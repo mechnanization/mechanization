@@ -25,6 +25,51 @@ const MIGRATIONS_DIR = join(
   'apps/backend/src/infrastructure/prisma/tenant/migrations',
 );
 
+/**
+ * What may cross from staging into production, stated explicitly.
+ *
+ * This used to discover every base table in the target schema and copy each one
+ * whole. On 2026-09-05 that put five citizens' national ID numbers, civil record
+ * numbers, phone numbers and رقم مرجعي login credentials into the production
+ * database, against an explicit instruction not to — and reported
+ * "Production database is ready and fully populated!" while doing it.
+ *
+ * An allowlist is the point. A table added by a future migration is NOT copied
+ * until someone writes it down here and says why, which is the opposite of the
+ * old behaviour, where a new table joined the copy set silently. If you are
+ * adding an entry, the question to answer is not "is this useful in production"
+ * but "does any row of it describe a citizen, directly or through a foreign key".
+ */
+const TABLE_POLICY = [
+  { table: 'parcels', where: null, why: 'the cadastre — no FKs, no personal data, and the admin map is blank without it' },
+  { table: 'zones', where: null, why: 'map zones — municipality cartography, references no person' },
+  { table: 'system_settings', where: null, why: "the municipality's own configuration: name, contact, fee defaults, branding" },
+  {
+    table: 'users',
+    where: `kind = 'STAFF'`,
+    why: 'staff accounts, so someone can sign in to production. kind=CITIZEN is the PII this whole allowlist exists to keep out.',
+  },
+];
+
+/**
+ * Never copied, and why — kept as a list rather than a silence so that a reader
+ * can see the decision was made rather than forgotten.
+ *
+ *   users kind=CITIZEN, registrations, property_entries, building_units,
+ *   households, household_members, documents, citizen_payments,
+ *   payment_transactions, fee_notices, field_drafts, field_visits,
+ *   field_assignments, inspector_payouts, expenses
+ *     → citizen records, or rows that reference them.
+ *   audit_log_entries
+ *     → staging's history of events that never happened in production, and its
+ *       before/after snapshots embed the citizen rows they describe. It is also
+ *       append-only at the database level (see 0001_init), so copying it at all
+ *       required disabling that guard.
+ *   otp_challenges  → ephemeral, pruned by cron.
+ *   _tenant_migrations → written by the migrator itself; copying it convinces
+ *       the migrator every migration is already applied and leaves an empty schema.
+ */
+
 
 
 function getRef(url) {
@@ -148,21 +193,17 @@ async function main() {
     console.log(`\n3. Copying tenant table data from staging to production...`);
     await prodClient.query(`SET search_path TO "${SCHEMA_NAME}", public;`);
     await stagingClient.query(`SET search_path TO "${SCHEMA_NAME}", public;`);
-    await prodClient.query("SET session_replication_role = 'replica';");
+    // `SET session_replication_role = 'replica'` used to be here. It switches off
+    // every trigger and foreign-key check on this connection, which is how the
+    // append-only guard on audit_log_entries (0001_init) was written straight
+    // through. The allowlist below has no inter-table dependencies, so nothing
+    // needs it — and a sync that can only run with the database's integrity
+    // rules disabled is a sync that should be questioned, not accommodated.
 
-    // Discover tables present in the production schema
-    const targetTablesRes = await prodClient.query(
-      `SELECT table_name FROM information_schema.tables 
-       WHERE table_schema = $1 AND table_type = 'BASE TABLE' AND table_name != '_tenant_migrations'
-       ORDER BY table_name`,
-      [SCHEMA_NAME],
-    );
-    const tablesToSync = targetTablesRes.rows.map((r) => r.table_name);
-
-    for (const table of tablesToSync) {
+    for (const { table, where } of TABLE_POLICY) {
       // Check if table exists in staging
       const stagingTableCheck = await stagingClient.query(
-        `SELECT 1 FROM information_schema.tables 
+        `SELECT 1 FROM information_schema.tables
          WHERE table_schema = $1 AND table_name = $2`,
         [SCHEMA_NAME, table],
       );
@@ -171,13 +212,18 @@ async function main() {
         continue;
       }
 
+      const filter = where ? ` WHERE ${where}` : '';
+
       const sourceCountRes = await stagingClient.query(
-        `SELECT count(*)::int as count FROM "${SCHEMA_NAME}"."${table}"`,
+        `SELECT count(*)::int as count FROM "${SCHEMA_NAME}"."${table}"${filter}`,
       );
       const count = sourceCountRes.rows[0].count;
 
-      // Truncate target table
-      await prodClient.query(`TRUNCATE TABLE "${SCHEMA_NAME}"."${table}" CASCADE;`);
+      // DELETE, not TRUNCATE ... CASCADE. The cascade was actively destructive:
+      // tables were processed alphabetically, so `TRUNCATE users CASCADE` ran
+      // after registrations had been filled and silently wiped it again — the
+      // run logged "copied 5 rows" for three tables that ended up empty.
+      await prodClient.query(`DELETE FROM "${SCHEMA_NAME}"."${table}";`);
 
       if (count > 0) {
         // Query target columns so we only insert valid schema columns (excluding generated columns)
@@ -188,7 +234,11 @@ async function main() {
         );
         const validCols = new Set(targetColsRes.rows.map((r) => r.column_name));
 
-        const sourceData = await stagingClient.query(`SELECT * FROM "${SCHEMA_NAME}"."${table}"`);
+        // The same filter as the count above — a SELECT that forgot it is how
+        // citizens got copied while the log reported a staff-sized number.
+        const sourceData = await stagingClient.query(
+          `SELECT * FROM "${SCHEMA_NAME}"."${table}"${filter}`,
+        );
         const rows = sourceData.rows;
 
         // Batch insert
@@ -233,7 +283,7 @@ async function main() {
       console.log(`  ✓ payment_receipt_seq synced to ${last_value}`);
     }
 
-    await prodClient.query("SET session_replication_role = 'origin';");
+    // (nothing to restore — replication role is never changed any more)
     console.log(`✓ All tenant tables successfully copied.`);
 
     // 5. Migrate auth.users and auth.identities
@@ -358,11 +408,29 @@ async function main() {
     const prodUsers = await prodClient.query(`SELECT count(*)::int as count FROM "${SCHEMA_NAME}".users`);
     const prodAuthUsers = await prodClient.query('SELECT count(*)::int as count FROM auth.users');
 
+    // The check that should always have been here. The previous version printed
+    // "ready and fully populated" without ever asking the only question that
+    // mattered, and was therefore most confident at the moment it was most wrong.
+    const prodCitizens = await prodClient.query(
+      `SELECT count(*)::int as count FROM "${SCHEMA_NAME}".users WHERE kind = 'CITIZEN'`,
+    );
+    const citizenCount = prodCitizens.rows[0].count;
+
     console.log(`  Tenant:         ${prodTenants.rows[0].count === 1 ? '✓ Present' : '✗ Missing'}`);
     console.log(`  Parcels:        ${prodParcels.rows[0].count} rows`);
     console.log(`  Tenant users:   ${prodUsers.rows[0].count} rows`);
+    console.log(`  Citizens:       ${citizenCount} rows ${citizenCount === 0 ? '✓ none, as required' : '✗ MUST BE ZERO'}`);
     console.log(`  Auth accounts:  ${prodAuthUsers.rows[0].count} accounts`);
-    console.log(`\n✓ Production database is ready and fully populated!`);
+
+    if (citizenCount !== 0) {
+      throw new Error(
+        `${citizenCount} citizen row(s) are present in production after the sync. ` +
+          'Citizen records must never be copied out of staging. Remove them before ' +
+          'anything else: DELETE FROM "' + SCHEMA_NAME + '".users WHERE kind = \'CITIZEN\';',
+      );
+    }
+
+    console.log(`\n✓ Production seeded — staff, cadastre and settings only, no citizen records.`);
   } finally {
     await stagingClient.end().catch(() => {});
     await prodClient.end().catch(() => {});
