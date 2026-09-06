@@ -461,24 +461,30 @@ export default function CitizenProfilePage({
                   icon: Users,
                   label:
                     locale === 'en'
-                      ? 'Total Registered Members'
-                      : 'عدد أفراد الأسرة الإجمالي',
-                  value: citizen.totalRegisteredMembers?.toString(),
+                      ? 'Family Members (Living in House)'
+                      : 'عدد أفراد الأسرة (المقيمين في المنزل)',
+                  value: (citizen.actualHouseholdMembers ?? citizen.totalRegisteredMembers)?.toString(),
                 },
-                {
-                  icon: Users,
-                  label:
-                    locale === 'en'
-                      ? 'Actual Household Members'
-                      : 'عدد أفراد الأسرة الفعليين',
-                  value: citizen.actualHouseholdMembers?.toString(),
-                },
-                {
-                  icon: Users,
-                  label:
-                    locale === 'en' ? 'Married Children Count' : 'عدد الأبناء المتزوجين',
-                  value: citizen.marriedChildrenCount?.toString(),
-                },
+                ...(citizen.totalRegisteredMembers != null &&
+                citizen.actualHouseholdMembers != null &&
+                citizen.totalRegisteredMembers > citizen.actualHouseholdMembers
+                  ? [
+                      {
+                        icon: Users,
+                        label:
+                          locale === 'en'
+                            ? 'Total Registered (Civil Record)'
+                            : 'إجمالي المسجلين في القيد',
+                        value: citizen.totalRegisteredMembers.toString(),
+                      },
+                      {
+                        icon: Users,
+                        label:
+                          locale === 'en' ? 'Married Children (Independent)' : 'الأبناء المتزوجون المستقلون',
+                        value: citizen.marriedChildrenCount?.toString(),
+                      },
+                    ]
+                  : []),
               ]}
             />
 

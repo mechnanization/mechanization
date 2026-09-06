@@ -352,25 +352,35 @@ export default function MyFilePage({
             />
             <Detail
               icon={Users}
-              label={locale === 'en' ? 'Total Registered Members' : 'عدد أفراد الأسرة الإجمالي'}
+              label={
+                locale === 'en'
+                  ? 'Family Members (Living in House)'
+                  : 'عدد أفراد الأسرة (المقيمين في المنزل)'
+              }
               value={
-                summary?.totalRegisteredMembers ? String(summary.totalRegisteredMembers) : null
+                summary?.actualHouseholdMembers
+                  ? String(summary.actualHouseholdMembers)
+                  : summary?.totalRegisteredMembers
+                    ? String(summary.totalRegisteredMembers)
+                    : null
               }
             />
-            <Detail
-              icon={Users}
-              label={locale === 'en' ? 'Actual Household Members' : 'عدد أفراد الأسرة الفعليين'}
-              value={
-                summary?.actualHouseholdMembers ? String(summary.actualHouseholdMembers) : null
-              }
-            />
-            <Detail
-              icon={Users}
-              label={locale === 'en' ? 'Married Children Count' : 'عدد الأبناء المتزوجين'}
-              value={
-                summary?.marriedChildrenCount != null ? String(summary.marriedChildrenCount) : null
-              }
-            />
+            {summary?.totalRegisteredMembers != null &&
+            summary?.actualHouseholdMembers != null &&
+            summary.totalRegisteredMembers > summary.actualHouseholdMembers ? (
+              <>
+                <Detail
+                  icon={Users}
+                  label={locale === 'en' ? 'Total Registered (Civil Record)' : 'إجمالي المسجلين في القيد'}
+                  value={String(summary.totalRegisteredMembers)}
+                />
+                <Detail
+                  icon={Users}
+                  label={locale === 'en' ? 'Married Children (Independent)' : 'الأبناء المتزوجون المستقلون'}
+                  value={String(summary.marriedChildrenCount)}
+                />
+              </>
+            ) : null}
             <Detail
               icon={FileDigit}
               label={locale === 'en' ? 'Civil Record Number' : 'رقم السجل'}

@@ -131,29 +131,38 @@ export const contactDetailsObject = z.object({
   phone: lebanesePhone,
   whatsappSameAsPhone: z.boolean().default(true),
   whatsapp: lebanesePhone.optional(),
-  totalRegisteredMembers: z.coerce
-    .number({
-      required_error: 'عدد أفراد الأسرة الإجمالي مطلوب',
-      invalid_type_error: 'عدد أفراد الأسرة الإجمالي يجب أن يكون رقماً',
-    })
-    .int('يجب أن يكون رقماً صحيحاً')
-    .min(1, 'يجب تسجيل فرد واحد على الأقل لكل قيد عائلي')
-    .max(50, 'العدد كبير جداً — يرجى مراجعة البلدية'),
   actualHouseholdMembers: z.coerce
     .number({
-      required_error: 'عدد أفراد الأسرة الفعليين مطلوب',
-      invalid_type_error: 'عدد أفراد الأسرة الفعليين يجب أن يكون رقماً',
+      required_error: 'عدد أفراد الأسرة المقيمين في المنزل مطلوب',
+      invalid_type_error: 'عدد أفراد الأسرة المقيمين في المنزل يجب أن يكون رقماً',
     })
     .int('يجب أن يكون رقماً صحيحاً')
-    .min(1, 'يجب تسجيل فرد واحد على الأقل لكل قيد عائلي')
+    .min(1, 'يجب تسجيل فرد واحد على الأقل')
     .max(50, 'العدد كبير جداً — يرجى مراجعة البلدية'),
+  totalRegisteredMembers: z.coerce
+    .number()
+    .int('يجب أن يكون رقماً صحيحاً')
+    .min(1)
+    .max(50)
+    .optional(),
+  familySize: z.coerce
+    .number()
+    .int('يجب أن يكون رقماً صحيحاً')
+    .min(1)
+    .max(50)
+    .optional(),
 });
 
 export const contactDetailsSchema = contactDetailsObject
-  .transform((data) => ({
-    ...data,
-    whatsapp: data.whatsappSameAsPhone ? data.phone : data.whatsapp,
-  }))
+  .transform((data) => {
+    const actual = data.actualHouseholdMembers ?? data.familySize;
+    return {
+      ...data,
+      actualHouseholdMembers: actual,
+      totalRegisteredMembers: data.totalRegisteredMembers ?? actual,
+      whatsapp: data.whatsappSameAsPhone ? data.phone : data.whatsapp,
+    };
+  })
   .superRefine((data, ctx) => {
     if (!data.whatsappSameAsPhone && !data.whatsapp) {
       ctx.addIssue({
@@ -162,7 +171,11 @@ export const contactDetailsSchema = contactDetailsObject
         message: 'رقم الواتساب مطلوب',
       });
     }
-    if (data.actualHouseholdMembers > data.totalRegisteredMembers) {
+    if (
+      data.actualHouseholdMembers != null &&
+      data.totalRegisteredMembers != null &&
+      data.actualHouseholdMembers > data.totalRegisteredMembers
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['actualHouseholdMembers'],
@@ -186,9 +199,14 @@ export type ContactDetails = z.infer<typeof contactDetailsSchema>;
  */
 export const partialContactDetailsSchema = contactDetailsObject
   .partial()
-  .transform((data) => ({
-    ...data,
-    whatsapp: data.whatsappSameAsPhone === false ? data.whatsapp : (data.phone ?? data.whatsapp),
-  }));
+  .transform((data) => {
+    const actual = data.actualHouseholdMembers ?? data.familySize;
+    return {
+      ...data,
+      actualHouseholdMembers: actual,
+      totalRegisteredMembers: data.totalRegisteredMembers ?? actual,
+      whatsapp: data.whatsappSameAsPhone === false ? data.whatsapp : (data.phone ?? data.whatsapp),
+    };
+  });
 
 export type PartialContactDetails = z.infer<typeof partialContactDetailsSchema>;

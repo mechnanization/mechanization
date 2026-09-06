@@ -166,7 +166,6 @@ export function askableFields(values: CitizenFormValues): AskableField[] {
   fields.push(
     { path: 'contact.phone', field: 'phone', section: 'contact' },
     { path: 'contact.maritalStatus', field: 'maritalStatus', section: 'contact' },
-    { path: 'contact.totalRegisteredMembers', field: 'totalRegisteredMembers', section: 'contact' },
     { path: 'contact.actualHouseholdMembers', field: 'actualHouseholdMembers', section: 'contact' },
   );
 
