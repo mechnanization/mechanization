@@ -56,6 +56,8 @@ export interface PropertyEntryProps {
   side?: string | null;
   tentLocation?: string | null;
   unitArea?: number | null;
+  /** LAND only — أسهم out of the cadastre's standard 2400-share parcel. */
+  shares?: number | null;
   sharedRights?: string[];
   /**
    * HOUSE cards only, and only an owner's.
@@ -228,6 +230,9 @@ export class PropertyEntry {
         if (!required('unitArea', Boolean(props.unitArea && props.unitArea > 0))) {
           throw fail('Land requires an area');
         }
+        if (!required('shares', Boolean(props.shares && props.shares > 0))) {
+          throw fail('Land requires a share count');
+        }
         if (props.floor || props.unitType || props.buildingName) {
           throw fail('Land cannot carry building details');
         }
@@ -318,6 +323,7 @@ export class PropertyEntry {
       tentLocation: props.propertyType === 'TENT' ? (props.tentLocation?.trim() ?? null) : null,
       unitArea:
         props.propertyType === 'TENT' || isBuilding ? null : (props.unitArea ?? null),
+      shares: props.propertyType === 'LAND' ? (props.shares ?? null) : null,
       sharedRights: props.propertyType === 'HOUSE' ? (props.sharedRights ?? []) : [],
       // A منزل is the only card that describes its own single unit; a مبنى
       // states this per unit below, and أرض and خيمة are never asked.

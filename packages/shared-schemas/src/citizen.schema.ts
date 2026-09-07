@@ -142,8 +142,8 @@ export const contactDetailsObject = z.object({
   totalRegisteredMembers: z.coerce
     .number()
     .int('يجب أن يكون رقماً صحيحاً')
-    .min(1)
-    .max(50)
+    .min(1, 'يجب تسجيل فرد واحد على الأقل لكل قيد عائلي')
+    .max(50, 'العدد كبير جداً — يرجى مراجعة البلدية')
     .optional(),
   familySize: z.coerce
     .number()
@@ -154,6 +154,10 @@ export const contactDetailsObject = z.object({
 });
 
 export const contactDetailsSchema = contactDetailsObject
+  .transform((data) => ({
+    ...data,
+    whatsapp: data.whatsappSameAsPhone ? data.phone : data.whatsapp,
+  }))
   .transform((data) => {
     const actual = data.actualHouseholdMembers ?? data.familySize;
     return {
@@ -199,6 +203,10 @@ export type ContactDetails = z.infer<typeof contactDetailsSchema>;
  */
 export const partialContactDetailsSchema = contactDetailsObject
   .partial()
+  .transform((data) => ({
+    ...data,
+    whatsapp: data.whatsappSameAsPhone === false ? data.whatsapp : (data.phone ?? data.whatsapp),
+  }))
   .transform((data) => {
     const actual = data.actualHouseholdMembers ?? data.familySize;
     return {

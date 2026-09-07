@@ -153,6 +153,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
               side: p.side ?? null,
               tentLocation: p.tentLocation ?? null,
               unitArea: p.unitArea ?? null,
+              shares: p.shares ?? null,
               sharedRights: p.sharedRights ?? [],
               unitStatus: (p.unitStatus ?? null) as never,
               latitude: p.latitude ?? null,
@@ -288,6 +289,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
           side: p.side as string | null,
           tentLocation: p.tentLocation as string | null,
           unitArea: p.unitArea == null ? null : Number(p.unitArea),
+          shares: p.shares as number | null,
           sharedRights: (p.sharedRights as string[]) ?? [],
           unitStatus: p.unitStatus as never,
           units: ((p.units as Array<Record<string, unknown>>) ?? []).map((unit) => ({

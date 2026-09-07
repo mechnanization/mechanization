@@ -382,6 +382,13 @@ export default function MyFilePage({
               </>
             ) : null}
             <Detail
+              icon={Users}
+              label={locale === 'en' ? 'Married Children Count' : 'عدد الأبناء المتزوجين'}
+              value={
+                summary?.marriedChildrenCount != null ? String(summary.marriedChildrenCount) : null
+              }
+            />
+            <Detail
               icon={FileDigit}
               label={locale === 'en' ? 'Civil Record Number' : 'رقم السجل'}
               value={summary?.civilRecordNumberMasked}

@@ -288,6 +288,7 @@ async function seedTenant(
           propertyNumber: `${tenant.prefix}-L-404`,
           landType: 'AGRICULTURAL' as const,
           unitArea: 2400,
+          shares: 2400,
           latitude: 33.2752,
           longitude: 35.2141,
         },

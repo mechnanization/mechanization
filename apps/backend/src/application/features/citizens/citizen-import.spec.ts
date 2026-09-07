@@ -66,16 +66,18 @@ describe('buildCitizenPayload — property branches', () => {
     expect(data.properties[0]).toMatchObject({ propertyType: 'HOUSE', unitArea: 180 });
   });
 
-  it('maps land, including its land type', () => {
+  it('maps land, including its land type and shares', () => {
     const data = expectAccepted({
       ...BASE,
       propertyType: 'أرض',
       landType: 'زراعي',
       unitArea: '2500',
+      shares: '400',
     });
     expect(data.properties[0]).toMatchObject({
       propertyType: 'LAND',
       landType: 'AGRICULTURAL',
+      shares: 400,
     });
   });
 

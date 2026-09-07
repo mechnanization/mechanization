@@ -95,7 +95,10 @@ export function emptyCitizen(): CitizenFormValues {
   return {
     personal: { isLebanese: true },
     contact: { whatsappSameAsPhone: true },
-    properties: [{}],
+    // Empty, not one blank card — a citizen who owns nothing and only rents
+    // has no property to file, and that is the common case this form should
+    // not stand in the way of. Staff add a card only for someone who owns.
+    properties: [],
     flags: new Map(),
     unverified: new Map(),
   };
@@ -166,6 +169,7 @@ export function askableFields(values: CitizenFormValues): AskableField[] {
   fields.push(
     { path: 'contact.phone', field: 'phone', section: 'contact' },
     { path: 'contact.maritalStatus', field: 'maritalStatus', section: 'contact' },
+    { path: 'contact.totalRegisteredMembers', field: 'totalRegisteredMembers', section: 'contact' },
     { path: 'contact.actualHouseholdMembers', field: 'actualHouseholdMembers', section: 'contact' },
   );
 
@@ -254,7 +258,7 @@ function reindexFlags(flags: ReadonlyMap<string, string>, removed: number): Map<
 
 /** Drops UI-only fields and coerces the numeric strings the inputs produce. */
 export function toPayloadProperty(property: PropertyDraft): Record<string, unknown> {
-  const { unitArea, units, id, ...rest } = property;
+  const { unitArea, shares, units, id, ...rest } = property;
 
   return {
     // Present only when this card is editing a stored row; the create endpoint
@@ -262,6 +266,7 @@ export function toPayloadProperty(property: PropertyDraft): Record<string, unkno
     ...(id ? { id } : {}),
     ...rest,
     ...(unitArea !== undefined && unitArea !== '' ? { unitArea: Number(unitArea) } : {}),
+    ...(shares !== undefined && shares !== '' ? { shares: Number(shares) } : {}),
     ...(units ? { units: units.map(toPayloadUnit) } : {}),
   };
 }
@@ -585,7 +590,9 @@ export function CitizenForm({
             onAddOnSameParcel={() => addProperty(index)}
             onViewParcel={token ? setRosterParcel : undefined}
             onRemove={() => removeProperty(index)}
-            canRemove={values.properties.length > 1}
+            // Zero properties is a valid registration, so the last remaining
+            // card is removable too — not just every card after the first.
+            canRemove
             errors={scopeErrors(shown, `properties.${index}`)}
             locale={locale}
           />
@@ -620,7 +627,7 @@ export function CitizenForm({
                 onChange={(next) => setProperty(index, next)}
                 onViewParcel={token ? setRosterParcel : undefined}
                 onRemove={() => removeProperty(index)}
-                canRemove={values.properties.length > 1}
+                canRemove
                 errors={scopeErrors(shown, `properties.${index}`)}
                 locale={locale}
                 title={locale === 'en' ? `Unit ${unitPosition + 1}` : `الملكية ${unitPosition + 1}`}
@@ -1040,6 +1047,14 @@ export function CitizenForm({
             invalid={sectionInvalid('properties')}
           >
             <div className="space-y-4">
+              {values.properties.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
+                  {locale === 'en'
+                    ? 'No property to add? Leave this empty for a citizen who owns nothing and only rents.'
+                    : 'لا يملك المواطن أي عقار؟ يمكن ترك هذا القسم فارغاً إذا كان يستأجر فقط.'}
+                </p>
+              ) : null}
+
               {renderPropertyGroups()}
 
               {mode === 'edit' && values.properties.some((property) => property.id) ? (
@@ -1057,7 +1072,13 @@ export function CitizenForm({
                 className="w-full border-dashed border-primary/60 text-primary hover:bg-primary/5 h-9 text-xs sm:text-sm font-medium"
               >
                 <Plus className="size-4" aria-hidden />
-                {locale === 'en' ? 'Add Another Property' : 'إضافة عقار آخر'}
+                {locale === 'en'
+                  ? values.properties.length === 0
+                    ? 'Add Property'
+                    : 'Add Another Property'
+                  : values.properties.length === 0
+                    ? 'إضافة عقار'
+                    : 'إضافة عقار آخر'}
               </Button>
             </div>
           </FormSection>
@@ -1123,6 +1144,14 @@ export function CitizenForm({
           invalid={sectionInvalid('properties')}
         >
           <div className="space-y-4">
+            {values.properties.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
+                {locale === 'en'
+                  ? 'No property to add? Leave this empty for a citizen who owns nothing and only rents.'
+                  : 'لا يملك المواطن أي عقار؟ يمكن ترك هذا القسم فارغاً إذا كان يستأجر فقط.'}
+              </p>
+            ) : null}
+
             {renderPropertyGroups()}
 
             {mode === 'edit' && values.properties.some((property) => property.id) ? (
@@ -1140,7 +1169,13 @@ export function CitizenForm({
               className="w-full border-dashed border-primary/60 text-primary hover:bg-primary/5 h-9 text-xs sm:text-sm font-medium"
             >
               <Plus className="size-4" aria-hidden />
-              {locale === 'en' ? 'Add Another Property' : 'إضافة عقار آخر'}
+              {locale === 'en'
+                ? values.properties.length === 0
+                  ? 'Add Property'
+                  : 'Add Another Property'
+                : values.properties.length === 0
+                  ? 'إضافة عقار'
+                  : 'إضافة عقار آخر'}
             </Button>
           </div>
         </FormSection>

@@ -6,6 +6,7 @@ import { AuditController } from './controllers/audit.controller';
 import { BackupController } from './controllers/backup.controller';
 import { AuthController } from './controllers/auth.controller';
 import { CadastreController } from './controllers/cadastre.controller';
+import { CasesController } from './controllers/cases.controller';
 import { CitizenController } from './controllers/citizen.controller';
 import { DashboardController } from './controllers/dashboard.controller';
 import { DocumentController } from './controllers/document.controller';
@@ -38,6 +39,7 @@ import { TenantMiddleware } from './middleware/tenant.middleware';
     FeesController,
     StaffController,
     ZonesController,
+    CasesController,
     BackupController,
   ],
   providers: [

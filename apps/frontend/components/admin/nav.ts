@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   BadgeDollarSign,
+  ClipboardList,
   KeyRound,
   LayoutDashboard,
   Layers,
@@ -82,6 +83,16 @@ export const NAV_GROUPS: NavGroup[] = [
         labelEn: 'Citizens',
         icon: Users,
         keywords: ['سجل', 'مواطن', 'عقار', 'استيراد', 'citizens', 'registry'],
+      },
+      // A visit that didn't produce a citizen — nobody home, gate locked —
+      // sits next to the registry it feeds rather than under land/map, since
+      // what it records is "who to go back to", not a parcel's own facts.
+      {
+        path: '/cases',
+        label: 'الحالات',
+        labelEn: 'Cases',
+        icon: ClipboardList,
+        keywords: ['زيارة', 'لا أحد في المنزل', 'متابعة', 'cases', 'follow-up', 'visit'],
       },
       // Next to the registry rather than under settings: a fee is issued
       // against the citizens in it, not configured in isolation.

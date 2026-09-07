@@ -84,6 +84,19 @@ export const areaField = z.coerce
   .max(1_000_000);
 
 /**
+ * أسهم — a fractional land ownership, out of the Lebanese cadastre's
+ * standard 2400-share parcel. LAND only: a building or a house is filed
+ * whole (see `buildingUnitSchema`/`unitStatusField`'s occupancy split for how
+ * multiple parties on one structure are handled instead), so shares only
+ * ever describe a share of the *land itself*.
+ */
+export const sharesField = z.coerce
+  .number({ required_error: 'عدد الأسهم مطلوب', invalid_type_error: 'عدد الأسهم يجب أن يكون رقماً' })
+  .int('يجب أن يكون رقماً صحيحاً')
+  .min(1, 'يجب أن يكون سهماً واحداً على الأقل')
+  .max(2400, 'الحد الأقصى 2400 سهم');
+
+/**
  * حالة الوحدة — optional everywhere, on purpose.
  *
  * Never required, and the omission is the design rather than a gap in it. A
@@ -182,6 +195,7 @@ const propertyBranch = z.discriminatedUnion(
       propertyNumber: propertyNumberField,
       landType: landTypeSchema,
       unitArea: areaField,
+      shares: sharesField,
     }),
     z.object({
       propertyType: z.literal('TENT'),
@@ -200,10 +214,13 @@ const propertyBranch = z.discriminatedUnion(
 export const propertyEntrySchema = z.intersection(occupancyBranch, propertyBranch);
 export type PropertyEntry = z.infer<typeof propertyEntrySchema>;
 
-/** At least one property; the soft ceiling catches accidental repeat taps. */
+/**
+ * Zero properties is a valid registration — a citizen who owns nothing and
+ * only rents has none to file. The soft ceiling just catches accidental
+ * repeat taps.
+ */
 export const propertyEntriesSchema = z
   .array(propertyEntrySchema)
-  .min(1, 'يجب تسجيل عقار واحد على الأقل')
   .max(25, 'عدد العقارات كبير جداً — يرجى مراجعة البلدية');
 
 /**
@@ -213,7 +230,7 @@ export const propertyEntriesSchema = z
 export const PROPERTY_FIELD_MAP = {
   BUILDING: ['neighborhood', 'propertyNumber', 'buildingName', 'units'],
   HOUSE: ['neighborhood', 'propertyNumber', 'buildingName', 'side', 'unitArea', 'sharedRights'],
-  LAND: ['neighborhood', 'propertyNumber', 'landType', 'unitArea'],
+  LAND: ['neighborhood', 'propertyNumber', 'landType', 'unitArea', 'shares'],
   TENT: ['neighborhood', 'propertyNumber', 'tentLocation'],
 } as const satisfies Record<string, readonly string[]>;
 
@@ -245,6 +262,7 @@ export const partialPropertyEntrySchema = z
     landType: landTypeSchema,
     tentLocation: z.string().trim().min(3).max(200),
     unitArea: areaField,
+    shares: sharesField,
     sharedRights: sharedRightsField,
     unitStatus: unitStatusSchema,
     units: buildingUnitsSchema,

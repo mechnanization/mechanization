@@ -465,6 +465,12 @@ export default function CitizenProfilePage({
                       : 'عدد أفراد الأسرة (المقيمين في المنزل)',
                   value: (citizen.actualHouseholdMembers ?? citizen.totalRegisteredMembers)?.toString(),
                 },
+                {
+                  icon: Users,
+                  label:
+                    locale === 'en' ? 'Married Children Count' : 'عدد الأبناء المتزوجين',
+                  value: citizen.marriedChildrenCount?.toString(),
+                },
                 ...(citizen.totalRegisteredMembers != null &&
                 citizen.actualHouseholdMembers != null &&
                 citizen.totalRegisteredMembers > citizen.actualHouseholdMembers
@@ -1003,6 +1009,11 @@ function PropertyCard({
       icon: Ruler,
       label: locale === 'en' ? 'Area' : 'المساحة',
       value: property.unitArea != null ? `${property.unitArea} ${locale === 'en' ? 'm²' : 'م²'}` : null,
+    },
+    {
+      icon: Ruler,
+      label: locale === 'en' ? 'Shares' : 'الأسهم',
+      value: property.shares != null ? `${property.shares}/2400` : null,
     },
     {
       icon: Tent,

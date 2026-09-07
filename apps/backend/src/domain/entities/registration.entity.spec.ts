@@ -1,6 +1,5 @@
 import { PropertyEntry } from './property-entry.entity';
 import { Registration } from './registration.entity';
-import { ValidationError } from '../errors/domain-error';
 
 const property = (propertyNumber: string): PropertyEntry =>
   PropertyEntry.create({
@@ -10,18 +9,19 @@ const property = (propertyNumber: string): PropertyEntry =>
     propertyNumber,
     landType: 'AGRICULTURAL',
     unitArea: 500,
+    shares: 400,
   });
 
 describe('Registration — creation', () => {
-  it('rejects a submission with no properties', () => {
-    expect(() =>
-      Registration.create({
-        id: 'r1',
-        citizenId: 'c1',
-        referenceNumber: 'BZR-2607-4K9QX2',
-        properties: [],
-      }),
-    ).toThrow(ValidationError);
+  it('accepts a submission with no properties — a citizen who owns nothing and only rents', () => {
+    const registration = Registration.create({
+      id: 'r1',
+      citizenId: 'c1',
+      referenceNumber: 'BZR-2607-4K9QX2',
+      properties: [],
+    });
+
+    expect(registration.properties).toHaveLength(0);
   });
 
   it('accepts several structures standing on the same رقم العقار', () => {

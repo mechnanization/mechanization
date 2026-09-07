@@ -458,7 +458,7 @@ export function ContactStep({
           placeholder={locale === 'en' ? 'e.g. 4' : 'مثال: ٤'}
           className="text-start max-w-xs"
           invalid={Boolean(errors['contact.actualHouseholdMembers'])}
-          value={str(value.actualHouseholdMembers ?? value.familySize)}
+          value={str(value.actualHouseholdMembers)}
           onChange={(e) =>
             set({
               actualHouseholdMembers: e.target.value,
@@ -467,6 +467,21 @@ export function ContactStep({
           }
         />
       </Field>
+
+      {(() => {
+        const total = Number(value.totalRegisteredMembers);
+        const actual = Number(value.actualHouseholdMembers);
+        if (!Number.isFinite(total) || !Number.isFinite(actual)) return null;
+        const married = total - actual;
+        if (married < 0) return null;
+        return (
+          <div className="flex h-10 items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-3 text-xs text-muted-foreground">
+            {locale === 'en'
+              ? `Married children count (auto): ${married}`
+              : `عدد الأبناء المتزوجين المستقلين (تلقائي): ${married}`}
+          </div>
+        );
+      })()}
     </div>
   );
 }
