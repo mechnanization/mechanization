@@ -12,3 +12,4 @@ export * from './auth.schema';
 export * from './tenant.schema';
 export * from './zone.schema';
 export * from './staff.schema';
+export * from './case.schema';

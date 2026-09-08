@@ -554,6 +554,7 @@ export class CitizensService {
         tentLocation: property.tentLocation,
         // Decimal → number at the edge, as everywhere else in this codebase.
         unitArea: property.unitArea == null ? null : Number(property.unitArea),
+        shares: property.shares,
         sharedRights: property.sharedRights,
         unitStatus: property.unitStatus,
         units: property.units.map((unit) => ({
@@ -929,6 +930,7 @@ export class CitizensService {
           side: p.side ?? null,
           tentLocation: p.tentLocation ?? null,
           unitArea: p.unitArea ?? null,
+          shares: p.shares ?? null,
           sharedRights: p.sharedRights ?? [],
           unitStatus: (p.unitStatus ?? null) as never,
           latitude: p.latitude ?? null,

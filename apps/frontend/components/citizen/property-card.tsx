@@ -74,6 +74,8 @@ export interface PropertyDraft {
   side?: string;
   tentLocation?: string;
   unitArea?: string;
+  /** أرض only — أسهم out of the cadastre's standard 2400-share parcel. */
+  shares?: string;
   sharedRights?: string[];
   /** منزل only — a مبنى states this per unit inside `units`. */
   unitStatus?: UnitStatus;
@@ -441,6 +443,27 @@ export function PropertyCard({
                 />
               </Field>
             ) : null}
+
+            {visible.includes('shares') ? (
+              <Field
+                label={locale === 'en' ? 'Shares (out of 2400)' : 'الأسهم (من أصل 2400)'}
+                htmlFor={`sh-${index}`}
+                path={flagPath(index, 'shares')}
+                required
+                error={errors.shares}
+              >
+                <Input
+                  id={`sh-${index}`}
+                  inputMode="numeric"
+                  dir="ltr"
+                  className="text-start"
+                  placeholder={locale === 'en' ? 'e.g. 400' : 'مثال: ٤٠٠'}
+                  invalid={Boolean(errors.shares)}
+                  value={draft.shares ?? ''}
+                  onChange={(e) => set({ shares: e.target.value })}
+                />
+              </Field>
+            ) : null}
           </div>
 
           {/*
@@ -536,6 +559,7 @@ function changePropertyType(draft: PropertyDraft, propertyType: PropertyType): P
   if (propertyType === 'LAND') {
     keep.landType = draft.landType;
     keep.unitArea = draft.unitArea;
+    keep.shares = draft.shares;
   }
   if (propertyType === 'TENT') {
     keep.tentLocation = draft.tentLocation;

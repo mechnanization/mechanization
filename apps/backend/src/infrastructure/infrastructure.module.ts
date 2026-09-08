@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import {
   AUDIT_REPOSITORY,
+  CASE_REPOSITORY,
   DOCUMENT_REPOSITORY,
   IMAGE_STORAGE_SERVICE,
   OTP_REPOSITORY,
@@ -23,6 +24,7 @@ import { TenantContextService } from './context/tenant-context.service';
 import { RegistryPrismaService } from './prisma/registry-prisma.service';
 import { TenantPrismaFactory } from './prisma/tenant-prisma.factory';
 import { PrismaAuditRepository } from './repositories/audit.repository';
+import { PrismaCaseRepository } from './repositories/case.repository';
 import { PrismaDocumentRepository } from './repositories/document.repository';
 import { PrismaOtpRepository } from './repositories/otp.repository';
 import { PrismaParcelRepository } from './repositories/parcel.repository';
@@ -61,6 +63,7 @@ import { SupabaseStorageService } from './supabase/storage/supabase-storage.serv
     { provide: AUDIT_REPOSITORY, useClass: PrismaAuditRepository },
     { provide: OTP_REPOSITORY, useClass: PrismaOtpRepository },
     { provide: ZONE_REPOSITORY, useClass: PrismaZoneRepository },
+    { provide: CASE_REPOSITORY, useClass: PrismaCaseRepository },
 
     { provide: IMAGE_STORAGE_SERVICE, useClass: SupabaseStorageService },
     { provide: SUPABASE_AUTH_SERVICE, useClass: SupabaseAuthServiceImpl },
@@ -84,6 +87,7 @@ import { SupabaseStorageService } from './supabase/storage/supabase-storage.serv
     AUDIT_REPOSITORY,
     OTP_REPOSITORY,
     ZONE_REPOSITORY,
+    CASE_REPOSITORY,
     IMAGE_STORAGE_SERVICE,
     SUPABASE_AUTH_SERVICE,
     SMS_SENDER,

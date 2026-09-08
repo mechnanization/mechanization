@@ -513,6 +513,100 @@ export function getZonesGeoJson(tenant: string, token: string) {
   return apiFetch<GeoJSON.FeatureCollection>(tenant, '/zones/geojson', { token });
 }
 
+// ────────────────────────────────  Cases  ────────────────────────────────
+
+/**
+ * حالات — a field visit that could not become a citizen registration
+ * (nobody home, gate locked, access refused…). Not linked to any citizen:
+ * there is none to attach it to yet.
+ */
+export interface CaseSummary {
+  id: string;
+  notes: string;
+  propertyNumber: string | null;
+  neighborhood: string | null;
+  propertyType: string | null;
+  buildingName: string | null;
+  floor: string | null;
+  side: string | null;
+  landType: string | null;
+  tentLocation: string | null;
+  status: 'OPEN' | 'RESOLVED';
+  /** The citizen whose registration resolved this case, if any. */
+  resolvedCitizenId: string | null;
+  resolvedCitizenName: string | null;
+  resolvedAt: string | null;
+  createdById: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CaseWriteInput {
+  notes: string;
+  propertyNumber?: string;
+  neighborhood?: string;
+  propertyType?: string;
+  buildingName?: string;
+  floor?: string;
+  side?: string;
+  landType?: string;
+  tentLocation?: string;
+}
+
+export function getCases(
+  tenant: string,
+  token: string,
+  filter: { propertyNumber?: string; status?: 'OPEN' | 'RESOLVED' } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (filter.propertyNumber) query.set('propertyNumber', filter.propertyNumber);
+  if (filter.status) query.set('status', filter.status);
+  const qs = query.toString();
+  return apiFetch<{ cases: CaseSummary[] }>(tenant, `/cases${qs ? `?${qs}` : ''}`, {
+    token,
+    signal,
+  });
+}
+
+export function getCase(tenant: string, token: string, id: string, signal?: AbortSignal) {
+  return apiFetch<CaseSummary>(tenant, `/cases/${encodeURIComponent(id)}`, { token, signal });
+}
+
+export function createCase(tenant: string, token: string, input: CaseWriteInput) {
+  return apiFetch<CaseSummary>(tenant, '/cases', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateCase(
+  tenant: string,
+  token: string,
+  id: string,
+  input: Partial<CaseWriteInput> & {
+    status?: 'OPEN' | 'RESOLVED';
+    /** Setting this always resolves the case server-side; `null` only clears the link. */
+    resolvedCitizenId?: string | null;
+  },
+) {
+  return apiFetch<CaseSummary>(tenant, `/cases/${encodeURIComponent(id)}`, {
+    token,
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+/** SUPER_ADMIN only, server-enforced. */
+export function deleteCase(tenant: string, token: string, id: string) {
+  return apiFetch<{ deleted: boolean }>(tenant, `/cases/${encodeURIComponent(id)}`, {
+    token,
+    method: 'DELETE',
+  });
+}
+
 /** One unit inside a BUILDING — شقة, عيادة or محل. */
 export interface CitizenProfileUnit {
   id: string;
@@ -545,6 +639,8 @@ export interface CitizenProfileProperty {
   side: string | null;
   tentLocation: string | null;
   unitArea: number | null;
+  /** LAND only — أسهم out of the cadastre's standard 2400-share parcel. */
+  shares: number | null;
   sharedRights: string[];
   latitude: number | null;
   longitude: number | null;

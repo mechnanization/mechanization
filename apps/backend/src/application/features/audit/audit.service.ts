@@ -121,6 +121,28 @@ export class AuditService {
     });
   }
 
+  /** حالات writes — a field visit logged, edited, resolved or removed. */
+  @OnEvent('case.changed')
+  async onCaseChanged(payload: {
+    caseId: string;
+    action: string;
+    before?: Record<string, unknown>;
+    after?: Record<string, unknown>;
+    actorId: string;
+    actorRole: string;
+  }): Promise<void> {
+    await this.record({
+      actorId: payload.actorId,
+      actorType: 'STAFF',
+      actorRole: payload.actorRole as never,
+      action: payload.action,
+      entityType: 'Case',
+      entityId: payload.caseId,
+      before: payload.before,
+      after: payload.after,
+    });
+  }
+
   @OnEvent('user.logged-in')
   async onLogin(payload: {
     userId: string;

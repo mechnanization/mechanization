@@ -443,31 +443,8 @@ export function ContactStep({
       <Field
         label={
           locale === 'en'
-            ? 'Total Registered Members (incl. married children)'
-            : 'عدد أفراد الأسرة الإجمالي (شاملاً الأبناء المتزوجين)'
-        }
-        htmlFor="totalRegisteredMembers"
-        path="contact.totalRegisteredMembers"
-        required
-        error={errors['contact.totalRegisteredMembers']}
-      >
-        <Input
-          id="totalRegisteredMembers"
-          inputMode="numeric"
-          dir="ltr"
-          placeholder={locale === 'en' ? 'e.g. 5' : 'مثال: ٥'}
-          className="text-start max-w-xs"
-          invalid={Boolean(errors['contact.totalRegisteredMembers'])}
-          value={str(value.totalRegisteredMembers)}
-          onChange={(e) => set({ totalRegisteredMembers: e.target.value })}
-        />
-      </Field>
-
-      <Field
-        label={
-          locale === 'en'
-            ? 'Actual Household Members (excl. married children)'
-            : 'عدد أفراد الأسرة الفعليين (باستثناء الأبناء المتزوجين المستقلين)'
+            ? 'Family Members Living in the House (without married children)'
+            : 'عدد أفراد الأسرة المقيمين في المنزل (دون المتزوجين)'
         }
         htmlFor="actualHouseholdMembers"
         path="contact.actualHouseholdMembers"
@@ -482,7 +459,12 @@ export function ContactStep({
           className="text-start max-w-xs"
           invalid={Boolean(errors['contact.actualHouseholdMembers'])}
           value={str(value.actualHouseholdMembers)}
-          onChange={(e) => set({ actualHouseholdMembers: e.target.value })}
+          onChange={(e) =>
+            set({
+              actualHouseholdMembers: e.target.value,
+              totalRegisteredMembers: e.target.value,
+            })
+          }
         />
       </Field>
 

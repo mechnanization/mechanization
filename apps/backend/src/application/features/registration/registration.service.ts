@@ -212,7 +212,9 @@ export class RegistrationService {
           input.payload.personal.residencyNumber ||
           undefined,
         civilRecordNumber: input.payload.personal.civilRecordNumber || undefined,
-        totalRegisteredMembers: input.payload.contact.totalRegisteredMembers,
+        totalRegisteredMembers:
+          input.payload.contact.totalRegisteredMembers ??
+          input.payload.contact.actualHouseholdMembers,
         actualHouseholdMembers: input.payload.contact.actualHouseholdMembers,
         maritalStatus: input.payload.contact.maritalStatus,
         bloodType: input.payload.personal.bloodType,

@@ -165,6 +165,8 @@ model User {
   createdRegistrations  Registration[]       @relation("RegistrationCreatedBy")
   inspectorPayouts      InspectorPayout[]    @relation("InspectorPayouts")
   recordedInspectorPayouts InspectorPayout[] @relation("RecordedInspectorPayouts")
+  createdCases          Case[]               @relation("CaseCreatedBy")
+  resolvedCases         Case[]               @relation("CaseResolvedCitizen")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -381,6 +383,9 @@ model PropertyEntry {
   side           String?
   tentLocation   String?
   unitArea       Decimal?     @db.Decimal(12, 2)
+  /// أسهم — fractional land ownership, out of the Lebanese cadastre's standard
+  /// 2400-share parcel. LAND only; null for every other نوع العقار.
+  shares         Int?
   sharedRights   String[]     @default([])
   /// Asked of an OWNER filing a منزل, and null for every other card: a مستأجر
   /// or a شاغل بتسامح is the occupant of what they are filing, so there is no
@@ -507,6 +512,74 @@ model Zone {
 
   @@index([name])
   @@map("zones")
+}
+
+/// OPEN still needs a revisit; RESOLVED means staff consider the situation
+/// settled (a citizen was registered there, or the site is confirmed
+/// permanently vacant/inaccessible). Resolving is a staff judgment call, not
+/// a derived fact — nothing here links back to a citizen record.
+enum CaseStatus {
+  OPEN
+  RESOLVED
+}
+
+/// A field visit that could not become a citizen registration — nobody was
+/// home, the gate was locked, access was refused — so whatever staff could
+/// observe from outside is recorded here instead of being lost before the
+/// next visit.
+///
+/// Not a Registration or a PropertyEntry: at the moment it is logged there is
+/// no citizen to attach either to. `resolvedCitizenId` is the bridge back —
+/// set once someone (this visit or a later one) does register the resident,
+/// so a case's outcome is traceable and a conversion rate is something this
+/// table can actually answer rather than something kept in someone's head.
+model Case {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// What staff observed or why the visit didn't complete. Free text rather
+  /// than a fixed reason list — "nobody home", "refused", "gate locked,
+  /// dog in yard" don't compress into an enum without losing the detail the
+  /// next visit needs.
+  notes String
+
+  propertyNumber String?
+  neighborhood   String?
+  propertyType   PropertyType?
+  /// BUILDING/HOUSE only — which structure, and which floor for a BUILDING.
+  buildingName   String?
+  floor          String?
+  /// HOUSE only — orientation.
+  side           String?
+  /// LAND only.
+  landType       LandType?
+  /// TENT only — free text, matching a citizen's own registration.
+  tentLocation   String?
+
+  status CaseStatus @default(OPEN)
+
+  /// The citizen whose registration resolved this case — set by staff, either
+  /// right after registering them (the common path, from `cases/[id]/register`)
+  /// or after the fact by searching the registry (the case was logged Monday,
+  /// the citizen turned up in someone else's registration Friday). Null does
+  /// not mean unresolved: a case can also close as "confirmed vacant" or
+  /// "refused" with nobody to link. Setting this always implies RESOLVED;
+  /// clearing it does not imply the reverse.
+  resolvedCitizenId String?   @db.Uuid
+  resolvedCitizen   User?     @relation("CaseResolvedCitizen", fields: [resolvedCitizenId], references: [id], onDelete: SetNull)
+  resolvedAt        DateTime?
+
+  createdById String? @db.Uuid
+  createdBy   User?   @relation("CaseCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([propertyNumber])
+  /// Declared so Prisma knows about the index 0029 created; without it a later
+  /// `migrate dev` reads the index as drift and proposes dropping it.
+  @@index([resolvedCitizenId])
+  @@map("cases")
 }
 
 enum DocumentType {

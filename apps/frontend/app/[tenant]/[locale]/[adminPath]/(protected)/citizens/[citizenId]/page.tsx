@@ -461,17 +461,9 @@ export default function CitizenProfilePage({
                   icon: Users,
                   label:
                     locale === 'en'
-                      ? 'Total Registered Members'
-                      : 'عدد أفراد الأسرة الإجمالي',
-                  value: citizen.totalRegisteredMembers?.toString(),
-                },
-                {
-                  icon: Users,
-                  label:
-                    locale === 'en'
-                      ? 'Actual Household Members'
-                      : 'عدد أفراد الأسرة الفعليين',
-                  value: citizen.actualHouseholdMembers?.toString(),
+                      ? 'Family Members (Living in House)'
+                      : 'عدد أفراد الأسرة (المقيمين في المنزل)',
+                  value: (citizen.actualHouseholdMembers ?? citizen.totalRegisteredMembers)?.toString(),
                 },
                 {
                   icon: Users,
@@ -479,6 +471,26 @@ export default function CitizenProfilePage({
                     locale === 'en' ? 'Married Children Count' : 'عدد الأبناء المتزوجين',
                   value: citizen.marriedChildrenCount?.toString(),
                 },
+                ...(citizen.totalRegisteredMembers != null &&
+                citizen.actualHouseholdMembers != null &&
+                citizen.totalRegisteredMembers > citizen.actualHouseholdMembers
+                  ? [
+                      {
+                        icon: Users,
+                        label:
+                          locale === 'en'
+                            ? 'Total Registered (Civil Record)'
+                            : 'إجمالي المسجلين في القيد',
+                        value: citizen.totalRegisteredMembers.toString(),
+                      },
+                      {
+                        icon: Users,
+                        label:
+                          locale === 'en' ? 'Married Children (Independent)' : 'الأبناء المتزوجون المستقلون',
+                        value: citizen.marriedChildrenCount?.toString(),
+                      },
+                    ]
+                  : []),
               ]}
             />
 
@@ -997,6 +1009,11 @@ function PropertyCard({
       icon: Ruler,
       label: locale === 'en' ? 'Area' : 'المساحة',
       value: property.unitArea != null ? `${property.unitArea} ${locale === 'en' ? 'm²' : 'م²'}` : null,
+    },
+    {
+      icon: Ruler,
+      label: locale === 'en' ? 'Shares' : 'الأسهم',
+      value: property.shares != null ? `${property.shares}/2400` : null,
     },
     {
       icon: Tent,

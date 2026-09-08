@@ -129,6 +129,7 @@ describe('PropertyEntry — unit taxonomy', () => {
       propertyNumber: 'L-1',
       landType: 'AGRICULTURAL',
       unitArea: 800,
+      shares: 400,
     });
 
     expect(land.props.unitType).toBeNull();
@@ -210,6 +211,7 @@ describe('PropertyEntry — unit status', () => {
       propertyNumber: 'L-1',
       landType: 'AGRICULTURAL',
       unitArea: 800,
+      shares: 400,
       unitStatus: 'VACANT',
     });
 
@@ -331,6 +333,7 @@ describe('PropertyEntry — taxonomy rules', () => {
         propertyNumber: 'L-404',
         landType: 'AGRICULTURAL',
         unitArea: 2400,
+        shares: 2400,
         buildingName: 'should not be here',
       }),
     ).toThrow(/cannot carry building details/);
@@ -432,6 +435,7 @@ describe('PropertyEntry — unestablished fields', () => {
         propertyType: 'LAND',
         landType: 'AGRICULTURAL',
         unitArea: 800,
+        shares: 400,
       },
       new Set(['neighborhood', 'propertyNumber']),
     );

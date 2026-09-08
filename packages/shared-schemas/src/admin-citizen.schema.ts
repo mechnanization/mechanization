@@ -102,7 +102,6 @@ export const adminUpdateCitizenSchema = z
     contact: contactDetailsSchema,
     properties: z
       .array(identifiedPropertyEntrySchema)
-      .min(1, 'يجب تسجيل عقار واحد على الأقل')
       .max(25, 'عدد العقارات كبير جداً — يرجى مراجعة البلدية'),
   })
   .superRefine(assertTentOnlyForRefugees);
@@ -287,7 +286,6 @@ export const adminCreateCitizenSubmissionSchema = z
     ...submissionEnvelope,
     properties: z
       .array(rawSection)
-      .min(1, 'يجب تسجيل عقار واحد على الأقل')
       .max(25, 'عدد العقارات كبير جداً — يرجى مراجعة البلدية'),
   })
   .superRefine(unexcusedIssues)
@@ -306,7 +304,6 @@ export const adminUpdateCitizenSubmissionSchema = z
      */
     properties: z
       .array(z.object({ id: uuid.optional() }).passthrough())
-      .min(1, 'يجب تسجيل عقار واحد على الأقل')
       .max(25, 'عدد العقارات كبير جداً — يرجى مراجعة البلدية'),
   })
   .superRefine(unexcusedIssues)

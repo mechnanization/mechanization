@@ -6,11 +6,14 @@ import { ArrowRight, CloudOff, UserPlus, UserRoundPen } from 'lucide-react';
 import {
   ApiRequestError,
   createCitizen,
+  getCase,
   getCitizenForm,
   getTenantConfig,
   logApiError,
+  updateCase,
   updateCitizen,
 } from '@/lib/api-client';
+import type { CaseSummary } from '@/lib/api-client';
 import type { PublicTenantConfig } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
@@ -42,6 +45,33 @@ function text(value: unknown): string | undefined {
 }
 
 /**
+ * What a حالة already knows about the property, carried onto the first card
+ * of the registration it becomes — so the officer answering the door on the
+ * *second* visit does not retype رقم العقار or اسم المبنى from scratch.
+ *
+ * `occupancyType` is left unset on purpose: the case recorded nobody was
+ * reachable, so nothing was ever established about who lives there or how.
+ * That question is answered fresh, now that someone actually is home.
+ */
+function fromCaseDraft(item: CaseSummary): PropertyDraft {
+  return {
+    propertyType: item.propertyType as PropertyDraft['propertyType'],
+    propertyNumber: text(item.propertyNumber),
+    neighborhood: text(item.neighborhood),
+    buildingName: text(item.buildingName),
+    side: text(item.side),
+    landType: item.landType as PropertyDraft['landType'],
+    tentLocation: text(item.tentLocation),
+    // BUILDING alone carries floor inside `units` — a card's own `floor` is
+    // never a thing a منزل/أرض has, so the case's flat column only makes
+    // sense seeded into the one unit a BUILDING card starts with.
+    ...(item.propertyType === 'BUILDING' && item.floor
+      ? { units: [{ floor: item.floor }] }
+      : {}),
+  };
+}
+
+/**
  * A stored property row as the form's draft shape.
  *
  * The inputs are all text, so every number crosses back as a string here and
@@ -66,6 +96,7 @@ function toDraft(property: Record<string, unknown>): PropertyDraft {
     side: text(property.side),
     tentLocation: text(property.tentLocation),
     unitArea: text(property.unitArea),
+    shares: text(property.shares),
     sharedRights: (property.sharedRights as string[] | null) ?? [],
     // Not routed through `text()`: this is an enum the choice control compares
     // by identity, and null must stay absent rather than become the empty
@@ -114,12 +145,20 @@ export function CitizenEditor({
    * `citizenId`: a queued record has no server citizen to be an id for yet.
    */
   queueId,
+  /**
+   * Arrived from the "Register Citizen" action on an open حالة. Seeds the
+   * first property card from what that visit recorded, and — once this
+   * registration is actually saved online — resolves the case back to
+   * whoever gets created here. See `fromCaseDraft` and `submit` below.
+   */
+  fromCaseId,
 }: {
   tenant: string;
   locale: string;
   adminPath: string;
   citizenId?: string;
   queueId?: string;
+  fromCaseId?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -188,10 +227,11 @@ export function CitizenEditor({
         // accepts, so the form cannot offer one that would be refused on save.
         // `getQueuedSubmission` touches only IndexedDB, not the network — it
         // runs alongside the other two rather than blocking on them.
-        const [tenantConfig, form, queued] = await Promise.all([
+        const [tenantConfig, form, queued, fromCase] = await Promise.all([
           getTenantConfig(tenant),
           citizenId ? getCitizenForm(tenant, token, citizenId) : Promise.resolve(null),
           queueId ? getQueuedSubmission(tenant, queueId) : Promise.resolve(null),
+          fromCaseId ? getCase(tenant, token, fromCaseId).catch(() => null) : Promise.resolve(null),
         ]);
         if (cancelled) return;
 
@@ -232,7 +272,10 @@ export function CitizenEditor({
         }
 
         if (!form) {
-          setInitial(emptyCitizen());
+          const empty = emptyCitizen();
+          setInitial(
+            fromCase ? { ...empty, properties: [fromCaseDraft(fromCase)] } : empty,
+          );
           return;
         }
 
@@ -271,8 +314,10 @@ export function CitizenEditor({
             // Every text input reads its value as a string; a numeric value
             // would render as an empty box and then fail validation as
             // "required" on a field that was never blank.
-            totalRegisteredMembers: text(form.contact.totalRegisteredMembers) ?? '',
-            actualHouseholdMembers: text(form.contact.actualHouseholdMembers) ?? '',
+            actualHouseholdMembers:
+              text(form.contact.actualHouseholdMembers ?? form.contact.totalRegisteredMembers) ?? '',
+            totalRegisteredMembers:
+              text(form.contact.totalRegisteredMembers ?? form.contact.actualHouseholdMembers) ?? '',
           },
           properties:
             form.properties.length > 0 ? form.properties.map(toDraft) : emptyCitizen().properties,
@@ -310,7 +355,7 @@ export function CitizenEditor({
     return () => {
       cancelled = true;
     };
-  }, [tenant, token, citizenId, queueId, base, router, locale]);
+  }, [tenant, token, citizenId, queueId, fromCaseId, base, router, locale]);
 
   const submit = useCallback(
     async (values: CitizenFormValues) => {
@@ -408,6 +453,46 @@ export function CitizenEditor({
           router.push(`${base}/citizens/${citizenId}`);
         } else {
           const created = await createCitizen(tenant, token, payload);
+
+          /*
+            The other half of the bridge. Only reachable here — a citizen
+            actually exists to link now — which is also why the offline and
+            queued branches above return before ever reaching this point: a
+            case cannot be resolved to a citizen that has not been created
+            yet, and there is no network here to ask the server to do it
+            regardless. Left unlinked in that case, but not unlinkable — the
+            Cases screen's own "Link to Citizen" search reaches the same
+            citizen once this record has synced.
+          */
+          if (fromCaseId) {
+            try {
+              await updateCase(tenant, token, fromCaseId, { resolvedCitizenId: created.citizenId });
+              toast.success(
+                locale === 'en' ? 'Case resolved' : 'تم حل الحالة',
+                {
+                  description:
+                    locale === 'en'
+                      ? 'This registration has been linked back to the case that led to it.'
+                      : 'تم ربط هذا التسجيل بالحالة التي أدّت إليه.',
+                },
+              );
+            } catch (caseError) {
+              // The registration itself succeeded — that is what matters — so
+              // a failure here is surfaced softly rather than blocking the
+              // navigation below or looking like the save itself failed.
+              logApiError(caseError);
+              toast.error(
+                locale === 'en' ? 'Could not resolve the case' : 'تعذّر حل الحالة',
+                {
+                  description:
+                    locale === 'en'
+                      ? 'The citizen was registered. Link the case to them from the Cases screen.'
+                      : 'تم تسجيل المواطن. اربط الحالة به من شاشة الحالات.',
+                },
+              );
+            }
+          }
+
           router.push(`${base}/citizens/${created.citizenId}`);
         }
         router.refresh();
@@ -454,7 +539,7 @@ export function CitizenEditor({
         setSubmitting(false);
       }
     },
-    [tenant, token, citizenId, queueId, base, router, locale, willQueue, canQueue, toast],
+    [tenant, token, citizenId, queueId, fromCaseId, base, router, locale, willQueue, canQueue, toast],
   );
 
   const cancelHref = useMemo(

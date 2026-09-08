@@ -45,6 +45,7 @@ const complete = () => ({
       propertyNumber: '1553',
       landType: 'AGRICULTURAL',
       unitArea: '250',
+      shares: '400',
     } as Record<string, unknown>,
   ],
   flags: [] as Array<{ path: string; reason: string }>,

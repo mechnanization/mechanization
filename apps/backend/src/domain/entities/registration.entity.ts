@@ -1,5 +1,4 @@
 import { AggregateRoot } from './aggregate-root.base';
-import { ValidationError } from '../errors/domain-error';
 import { PropertyEntry } from './property-entry.entity';
 
 /**
@@ -13,9 +12,10 @@ import { PropertyEntry } from './property-entry.entity';
  * row exists because a clerk entered it, which is what مقبول used to certify.
  *
  * What remains is the aggregate's real job, and the reason it is not just a
- * table: it refuses an empty filing, and it refuses two عقارات claiming the
- * same رقم العقار within one filing. Those rules are about property, not about
- * process, so they outlive the workflow.
+ * table: it used to refuse an empty filing, back when every citizen was
+ * assumed to hold property. A citizen who owns nothing and only rents has
+ * none to file, so an empty `properties` array is now a legitimate
+ * registration — personal and household information with no عقار attached.
  */
 export class Registration extends AggregateRoot {
   private constructor(
@@ -33,10 +33,6 @@ export class Registration extends AggregateRoot {
     referenceNumber: string;
     properties: PropertyEntry[];
   }): Registration {
-    if (props.properties.length === 0) {
-      throw new ValidationError('A registration must include at least one property');
-    }
-
     /*
       Several cards in one filing MAY claim the same رقم العقار.
 

@@ -66,6 +66,7 @@ export const IMPORT_COLUMN_KEYS = [
   'side',
   'unitArea',
   'landType',
+  'shares',
   'tentLocation',
   'sharedRights',
   'unitType',
@@ -173,6 +174,7 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
     header: 'نوع الأرض',
     hint: `${Object.values(ar.landType).join(' / ')} — للأرض فقط`,
   },
+  { key: 'shares', header: 'الأسهم', hint: 'من أصل 2400 — إلزامي للأرض فقط' },
   { key: 'tentLocation', header: 'موقع الخيمة', hint: 'إلزامي للخيمة فقط' },
   { key: 'sharedRights', header: 'الحقوق المشتركة', hint: 'اختياري — افصل بينها بفاصلة منقوطة ؛' },
   {
@@ -329,6 +331,7 @@ export function buildCitizenPayload(row: ImportRow): unknown {
   } else if (propertyType === 'LAND') {
     property.landType = toEnum(LAND_TYPE, ar.landType, row.landType ?? '');
     property.unitArea = area;
+    property.shares = text(row.shares) ? normalizeDigits(text(row.shares)!) : undefined;
   } else if (propertyType === 'TENT') {
     property.tentLocation = text(row.tentLocation);
   }
