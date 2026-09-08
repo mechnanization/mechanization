@@ -576,6 +576,9 @@ model Case {
 
   @@index([status])
   @@index([propertyNumber])
+  /// Declared so Prisma knows about the index 0029 created; without it a later
+  /// `migrate dev` reads the index as drift and proposes dropping it.
+  @@index([resolvedCitizenId])
   @@map("cases")
 }
 
