@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
+import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { ConflictError } from '../../common/exceptions';
 import { PaymentLedgerService } from './payment-ledger.service';
@@ -28,6 +29,16 @@ const SCHEMA = 'tenant_ledger_spec';
 
 const describeIfDb = TEST_DATABASE_URL ? describe : describe.skip;
 
+/**
+ * Jest's 5-second default is a budget for a local socket, and there is no local
+ * Postgres in this project — `TARGETS.local` in `scripts/db/targets.mjs` points
+ * at the hosted staging database, so "local" describes where the process runs
+ * and not where the data is. A reversal test here is three or four round trips
+ * a couple of hundred milliseconds apart, which overran the default and failed
+ * as a timeout rather than as anything about the ledger.
+ */
+jest.setTimeout(60_000);
+
 describeIfDb('PaymentLedgerService', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
@@ -51,9 +62,7 @@ describeIfDb('PaymentLedgerService', () => {
     await ddl.query(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`);
     await migrateTenantSchema(ddl, SCHEMA);
 
-    const url = new URL(TEST_DATABASE_URL!);
-    url.searchParams.set('schema', SCHEMA);
-    db = new TenantPrismaClient({ datasources: { db: { url: url.toString() } } });
+    db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
 
     ledger = new PaymentLedgerService({
       get prisma() {

@@ -699,7 +699,19 @@ export class CitizensService {
             survey office has not exported yet — now lands as «يتطلب مراجعة»
             with the number intact and the reason attached.
           */
-          payload: { ...parsed.data, flags: [], clientSubmissionId: undefined },
+          /*
+            A spreadsheet row carries no blanket reason either, and could not.
+            The reason is a sentence an officer says about a visit they made;
+            a row typed from a ledger years ago has no visit behind it, and
+            inventing one would put words in somebody's mouth on a record that
+            outlives them.
+          */
+          payload: {
+            ...parsed.data,
+            flags: [],
+            blanketFlagReason: undefined,
+            clientSubmissionId: undefined,
+          },
           actor: input.actor,
         });
         results.push({ row, ok: true, name, referenceNumber: created.referenceNumber });

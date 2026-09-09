@@ -937,14 +937,48 @@ export class FeesService {
           OR: [
             { unitType: category as never },
             { units: { some: { unitType: category as never } } },
+            /*
+              And the canonical row, since P2-T8 made it the authority.
+
+              Selection and assessment have to look in the same places or they
+              disagree in the one direction nobody notices: a shop whose type
+              lives only on its linked `Unit` would be counted by
+              `assessCitizen` and yet never put its owner on the notice, so the
+              register would report that the municipality has no shops while
+              happily charging for them the moment someone was targeted another
+              way.
+            */
+            { units: { some: { unit: { unitType: category as never } } } },
           ],
         };
+
+    /*
+      Held on a card, *or* held through an occupancy.
+
+      A citizen whose only محل is a flat the census recorded them in — their card
+      itemising nothing — is charged for it by `assessCitizen` and would never
+      have been put on the notice by the card query alone.
+
+      Deliberately a superset rather than an exact mirror of the assessment.
+      Reproducing "a BUILDING card with no unit rows linked to this building" in
+      SQL would be a second copy of a rule that already lives in one place, and
+      the two would drift. Over-selecting is free — `assessCitizen` returns
+      nothing for a citizen who holds none of what the notice charges for, and
+      they are skipped. Under-selecting is the silent one: a resident simply
+      never billed, which nothing downstream reports.
+    */
+    const occupancyWhere = PROPERTY_TYPE_CATEGORIES.has(category)
+      ? undefined
+      : { some: { toDate: null, unit: { unitType: category as never } } };
 
     const rows = await this.db.user.findMany({
       where: {
         kind: 'CITIZEN',
         isActive: true,
-        registrations: { some: { properties: { some: propertyWhere } } },
+        OR: [
+          { registrations: { some: { properties: { some: propertyWhere } } } },
+          ...(occupancyWhere ? [{ unitOccupancies: occupancyWhere }] : []),
+        ],
       },
       select: { id: true },
     });
@@ -1030,7 +1064,69 @@ export class FeesService {
                     */
                     occupancyType: true,
                     unitStatus: true,
-                    units: { select: { unitType: true, unitArea: true, unitStatus: true } },
+                    /*
+                      P2-T8 — the authority flip.
+
+                      Each card line now carries the canonical `Unit` it was
+                      linked to, where one exists, and `billableUnits` prefers
+                      it field by field. The municipality's own row is the
+                      better record of a flat: it survives the card being
+                      edited, it is what an officer corrects from the matrix,
+                      and it is what two cards describing the same flat both
+                      point at.
+
+                      The fallback is not transitional. A منزل, an أرض and a
+                      خيمة never get a `Unit`, and neither does a building on a
+                      parcel nobody has surveyed — a biller that could only read
+                      the new tables would stop charging for most of the
+                      register.
+
+                      A card with no unit rows of its own is not automatically
+                      unassessable any more: `buildingId` plus this citizen's
+                      own occupancies (loaded beside the registration below)
+                      answer "which flats do they hold here" — which is the
+                      question, and the one a building's unit *count* cannot
+                      answer. See `heldThroughOccupancy`.
+                    */
+                    buildingId: true,
+                    units: {
+                      select: {
+                        unitType: true,
+                        unitArea: true,
+                        unitStatus: true,
+                        unit: {
+                          select: { unitType: true, unitArea: true, unitStatus: true },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            /*
+              This citizen's current occupancies, for the cards that itemise
+              nothing themselves.
+
+              Loaded on the user rather than per property card, and filtered to
+              the ones still running: an occupancy that ended is a fact about
+              the flat's history, not about what this person holds today, and
+              billing a former tenant for a flat they moved out of is the
+              clearest possible way to lose a resident's trust.
+
+              One extra join for the whole batch — the same 500-citizen page the
+              registrations come from — so this stays the same number of
+              queries it was.
+            */
+            unitOccupancies: {
+              where: { toDate: null },
+              select: {
+                role: true,
+                unit: {
+                  select: {
+                    buildingId: true,
+                    unitType: true,
+                    unitArea: true,
+                    unitStatus: true,
                   },
                 },
               },
@@ -1040,9 +1136,40 @@ export class FeesService {
       );
 
       for (const row of rows) {
-        const entries = row.registrations[0]?.properties ?? [];
+        /*
+          Occupancies attached to the card they belong to.
+
+          Grouped by building so a citizen who holds flats in two of them does
+          not have one card's holdings counted against the other. A card with no
+          `buildingId` gets nothing, which is correct — there is no building to
+          hold flats in.
+        */
+        const occupanciesByBuilding = new Map<string, Array<{
+          role: string;
+          unitType: string | null;
+          unitArea: unknown;
+          unitStatus: string | null;
+        }>>();
+        for (const occupancy of row.unitOccupancies) {
+          const buildingId = occupancy.unit.buildingId;
+          const list = occupanciesByBuilding.get(buildingId) ?? [];
+          list.push({
+            role: occupancy.role,
+            unitType: occupancy.unit.unitType,
+            unitArea: occupancy.unit.unitArea,
+            unitStatus: occupancy.unit.unitStatus,
+          });
+          occupanciesByBuilding.set(buildingId, list);
+        }
+
+        const entries = (row.registrations[0]?.properties ?? []).map((entry) => ({
+          ...entry,
+          occupiedUnits: entry.buildingId
+            ? occupanciesByBuilding.get(entry.buildingId)
+            : undefined,
+        }));
         const name = [row.firstName, row.lastName].filter(Boolean).join(' ');
-        const outcome = assessCitizen(entries, notice);
+        const outcome = assessCitizen(entries as never, notice);
 
         if (outcome.kind === 'unassessable') {
           unassessable.push({ citizenId: row.id, name, reason: outcome.reason });

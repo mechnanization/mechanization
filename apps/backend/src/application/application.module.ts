@@ -6,6 +6,8 @@ import { RecurringBillingJob } from './background-jobs/recurring-billing.job';
 import { AuditService } from './features/audit/audit.service';
 import { BackupService } from './features/backup/backup.service';
 import { CadastreImportService } from './features/cadastre/cadastre-import.service';
+import { BuildingsService } from './features/buildings/buildings.service';
+import { DamageService } from './features/buildings/damage.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
 import { DocumentService } from './features/documents/document.service';
@@ -52,6 +54,8 @@ import { ZonesService } from './features/zones/zones.service';
     StaffService,
     ZonesService,
     CasesService,
+    BuildingsService,
+    DamageService,
     BackupService,
     OtpCleanupJob,
     RecurringBillingJob,
@@ -72,6 +76,8 @@ import { ZonesService } from './features/zones/zones.service';
     StaffService,
     ZonesService,
     CasesService,
+    BuildingsService,
+    DamageService,
     BackupService,
     OtpCleanupJob,
     RecurringBillingJob,

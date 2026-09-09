@@ -1,4 +1,5 @@
 import { Controller, Get, Header, Param } from '@nestjs/common';
+import { BuildingsService } from '../../application/features/buildings/buildings.service';
 import { ReportingService } from '../../application/features/reporting/reporting.service';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
@@ -16,7 +17,10 @@ import type { SessionClaims } from '../../application/features/identity/identity
  */
 @Controller('t/:tenantSlug/dashboard')
 export class DashboardController {
-  constructor(private readonly reporting: ReportingService) {}
+  constructor(
+    private readonly reporting: ReportingService,
+    private readonly buildings: BuildingsService,
+  ) {}
 
   @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR')
   @Get('counters')
@@ -42,6 +46,26 @@ export class DashboardController {
   @Get('map')
   async spatial() {
     return { features: await this.reporting.getSpatialData() };
+  }
+
+  /**
+   * Every building pin, with the three channels the map styles off: what kind
+   * of structure it is, how far its survey has got, and what condition it is in.
+   *
+   * `surveyRollup` is the **worst** status among its units, never the majority
+   * (D11) — a block of twelve flats with one nobody answered is not a surveyed
+   * building, and colouring it complete hides the one fact the map was drawn to
+   * show.
+   *
+   * Not cached, unlike the counters and analytics beside it. This is the screen
+   * a field officer refreshes after recording an occupancy, and a five-minute
+   * TTL there reads as "the survey did not save".
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Get('map/buildings')
+  @Header('Cache-Control', 'no-store')
+  async buildingPins() {
+    return { buildings: await this.buildings.mapPins() };
   }
 
   /**

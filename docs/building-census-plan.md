@@ -1,6 +1,6 @@
 # Building Census, Zone/Building Numbering & War Damage — Implementation Plan
 
-> **Status:** **Phase 1 complete** (P1-T1 … P1-T7, 2026-09-09). Phase 2 not started.
+> **Status:** **Phases 1 and 2 complete** (P1-T1 … P2-T8, 2026-09-09). Phase 3 not started.
 > **Created:** 2026-09-09 · **Branch to use:** `feat/building-census` (off `develop`)
 > **Owner:** Hashem Nasrallah
 >
@@ -19,12 +19,12 @@ If you are that session, do this first:
 2. Read [schema.prisma](../apps/backend/src/infrastructure/prisma/tenant/schema.prisma) — the tenant data model.
 3. Read [property.schema.ts](../packages/shared-schemas/src/property.schema.ts) and
    [field-flag.schema.ts](../packages/shared-schemas/src/field-flag.schema.ts) — the validation spine.
-4. Check §6 "Progress log" to see what is already done. **Phase 1 is complete** —
-   §6 lists every file it touched and where Phase 2 should start.
-5. Read the **P1-T7 caveat** at the end of §5's Phase 1 table before building any
-   per-unit «غير مؤكَّد» control, and the **database-state note** in §1 before
-   assuming there is data to migrate.
-6. The user will tell you which **Phase** and **Task ID** to continue from (e.g. "continue from P2-T3").
+4. Check §6 "Progress log" to see what is already done. **Phases 1 and 2 are
+   complete** — §6 lists every file they touched and where Phase 3 should start.
+5. Read the **database-state note** in §1 before assuming there is data to
+   migrate, and the **three decisions inside P2-T8** in §5 before touching
+   anything under `features/fees`.
+6. The user will tell you which **Phase** and **Task ID** to continue from (e.g. "continue from P3-T2").
 
 **Conventions used below:** `P1-T2` = Phase 1, Task 2. Every task has an acceptance
 criterion. Do not start a later phase before the earlier one's acceptance criteria pass.
@@ -42,7 +42,7 @@ criterion. Do not start a later phase before the earlier one's acceptance criter
 | Multi-tenancy | **Schema-per-tenant** in Postgres (`tenant_<slug>`), plus a separate registry schema |
 | Tenant schema file | `apps/backend/src/infrastructure/prisma/tenant/schema.prisma` |
 | Migrations | `.../tenant/migrations/NNNN_name/migration.sql` — **hand-written, idempotent SQL** (`DO $$ … IF NOT EXISTS`), not `prisma migrate dev` output |
-| Latest migration on disk | `0030_building_census` (applied to staging, **not** to production) → next number is `0031` |
+| Latest migration on disk | `0031_unit_fields_flaggable` (both applied to staging, **neither** to production) → next number is `0032` |
 | Apply migrations | `pnpm db:deploy:local` / `:staging` / `:production`; dry run via `pnpm db:status:*` |
 | Typecheck | `pnpm typecheck` · Lint: `pnpm lint` |
 | Language | **Arabic-first, RTL.** Enum values are stable English machine strings; Arabic display labels live in `packages/shared-schemas/src/labels.ts` |
@@ -566,49 +566,148 @@ to draw into. Nothing user-visible changes.
 | P1-T4 | Persist parcel polygons: extend the cadastre import to write `parcel-polygons.geojson`'s features into `Parcel.boundary` | Row count with non-null `boundary` ≈ 1,702 for albazourieh | ✅ **1,800 / 1,825** after a real `cadastre:import` from `bazoreyye.kmz`. (The 1,702 in the plan was stale.) All 1,800 verified: closed rings, ≥4 points, each parcel's own point inside its outline's bbox. |
 | P1-T5 | **Floor normalisation.** Add `Unit.floor Int`; write `parseFloorLabel(s: string): number \| null` in shared-schemas handling `الأرضي/ground/G/0`, `ط1`, `-1`, `قبو/basement`. Keep the legacy `BuildingUnit.floor` string untouched | Unit-tested against the distinct `floor` values actually in the DB (query them first) | ✅ 53 tests. The DB was queried first and holds only `"0"`, `"1"`, `"2"` — which proves nothing, so the suite covers the shapes a free-text RTL input actually produces instead. Legacy column untouched. |
 | P1-T6 | **Backfill script** `apps/backend/src/scripts/backfill-buildings.ts` … Idempotent, `--dry-run` first | Re-running produces zero new rows; a spot-check of 10 parcels matches by hand | ✅ Run against staging: 5 cards → 2 buildings, 7 units, 7 occupancies, matching a by-hand derivation row for row. Re-run: **0 created**. Only 2 parcels exist in the data, not 10 — see the database-state note in §1. |
-| P1-T7 | Fix `FLAG_PATH` at `field-flag.schema.ts:79` to accept `properties.N.units.M.<field>`; teach `withoutFlagged` to walk the `units` array | New unit tests in `apps/backend/src/application/features/citizens/field-flags.spec.ts` | ✅ 11 new tests; all 27 pre-existing ones still pass. **See the caveat below — the schema now accepts these flags but the write path cannot yet store them.** |
+| P1-T7 | Fix `FLAG_PATH` at `field-flag.schema.ts:79` to accept `properties.N.units.M.<field>`; teach `withoutFlagged` to walk the `units` array | New unit tests in `apps/backend/src/application/features/citizens/field-flags.spec.ts` | ✅ 11 new tests; all 27 pre-existing ones still pass. The write path could not store such a flag when Phase 1 shipped; **migration 0031 closed that in Phase 2** — see below. |
 
 > **P1-T6 authority rule (in the script's header):** until Phase 2 completes,
 > **`PropertyEntry`/`BuildingUnit` remain authoritative for billing.** `Building`/`Unit`
 > are a read-model. Nothing in `fees` may read the new tables in Phase 1. **P2-T8 flips
 > this, deliberately and in its own commit.**
 
-#### ⚠️ P1-T7 leaves one thing unfinished, and Phase 2 must close it
+#### ✅ P1-T7's unfinished half — closed by migration 0031
 
-A per-unit flag now **validates**. It cannot yet be **persisted**.
+A per-unit flag now validates **and** persists. `P3-T3`/`P3-T6` may ship the
+per-unit «غير مؤكَّد» control.
 
-`citizens.service.ts:940` maps each unit straight onto `BuildingUnit`, whose
-`floor`, `unitType` and `unitArea` columns are `NOT NULL`. A flag blanks the field
-it excuses, so a submission carrying `properties.0.units.3.unitArea` passes
-validation and then fails at the insert.
+*The gap, as it stood after Phase 1:* `citizens.service.ts` maps each unit
+straight onto `BuildingUnit`, whose `floor`, `unitType` and `unitArea` were
+`NOT NULL`. A flag blanks the field it excuses, so a submission carrying
+`properties.0.units.3.unitArea` passed validation and then failed at the INSERT.
+Nothing reached it — the only per-unit control in `property-card.tsx` flags the
+whole `units` array — so it was latent rather than broken.
 
-Nothing reaches that path today — the only per-unit control in `property-card.tsx`
-flags the whole `units` array, and P1 ships no UI — so this is latent, not broken.
-But **P3-T3/P3-T6 must not ship a per-unit flag control until it is closed.**
+*How it was closed:* **migration `0031_unit_fields_flaggable` makes those three
+columns nullable.** The plan leaned toward the other option — write the unit into
+`Unit` instead, where `unitArea` is already nullable — and that turned out to be
+the wrong one. It makes the *legacy* row the lossy one: the card would describe a
+flat whose area lives on a table that, until P2-T8, billing did not read, so a
+flat with no area would bill as though it had one.
 
-Two ways to close it, to be decided in Phase 2:
+Nullable columns say the true thing where the code already reads it.
+`BillableUnit` has carried `unitArea: number | null` since per-unit billing was
+written, and `assessCitizen` already refuses to price a PER_AREA notice against a
+unit with no recorded area — it returns the citizen as unassessable, by name,
+with a reason the municipality can act on. The `NOT NULL` was what stopped the
+honest value from ever reaching that.
 
-- Make those three columns nullable (a migration, and `assessment.ts` reads
-  `unitArea` for `PER_AREA` billing, so the fee path needs a decision about what a
-  unit with no recorded area is worth); or
-- Write the unit into `Unit` instead, where `unitArea` is already nullable, and
-  let `BuildingUnit` keep only what it can hold. This is the direction P2-T8 is
-  going anyway.
+**What did not change:** `buildingUnitSchema` still requires all three of an
+ordinary submission. The only way to store a null is an `UNESTABLISHED` flag
+naming that exact unit field, with a written reason, on a record that lands at
+«يتطلب مراجعة». The column is nullable; the form is not.
 
-The second is probably right, but it is a Phase 2 call, not a Phase 1 one.
+### Phase 2 — Backend services & API — ✅ **complete 2026-09-09**
 
-### Phase 2 — Backend services & API
+| ID | Task | Acceptance | Result |
+|---|---|---|---|
+| P2-T1 | `building.schema.ts` — create/update, `unitBlueprintSchema`, `createDamageAssessmentSchema`, `upsertOccupancySchema` | Schema unit tests | ✅ Also `upsertUnitSchema`/`updateUnitSchema`, `endOccupancySchema` and `buildingFilterSchema` — the controller needed request shapes for the matrix and the ledger, and a hand-rolled `@Query` parse beside a Zod one is how the two drift. 27 tests. |
+| P2-T2 | `buildings.service.ts` — `list`, `get`, `create` (§4.4 locked suffix allocation), `update`, `generateUnits`, code recompute | Service tests incl. **concurrent-create allocating distinct suffixes** | ✅ **6 simultaneous creates on one parcel → A,B,C,D,E,F**, against a real Postgres. Serialised by a transaction-scoped advisory lock keyed on `current_schema() || parcel` — namespaced because tenant schemas share a database. |
+| P2-T3 | `damage.service.ts` — `record`, `currentLevel`, `history` | Latest-row-wins verified | ✅ Verified with a 2024 `UNSAFE_EVACUATE` and a 2026 `SAFE_MINOR_DAMAGE`: current reads the repair, history keeps both. Ordered by `assessedAt`, not `createdAt` — an assessment typed up a week late describes the visit, not the paperwork. |
+| P2-T4 | `buildings.controller.ts` under `/t/:tenantSlug/buildings`, RBAC-guarded | Endpoints reachable; unauthorised roles rejected | ✅ Reads open to all six staff roles; writes to the four field/administrative ones (matching `CasesController`, not `ZonesController` — creating a building and logging a case are the same afternoon's work); delete SUPER_ADMIN only. |
+| P2-T5 | Cases: filter by `caseType`/`buildingId`/`unitId`; `SCHEDULED`; auto-resolve on occupancy | Existing case tests still pass | ✅ Auto-resolve lives in `recordOccupancy` — the moment the thing the case was waiting on happened. Only cases pinned to that exact `unitId`; a case carrying free-text «الطابق الثاني» is **not** resolved, because nothing can tell which of that floor's four flats was meant. |
+| P2-T6 | `GET /dashboard/map/buildings` with worst-case rollup (D11) | Single query, no N+1; snapshot test | ✅ Three queries total whatever the municipality's size — buildings, a `groupBy` over unit statuses, one `DISTINCT ON` for current damage. Verified: 2 of 3 units surveyed still reports `NOT_SURVEYED`. |
+| P2-T7 | Blanket reason auto-filling unexcused issues, ceiling raised to 120 | Name + phone only, one reason → `REQUIRES_REVIEW` with per-field flags each carrying it | ✅ 9 tests. See the note below on what "name + phone only" can actually mean. |
+| P2-T8 | Billing reads `Unit`/`UnitOccupancy` where linked, falls back to `PropertyEntry` | `fees` tests pass against **both** linked and unlinked records | ✅ Both halves tested. **The authority rule from P1-T6 is now flipped.** |
 
-| ID | Task | Acceptance |
-|---|---|---|
-| P2-T1 | `packages/shared-schemas/src/building.schema.ts` — `createBuildingSchema`, `updateBuildingSchema`, `unitBlueprintSchema` (floors × units-per-floor, or explicit list), `createDamageAssessmentSchema`, `upsertOccupancySchema`. Export from `index.ts` | Schema unit tests |
-| P2-T2 | `application/features/buildings/buildings.service.ts` — `list(filter)`, `get(id)`, `create(input)` (with §4.4 suffix allocation in a locked transaction), `update`, `generateUnits(buildingId, blueprint)`, `recomputeCodesForZone(zoneId)` | Service tests incl. concurrent-create allocating distinct suffixes |
-| P2-T3 | `application/features/buildings/damage.service.ts` — `record(assessment)`, `currentLevel(buildingId)`, `history(buildingId)` | Latest-row-wins verified |
-| P2-T4 | `presentation/controllers/buildings.controller.ts` under `/t/:tenantSlug/buildings`, RBAC-guarded like `zones.controller.ts` | Endpoints reachable; unauthorised roles rejected |
-| P2-T5 | Extend `cases.service.ts` + controller: filter by `caseType`, `buildingId`, `unitId`; `SCHEDULED` status; auto-resolve when a `UnitOccupancy` appears on the flagged unit | Existing case tests still pass |
-| P2-T6 | New `GET /dashboard/map/buildings` in `reporting.service.ts` — one payload of building pins: `{id, code, name, lat, lng, structureType, surveyRollup, worstDamageLevel, unitsTotal, unitsSurveyed}`. **Rollup uses worst-case (D11)** | Single query, no N+1; snapshot test |
-| P2-T7 | **Blanket reason.** Add `blanketFlagReason` to the submission envelope in `admin-citizen.schema.ts`. In `unexcusedIssues`, an issue with no explicit flag is auto-flagged with the blanket reason **only if** its path is flaggable and not in `NON_FLAGGABLE_FIELDS`. Raise `fieldFlagsSchema.max(40)` to 120 for blanket submissions | Submitting name + phone only, with one reason, yields `REQUIRES_REVIEW` with per-field flags each carrying that reason |
-| P2-T8 | Switch billing to read `Unit`/`UnitOccupancy` where a link exists, falling back to `PropertyEntry`. **Flip the authority rule from P1-T6 here** and say so in the commit | `fees` tests pass against both linked and unlinked records |
+> **The authority rule, as of P2-T8:** where a `BuildingUnit` is linked to a
+> canonical `Unit`, the `Unit` wins — **field by field**, not row by row. Where
+> there is no link, `PropertyEntry`/`BuildingUnit` still decide, and that is
+> permanent rather than transitional: a منزل, an أرض and a خيمة never get a
+> `Unit`, and neither does a building on a parcel nobody has surveyed.
+
+#### Three decisions inside P2-T8 worth knowing before touching billing
+
+1. **Per field, not per row.** A generated matrix row has no مساحة; the card it
+   was linked to may. Taking the whole canonical row would discard a
+   measurement the register already holds and make the citizen unassessable
+   under a PER_AREA notice.
+2. **Occupancy still comes from the card, never from `UnitOccupancy`.** That
+   table records every party to a flat at once — an owner abroad and the tenant
+   living in it are two rows on one unit, which is why it is a join table (D2).
+   Reading a role from it would require already knowing which of the two is
+   being billed, and the answer is on the card the line came from.
+3. **A مبنى card with no unit rows is answered from `UnitOccupancy`.** This one
+   went through two wrong shapes before the right one, and all three are
+   recorded because the wrong ones are tempting.
+
+   **First attempt — relax the guard when the building has a matrix. Reverted.**
+   The flats *are* known, so why refuse? Because the assessment does not need
+   "does this building have units", it needs **which of them does this citizen
+   hold**, and a matrix of twelve flats says nothing about whether this person
+   holds one or twelve. Worse, `billableUnits` does not *skip* a BUILDING card
+   that is not `isUnsurveyed` — it returns a single unit built from the card's
+   own null fields, so the relaxation would bill an entire block as one flat and
+   a `PER_UNIT` rate would multiply by it without a murmur.
+
+   **Second attempt — refuse, and defer.** Correct but incomplete: the
+   municipality got a named, actionable refusal instead of a quiet wrong number,
+   and the citizen went unbilled.
+
+   **What is implemented — `heldThroughOccupancy`.** The question is
+   per-citizen, so it is answered by the only per-citizen table:
+   `UnitOccupancy`. A BUILDING card that itemises nothing now bills exactly the
+   flats this citizen is currently recorded in — no more, and never inferred
+   from the building's own count. Three things keep it honest:
+
+   - **The role comes from the occupancy row here, and only here.** That is not
+     a contradiction of (2) above but its complement: a *card's* unit rows carry
+     no role of their own, so they take the card's. These rows do carry one, and
+     they are selected by citizen, so an owner abroad and the tenant living in
+     their flat are two rows on one unit and each person gets their own.
+   - **Card rows win when both exist.** A card that itemises its flats is the
+     citizen's own statement; the occupancies describe the same flats from the
+     municipality's side. Counting both would bill a landlord twice.
+   - **BUILDING cards only.** A منزل keeps its single unit on the card, so "no
+     unit rows" is its normal shape, not a gap.
+
+   An empty occupancy list still refuses, and correctly: the census may know the
+   building well and know nothing about this citizen's place in it. Target
+   selection was widened to match, deliberately as a *superset* — reproducing
+   the rule in SQL would be a second copy that drifts, and over-selecting is
+   free while under-selecting is a resident silently never billed.
+
+   > **Proved against a real database**, in
+   > `fees/billing-census.integration.spec.ts`. Half of this change exists only
+   > as a Prisma `select`, and a join that names the wrong relation or filters
+   > the wrong way produces a bill that is quietly wrong while every unit test
+   > still passes. The spec goes through `issue()` rather than the assessment in
+   > isolation, so it also covers `resolveTargets` — a citizen assessed
+   > correctly but never *selected* is the silent under-billing the superset
+   > exists to prevent, and it now fails here instead of in production. Eight
+   > cases: the linked unit outranking a stale card line, the per-field
+   > fallback, flats held only through occupancy, a moved-out tenant ignored,
+   > the bearer decision taken per occupancy role, the landlord double-count
+   > refused, an unsurveyed building refused *with its reason*, and a محل
+   > reachable only through the matrix still being billed.
+
+#### P2-T7: what "name + phone only" can actually mean
+
+The acceptance criterion is met, with one correction to its wording. `isLebanese`
+is in `NON_FLAGGABLE_FIELDS` alongside `firstName`/`lastName`, so **no** flag —
+blanket or explicit — can excuse it, and a submission of literally name + phone
+fails on it. The true minimum is name + `isLebanese` + phone, and from there one
+reason fills in every remaining gap. That is the design working, not a gap in it:
+the three discriminators decide which fields the record even has, so there is
+nothing to flag against without them.
+
+Two limits on what the blanket reason may cover, both load-bearing:
+
+- **Only flaggable paths** — it cannot supply a surname or a discriminator.
+- **Only fields that are actually empty.** A value that was entered and is
+  *invalid* — a malformed phone, an area of `"abc"` — is a typo to correct, not
+  missing data to excuse. Auto-flagging it would blank what the officer typed and
+  hide the mistake behind a reason that does not describe it, leaving a household
+  unreachable under a note saying nobody was home. Those still fail.
+
+An officer's own reason on a field always wins; the blanket one is a default.
 
 ### Phase 3 — Frontend
 
@@ -643,6 +742,7 @@ _Update this table as tasks complete. A fresh session reads it to know where to 
 | 2026-09-09 | — | Plan written and approved. No code changes yet. |
 | 2026-09-09 | Q1–Q5 | All five open questions answered — see §7. Q2 (tents stay bare `PropertyEntry` cards) is what unblocked P1-T6's scope. |
 | 2026-09-09 | **P1-T1 … P1-T7** | **Phase 1 complete.** `pnpm typecheck` clean, `pnpm lint` clean (0 errors; 6 pre-existing warnings), 378 backend tests pass with 64 new ones. Migration `0030_building_census` applied to staging. Details below. |
+| 2026-09-09 | **P2-T1 … P2-T8** | **Phase 2 complete.** `pnpm typecheck` clean, `pnpm lint` clean (0 errors; 6 pre-existing warnings), `nest build` clean. **The whole suite is green with a database attached: 26 suites, 464 tests, 0 failures** — 422 unit tests plus 42 across the three integration suites, run together. Migration `0031_unit_fields_flaggable` applied to staging. Details below. |
 
 ### What Phase 1 actually changed
 
@@ -688,13 +788,138 @@ pre-existing drift, not something Phase 1 introduced. Leaving it would have had 
 browser and the server disagreeing about parcel outlines — exactly the failure P3-T2
 turns on.
 
-### Where Phase 2 should start
+### What Phase 2 actually changed
 
-`P2-T1`. The numbering primitives it would have written already exist in
-`numbering.ts` and are tested; `building.schema.ts` still needs the Zod request
-shapes. Two things to read first: the **P1-T7 caveat** in §5, and the
-**database-state note** in §1 — the census will be filled by field officers
-through the Phase 3 UI, not by the backfill.
+**New files**
+
+| File | What it is |
+|---|---|
+| `packages/shared-schemas/src/building.schema.ts` | P2-T1. Create/update, unit blueprints, per-unit upsert, damage, occupancy, and the ledger's filter. |
+| `apps/backend/.../buildings/building.types.ts` | The census's row shapes. A types module rather than a repository port — see its header for why the service reads Prisma directly. |
+| `apps/backend/.../buildings/buildings.service.ts` | P2-T2 + P2-T6. Suffix allocation under an advisory lock, the unit matrix, occupancy, code recomputation, map pins, and the `rollupOf` worst-status ladder. |
+| `apps/backend/.../buildings/damage.service.ts` | P2-T3. Append-only, plus the `damageSeverity` ladder the rollup uses. |
+| `apps/backend/.../controllers/buildings.controller.ts` | P2-T4. |
+| `apps/backend/.../buildings/buildings.spec.ts` | 27 tests — the rollup and damage ladders, and every schema. |
+| `apps/backend/.../buildings/buildings.integration.spec.ts` | 18 tests against a real Postgres. Gated on `TEST_DATABASE_URL`, like the ledger and backup suites. |
+| `apps/backend/.../citizens/blanket-reason.spec.ts` | 9 tests. P2-T7's acceptance case and its two limits. |
+| `apps/backend/.../migrations/0031_unit_fields_flaggable/` | Closes P1-T7's unfinished half. |
+
+**Changed** — `case.schema.ts`, `admin-citizen.schema.ts`, `index.ts`,
+`schema.prisma`, `case-repository.interface.ts`, `case.repository.ts`,
+`cases.service.ts`, `cases.controller.ts`, `zones.service.ts`,
+`dashboard.controller.ts`, `billable-unit.ts`, `fees.service.ts`,
+`registration.service.ts`, `registration-repository.interface.ts`,
+`registration.repository.ts`, `citizens.service.ts`, `reporting.service.ts`,
+`staff.service.ts`, `backup.service.ts`, both modules, `assessment.spec.ts`.
+
+**Three changes outside the task list, all flagged rather than folded in quietly:**
+
+1. **`ZonesService` now calls `recomputeCodesForParcels` on every write.** P2-T2
+   asked only for the method. Without a caller it is dead code and the bug it
+   exists for stays live: a building's code is `ZONE-PARCEL-SUFFIX` and the zone
+   half is resolved from `Zone.parcelNumbers` rather than stored (D13), so
+   renaming a sector silently orphans every code printed on a notice under the
+   old one. Called on the **union** of the parcels before and after an edit — a
+   parcel moved *out* needs rebuilding too, and is no longer in the list to find
+   it by. Failures are logged, not thrown: the zone edit has already committed
+   and is correct, and reporting a successful save as a failure invites the
+   admin to make it twice.
+
+2. **`payment-ledger.integration.spec.ts` got a suite-level timeout.** Running
+   the database-backed suites turned up two failures in it, both
+   `Exceeded timeout of 5000 ms` — jest's default is a budget for a local
+   socket, and **there is no local Postgres in this project**: `TARGETS.local`
+   points at hosted staging, so a reversal test doing four round trips overran
+   it. Pre-existing and nothing to do with Phase 2 — the same spec's `beforeAll`
+   already carried a 60s timeout and its `it`s did not, and the backup suite
+   sets 60s on every test for exactly this reason. Fixed with one
+   `jest.setTimeout(60_000)`, matching what `buildings.integration.spec.ts`
+   does.
+
+   > **If the DB-backed suites ever fail together again, read this first.**
+   > They did, during Phase 2, and the cause was not what it looked like. Every
+   > suite passed alone; two passed together; all three "failed to run". It was
+   > timeout pressure, not a defect and not a connection cap — the buildings
+   > suite took **239s in the failing run and 70s in the passing one**, against
+   > the same hosted database. Two things were inflating it: source files being
+   > edited while jest was running, and the ledger timeout above still being
+   > unfixed. With both settled, all three pass together (42/42).
+   >
+   > **Both standing risks noted here have since been closed.**
+   >
+   > *Connection pooling.* All three specs now build their client through
+   > `tenantTestClient`, which pins `connection_limit=5`. They previously used
+   > `TEST_DATABASE_URL` raw — the direct, session-mode string, carrying no
+   > limit — so Prisma fell back to `num_cpus * 2 + 1`, seventeen session
+   > connections per suite against hosted staging.
+   >
+   > **Not 1**, which is the obvious number and would have quietly gutted the
+   > suite: half the reason these specs need a real Postgres is to prove that
+   > simultaneous writers are serialised *by the database* (the advisory lock
+   > behind suffix allocation, the row lock behind the ledger). Prisma queues
+   > transactions when its pool is exhausted, so a pool of one serialises them
+   > in the client and every such test passes without ever contending. Five
+   > leaves the largest of them — six concurrent creates — genuinely fighting
+   > over the lock.
+   >
+   > *And one that is neither of the above.* A later full run had the ledger and
+   > backup suites fail with `Can't reach database server` and `Connection
+   > terminated unexpectedly`, the ledger taking **201s against its usual ~41s**.
+   > That is the hosted pooler dropping connections, not a defect: the same two
+   > suites passed on an immediate retry, unchanged. `TEST_DATABASE_URL` is the
+   > *session* pooler (`…pooler.supabase.com:5432`), which is shared with
+   > everything else pointed at staging and is entitled to refuse. If these
+   > suites fail with a connectivity error rather than an assertion, re-run
+   > before changing anything — and note the durations, because a suite that is
+   > five times slower than usual is reporting the network, not the code.
+   >
+   > *Per-test cleanup.* `buildings.integration.spec.ts` no longer wipes seven
+   > tables before each test; the three assertions that needed a clean table are
+   > scoped to the rows their own test created, which is the better assertion
+   > anyway — a test that passes only while it is alone in the file is one
+   > refactor from lying. Worth recording honestly: the predicted speed-up did
+   > **not** materialise (72s before and after). `deleteMany` against near-empty
+   > tables is cheap, and the suite's cost is round-trip latency in the tests'
+   > own work. The change was worth making for independence, not for time.
+
+3. **`backup.service.ts` gained the census tables and `case`.** Their absence
+   was not a missing feature, it was silent data loss:
+   `unit_occupancies.citizenId` cascades from `users`, and a restore deletes and
+   rewrites every user — so it destroyed every record of who lives where and
+   then did not put it back. `case` has had the same hole since 0027 and is
+   fixed here rather than separately, because a case now points at a building, a
+   unit and a damage assessment and cannot be ordered correctly except alongside
+   them. Verified with the existing backup round-trip suite against a real
+   database.
+
+### Where Phase 3 should start
+
+`P3-T1` — `lib/api-client.ts` types and fetchers. Everything the frontend needs
+is now reachable:
+
+| What the UI needs | Endpoint |
+|---|---|
+| Census ledger, filters composed | `GET /t/:slug/buildings` |
+| One building + its unit matrix + occupants | `GET /t/:slug/buildings/:id` |
+| Damage history + current level | `GET /t/:slug/buildings/:id/damage` |
+| Create / edit a building | `POST`, `PATCH /t/:slug/buildings/:id` |
+| Fill a matrix from a blueprint | `POST /t/:slug/buildings/:id/units/generate` |
+| Add / correct one unit | `POST /t/:slug/buildings/:id/units`, `PATCH /t/:slug/buildings/units/:unitId` |
+| Register an occupant (auto-closes cases) | `POST /t/:slug/buildings/occupancies` |
+| End a tenancy | `PATCH /t/:slug/buildings/occupancies/:id/end` |
+| Record damage | `POST /t/:slug/buildings/damage` |
+| Map pins with rollups | `GET /t/:slug/dashboard/map/buildings` |
+| Cases by type / building / unit | `GET /t/:slug/cases?caseType=&buildingId=&unitId=` |
+
+Three things the frontend must respect, all already enforced server-side:
+
+- **`create` returns `{ building, reconciled, deduplicated }`.** `reconciled: true`
+  means the provisional suffix the phone was showing is not the one it got —
+  P3-T8's post-sync notice reads that, and an officer who is not told will keep
+  quoting a code that no longer exists.
+- **`recordOccupancy` returns `casesResolved`.** Silently closing someone else's
+  case is how a dispatch list stops being believed.
+- **A per-unit «غير مؤكَّد» control is now safe to ship** (migration 0031).
 
 ---
 

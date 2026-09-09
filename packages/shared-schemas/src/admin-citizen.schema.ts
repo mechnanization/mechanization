@@ -14,6 +14,7 @@ import {
 import {
   fieldFlagsSchema,
   flaggedPaths,
+  isFlaggablePath,
   isUnestablished,
   issuePath,
   withoutFlagged,
@@ -173,12 +174,137 @@ interface SubmissionInput {
   contact: Record<string, unknown>;
   properties: Array<Record<string, unknown>>;
   flags: FieldFlag[];
+  blanketFlagReason?: string;
   clientSubmissionId?: string;
+}
+
+/**
+ * The most flags one record may end up carrying once the blanket reason has
+ * filled in the gaps.
+ *
+ * Three times the hand-flagged ceiling, and it has to be: the point of a
+ * blanket reason is the record an officer could barely start, and «الأسرة
+ * غائبة والجيران لا يعرفون» legitimately accounts for thirty fields across
+ * three property cards. The ceiling still exists for the same reason the
+ * smaller one does — past it the record has stopped being a registration with
+ * gaps and become a blank form with an excuse attached, which is a conversation
+ * to have with the officer rather than a row to store.
+ */
+const MAX_FLAGS_WITH_BLANKET_REASON = 120;
+
+/** The value at a dot-path, so an auto-flag can tell absent from merely wrong. */
+function valueAt(input: SubmissionInput, path: string): unknown {
+  const [head, ...rest] = path.split('.');
+  let cursor: unknown =
+    head === 'personal' ? input.personal : head === 'contact' ? input.contact : input.properties;
+
+  for (const segment of rest) {
+    if (cursor === null || typeof cursor !== 'object') return undefined;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return cursor;
+}
+
+/** Nothing was entered here — as against something wrong having been. */
+function isAbsent(value: unknown): boolean {
+  return value === undefined || value === null || (typeof value === 'string' && !value.trim());
+}
+
+/** Every path the strict schemas complain about, given what is already excused. */
+function strictIssuePaths(input: SubmissionInput, excused: ReadonlySet<string>): string[] {
+  const paths: string[] = [];
+
+  const collect = (prefix: string, result: z.SafeParseReturnType<unknown, unknown>) => {
+    if (result.success) return;
+    for (const issue of result.error.issues) paths.push(issuePath(prefix, issue.path));
+  };
+
+  collect(
+    'personal',
+    personalDetailsSchema.safeParse(withoutFlagged(input.personal, 'personal', excused)),
+  );
+  collect(
+    'contact',
+    contactDetailsSchema.safeParse(withoutFlagged(input.contact, 'contact', excused)),
+  );
+  input.properties.forEach((card, index) => {
+    const prefix = `properties.${index}`;
+    collect(prefix, propertyEntrySchema.safeParse(withoutFlagged(card, prefix, excused)));
+  });
+
+  return paths;
+}
+
+/**
+ * «سبب عام لنقص البيانات» — the officer's one reason, spread across the fields
+ * it actually accounts for.
+ *
+ * D12, and the emphasis is the whole of it: the blanket reason **fills in**
+ * per-field flags as a default, it does not replace them. One sentence attached
+ * to a record with thirty holes in it leaves the reviewer nothing actionable —
+ * they cannot tell which thirty. Thirty flags each carrying that sentence say
+ * exactly which fields are missing *and* why, and each stays individually
+ * overridable by an officer who has a better reason for one of them.
+ *
+ * Two limits on what it may cover, and both are load-bearing:
+ *
+ *  - **Only flaggable paths.** `isFlaggablePath` already refuses the name and
+ *    the three discriminators, so a blanket reason cannot register a person
+ *    with no surname, or a property card whose type nobody chose. A record that
+ *    could not answer those is not a record with gaps; it is not a record.
+ *
+ *  - **Only fields that are actually empty.** A value that *was* entered and is
+ *    invalid — a malformed phone number, an area of "abc" — is a typo to
+ *    correct, not missing data to excuse. Auto-flagging it would blank what the
+ *    officer typed and hide the mistake behind a reason that does not describe
+ *    it. Those still fail, and the officer fixes them.
+ */
+function autoFlags(input: SubmissionInput, explicit: ReadonlySet<string>): FieldFlag[] {
+  const reason = input.blanketFlagReason?.trim();
+  if (!reason) return [];
+
+  const flags: FieldFlag[] = [];
+  const seen = new Set<string>();
+
+  for (const path of strictIssuePaths(input, explicit)) {
+    if (explicit.has(path) || seen.has(path)) continue;
+    if (!isFlaggablePath(path)) continue;
+    if (!isAbsent(valueAt(input, path))) continue;
+
+    seen.add(path);
+    flags.push({ path, reason, kind: 'UNESTABLISHED' });
+  }
+
+  return flags;
+}
+
+/**
+ * Every flag this submission carries — the officer's own, plus whatever the
+ * blanket reason filled in.
+ *
+ * Recomputed rather than passed along, and computed identically by
+ * `unexcusedIssues` and `shapeSubmission`, because Zod's `superRefine` has no
+ * way to hand a value to the `transform` that follows it. Both passes see the
+ * same input and the function is pure, so they cannot disagree.
+ */
+function allFlags(input: SubmissionInput): FieldFlag[] {
+  const explicit = flaggedPaths(input.flags);
+  return [...input.flags, ...autoFlags(input, explicit)];
 }
 
 /** Every issue the strict schemas raise that no flag accounts for. */
 function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
-  const paths = flaggedPaths(input.flags);
+  const flags = allFlags(input);
+  const paths = flaggedPaths(flags);
+
+  if (flags.length > MAX_FLAGS_WITH_BLANKET_REASON) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['blanketFlagReason'],
+      message: 'عدد الحقول غير المؤكَّدة كبير جداً — يرجى استكمال البيانات',
+    });
+    return;
+  }
 
   const report = (prefix: string, result: z.SafeParseReturnType<unknown, unknown>) => {
     if (result.success) return;
@@ -236,7 +362,17 @@ function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
  * because it had (correctly) refused it.
  */
 function shapeSubmission(input: SubmissionInput) {
-  const paths = flaggedPaths(input.flags);
+  /*
+    The blanket reason's flags blank their fields too.
+
+    They are flags in every sense — same kind, same reason string, same
+    per-field granularity — so the field each one names is emptied exactly as an
+    officer's own flag empties it. Using only `input.flags` here would store the
+    half-typed value the officer left behind on a field the record has just
+    declared unestablished.
+  */
+  const flags = allFlags(input);
+  const paths = flaggedPaths(flags);
 
   return {
     personal: partialPersonalDetailsSchema.parse(withoutFlagged(input.personal, 'personal', paths)),
@@ -250,6 +386,16 @@ function shapeSubmission(input: SubmissionInput) {
         ),
       };
     }),
+    /**
+     * Kept on the record alongside the per-field flags it produced.
+     *
+     * Redundant with them by design: every flag already carries the sentence,
+     * and this is the statement that they came from one. It is what lets a
+     * reviewer tell «the officer wrote one reason for the whole visit» from
+     * «the officer wrote the same sentence thirty times», which are different
+     * conversations to have with them.
+     */
+    blanketFlagReason: input.blanketFlagReason?.trim() || undefined,
     /*
       Only the officer's own flags survive the wire.
 
@@ -260,7 +406,7 @@ function shapeSubmission(input: SubmissionInput) {
       verdict from a phone that queued the record days before the parcel was
       imported. The server re-derives them on every write instead.
     */
-    flags: input.flags.filter(isUnestablished),
+    flags: allFlags(input).filter(isUnestablished),
     clientSubmissionId: input.clientSubmissionId,
   };
 }
@@ -278,6 +424,22 @@ const submissionEnvelope = {
   personal: rawSection,
   contact: rawSection,
   flags: fieldFlagsSchema,
+  /**
+   * «سبب عام لنقص البيانات» — one reason for the whole visit.
+   *
+   * The same four-character floor the per-field reason has, and for the same
+   * reason: «لا» records that somebody pressed the button, not why the data is
+   * missing, and this one sentence is about to be copied onto every gap in the
+   * record. See `autoFlags` for exactly which gaps it may cover — the name and
+   * the three discriminators are not among them, and neither is a field whose
+   * value is present but wrong.
+   */
+  blanketFlagReason: z
+    .string()
+    .trim()
+    .min(4, 'يرجى ذكر سبب عدم اكتمال البيانات')
+    .max(300, 'السبب طويل جداً')
+    .optional(),
   clientSubmissionId: uuid.optional(),
 };
 

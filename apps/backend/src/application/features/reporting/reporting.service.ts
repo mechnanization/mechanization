@@ -180,10 +180,16 @@ export interface RegisteredParcel {
 /** One unit inside a BUILDING — شقة, عيادة or محل. */
 export interface CitizenProfileUnit {
   id: string;
-  unitType: string;
-  floor: string;
+  /**
+   * Nullable since migration 0031 — a per-unit «غير مؤكَّد» flag blanks the
+   * field it excuses, so the review screen has to be able to render a flat the
+   * officer could not fully describe. Null here means "not established", never
+   * "zero"; the reason is on the registration's `flaggedFields`.
+   */
+  unitType: string | null;
+  floor: string | null;
   side: string | null;
-  unitArea: number;
+  unitArea: number | null;
   sharedRights: string[];
   /** حالة الوحدة — set by the building's owner. Null on a tenant's own card. */
   unitStatus: string | null;
@@ -905,7 +911,7 @@ export class ReportingService {
             unitType: unit.unitType,
             floor: unit.floor,
             side: unit.side,
-            unitArea: Number(unit.unitArea),
+            unitArea: unit.unitArea == null ? null : Number(unit.unitArea),
             sharedRights: unit.sharedRights,
             unitStatus: unit.unitStatus,
           })),

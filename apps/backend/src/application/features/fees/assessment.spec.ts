@@ -44,6 +44,270 @@ const card = (
   units: [],
 });
 
+
+/**
+ * P2-T8 — the authority flip, against both linked and unlinked records.
+ *
+ * Until Phase 2, `PropertyEntry`/`BuildingUnit` were the only thing billing
+ * read and the census tables were a read-model. Now the canonical `Unit` wins
+ * *where it exists*, and the card wins where it does not — which is most of the
+ * register and always will be: a منزل, an أرض and a خيمة never get a `Unit`,
+ * and neither does a building on a parcel nobody has surveyed.
+ *
+ * Both halves are tested here, because a flip that only worked on linked rows
+ * would silently stop charging for everything else.
+ */
+describe('billing authority — linked units win, unlinked cards still bill', () => {
+  const linked = (
+    line: [string | null, number | null, string | null],
+    unit: { unitType?: string | null; unitArea?: number | null; unitStatus?: string | null } | null,
+  ): BillablePropertyEntry => ({
+    propertyType: 'BUILDING',
+    propertyNumber: '1553',
+    occupancyType: 'OWNER',
+    unitType: null,
+    unitArea: null,
+    units: [
+      {
+        unitType: line[0],
+        unitArea: line[1],
+        unitStatus: line[2],
+        unit: unit
+          ? {
+              unitType: unit.unitType ?? null,
+              unitArea: unit.unitArea ?? null,
+              unitStatus: unit.unitStatus ?? null,
+            }
+          : null,
+      },
+    ],
+  });
+
+  it('prefers the canonical unit’s values over the card’s', () => {
+    // The card says the flat is 100m² and empty; the matrix — corrected by an
+    // officer standing in it — says 140m² and rented. The municipality's own
+    // row is the one that survives the card being edited.
+    const units = billableUnits(
+      linked(['APARTMENT', 100, 'VACANT'], { unitType: 'SHOP', unitArea: 140, unitStatus: 'RENTED' }),
+    );
+
+    expect(units).toEqual([
+      expect.objectContaining({ unitType: 'SHOP', unitArea: 140, unitStatus: 'RENTED' }),
+    ]);
+  });
+
+  it('falls back field by field, not row by row', () => {
+    /*
+      The case that makes per-field preference load-bearing.
+
+      A generated matrix row has no area — nobody has measured it — while the
+      card carries one from the officer who filed it. Taking the whole canonical
+      row would throw that measurement away and make the citizen unassessable
+      under a PER_AREA notice, over a number the register already has.
+    */
+    const units = billableUnits(
+      linked(['APARTMENT', 120, null], { unitType: 'SHOP', unitArea: null }),
+    );
+
+    expect(units[0]).toEqual(
+      expect.objectContaining({ unitType: 'SHOP', unitArea: 120 }),
+    );
+  });
+
+  it('still reads the card when there is no canonical unit', () => {
+    const units = billableUnits(linked(['APARTMENT', 120, 'RENTED'], null));
+
+    expect(units[0]).toEqual(
+      expect.objectContaining({ unitType: 'APARTMENT', unitArea: 120, unitStatus: 'RENTED' }),
+    );
+  });
+
+  it('bills an unlinked منزل exactly as it always did', () => {
+    // The half of the register that never gets a `Unit`. If the flip had made
+    // the new tables mandatory this would bill nothing.
+    const house = card('HOUSE', '1553', 'INDEPENDENT_HOUSE', 180);
+    const outcome = assessCitizen([house], { amount: 1000, basis: 'PER_UNIT' });
+
+    expect(outcome.kind).toBe('assessed');
+    if (outcome.kind !== 'assessed') return;
+    expect(outcome.amount).toBe(1000);
+    expect(outcome.assessment.unitCount).toBe(1);
+  });
+
+  it('takes occupancy from the card, never from the unit', () => {
+    /*
+      `UnitOccupancy` records every party to a flat at once — an owner abroad
+      and the tenant living in it are two rows on one unit, which is the whole
+      reason it is a join table (D2). Reading a role from there would need this
+      function to already know which of the two people is being billed, and the
+      answer is on the card it came from.
+    */
+    const tenantCard: BillablePropertyEntry = {
+      ...linked(['APARTMENT', 120, null], { unitType: 'APARTMENT', unitArea: 120 }),
+      occupancyType: 'TENANT',
+    };
+
+    expect(billableUnits(tenantCard)[0]?.occupancyType).toBe('TENANT');
+  });
+
+  it('charges a linked shop under a محلات notice', () => {
+    // The unit type that exists only on the canonical row still has to match a
+    // category, or assessment and target-selection would disagree.
+    const entry = linked([null, 40, null], { unitType: 'SHOP', unitArea: 40 });
+    const outcome = assessCitizen([entry], {
+      amount: 500,
+      basis: 'PER_UNIT',
+      targetCategory: 'SHOP',
+    });
+
+    expect(outcome.kind).toBe('assessed');
+    if (outcome.kind !== 'assessed') return;
+    expect(outcome.amount).toBe(500);
+  });
+});
+
+describe('billing authority — a building the card does not itemise', () => {
+  const emptyBuilding = (
+    occupiedUnits?: Array<{
+      role: string;
+      unitType: string | null;
+      unitArea: number | null;
+      unitStatus?: string | null;
+    }>,
+  ): BillablePropertyEntry => ({
+    propertyType: 'BUILDING',
+    propertyNumber: '1553',
+    occupancyType: 'OWNER',
+    unitType: null,
+    unitArea: null,
+    units: [],
+    ...(occupiedUnits ? { occupiedUnits } : {}),
+  });
+
+  it('still refuses to bill a building nobody has been inside', () => {
+    // Unchanged, and the reason is unchanged: counted as zero, the largest
+    // building in the municipality pays nothing and the schedule is most
+    // generous to the properties worth the most.
+    expect(isUnsurveyed(emptyBuilding())).toBe(true);
+
+    const outcome = assessCitizen([emptyBuilding()], { amount: 1000, basis: 'PER_UNIT' });
+    expect(outcome.kind).toBe('unassessable');
+  });
+
+  it('does not bill on the strength of the building having a matrix', () => {
+    /*
+      The relaxation that was written first and reverted, and it stays reverted.
+
+      It is tempting: the card has no unit rows, but the census holds a matrix
+      for its building, so the flats *are* known — why refuse? Because what an
+      assessment needs is not "does this building have units", it is **which of
+      them does this citizen hold**, and a matrix of twelve flats says nothing
+      about whether this person holds one or twelve. Worse, `billableUnits` does
+      not skip such a card — it emits one phantom unit from the card's own null
+      fields, so a per-unit rate would bill an entire block as a single flat.
+
+      An empty occupancy list is exactly that case: the census may know the
+      building well and know nothing about this citizen's place in it.
+    */
+    expect(isUnsurveyed(emptyBuilding([]))).toBe(true);
+    expect(billableUnits(emptyBuilding([]))).toEqual([]);
+  });
+
+  /*
+    What *does* make such a card assessable is `UnitOccupancy`, because it is
+    the only table that is per-citizen. This is the question P2-T8 left open,
+    now answered.
+  */
+  it('bills the flats the citizen is actually recorded in', () => {
+    const entry = emptyBuilding([
+      { role: 'OWNER', unitType: 'APARTMENT', unitArea: 120 },
+      { role: 'OWNER', unitType: 'SHOP', unitArea: 40 },
+    ]);
+
+    expect(isUnsurveyed(entry)).toBe(false);
+
+    const outcome = assessCitizen([entry], { amount: 1000, basis: 'PER_UNIT' });
+    expect(outcome.kind).toBe('assessed');
+    if (outcome.kind !== 'assessed') return;
+    // Two flats — not one phantom unit, and not the building's whole matrix.
+    expect(outcome.assessment.unitCount).toBe(2);
+    expect(outcome.amount).toBe(2000);
+  });
+
+  it('takes each flat’s role from the occupancy, not from the card', () => {
+    /*
+      The one place a role legitimately comes from `UnitOccupancy`. These rows
+      are selected *by citizen*, so each already names this person's capacity in
+      that specific flat — an owner abroad and the tenant living in their flat
+      are two rows on one unit, and picking by citizen picks the right one.
+
+      The card says OWNER. The census says this person rents one flat and owns
+      another, which is ordinary and which a single card-level role cannot say.
+    */
+    const entry = emptyBuilding([
+      { role: 'TENANT', unitType: 'APARTMENT', unitArea: 120 },
+      { role: 'OWNER', unitType: 'APARTMENT', unitArea: 90 },
+    ]);
+
+    expect(billableUnits(entry).map((unit) => unit.occupancyType)).toEqual(['TENANT', 'OWNER']);
+
+    // The bearer rule then does its ordinary work over them: an owner-borne fee
+    // reaches the owned flat and not the rented one.
+    const outcome = assessCitizen([entry], { amount: 1000, basis: 'PER_UNIT', bearer: 'OWNER' });
+    expect(outcome.kind).toBe('assessed');
+    if (outcome.kind !== 'assessed') return;
+    expect(outcome.assessment.unitCount).toBe(1);
+    expect(outcome.assessment.excludedUnitCount).toBe(1);
+  });
+
+  it('never counts a card’s own units and its occupancies together', () => {
+    /*
+      The double-count the ordering exists to prevent. A card that itemises its
+      flats is the citizen's own statement of what they hold; their occupancies
+      on the same building describe the same flats from the municipality's side.
+      Adding the two would bill a landlord twice for one building.
+    */
+    const entry: BillablePropertyEntry = {
+      ...emptyBuilding([
+        { role: 'OWNER', unitType: 'APARTMENT', unitArea: 120 },
+        { role: 'OWNER', unitType: 'APARTMENT', unitArea: 110 },
+      ]),
+      units: [
+        { unitType: 'APARTMENT', unitArea: 120, unitStatus: null },
+        { unitType: 'APARTMENT', unitArea: 110, unitStatus: null },
+      ],
+    };
+
+    expect(billableUnits(entry)).toHaveLength(2);
+  });
+
+  it('does not let occupancies stand in for a منزل’s own card', () => {
+    /*
+      Only a BUILDING card defers to occupancies. A منزل keeps its single unit
+      on the card itself, so "no unit rows" is its normal shape rather than a
+      gap — reading occupancies there would replace the citizen's own record of
+      their house with whatever the matrix happened to say.
+    */
+    const house: BillablePropertyEntry = {
+      ...card('HOUSE', '1553', 'INDEPENDENT_HOUSE', 180),
+      occupiedUnits: [{ role: 'OWNER', unitType: 'SHOP', unitArea: 40 }],
+    };
+
+    const units = billableUnits(house);
+    expect(units).toHaveLength(1);
+    expect(units[0]).toEqual(
+      expect.objectContaining({ unitType: 'INDEPENDENT_HOUSE', unitArea: 180 }),
+    );
+  });
+
+  it('refuses a per-area bill over an occupancy with no recorded area', () => {
+    // The existing guard reaches these units too — read as zero the flat is
+    // free, read as a default it is fiction with a number attached.
+    const entry = emptyBuilding([{ role: 'OWNER', unitType: 'APARTMENT', unitArea: null }]);
+
+    expect(assessCitizen([entry], { amount: 100, basis: 'PER_AREA' }).kind).toBe('unassessable');
+  });
+});
 describe('billable units — one list from two storage shapes', () => {
   it('reads a building as its unit rows', () => {
     const units = billableUnits(building('1553', [['SHOP', 40], ['APARTMENT', 120]]));

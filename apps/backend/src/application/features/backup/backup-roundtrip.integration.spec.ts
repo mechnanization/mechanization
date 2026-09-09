@@ -2,6 +2,7 @@ import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
+import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { BackupService } from './backup.service';
 
@@ -48,9 +49,7 @@ describeIfDb('BackupService — export and restore round-trip', () => {
     await ddl.query(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`);
     await migrateTenantSchema(ddl, SCHEMA);
 
-    const url = new URL(TEST_DATABASE_URL!);
-    url.searchParams.set('schema', SCHEMA);
-    db = new TenantPrismaClient({ datasources: { db: { url: url.toString() } } });
+    db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
 
     emit = jest.fn();
     service = new BackupService(

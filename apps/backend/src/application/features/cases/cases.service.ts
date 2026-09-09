@@ -109,6 +109,50 @@ export class CasesService {
     return updated;
   }
 
+  /**
+   * Closes the cases a newly-recorded occupancy has just answered.
+   *
+   * Called from `BuildingsService.recordOccupancy`, because that is the moment
+   * the thing these cases were waiting on actually happened: a حالة on a flat
+   * says «لم يتم الرد», and an occupancy on that flat says who lives there.
+   * Leaving it open sends a second officer to a door the municipality has
+   * already been through — which is the specific waste the cases table exists
+   * to prevent, arrived at from the other side.
+   *
+   * Only cases pinned to that exact `unitId`. A case carrying nothing but a
+   * free-text «الطابق الثاني» is not resolved by this, and must not be: nothing
+   * here can tell which of the second floor's four flats the officer meant, and
+   * closing the wrong one loses a visit that still needs making.
+   *
+   * Returns the count so the caller can tell the officer what just closed —
+   * silently resolving someone else's case is how a dispatch list stops being
+   * believed.
+   */
+  async resolveForUnit(
+    unitId: string,
+    citizenId: string,
+    actor: { id: string; role: string },
+  ): Promise<number> {
+    const open = await this.cases.findAll({ unitId, status: 'OPEN' });
+    const scheduled = await this.cases.findAll({ unitId, status: 'SCHEDULED' });
+    const affected = [...open, ...scheduled];
+    if (affected.length === 0) return 0;
+
+    const resolved = await this.cases.resolveOpenForUnit(unitId, citizenId);
+
+    for (const existing of affected) {
+      this.recordChange({
+        action: 'CASE_RESOLVED_WITH_CITIZEN',
+        caseId: existing.id,
+        before: { status: existing.status, resolvedCitizenId: existing.resolvedCitizenId },
+        after: { status: 'RESOLVED', resolvedCitizenId: citizenId, via: 'UNIT_OCCUPANCY' },
+        actor,
+      });
+    }
+
+    return resolved;
+  }
+
   async remove(id: string, actor: { id: string; role: string }): Promise<void> {
     const existing = await this.cases.findById(id);
     if (!existing) throw new NotFoundError('الحالة غير موجودة');

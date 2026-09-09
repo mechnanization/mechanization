@@ -444,10 +444,20 @@ model BuildingUnit {
   propertyEntryId String        @db.Uuid
   propertyEntry   PropertyEntry @relation(fields: [propertyEntryId], references: [id], onDelete: Cascade)
 
-  unitType     UnitType
-  floor        String
+  /// All three nullable, and only ever null behind a flag.
+  ///
+  /// `buildingUnitSchema` still requires each of them of an ordinary
+  /// submission. The one way a null gets here is an `UNESTABLISHED` flag naming
+  /// this exact unit field — `properties.0.units.3.unitArea` — with the
+  /// officer's written reason attached, on a record that lands at
+  /// «يتطلب مراجعة». Before migration 0031 that record passed validation and
+  /// then failed at the INSERT. See `assessCitizen`, which already refuses to
+  /// price a PER_AREA notice against a unit with no recorded area rather than
+  /// reading the absence as zero.
+  unitType     UnitType?
+  floor        String?
   side         String?
-  unitArea     Decimal  @db.Decimal(12, 2)
+  unitArea     Decimal? @db.Decimal(12, 2)
   sharedRights String[] @default([])
   /// Set by the building's owner, unit by unit. Null on a tenant's own card.
   unitStatus   UnitStatus?
