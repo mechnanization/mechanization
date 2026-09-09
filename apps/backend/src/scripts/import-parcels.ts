@@ -178,6 +178,26 @@ export async function importCadastre(args: Args): Promise<void> {
         `(${merged.length} merged from several points)`,
     );
 
+    // ── Derived geometry ──
+    // The survey ships lines and labels but no shapes; these are reconstructed
+    // so the zone editor has parcels to click and an outline to draw — and so
+    // each parcel row can carry its own outline (see `Parcel.boundary`), which
+    // is what lets the server decide whether a building's pin is inside its
+    // parcel without shipping every polygon to it.
+    //
+    // Traced before the table is written, because the outlines go in with the
+    // points rather than being backfilled afterwards: a parcel must never be
+    // resolvable carrying a shape from the previous survey.
+    const geometry = buildCadastreGeometryAssets(lines, points);
+    console.log(
+      `  ${geometry.shapeCount}/${parcels.length} parcel shapes traced ` +
+        `(${geometry.unmatchedCount} stay point-only)`,
+    );
+
+    const boundaries = new Map(
+      geometry.parcelBoundaries.map((entry) => [entry.parcelNumber, entry.geometry]),
+    );
+
     // ── Registry table ──
     const url = new URL(process.env.DIRECT_URL ?? process.env.DATABASE_URL!);
     url.searchParams.set('schema', tenant.schemaName);
@@ -195,10 +215,16 @@ export async function importCadastre(args: Args): Promise<void> {
             latitude: parcel.latitude,
             longitude: parcel.longitude,
             pointCount: parcel.pointCount,
+            // Undefined — not null — for a parcel with no traced shape: Prisma
+            // omits the field entirely, so the column takes its own null.
+            boundary: boundaries.get(parcel.parcelNumber),
           })),
         }),
       ]);
-      console.log(`  ${parcels.length} parcels written to ${tenant.schemaName}.parcels`);
+      console.log(
+        `  ${parcels.length} parcels written to ${tenant.schemaName}.parcels ` +
+          `(${boundaries.size} with an outline)`,
+      );
     } finally {
       await db.$disconnect();
     }
@@ -215,14 +241,6 @@ export async function importCadastre(args: Args): Promise<void> {
     await uploadToSupabase(slug.value, 'parcels.geojson', parcelsAsset);
     await uploadToSupabase(slug.value, 'cadastre.geojson', cadastreAsset);
 
-    // ── Derived geometry ──
-    // The survey ships lines and labels but no shapes; these are reconstructed
-    // so the zone editor has parcels to click and an outline to draw.
-    const geometry = buildCadastreGeometryAssets(lines, points);
-    console.log(
-      `  ${geometry.shapeCount}/${parcels.length} parcel shapes traced ` +
-        `(${geometry.unmatchedCount} stay point-only)`,
-    );
     if (geometry.parcelPolygonsGeoJson) {
       writeAsset(join(outDir, 'parcel-polygons.geojson'), geometry.parcelPolygonsGeoJson);
       await uploadToSupabase(slug.value, 'parcel-polygons.geojson', geometry.parcelPolygonsGeoJson);

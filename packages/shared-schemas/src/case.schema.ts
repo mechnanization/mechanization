@@ -14,7 +14,19 @@ import { uuid } from './primitives';
  * that I tried".
  */
 
-export const CASE_STATUS = ['OPEN', 'RESOLVED'] as const;
+/**
+ * Where a حالة stands.
+ *
+ * `SCHEDULED` is the state that was missing and was being carried in someone's
+ * head: a case an officer has already agreed a return date for is neither open
+ * work waiting to be picked up nor settled, and leaving it `OPEN` meant every
+ * dispatch list re-proposed a visit that was already arranged. It is a
+ * *promise*, not an outcome — `scheduledRevisitAt` on the case carries the date
+ * — and the only way out of it is still `RESOLVED`.
+ *
+ * Ordered as the work moves, which is also the order the tabs render in.
+ */
+export const CASE_STATUS = ['OPEN', 'SCHEDULED', 'RESOLVED'] as const;
 export type CaseStatus = (typeof CASE_STATUS)[number];
 
 const notesField = z

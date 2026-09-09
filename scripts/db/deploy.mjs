@@ -178,14 +178,27 @@ async function pendingFor(connectionString) {
 // ── Running the actual migration commands ──────────────────────────────────
 
 function run(script, env, label) {
-  process.stdout.write(C.dim(`\n$ pnpm --filter @mechanization/backend ${script}\n`));
-  // `pnpm.cmd` directly rather than `shell: true`: passing args through a shell
-  // concatenates rather than escapes them, which Node now warns about (DEP0190).
-  const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-  const result = spawnSync(command, ['--filter', '@mechanization/backend', script], {
+  const command = `pnpm --filter @mechanization/backend ${script}`;
+  process.stdout.write(C.dim(`\n$ ${command}\n`));
+  /*
+    One command string through a shell, and no `args` array beside it.
+
+    Both halves are load-bearing on Windows. Spawning `pnpm.cmd` directly — what
+    this used to do — has thrown `EINVAL` since Node 20.12 hardened `.cmd`
+    execution (CVE-2024-27980), so the deploy failed before it reached a
+    database with "Registry migration could not start". And passing `args`
+    *alongside* `shell: true` is what DEP0190 warns about, because the shell
+    concatenates them rather than escaping them.
+
+    Interpolating `script` into the string is safe here and only here: every
+    call site below passes a literal from this file, never anything read from
+    a dotenv, an argv or a database.
+  */
+  const result = spawnSync(command, {
     cwd: ROOT,
     env,
     stdio: 'inherit',
+    shell: true,
   });
   if (result.error) throw new Error(`${label} could not start: ${result.error.message}`);
   if (result.status !== 0) {

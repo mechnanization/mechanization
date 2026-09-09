@@ -1,6 +1,7 @@
 export * from './enums';
 export * from './labels';
 export * from './primitives';
+export * from './numbering';
 export * from './citizen.schema';
 export * from './field-flag.schema';
 export * from './property.schema';

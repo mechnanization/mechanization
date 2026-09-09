@@ -1,17 +1,24 @@
 import type {
   BloodType,
+  CaseType,
+  DamageLevel,
+  DamageSource,
   DocumentType,
   Gender,
   IdentityDocType,
   LandType,
   MaritalStatus,
+  OccupancyRole,
   OccupancyType,
   PropertyType,
   ResidentStatus,
   StaffRole,
+  StructureType,
+  SurveyStatus,
   UnitStatus,
   UnitType,
 } from './enums';
+import type { CaseStatus } from './case.schema';
 import type { FeeBasis, FeeBearer, FeeTargetCategory } from './fee.schema';
 
 /** Arabic display labels. Keep UI copy here, not inside the schemas. */
@@ -179,6 +186,82 @@ export const ar = {
     AGRICULTURAL: 'زراعي',
     INDUSTRIAL: 'صناعي',
   } satisfies Record<LandType, string>,
+
+  /** ما القائم فعلاً على العقار. See `STRUCTURE_TYPE`. */
+  structureType: {
+    RESIDENTIAL_BUILDING: 'مبنى سكني',
+    INDEPENDENT_HOUSE: 'منزل مستقل',
+    COMMERCIAL_CENTER: 'مجمع تجاري',
+    WAREHOUSE_HANGAR: 'مستودع / هنغار',
+    MIXED_USE: 'سكني - تجاري',
+    TENT_SHELTER: 'تجمّع خيم / مأوى',
+  } satisfies Record<StructureType, string>,
+
+  /**
+   * حالة المسح — never «تم» or «لم يتم» alone.
+   *
+   * The distinction the whole census turns on is «غير ممسوحة» (nobody has been)
+   * against «زيارة بلا رد» (someone has been, more than once perhaps, and got
+   * no answer). Two words apart on a phone screen, and they are the difference
+   * between sending an officer and escalating to a notice, so neither is
+   * shortened to fit a badge.
+   */
+  surveyStatus: {
+    NOT_SURVEYED: 'غير ممسوحة',
+    VISITED_NO_ANSWER: 'زيارة بلا رد',
+    PARTIAL: 'بيانات ناقصة',
+    COMPLETE: 'مكتملة',
+    REFUSED: 'رفض إعطاء البيانات',
+    INACCESSIBLE: 'يتعذّر الوصول',
+    VACANT_CONFIRMED: 'شاغرة مؤكدة',
+    DEMOLISHED: 'مهدومة',
+  } satisfies Record<SurveyStatus, string>,
+
+  /** مستوى الضرر — UN-Habitat's five levels, in the wording the Beirut and
+   *  Bourj Hammoud assessments used. See `DAMAGE_LEVEL`. */
+  damageLevel: {
+    NOT_AFFECTED: 'غير متأثر',
+    SAFE_MINOR_DAMAGE: 'أضرار طفيفة — آمن',
+    RESTRICTED_USE: 'استخدام مقيّد',
+    UNSAFE_EVACUATE: 'غير آمن — يستوجب الإخلاء',
+    TOTAL_COLLAPSE: 'انهيار كلي',
+    UNCLASSIFIED: 'غير مصنّف',
+  } satisfies Record<DamageLevel, string>,
+
+  damageSource: {
+    FIELD_VISIT: 'كشف ميداني',
+    SATELLITE: 'صور جوية / أقمار صناعية',
+    SELF_REPORTED: 'إفادة صاحب العلاقة',
+    OFFICIAL_REPORT: 'تقرير رسمي',
+  } satisfies Record<DamageSource, string>,
+
+  /** لماذا لم تكتمل الزيارة. See `CASE_TYPE` — there is no «ضرر حربي» here. */
+  caseType: {
+    UNIT_UNREACHABLE: 'مقفلة / لم يتم الرد',
+    ACCESS_REFUSED: 'رفض إعطاء البيانات',
+    VACANT_UNCONFIRMED: 'شاغرة قيد التحقق',
+    OWNERSHIP_DISPUTE: 'نزاع ملكية',
+    GENERAL_NOTE: 'ملاحظة عامة',
+  } satisfies Record<CaseType, string>,
+
+  /** أين وصلت الحالة. «مجدولة» means a revisit date is already set. */
+  caseStatus: {
+    OPEN: 'مفتوحة',
+    SCHEDULED: 'زيارة مجدولة',
+    RESOLVED: 'مُعالجة',
+  } satisfies Record<CaseStatus, string>,
+
+  /**
+   * صفة الإشغال على الوحدة — the unit-matrix counterpart of `occupancyType`.
+   *
+   * Worded «صفة» rather than «نوع» because this one is recorded about a person
+   * standing in a stairwell, often before that person has a file at all.
+   */
+  occupancyRole: {
+    OWNER: 'مالك',
+    TENANT: 'مستأجر',
+    FREE_OCCUPANT: 'شاغل بتسامح (بدون بدل)',
+  } satisfies Record<OccupancyRole, string>,
 
   documentType: {
     IDENTITY: 'وثيقة الإثبات',
@@ -385,6 +468,62 @@ export const en = {
     AGRICULTURAL: 'Agricultural',
     INDUSTRIAL: 'Industrial',
   } satisfies Record<LandType, string>,
+
+  structureType: {
+    RESIDENTIAL_BUILDING: 'Residential Building',
+    INDEPENDENT_HOUSE: 'Independent House',
+    COMMERCIAL_CENTER: 'Commercial Centre',
+    WAREHOUSE_HANGAR: 'Warehouse / Hangar',
+    MIXED_USE: 'Mixed Use',
+    TENT_SHELTER: 'Tent Settlement / Shelter',
+  } satisfies Record<StructureType, string>,
+
+  surveyStatus: {
+    NOT_SURVEYED: 'Not Surveyed',
+    VISITED_NO_ANSWER: 'Visited — No Answer',
+    PARTIAL: 'Incomplete Data',
+    COMPLETE: 'Complete',
+    REFUSED: 'Access Refused',
+    INACCESSIBLE: 'Inaccessible',
+    VACANT_CONFIRMED: 'Confirmed Vacant',
+    DEMOLISHED: 'Demolished',
+  } satisfies Record<SurveyStatus, string>,
+
+  damageLevel: {
+    NOT_AFFECTED: 'Not Affected',
+    SAFE_MINOR_DAMAGE: 'Safe — Minor Damage',
+    RESTRICTED_USE: 'Restricted Use',
+    UNSAFE_EVACUATE: 'Unsafe — Evacuate',
+    TOTAL_COLLAPSE: 'Total Collapse',
+    UNCLASSIFIED: 'Unclassified',
+  } satisfies Record<DamageLevel, string>,
+
+  damageSource: {
+    FIELD_VISIT: 'Field Visit',
+    SATELLITE: 'Aerial / Satellite Imagery',
+    SELF_REPORTED: 'Self-Reported',
+    OFFICIAL_REPORT: 'Official Report',
+  } satisfies Record<DamageSource, string>,
+
+  caseType: {
+    UNIT_UNREACHABLE: 'Locked / No Answer',
+    ACCESS_REFUSED: 'Access Refused',
+    VACANT_UNCONFIRMED: 'Vacancy Unconfirmed',
+    OWNERSHIP_DISPUTE: 'Ownership Dispute',
+    GENERAL_NOTE: 'General Note',
+  } satisfies Record<CaseType, string>,
+
+  caseStatus: {
+    OPEN: 'Open',
+    SCHEDULED: 'Revisit Scheduled',
+    RESOLVED: 'Resolved',
+  } satisfies Record<CaseStatus, string>,
+
+  occupancyRole: {
+    OWNER: 'Owner',
+    TENANT: 'Tenant',
+    FREE_OCCUPANT: 'Free occupant (no rent)',
+  } satisfies Record<OccupancyRole, string>,
 
   documentType: {
     IDENTITY: 'Identity Document',

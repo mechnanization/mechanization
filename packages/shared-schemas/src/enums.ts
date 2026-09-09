@@ -161,6 +161,221 @@ export const LAND_TYPE = ['AGRICULTURAL', 'INDUSTRIAL'] as const;
 export const landTypeSchema = arabicEnum(LAND_TYPE, 'نوع الأرض مطلوب');
 export type LandType = z.infer<typeof landTypeSchema>;
 
+// ───────────────────────────  Building census  ───────────────────────────
+//
+// The vocabulary of the *structure*, as opposed to the vocabulary of the
+// citizen's property card above it. The two describe the same town and answer
+// different questions: a card says what one person filed about what they hold,
+// a building row says what stands on a parcel whether or not anyone has ever
+// been surveyed inside it. See docs/building-census-plan.md §3.
+
+/**
+ * What physically stands on a parcel.
+ *
+ * Kept separate from `PROPERTY_TYPE` rather than reused, because the two ask
+ * different questions and folding them together would produce a third,
+ * ambiguous one. `PropertyType.BUILDING` covers an apartment block, a shopping
+ * arcade and a hangar alike — adequate for "which fields does this card
+ * render", useless for "what is this structure and what units should it have".
+ * The explicit correspondence lives in `STRUCTURE_TYPE_MAP` below and nowhere
+ * else.
+ */
+export const STRUCTURE_TYPE = [
+  'RESIDENTIAL_BUILDING',
+  'INDEPENDENT_HOUSE',
+  'COMMERCIAL_CENTER',
+  'WAREHOUSE_HANGAR',
+  'MIXED_USE',
+  /**
+   * A mapped informal settlement or shelter cluster, registered deliberately as
+   * one structure on a parcel.
+   *
+   * Not what an ordinary tent card becomes. A خيمة filed by a refugee stays a
+   * bare `PropertyEntry`: tents have no permanent cadastral footprint, no fixed
+   * entrance to navigate to and no floor matrix, and they move between
+   * agricultural plots by season — so minting a one-unit building shell for
+   * each would corrupt every building-density, structural-inventory and
+   * war-damage figure the census exists to produce. This value is for the
+   * opposite case, where a field inspector means to put a whole settlement on
+   * the map as something to revisit.
+   */
+  'TENT_SHELTER',
+] as const;
+export const structureTypeSchema = arabicEnum(STRUCTURE_TYPE, 'نوع المنشأة مطلوب');
+export type StructureType = z.infer<typeof structureTypeSchema>;
+
+/**
+ * Per-unit survey progress — the state machine that makes an unsurveyed flat a
+ * row rather than an absence.
+ *
+ * `NOT_SURVEYED` and `VISITED_NO_ANSWER` are the two the whole table exists
+ * for. Before it, "nobody has ever tried this door" and "three officers have
+ * stood at it and got no answer" were the same thing — nothing — and neither
+ * could be dispatched against. A building's figure is a rollup of these; see
+ * `isSurveyed` below and D11 in the plan.
+ */
+export const SURVEY_STATUS = [
+  'NOT_SURVEYED',
+  'VISITED_NO_ANSWER',
+  'PARTIAL',
+  'COMPLETE',
+  'REFUSED',
+  'INACCESSIBLE',
+  'VACANT_CONFIRMED',
+  'DEMOLISHED',
+] as const;
+export const surveyStatusSchema = arabicEnum(SURVEY_STATUS, 'حالة المسح غير صالحة');
+export type SurveyStatus = z.infer<typeof surveyStatusSchema>;
+
+/**
+ * The statuses that count as a unit the municipality has an answer for.
+ *
+ * Narrow on purpose, and narrower than "the visit is over". `REFUSED` and
+ * `INACCESSIBLE` end a visit without producing any of the data the census is
+ * collecting, and `PARTIAL` says so in its name; counting any of them as
+ * surveyed would let a coverage percentage climb while the register stayed
+ * empty, which is precisely the number that would then be worthless. What is
+ * left is the three outcomes that are a finding about the unit: it was
+ * surveyed, it was confirmed empty, or it is no longer standing.
+ *
+ * Mirrored in SQL by migration 0030's `sync_building_unit_counts` trigger,
+ * which maintains `Building.unitsSurveyed`. Change one and change the other, or
+ * the map's colours and the ledger's percentages will quietly disagree.
+ */
+export const SURVEYED_STATUS = ['COMPLETE', 'VACANT_CONFIRMED', 'DEMOLISHED'] as const;
+
+/** Whether this unit's survey produced an answer. False for null, as ever. */
+export function isSurveyed(status: string | null | undefined): boolean {
+  return status != null && (SURVEYED_STATUS as readonly string[]).includes(status);
+}
+
+/**
+ * UN-Habitat's rapid building-level damage scale, verbatim.
+ *
+ * Not adjusted, not simplified and not extended — it is already the vocabulary
+ * of the Beirut Municipality and Bourj Hammoud assessments and of the national
+ * Building Destruction and Debris Quantities Assessment, so a municipality
+ * using these levels produces figures that aggregate with the national
+ * reconstruction datasets instead of standing alone.
+ *
+ * The split carrying the most weight in practice is `UNSAFE_EVACUATE` against
+ * `RESTRICTED_USE`: both are damaged buildings, and only the first means the
+ * residents must be out of it tonight. Aid allocation turns on that line, which
+ * is why the scale is not collapsed to "damaged / not damaged".
+ *
+ * `UNDER_CONSTRUCTION` is deliberately absent — it is a lifecycle state, it
+ * already exists in `UNIT_STATUS`, and admitting it here would overwrite a
+ * building's damage history with a fact about its building permit.
+ */
+export const DAMAGE_LEVEL = [
+  'NOT_AFFECTED',
+  'SAFE_MINOR_DAMAGE',
+  'RESTRICTED_USE',
+  'UNSAFE_EVACUATE',
+  'TOTAL_COLLAPSE',
+  'UNCLASSIFIED',
+] as const;
+export const damageLevelSchema = arabicEnum(DAMAGE_LEVEL, 'مستوى الضرر مطلوب');
+export type DamageLevel = z.infer<typeof damageLevelSchema>;
+
+/**
+ * Where a damage reading came from, and therefore how far to trust it.
+ *
+ * Recorded on every assessment rather than inferred from who wrote it: a
+ * satellite-derived level and an engineer's site visit disagreeing about the
+ * same building is ordinary, and is information — not a conflict to be resolved
+ * by overwriting one with the other.
+ */
+export const DAMAGE_SOURCE = [
+  'FIELD_VISIT',
+  'SATELLITE',
+  'SELF_REPORTED',
+  'OFFICIAL_REPORT',
+] as const;
+export const damageSourceSchema = arabicEnum(DAMAGE_SOURCE, 'مصدر التقييم مطلوب');
+export type DamageSource = z.infer<typeof damageSourceSchema>;
+
+/**
+ * Why a visit did not become a registration.
+ *
+ * There is no `WAR_DAMAGE` here and there will not be one. A حالة is a *failed
+ * visit* — something to do again — and damage is a *fact about a structure*.
+ * Merge them and «مُعالجة» stops having an answer: revisited, or repaired? A
+ * case may point at the `DamageAssessment` that prompted it instead, which
+ * keeps the reference without conflating the two lifecycles.
+ */
+export const CASE_TYPE = [
+  'UNIT_UNREACHABLE',
+  'ACCESS_REFUSED',
+  'VACANT_UNCONFIRMED',
+  'OWNERSHIP_DISPUTE',
+  'GENERAL_NOTE',
+] as const;
+export const caseTypeSchema = arabicEnum(CASE_TYPE, 'نوع الحالة غير صالح');
+export type CaseType = z.infer<typeof caseTypeSchema>;
+
+/**
+ * A person's relationship to a canonical unit.
+ *
+ * The same three values as `OCCUPANCY_TYPE`, and deliberately a separate enum:
+ * that one is a field on a citizen's property card and cannot exist without a
+ * registration behind it, this one is a row on the unit matrix and routinely
+ * does — an officer walking a stairwell can record that flat 3 is rented, and
+ * who its owner is, before either person has a file. Keeping them apart is what
+ * lets the unit-level fact outlive, or precede, the citizen-level one.
+ */
+export const OCCUPANCY_ROLE = ['OWNER', 'TENANT', 'FREE_OCCUPANT'] as const;
+export const occupancyRoleSchema = arabicEnum(OCCUPANCY_ROLE, 'صفة الإشغال مطلوبة');
+export type OccupancyRole = z.infer<typeof occupancyRoleSchema>;
+
+/**
+ * The one place the three taxonomies are allowed to meet.
+ *
+ * `StructureType` describes what stands on the parcel, `PropertyType` describes
+ * the card a citizen files about it, and `UnitType` describes what is inside.
+ * Every conversion between them goes through this table — hand-coding the
+ * correspondence at a call site is how three vocabularies drift into
+ * disagreeing, and the disagreement surfaces months later as a building that
+ * cannot be filtered or a unit generator producing the wrong default.
+ *
+ * `propertyType` is what the legacy card would have called this structure,
+ * which is what the backfill reads to decide which cards become buildings.
+ * `defaultUnitType` is what a generated unit is unless the officer says
+ * otherwise — a default, never a constraint: a ground-floor محل in a
+ * residential block is entirely ordinary, and is set per unit.
+ *
+ * `LAND` is absent because land has nothing standing on it and never gets a
+ * building; a land card stays a bare `PropertyEntry`.
+ */
+export const STRUCTURE_TYPE_MAP = {
+  RESIDENTIAL_BUILDING: { propertyType: 'BUILDING', defaultUnitType: 'APARTMENT' },
+  INDEPENDENT_HOUSE: { propertyType: 'HOUSE', defaultUnitType: 'INDEPENDENT_HOUSE' },
+  COMMERCIAL_CENTER: { propertyType: 'BUILDING', defaultUnitType: 'SHOP' },
+  WAREHOUSE_HANGAR: { propertyType: 'BUILDING', defaultUnitType: 'WAREHOUSE' },
+  MIXED_USE: { propertyType: 'BUILDING', defaultUnitType: 'APARTMENT' },
+  TENT_SHELTER: { propertyType: 'TENT', defaultUnitType: 'INDEPENDENT_HOUSE' },
+} as const satisfies Record<
+  StructureType,
+  { propertyType: PropertyType; defaultUnitType: UnitType }
+>;
+
+/**
+ * The structure a legacy property card describes, or null when it describes no
+ * structure at all.
+ *
+ * `LAND` and `TENT` both return null, for different reasons arriving at the
+ * same place: land has nothing standing on it, and a tent card is not a mapped
+ * settlement — see `TENT_SHELTER` above. Anything backfilling or migrating
+ * cards reads this rather than testing `propertyType` for itself.
+ */
+export function structureTypeForProperty(
+  propertyType: string | null | undefined,
+): StructureType | null {
+  if (propertyType === 'BUILDING') return 'RESIDENTIAL_BUILDING';
+  if (propertyType === 'HOUSE') return 'INDEPENDENT_HOUSE';
+  return null;
+}
+
 /*
  * `REPORT_STATUS` / `reportStatusSchema` / `ReportStatus` were here.
  *

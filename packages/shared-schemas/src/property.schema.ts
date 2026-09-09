@@ -161,6 +161,35 @@ export const buildingUnitsSchema = z
   .min(1, 'يجب إضافة وحدة واحدة على الأقل')
   .max(60, 'عدد الوحدات كبير جداً — يرجى مراجعة البلدية');
 
+/**
+ * The same unit with nothing required — the coercion shape, not a second
+ * rulebook.
+ *
+ * Stands to `buildingUnitSchema` exactly as `partialPropertyEntrySchema` stands
+ * to `propertyEntrySchema`, and exists for the same reason one level further
+ * down: a card carrying a per-unit «غير مؤكَّد» flag has had that field blanked
+ * before anything is parsed, so the strict unit schema would refuse to *shape*
+ * a record its own strict pass had already (correctly) accepted. Without it a
+ * flag on `properties.0.units.9.unitArea` passes validation and then throws in
+ * `shapeSubmission`, which is the worst of the three possible outcomes.
+ *
+ * The element rules are the identical field constants either way; what is
+ * dropped is only the requiredness the flag has accounted for.
+ */
+export const partialBuildingUnitSchema = buildingUnitSchema.partial();
+
+/**
+ * No `min(1)` here, and that is not a loosening.
+ *
+ * "At least one unit" is a rule about whether a مبنى card is acceptable, which
+ * the strict pass has already settled — either the card had units, or the
+ * officer flagged the whole array and said why. Re-asserting it on the
+ * coercion pass could only ever fail a record that was already accepted.
+ */
+export const partialBuildingUnitsSchema = z
+  .array(partialBuildingUnitSchema)
+  .max(60, 'عدد الوحدات كبير جداً — يرجى مراجعة البلدية');
+
 const propertyBranch = z.discriminatedUnion(
   'propertyType',
   [
@@ -265,7 +294,7 @@ export const partialPropertyEntrySchema = z
     shares: sharesField,
     sharedRights: sharedRightsField,
     unitStatus: unitStatusSchema,
-    units: buildingUnitsSchema,
+    units: partialBuildingUnitsSchema,
   })
   .partial()
   /**

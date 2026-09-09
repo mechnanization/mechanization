@@ -167,6 +167,9 @@ model User {
   recordedInspectorPayouts InspectorPayout[] @relation("RecordedInspectorPayouts")
   createdCases          Case[]               @relation("CaseCreatedBy")
   resolvedCases         Case[]               @relation("CaseResolvedCitizen")
+  unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
+  damageAssessments     DamageAssessment[]   @relation("DamageAssessedBy")
+  buildingsCreated      Building[]           @relation("BuildingCreatedBy")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -281,8 +284,20 @@ model Registration {
   submittedAt DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  properties PropertyEntry[]
-  documents  Document[]
+  /// «سبب عام لنقص البيانات» — one reason the officer states once, used to fill
+  /// in each individual field flag's reason where they did not write a specific
+  /// one.
+  ///
+  /// It does not replace the per-field flags and must never be allowed to: a
+  /// single sentence attached to a record with thirty gaps leaves the reviewer
+  /// with nothing to act on, whereas thirty flags each carrying that sentence
+  /// still says exactly which fields are missing. It is a default, applied
+  /// field by field and overridable field by field.
+  blanketFlagReason String?
+
+  properties      PropertyEntry[]
+  documents       Document[]
+  unitOccupancies UnitOccupancy[]
 
   @@index([status, submittedAt])
   @@index([citizenId])
@@ -398,12 +413,23 @@ model PropertyEntry {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// Optional link to the canonical structure this card describes.
+  ///
+  /// Nullable through the whole transition and beyond it: a LAND or TENT card
+  /// has no building and never gets one, and a card filed before its parcel was
+  /// ever surveyed has nothing to point at yet. `SetNull` rather than `Cascade`
+  /// — deleting a building must never delete a citizen's own record of what
+  /// they filed.
+  buildingId String?   @db.Uuid
+  building   Building? @relation(fields: [buildingId], references: [id], onDelete: SetNull)
+
   documents Document[]
   units     BuildingUnit[]
 
   @@index([propertyType])
   @@index([propertyNumber])
   @@index([latitude, longitude])
+  @@index([buildingId])
   @@map("property_entries")
 }
 
@@ -426,10 +452,21 @@ model BuildingUnit {
   /// Set by the building's owner, unit by unit. Null on a tenant's own card.
   unitStatus   UnitStatus?
 
+  /// The canonical unit this line describes, once one is known.
+  ///
+  /// The bridge, not a replacement: this row stays the citizen's own statement
+  /// about the flat they filed and is still what billing reads (see the
+  /// authority rule in `backfill-buildings.ts`). The link is what lets two
+  /// cards — a landlord's and their tenant's — be recognised as describing one
+  /// flat, which no amount of matching on `buildingName` and `floor` could do.
+  unitId String? @db.Uuid
+  unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([propertyEntryId])
+  @@index([unitId])
   @@map("building_units")
 }
 
@@ -465,6 +502,21 @@ model Parcel {
   /// survey split this parcel, so the point is an approximation of a shape that
   /// is not contiguous.
   pointCount Int @default(1)
+
+  /// The parcel outline as a GeoJSON geometry — `{ "type": "Polygon",
+  /// "coordinates": [...] }` — copied from the `parcel-polygons.geojson` the
+  /// cadastre import already derives by face-tracing the survey's line layers.
+  ///
+  /// Stored here as well as in the static asset because the two answer
+  /// different questions. The asset is cartography the browser draws; this is
+  /// what lets the *server* answer "is this pin inside this parcel?" when a
+  /// field officer drops a building's entrance, without shipping 1,700 polygons
+  /// to it to find out.
+  ///
+  /// Null for the parcels face-tracing could not close — roughly 1.5% of
+  /// albazourieh's. Null means "we do not know this outline", never "this
+  /// parcel has no area", and nothing may read it as a containment failure.
+  boundary Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -514,12 +566,320 @@ model Zone {
   @@map("zones")
 }
 
+// ─────────────────────────  Building census  ─────────────────────────
+//
+// A building had no existence in this schema. The chain was
+// `BuildingUnit → PropertyEntry → Registration → User`, cascading on delete,
+// which means a building was a free-text `buildingName` on one citizen's
+// property card — and an apartment nobody had surveyed was not a row at all.
+// You cannot colour, count or filter an absence, so "which flats in this town
+// have we still not reached" was a question with no query behind it.
+//
+// These four tables are that missing half. They are the *structure's* record,
+// created before anyone is surveyed and independent of every registration;
+// `PropertyEntry` stays the *citizen's* record of what they filed. Both remain,
+// linked but not merged. See docs/building-census-plan.md §3.
+
+/// What physically stands on a parcel. Mapped to the legacy PropertyType and to
+/// a default UnitType by `STRUCTURE_TYPE_MAP` in shared-schemas — never by hand
+/// at a call site.
+enum StructureType {
+  RESIDENTIAL_BUILDING
+  INDEPENDENT_HOUSE
+  COMMERCIAL_CENTER
+  WAREHOUSE_HANGAR
+  MIXED_USE
+  /// A deliberately mapped settlement or shelter cluster — *not* what an
+  /// ordinary خيمة card becomes. Tents have no permanent footprint and move by
+  /// season; minting a building shell for each would corrupt every density and
+  /// structural-inventory figure the census exists to produce.
+  TENT_SHELTER
+}
+
+/// Per-unit survey progress. `NOT_SURVEYED` and `VISITED_NO_ANSWER` are the two
+/// this whole table exists to distinguish: never attempted, against three
+/// officers who stood at the door and got no answer. The building-level figure
+/// is a rollup of these, and it takes the *worst* status, never the majority —
+/// an unsurveyed flat must not hide behind eleven surveyed ones.
+enum SurveyStatus {
+  NOT_SURVEYED
+  VISITED_NO_ANSWER
+  PARTIAL
+  COMPLETE
+  REFUSED
+  INACCESSIBLE
+  VACANT_CONFIRMED
+  DEMOLISHED
+}
+
+/// UN-Habitat's rapid building-level damage scale, verbatim — already the
+/// vocabulary of the Beirut Municipality and Bourj Hammoud assessments, so
+/// these figures aggregate with the national reconstruction datasets.
+///
+/// `UNDER_CONSTRUCTION` is deliberately not here: it is a lifecycle state and
+/// lives in `UnitStatus`. Admitting it would overwrite a building's damage
+/// history with a fact about its building permit.
+enum DamageLevel {
+  NOT_AFFECTED
+  SAFE_MINOR_DAMAGE
+  RESTRICTED_USE
+  UNSAFE_EVACUATE
+  TOTAL_COLLAPSE
+  UNCLASSIFIED
+}
+
+/// Where a damage reading came from, and so how far to trust it. A satellite
+/// level and an engineer's site visit disagreeing about one building is
+/// ordinary and is information — not a conflict to resolve by overwriting.
+enum DamageSource {
+  FIELD_VISIT
+  SATELLITE
+  SELF_REPORTED
+  OFFICIAL_REPORT
+}
+
+/// Why a visit did not become a registration. There is no `WAR_DAMAGE` value: a
+/// حالة is a *failed visit* and damage is a *fact about a structure*, and
+/// merging them leaves "resolved" with no answer — revisited, or repaired?
+enum CaseType {
+  UNIT_UNREACHABLE
+  ACCESS_REFUSED
+  VACANT_UNCONFIRMED
+  OWNERSHIP_DISPUTE
+  GENERAL_NOTE
+}
+
+/// A person's relationship to a canonical unit. The same three values as
+/// `OccupancyType` and deliberately a separate enum: that one is a field on a
+/// citizen's property card and needs a registration behind it, this one is a
+/// row on the unit matrix and routinely precedes one.
+enum OccupancyRole {
+  OWNER
+  TENANT
+  FREE_OCCUPANT
+}
+
+/// One physical structure standing on a parcel.
+///
+/// Exists independently of any citizen or registration: the municipality
+/// creates the shell first and surveys the units inside it afterwards. That is
+/// what makes an unsurveyed apartment a row which can be counted, coloured and
+/// filtered rather than an absence.
+model Building {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// رقم العقار this building stands on. A string and not an FK, for exactly
+  /// the reason `Zone.parcelNumbers` is: `cadastre:import` rebuilds the parcel
+  /// table wholesale, and a routine survey correction must not cascade a
+  /// municipality's buildings away.
+  parcelNumber String
+
+  /// The durable half of the code — the per-parcel suffix alone, e.g. "A".
+  /// Allocated in order of first creation on the parcel, skipping I and O
+  /// (they read as 1 and 0 painted on a wall). Never changes once assigned.
+  codeSuffix String
+
+  /// Denormalised display code, `ZONE-PARCEL-SUFFIX` — "A-1042-B". DERIVED:
+  /// recomputed whenever the parcel's zone changes or a zone is renamed. Never
+  /// identity — the UUID above is the identity.
+  code String @unique
+
+  /// What residents call it — «بناية النور». Free text, optional.
+  name String?
+
+  /// What is actually painted on the building. May disagree with `code`; when
+  /// it does the collector standing in the street trusts this one, so both are
+  /// printed on notices.
+  postedNumber String?
+
+  structureType StructureType
+
+  /// The entrance, not the centroid — this is the dot a collector navigates to.
+  /// Nullable because a building may be created from a desk before anyone has
+  /// stood at its door.
+  latitude  Float?
+  longitude Float?
+
+  floorsCount Int @default(1)
+
+  /// Maintained by the `sync_building_unit_counts` trigger in migration 0030,
+  /// so the map can style off them without an N+1 count per pin. Never written
+  /// by application code — the trigger is the only writer.
+  unitsTotal    Int @default(0)
+  unitsSurveyed Int @default(0)
+
+  notes String?
+
+  createdById String? @db.Uuid
+  createdBy   User?   @relation("BuildingCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  units             Unit[]
+  cases             Case[]
+  damageAssessments DamageAssessment[]
+  propertyEntries   PropertyEntry[]
+
+  @@unique([parcelNumber, codeSuffix])
+  @@index([parcelNumber])
+  @@index([latitude, longitude])
+  @@map("buildings")
+}
+
+/// One canonical unit inside a building — شقة, محل, عيادة.
+///
+/// The unit exists whether or not anyone has been surveyed in it, and that is
+/// the entire point: a flat nobody answered is a row with `surveyStatus =
+/// NOT_SURVEYED` and no occupancy, which the map can colour and the cases page
+/// can filter. Before this table it was nothing at all.
+///
+/// Distinct from `BuildingUnit`, which stays exactly as it is: that one is a
+/// line on one citizen's property card and is still what billing reads. This
+/// one is the municipality's own record of the flat, and the two are linked by
+/// `BuildingUnit.unitId` rather than merged.
+model Unit {
+  id         String   @id @default(uuid()) @db.Uuid
+  buildingId String   @db.Uuid
+  building   Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+
+  /// Signed: basement negative, ground 0, first floor 1. An Int and not the
+  /// legacy `String`, which holds «الأرضي», «ground», «G» and «0» for the same
+  /// floor and can therefore be neither sorted nor counted. `parseFloorLabel`
+  /// in shared-schemas is the one-way door between the two.
+  floor Int
+
+  /// Position within the floor, 1-based. `floor` and `sequence` are the durable
+  /// pair; `unitCode` below is derived from them.
+  sequence Int
+
+  /// Derived display code, floor-based: floor 3 unit 4 is "0304", basement 1
+  /// unit 2 is "B102". Self-describing — a collector on foot reads the floor
+  /// off the code without opening the app.
+  unitCode String
+
+  /// What is actually on the door, if it differs. See `Building.postedNumber`.
+  postedNumber String?
+
+  unitType UnitType
+
+  /// Orientation — يمين / يسار / أمامي. Free text, matching the existing `side`.
+  side String?
+
+  unitArea Decimal? @db.Decimal(12, 2)
+
+  /// حالة الوحدة — reuses the existing enum, with its existing rule: null still
+  /// means "nobody was asked", and is still billed. See `isUnoccupied`.
+  unitStatus UnitStatus?
+
+  surveyStatus SurveyStatus @default(NOT_SURVEYED)
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  occupancies       UnitOccupancy[]
+  cases             Case[]
+  damageAssessments DamageAssessment[]
+  buildingUnits     BuildingUnit[]
+
+  @@unique([buildingId, floor, sequence])
+  @@index([buildingId])
+  @@index([surveyStatus])
+  @@map("units")
+}
+
+/// Who is in a unit, in what capacity, and when.
+///
+/// A join table rather than two FK columns on the unit, because a flat
+/// routinely has an owner abroad, a tenant living in it and two co-heirs on the
+/// deed — Lebanese inheritance makes multi-owner the normal case, not the
+/// exception. And because a previous tenant is information the municipality
+/// needs, not history to overwrite.
+model UnitOccupancy {
+  id     String @id @default(uuid()) @db.Uuid
+  unitId String @db.Uuid
+  unit   Unit   @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  citizenId String @db.Uuid
+  citizen   User   @relation("UnitOccupant", fields: [citizenId], references: [id], onDelete: Cascade)
+
+  role OccupancyRole
+
+  /// أسهم out of 2400, OWNER rows only — mirrors `PropertyEntry.shares`.
+  shares Int?
+
+  /// Null `toDate` means current. A superseded occupancy keeps its dates rather
+  /// than being deleted.
+  fromDate DateTime  @default(now())
+  toDate   DateTime?
+
+  /// The registration this occupancy was established by, when there is one.
+  /// Null for an occupancy recorded straight onto the unit matrix before the
+  /// citizen's full file exists — which is the ordinary case in the field.
+  registrationId String?       @db.Uuid
+  registration   Registration? @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([unitId])
+  @@index([citizenId])
+  @@index([unitId, toDate])
+  @@map("unit_occupancies")
+}
+
+/// One observation of a structure's condition at a point in time.
+///
+/// Append-only: the current level is the latest row, and a building repaired in
+/// 2026 keeps the row saying it was unsafe in 2024. An overwritten enum column
+/// would have destroyed exactly the history a reconstruction file is made of.
+///
+/// Attaches to a Building, or to a Unit for the "top three floors gone, ground
+/// floor shop still trading" case. Exactly one of the two is set — enforced by
+/// a CHECK constraint in migration 0030, which Prisma's schema language cannot
+/// express.
+model DamageAssessment {
+  id String @id @default(uuid()) @db.Uuid
+
+  buildingId String?   @db.Uuid
+  building   Building? @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+
+  unitId String? @db.Uuid
+  unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  level  DamageLevel
+  source DamageSource @default(FIELD_VISIT)
+
+  /// Free text — what was actually seen. «الطابق الرابع مهدوم، الدرج غير سالك».
+  observations String?
+
+  assessedAt DateTime @default(now())
+
+  assessedById String? @db.Uuid
+  assessedBy   User?   @relation("DamageAssessedBy", fields: [assessedById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  cases Case[]
+
+  @@index([buildingId, assessedAt])
+  @@index([unitId, assessedAt])
+  @@index([level])
+  @@map("damage_assessments")
+}
+
 /// OPEN still needs a revisit; RESOLVED means staff consider the situation
 /// settled (a citizen was registered there, or the site is confirmed
 /// permanently vacant/inaccessible). Resolving is a staff judgment call, not
 /// a derived fact — nothing here links back to a citizen record.
 enum CaseStatus {
   OPEN
+  /// A revisit date has been agreed — see `Case.scheduledRevisitAt`. Neither
+  /// open work waiting to be picked up nor settled; without it every dispatch
+  /// list re-proposed a visit that was already arranged.
+  SCHEDULED
   RESOLVED
 }
 
@@ -568,6 +928,37 @@ model Case {
   resolvedCitizen   User?     @relation("CaseResolvedCitizen", fields: [resolvedCitizenId], references: [id], onDelete: SetNull)
   resolvedAt        DateTime?
 
+  /// Why the visit did not complete. Defaulted to `GENERAL_NOTE` so every case
+  /// logged before this column existed keeps meaning exactly what it did — a
+  /// note from the doorstep — rather than being retroactively classified as
+  /// something nobody wrote down.
+  caseType CaseType @default(GENERAL_NOTE)
+
+  /// Which structure, and which unit inside it, this case is about.
+  ///
+  /// The free-text `buildingName`/`floor` above stay: they are what the officer
+  /// actually wrote, and on a parcel with no surveyed buildings they are all
+  /// there is. These two are the resolved form, set once the case can be
+  /// attached to a row — which is what makes "every open case in this building"
+  /// a query instead of a string search.
+  buildingId String?   @db.Uuid
+  building   Building? @relation(fields: [buildingId], references: [id], onDelete: SetNull)
+
+  unitId String? @db.Uuid
+  unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  /// The damage reading that prompted this case, when one did.
+  ///
+  /// A reference and not ownership: resolving the case says nothing at all
+  /// about the damage, and the assessment outlives it. This is the link that
+  /// exists *instead of* a `WAR_DAMAGE` case type — see the `CaseType` comment.
+  damageAssessmentId String?           @db.Uuid
+  damageAssessment   DamageAssessment? @relation(fields: [damageAssessmentId], references: [id], onDelete: SetNull)
+
+  /// When someone has agreed to go back. Meaningful with `SCHEDULED`; null
+  /// under `OPEN` simply means the revisit has not been arranged yet.
+  scheduledRevisitAt DateTime?
+
   createdById String? @db.Uuid
   createdBy   User?   @relation("CaseCreatedBy", fields: [createdById], references: [id])
 
@@ -579,6 +970,9 @@ model Case {
   /// Declared so Prisma knows about the index 0029 created; without it a later
   /// `migrate dev` reads the index as drift and proposes dropping it.
   @@index([resolvedCitizenId])
+  @@index([caseType])
+  @@index([buildingId])
+  @@index([unitId])
   @@map("cases")
 }
 

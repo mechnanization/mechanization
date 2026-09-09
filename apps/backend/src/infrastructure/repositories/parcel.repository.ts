@@ -74,7 +74,13 @@ export class PrismaParcelRepository implements ParcelRepository {
   }
 
   async replaceAll(
-    parcels: readonly { parcelNumber: string; latitude: number; longitude: number; pointCount: number }[],
+    parcels: readonly {
+      parcelNumber: string;
+      latitude: number;
+      longitude: number;
+      pointCount: number;
+      boundary?: unknown;
+    }[],
   ): Promise<void> {
     await this.db.$transaction([
       this.db.parcel.deleteMany({}),
