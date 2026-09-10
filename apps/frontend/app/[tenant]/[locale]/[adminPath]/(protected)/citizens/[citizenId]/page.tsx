@@ -522,6 +522,7 @@ export default function CitizenProfilePage({
         canManage={canManage}
         municipalityName={municipalityName}
         governorate={settings?.governorate}
+        councilDecisionRef={settings?.councilDecisionRef}
         district={settings?.district}
         contactPhone={settings?.contactPhone}
         officeWhatsapp={settings?.whatsappNumber}
@@ -683,6 +684,7 @@ function FeesPanel({
   canManage,
   municipalityName,
   governorate,
+  councilDecisionRef,
   district,
   contactPhone,
   officeWhatsapp,
@@ -695,6 +697,7 @@ function FeesPanel({
   canManage: boolean;
   municipalityName: string;
   governorate?: string | null;
+  councilDecisionRef?: string | null;
   district?: string | null;
   contactPhone?: string | null;
   officeWhatsapp?: string | null;
@@ -922,6 +925,7 @@ function FeesPanel({
         receivedAmount={receipt?.received}
         municipalityName={municipalityName}
         governorate={governorate}
+        councilDecisionRef={councilDecisionRef}
         district={district}
         contactPhone={contactPhone}
         officeWhatsapp={officeWhatsapp}
@@ -988,6 +992,21 @@ function PropertyCard({
       icon: Building2,
       label: locale === 'en' ? 'Building Name' : 'اسم المبنى',
       value: property.buildingName,
+    },
+    /*
+      The censused structure this card is attached to.
+
+      `buildingCode` has been on the profile since P4-T4 and this screen showed
+      `buildingName` instead — a free-text string that looks identical whether
+      the card is linked to the register or not. An officer looking at a card
+      they had just registered into a specific flat had no way to tell it had
+      worked, which is exactly the doubt that sends someone to re-enter it.
+    */
+    {
+      icon: Building2,
+      label: locale === 'en' ? 'Census Record' : 'سجل المباني',
+      value: property.buildingCode,
+      ltr: true,
     },
     {
       icon: Trees,

@@ -3,12 +3,15 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   formatBuildingCode,
   formatUnitCode,
+  isOccupiableLifecycle,
   nextBuildingSuffix,
+  OCCUPIABLE_LIFECYCLE,
   STRUCTURE_TYPE_MAP,
   SURVEYED_STATUS,
   type CreateBuildingInput,
   type StructureType,
   type UnitBlueprint,
+  type LogVisitInput,
   type UpdateBuildingInput,
   type UpdateUnitInput,
   type UpsertOccupancyInput,
@@ -16,15 +19,19 @@ import {
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { CasesService } from '../cases/cases.service';
 import type {
+  BuildingLedgerRow,
   BuildingListFilter,
   BuildingMapPin,
   BuildingRow,
+  CensusSummary,
   OccupancyRow,
   UnitRow,
+  VisitRow,
 } from './building.types';
 
 /**
@@ -40,13 +47,44 @@ import type {
 const MAX_GENERATED_UNITS = 400;
 
 /**
+ * What «متضرر» counts as on the census tiles.
+ *
+ * The three levels that mean the structure's use is impaired. `NOT_AFFECTED`
+ * and `SAFE_MINOR_DAMAGE` are assessments that found no impairment — counting
+ * them would make the damaged figure rise every time an officer confirmed a
+ * building was fine — and `UNCLASSIFIED` is an absence of a finding, not one.
+ */
+/**
+ * How many of a unit's attempts travel with the matrix.
+ *
+ * The cell shows a count, and the panel under it shows the recent ones. A unit
+ * somebody has been to twenty times is real and its count says twenty; putting
+ * all twenty rows into every read of a forty-flat building is not.
+ */
+const MAX_VISITS_RETURNED = 10;
+
+const DAMAGED_LEVELS: readonly string[] = [
+  'RESTRICTED_USE',
+  'UNSAFE_EVACUATE',
+  'TOTAL_COLLAPSE',
+];
+
+/**
  * A building with its units, as the matrix drawer reads it.
  */
 export interface BuildingDetail extends BuildingRow {
   /** The zone this building's parcel belongs to, resolved at read time (D13). */
   zoneCode: string | null;
   zoneName: string | null;
-  units: Array<UnitRow & { occupants: OccupancyRow[] }>;
+  units: Array<
+    UnitRow & {
+      occupants: OccupancyRow[];
+      /** The most recent attempts, newest first — capped at `MAX_VISITS_RETURNED`. */
+      visits: VisitRow[];
+      /** Every attempt ever made, uncapped. This is «٣ محاولات» on the cell. */
+      visitCount: number;
+    }
+  >;
 }
 
 @Injectable()
@@ -72,7 +110,8 @@ export class BuildingsService {
       | 'BUILDING_CODE_RECOMPUTED'
       | 'UNIT_UPDATED'
       | 'OCCUPANCY_RECORDED'
-      | 'OCCUPANCY_ENDED';
+      | 'OCCUPANCY_ENDED'
+      | 'UNIT_VISIT_LOGGED';
     buildingId: string;
     before?: Record<string, unknown>;
     after?: Record<string, unknown>;
@@ -98,11 +137,38 @@ export class BuildingsService {
    * on any assessment ever recorded, which is what makes "show me the unsafe
    * buildings" mean the buildings that are unsafe now rather than the ones that
    * were unsafe in 2024 and have since been repaired.
+   *
+   * The filter is resolved into the `WHERE` rather than applied to the page it
+   * returns. Applied afterwards it would filter *within* the page — a page of a
+   * hundred buildings of which four are unsafe would show four rows out of a
+   * stated total in the thousands, and page two would show four different ones
+   * out of the same total. `summary` is computed over the same predicate, so
+   * the tiles and the rows can never describe different sets.
    */
-  async list(filter: BuildingListFilter): Promise<{ buildings: BuildingRow[]; total: number }> {
+  async list(
+    filter: BuildingListFilter,
+  ): Promise<{ buildings: BuildingLedgerRow[]; total: number; summary: CensusSummary }> {
     const where = await this.buildWhere(filter);
 
-    const [rows, total] = await withConnectionRetry(() =>
+    /*
+      The unit figures count only the structures that can hold households.
+
+      A permitted plot, a shell going up, a demolished block and a permit
+      nobody built against all have units in the matrix and no doors to knock
+      on. Left in the denominator they are permanent unreachable work: the
+      «غير ممسوحة» tile never falls, the coverage percentage never reaches
+      100, and a dispatch list keeps proposing visits nobody can make.
+
+      The building *count* deliberately stays over the whole filtered set —
+      «٤٠ مبنى» must mean what the ledger below it lists — and the units the
+      exclusion removed are reported separately rather than silently dropped,
+      so a percentage that looks too good can be explained on the same screen.
+    */
+    const occupiableWhere: Prisma.BuildingWhereInput = {
+      AND: [where, { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never } }],
+    };
+
+    const [rows, total, totals, allTotals, damaged] = await withConnectionRetry(() =>
       Promise.all([
         this.db.building.findMany({
           where,
@@ -111,17 +177,110 @@ export class BuildingsService {
           skip: filter.offset ?? 0,
         }),
         this.db.building.count({ where }),
+        this.db.building.aggregate({
+          where: occupiableWhere,
+          _sum: { unitsTotal: true, unitsSurveyed: true },
+        }),
+        this.db.building.aggregate({ where, _sum: { unitsTotal: true } }),
+        this.countAtDamageLevels(where, DAMAGED_LEVELS),
       ]),
     );
 
-    let buildings = rows.map(toBuildingRow);
+    const ids = rows.map((row) => row.id);
+    const [zoneOf, damageOf] = await Promise.all([
+      this.zonesOfParcels(rows.map((row) => row.parcelNumber)),
+      this.currentDamageLevels(ids),
+    ]);
 
-    if (filter.damageLevel) {
-      const current = await this.currentDamageLevels(buildings.map((b) => b.id));
-      buildings = buildings.filter((b) => current.get(b.id) === filter.damageLevel);
-    }
+    const unitsTotal = totals._sum.unitsTotal ?? 0;
+    const unitsSurveyed = totals._sum.unitsSurveyed ?? 0;
 
-    return { buildings, total };
+    return {
+      buildings: rows.map((row) => {
+        const zone = zoneOf.get(row.parcelNumber);
+        return {
+          ...toBuildingRow(row),
+          zoneCode: zone?.code ?? null,
+          zoneName: zone?.name ?? null,
+          damageLevel: damageOf.get(row.id) ?? null,
+        };
+      }),
+      total,
+      summary: {
+        buildings: total,
+        unitsTotal,
+        unitsSurveyed,
+        unitsUnsurveyed: Math.max(0, unitsTotal - unitsSurveyed),
+        unitsOutOfScope: Math.max(0, (allTotals._sum.unitsTotal ?? 0) - unitsTotal),
+        damaged,
+      },
+    };
+  }
+
+  /**
+   * How many of the filtered buildings currently sit at one of these levels.
+   *
+   * Two steps rather than a join, because "current" is the newest row of an
+   * append-only log and the filter it has to compose with is a Prisma
+   * predicate: the ids are resolved first, then counted *inside* the caller's
+   * own `where`, so a zone or a search term still narrows the number.
+   */
+  private async countAtDamageLevels(
+    where: Prisma.BuildingWhereInput,
+    levels: readonly string[],
+  ): Promise<number> {
+    const ids = await this.buildingIdsAtCurrentLevel(levels);
+    if (ids.length === 0) return 0;
+    return this.db.building.count({ where: { AND: [where, { id: { in: ids } }] } });
+  }
+
+  /**
+   * Every building whose *latest* assessment reads one of these levels.
+   *
+   * Built out of `currentDamageLevels` rather than as a query of its own, and
+   * deliberately: "the current level" is a `DISTINCT ON` over an append-only log
+   * unioned across two ways of pointing at a building, and that query already
+   * exists and is already covered against a real Postgres. A second hand-written
+   * copy of it here is the shape of a bug that no unit test would catch — the
+   * two would agree until somebody changed one of them, and the one that then
+   * lied is the one a damage figure is read off.
+   *
+   * The cost is one extra round trip to collect the candidates. It is bounded by
+   * the number of buildings anyone has *assessed*, not by the census, and
+   * `mapPins` already resolves current levels for up to ten thousand at once.
+   */
+  private async buildingIdsAtCurrentLevel(levels: readonly string[]): Promise<string[]> {
+    if (levels.length === 0) return [];
+
+    const [direct, viaUnit] = await Promise.all([
+      this.db.damageAssessment.findMany({
+        where: { buildingId: { not: null } },
+        select: { buildingId: true },
+        distinct: ['buildingId'],
+      }),
+      // A unit-level reading is an observation about the structure the unit is
+      // in — "top three floors gone, ground floor shop still trading" is two
+      // rows about one building — so those buildings are candidates too.
+      this.db.damageAssessment.findMany({
+        where: { unitId: { not: null } },
+        select: { unit: { select: { buildingId: true } } },
+        distinct: ['unitId'],
+      }),
+    ]);
+
+    const candidates = [
+      ...new Set([
+        ...direct.map((row) => row.buildingId).filter((id): id is string => Boolean(id)),
+        ...viaUnit.map((row) => row.unit?.buildingId).filter((id): id is string => Boolean(id)),
+      ]),
+    ];
+    if (candidates.length === 0) return [];
+
+    const wanted = new Set(levels);
+    const current = await this.currentDamageLevels(candidates);
+    return [...current.entries()]
+      .filter(([, level]) => wanted.has(level))
+      .map(([buildingId]) => buildingId);
   }
 
   private async buildWhere(filter: BuildingListFilter): Promise<Prisma.BuildingWhereInput> {
@@ -130,6 +289,31 @@ export class BuildingsService {
     if (filter.parcelNumber) where.parcelNumber = filter.parcelNumber.trim();
     if (filter.parcelNumbers) where.parcelNumber = { in: [...filter.parcelNumbers] };
     if (filter.structureType) where.structureType = filter.structureType as never;
+    if (filter.lifecycleStatus) where.lifecycleStatus = filter.lifecycleStatus as never;
+
+    /*
+      A sector filter, expanded to the parcels the sector owns.
+
+      There is no column to filter on — D13 keeps membership in
+      `Zone.parcelNumbers` so it cannot drift — so the expansion happens here.
+      A sector that owns no parcels resolves to an empty list and therefore
+      matches nothing, which is the true answer: "buildings in a sector with no
+      parcels" is none of them, not all of them.
+
+      ANDed rather than assigned, so it narrows an explicit `parcelNumber`
+      instead of replacing it — a parcel outside the chosen sector then yields
+      nothing, which is what composing the two filters means.
+    */
+    if (filter.zoneId) {
+      const zone = await this.db.zone.findUnique({
+        where: { id: filter.zoneId },
+        select: { parcelNumbers: true },
+      });
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : []),
+        { parcelNumber: { in: zone?.parcelNumbers ?? [] } },
+      ];
+    }
 
     /*
       A survey-status filter asks about the *building*, and a building has no
@@ -147,6 +331,24 @@ export class BuildingsService {
         filter.surveyStatus === 'NOT_SURVEYED'
           ? [{ units: { some: { surveyStatus: 'NOT_SURVEYED' } } }, { units: { none: {} } }]
           : [{ units: { some: { surveyStatus: filter.surveyStatus as never } } }];
+    }
+
+    /*
+      The current damage level, resolved to a set of ids.
+
+      In the `WHERE` rather than applied to the page that comes back, which is
+      what it used to be. Applied afterwards it filtered *within* the page: a
+      page of a hundred buildings of which four were unsafe showed four rows
+      under a stated total in the thousands, and page two showed four different
+      ones under the same number.
+
+      "Current" means the newest row of an append-only log, so it cannot be a
+      column predicate — see `buildingIdsAtCurrentLevel`. An empty result
+      correctly matches nothing.
+    */
+    if (filter.damageLevel) {
+      const ids = await this.buildingIdsAtCurrentLevel([filter.damageLevel]);
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { id: { in: ids } }];
     }
 
     if (filter.search) {
@@ -182,6 +384,21 @@ export class BuildingsService {
                 orderBy: [{ toDate: 'asc' }, { fromDate: 'desc' }],
                 include: { citizen: { select: { firstName: true, lastName: true } } },
               },
+              /*
+                The attempts behind the status (D10).
+
+                Newest first, and capped: a cell shows «٣ محاولات» and the panel
+                under it shows the last few, so a unit somebody has been to
+                twenty times must not put twenty rows into every matrix read.
+                The count on the cell is `_count`, which is not capped and is
+                the number that matters.
+              */
+              visits: {
+                orderBy: [{ visitedAt: 'desc' }],
+                take: MAX_VISITS_RETURNED,
+                include: { officer: { select: { firstName: true, lastName: true } } },
+              },
+              _count: { select: { visits: true } },
             },
           },
         },
@@ -199,6 +416,8 @@ export class BuildingsService {
       units: row.units.map((unit) => ({
         ...toUnitRow(unit),
         occupants: unit.occupancies.map(toOccupancyRow),
+        visits: unit.visits.map(toVisitRow),
+        visitCount: unit._count.visits,
       })),
     };
   }
@@ -246,10 +465,91 @@ export class BuildingsService {
       return { building: toBuildingRow(existing), reconciled: false, deduplicated: true };
     }
 
+    /*
+      Is this a second structure, or the same one surveyed from the other side?
+
+      §4.4's advisory lock solves the *opposite* problem. It guarantees that two
+      officers standing on one parcel receive different suffixes — quietly,
+      correctly, and with nothing whatsoever to notice. Two people walking a
+      block from the street and from the alley therefore produce «A-1042-A» and
+      «A-1042-B» for one building, and every count, coverage figure and notice
+      run downstream of that is wrong in a way no constraint can catch.
+
+      Q5's clockwise sweep is the field convention that prevents it, and a
+      convention in a handbook is not a check. This is the check: on a parcel
+      that already carries a structure, the officer is shown what is there and
+      has to say that this is not one of them.
+
+      Refused rather than warned, and refused *before* the transaction, because
+      a warning attached to a row that already exists is a row somebody has to
+      go and delete. `acknowledgedDuplicates` is what a person ticks; an offline
+      client that showed the same list from its cache sets it too, so the guard
+      costs a phone with no signal nothing.
+    */
+    if (!input.acknowledgedDuplicates) {
+      const neighbours = await this.db.building.findMany({
+        where: { parcelNumber },
+        orderBy: { codeSuffix: 'asc' },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          postedNumber: true,
+          structureType: true,
+          lifecycleStatus: true,
+          unitsTotal: true,
+          latitude: true,
+          longitude: true,
+        },
+      });
+
+      if (neighbours.length > 0) {
+        throw new ConflictError(
+          `يوجد ${neighbours.length === 1 ? 'مبنى مسجَّل' : `${neighbours.length} مبانٍ مسجَّلة`} على العقار ${parcelNumber}. تأكَّد أن هذه منشأة مختلفة قبل المتابعة.`,
+          {
+            /*
+              The candidates travel with the refusal so the dialog can show
+              them without a second round trip — an officer offline enough to
+              have queued this creation may not get one.
+
+              `distanceMetres` is null where either pin is missing rather than
+              defaulted to zero: "we cannot tell how far apart these are" and
+              "they are in the same place" are opposite findings, and the
+              second is the one that would talk somebody out of a real building.
+            */
+            parcelNumber,
+            candidates: neighbours.map((row) => ({
+              ...row,
+              distanceMetres:
+                input.latitude != null &&
+                input.longitude != null &&
+                row.latitude != null &&
+                row.longitude != null
+                  ? Math.round(
+                      metresBetween(
+                        { latitude: input.latitude, longitude: input.longitude },
+                        { latitude: row.latitude, longitude: row.longitude },
+                      ),
+                    )
+                  : null,
+            })),
+          },
+        );
+      }
+    }
+
     const created = await this.db.$transaction(async (tx) => {
+      /*
+        The lock key names the schema explicitly, for the same reason the query
+        above does. `current_schema()` reads the connection's `search_path`, so
+        on a pooled connection that had drifted it would return `public` — and
+        every municipality's parcel 28 would serialise against every other's,
+        or worse, two officers on one parcel would take *different* locks and
+        the suffix race §4.4 exists to prevent would be back.
+      */
       await tx.$executeRawUnsafe(
-        'SELECT pg_advisory_xact_lock(hashtext(current_schema() || $1))',
-        `:building-suffix:${parcelNumber}`,
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+        `${this.tenantContext.schemaName}:building-suffix:${parcelNumber}`,
       );
 
       const taken = await tx.building.findMany({
@@ -268,6 +568,7 @@ export class BuildingsService {
           name: input.name?.trim() || null,
           postedNumber: input.postedNumber?.trim() || null,
           structureType: input.structureType as never,
+          lifecycleStatus: input.lifecycleStatus as never,
           latitude: input.latitude ?? null,
           longitude: input.longitude ?? null,
           floorsCount: input.floorsCount,
@@ -323,6 +624,9 @@ export class BuildingsService {
         ...(input.structureType !== undefined
           ? { structureType: input.structureType as never }
           : {}),
+        ...(input.lifecycleStatus !== undefined
+          ? { lifecycleStatus: input.lifecycleStatus as never }
+          : {}),
         ...(input.latitude !== undefined ? { latitude: input.latitude } : {}),
         ...(input.longitude !== undefined ? { longitude: input.longitude } : {}),
         ...(input.floorsCount !== undefined ? { floorsCount: input.floorsCount } : {}),
@@ -333,8 +637,19 @@ export class BuildingsService {
     this.record({
       action: 'BUILDING_UPDATED',
       buildingId: id,
-      before: { name: before.name, structureType: before.structureType },
-      after: { name: updated.name, structureType: updated.structureType },
+      // The lifecycle is logged on both sides because it is the one field here
+      // that moves a building in and out of the census denominator — a coverage
+      // percentage that jumped needs a row explaining which building did it.
+      before: {
+        name: before.name,
+        structureType: before.structureType,
+        lifecycleStatus: before.lifecycleStatus,
+      },
+      after: {
+        name: updated.name,
+        structureType: updated.structureType,
+        lifecycleStatus: updated.lifecycleStatus,
+      },
       actor,
     });
 
@@ -727,6 +1042,75 @@ export class BuildingsService {
     return toOccupancyRow(updated);
   }
 
+  // ──────────────────────────────  Visits  ──────────────────────────────
+
+  /**
+   * Logs one attempt, and moves the unit to what the attempt found.
+   *
+   * Two facts recorded by one action, deliberately. An officer who has just
+   * stood at a door knows both — that they went, and what happened — and asking
+   * them to say it twice is how the two drift apart: a unit reading «مكتملة»
+   * with no visit behind it, or three visits under a status nobody updated.
+   *
+   * The status is *set*, not merged, and that is the difference from
+   * `recordOccupancy`'s narrow lift. This is not a side effect of some other
+   * action — it is an officer stating a finding directly, and a finding
+   * replaces the previous one. `NOT_SURVEYED` is refused by the schema, so the
+   * one thing this cannot do is walk a unit backwards to "nobody has been".
+   */
+  async logVisit(
+    input: LogVisitInput,
+    actor: { id: string; role: string },
+  ): Promise<{ visit: VisitRow; visitCount: number }> {
+    const unit = await this.db.unit.findUnique({
+      where: { id: input.unitId },
+      select: { id: true, buildingId: true, unitCode: true, surveyStatus: true },
+    });
+    if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+
+    const [visit, visitCount] = await this.db.$transaction(async (tx) => {
+      const created = await tx.unitVisit.create({
+        data: {
+          unitId: input.unitId,
+          officerId: actor.id,
+          outcome: input.outcome as never,
+          ...(input.visitedAt ? { visitedAt: input.visitedAt } : {}),
+          notes: input.notes?.trim() || null,
+        },
+        include: { officer: { select: { firstName: true, lastName: true } } },
+      });
+
+      await tx.unit.update({
+        where: { id: input.unitId },
+        data: { surveyStatus: input.outcome as never },
+      });
+
+      return [created, await tx.unitVisit.count({ where: { unitId: input.unitId } })] as const;
+    });
+
+    this.record({
+      action: 'UNIT_VISIT_LOGGED',
+      buildingId: unit.buildingId,
+      before: { surveyStatus: unit.surveyStatus },
+      after: { unitCode: unit.unitCode, outcome: input.outcome, attempts: visitCount },
+      actor,
+    });
+
+    return { visit: toVisitRow(visit), visitCount };
+  }
+
+  /** Every attempt on one unit, newest first. The panel behind «٣ محاولات». */
+  async visits(unitId: string): Promise<VisitRow[]> {
+    const rows = await withConnectionRetry(() =>
+      this.db.unitVisit.findMany({
+        where: { unitId },
+        orderBy: [{ visitedAt: 'desc' }, { createdAt: 'desc' }],
+        include: { officer: { select: { firstName: true, lastName: true } } },
+      }),
+    );
+    return rows.map(toVisitRow);
+  }
+
   // ─────────────────────────────  Codes  ─────────────────────────────
 
   /**
@@ -828,22 +1212,66 @@ export class BuildingsService {
     */
     const ids = Prisma.join(buildingIds.map((id) => Prisma.sql`${id}::uuid`));
 
+    /*
+      Every table named with its schema — see `tenant-schema-ref.ts`.
+
+      This exact query is the one that failed in production-like conditions with
+      `relation "damage_assessments" does not exist`, on a table that exists,
+      because raw SQL resolves through `search_path` and the transaction pooler
+      does not promise to carry it.
+    */
+    const S = tenantSchemaRef(this.tenantContext.schemaName);
+
     const rows = await this.db.$queryRaw<Array<{ buildingId: string; level: string }>>`
       SELECT DISTINCT ON (t."buildingId") t."buildingId", t."level"
         FROM (
           SELECT d."buildingId", d."level", d."assessedAt"
-            FROM "damage_assessments" d
+            FROM ${S}"damage_assessments" d
            WHERE d."buildingId" IN (${ids})
           UNION ALL
           SELECT u."buildingId", d."level", d."assessedAt"
-            FROM "damage_assessments" d
-            JOIN "units" u ON u."id" = d."unitId"
+            FROM ${S}"damage_assessments" d
+            JOIN ${S}"units" u ON u."id" = d."unitId"
            WHERE u."buildingId" IN (${ids})
         ) t
        ORDER BY t."buildingId", t."assessedAt" DESC
     `;
 
     return new Map(rows.map((row) => [row.buildingId, row.level]));
+  }
+
+  /**
+   * Parcel → its sector, for a page of buildings at once.
+   *
+   * One read of the sector table rather than one per row: `Zone.parcelNumbers`
+   * is an array column, so "which sector owns parcel N" cannot be joined and a
+   * hundred-row ledger would otherwise be a hundred queries. There are a
+   * handful of sectors in a municipality, so reading them whole is cheaper than
+   * any of the alternatives.
+   */
+  private async zonesOfParcels(
+    parcelNumbers: readonly string[],
+  ): Promise<Map<string, { code: string; name: string }>> {
+    const resolved = new Map<string, { code: string; name: string }>();
+    if (parcelNumbers.length === 0) return resolved;
+
+    const wanted = new Set(parcelNumbers);
+    const zones = await this.db.zone.findMany({
+      select: { code: true, name: true, parcelNumbers: true },
+    });
+
+    for (const zone of zones) {
+      for (const parcelNumber of zone.parcelNumbers) {
+        // First sector wins, matching `zoneOfParcel`'s `findFirst`. A parcel in
+        // two sectors is a data error the zone editor already refuses; picking
+        // one consistently beats reporting it differently per screen.
+        if (wanted.has(parcelNumber) && !resolved.has(parcelNumber)) {
+          resolved.set(parcelNumber, { code: zone.code, name: zone.name });
+        }
+      }
+    }
+
+    return resolved;
   }
 
   private async zoneOfParcel(
@@ -890,6 +1318,7 @@ export class BuildingsService {
           longitude: true,
           parcelNumber: true,
           structureType: true,
+          lifecycleStatus: true,
           unitsTotal: true,
           unitsSurveyed: true,
         },
@@ -935,9 +1364,22 @@ export class BuildingsService {
       longitude: building.longitude!,
       parcelNumber: building.parcelNumber,
       structureType: building.structureType,
+      lifecycleStatus: building.lifecycleStatus,
       unitsTotal: building.unitsTotal,
       unitsSurveyed: building.unitsSurveyed,
-      surveyRollup: rollupOf(statuses.get(building.id) ?? []),
+      /*
+        A structure nobody can be inside has no survey rollup to show.
+
+        `rollupOf` would answer `NOT_SURVEYED` for a shell under construction —
+        truthfully, since its generated units are — and paint it the same
+        urgent grey as a finished block nobody has visited. That is the one
+        colour on this map that means "send somebody", so it is withheld from
+        the buildings where sending somebody is not the answer; the map draws
+        those in the lifecycle's own muted channel instead.
+      */
+      surveyRollup: isOccupiableLifecycle(building.lifecycleStatus)
+        ? rollupOf(statuses.get(building.id) ?? [])
+        : null,
       worstDamageLevel: damage.get(building.id) ?? null,
     }));
   }
@@ -1002,6 +1444,33 @@ export function rollupOf(unitStatuses: readonly string[]): string {
   }, unitStatuses[0]!);
 }
 
+/**
+ * Metres between two pins, on a sphere.
+ *
+ * Haversine and not an ellipsoidal formula, deliberately. The only consumer is
+ * the duplicate-building prompt, where the question is "are these two entrances
+ * eight metres apart or eighty" — and at the hundred-metre scale of one parcel
+ * the two formulas differ by centimetres. What matters is that the number is
+ * never confidently wrong, and Haversine at this range is not.
+ */
+function metresBetween(
+  a: { latitude: number; longitude: number },
+  b: { latitude: number; longitude: number },
+): number {
+  const EARTH_RADIUS_M = 6_371_000;
+  const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+
+  const deltaLat = toRadians(b.latitude - a.latitude);
+  const deltaLng = toRadians(b.longitude - a.longitude);
+  const latA = toRadians(a.latitude);
+  const latB = toRadians(b.latitude);
+
+  const h =
+    Math.sin(deltaLat / 2) ** 2 + Math.cos(latA) * Math.cos(latB) * Math.sin(deltaLng / 2) ** 2;
+
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 // ──────────────────────────────  Mappers  ──────────────────────────────
 
 function toBuildingRow(row: {
@@ -1012,6 +1481,7 @@ function toBuildingRow(row: {
   name: string | null;
   postedNumber: string | null;
   structureType: string;
+  lifecycleStatus: string;
   latitude: number | null;
   longitude: number | null;
   floorsCount: number;
@@ -1030,6 +1500,7 @@ function toBuildingRow(row: {
     name: row.name,
     postedNumber: row.postedNumber,
     structureType: row.structureType,
+    lifecycleStatus: row.lifecycleStatus,
     latitude: row.latitude,
     longitude: row.longitude,
     floorsCount: row.floorsCount,
@@ -1075,6 +1546,28 @@ function toUnitRow(row: {
     notes: row.notes,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function toVisitRow(row: {
+  id: string;
+  unitId: string;
+  officerId: string | null;
+  officer?: { firstName: string; lastName: string } | null;
+  visitedAt: Date;
+  outcome: string;
+  notes: string | null;
+  createdAt: Date;
+}): VisitRow {
+  return {
+    id: row.id,
+    unitId: row.unitId,
+    officerId: row.officerId,
+    officerName: row.officer ? `${row.officer.firstName} ${row.officer.lastName}` : null,
+    visitedAt: row.visitedAt,
+    outcome: row.outcome,
+    notes: row.notes,
+    createdAt: row.createdAt,
   };
 }
 

@@ -8,9 +8,11 @@ import {
   Check,
   ChevronDown,
   Coins,
+  Building2,
   Crosshair,
   Eye,
   EyeOff,
+  Info,
   Loader2,
   Maximize2,
   Printer,
@@ -23,12 +25,29 @@ import {
 } from 'lucide-react';
 import {
   checkPropertyNumber,
+  getBuildingMapPins,
   getZone,
   getZones,
   getZonesGeoJson,
+  logApiError,
+  type BuildingMapPin,
   type RegisteredParcel,
   type ZoneSummary,
 } from '@/lib/api-client';
+import { getLabels } from '@mechanization/shared-schemas';
+import {
+  BUILDING_LAYER,
+  BUILDING_SOURCE,
+  BUILDING_ZOOM,
+  buildingLegend,
+  buildingsGeoJson,
+  damageRingExpression,
+  ensureStructureIcons,
+  parcelRollupGeoJson,
+  structureIconExpression,
+  lifecycleOpacityExpression,
+  surveyFillExpression,
+} from './building-map-layer';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,6 +62,7 @@ import { CitizenDetailDrawer } from './citizen-detail-drawer';
 import { ZoneLegend } from './zone-legend';
 import { MapExportDialog } from './map-export-dialog';
 import { ZoneInfoDialog } from './zone-info-dialog';
+import { BuildingUnitMatrixDrawer } from './building-unit-matrix-drawer';
 import {
   basemapById,
   ensureRtlTextPlugin,
@@ -276,6 +296,7 @@ export function FullscreenMap({
   focusParcelNumber,
   focusLat,
   focusLng,
+  registerHref,
   locale = 'ar',
 }: {
   parcels: RegisteredParcel[];
@@ -286,6 +307,13 @@ export function FullscreenMap({
   focusParcelNumber?: string;
   focusLat?: number;
   focusLng?: number;
+  /**
+   * Where «تسجيل أسرة في هذه الوحدة» goes from the census drawer.
+   *
+   * Built by the page, like `citizenHref` beside it: this component is handed
+   * links rather than reconstructing `/{tenant}/{locale}/{adminPath}` itself.
+   */
+  registerHref?: (buildingId: string, unitId: string) => string;
   locale?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -341,6 +369,13 @@ export function FullscreenMap({
   // Zone Info Dialog
   const [selectedZoneInfo, setSelectedZoneInfo] = useState<ZoneSummary | null>(null);
   const [zoneInfoOpen, setZoneInfoOpen] = useState(false);
+
+  // ── The census layer (P3-T5) ───────────────────────────────────────
+  const [buildingPins, setBuildingPins] = useState<BuildingMapPin[]>([]);
+  const [buildingsVisible, setBuildingsVisible] = useState(false);
+  const [buildingLegendOpen, setBuildingLegendOpen] = useState(false);
+  /** Which building's matrix is open, if any. */
+  const [openBuildingId, setOpenBuildingId] = useState<string | null>(null);
 
   const zonesVisibleRef = useRef(zonesVisible);
   zonesVisibleRef.current = zonesVisible;
@@ -498,6 +533,278 @@ export function FullscreenMap({
     },
     [dark],
   );
+
+  // ── The census layer (P3-T5) ───────────────────────────────────────
+
+  /**
+   * The pins, fetched once per session and only when they are asked for.
+   *
+   * Gated on `buildingsVisible` rather than loaded with the page: this is a
+   * second full request beside the registered parcels, and the map is opened
+   * far more often to find a citizen than to read the census. The state is kept
+   * after the layer is hidden again, so toggling it back on is free.
+   */
+  useEffect(() => {
+    if (!token || !buildingsVisible || buildingPins.length > 0) return;
+    let cancelled = false;
+
+    getBuildingMapPins(tenant, token)
+      .then((response) => {
+        if (!cancelled) setBuildingPins(response.buildings);
+      })
+      .catch((caught) => {
+        // The map still works without the census layer, so a failure costs the
+        // toggle rather than the screen.
+        logApiError(caught);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tenant, token, buildingsVisible, buildingPins.length]);
+
+  const censusLegend = useMemo(() => buildingLegend(getLabels(locale)), [locale]);
+  const buildingData = useMemo(() => buildingsGeoJson(buildingPins), [buildingPins]);
+  const parcelRollupData = useMemo(() => parcelRollupGeoJson(buildingPins), [buildingPins]);
+
+  /**
+   * The parcel outlines the plan asks for, from the asset that already exists.
+   *
+   * Drawn under everything else and deliberately faint: this is the ground the
+   * building pins stand on, not a layer to read on its own — `cadastre.geojson`
+   * already draws the boundary lines, and what the polygons add is a *fill* a
+   * pin can be seen to be inside.
+   */
+  const attachParcelPolygons = useCallback(
+    async (map: mapboxgl.Map) => {
+      if (map.getSource(BUILDING_SOURCE.polygons)) return;
+
+      const base = `/tenants/${encodeURIComponent(tenant)}`;
+      const apiBase = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/t/${encodeURIComponent(tenant)}/cadastre/assets`;
+      const polygons = await fetchGeoJson(
+        `${base}/parcel-polygons.geojson`,
+        `${apiBase}/parcel-polygons.geojson`,
+      );
+      if (!polygons || !mapRef.current || mapRef.current !== map) return;
+      if (map.getSource(BUILDING_SOURCE.polygons)) return;
+
+      map.addSource(BUILDING_SOURCE.polygons, { type: 'geojson', data: polygons });
+
+      map.addLayer({
+        id: BUILDING_LAYER.polygonFill,
+        type: 'fill',
+        source: BUILDING_SOURCE.polygons,
+        paint: {
+          'fill-color': dark ? '#38bdf8' : '#0f766e',
+          'fill-opacity': ['interpolate', ['linear'], ['zoom'], 14, 0.04, 18, 0.12],
+        },
+      });
+
+      map.addLayer({
+        id: BUILDING_LAYER.polygonLine,
+        type: 'line',
+        source: BUILDING_SOURCE.polygons,
+        paint: {
+          'line-color': dark ? '#7dd3fc' : '#0f766e',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 14, 0.3, 18, 1.1],
+          'line-opacity': ['interpolate', ['linear'], ['zoom'], 14, 0.25, 17, 0.6],
+        },
+      });
+    },
+    [tenant, dark],
+  );
+
+  /**
+   * The three channels, plus the parcel aggregate below the building zoom.
+   *
+   * Layer order is load-bearing: the ring is drawn first and largest so the
+   * fill sits inside it, and the icon last so nothing occludes it. Three layers
+   * over one source rather than one styled layer is what makes the channels
+   * *independent* — a building can be fully surveyed and unsafe to enter, and
+   * the reader has to see both at once.
+   */
+  const attachBuildings = useCallback(
+    (map: mapboxgl.Map) => {
+      ensureStructureIcons(map);
+
+      const existing = map.getSource(BUILDING_SOURCE.buildings) as
+        | mapboxgl.GeoJSONSource
+        | undefined;
+      if (existing) {
+        existing.setData(buildingData);
+        (
+          map.getSource(BUILDING_SOURCE.parcelRollup) as mapboxgl.GeoJSONSource | undefined
+        )?.setData(parcelRollupData);
+        return;
+      }
+
+      map.addSource(BUILDING_SOURCE.buildings, { type: 'geojson', data: buildingData });
+      map.addSource(BUILDING_SOURCE.parcelRollup, { type: 'geojson', data: parcelRollupData });
+
+      // ── Below the building zoom: one dot per parcel, worst status (D11) ──
+      map.addLayer({
+        id: BUILDING_LAYER.parcelDot,
+        type: 'circle',
+        source: BUILDING_SOURCE.parcelRollup,
+        maxzoom: BUILDING_ZOOM,
+        paint: {
+          'circle-color': surveyFillExpression(),
+          'circle-stroke-color': damageRingExpression(),
+          'circle-stroke-width': 2.5,
+          'circle-opacity': 0.9,
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            12,
+            ['case', ['>', ['get', 'buildings'], 1], 7, 5],
+            16,
+            ['case', ['>', ['get', 'buildings'], 1], 13, 9],
+          ],
+        },
+      });
+
+      map.addLayer({
+        id: BUILDING_LAYER.parcelCount,
+        type: 'symbol',
+        source: BUILDING_SOURCE.parcelRollup,
+        maxzoom: BUILDING_ZOOM,
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 12, 9, 16, 13],
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
+        },
+        paint: { 'text-color': '#ffffff' },
+      });
+
+      // ── At building zoom: one pin per structure, three channels ──
+      map.addLayer({
+        id: BUILDING_LAYER.ring,
+        type: 'circle',
+        source: BUILDING_SOURCE.buildings,
+        minzoom: BUILDING_ZOOM,
+        paint: {
+          // Transparent fill: this layer exists only for its stroke, which is
+          // the damage channel. A filled disc here would put a second colour
+          // under the survey fill and muddy both.
+          'circle-color': 'rgba(0,0,0,0)',
+          'circle-stroke-color': damageRingExpression(),
+          'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 16, 2.5, 19, 4],
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 16, 11, 19, 18],
+        },
+      });
+
+      map.addLayer({
+        id: BUILDING_LAYER.fill,
+        type: 'circle',
+        source: BUILDING_SOURCE.buildings,
+        minzoom: BUILDING_ZOOM,
+        paint: {
+          'circle-color': surveyFillExpression(),
+          /*
+            The lifecycle's channel: a structure nobody can be inside is drawn
+            faint rather than in a colour of its own. Three hues already compete
+            on this dot, and a permitted plot must not read as urgent work.
+          */
+          'circle-opacity': lifecycleOpacityExpression(),
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 1,
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 16, 9, 19, 15],
+        },
+      });
+
+      map.addLayer({
+        id: BUILDING_LAYER.icon,
+        type: 'symbol',
+        source: BUILDING_SOURCE.buildings,
+        minzoom: BUILDING_ZOOM,
+        layout: {
+          'icon-image': structureIconExpression(),
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 16, 0.5, 19, 0.85],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+        },
+      });
+    },
+    [buildingData, parcelRollupData],
+  );
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !buildingsVisible) return;
+    attachWhenReady(map, () => {
+      void attachParcelPolygons(map).catch(() => {});
+      attachBuildings(map);
+      raiseRegistered(map);
+    });
+  }, [buildingsVisible, attachBuildings, attachParcelPolygons]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const visibility = buildingsVisible ? 'visible' : 'none';
+    for (const id of Object.values(BUILDING_LAYER)) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visibility);
+    }
+  }, [buildingsVisible, buildingData]);
+
+  /**
+   * Clicking a pin opens that building's matrix; clicking a parcel aggregate
+   * flies in far enough for its buildings to separate.
+   *
+   * The same fingertip-sized box the registered dots use, and for the same
+   * reason: a 9px circle is not a tap target on a phone in a stairwell.
+   */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const onClick = (event: mapboxgl.MapMouseEvent) => {
+      if (measureModeRef.current !== 'none') return;
+      if (!buildingsVisible) return;
+
+      const slop = window.matchMedia?.('(pointer: coarse)').matches ? 14 : 4;
+      const box: [[number, number], [number, number]] = [
+        [event.point.x - slop, event.point.y - slop],
+        [event.point.x + slop, event.point.y + slop],
+      ];
+
+      const layers = [BUILDING_LAYER.fill, BUILDING_LAYER.parcelDot].filter((id) =>
+        map.getLayer(id),
+      );
+      if (layers.length === 0) return;
+
+      const hit = map.queryRenderedFeatures(box, { layers })[0];
+      if (!hit) return;
+
+      const buildingId = hit.properties?.id as string | undefined;
+      if (buildingId) {
+        setOpenBuildingId(buildingId);
+        return;
+      }
+
+      /*
+        A parcel aggregate. Zooming past the split point is the useful action
+        rather than opening something: the only reason it is one dot is that its
+        buildings overlap at this zoom, and the officer's next question is which
+        of them they meant.
+      */
+      if (hit.geometry.type === 'Point') {
+        map.flyTo({
+          center: hit.geometry.coordinates as [number, number],
+          zoom: Math.max(map.getZoom(), BUILDING_ZOOM + 0.6),
+          duration: 600,
+        });
+      }
+    };
+
+    map.on('click', onClick);
+    return () => {
+      map.off('click', onClick);
+    };
+  }, [buildingsVisible]);
 
   // ── Map lifecycle ──────────────────────────────────────────────────
   useEffect(() => {
@@ -1310,6 +1617,56 @@ export function FullscreenMap({
             </span>
           </Button>
 
+          {/* Toggle the census layer (P3-T5) */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setBuildingsVisible((v) => !v);
+              setBuildingLegendOpen((open) => (buildingsVisible ? false : open));
+            }}
+            title={
+              buildingsVisible
+                ? locale === 'en'
+                  ? 'Hide the building census'
+                  : 'إخفاء سجل المباني'
+                : locale === 'en'
+                  ? 'Show the building census'
+                  : 'إظهار سجل المباني'
+            }
+            className={cn(
+              'h-9 shrink-0 gap-1.5 px-2.5 text-xs font-semibold cursor-pointer rounded-xl transition-all sm:h-8 sm:rounded-lg',
+              buildingsVisible
+                ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+            )}
+          >
+            <Building2 className="size-3.5" aria-hidden />
+            <span>{locale === 'en' ? 'Buildings' : 'المباني'}</span>
+          </Button>
+
+          {/* The three channels need explaining, so the legend rides with them. */}
+          {buildingsVisible ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setBuildingLegendOpen((open) => !open)}
+              aria-expanded={buildingLegendOpen}
+              title={locale === 'en' ? 'Census legend' : 'مفتاح سجل المباني'}
+              className={cn(
+                'h-9 shrink-0 gap-1.5 px-2.5 text-xs font-semibold cursor-pointer rounded-xl transition-all sm:h-8 sm:rounded-lg',
+                buildingLegendOpen
+                  ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+              )}
+            >
+              <Info className="size-3.5" aria-hidden />
+              <span>{locale === 'en' ? 'Legend' : 'المفتاح'}</span>
+            </Button>
+          ) : null}
+
           {/* Color & Filter Dropdown Menu */}
           <div className="static sm:relative">
             <Button
@@ -1877,6 +2234,107 @@ export function FullscreenMap({
         tenant={tenant}
         locale={locale}
       />
+
+      {/*
+        The census legend.
+
+        Three channels is two more than a map usually asks a reader to hold, so
+        it is spelled out rather than left to be inferred — and it is only
+        offered while the layer is on, because a legend for something invisible
+        is furniture.
+      */}
+      {buildingsVisible && buildingLegendOpen ? (
+        <div className="pointer-events-auto absolute inset-x-2 bottom-20 z-20 max-h-[45dvh] overflow-y-auto rounded-xl border bg-card/95 p-3 text-xs shadow-lg backdrop-blur sm:inset-x-auto sm:end-3 sm:top-20 sm:bottom-auto sm:w-64">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="font-semibold">
+              {locale === 'en' ? 'Building census' : 'سجل المباني'}
+            </p>
+            <button
+              type="button"
+              onClick={() => setBuildingLegendOpen(false)}
+              aria-label={locale === 'en' ? 'Close the legend' : 'إغلاق المفتاح'}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3.5" aria-hidden />
+            </button>
+          </div>
+
+          <p className="mb-2 leading-relaxed text-muted-foreground">
+            {locale === 'en'
+              ? 'Icon = structure · fill = survey · ring = damage. No ring means nobody has assessed it.'
+              : 'الأيقونة = نوع المنشأة · التعبئة = حالة المسح · الحلقة = مستوى الضرر. غياب الحلقة يعني أنه لم يُكشف عليه بعد.'}
+          </p>
+
+          <p className="mb-1 font-medium">
+            {locale === 'en' ? 'Fill — survey' : 'التعبئة — حالة المسح'}
+          </p>
+          <ul className="mb-2 space-y-1">
+            {censusLegend.survey.map((entry) => (
+              <li key={entry.key} className="flex items-center gap-2">
+                <span
+                  aria-hidden
+                  className="size-3 shrink-0 rounded-full border border-black/20"
+                  style={{ backgroundColor: entry.color }}
+                />
+                <span className="truncate">{entry.label}</span>
+              </li>
+            ))}
+          </ul>
+
+          <p className="mb-1 font-medium">
+            {locale === 'en' ? 'Ring — damage' : 'الحلقة — مستوى الضرر'}
+          </p>
+          <ul className="space-y-1">
+            {censusLegend.damage.map((entry) => (
+              <li key={entry.key} className="flex items-center gap-2">
+                <span
+                  aria-hidden
+                  className="size-3 shrink-0 rounded-full border-2 bg-transparent"
+                  style={{ borderColor: entry.color }}
+                />
+                <span className="truncate">{entry.label}</span>
+              </li>
+            ))}
+          </ul>
+
+          <p className="mt-2 leading-relaxed text-muted-foreground">
+            {locale === 'en'
+              ? `Below zoom ${BUILDING_ZOOM} a parcel shows one dot carrying its worst status; tap it to zoom in.`
+              : `دون مستوى التكبير ${BUILDING_ZOOM} يظهر العقار كنقطة واحدة تحمل أسوأ حالة فيه؛ انقر عليها للتكبير.`}
+          </p>
+        </div>
+      ) : null}
+
+      {/*
+        Clicking a pin opens the same matrix the census ledger opens — the same
+        component, so an officer who logs a visit from the map and one who logs
+        it from the ledger are using one screen, not two that have to be kept in
+        step.
+      */}
+      {token ? (
+        <BuildingUnitMatrixDrawer
+          open={openBuildingId !== null}
+          onClose={() => setOpenBuildingId(null)}
+          tenant={tenant}
+          token={token}
+          buildingId={openBuildingId}
+          canWrite
+          registerHref={
+            registerHref
+              ? (buildingId, unitId) => registerHref(buildingId, unitId)
+              : undefined
+          }
+          onChanged={() => {
+            // The pin's own fill and ring are derived from what just changed,
+            // so the layer is re-read rather than left showing the old rollup.
+            if (!token) return;
+            void getBuildingMapPins(tenant, token)
+              .then((response) => setBuildingPins(response.buildings))
+              .catch(logApiError);
+          }}
+          locale={locale}
+        />
+      ) : null}
 
       <ZoneInfoDialog
         zone={selectedZoneInfo}

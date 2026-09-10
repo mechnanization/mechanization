@@ -39,9 +39,15 @@ const DB_NAME = 'mechanization.offline';
  *
  * Change this only for a change IndexedDB itself has to know about: a new
  * object store, a new index, or a key path that moves.
+ *
+ * **Bumped to 2 by P3-T8**, which is exactly that case: buildings created
+ * offline need their own store. The upgrade is additive — the citizen store and
+ * everything in it is untouched — so a phone carrying thirty queued
+ * registrations opens the new version and still has all thirty.
  */
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = 'citizenSubmissions';
+const BUILDING_STORE = 'buildingSubmissions';
 
 /** Groups a queue read by municipality without scanning every record. */
 const TENANT_INDEX = 'by-tenant';
@@ -99,10 +105,19 @@ function open(): Promise<IDBDatabase> {
   connection = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
+    /*
+      Additive and idempotent, so it is correct from any earlier version.
+
+      Written as "create what is missing" rather than switching on
+      `event.oldVersion`: a device that has never opened the app and one that
+      has been queueing registrations for a week take the same path, and there
+      is no branch that only runs on an upgrade nobody has tested.
+    */
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        const store = db.createObjectStore(STORE, { keyPath: 'id' });
+      for (const name of [STORE, BUILDING_STORE]) {
+        if (db.objectStoreNames.contains(name)) continue;
+        const store = db.createObjectStore(name, { keyPath: 'id' });
         store.createIndex(TENANT_INDEX, 'tenant', { unique: false });
       }
     };
@@ -128,21 +143,30 @@ function open(): Promise<IDBDatabase> {
   return connection;
 }
 
-/** One transaction, promisified. */
-function run<T>(
+/** One transaction against one store, promisified. */
+function runOn<T>(
+  storeName: string,
   mode: IDBTransactionMode,
   work: (store: IDBObjectStore) => IDBRequest<T>,
 ): Promise<T> {
   return open().then(
     (db) =>
       new Promise<T>((resolve, reject) => {
-        const transaction = db.transaction(STORE, mode);
-        const request = work(transaction.objectStore(STORE));
+        const transaction = db.transaction(storeName, mode);
+        const request = work(transaction.objectStore(storeName));
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
         transaction.onabort = () => reject(transaction.error);
       }),
   );
+}
+
+/** The citizen store, which is what every pre-existing caller means. */
+function run<T>(
+  mode: IDBTransactionMode,
+  work: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  return runOn(STORE, mode, work);
 }
 
 /** Queues a finished registration. Resolves once it is durably stored. */
@@ -179,20 +203,21 @@ export async function dequeue(id: string): Promise<void> {
  * caller correcting a record that was delivered a moment earlier can say so
  * rather than claim a save that never happened.
  */
-async function update(
+async function updateOn<T extends { id: string }>(
+  storeName: string,
   id: string,
-  patch: (existing: QueuedSubmission) => QueuedSubmission,
+  patch: (existing: T) => T,
 ): Promise<boolean> {
   const db = await open();
   let found = false;
 
   await new Promise<void>((resolve, reject) => {
-    const transaction = db.transaction(STORE, 'readwrite');
-    const store = transaction.objectStore(STORE);
+    const transaction = db.transaction(storeName, 'readwrite');
+    const store = transaction.objectStore(storeName);
     const read = store.get(id);
 
     read.onsuccess = () => {
-      const existing = read.result as QueuedSubmission | undefined;
+      const existing = read.result as T | undefined;
       if (existing) {
         found = true;
         store.put(patch(existing));
@@ -205,6 +230,14 @@ async function update(
   });
 
   return found;
+}
+
+/** The citizen store's read-modify-write, which is what the callers below mean. */
+function update(
+  id: string,
+  patch: (existing: QueuedSubmission) => QueuedSubmission,
+): Promise<boolean> {
+  return updateOn(STORE, id, patch);
 }
 
 /** Records the outcome of one delivery attempt. */
@@ -257,5 +290,121 @@ export function reviseQueued(
     displayName: patch.displayName,
     status: 'pending',
     lastError: null,
+  }));
+}
+
+// ─────────────────────  Buildings created offline (P3-T8)  ─────────────────────
+
+/**
+ * A building an officer created on a phone with no signal.
+ *
+ * Separate from the citizen queue rather than folded into it, because the two
+ * are different records with different failure modes and — the part that
+ * matters — a different *order*. A queued registration may carry the
+ * `buildingId` of a building that is also still queued, so the buildings have
+ * to land first or the registration references a row that does not exist yet.
+ * One store per kind is what lets `syncQueue` say that plainly.
+ *
+ * `id` is minted before the first send and is also the row's primary key
+ * server-side (`clientSubmissionId` → `Building.id`), which is what makes a
+ * re-delivered creation idempotent: the second attempt finds the building it
+ * already made rather than putting a second structure on the parcel.
+ */
+export interface QueuedBuilding {
+  id: string;
+  tenant: string;
+  /** رقم العقار, for the queue list — the one thing that names it before a code. */
+  parcelNumber: string;
+  /**
+   * The code the phone showed while offline, e.g. `A-1042-B مؤقت`.
+   *
+   * Computed from whatever the device had cached, so two officers on the same
+   * parcel will both compute the same one. It is never authoritative — see
+   * `reconciledCode` — and the badge beside it says so.
+   */
+  provisionalCode: string;
+  /** The suffix half of the above, sent so the server can say whether it changed. */
+  provisionalSuffix: string;
+  payload: {
+    parcelNumber: string;
+    name?: string;
+    postedNumber?: string;
+    structureType: string;
+    /** Permitted / going up / standing / abandoned / gone. See `BUILDING_LIFECYCLE`. */
+    lifecycleStatus?: string;
+    latitude?: number;
+    longitude?: number;
+    floorsCount?: number;
+    notes?: string;
+    /**
+     * Carried because the officer was shown the parcel's existing structures
+     * *before* the record was queued, and answered.
+     *
+     * Without it the server would refuse this creation on delivery — hours
+     * later, with nobody at the screen to answer the question again.
+     */
+    acknowledgedDuplicates?: boolean;
+  };
+  /** The matrix to generate once the shell exists, if the officer asked for one. */
+  blueprint: unknown | null;
+  status: QueuedBuildingStatus;
+  savedAt: number;
+  attempts: number;
+  lastAttemptAt: number | null;
+  lastError: string | null;
+  /**
+   * What the server actually allocated, once it has.
+   *
+   * Set only when it differs from `provisionalCode`. The record is kept — not
+   * deleted — precisely so this survives a page reload: an officer who wrote
+   * `A-1042-A` on a form in somebody's stairwell has to be told it became
+   * `A-1042-B`, and a notice that vanished with the tab would not tell them.
+   */
+  reconciledCode?: string;
+}
+
+export type QueuedBuildingStatus =
+  | 'pending'
+  | 'blocked'
+  /**
+   * Delivered, and the code changed. Kept until the officer dismisses it.
+   *
+   * A delivered building whose code did *not* change is simply removed — there
+   * is nothing to tell anyone.
+   */
+  | 'reconciled';
+
+/** Queues a building created with no connection. */
+export async function enqueueBuilding(building: QueuedBuilding): Promise<void> {
+  await runOn(BUILDING_STORE, 'readwrite', (store) => store.put(building));
+}
+
+/** Everything still waiting, or waiting to be read, for this municipality. */
+export async function listQueuedBuildings(tenant: string): Promise<QueuedBuilding[]> {
+  const rows = await runOn<QueuedBuilding[]>(BUILDING_STORE, 'readonly', (store) =>
+    store.index(TENANT_INDEX).getAll(tenant),
+  );
+  return rows.sort((a, b) => a.savedAt - b.savedAt);
+}
+
+export async function dequeueBuilding(id: string): Promise<void> {
+  await runOn(BUILDING_STORE, 'readwrite', (store) => store.delete(id));
+}
+
+/** Records one delivery attempt's outcome, or its reconciliation. */
+export function updateQueuedBuilding(
+  id: string,
+  patch: Partial<Pick<QueuedBuilding, 'status' | 'lastError' | 'reconciledCode'>> & {
+    countAttempt?: boolean;
+  },
+): Promise<boolean> {
+  return updateOn(BUILDING_STORE, id, (existing: QueuedBuilding) => ({
+    ...existing,
+    ...(patch.status ? { status: patch.status } : {}),
+    ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+    ...(patch.reconciledCode !== undefined ? { reconciledCode: patch.reconciledCode } : {}),
+    ...(patch.countAttempt
+      ? { attempts: existing.attempts + 1, lastAttemptAt: Date.now() }
+      : {}),
   }));
 }

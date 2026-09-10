@@ -3,8 +3,12 @@ import { cachedRequest, invalidateRequests } from './request-cache';
 import type {
   BackupSchedule,
   CitizenImportResult,
+  CaseStatus,
+  CaseType,
   CitizenRecordStatus,
   CurrencyCode,
+  DamageLevel,
+  DamageSource,
   FeeAssessment,
   FeeBasis,
   FeeBearer,
@@ -14,8 +18,14 @@ import type {
   InspectorPayoutItem,
   InspectorProfileResponse,
   NumberingSequence,
+  OccupancyRole,
   RecordInspectorPayoutInput,
   SequenceKey,
+  BuildingLifecycle,
+  StructureType,
+  SurveyStatus,
+  UnitStatus,
+  UnitType,
 } from '@mechanization/shared-schemas';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
@@ -23,8 +33,65 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1
 export interface ApiError {
   code: string;
   message: string;
-  details?: { path: string; message: string }[];
+  /**
+   * Whatever the caller has to look at before it can decide.
+   *
+   * Two shapes, and they are not interchangeable: a validation failure sends an
+   * array of field paths, and a conflict sends an object describing what it
+   * collided with. Typed as the union rather than the array alone because the
+   * server has been able to send both since the duplicate-building guard
+   * shipped — and `fieldErrors` below used to call `.map` on it unconditionally,
+   * which turned a conflict into a `TypeError` in the catch block meant to
+   * display it.
+   */
+  details?: { path: string; message: string }[] | Record<string, unknown>;
   correlationId?: string;
+}
+
+/**
+ * A structure already standing on the parcel a new building is being created on.
+ *
+ * Sent with the refusal so the "is this a different building?" dialog can show
+ * what is there without a second request — which matters most on exactly the
+ * offline phone least able to make one.
+ */
+export interface DuplicateBuildingCandidate {
+  id: string;
+  code: string;
+  name: string | null;
+  postedNumber: string | null;
+  structureType: StructureType;
+  lifecycleStatus: BuildingLifecycle;
+  unitsTotal: number;
+  latitude: number | null;
+  longitude: number | null;
+  /**
+   * Metres from the pin being proposed, or null when either side has no pin.
+   *
+   * Never 0 for "we cannot tell". "There is another building here" is a shrug;
+   * "there is another building fifteen metres away called بناية النور" is a
+   * decision, and an unknown distance rendered as zero would talk an officer
+   * out of recording a structure that really exists.
+   */
+  distanceMetres: number | null;
+}
+
+/**
+ * The candidates carried by a duplicate-building refusal, or null for any other
+ * error.
+ *
+ * A function rather than a getter on `ApiRequestError`, so the narrowing is
+ * visible at the call site: everything below the `if` knows it is holding a
+ * duplicate prompt rather than a failed save.
+ */
+export function duplicateBuildingsOf(caught: unknown): DuplicateBuildingCandidate[] | null {
+  if (!(caught instanceof ApiRequestError) || caught.payload.code !== 'CONFLICT') return null;
+
+  const details = caught.payload.details;
+  if (!details || Array.isArray(details)) return null;
+
+  const candidates = (details as { candidates?: unknown }).candidates;
+  return Array.isArray(candidates) ? (candidates as DuplicateBuildingCandidate[]) : null;
 }
 
 export class ApiRequestError extends Error {
@@ -41,11 +108,17 @@ export class ApiRequestError extends Error {
     this.name = status === 0 ? 'error (network)' : `error (${status})`;
   }
 
-  /** Field-level messages, keyed by path, for highlighting the offending input. */
+  /**
+   * Field-level messages, keyed by path, for highlighting the offending input.
+   *
+   * Empty for a `details` that is not the array shape — a conflict's payload
+   * describes what was collided with, not which input was wrong, and there is
+   * no field on the form to attach it to.
+   */
   get fieldErrors(): Record<string, string> {
-    return Object.fromEntries(
-      (this.payload.details ?? []).map((detail) => [detail.path, detail.message]),
-    );
+    const details = this.payload.details;
+    if (!Array.isArray(details)) return {};
+    return Object.fromEntries(details.map((detail) => [detail.path, detail.message]));
   }
 }
 
@@ -410,6 +483,15 @@ export interface ParcelFinancials {
  * from the static GeoJSON with no dot, so a dot always means there is
  * citizen data to open.
  */
+/**
+ * A parcel that has at least one registration, with everyone attached to it.
+ *
+ * **One row per رقم العقار.** P5-T5 split it per censused structure and P5-T7
+ * put it back: the map already draws a census layer with a pin per building at
+ * its own entrance, so a registration dot on each of those said the same thing
+ * twice. This layer is about the plot — everyone on it, one dot, at the
+ * parcel's own point.
+ */
 export interface RegisteredParcel {
   propertyNumber: string;
   latitude: number;
@@ -531,7 +613,25 @@ export interface CaseSummary {
   side: string | null;
   landType: string | null;
   tentLocation: string | null;
-  status: 'OPEN' | 'RESOLVED';
+  /** «مجدولة» means a revisit date is already set — see `scheduledRevisitAt`. */
+  status: CaseStatus;
+  /** Why the visit did not complete. `GENERAL_NOTE` for anything logged before
+   *  the column existed. There is deliberately no war-damage type (D6). */
+  caseType: CaseType;
+  /**
+   * The resolved form of `buildingName`/`floor`, once the case can be pinned to
+   * actual census rows. Both survive: the free text is what the officer wrote at
+   * the door, and on a parcel with no surveyed buildings it is all there is.
+   */
+  buildingId: string | null;
+  buildingCode: string | null;
+  unitId: string | null;
+  unitCode: string | null;
+  /** The damage reading that prompted this case, if one did. A reference, not
+   *  ownership — resolving the case says nothing about the damage (D6). */
+  damageAssessmentId: string | null;
+  /** When someone has agreed to go back. Meaningful under `SCHEDULED`. */
+  scheduledRevisitAt: string | null;
   /** The citizen whose registration resolved this case, if any. */
   resolvedCitizenId: string | null;
   resolvedCitizenName: string | null;
@@ -552,17 +652,33 @@ export interface CaseWriteInput {
   side?: string;
   landType?: string;
   tentLocation?: string;
+  caseType?: CaseType;
+  /** Pins the case to a censused structure — set when logged from the matrix. */
+  buildingId?: string;
+  unitId?: string;
+  damageAssessmentId?: string;
+  scheduledRevisitAt?: string;
 }
 
 export function getCases(
   tenant: string,
   token: string,
-  filter: { propertyNumber?: string; status?: 'OPEN' | 'RESOLVED' } = {},
+  filter: {
+    propertyNumber?: string;
+    status?: CaseStatus;
+    caseType?: CaseType;
+    /** Every case on this structure, however its units are spread. */
+    buildingId?: string;
+    unitId?: string;
+  } = {},
   signal?: AbortSignal,
 ) {
   const query = new URLSearchParams();
   if (filter.propertyNumber) query.set('propertyNumber', filter.propertyNumber);
   if (filter.status) query.set('status', filter.status);
+  if (filter.caseType) query.set('caseType', filter.caseType);
+  if (filter.buildingId) query.set('buildingId', filter.buildingId);
+  if (filter.unitId) query.set('unitId', filter.unitId);
   const qs = query.toString();
   return apiFetch<{ cases: CaseSummary[] }>(tenant, `/cases${qs ? `?${qs}` : ''}`, {
     token,
@@ -587,7 +703,7 @@ export function updateCase(
   token: string,
   id: string,
   input: Partial<CaseWriteInput> & {
-    status?: 'OPEN' | 'RESOLVED';
+    status?: CaseStatus;
     /** Setting this always resolves the case server-side; `null` only clears the link. */
     resolvedCitizenId?: string | null;
   },
@@ -607,9 +723,576 @@ export function deleteCase(tenant: string, token: string, id: string) {
   });
 }
 
+// ─────────────────────────  Buildings (سجل المباني)  ─────────────────────────
+
+/**
+ * The census, as the browser sees it.
+ *
+ * Every shape here is the server's own row with its `Date`s read back as the
+ * ISO strings JSON actually carries — `createdAt` is typed `string` rather than
+ * `Date` because that is what arrives, and typing it otherwise would have
+ * `formatDate` handed something that only looks like a date until it is used.
+ *
+ * The rule that governs all of them: **the id is the identity and the code is
+ * derived** (D9). Nothing here ever sends a `code`, a `unitCode` or a
+ * `codeSuffix` — the server allocates them, and a client that could assert one
+ * could assert one that contradicts the parcel it names.
+ */
+export interface BuildingSummary {
+  id: string;
+  parcelNumber: string;
+  codeSuffix: string;
+  /** `ZONE-PARCEL-SUFFIX` — `A-1042-B`. Display only; recomputed server-side. */
+  code: string;
+  name: string | null;
+  /** What is painted on the building. Trusted over `code` in the field (D14). */
+  postedNumber: string | null;
+  structureType: StructureType;
+  /**
+   * Where the structure is in its own life — permitted, going up, standing,
+   * abandoned, gone. The third axis beside *what it is* (`structureType`) and
+   * *what happened to it* (its damage level).
+   */
+  lifecycleStatus: BuildingLifecycle;
+  latitude: number | null;
+  longitude: number | null;
+  floorsCount: number;
+  /** Maintained by a database trigger — never written from the client. */
+  unitsTotal: number;
+  unitsSurveyed: number;
+  notes: string | null;
+  createdById: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A census ledger row — the building plus the two derived columns it shows. */
+export interface BuildingLedgerRow extends BuildingSummary {
+  zoneCode: string | null;
+  zoneName: string | null;
+  /** The *current* level, i.e. the newest assessment. Null = never assessed. */
+  damageLevel: DamageLevel | null;
+}
+
+/** One occupant of a unit. A `toDate` of null means they are there now (D2). */
+export interface UnitOccupant {
+  id: string;
+  unitId: string;
+  citizenId: string;
+  citizenName: string | null;
+  role: OccupancyRole;
+  /** أسهم out of 2400 — owners only. */
+  shares: number | null;
+  fromDate: string;
+  toDate: string | null;
+  registrationId: string | null;
+}
+
+/** One canonical unit. It exists whether or not anybody has been surveyed in it. */
+export interface UnitRow {
+  id: string;
+  buildingId: string;
+  /** Signed: basement negative, ground 0. `unitCode` is derived from it (D8). */
+  floor: number;
+  sequence: number;
+  unitCode: string;
+  postedNumber: string | null;
+  unitType: UnitType;
+  side: string | null;
+  unitArea: number | null;
+  unitStatus: UnitStatus | null;
+  surveyStatus: SurveyStatus;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A unit as the matrix draws it — with whoever is, and was, inside it. */
+export interface UnitWithOccupants extends UnitRow {
+  occupants: UnitOccupant[];
+  /** The most recent attempts, newest first. Capped server-side at ten. */
+  visits: UnitVisitRow[];
+  /** Every attempt ever made, uncapped — this is «٣ محاولات» on the cell. */
+  visitCount: number;
+}
+
+/** One building opened in the matrix drawer. */
+export interface BuildingDetail extends BuildingSummary {
+  /** Resolved from `Zone.parcelNumbers` at read time — never stored (D13). */
+  zoneCode: string | null;
+  zoneName: string | null;
+  units: UnitWithOccupants[];
+}
+
+/** One observation of a structure's condition. Append-only (D3). */
+export interface DamageAssessmentRow {
+  id: string;
+  buildingId: string | null;
+  unitId: string | null;
+  level: DamageLevel;
+  source: DamageSource;
+  observations: string | null;
+  /** When the visit happened, not when it was typed up — see the schema. */
+  assessedAt: string;
+  assessedById: string | null;
+  assessedByName: string | null;
+  createdAt: string;
+}
+
+/**
+ * The census totals for whatever the filters currently select — computed by the
+ * server over the whole filtered set, not over the page on screen.
+ */
+export interface CensusSummary {
+  /** Every building the filters select, whatever its lifecycle state. */
+  buildings: number;
+  /**
+   * Units in structures that can hold households only — a shell under
+   * construction has matrix rows and no doors to knock on.
+   */
+  unitsTotal: number;
+  unitsSurveyed: number;
+  unitsUnsurveyed: number;
+  /** Units the lifecycle exclusion removed from the three figures above. */
+  unitsOutOfScope: number;
+  /** Restricted-use, unsafe-evacuate or total-collapse, at the current level. */
+  damaged: number;
+}
+
+/**
+ * What saving a citizen changed in the building census.
+ *
+ * Returned by both write paths so the form can say what it linked — an officer
+ * who registered a household into a flat has no other way to tell the census
+ * heard about it, and "did that work?" is what sends somebody to enter a record
+ * a second time.
+ *
+ * `null` on the citizen response means the census write failed. The citizen is
+ * saved either way; the link can be made from the ledger.
+ */
+export interface CensusSyncResult {
+  occupanciesCreated: number;
+  occupanciesRefreshed: number;
+  /** Spells this registration used to claim and no longer does. */
+  occupanciesEnded: number;
+  /** Units lifted out of «غير ممسوحة» / «زيارة بلا رد» / «بيانات ناقصة». */
+  unitsSurveyed: number;
+  casesResolved: number;
+  /** Structures that had no name until this card supplied one. */
+  buildingsNamed: number;
+}
+
+/** Every filter the ledger composes. All optional; any subset is valid. */
+export interface BuildingListFilter {
+  parcelNumber?: string;
+  zoneId?: string;
+  structureType?: StructureType;
+  lifecycleStatus?: BuildingLifecycle;
+  surveyStatus?: SurveyStatus;
+  damageLevel?: DamageLevel;
+  /** Matches code, name, posted number or parcel number. */
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CreateBuildingInput {
+  parcelNumber: string;
+  name?: string;
+  postedNumber?: string;
+  structureType: StructureType;
+  /** Defaults to `IN_USE` server-side — what an officer is looking at most days. */
+  lifecycleStatus?: BuildingLifecycle;
+  latitude?: number;
+  longitude?: number;
+  floorsCount?: number;
+  notes?: string;
+  /**
+   * The suffix a phone showed while offline. Never trusted — the server
+   * re-allocates under a lock (§4.4) and the response says whether the code the
+   * officer has been quoting changed.
+   */
+  provisionalSuffix?: string;
+  /** The browser's own id for this creation, which is also the row's id. */
+  clientSubmissionId?: string;
+  /**
+   * «نعم، هذه منشأة مختلفة» — the officer has seen what already stands on this
+   * parcel and is asserting this is not one of them.
+   *
+   * The server refuses a second structure on an occupied parcel without it, and
+   * answers the refusal with the candidates (`duplicateBuildingsOf`). Never set
+   * by default: the answer is always allowed to be yes, but it has to be given.
+   */
+  acknowledgedDuplicates?: boolean;
+}
+
+export type UpdateBuildingInput = Partial<{
+  name: string | null;
+  postedNumber: string | null;
+  structureType: StructureType;
+  lifecycleStatus: BuildingLifecycle;
+  latitude: number | null;
+  longitude: number | null;
+  floorsCount: number;
+  notes: string | null;
+}>;
+
+/**
+ * How to fill a matrix. Two shapes, because officers arrive with two different
+ * amounts of knowledge — "six floors, four flats each" from the pavement, or a
+ * row per floor from someone who has walked the stairwell.
+ */
+export type UnitBlueprintInput =
+  | {
+      kind: 'uniform';
+      fromFloor: number;
+      toFloor: number;
+      unitsPerFloor: number;
+      unitType: UnitType;
+    }
+  | {
+      kind: 'explicit';
+      floors: Array<{ floor: number; unitCount: number; unitType: UnitType }>;
+    };
+
+export interface UpsertUnitInput {
+  floor: number;
+  /** Omitted on create: the server takes the next free spot on the floor. */
+  sequence?: number;
+  unitType: UnitType;
+  postedNumber?: string;
+  side?: string;
+  unitArea?: number;
+  unitStatus?: UnitStatus;
+  surveyStatus?: SurveyStatus;
+  notes?: string;
+}
+
+export interface RecordOccupancyInput {
+  unitId: string;
+  citizenId: string;
+  role: OccupancyRole;
+  /** Owners only — the server refuses shares on a tenant. */
+  shares?: number;
+  fromDate?: string;
+  toDate?: string;
+}
+
+export interface RecordDamageInput {
+  /** Exactly one of these two. Both, or neither, is refused server-side. */
+  buildingId?: string;
+  unitId?: string;
+  level: DamageLevel;
+  source?: DamageSource;
+  observations?: string;
+  assessedAt?: string;
+}
+
+/**
+ * Every building matching the filters, with the totals for that same set.
+ *
+ * Not cached: this is what an officer reloads after creating a building from
+ * the map, and a stale ledger is how the same structure gets entered twice.
+ */
+export function getBuildings(
+  tenant: string,
+  token: string,
+  filter: BuildingListFilter = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filter)) {
+    if (value === undefined || value === null || value === '') continue;
+    query.set(key, String(value));
+  }
+  const qs = query.toString();
+  return apiFetch<{ buildings: BuildingLedgerRow[]; total: number; summary: CensusSummary }>(
+    tenant,
+    `/buildings${qs ? `?${qs}` : ''}`,
+    { token, signal },
+  );
+}
+
+/** One building with its whole unit matrix and each unit's occupants. */
+export function getBuilding(tenant: string, token: string, id: string, signal?: AbortSignal) {
+  return apiFetch<BuildingDetail>(tenant, `/buildings/${encodeURIComponent(id)}`, {
+    token,
+    signal,
+  });
+}
+
+/**
+ * The condition log for one structure, newest first, plus the current level.
+ *
+ * Includes its units' own readings: "top three floors gone, ground floor shop
+ * still trading" is two rows about one building.
+ */
+export function getBuildingDamage(
+  tenant: string,
+  token: string,
+  id: string,
+  signal?: AbortSignal,
+) {
+  return apiFetch<{ current: DamageLevel | null; history: DamageAssessmentRow[] }>(
+    tenant,
+    `/buildings/${encodeURIComponent(id)}/damage`,
+    { token, signal },
+  );
+}
+
+/**
+ * Creates the shell. The suffix is allocated server-side, under a lock.
+ *
+ * `reconciled: true` means the provisional code the phone was showing is not
+ * the one it got, and the officer has to be told — they will otherwise keep
+ * quoting a code that names nothing. `deduplicated: true` means this exact
+ * creation had already been delivered, so nothing new was made.
+ */
+export function createBuilding(tenant: string, token: string, input: CreateBuildingInput) {
+  return apiFetch<{ building: BuildingSummary; reconciled: boolean; deduplicated: boolean }>(
+    tenant,
+    '/buildings',
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+/** Omitted fields are left alone. `parcelNumber` cannot be changed — see the schema. */
+export function updateBuilding(
+  tenant: string,
+  token: string,
+  id: string,
+  input: UpdateBuildingInput,
+) {
+  return apiFetch<BuildingSummary>(tenant, `/buildings/${encodeURIComponent(id)}`, {
+    token,
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+/** SUPER_ADMIN only. Refused server-side once anyone is recorded as living in it. */
+export function deleteBuilding(tenant: string, token: string, id: string) {
+  return apiFetch<{ deleted: boolean }>(tenant, `/buildings/${encodeURIComponent(id)}`, {
+    token,
+    method: 'DELETE',
+  });
+}
+
+/**
+ * Fills the matrix from a blueprint. Additive and idempotent — a floor that
+ * already holds the requested number of units is topped up, never doubled, so a
+ * re-tap on a slow connection cannot invent flats.
+ */
+export function generateUnits(
+  tenant: string,
+  token: string,
+  buildingId: string,
+  blueprint: UnitBlueprintInput,
+) {
+  return apiFetch<{ created: number; skipped: number; units: UnitRow[] }>(
+    tenant,
+    `/buildings/${encodeURIComponent(buildingId)}/units/generate`,
+    { token, method: 'POST', body: JSON.stringify(blueprint) },
+  );
+}
+
+/** Adds one unit by hand. Without a `sequence` the server takes the next free one. */
+export function addUnit(
+  tenant: string,
+  token: string,
+  buildingId: string,
+  input: UpsertUnitInput,
+) {
+  return apiFetch<UnitRow>(tenant, `/buildings/${encodeURIComponent(buildingId)}/units`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/**
+ * Corrects one unit. Not nested under its building — a unit id is unique on its
+ * own, and a path carrying both would let the two disagree.
+ */
+export function updateUnit(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: Partial<UpsertUnitInput>,
+) {
+  return apiFetch<UnitRow>(tenant, `/buildings/units/${encodeURIComponent(unitId)}`, {
+    token,
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+/**
+ * Records who is in a unit — and closes whatever case was waiting to find out.
+ *
+ * `casesResolved` is why this returns anything at all: silently closing
+ * somebody else's dispatch item is how a case list stops being believed, so the
+ * number is surfaced to the officer who caused it.
+ */
+export function recordOccupancy(tenant: string, token: string, input: RecordOccupancyInput) {
+  return apiFetch<{ occupancy: UnitOccupant; casesResolved: number }>(
+    tenant,
+    '/buildings/occupancies',
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+/** Ends a spell without deleting it — the history is the point (D2). */
+export function endOccupancy(
+  tenant: string,
+  token: string,
+  occupancyId: string,
+  toDate?: string,
+) {
+  return apiFetch<UnitOccupant>(
+    tenant,
+    `/buildings/occupancies/${encodeURIComponent(occupancyId)}/end`,
+    { token, method: 'PATCH', body: JSON.stringify(toDate ? { toDate } : {}) },
+  );
+}
+
+/**
+ * Appends one observation. There is no update and no delete: a building that
+ * was unsafe in 2024 and repaired in 2026 is two facts, and the first is what a
+ * compensation claim rests on (D3).
+ */
+export function recordDamage(tenant: string, token: string, input: RecordDamageInput) {
+  return apiFetch<DamageAssessmentRow>(tenant, '/buildings/damage', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/**
+ * One logged attempt to survey a unit (P4-T1, D10).
+ *
+ * `outcome` is a `SurveyStatus` because every state a visit can produce is
+ * already in that enum — never `NOT_SURVEYED`, which means nobody went.
+ */
+export interface UnitVisitRow {
+  id: string;
+  unitId: string;
+  officerId: string | null;
+  officerName: string | null;
+  visitedAt: string;
+  outcome: SurveyStatus;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface LogVisitInput {
+  unitId: string;
+  outcome: SurveyStatus;
+  visitedAt?: string;
+  notes?: string;
+}
+
+/**
+ * Logs one attempt and moves the unit to what it found — two facts, one action.
+ *
+ * `visitCount` comes back because it is the number the matrix shows: «٣
+ * محاولات» is the difference between assigning a door and escalating it.
+ */
+export function logUnitVisit(tenant: string, token: string, input: LogVisitInput) {
+  return apiFetch<{ visit: UnitVisitRow; visitCount: number }>(tenant, '/buildings/visits', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** Every attempt on one unit, newest first — the panel behind the count. */
+export function getUnitVisits(tenant: string, token: string, unitId: string) {
+  return apiFetch<{ visits: UnitVisitRow[] }>(
+    tenant,
+    `/buildings/units/${encodeURIComponent(unitId)}/visits`,
+    { token },
+  );
+}
+
+/**
+ * One building pin as the map draws it — three visual channels in one row: icon
+ * from `structureType`, fill from `surveyRollup`, ring from `worstDamageLevel`.
+ * Only buildings that have been given a location appear.
+ */
+export interface BuildingMapPin {
+  id: string;
+  code: string;
+  name: string | null;
+  latitude: number;
+  longitude: number;
+  parcelNumber: string;
+  structureType: StructureType;
+  lifecycleStatus: BuildingLifecycle;
+  unitsTotal: number;
+  unitsSurveyed: number;
+  /**
+   * The **worst** survey status among the units, never the majority (D11).
+   *
+   * Null for a structure nobody can be inside. Its units really are
+   * `NOT_SURVEYED`, and painting them in that colour would put "send an officer
+   * here" on a building with no doors hung yet — so the server withholds the
+   * channel and the map draws the lifecycle instead.
+   */
+  surveyRollup: SurveyStatus | null;
+  worstDamageLevel: DamageLevel | null;
+}
+
+/** Building pins with their rollups, for the fullscreen map (P3-T5). */
+export function getBuildingMapPins(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<{ buildings: BuildingMapPin[] }>(tenant, '/dashboard/map/buildings', {
+    token,
+    signal,
+  });
+}
+
+/**
+ * Which sector owns which parcel, keyed by parcel number.
+ *
+ * Built from the sector list plus one read per sector, because membership is
+ * `Zone.parcelNumbers` and there is no parcel→sector endpoint to ask (D13). The
+ * building editor needs it to preview a code before the building exists: the
+ * zone half of `ZONE-PARCEL-SUFFIX` is the only part of that code the client
+ * cannot derive from what it already has.
+ *
+ * Cached for five minutes. Sector membership changes when an administrator
+ * saves the zone editor, which is not something that happens between two
+ * keystrokes in a parcel field.
+ */
+export function getZoneParcelIndex(tenant: string, token: string) {
+  return cachedRequest(`zone-parcels:${tenant}`, 5 * 60 * 1000, async () => {
+    const { zones } = await getZones(tenant, token);
+    const details = await Promise.all(zones.map((zone) => getZone(tenant, token, zone.id)));
+
+    const index: Record<string, { id: string; code: string; name: string; color: string }> = {};
+    for (const zone of details) {
+      for (const parcelNumber of zone.parcelNumbers) {
+        // First sector wins, matching the server's own `findFirst`.
+        index[parcelNumber] ??= {
+          id: zone.id,
+          code: zone.code,
+          name: zone.name,
+          color: zone.color,
+        };
+      }
+    }
+    return index;
+  });
+}
+
 /** One unit inside a BUILDING — شقة, عيادة or محل. */
 export interface CitizenProfileUnit {
   id: string;
+  /** The canonical `Unit` this line was linked to, if any. */
+  unitId?: string | null;
+  unitCode?: string | null;
+  unitPostedNumber?: string | null;
   unitType: string;
   floor: string;
   side: string | null;
@@ -644,6 +1327,17 @@ export interface CitizenProfileProperty {
   sharedRights: string[];
   latitude: number | null;
   longitude: number | null;
+  /**
+   * The censused structure behind this card, when one was linked.
+   *
+   * Two codes, and they are not interchangeable (D14): `buildingCode` is the
+   * municipality's own `ZONE-PARCEL-SUFFIX`; `buildingPostedNumber` is what is
+   * painted on the building. A notice prints both, because where they disagree
+   * the collector in the street trusts the paint.
+   */
+  buildingId: string | null;
+  buildingCode: string | null;
+  buildingPostedNumber: string | null;
   unitCount: number;
   units: CitizenProfileUnit[];
 }
@@ -1021,6 +1715,7 @@ export function createCitizen(tenant: string, token: string, input: CitizenWrite
     propertyCount: number;
     status: CitizenRecordStatus;
     deduplicated: boolean;
+    census: CensusSyncResult | null;
   }>(tenant, '/citizens', { token, method: 'POST', body: JSON.stringify(input) });
 }
 
@@ -1035,11 +1730,16 @@ export function updateCitizen(
   citizenId: string,
   input: CitizenWriteInput,
 ) {
-  return apiFetch<{ updated: boolean; citizenId: string; status: CitizenRecordStatus }>(
-    tenant,
-    `/citizens/${encodeURIComponent(citizenId)}`,
-    { token, method: 'PATCH', body: JSON.stringify(input) },
-  );
+  return apiFetch<{
+    updated: boolean;
+    citizenId: string;
+    status: CitizenRecordStatus;
+    census: CensusSyncResult | null;
+  }>(tenant, `/citizens/${encodeURIComponent(citizenId)}`, {
+    token,
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
 }
 
 /** Soft delete and its undo — a deactivated citizen is skipped by the biller. */
@@ -1295,6 +1995,8 @@ export interface MunicipalitySettings {
   governorate: string | null;
   district: string | null;
   town: string | null;
+  /** تاريخ ورقم قرار المجلس البلدي, if the council has issued one (§7 Q1). */
+  councilDecisionRef: string | null;
   /**
    * Absent — not null — for a citizen.
    *
@@ -1384,6 +2086,7 @@ export async function updateMunicipalitySettings(
     governorate: string;
     district: string;
     town: string;
+    councilDecisionRef: string;
     logoDataUri: string;
 
     defaultFeeFrequency: FeeFrequency;

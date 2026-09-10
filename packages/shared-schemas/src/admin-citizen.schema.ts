@@ -164,6 +164,19 @@ function branchFieldsOnly(card: Record<string, unknown>): Record<string, unknown
       ? ['landlordName', 'landlordPhone']
       : []),
     ...(card.occupancyType === 'OWNER' ? ['unitStatus'] : []),
+    /*
+      The census link, on the two types that can stand on a structure.
+
+      Not in `PROPERTY_FIELD_MAP` on purpose: that map says which fields a card
+      *renders and requires*, and `buildingId` is neither — it is a reference
+      the picker sets and the officer never types. Listing it there would put a
+      phantom field into the form's own branch logic and into `askableFields`.
+      Kept here for the same reason `landlordName` is: omitting it would not
+      reject it, it would silently drop it, which is the quieter failure.
+    */
+    ...(card.propertyType === 'BUILDING' || card.propertyType === 'HOUSE'
+      ? ['buildingId']
+      : []),
   ]);
 
   return Object.fromEntries(Object.entries(card).filter(([key]) => keep.has(key)));

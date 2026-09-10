@@ -22,8 +22,25 @@ export default function NewCitizenPage({
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
 }) {
   const { tenant, locale, adminPath } = use(params);
-  const fromCaseId = useSearchParams().get('fromCaseId') ?? undefined;
+  const searchParams = useSearchParams();
+  const fromCaseId = searchParams.get('fromCaseId') ?? undefined;
+
+  /*
+    `?buildingId=&unitId=` arrives from a unit in the census matrix — "register
+    whoever is in this flat". The building half is what the form locks onto; the
+    unit half narrows the tick-list to the flat that was actually tapped.
+  */
+  const buildingId = searchParams.get('buildingId');
+  const lockedCensusTarget = buildingId
+    ? { buildingId, unitId: searchParams.get('unitId') ?? undefined }
+    : null;
   return (
-    <CitizenEditor tenant={tenant} locale={locale} adminPath={adminPath} fromCaseId={fromCaseId} />
+    <CitizenEditor
+      tenant={tenant}
+      locale={locale}
+      adminPath={adminPath}
+      fromCaseId={fromCaseId}
+      lockedCensusTarget={lockedCensusTarget}
+    />
   );
 }

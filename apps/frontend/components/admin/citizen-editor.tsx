@@ -6,6 +6,7 @@ import { ArrowRight, CloudOff, UserPlus, UserRoundPen } from 'lucide-react';
 import {
   ApiRequestError,
   createCitizen,
+  getBuilding,
   getCase,
   getCitizenForm,
   getTenantConfig,
@@ -13,7 +14,7 @@ import {
   updateCase,
   updateCitizen,
 } from '@/lib/api-client';
-import type { CaseSummary } from '@/lib/api-client';
+import type { BuildingDetail, CaseSummary, CensusSyncResult } from '@/lib/api-client';
 import type { PublicTenantConfig } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
@@ -38,10 +39,202 @@ import {
   toPayloadProperty,
   type CitizenFormValues,
 } from './citizen-form';
+import { STRUCTURE_TYPE_MAP } from '@mechanization/shared-schemas';
+import type { LockedCensusTarget } from './building-unit-picker';
 
 /** `null`/`undefined` → absent; a number → the string an `<input>` holds. */
 function text(value: unknown): string | undefined {
   return value === null || value === undefined || value === '' ? undefined : String(value);
+}
+
+/**
+ * Tells the officer what the save did to the building census.
+ *
+ * Registering a household into a flat now writes an occupancy, moves the unit
+ * out of «غير ممسوحة» and closes any حالة waiting on that door — four rows in
+ * four tables, none of which is on the screen the officer is looking at. Saying
+ * nothing was the old behaviour and it was indistinguishable from the bug: the
+ * link had been silently written to a column nothing read, and the only way to
+ * find out was to go back to the matrix and look.
+ *
+ * Silent when the save touched no linked structure, which is most saves. A toast
+ * that fires on every registration to report zero of everything is a toast
+ * people learn to dismiss without reading.
+ */
+function announceCensus(
+  census: CensusSyncResult | null,
+  toast: ReturnType<typeof useToast>,
+  locale: string,
+): void {
+  const en = locale === 'en';
+
+  /*
+    A failed sync is worth saying out loud, and worth saying *softly*.
+
+    The citizen is committed — the record is safe, and telling somebody their
+    registration failed when it did not is how a household ends up in the
+    register twice. What they need to know is that the census link is still
+    outstanding and where to finish it.
+  */
+  if (census === null) {
+    toast.error(
+      en ? 'Saved, but not linked to the census' : 'تم الحفظ دون الربط بسجل المباني',
+      {
+        description: en
+          ? 'The record is safe. Link it to its building from the census ledger.'
+          : 'السجل محفوظ. يمكن ربطه بالمبنى من سجل المباني.',
+      },
+    );
+    return;
+  }
+
+  const linked = census.occupanciesCreated + census.occupanciesRefreshed;
+  if (linked === 0 && census.casesResolved === 0 && census.buildingsNamed === 0) return;
+
+  const parts = [
+    linked > 0
+      ? en
+        ? `${linked} unit(s) linked`
+        : `تم ربط ${linked} وحدة`
+      : null,
+    census.unitsSurveyed > 0
+      ? en
+        ? `${census.unitsSurveyed} marked surveyed`
+        : `${census.unitsSurveyed} أصبحت ممسوحة`
+      : null,
+    census.casesResolved > 0
+      ? en
+        ? `${census.casesResolved} case(s) closed`
+        : `أُغلقت ${census.casesResolved} حالة`
+      : null,
+    census.buildingsNamed > 0
+      ? en
+        ? 'building name recorded'
+        : 'تم تسجيل اسم المبنى'
+      : null,
+    /*
+      Named explicitly rather than left to be noticed on the matrix. Unticking a
+      flat ends a tenancy and stops it being billed, and an officer who did it
+      by accident while correcting a phone number should find out now.
+    */
+    census.occupanciesEnded > 0
+      ? en
+        ? `${census.occupanciesEnded} previous unit link(s) ended`
+        : `أُنهيت ${census.occupanciesEnded} صلة سابقة بوحدات`
+      : null,
+  ].filter(Boolean);
+
+  toast.success(en ? 'Census updated' : 'تم تحديث سجل المباني', {
+    description: parts.join(en ? ' · ' : ' · '),
+  });
+}
+
+/**
+ * What the census already knows about the flat the officer just tapped.
+ *
+ * The «تسجيل أسرة في هذه الوحدة» button used to carry two UUIDs in a
+ * querystring and nothing else. The form opened blank, `BuildingUnitPicker`
+ * rendered nothing at all — it returns null without a رقم العقار — and an
+ * officer standing in a stairwell they had already surveyed retyped the parcel
+ * number, the building name, the floor and the area that the register was
+ * holding two tables away.
+ *
+ * Everything here is a value the municipality has already recorded about the
+ * structure, so seeding it is not a guess: it is the register answering a
+ * question it knows the answer to. What is deliberately left blank is
+ * `occupancyType` — whether this household owns or rents is exactly what the
+ * officer is at the door to find out, and defaulting it would have the form
+ * assert something nobody said.
+ */
+function censusDraft(
+  building: BuildingDetail,
+  unitId: string | undefined,
+  locale: string,
+): PropertyDraft {
+  const en = locale === 'en';
+  const mapped = STRUCTURE_TYPE_MAP[building.structureType];
+  const unit = unitId ? building.units.find((row) => row.id === unitId) : undefined;
+
+  /*
+    A مبنى or a منزل, decided by what is standing there.
+
+    `STRUCTURE_TYPE_MAP` is the one place that correspondence is written (D15),
+    so this reads it rather than restating it — a مجمع تجاري seeds a مبنى card
+    whose units are محلات, and a منزل مستقل seeds a منزل.
+  */
+  const propertyType = mapped.propertyType as PropertyDraft['propertyType'];
+
+  const draft: PropertyDraft = {
+    propertyType,
+    propertyNumber: building.parcelNumber,
+    // The register's own name for the block, not free text this officer
+    // invents. Where the building has none, the field stays empty and editable
+    // and whatever they type is promoted onto the building server-side.
+    buildingName: building.name ?? undefined,
+    /*
+      Only the two card types that can carry the link.
+
+      `branchFieldsOnly` admits `buildingId` for مبنى and منزل and drops it
+      silently for anything else — so a خيمة card seeded with one would arrive
+      unlinked with no complaint anywhere, which is the failure mode
+      `census-link.spec.ts` exists about. A `TENT_SHELTER` structure is the one
+      mapping that lands here (§3.6), and it keeps the parcel and the name
+      without pretending to a link the schema will not carry.
+    */
+    ...(propertyType === 'BUILDING' || propertyType === 'HOUSE'
+      ? { buildingId: building.id }
+      : {}),
+  };
+
+  if (propertyType !== 'BUILDING') {
+    /*
+      A منزل carries its single unit's detail in its own columns.
+
+      The link is the building; there is no units array to tick, and the sync
+      attaches the household to the structure's one unit on the server. Copying
+      the area and orientation across saves the officer measuring again.
+    */
+    if (unit?.side) draft.side = unit.side;
+    if (unit?.unitArea != null) draft.unitArea = String(unit.unitArea);
+    return draft;
+  }
+
+  /*
+    A مبنى carries one card line per flat, and exactly one is seeded: the one
+    that was tapped.
+
+    Nothing is seeded when the officer came from the building rather than a
+    unit. The picker's rule holds — a twelve-flat matrix says nothing about how
+    many of them one person holds — and it is not violated here, because
+    tapping a specific door *is* the officer saying which one.
+  */
+  if (unit) {
+    draft.units = [
+      {
+        unitId: unit.id,
+        unitType: unit.unitType,
+        floor: floorLabel(unit.floor, en),
+        side: unit.side ?? undefined,
+        unitArea: unit.unitArea != null ? String(unit.unitArea) : undefined,
+        unitStatus: unit.unitStatus ?? undefined,
+      },
+    ];
+  }
+
+  return draft;
+}
+
+/**
+ * A signed floor rendered the way a person says it.
+ *
+ * `Unit.floor` is an integer and a card's `floor` is free text, so seeding one
+ * from the other crosses that boundary. «الأرضي» rather than «0», because that
+ * is what the register has always held and what the officer would have typed.
+ */
+function floorLabel(floor: number, en: boolean): string {
+  if (floor === 0) return en ? 'Ground' : 'الأرضي';
+  if (floor < 0) return en ? `Basement ${Math.abs(floor)}` : `قبو ${Math.abs(floor)}`;
+  return String(floor);
 }
 
 /**
@@ -152,6 +345,7 @@ export function CitizenEditor({
    * whoever gets created here. See `fromCaseDraft` and `submit` below.
    */
   fromCaseId,
+  lockedCensusTarget,
 }: {
   tenant: string;
   locale: string;
@@ -159,6 +353,15 @@ export function CitizenEditor({
   citizenId?: string;
   queueId?: string;
   fromCaseId?: string;
+  /**
+   * Arrived from a building's unit matrix — the structure, and possibly the
+   * flat, is already decided.
+   *
+   * A URL parameter rather than shared state, for the same reason `fromCaseId`
+   * is one: the matrix lives on another route, and the two screens should not
+   * have to know about each other beyond a link.
+   */
+  lockedCensusTarget?: LockedCensusTarget | null;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -227,11 +430,24 @@ export function CitizenEditor({
         // accepts, so the form cannot offer one that would be refused on save.
         // `getQueuedSubmission` touches only IndexedDB, not the network — it
         // runs alongside the other two rather than blocking on them.
-        const [tenantConfig, form, queued, fromCase] = await Promise.all([
+        const [tenantConfig, form, queued, fromCase, censusBuilding] = await Promise.all([
           getTenantConfig(tenant),
           citizenId ? getCitizenForm(tenant, token, citizenId) : Promise.resolve(null),
           queueId ? getQueuedSubmission(tenant, queueId) : Promise.resolve(null),
           fromCaseId ? getCase(tenant, token, fromCaseId).catch(() => null) : Promise.resolve(null),
+          /*
+            The structure behind `?buildingId=`, fetched so the first card can
+            be seeded from it.
+
+            Swallowed on failure, exactly as the case lookup beside it is: an
+            officer who tapped a flat and lost signal on the way to this screen
+            still needs a working registration form. They get a blank one and
+            the link is made later, which is worse than the prefill and far
+            better than a page that will not open.
+          */
+          lockedCensusTarget
+            ? getBuilding(tenant, token, lockedCensusTarget.buildingId).catch(() => null)
+            : Promise.resolve(null),
         ]);
         if (cancelled) return;
 
@@ -273,9 +489,25 @@ export function CitizenEditor({
 
         if (!form) {
           const empty = emptyCitizen();
-          setInitial(
-            fromCase ? { ...empty, properties: [fromCaseDraft(fromCase)] } : empty,
-          );
+
+          /*
+            Three ways in, and they cannot both seed the first card.
+
+            The census target wins where both are present, and that ordering is
+            not arbitrary: a حالة carries what an officer wrote from the
+            doorstep — free text, possibly «الطابق الثاني» with four flats on
+            it — while the census carries rows the municipality created and
+            numbered. Where the two describe the same place, the numbered one is
+            the better answer, and the case is still resolved by the
+            registration either way.
+          */
+          const seeded = censusBuilding
+            ? [censusDraft(censusBuilding, lockedCensusTarget?.unitId, locale)]
+            : fromCase
+              ? [fromCaseDraft(fromCase)]
+              : null;
+
+          setInitial(seeded ? { ...empty, properties: seeded } : empty);
           return;
         }
 
@@ -355,6 +587,16 @@ export function CitizenEditor({
     return () => {
       cancelled = true;
     };
+    /*
+      `lockedCensusTarget` is deliberately not a dependency.
+
+      It is an object literal rebuilt from the querystring on every render of
+      the page above, so listing it would re-run this whole load — including the
+      building fetch — on every keystroke in the form. Its two fields are plain
+      strings that cannot change without a navigation, and a navigation remounts
+      this component, so the effect already re-runs exactly when it should.
+    */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenant, token, citizenId, queueId, fromCaseId, base, router, locale]);
 
   const submit = useCallback(
@@ -449,10 +691,12 @@ export function CitizenEditor({
 
       try {
         if (citizenId) {
-          await updateCitizen(tenant, token, citizenId, payload);
+          const updated = await updateCitizen(tenant, token, citizenId, payload);
+          announceCensus(updated.census, toast, locale);
           router.push(`${base}/citizens/${citizenId}`);
         } else {
           const created = await createCitizen(tenant, token, payload);
+          announceCensus(created.census, toast, locale);
 
           /*
             The other half of the bridge. Only reachable here — a citizen
@@ -652,6 +896,7 @@ export function CitizenEditor({
         onSubmit={(values) => void submit(values)}
         onCancel={() => shellNavigate(router, cancelHref)}
         locale={locale}
+        lockedCensusTarget={lockedCensusTarget}
       />
     </div>
   );

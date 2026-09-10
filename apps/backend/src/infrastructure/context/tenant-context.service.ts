@@ -53,6 +53,21 @@ export class TenantContextService {
     return this.require().tenantSlug;
   }
 
+  /**
+   * The Postgres schema this request's data lives in.
+   *
+   * Read by every raw query, which writes it into its SQL rather than leaning
+   * on `search_path` — see `tenant-schema-ref.ts`. A plain property and not a
+   * pre-built SQL fragment on purpose: a test stubbing this service fakes a
+   * string, and a fragment it forgot to fake would interpolate as `undefined`
+   * and become a bound parameter — a `syntax error at or near "$1"` instead of
+   * a missing-schema error naming what is wrong.
+   */
+  get schemaName(): string {
+    return this.require().schemaName;
+  }
+
+
   get tenantId(): string {
     return this.require().tenantId;
   }

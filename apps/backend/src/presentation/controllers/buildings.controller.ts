@@ -4,6 +4,7 @@ import {
   createBuildingSchema,
   createDamageAssessmentSchema,
   endOccupancySchema,
+  logVisitSchema,
   unitBlueprintSchema,
   updateBuildingSchema,
   updateUnitSchema,
@@ -13,6 +14,7 @@ import {
   type CreateBuildingInput,
   type CreateDamageAssessmentInput,
   type EndOccupancyInput,
+  type LogVisitInput,
   type UnitBlueprint,
   type UpdateBuildingInput,
   type UpdateUnitInput,
@@ -195,6 +197,31 @@ export class BuildingsController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.buildings.endOccupancy(occupancyId, body.toDate, this.actor(user));
+  }
+
+  // ──────────────────────────────  Visits  ──────────────────────────────
+
+  /**
+   * Logs one attempt and moves the unit to what it found.
+   *
+   * A write, so the field roles — this is the single most common thing an
+   * officer does in a stairwell, and routing it through a narrower role would
+   * mean the person who knocked cannot record that they knocked.
+   */
+  @Roles(...WRITE_ROLES)
+  @Post('visits')
+  async logVisit(
+    @Body(new ZodValidationPipe(logVisitSchema)) body: LogVisitInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.buildings.logVisit(body, this.actor(user));
+  }
+
+  /** Every attempt on one unit — the panel behind «٣ محاولات». */
+  @Roles(...READ_ROLES)
+  @Get('units/:unitId/visits')
+  async unitVisits(@Param('unitId') unitId: string) {
+    return { visits: await this.buildings.visits(unitId) };
   }
 
   // ──────────────────────────────  Damage  ──────────────────────────────

@@ -170,6 +170,7 @@ model User {
   unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
   damageAssessments     DamageAssessment[]   @relation("DamageAssessedBy")
   buildingsCreated      Building[]           @relation("BuildingCreatedBy")
+  unitVisits            UnitVisit[]          @relation("UnitVisitOfficer")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -606,6 +607,29 @@ enum StructureType {
   TENT_SHELTER
 }
 
+/// Where a structure is in its own life — the third axis, beside *what kind of
+/// thing it is* (`StructureType`) and *what has happened to it* (`DamageLevel`).
+///
+/// Modelled on the Dutch BAG's `pand` lifecycle, keeping only the states a
+/// surveyor can establish by looking rather than the ones their register infers
+/// from permit paperwork we never receive. `NOT_REALISED` is BAG's
+/// `niet gerealiseerd pand`: permitted, then abandoned or revoked.
+///
+/// Not folded into `DamageLevel` — that is D5 one level up. A building going up
+/// has no damage history to overwrite, and a building taken down on purpose is
+/// a different fact from one that collapsed.
+enum BuildingLifecycle {
+  PERMITTED
+  UNDER_CONSTRUCTION
+  IN_USE
+  /// Standing, structurally present, nobody using it as intended. Counted as
+  /// occupiable on purpose — an abandoned block with a displaced family in it
+  /// is precisely what a war-damage census is looking for.
+  DERELICT
+  DEMOLISHED
+  NOT_REALISED
+}
+
 /// Per-unit survey progress. `NOT_SURVEYED` and `VISITED_NO_ANSWER` are the two
 /// this whole table exists to distinguish: never attempted, against three
 /// officers who stood at the door and got no answer. The building-level figure
@@ -704,6 +728,15 @@ model Building {
 
   structureType StructureType
 
+  /// Where the structure is in its own life. `IN_USE` for everything created
+  /// before this column existed, which is the true answer for all of them: the
+  /// census had no way to record a shell, so nobody entered one.
+  ///
+  /// Read by `isOccupiableLifecycle` — a building that is permitted, going up,
+  /// demolished or never built is excluded from the survey denominator, so its
+  /// units stop appearing as permanent unreachable work on the dispatch list.
+  lifecycleStatus BuildingLifecycle @default(IN_USE)
+
   /// The entrance, not the centroid — this is the dot a collector navigates to.
   /// Nullable because a building may be created from a desk before anyone has
   /// stood at its door.
@@ -734,6 +767,7 @@ model Building {
   @@unique([parcelNumber, codeSuffix])
   @@index([parcelNumber])
   @@index([latitude, longitude])
+  @@index([lifecycleStatus])
   @@map("buildings")
 }
 
@@ -793,6 +827,7 @@ model Unit {
   cases             Case[]
   damageAssessments DamageAssessment[]
   buildingUnits     BuildingUnit[]
+  visits            UnitVisit[]
 
   @@unique([buildingId, floor, sequence])
   @@index([buildingId])
@@ -838,6 +873,45 @@ model UnitOccupancy {
   @@index([citizenId])
   @@index([unitId, toDate])
   @@map("unit_occupancies")
+}
+
+/// One attempt to survey a unit — who went, when, and what came of it.
+///
+/// `Unit.surveyStatus` is the *current* answer; this is the record of how many
+/// times somebody went to get it, and by whom. D10 is the reason both exist:
+/// the dispatch decision is not "is this flat surveyed" but "has anybody been,
+/// and how often" — a door knocked on three times with no answer is a different
+/// instruction from one nobody has walked to yet, and the status alone flattens
+/// the two into `VISITED_NO_ANSWER`.
+///
+/// `outcome` reuses `SurveyStatus` rather than declaring a fourth overlapping
+/// vocabulary (the trap D15 names). Every state a *visit* can produce is
+/// already in it, and logging a visit sets the unit to its outcome — one fact
+/// recorded once. The single value that is not a visit outcome is
+/// `NOT_SURVEYED`, which means nobody went; the service refuses it.
+model UnitVisit {
+  id     String @id @default(uuid()) @db.Uuid
+  unitId String @db.Uuid
+  unit   Unit   @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  /// Nullable, and `SetNull` on delete: a visit is a thing that happened, and
+  /// it stays true after the officer who made it leaves the municipality.
+  officerId String? @db.Uuid
+  officer   User?   @relation("UnitVisitOfficer", fields: [officerId], references: [id], onDelete: SetNull)
+
+  /// When the officer stood at the door — back-datable from a paper form, for
+  /// the same reason `DamageAssessment.assessedAt` is.
+  visitedAt DateTime @default(now())
+
+  outcome SurveyStatus
+
+  notes String?
+
+  createdAt DateTime @default(now())
+
+  @@index([unitId, visitedAt])
+  @@index([officerId])
+  @@map("unit_visits")
 }
 
 /// One observation of a structure's condition at a point in time.
@@ -1149,6 +1223,17 @@ model SystemSettings {
   /// `{ frequency, timeOfDay, dayOfWeek, dayOfMonth, keepCopies }`. Read by
   /// nothing yet; there is no scheduler process in this deployment.
   backupSchedule Json?
+
+  /// تاريخ ورقم قرار المجلس البلدي — the council decision adopting the building
+  /// numbering scheme, if one has been issued.
+  ///
+  /// Optional by design, and §7 Q1 is the whole reason: internal cadastral
+  /// indexing is already within municipal executive competence, so the codes are
+  /// valid without a decree. Where a council *has* passed one, a notice that
+  /// cites it carries more weight; where it has not, the notice cites the
+  /// municipal survey authority instead. Free text — it is a reference to
+  /// someone else's document, not a shape this system gets to assert.
+  councilDecisionRef String?
 
   updatedAt   DateTime @updatedAt
   updatedById String?  @db.Uuid

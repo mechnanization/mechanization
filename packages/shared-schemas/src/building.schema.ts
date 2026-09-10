@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  buildingLifecycleSchema,
   damageLevelSchema,
   damageSourceSchema,
   occupancyRoleSchema,
@@ -8,7 +9,7 @@ import {
   unitStatusSchema,
   unitTypeSchema,
 } from './enums';
-import { areaField, neighborhoodField, propertyNumberField } from './property.schema';
+import { areaField, propertyNumberField } from './property.schema';
 import { uuid } from './primitives';
 
 /**
@@ -111,11 +112,43 @@ export const createBuildingSchema = z
     name: buildingName.optional(),
     postedNumber: postedNumber.optional(),
     structureType: structureTypeSchema,
-    neighborhood: neighborhoodField.optional(),
+    /**
+     * Where the structure is in its own life. Defaults to «قائم ومستعمل»
+     * because that is what an officer is standing in front of nineteen times
+     * out of twenty, and a required question whose answer is nearly always the
+     * same is a question that gets answered wrong.
+     */
+    lifecycleStatus: buildingLifecycleSchema.default('IN_USE'),
+    /*
+      No `neighborhood`, deliberately.
+
+      It used to be accepted here and there is no column for it: `Building` has
+      never had one, and `BuildingsService.create` never read it — so a client
+      that sent الحي got a 201 and a building with no الحي, which is the silent
+      drop this whole change set exists to remove. الحي lives on the property
+      card, where it is asked of the citizen and stored.
+
+      If the census ever needs its own, it needs a column and a migration first.
+    */
     latitude: latitude.optional(),
     longitude: longitude.optional(),
     floorsCount: floorsCount.default(1),
     notes: notes.optional(),
+    /**
+     * «نعم، هذه منشأة مختلفة» — the officer has seen what already stands on
+     * this parcel and is asserting this is not one of them.
+     *
+     * The parcel is the only thing that makes two buildings *look* like one
+     * record, and the suffix allocation in §4.4 solves the opposite problem: it
+     * guarantees two officers surveying one block from opposite ends get
+     * *different* codes, quietly, with nothing to notice. This flag is the
+     * moment of noticing, and the server refuses a second structure on an
+     * occupied parcel without it.
+     *
+     * Not a validation rule — a confirmation. The answer is always allowed to
+     * be yes; what is not allowed is never being asked.
+     */
+    acknowledgedDuplicates: z.boolean().optional(),
     /**
      * The suffix the phone showed while offline, if it showed one.
      *
@@ -152,6 +185,7 @@ export const updateBuildingSchema = z
     name: buildingName.nullable().optional(),
     postedNumber: postedNumber.nullable().optional(),
     structureType: structureTypeSchema.optional(),
+    lifecycleStatus: buildingLifecycleSchema.optional(),
     latitude: latitude.nullable().optional(),
     longitude: longitude.nullable().optional(),
     floorsCount: floorsCount.optional(),
@@ -380,6 +414,33 @@ export const endOccupancySchema = z.object({
 export type EndOccupancyInput = z.infer<typeof endOccupancySchema>;
 
 /**
+ * One attempt to survey a unit, logged from the matrix.
+ *
+ * `outcome` is a `SurveyStatus` — every state a visit can produce is already in
+ * that enum, and a second vocabulary beside it is the trap D15 names. The one
+ * value excluded is `NOT_SURVEYED`: it means nobody went, so a *visit* carrying
+ * it is a contradiction rather than a finding.
+ */
+export const logVisitSchema = z.object({
+  unitId: uuid,
+  outcome: surveyStatusSchema.refine((value) => value !== 'NOT_SURVEYED', {
+    message: 'نتيجة الزيارة لا يمكن أن تكون «غير ممسوحة»',
+  }),
+  /**
+   * Back-datable from a paper form or a phone that was offline, and refused in
+   * the future for the same reason `assessedAt` is: that direction is a typo,
+   * never a fact.
+   */
+  visitedAt: z.coerce
+    .date({ invalid_type_error: 'تاريخ الزيارة غير صالح' })
+    .max(new Date(Date.now() + 60_000), 'تاريخ الزيارة في المستقبل')
+    .optional(),
+  notes: z.string().trim().max(1000, 'الملاحظات طويلة جداً').optional(),
+});
+
+export type LogVisitInput = z.infer<typeof logVisitSchema>;
+
+/**
  * What the census ledger filters on.
  *
  * Every field optional and composable — the page's filters are checkboxes and
@@ -389,6 +450,7 @@ export const buildingFilterSchema = z.object({
   parcelNumber: z.string().trim().max(40).optional(),
   zoneId: uuid.optional(),
   structureType: structureTypeSchema.optional(),
+  lifecycleStatus: buildingLifecycleSchema.optional(),
   surveyStatus: surveyStatusSchema.optional(),
   damageLevel: damageLevelSchema.optional(),
   /** Matches `code`, `name` or `postedNumber` — what a clerk actually types. */

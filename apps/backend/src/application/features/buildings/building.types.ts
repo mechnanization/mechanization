@@ -23,6 +23,12 @@ export interface BuildingRow {
   name: string | null;
   postedNumber: string | null;
   structureType: string;
+  /**
+   * Where the structure is in its own life — permitted, going up, standing,
+   * abandoned, gone. Distinct from `structureType` (what it is) and from its
+   * damage level (what happened to it). See `BUILDING_LIFECYCLE`.
+   */
+  lifecycleStatus: string;
   latitude: number | null;
   longitude: number | null;
   floorsCount: number;
@@ -64,6 +70,19 @@ export interface OccupancyRow {
   registrationId: string | null;
 }
 
+/** One logged attempt to survey a unit — P4-T1, D10. */
+export interface VisitRow {
+  id: string;
+  unitId: string;
+  officerId: string | null;
+  officerName: string | null;
+  visitedAt: Date;
+  /** A `SurveyStatus`, never `NOT_SURVEYED` — see the model comment. */
+  outcome: string;
+  notes: string | null;
+  createdAt: Date;
+}
+
 export interface DamageRow {
   id: string;
   buildingId: string | null;
@@ -80,12 +99,71 @@ export interface DamageRow {
 export interface BuildingListFilter {
   parcelNumber?: string;
   parcelNumbers?: readonly string[];
+  /**
+   * A sector, resolved to its parcels at query time.
+   *
+   * There is no `zoneId` on a building to filter on (D13) — membership lives in
+   * `Zone.parcelNumbers` and nowhere else — so this is expanded into a parcel
+   * list before it reaches the database.
+   */
+  zoneId?: string;
   structureType?: string;
+  /** Permitted / going up / standing / abandoned / gone. See `BUILDING_LIFECYCLE`. */
+  lifecycleStatus?: string;
   surveyStatus?: string;
   damageLevel?: string;
   search?: string;
   limit?: number;
   offset?: number;
+}
+
+/**
+ * A census ledger row: the stored building plus the two things the ledger shows
+ * that are not columns on it.
+ *
+ * Both are derived rather than stored, and for the same reason in each case —
+ * the zone because membership is `Zone.parcelNumbers` (D13), the damage level
+ * because it is the newest row in an append-only log (D3). Resolving them once
+ * per page here is what keeps the ledger from asking per row.
+ */
+export interface BuildingLedgerRow extends BuildingRow {
+  zoneCode: string | null;
+  zoneName: string | null;
+  /** The current level — the latest assessment — or null if never assessed. */
+  damageLevel: string | null;
+}
+
+/**
+ * The census totals for whatever the filters currently select.
+ *
+ * Computed over the whole filtered set rather than the page, because a KPI tile
+ * that silently described the first hundred rows would read as an answer about
+ * the municipality and be one about the pagination.
+ */
+export interface CensusSummary {
+  /** Every building the filters select, whatever its lifecycle state. */
+  buildings: number;
+  /**
+   * Units in structures that can hold households — see `OCCUPIABLE_LIFECYCLE`.
+   *
+   * Not every unit in `buildings` above. A shell under construction has rows in
+   * the matrix and no doors to knock on, and counting them would hold the
+   * coverage percentage below 100 for as long as the scaffolding is up.
+   */
+  unitsTotal: number;
+  unitsSurveyed: number;
+  /** `unitsTotal - unitsSurveyed` — the work still outstanding. */
+  unitsUnsurveyed: number;
+  /**
+   * Units the lifecycle exclusion removed from the three figures above.
+   *
+   * Reported rather than dropped: a coverage percentage that improved because
+   * a building was marked demolished needs to be explainable on the screen
+   * showing it, not only in the audit log.
+   */
+  unitsOutOfScope: number;
+  /** Buildings whose *current* level is restricted-use, unsafe, or collapsed. */
+  damaged: number;
 }
 
 export interface CreateBuildingRow {
@@ -125,10 +203,18 @@ export interface BuildingMapPin {
   longitude: number;
   parcelNumber: string;
   structureType: string;
+  /** Permitted / going up / standing / abandoned / gone — the map's fourth channel. */
+  lifecycleStatus: string;
   unitsTotal: number;
   unitsSurveyed: number;
-  /** The **worst** survey status among the units, never the majority (D11). */
-  surveyRollup: string;
+  /**
+   * The **worst** survey status among the units, never the majority (D11).
+   *
+   * Null for a structure that cannot hold households: a shell under
+   * construction is honestly `NOT_SURVEYED` and must not be painted in the one
+   * colour that means "send an officer here".
+   */
+  surveyRollup: string | null;
   /** The worst *current* damage level across the building and its units. */
   worstDamageLevel: string | null;
 }

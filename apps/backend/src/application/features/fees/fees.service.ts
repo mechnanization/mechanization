@@ -454,6 +454,7 @@ export class FeesService {
       governorate: row?.governorate ?? null,
       district: row?.district ?? null,
       town: row?.town ?? null,
+      councilDecisionRef: row?.councilDecisionRef ?? null,
       // `undefined` rather than null for a citizen: the key is absent, so a
       // client cannot mistake "not sent to you" for "no logo configured".
       logoDataUri: includeLogo ? (row?.logoDataUri ?? null) : undefined,
@@ -526,6 +527,7 @@ export class FeesService {
       governorate: blankToNull(input.governorate),
       district: blankToNull(input.district),
       town: blankToNull(input.town),
+      councilDecisionRef: blankToNull(input.councilDecisionRef),
       logoDataUri: blankToNull(input.logoDataUri),
 
       defaultFeeFrequency: input.defaultFeeFrequency,

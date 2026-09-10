@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { PaymentMethod } from '@mechanization/shared-schemas';
 import type { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 
 /** One movement of money, as the caller describes it. */
@@ -61,6 +62,18 @@ export class PaymentLedgerService {
 
   private get db() {
     return this.tenantContext.prisma;
+  }
+
+  /**
+   * The schema prefix every raw query in this class writes into its SQL.
+   *
+   * Raw SQL is sent to Postgres untouched, so an unqualified table name resolves
+   * through `search_path` — session state on a connection shared through a
+   * transaction pooler, which is not required to carry it. See
+   * `tenant-schema-ref.ts` for the 42P01 this prevents.
+   */
+  private get S() {
+    return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
   /**
@@ -218,7 +231,7 @@ export class PaymentLedgerService {
     >`
       SELECT "id", "amount"::text, "paidAmount"::text, "currency",
              "paymentStatus"::text, "citizenId"
-        FROM citizen_payments
+        FROM ${this.S}citizen_payments
        WHERE "id" = ${paymentId}::uuid
        FOR UPDATE
     `;

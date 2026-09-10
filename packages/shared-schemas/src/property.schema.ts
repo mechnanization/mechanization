@@ -8,7 +8,7 @@ import {
   unitTypeSchema,
   type PropertyType,
 } from './enums';
-import { arabicOrLatinName, lebanesePhone } from './primitives';
+import { arabicOrLatinName, lebanesePhone, uuid } from './primitives';
 
 /**
  * Steps 3–4 — a single repeatable "property card".
@@ -140,6 +140,17 @@ export const neighborhoodField = z
  * the parcel instead of duplicating it.
  */
 export const buildingUnitSchema = z.object({
+  /**
+   * The canonical `Unit` this card line describes, when the officer picked one.
+   *
+   * The link the census turns on (§3.7, P2-T8): where it is set the `Unit` is
+   * authoritative field by field, and the flat the citizen filed and the flat
+   * the municipality surveyed are known to be the same flat rather than two
+   * rows that happen to agree. Null everywhere it was not offered — a card
+   * filed before the building was censused, or one whose parcel nobody has
+   * surveyed — and that is permanent rather than transitional.
+   */
+  unitId: uuid.optional(),
   unitType: unitTypeSchema,
   floor: z.string({ required_error: 'الطابق مطلوب' }).trim().min(1, 'الطابق مطلوب').max(20),
   side: z.string().trim().max(60).optional(),
@@ -197,6 +208,14 @@ const propertyBranch = z.discriminatedUnion(
       propertyType: z.literal('BUILDING'),
       neighborhood: neighborhoodField,
       propertyNumber: propertyNumberField,
+      /**
+       * The censused structure this card is about, when one was picked.
+       *
+       * On BUILDING and HOUSE only. أرض has nothing standing on it and never
+       * gets one, and a خيمة stays a bare card by Q2 — offering the field there
+       * would invite a link the census deliberately does not model.
+       */
+      buildingId: uuid.optional(),
       buildingName: z
         .string({ required_error: 'اسم المبنى مطلوب' })
         .trim()
@@ -208,6 +227,7 @@ const propertyBranch = z.discriminatedUnion(
       propertyType: z.literal('HOUSE'),
       neighborhood: neighborhoodField,
       propertyNumber: propertyNumberField,
+      buildingId: uuid.optional(),
       buildingName: z
         .string({ required_error: 'اسم المبنى/المنزل مطلوب' })
         .trim()
@@ -286,6 +306,7 @@ export const partialPropertyEntrySchema = z
     propertyType: propertyTypeSchema,
     neighborhood: neighborhoodField,
     propertyNumber: propertyNumberField,
+    buildingId: uuid,
     buildingName: z.string().trim().min(1).max(120),
     side: z.string().trim().max(60),
     landType: landTypeSchema,

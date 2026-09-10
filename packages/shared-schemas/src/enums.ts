@@ -205,6 +205,80 @@ export const structureTypeSchema = arabicEnum(STRUCTURE_TYPE, 'نوع المنش
 export type StructureType = z.infer<typeof structureTypeSchema>;
 
 /**
+ * Where a structure stands in its own life, as distinct from what kind of thing
+ * it is and from what condition it is in.
+ *
+ * The third axis the census was missing. `STRUCTURE_TYPE` says *what* is on the
+ * parcel and `DAMAGE_LEVEL` says what has happened *to* it — neither can say
+ * that the thing is a poured foundation, or a permit nobody ever built against.
+ * Before this, an officer standing in front of a half-built shell had two
+ * options: invent a `RESIDENTIAL_BUILDING` with a fictional matrix, which then
+ * counts in every occupancy and coverage figure the census produces, or record
+ * nothing at all and leave the parcel looking unvisited.
+ *
+ * The ladder is the Dutch BAG's *pand* lifecycle, minus the states that only
+ * exist because their register is driven by permit paperwork we do not receive
+ * (`Pand in gebruik (niet ingemeten)`, `Verbouwing pand`, `Sloopvergunning
+ * verleend`). What is kept is the part a surveyor can establish by looking:
+ * whether it is permitted, going up, standing and used, standing and abandoned,
+ * gone, or abandoned before it was ever finished.
+ *
+ * Deliberately **not** merged into `DAMAGE_LEVEL` — that is D5 restated one
+ * level up. A building under construction has no damage history to overwrite,
+ * and a demolished-by-choice building is a different fact from a collapsed one.
+ */
+export const BUILDING_LIFECYCLE = [
+  /** رخصة بناء صادرة — permitted, nothing on the ground yet. */
+  'PERMITTED',
+  /** قيد الإنشاء — foundations poured or higher, not yet habitable. */
+  'UNDER_CONSTRUCTION',
+  /** قائم ومستعمل — standing and in use. The overwhelming default. */
+  'IN_USE',
+  /**
+   * مهجور — standing, structurally there, nobody using it as intended.
+   *
+   * Counted as occupiable below, and that is not an oversight: an abandoned
+   * building with squatters or a displaced family in it is exactly the case a
+   * war-damage census exists to find, and excluding it from the denominator
+   * would hide those households from every coverage figure.
+   */
+  'DERELICT',
+  /** مهدوم — taken down. Distinct from `TOTAL_COLLAPSE`, which is damage. */
+  'DEMOLISHED',
+  /** لم يُنفَّذ — permitted, then abandoned or revoked. BAG's `niet gerealiseerd`. */
+  'NOT_REALISED',
+] as const;
+export const buildingLifecycleSchema = arabicEnum(
+  BUILDING_LIFECYCLE,
+  'حالة المبنى الإنشائية غير صالحة',
+);
+export type BuildingLifecycle = z.infer<typeof buildingLifecycleSchema>;
+
+/**
+ * The lifecycle states in which a structure can hold households.
+ *
+ * This is the census denominator. A building that is permitted, going up,
+ * demolished or never built has no doors to knock on, so counting its units as
+ * «غير ممسوحة» would park permanent unreachable work on every dispatch list and
+ * hold the municipality's coverage percentage below 100 for ever.
+ *
+ * `DERELICT` is in, for the reason given on the value itself.
+ */
+export const OCCUPIABLE_LIFECYCLE = ['IN_USE', 'DERELICT'] as const;
+
+/**
+ * Whether this structure's units belong in survey and occupancy figures.
+ *
+ * Null reads as occupiable, matching every other nullable census field in this
+ * file: a building recorded before the column existed is a building somebody
+ * surveyed, and defaulting it out of the denominator would silently shrink the
+ * census the day the column shipped.
+ */
+export function isOccupiableLifecycle(status: string | null | undefined): boolean {
+  return status == null || (OCCUPIABLE_LIFECYCLE as readonly string[]).includes(status);
+}
+
+/**
  * Per-unit survey progress — the state machine that makes an unsurveyed flat a
  * row rather than an absence.
  *

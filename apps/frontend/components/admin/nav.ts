@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   BadgeDollarSign,
+  Building2,
   ClipboardList,
   KeyRound,
   LayoutDashboard,
@@ -126,6 +127,25 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: MapIcon,
         roles: ['SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER'],
         keywords: ['عقارات', 'مواقع', 'مسح', 'map', 'cadastre'],
+      },
+      // Between the map and the sectors on purpose: the census is what the map
+      // draws pins from and what a sector is ultimately a count of. Open to
+      // every staff role that may open the map — a collector needs a building's
+      // code to find a door as much as an inspector needs it to survey one.
+      {
+        path: '/buildings',
+        label: 'سجل المباني',
+        labelEn: 'Building Census',
+        icon: Building2,
+        roles: [
+          'SUPER_ADMIN',
+          'AUDITOR',
+          'FIELD_INSPECTOR',
+          'COLLECTOR',
+          'ACCOUNTANT',
+          'ADMINISTRATIVE_OFFICER',
+        ],
+        keywords: ['مبنى', 'مباني', 'وحدات', 'شقق', 'مسح', 'ضرر', 'إحصاء', 'buildings', 'units', 'census', 'damage'],
       },
       {
         path: '/zones',

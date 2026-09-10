@@ -49,9 +49,22 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SegmentedControl } from '@/components/ui/segmented-control';
+import {
+  BuildingUnitPicker,
+  type LockedCensusTarget,
+} from '@/components/admin/building-unit-picker';
 import { cn, scopeErrors } from '@/lib/utils';
 
 export interface UnitDraft {
+  /**
+   * The canonical `Unit` this line describes, when the officer linked one.
+   *
+   * Set by `BuildingUnitPicker` and never typed. Where it is present the
+   * census record outranks this row field by field (P2-T8); where it is absent
+   * — a card filed before the building was surveyed — this row is all there is,
+   * and that is permanent rather than transitional.
+   */
+  unitId?: string;
   unitType?: UnitType;
   floor?: string;
   side?: string;
@@ -63,6 +76,8 @@ export interface UnitDraft {
 
 export interface PropertyDraft {
   id?: string;
+  /** The censused structure this card is about, when one was linked (§3.7). */
+  buildingId?: string;
   occupancyType?: OccupancyType;
   landlordName?: string;
   landlordPhone?: string;
@@ -124,6 +139,9 @@ export function PropertyCard({
   errors = {},
   locale = 'ar',
   title,
+  token,
+  censusPicker = false,
+  lockedCensusTarget,
 }: {
   tenant: string;
   index: number;
@@ -148,6 +166,12 @@ export function PropertyCard({
   locale?: string;
   /** Overrides the default "العقار {index+1}" heading — used when grouped under a shared parcel. */
   title?: string;
+  /** A staff session. Without one the census picker is not rendered at all. */
+  token?: string | null;
+  /** Opt-in, so the citizen wizard's own use of this card is unchanged. */
+  censusPicker?: boolean;
+  /** Set when the form was launched from a building's unit matrix. */
+  lockedCensusTarget?: LockedCensusTarget | null;
 }) {
   const labels = getLabels(locale);
   const visible: readonly string[] = draft.propertyType
@@ -157,6 +181,23 @@ export function PropertyCard({
   const set = (patch: Partial<PropertyDraft>) => onChange({ ...draft, ...patch });
 
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+
+  /**
+   * The censused structure this card is linked to, reported up by the picker.
+   *
+   * Held here rather than fetched again because the picker already loads it,
+   * and two components asking the server the same question is how they end up
+   * disagreeing about the answer. It is what «اسم المبنى» reads from when the
+   * register has a name for the block.
+   */
+  const [linkedBuilding, setLinkedBuilding] = useState<{
+    id: string;
+    code: string;
+    name: string | null;
+  } | null>(null);
+
+  /** The register has an answer, so the field states it instead of asking. */
+  const namedByCensus = Boolean(draft.buildingId && linkedBuilding?.name);
 
   const isBuilding = draft.propertyType === 'BUILDING';
   const units = draft.units ?? [];
@@ -241,6 +282,29 @@ export function PropertyCard({
               locale={locale}
             />
           </div>
+
+          {/*
+            The census link, on the two types that can stand on a structure.
+
+            Staff-only, because it needs a session to read the census — the
+            citizen wizard renders this same card and simply does not get the
+            control, which is correct: a resident has no view of the
+            municipality's survey and nothing to link against.
+
+            أرض has nothing standing on it and a خيمة stays a bare card (Q2), so
+            neither is offered one.
+          */}
+          {token && censusPicker && (draft.propertyType === 'BUILDING' || draft.propertyType === 'HOUSE') ? (
+            <BuildingUnitPicker
+              tenant={tenant}
+              token={token}
+              draft={draft}
+              onChange={set}
+              onLinkedBuilding={setLinkedBuilding}
+              locked={lockedCensusTarget}
+              locale={locale}
+            />
+          ) : null}
 
           {onAddOnSameParcel && draft.propertyNumber ? (
             <button
@@ -353,12 +417,40 @@ export function PropertyCard({
                 path={flagPath(index, 'buildingName')}
                 required
                 error={errors.buildingName}
+                /*
+                  Where the register has a name, this field states it rather
+                  than asks for it.
+
+                  Two tenants of one block used to produce «بناية النور» and
+                  «بنايه الن‍ور» in two rows nothing could recognise as the same
+                  building, because `PropertyEntry.buildingName` and
+                  `Building.name` were unrelated free-text columns with nothing
+                  comparing them. Linked, the register is the single answer and
+                  every card in the building shows it.
+
+                  The lock is deliberately one-directional. A building with *no*
+                  name leaves the field open, because the officer standing in
+                  its stairwell is the person who learns what residents call it
+                  — and what they type is promoted onto the building itself on
+                  save. Locking an empty field would make the name unrecordable
+                  by the only person who knows it.
+                */
+                hint={
+                  namedByCensus
+                    ? locale === 'en'
+                      ? `From the census record for ${linkedBuilding!.code}. Edit it on the building itself.`
+                      : `من سجل المباني (${linkedBuilding!.code}). التعديل يتم على المبنى نفسه.`
+                    : undefined
+                }
               >
                 <Input
                   id={`bn-${index}`}
                   invalid={Boolean(errors.buildingName)}
                   value={draft.buildingName ?? ''}
                   onChange={(e) => set({ buildingName: e.target.value })}
+                  readOnly={namedByCensus}
+                  aria-readonly={namedByCensus || undefined}
+                  className={cn(namedByCensus && 'bg-muted text-muted-foreground')}
                 />
               </Field>
             ) : null}

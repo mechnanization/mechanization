@@ -7,6 +7,7 @@ import { AuditService } from './features/audit/audit.service';
 import { BackupService } from './features/backup/backup.service';
 import { CadastreImportService } from './features/cadastre/cadastre-import.service';
 import { BuildingsService } from './features/buildings/buildings.service';
+import { CensusSyncService } from './features/buildings/census-sync.service';
 import { DamageService } from './features/buildings/damage.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
@@ -55,6 +56,7 @@ import { ZonesService } from './features/zones/zones.service';
     ZonesService,
     CasesService,
     BuildingsService,
+    CensusSyncService,
     DamageService,
     BackupService,
     OtpCleanupJob,
@@ -77,6 +79,7 @@ import { ZonesService } from './features/zones/zones.service';
     ZonesService,
     CasesService,
     BuildingsService,
+    CensusSyncService,
     DamageService,
     BackupService,
     OtpCleanupJob,

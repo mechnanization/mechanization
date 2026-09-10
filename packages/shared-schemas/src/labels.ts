@@ -1,5 +1,6 @@
 import type {
   BloodType,
+  BuildingLifecycle,
   CaseType,
   DamageLevel,
   DamageSource,
@@ -196,6 +197,22 @@ export const ar = {
     MIXED_USE: 'سكني - تجاري',
     TENT_SHELTER: 'تجمّع خيم / مأوى',
   } satisfies Record<StructureType, string>,
+
+  /**
+   * الحالة الإنشائية — where the structure is in its own life.
+   *
+   * «قائم ومستعمل» rather than a bare «قائم»: the distinction that decides
+   * whether the units count is whether anybody can be *in* it, and a standing
+   * shell with no doors hung is قائم too.
+   */
+  buildingLifecycle: {
+    PERMITTED: 'رخصة صادرة — لم يبدأ البناء',
+    UNDER_CONSTRUCTION: 'قيد الإنشاء',
+    IN_USE: 'قائم ومستعمل',
+    DERELICT: 'قائم ومهجور',
+    DEMOLISHED: 'مهدوم',
+    NOT_REALISED: 'لم يُنفَّذ',
+  } satisfies Record<BuildingLifecycle, string>,
 
   /**
    * حالة المسح — never «تم» or «لم يتم» alone.
@@ -477,6 +494,15 @@ export const en = {
     MIXED_USE: 'Mixed Use',
     TENT_SHELTER: 'Tent Settlement / Shelter',
   } satisfies Record<StructureType, string>,
+
+  buildingLifecycle: {
+    PERMITTED: 'Permitted — Not Started',
+    UNDER_CONSTRUCTION: 'Under Construction',
+    IN_USE: 'Standing — In Use',
+    DERELICT: 'Standing — Abandoned',
+    DEMOLISHED: 'Demolished',
+    NOT_REALISED: 'Never Built',
+  } satisfies Record<BuildingLifecycle, string>,
 
   surveyStatus: {
     NOT_SURVEYED: 'Not Surveyed',
