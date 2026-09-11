@@ -172,6 +172,22 @@ export class BuildingsController {
     return this.buildings.updateUnit(unitId, body, this.actor(user));
   }
 
+  /**
+   * Removes a flat the matrix says exists and the street does not.
+   *
+   * Not nested under its building for the same reason `PATCH` is not. Held to
+   * `WRITE_ROLES` rather than `SUPER_ADMIN` — unlike deleting a whole building,
+   * this is a survey correction an officer makes standing in the stairwell, and
+   * the service refuses it the moment anything has been recorded against the
+   * unit. The narrowing that matters is in the guards, not the role.
+   */
+  @Roles(...WRITE_ROLES)
+  @Delete('units/:unitId')
+  async deleteUnit(@Param('unitId') unitId: string, @CurrentUser() user: SessionClaims) {
+    await this.buildings.deleteUnit(unitId, this.actor(user));
+    return { deleted: true };
+  }
+
   // ────────────────────────────  Occupancy  ────────────────────────────
 
   /**

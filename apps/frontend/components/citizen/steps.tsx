@@ -459,6 +459,28 @@ export function ContactStep({
           className="text-start max-w-xs"
           invalid={Boolean(errors['contact.actualHouseholdMembers'])}
           value={str(value.actualHouseholdMembers)}
+          /*
+            `totalRegisteredMembers` is written from this one field and is no
+            longer asked for separately.
+
+            The form used to ask twice — once for the قيد العائلي headcount
+            including married children, once for who actually sleeps in the
+            house — and showed the subtraction between them as a read-only
+            «عدد الأبناء المتزوجين المستقلين (تلقائي)». The municipality only
+            registers the resident household now, so the second number has no
+            one to supply it and the subtraction had nothing left to mean: it
+            sat under the field reading 0 on every record.
+
+            Kept mirrored rather than dropped because the column is still
+            written, read by `reporting.service`'s `marriedOffspringTotal` and
+            shown on the citizen's file. Leaving it unset would let the schema
+            default it to `actualHouseholdMembers` on a create — the same value
+            — but would strand an *edit* of an older record at whatever gross
+            total it was filed with, so correcting the resident count from 5 to
+            3 would silently report two married children who were never
+            entered. Writing both keeps the derived figure at 0, which is what
+            «دون المتزوجين» now means for every record this form touches.
+          */
           onChange={(e) =>
             set({
               actualHouseholdMembers: e.target.value,
@@ -467,21 +489,6 @@ export function ContactStep({
           }
         />
       </Field>
-
-      {(() => {
-        const total = Number(value.totalRegisteredMembers);
-        const actual = Number(value.actualHouseholdMembers);
-        if (!Number.isFinite(total) || !Number.isFinite(actual)) return null;
-        const married = total - actual;
-        if (married < 0) return null;
-        return (
-          <div className="flex h-10 items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-3 text-xs text-muted-foreground">
-            {locale === 'en'
-              ? `Married children count (auto): ${married}`
-              : `عدد الأبناء المتزوجين المستقلين (تلقائي): ${married}`}
-          </div>
-        );
-      })()}
     </div>
   );
 }

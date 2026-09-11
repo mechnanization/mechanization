@@ -668,8 +668,18 @@ export class CitizensService {
       deduplicated: result.deduplicated,
       /**
        * What the census did about it — units linked, cases closed, a building
-       * named. `null` means the sync failed and the link is still to be made
-       * from the ledger; the record itself is safe either way.
+       * named.
+       *
+       * `null` carries two meanings and the caller must read `deduplicated`
+       * above to tell them apart. With `deduplicated: false` the sync **failed**
+       * and the link is still to be made from the ledger. With
+       * `deduplicated: true` it was **skipped**, because this delivery changed
+       * nothing and the first one already did all of this — announcing a
+       * failure there sends an officer to re-link a building that is already
+       * linked, and the occupancy they would create carries no `registrationId`
+       * for `endUnclaimed` to ever close.
+       *
+       * The record itself is safe in all three cases.
        */
       census,
     };

@@ -786,6 +786,20 @@ export interface UnitOccupant {
   fromDate: string;
   toDate: string | null;
   registrationId: string | null;
+  /**
+   * Whether the citizen's own file claims this flat.
+   *
+   * `false` means the census records them here but their registration does
+   * not name the property — the half-finished state «تسجيل شاغل» produces,
+   * which is legitimate at the doorstep and needs finishing afterwards.
+   * Billing reads the file, not this row, so an unbacked occupancy is a flat
+   * nobody is charged for.
+   *
+   * Optional on the wire so a cached response from a build before the field
+   * existed reads as "backed" rather than lighting up every occupant in the
+   * matrix with a warning.
+   */
+  backedByFile?: boolean;
 }
 
 /** One canonical unit. It exists whether or not anybody has been surveyed in it. */
@@ -857,6 +871,15 @@ export interface CensusSummary {
   unitsOutOfScope: number;
   /** Restricted-use, unsafe-evacuate or total-collapse, at the current level. */
   damaged: number;
+  /**
+   * Structures with no entrance pin — a queue of doors, not an error.
+   *
+   * A building may be created from a desk, and one created from the
+   * registration form always is: no entrance is guessed for it (D19), because
+   * the parcel centroid is the middle of a plot where no building stands and is
+   * the same point for every structure on it.
+   */
+  withoutEntrance: number;
 }
 
 /**
@@ -892,6 +915,8 @@ export interface BuildingListFilter {
   damageLevel?: DamageLevel;
   /** Matches code, name, posted number or parcel number. */
   search?: string;
+  /** `false` selects the structures with no entrance recorded. */
+  hasEntrance?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -924,6 +949,31 @@ export interface CreateBuildingInput {
    * by default: the answer is always allowed to be yes, but it has to be given.
    */
   acknowledgedDuplicates?: boolean;
+  /**
+   * The matrix, created in the same transaction as the shell.
+   *
+   * For the registration form, which creates a structure the officer is
+   * standing in front of and must attach a household to it in the same save. A
+   * shell alone would be worse than nothing there: the census claims a flat
+   * only where the card line carries a `unitId`, so a building with no units
+   * links the card and records no occupancy at all.
+   *
+   * Each unit may carry the id the browser minted, for the same reason the
+   * building does — a phone with no signal has to put a `unitId` on a card
+   * before the row exists. `sequence` is omitted and allocated server-side.
+   */
+  units?: Array<{
+    id?: string;
+    floor: number;
+    sequence?: number;
+    unitType: UnitType;
+    postedNumber?: string;
+    side?: string;
+    unitArea?: number;
+    unitStatus?: UnitStatus;
+    surveyStatus?: SurveyStatus;
+    notes?: string;
+  }>;
 }
 
 export type UpdateBuildingInput = Partial<{
@@ -1124,6 +1174,23 @@ export function updateUnit(
     token,
     method: 'PATCH',
     body: JSON.stringify(input),
+  });
+}
+
+/**
+ * Removes a flat the matrix says exists and the street does not — a blueprint
+ * that overshot a floor, or a محل counted twice.
+ *
+ * Refused server-side the moment anything has been recorded against the unit:
+ * an occupancy current or past, a field visit, a damage assessment, or a
+ * citizen's card naming it. Those refusals arrive as a `ConflictError` whose
+ * message names the remedy, so callers should surface it verbatim rather than
+ * replacing it with a generic failure.
+ */
+export function deleteUnit(tenant: string, token: string, unitId: string) {
+  return apiFetch<{ deleted: true }>(tenant, `/buildings/units/${encodeURIComponent(unitId)}`, {
+    token,
+    method: 'DELETE',
   });
 }
 

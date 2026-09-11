@@ -23,6 +23,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
+  Filter,
   RotateCcw,
   Search,
   SearchX,
@@ -206,6 +207,10 @@ export interface DataTableLabels {
   columns?: string;
   columnsHint?: string;
   resetColumns?: string;
+  /** Label for filter toggle button, e.g. "الفلاتر" / "Filters" */
+  filters?: string;
+  /** Label for clearing filters, e.g. "مسح الفلاتر" / "Clear filters" */
+  clearFilters?: string;
 }
 
 export interface DataTableProps<TData, TValue = unknown> {
@@ -268,8 +273,14 @@ export interface DataTableProps<TData, TValue = unknown> {
   error?: string | null;
   onRetry?: () => void;
 
-  /** Extra filter controls rendered alongside the search box. */
+  /** Extra action buttons rendered in the top-right toolbar next to the Columns button. */
   toolbar?: React.ReactNode;
+  /** Dedicated filter bar rendered in its own full-width row below search and actions. */
+  filterBar?: React.ReactNode;
+  /** Number of active filters, displayed on the mobile filter toggle button. */
+  activeFiltersCount?: number;
+  /** Optional callback when clear filters is invoked. */
+  onClearFilters?: () => void;
 
   /**
    * Remembers which columns are hidden, per table, in this browser.
@@ -443,6 +454,9 @@ export function DataTable<TData, TValue = unknown>({
   error = null,
   onRetry,
   toolbar,
+  filterBar,
+  activeFiltersCount,
+  onClearFilters,
   columnStorageKey,
   initialHiddenColumns,
   renderSubRow,
@@ -457,6 +471,7 @@ export function DataTable<TData, TValue = unknown>({
     React.useState<PaginationState>({ pageIndex: 0, pageSize: pageSizeOptions[0] ?? 20 });
   const [internalSorting, setInternalSorting] = React.useState<SortingState>([]);
   const [internalGlobalFilter, setInternalGlobalFilter] = React.useState('');
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
 
   /**
    * Which columns are hidden.
@@ -693,16 +708,16 @@ export function DataTable<TData, TValue = unknown>({
       rounded rectangle reads as page furniture instead.
     */
     <div className={cn('overflow-hidden rounded-lg border bg-card', className)}>
-      {searchable || toolbar || showColumnsMenu ? (
+      {searchable || toolbar || showColumnsMenu || filterBar ? (
         <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
           {searchable ? (
-            <div className="relative w-full sm:max-w-sm">
+            <div className="relative w-full sm:w-80 md:w-96 lg:w-[26rem]">
               <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="search"
                 role="searchbox"
                 aria-label={labels.searchAriaLabel}
-                className="h-10 ps-9 pe-9"
+                className="h-9 ps-9 pe-9 text-xs"
                 placeholder={labels.searchPlaceholder}
                 value={searchInput}
                 onChange={(event) => {
@@ -750,58 +765,90 @@ export function DataTable<TData, TValue = unknown>({
               ) : null}
             </div>
           ) : null}
-          {toolbar || showColumnsMenu ? (
-            <div className="flex flex-wrap items-center gap-2">
-              {toolbar}
-              {showColumnsMenu ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="gap-1.5">
-                      <SlidersHorizontal className="size-4" aria-hidden />
-                      {labels.columns}
-                      {/*
-                        The count of hidden columns, on the button itself. A
-                        table missing a column an administrator expects is
-                        otherwise indistinguishable from a table whose data did
-                        not load — and the menu that explains it is the one
-                        place they will not think to look.
-                      */}
-                      {hiddenCount > 0 ? (
-                        <span className="rounded-full bg-primary/10 px-1.5 text-xs font-semibold text-primary">
-                          {hiddenCount}
-                        </span>
-                      ) : null}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuLabel>{labels.columnsHint ?? labels.columns}</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {hideableColumns.map((column) => (
-                      <DropdownMenuCheckboxItem
-                        key={column.id}
-                        checked={column.getIsVisible()}
-                        // Radix closes the menu on select by default, which
-                        // makes choosing three columns three trips through it.
-                        onSelect={(event) => event.preventDefault()}
-                        onCheckedChange={(checked) => column.toggleVisibility(checked)}
-                      >
-                        {columnLabel(column)}
-                      </DropdownMenuCheckboxItem>
-                    ))}
-                    {labels.resetColumns ? (
-                      <>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onSelect={() => resetColumns()}>
-                          <RotateCcw className="size-4" aria-hidden />
-                          {labels.resetColumns}
-                        </DropdownMenuItem>
-                      </>
+          <div className="flex flex-wrap items-center gap-2 self-end sm:self-auto">
+            {filterBar ? (
+              <Button
+                type="button"
+                variant={filtersOpen || (activeFiltersCount ?? 0) > 0 ? 'secondary' : 'outline'}
+                size="sm"
+                onClick={() => setFiltersOpen((prev) => !prev)}
+                className={cn(
+                  'h-9 gap-1.5 text-xs sm:hidden',
+                  (activeFiltersCount ?? 0) > 0 && 'border-primary/50 text-primary font-medium',
+                )}
+              >
+                <Filter className="size-3.5" aria-hidden />
+                {labels.filters ?? (labels.searchAriaLabel?.includes('بحث') ? 'الفلاتر' : 'Filters')}
+                {(activeFiltersCount ?? 0) > 0 ? (
+                  <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary">
+                    {activeFiltersCount}
+                  </span>
+                ) : null}
+              </Button>
+            ) : null}
+
+            {toolbar}
+
+            {showColumnsMenu ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-9 gap-1.5 text-xs">
+                    <SlidersHorizontal className="size-3.5" aria-hidden />
+                    {labels.columns}
+                    {/*
+                      The count of hidden columns, on the button itself. A
+                      table missing a column an administrator expects is
+                      otherwise indistinguishable from a table whose data did
+                      not load — and the menu that explains it is the one
+                      place they will not think to look.
+                    */}
+                    {hiddenCount > 0 ? (
+                      <span className="rounded-full bg-primary/10 px-1.5 text-xs font-semibold text-primary">
+                        {hiddenCount}
+                      </span>
                     ) : null}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : null}
-            </div>
-          ) : null}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>{labels.columnsHint ?? labels.columns}</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {hideableColumns.map((column) => (
+                    <DropdownMenuCheckboxItem
+                      key={column.id}
+                      checked={column.getIsVisible()}
+                      // Radix closes the menu on select by default, which
+                      // makes choosing three columns three trips through it.
+                      onSelect={(event) => event.preventDefault()}
+                      onCheckedChange={(checked) => column.toggleVisibility(checked)}
+                    >
+                      {columnLabel(column)}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                  {labels.resetColumns ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => resetColumns()}>
+                        <RotateCcw className="size-4" aria-hidden />
+                        {labels.resetColumns}
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Dedicated Filter Bar */}
+      {filterBar ? (
+        <div
+          className={cn(
+            'border-b bg-muted/20 px-3.5 py-2.5 transition-all',
+            filtersOpen ? 'block' : 'hidden sm:block',
+          )}
+        >
+          {filterBar}
         </div>
       ) : null}
 
@@ -860,6 +907,29 @@ export function DataTable<TData, TValue = unknown>({
           description={hasSearchTerm ? labels.emptySearchHint : labels.emptyHint}
           icon={hasSearchTerm ? SearchX : undefined}
           iconNode={hasSearchTerm ? undefined : emptyIcon}
+          /*
+            The way out of a filter that matched nothing.
+
+            This is the one empty state a caller cannot fix from outside: the
+            filter controls live in `filterBar`, which is hidden on a phone
+            behind the «الفلاتر» toggle, and the row a page might put its own
+            reset button in is not rendered when there are no rows. So a clerk
+            who narrowed to «بلا مدخل مُثبت» in a قطاع with none of them got
+            «لا توجد مبانٍ» — a sentence that reads as "the municipality has no
+            buildings" and offers nothing to press.
+
+            Shown only when filters are what emptied the table. A genuinely
+            empty register keeps the plain message, because offering to clear
+            filters that are not set would explain the emptiness wrongly.
+          */
+          action={
+            onClearFilters && (activeFiltersCount ?? 0) > 0 ? (
+              <Button variant="outline" size="sm" onClick={onClearFilters} className="gap-1.5">
+                <X className="size-3.5" aria-hidden />
+                {labels.clearFilters ?? labels.clearSearch}
+              </Button>
+            ) : undefined
+          }
         />
       ) : (
         <>

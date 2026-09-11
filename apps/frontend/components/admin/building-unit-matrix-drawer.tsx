@@ -13,6 +13,7 @@ import {
   Pencil,
   Search,
   ShieldAlert,
+  Trash2,
   UserPlus,
   UserRound,
   UserRoundPlus,
@@ -30,10 +31,13 @@ import {
   type DamageSource,
   type OccupancyRole,
   type SurveyStatus,
+  type UpsertUnitInput,
 } from '@mechanization/shared-schemas';
 import {
+  addUnit,
   ApiRequestError,
   createCase,
+  deleteUnit,
   endOccupancy,
   getBuilding,
   getBuildingDamage,
@@ -66,6 +70,7 @@ import { Sheet } from '@/components/ui/sheet';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
 
 /**
  * One building's units, floor by floor, with the four things an officer
@@ -286,6 +291,10 @@ export function BuildingUnitMatrixDrawer({
     [building, selectedUnitId],
   );
 
+  /** Which floor's «إضافة وحدة» row is open, and the type chosen in it. */
+  const [addingFloor, setAddingFloor] = useState<number | null>(null);
+  const [addingType, setAddingType] = useState('');
+
   const surveyed = building?.unitsSurveyed ?? 0;
   const total = building?.unitsTotal ?? 0;
 
@@ -312,6 +321,57 @@ export function BuildingUnitMatrixDrawer({
     [load, onChanged, toast],
   );
 
+  /**
+   * Adds a flat to one floor of the matrix.
+   *
+   * The counterpart to the blueprint, which can only state a floor *range* and
+   * a count per floor. Real buildings are not uniform — a ground floor with one
+   * محل under three flats a storey, a fourth floor added since the survey — and
+   * until now the only way to record the odd one out was to re-run a blueprint
+   * wide enough to cover it, which tops every other floor up to the same count
+   * and invents flats that do not exist.
+   *
+   * Only the type is asked. The floor comes from the row the button sits in,
+   * and `unitCode` is the server's to derive — `floor × 100 + sequence`, under
+   * an advisory lock so two officers filling one matrix cannot both claim the
+   * same position.
+   */
+  const addOnFloor = (floor: number, unitType: string) => {
+    if (!building || !unitType) return;
+    return run(
+      async () => {
+        const created = await addUnit(tenant, token, building.id, {
+          floor,
+          unitType: unitType as UpsertUnitInput['unitType'],
+        });
+        setAddingFloor(null);
+        setAddingType('');
+        return en ? `Unit ${created.unitCode} added` : `تمت إضافة الوحدة ${created.unitCode}`;
+      },
+      en ? 'Could not add the unit.' : 'تعذّرت إضافة الوحدة.',
+    );
+  };
+
+  /**
+   * Removes a flat the matrix says exists and the street does not.
+   *
+   * The server refuses the moment anything has been recorded against the unit —
+   * an occupancy current or past, a visit, a damage assessment, a citizen's
+   * card naming it — and each refusal names its own remedy. Those messages are
+   * surfaced verbatim by `run`, which is the point: «عليها كشف ضرر» tells the
+   * officer something a generic failure would not, and the alternative to
+   * deleting is different in each case.
+   */
+  const removeUnit = (unit: UnitWithOccupants) =>
+    run(
+      async () => {
+        await deleteUnit(tenant, token, unit.id);
+        setSelectedUnitId(null);
+        return en ? `Unit ${unit.unitCode} removed` : `تم حذف الوحدة ${unit.unitCode}`;
+      },
+      en ? 'Could not remove the unit.' : 'تعذّر حذف الوحدة.',
+    );
+
   const markVacant = (unit: UnitWithOccupants) =>
     run(
       async () => {
@@ -324,11 +384,19 @@ export function BuildingUnitMatrixDrawer({
       en ? 'Could not update the unit.' : 'تعذّر تحديث الوحدة.',
     );
 
+  /*
+    Ending a spell also releases the citizen's own claim on the flat — see
+    `BuildingsService.endOccupancy` — and the message says so, because that
+    half happens inside a file the officer is not looking at. Told plainly
+    rather than left to be discovered from a bill that stopped arriving.
+  */
   const closeSpell = (occupant: UnitOccupant) =>
     run(
       async () => {
         await endOccupancy(tenant, token, occupant.id);
-        return en ? 'Occupancy ended' : 'تم إنهاء الإشغال';
+        return en
+          ? "Occupancy ended, and the property released from their file"
+          : 'تم إنهاء الإشغال وفصل العقار عن ملف المواطن';
       },
       en ? 'Could not end the occupancy.' : 'تعذّر إنهاء الإشغال.',
     );
@@ -475,12 +543,78 @@ export function BuildingUnitMatrixDrawer({
             <div className="space-y-2">
               {floors.map(({ floor, units }) => (
                 <div key={floor} className="rounded-lg border">
-                  <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-3 py-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-1.5">
                     <p className="text-xs font-semibold">{floorLabel(floor, en)}</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {en ? `${units.length} units` : `${units.length} وحدة`}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-[11px] text-muted-foreground">
+                        {en ? `${units.length} units` : `${units.length} وحدة`}
+                      </p>
+                      {/*
+                        Per floor, because the floor is the thing the officer is
+                        looking at. The blueprint in the building editor can only
+                        state a range and a count per floor, so recording a
+                        ground-floor محل under three flats a storey meant running
+                        a blueprint wide enough to cover it — which tops every
+                        other floor up to the same count and invents flats.
+                      */}
+                      {canWrite && addingFloor !== floor ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            setAddingFloor(floor);
+                            setAddingType('');
+                            setActionError(null);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                        >
+                          <UserPlus className="size-3" aria-hidden />
+                          {en ? 'Add unit' : 'إضافة وحدة'}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
+
+                  {addingFloor === floor ? (
+                    <div className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
+                      <Select value={addingType} onValueChange={setAddingType}>
+                        <SelectTrigger className="h-8 w-44 text-xs">
+                          <SelectValue placeholder={en ? 'Unit type…' : 'نوع الوحدة…'} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {BUILDING_UNIT_TYPES.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {labels.unitType[option]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        size="sm"
+                        disabled={busy || !addingType}
+                        onClick={() => void addOnFloor(floor, addingType)}
+                      >
+                        {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
+                        {en ? 'Add' : 'إضافة'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() => {
+                          setAddingFloor(null);
+                          setAddingType('');
+                        }}
+                      >
+                        {en ? 'Cancel' : 'إلغاء'}
+                      </Button>
+                      <span className="text-[11px] text-muted-foreground">
+                        {en
+                          ? 'The code is assigned from the floor.'
+                          : 'يُشتق رمز الوحدة من الطابق.'}
+                      </span>
+                    </div>
+                  ) : null}
                   <ul className="grid grid-cols-1 gap-2 p-2 sm:grid-cols-2 lg:grid-cols-3">
                     {units.map((unit) => {
                       const badge = cellBadge(unit, labels, en);
@@ -563,40 +697,87 @@ export function BuildingUnitMatrixDrawer({
                 </p>
               </div>
 
+              {/*
+                Current occupants and past ones, told apart at a glance.
+
+                They used to render identically — same weight, same badge, the
+                only difference a date range instead of «منذ». So a flat whose
+                owner had been moved out and replaced showed two rows that
+                looked equally live, and the honest reading of the panel was
+                that both people held the unit. Naming a former spell «سابق»
+                and dimming it makes the answer to «من في هذه الوحدة الآن؟» the
+                thing the eye lands on.
+              */}
               {selectedUnit.occupants.length > 0 ? (
                 <ul className="space-y-1.5">
-                  {selectedUnit.occupants.map((occupant) => (
-                    <li
-                      key={occupant.id}
-                      className="flex flex-wrap items-center gap-2 rounded-md bg-background px-2.5 py-1.5 text-xs"
-                    >
-                      <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                      <span className="font-medium">
-                        {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
-                      </span>
-                      <Badge variant="soft-muted">{labels.occupancyRole[occupant.role]}</Badge>
-                      {occupant.shares ? (
-                        <span className="text-muted-foreground">
-                          {en ? `${occupant.shares}/2400 shares` : `${occupant.shares}/٢٤٠٠ سهم`}
+                  {selectedUnit.occupants.map((occupant) => {
+                    const current = occupant.toDate === null;
+                    /*
+                      The census has them here; their own registration does not
+                      name the property. «تسجيل شاغل» records the first without
+                      the second, which is right at the doorstep and wrong left
+                      alone: billing reads the file, so an unbacked occupant is
+                      a household nobody charges, and their file still names
+                      whatever property it did name — possibly a different
+                      building entirely.
+
+                      Only said of a *current* occupant. A former spell whose
+                      link was released on the way out is not missing anything.
+                    */
+                    const unbacked = current && occupant.backedByFile === false;
+
+                    return (
+                      <li
+                        key={occupant.id}
+                        className={cn(
+                          'flex flex-wrap items-center gap-2 rounded-md px-2.5 py-1.5 text-xs',
+                          current ? 'bg-background' : 'bg-muted/40 text-muted-foreground',
+                        )}
+                      >
+                        <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                        <span className={cn(current ? 'font-medium' : 'font-normal line-through')}>
+                          {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
                         </span>
-                      ) : null}
-                      <span className="text-muted-foreground">
-                        {occupant.toDate
-                          ? `${formatDate(occupant.fromDate)} — ${formatDate(occupant.toDate)}`
-                          : `${en ? 'since' : 'منذ'} ${formatDate(occupant.fromDate)}`}
-                      </span>
-                      {canWrite && occupant.toDate === null ? (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => void closeSpell(occupant)}
-                          className="ms-auto text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
-                        >
-                          {en ? 'End tenancy' : 'إنهاء الإشغال'}
-                        </button>
-                      ) : null}
-                    </li>
-                  ))}
+                        <Badge variant="soft-muted">{labels.occupancyRole[occupant.role]}</Badge>
+                        {!current ? (
+                          <Badge variant="outline">{en ? 'Former' : 'سابق'}</Badge>
+                        ) : null}
+                        {occupant.shares ? (
+                          <span className="text-muted-foreground">
+                            {en ? `${occupant.shares}/2400 shares` : `${occupant.shares}/٢٤٠٠ سهم`}
+                          </span>
+                        ) : null}
+                        <span className="text-muted-foreground">
+                          {occupant.toDate
+                            ? `${formatDate(occupant.fromDate)} — ${formatDate(occupant.toDate)}`
+                            : `${en ? 'since' : 'منذ'} ${formatDate(occupant.fromDate)}`}
+                        </span>
+                        {unbacked ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-500"
+                            title={
+                              en
+                                ? "Recorded on the matrix only. Add this property to the citizen's file so it can be billed."
+                                : 'مسجَّل على المصفوفة فقط. أضف هذا العقار إلى ملف المواطن ليُحتسب في الرسوم.'
+                            }
+                          >
+                            <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+                            {en ? 'Not in their file' : 'غير مرتبط بملفه'}
+                          </span>
+                        ) : null}
+                        {canWrite && current ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void closeSpell(occupant)}
+                            className="ms-auto text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+                          >
+                            {en ? 'End tenancy' : 'إنهاء الإشغال'}
+                          </button>
+                        ) : null}
+                      </li>
+                    );
+                  })}
                 </ul>
               ) : null}
 
@@ -679,6 +860,36 @@ export function BuildingUnitMatrixDrawer({
                       <UserRoundPlus className="size-4" aria-hidden />
                       {en ? 'Register a household here' : 'تسجيل أسرة في هذه الوحدة'}
                     </a>
+                  ) : null}
+
+                  {/*
+                    Offered only for a flat nothing has been recorded against.
+
+                    The condition mirrors the server's refusals rather than
+                    trusting them to arrive: a unit with an occupant — current
+                    or historical — a visit, or a damage assessment is one whose
+                    deletion would cascade that history away, and the server
+                    says no. Hiding the button in the cases it would be refused
+                    keeps «حذف الوحدة» meaning "this flat does not exist" rather
+                    than "try and find out".
+
+                    The remaining refusal, a citizen's card naming the unit, is
+                    not visible from here — so it still arrives as a message,
+                    and `run` surfaces it verbatim.
+                  */}
+                  {canWrite &&
+                  selectedUnit.occupants.length === 0 &&
+                  selectedUnit.visitCount === 0 ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => void removeUnit(selectedUnit)}
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" aria-hidden />
+                      {en ? 'Delete unit' : 'حذف الوحدة'}
+                    </Button>
                   ) : null}
                 </div>
               ) : null}

@@ -131,6 +131,94 @@ describe('createBuildingSchema', () => {
     if (!result.success) return;
     expect(result.data.provisionalSuffix).toBe('A');
   });
+
+  /*
+    The registration form creates a structure and its flats in one request.
+
+    A shell alone would link the card and record no occupancy — the census
+    claims a flat only where the line carries a `unitId` — so the household
+    would go unbilled with nothing anywhere to say why. These are the shapes
+    that path depends on.
+  */
+  describe('inline units, for register-first creation', () => {
+    it('takes a matrix alongside the shell', () => {
+      const result = createBuildingSchema.safeParse({
+        ...valid,
+        units: [
+          { floor: 0, unitType: 'SHOP' },
+          { floor: 1, unitType: 'APARTMENT', unitArea: 120 },
+        ],
+      });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data.units).toHaveLength(2);
+      // Allocated server-side under the building's own transaction; a client
+      // that guessed one would collide with the officer filling the same floor.
+      expect(result.data.units?.[0]?.sequence).toBeUndefined();
+    });
+
+    it('accepts a browser-minted id per unit', () => {
+      // The offline half: a queued registration has to name a flat before the
+      // row exists, exactly as it names the building before the row exists.
+      const id = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+      const result = createBuildingSchema.safeParse({
+        ...valid,
+        units: [{ id, floor: 2, unitType: 'APARTMENT' }],
+      });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data.units?.[0]?.id).toBe(id);
+    });
+
+    it('refuses a unit id that is not a uuid', () => {
+      expect(
+        createBuildingSchema.safeParse({
+          ...valid,
+          units: [{ id: 'unit-1', floor: 0, unitType: 'APARTMENT' }],
+        }).success,
+      ).toBe(false);
+    });
+
+    it('refuses a matrix too large to have been typed by a person', () => {
+      // A genuine tower is created from the editor and filled by the blueprint
+      // generator; this path describes the flats one household holds.
+      const units = Array.from({ length: 41 }, () => ({ floor: 1, unitType: 'APARTMENT' }));
+      expect(createBuildingSchema.safeParse({ ...valid, units }).success).toBe(false);
+    });
+
+    it('is still valid with no units at all', () => {
+      // The editor's own path: a shell now, a blueprint next.
+      const result = createBuildingSchema.safeParse(valid);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data.units).toBeUndefined();
+    });
+  });
+});
+
+describe('buildingFilterSchema — «بلا مدخل مُثبت»', () => {
+  it('reads the querystring form the browser actually sends', () => {
+    /*
+      `URLSearchParams` stringifies everything, so the filter arrives as the
+      text "false" and a bare `z.boolean()` would refuse it — the filter would
+      look wired up and quietly never narrow anything, which is exactly the
+      shape of the sector-filter defect P3-T4 found.
+    */
+    const result = buildingFilterSchema.safeParse({ hasEntrance: 'false' });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.hasEntrance).toBe(false);
+  });
+
+  it('reads a real boolean too', () => {
+    expect(buildingFilterSchema.parse({ hasEntrance: true }).hasEntrance).toBe(true);
+  });
+
+  it('leaves it absent when nobody asked', () => {
+    // Absent must not collapse to `false`, or the default ledger would show
+    // only the structures with no pin.
+    expect(buildingFilterSchema.parse({}).hasEntrance).toBeUndefined();
+  });
 });
 
 describe('unitBlueprintSchema', () => {

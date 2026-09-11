@@ -37,6 +37,7 @@ import {
   createBuilding,
   duplicateBuildingsOf,
   generateUnits,
+  getBuilding,
   getBuildings,
   getZoneParcelIndex,
   logApiError,
@@ -44,6 +45,7 @@ import {
   type BuildingSummary,
   type DuplicateBuildingCandidate,
   type UnitBlueprintInput,
+  type UnitRow,
 } from '@/lib/api-client';
 import { geometryBounds, pointInGeometry } from '@/lib/map-geometry';
 import { offlineStorageAvailable } from '@/lib/offline-db';
@@ -102,6 +104,15 @@ const FALLBACK_CENTER: [number, number] = [35.2654, 33.2539];
 const LOOKUP_DEBOUNCE_MS = 350;
 
 /**
+ * The server's own ceiling, restated so the form can refuse before it saves.
+ *
+ * `BuildingsService.MAX_GENERATED_UNITS`. Duplicated rather than fetched: it is
+ * a constant of the system, and the alternative is an endpoint whose only job is
+ * to tell the browser a number that has not changed since it was written.
+ */
+const MAX_GENERATED_UNITS = 400;
+
+/**
  * Whether the browser believes it is offline.
  *
  * `navigator.onLine` is famously optimistic — it reports a connection to a
@@ -123,6 +134,16 @@ export interface BuildingEditorResult {
   /** True when the server handed back a different suffix than the preview showed. */
   reconciled: boolean;
   unitsCreated: number;
+  /**
+   * Requested positions that were already filled, so nothing was written there.
+   *
+   * Reported rather than absorbed. `generateUnits` tops a floor *up to* the
+   * requested count, so re-running a blueprint over a matrix that is already
+   * complete legitimately creates nothing — and «تم توليد ٠ وحدة» reads as a
+   * failure. "0 created, 12 already there" is the same event described in a way
+   * an officer can act on.
+   */
+  unitsSkipped: number;
   /**
    * Stored on this device rather than sent — there was no connection.
    *
@@ -192,6 +213,7 @@ export function BuildingEditorDialog({
   /** Pre-fills the parcel when opened from a map click or a parcel drawer. */
   initialParcelNumber,
   onSaved,
+  onOpenMatrix,
   locale = 'ar',
 }: {
   open: boolean;
@@ -202,6 +224,12 @@ export function BuildingEditorDialog({
   building?: BuildingSummary | null;
   initialParcelNumber?: string;
   onSaved: (result: BuildingEditorResult) => void;
+  /**
+   * Hands the officer to the matrix drawer, where units are corrected one at a
+   * time. Optional: the dialog is usable without it, it just cannot offer the
+   * way through.
+   */
+  onOpenMatrix?: (buildingId: string) => void;
   locale?: string;
 }) {
   const en = locale === 'en';
@@ -212,7 +240,16 @@ export function BuildingEditorDialog({
   const [name, setName] = useState('');
   const [postedNumber, setPostedNumber] = useState('');
   const [structureType, setStructureType] = useState<StructureType>('RESIDENTIAL_BUILDING');
-  const [floorsCount, setFloorsCount] = useState('1');
+  /**
+   * Three, matching the `toFloor: '2'` default below.
+   *
+   * It was '1', and the blueprint beside it defaulted to floors 0–2 — so the
+   * form's own untouched defaults described a one-storey building with three
+   * floors of flats, and `generateUnits` silently rewrote عدد الطوابق to 3 on
+   * save. P3-T2's acceptance criterion says the defaults are "a 3-floor /
+   * 6-unit building"; this is the field that was not.
+   */
+  const [floorsCount, setFloorsCount] = useState('3');
   const [notes, setNotes] = useState('');
   const [pin, setPin] = useState<[number, number] | null>(null);
   /**
@@ -232,6 +269,22 @@ export function BuildingEditorDialog({
   const [unitsPerFloor, setUnitsPerFloor] = useState('2');
   const [unitType, setUnitType] = useState<UnitType>('APARTMENT');
   const [floors, setFloors] = useState<BlueprintFloor[]>([]);
+
+  /**
+   * The matrix this building already has, for the edit view.
+   *
+   * Editing a building with units used to show one unchecked checkbox offering
+   * to generate a matrix, and nothing else — no count, no floors, no survey
+   * progress, no way through to the drawer. The section read as an empty offer
+   * for a building that already had three flats in it.
+   *
+   * `unitsTotal`/`unitsSurveyed` are on the prop and cover most of it, but the
+   * floors a matrix actually covers are the part that says whether a top-up is
+   * worth running, and those need the units. One request when the dialog opens
+   * for an edit; `null` while it is in flight or if it fails, and the summary
+   * falls back to the counts the prop already carries.
+   */
+  const [existingUnits, setExistingUnits] = useState<UnitRow[] | null>(null);
 
   const [zoneCode, setZoneCode] = useState<string | null>(null);
   const [zoneName, setZoneName] = useState<string | null>(null);
@@ -275,7 +328,7 @@ export function BuildingEditorDialog({
     setName(building?.name ?? '');
     setPostedNumber(building?.postedNumber ?? '');
     setStructureType((building?.structureType as StructureType) ?? 'RESIDENTIAL_BUILDING');
-    setFloorsCount(String(building?.floorsCount ?? 1));
+    setFloorsCount(String(building?.floorsCount ?? 3));
     setNotes(building?.notes ?? '');
     setPin(
       building?.latitude != null && building?.longitude != null
@@ -297,9 +350,34 @@ export function BuildingEditorDialog({
     setWithBlueprint(!building || building.unitsTotal === 0);
     setBlueprintKind('uniform');
     setFromFloor('0');
-    setToFloor('2');
+    /*
+      The top of the range is the top of *this* building.
+
+      It was hardcoded to '2', so opening a twelve-storey block always proposed
+      floors 0–2 and opening a bungalow proposed three floors it does not have.
+      Derived instead, which is also what keeps the range inside the ceiling the
+      server now enforces: floors are 0-indexed, so an N-storey building tops out
+      at N-1.
+    */
+    setToFloor(String(Math.max(0, (building?.floorsCount ?? 3) - 1)));
     setUnitsPerFloor('2');
     setFloors([]);
+    /*
+      Reset because it is state, not because it is stale.
+
+      `unitType` was absent from this effect and its only other writer is keyed
+      on `[structureType]` — so editing one building as «محل», closing, and
+      opening another of the *same* structure type left the type on «محل» and
+      generated six shops from a form that looked untouched.
+
+      `resolving` has a narrower version of the same fault: closing the dialog
+      mid-lookup sets the effect's `cancelled` flag, its `.finally` then skips
+      `setResolving(false)`, and the next opening shows a spinner beside the
+      code that never resolves.
+    */
+    setUnitType(STRUCTURE_TYPE_MAP[(building?.structureType as StructureType) ?? 'RESIDENTIAL_BUILDING'].defaultUnitType);
+    setResolving(false);
+    setExistingUnits(null);
     setSuffix(building?.codeSuffix ?? 'A');
     setLifecycleStatus((building?.lifecycleStatus as BuildingLifecycle) ?? 'IN_USE');
     setDuplicates(null);
@@ -323,6 +401,33 @@ export function BuildingEditorDialog({
   useEffect(() => {
     setUnitType(STRUCTURE_TYPE_MAP[structureType].defaultUnitType);
   }, [structureType]);
+
+  /**
+   * The matrix this building already has.
+   *
+   * Edit only — a building being created has none — and swallowed on failure:
+   * the summary below degrades to `unitsTotal`/`unitsSurveyed`, which are on
+   * the prop and never need a request. A census the officer cannot reach must
+   * not stop them correcting a building's name.
+   */
+  useEffect(() => {
+    if (!open || !building) {
+      setExistingUnits(null);
+      return;
+    }
+    let cancelled = false;
+    getBuilding(tenant, token, building.id)
+      .then((detail) => {
+        if (!cancelled) setExistingUnits(detail.units);
+      })
+      .catch((caught) => {
+        logApiError(caught);
+        if (!cancelled) setExistingUnits(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, building, tenant, token]);
 
   // ── Resolve everything that hangs off the parcel number ───────────
   const trimmedParcel = parcelNumber.trim();
@@ -523,6 +628,48 @@ export function BuildingEditorDialog({
   const pinVerdict = pin ? validatePin(pin) : null;
 
   // ── Blueprint ─────────────────────────────────────────────────────
+
+  /**
+   * The highest floor this building has, and therefore the highest a blueprint
+   * may name.
+   *
+   * Floors are 0-indexed — ground is 0 — so an N-storey building tops out at
+   * N-1. Basements are negative and are not counted by عدد الطوابق, which is
+   * why only the top of the range is bounded; `fromFloor` stays free down to
+   * the schema's -10.
+   *
+   * The two numbers had no relationship at all before this, on either side: a
+   * building declared as one storey accepted a range up to floor 40 and quietly
+   * became a forty-storey block, because `generateUnits` raised عدد الطوابق to
+   * match rather than refusing. The server refuses now; this is what stops an
+   * officer ever reaching that refusal.
+   */
+  const topFloorAllowed = Math.max(0, (Number(floorsCount) || 1) - 1);
+
+  /*
+    Lowering عدد الطوابق takes the range down with it.
+
+    Without this, setting a building from five storeys to two leaves «إلى
+    الطابق» reading 4 — a number the form itself now calls impossible, sitting
+    in an input the officer has already filled in and has no reason to revisit.
+    Only ever downward: raising the count is an offer of more floors, not an
+    instruction to fill them.
+  */
+  useEffect(() => {
+    setToFloor((current) => {
+      const value = Number(current);
+      if (!Number.isFinite(value) || value <= topFloorAllowed) return current;
+      return String(topFloorAllowed);
+    });
+    setFloors((prev) =>
+      prev.some((row) => row.floor > topFloorAllowed)
+        ? prev.map((row) =>
+            row.floor > topFloorAllowed ? { ...row, floor: topFloorAllowed } : row,
+          )
+        : prev,
+    );
+  }, [topFloorAllowed]);
+
   const blueprint = useMemo<UnitBlueprintInput | null>(() => {
     if (!withBlueprint) return null;
     if (blueprintKind === 'uniform') {
@@ -531,6 +678,17 @@ export function BuildingEditorDialog({
       const per = Number(unitsPerFloor);
       if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(per)) return null;
       if (to < from || per < 1) return null;
+      /*
+        The `min`/`max` on the inputs are hints a keyboard walks straight past.
+
+        A typed 999 used to flow through here into «999 وحدة ستُنشأ» and into
+        the request, and was refused by Zod only after the building had already
+        been saved. These are the schema's own bounds, restated where the
+        preview is computed so the preview cannot promise what the server will
+        refuse.
+      */
+      if (from < -10 || to > 100 || per > 20) return null;
+      if (to > topFloorAllowed) return null;
       return { kind: 'uniform', fromFloor: from, toFloor: to, unitsPerFloor: per, unitType };
     }
     if (floors.length === 0) return null;
@@ -542,7 +700,16 @@ export function BuildingEditorDialog({
         unitType: row.unitType,
       })),
     };
-  }, [withBlueprint, blueprintKind, fromFloor, toFloor, unitsPerFloor, unitType, floors]);
+  }, [
+    withBlueprint,
+    blueprintKind,
+    fromFloor,
+    toFloor,
+    unitsPerFloor,
+    unitType,
+    floors,
+    topFloorAllowed,
+  ]);
 
   /** What the blueprint will actually produce, shown before it is committed. */
   const plannedUnits = useMemo(() => {
@@ -568,8 +735,69 @@ export function BuildingEditorDialog({
     return repeated;
   }, [floors]);
 
+  /**
+   * Rows naming a floor the building does not have.
+   *
+   * The uniform mode is clamped by `topFloorAllowed`, but an explicit row is a
+   * number typed into its own input, so it is caught the same way a duplicate
+   * is — at the row that carries it, while the officer can see both it and
+   * عدد الطوابق.
+   */
+  const outOfRangeFloors = useMemo(() => {
+    const over = new Set<number>();
+    for (const row of floors) if (row.floor > topFloorAllowed) over.add(row.floor);
+    return over;
+  }, [floors, topFloorAllowed]);
+
+  /** Whether this building already has flats recorded in it. */
+  const hasMatrix = Boolean(building && building.unitsTotal > 0);
+
+  /**
+   * «٣ وحدات · الطوابق الأرضي–٢ · ٣ ممسوحة» — one line, in the officer's terms.
+   *
+   * The counts come from `BuildingSummary` and are on every path into this
+   * dialog. The floor range needs the units themselves, so it appears only once
+   * `existingUnits` has landed and is simply left out otherwise — a summary that
+   * waits for a request to say how many flats there are would be blank in the
+   * one case it matters most, an officer on a bad connection.
+   */
+  const existingMatrix = useMemo(() => {
+    if (!building || building.unitsTotal === 0) return null;
+
+    const parts = [
+      en ? `${building.unitsTotal} unit(s)` : `${building.unitsTotal} وحدة`,
+    ];
+
+    if (existingUnits && existingUnits.length > 0) {
+      const low = Math.min(...existingUnits.map((unit) => unit.floor));
+      const high = Math.max(...existingUnits.map((unit) => unit.floor));
+      parts.push(
+        low === high
+          ? en
+            ? `floor ${floorLabel(low, true)}`
+            : `الطابق ${floorLabel(low, false)}`
+          : en
+            ? `floors ${floorLabel(low, true)}–${floorLabel(high, true)}`
+            : `الطوابق ${floorLabel(low, false)}–${floorLabel(high, false)}`,
+      );
+    }
+
+    parts.push(
+      en
+        ? `${building.unitsSurveyed} surveyed`
+        : `${building.unitsSurveyed} ممسوحة`,
+    );
+
+    return parts.join(en ? ' · ' : ' · ');
+  }, [building, existingUnits, en]);
+
   const addFloorRow = () => {
-    const next = floors.length === 0 ? 0 : Math.max(...floors.map((row) => row.floor)) + 1;
+    // Never proposes a floor the building does not have — the row would be
+    // flagged red the moment it appeared.
+    const next = Math.min(
+      topFloorAllowed,
+      floors.length === 0 ? 0 : Math.max(...floors.map((row) => row.floor)) + 1,
+    );
     setFloors((prev) => [
       ...prev,
       { key: `${Date.now()}-${prev.length}`, floor: next, unitCount: 2, unitType },
@@ -595,6 +823,32 @@ export function BuildingEditorDialog({
     }
     if (blueprintKind === 'explicit' && withBlueprint && duplicateFloors.size > 0) {
       setError(en ? 'A floor is listed more than once.' : 'هناك طابق مذكور أكثر من مرة.');
+      return;
+    }
+    if (blueprintKind === 'explicit' && withBlueprint && outOfRangeFloors.size > 0) {
+      setError(
+        en
+          ? `A floor is above this building's floor count (${floorsCount}).`
+          : `هناك طابق أعلى من عدد طوابق المبنى (${floorsCount}).`,
+      );
+      return;
+    }
+    /*
+      Refused before the building is saved, not after.
+
+      `generateUnits` enforces `MAX_GENERATED_UNITS` server-side, but it runs
+      *after* the create or update has already committed — so a blueprint of
+      0–99 × 20 used to save the building, fail on the matrix, and render as a
+      save error for a building that had in fact been saved. Checking the number
+      the form has already computed and displayed costs nothing and keeps the
+      two halves of the save together.
+    */
+    if (withBlueprint && plannedUnits > MAX_GENERATED_UNITS) {
+      setError(
+        en
+          ? `${plannedUnits} units is more than the ${MAX_GENERATED_UNITS} that can be generated at once.`
+          : `عدد الوحدات المطلوب (${plannedUnits}) يتجاوز الحد الأقصى ${MAX_GENERATED_UNITS} في العملية الواحدة.`,
+      );
       return;
     }
 
@@ -666,6 +920,7 @@ export function BuildingEditorDialog({
           },
           reconciled: false,
           unitsCreated: 0,
+          unitsSkipped: 0,
           queued: true,
         });
         onOpenChange(false);
@@ -719,12 +974,14 @@ export function BuildingEditorDialog({
         its own drawer, and `generateUnits` is idempotent per floor.
       */
       let unitsCreated = 0;
+      let unitsSkipped = 0;
       if (blueprint) {
         const generated = await generateUnits(tenant, token, saved.id, blueprint);
         unitsCreated = generated.created;
+        unitsSkipped = generated.skipped;
       }
 
-      onSaved({ building: saved, reconciled, unitsCreated });
+      onSaved({ building: saved, reconciled, unitsCreated, unitsSkipped });
       onOpenChange(false);
     } catch (caught) {
       logApiError(caught);
@@ -1136,6 +1393,42 @@ export function BuildingEditorDialog({
 
         {/* ── The matrix blueprint ─────────────────────────────────── */}
         <Section icon={Layers3} title={en ? 'Unit matrix' : 'مصفوفة الوحدات'}>
+          {/*
+            What this building already has, said before anything is offered.
+
+            Editing a building with three flats in it used to show one unchecked
+            checkbox proposing to generate a matrix, and nothing else — no count,
+            no floors, no survey progress, no way through to the drawer. The
+            section read as an empty offer for a building that was not empty, and
+            an officer had no way to tell from this screen whether a matrix
+            existed at all.
+
+            The counts come from the prop and are always available; the floor
+            range needs the units, so it degrades to the counts alone while the
+            fetch is in flight or if it failed.
+          */}
+          {editing && existingMatrix ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 p-2.5">
+              <p className="min-w-0 text-[11px] leading-relaxed">
+                <span className="block text-sm font-medium">
+                  {en ? 'Current matrix' : 'المصفوفة الحالية'}
+                </span>
+                <span className="mt-0.5 block text-muted-foreground">{existingMatrix}</span>
+              </p>
+              {onOpenMatrix && building ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onOpenMatrix(building.id)}
+                >
+                  <Layers3 className="size-4" aria-hidden />
+                  {en ? 'Open the matrix' : 'فتح مصفوفة الوحدات'}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+
           <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border bg-muted/40 p-2.5 transition-colors hover:bg-muted/60">
             <input
               type="checkbox"
@@ -1145,12 +1438,30 @@ export function BuildingEditorDialog({
             />
             <span className="min-w-0">
               <span className="block text-sm font-medium">
-                {en ? 'Generate the unit matrix now' : 'توليد مصفوفة الوحدات الآن'}
+                {hasMatrix
+                  ? en
+                    ? 'Add the missing units'
+                    : 'إضافة الوحدات الناقصة'
+                  : en
+                    ? 'Generate the unit matrix now'
+                    : 'توليد مصفوفة الوحدات الآن'}
               </span>
               <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">
-                {en
-                  ? 'Creates the flats as rows at «not surveyed». It asserts that they exist, not that anyone has been inside.'
-                  : 'ينشئ الوحدات كسجلات بحالة «غير ممسوحة». هذا إثبات بوجودها، لا بأن أحداً دخلها.'}
+                {/*
+                  Two different promises, because the operation means two
+                  different things depending on what is already there. Over a
+                  populated matrix `generateUnits` tops each floor *up to* the
+                  requested count and skips the rest — it never replaces, and
+                  saying "generate" over three existing flats invites an officer
+                  to expect it will.
+                */}
+                {hasMatrix
+                  ? en
+                    ? 'Tops each floor up to the requested count. Units that already exist are left exactly as they are — nothing is replaced.'
+                    : 'يُكمل كل طابق حتى العدد المطلوب. الوحدات الموجودة تبقى كما هي — لا يُستبدل شيء.'
+                  : en
+                    ? 'Creates the flats as rows at «not surveyed». It asserts that they exist, not that anyone has been inside.'
+                    : 'ينشئ الوحدات كسجلات بحالة «غير ممسوحة». هذا إثبات بوجودها، لا بأن أحداً دخلها.'}
               </span>
             </span>
           </label>
@@ -1209,14 +1520,44 @@ export function BuildingEditorDialog({
                       className="text-start"
                     />
                   </Field>
-                  <Field label={en ? 'To floor' : 'إلى الطابق'} htmlFor="blueprint-to" required>
+                  <Field
+                    label={en ? 'To floor' : 'إلى الطابق'}
+                    htmlFor="blueprint-to"
+                    required
+                    /*
+                      The ceiling is stated, not merely enforced.
+
+                      An input that silently refuses a number reads as broken.
+                      The basement half matters too: عدد الطوابق counts storeys
+                      above ground, so «من الطابق» may go negative without
+                      moving this ceiling, and an officer recording a قبو needs
+                      to know that before they raise the floor count to make
+                      room for one.
+                    */
+                    hint={
+                      en
+                        ? `Top floor: ${topFloorAllowed} — basements are not counted in the floor count`
+                        : `الأعلى: الطابق ${topFloorAllowed} — القبو لا يُحتسب ضمن عدد الطوابق`
+                    }
+                  >
                     <Input
                       id="blueprint-to"
                       type="number"
                       min={-10}
-                      max={100}
+                      max={topFloorAllowed}
                       value={toFloor}
-                      onChange={(event) => setToFloor(event.target.value)}
+                      onChange={(event) => {
+                        // Clamped as it is typed rather than refused on save:
+                        // the ceiling is a fact about the building already on
+                        // screen, so the form can simply keep the field inside
+                        // it instead of holding an impossible value.
+                        const next = Number(event.target.value);
+                        setToFloor(
+                          Number.isFinite(next) && next > topFloorAllowed
+                            ? String(topFloorAllowed)
+                            : event.target.value,
+                        );
+                      }}
                       dir="ltr"
                       className="text-start"
                     />
@@ -1272,7 +1613,7 @@ export function BuildingEditorDialog({
                               id={`floor-${row.key}`}
                               type="number"
                               min={-10}
-                              max={100}
+                              max={topFloorAllowed}
                               value={row.floor}
                               onChange={(event) =>
                                 setFloorRow(row.key, { floor: Number(event.target.value) })
@@ -1280,7 +1621,9 @@ export function BuildingEditorDialog({
                               dir="ltr"
                               className={cn(
                                 'text-start',
-                                duplicateFloors.has(row.floor) && 'border-destructive',
+                                (duplicateFloors.has(row.floor) ||
+                                  outOfRangeFloors.has(row.floor)) &&
+                                  'border-destructive',
                               )}
                             />
                           </Field>
@@ -1353,6 +1696,14 @@ export function BuildingEditorDialog({
                     <Plus className="size-4" aria-hidden />
                     {en ? 'Add floor' : 'إضافة طابق'}
                   </Button>
+
+                  {outOfRangeFloors.size > 0 ? (
+                    <p role="alert" className="text-xs text-destructive">
+                      {en
+                        ? `A floor is above this building's floor count (${floorsCount}). Raise عدد الطوابق or lower the floor.`
+                        : `هناك طابق أعلى من عدد طوابق المبنى (${floorsCount}). ارفع عدد الطوابق أو اخفض الطابق.`}
+                    </p>
+                  ) : null}
 
                   {duplicateFloors.size > 0 ? (
                     <p role="alert" className="text-xs text-destructive">
@@ -1825,4 +2176,17 @@ function ParcelPinPicker({
       ) : null}
     </div>
   );
+}
+
+/**
+ * A signed floor as a person says it — «الأرضي», «قبو ٢», «٣».
+ *
+ * `Unit.floor` is a signed integer and the register has always held free text,
+ * so any read-out of a matrix crosses that boundary. `parseFloorLabel` is the
+ * door the other way.
+ */
+function floorLabel(floor: number, en: boolean): string {
+  if (floor === 0) return en ? 'ground' : 'الأرضي';
+  if (floor < 0) return en ? `basement ${Math.abs(floor)}` : `قبو ${Math.abs(floor)}`;
+  return String(floor);
 }

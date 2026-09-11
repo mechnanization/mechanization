@@ -262,8 +262,23 @@ export class PaymentLedgerService {
     input: LedgerEntryInput,
     reversalOfId?: string,
   ): Promise<SettledTotals> {
+    /*
+      The sequence names its schema too — see `tenant-schema-ref.ts`.
+
+      `payment_receipt_seq` is created once per tenant schema (migration 0017),
+      so a bare `nextval('payment_receipt_seq')` resolves through the pooled
+      connection's `search_path` exactly as an unqualified table would. The
+      failure is worse than a missing table, though: this runs *inside* the
+      caller's transaction, behind the invoice's `FOR UPDATE`, so a drifted
+      connection either 42P01s a payment that is already half-written, or draws
+      from **another municipality's** sequence — and receipt numbers are printed
+      on paper handed to a resident.
+
+      `nextval` takes text cast to `regclass`, which accepts a quoted qualified
+      name, so the prefix goes inside the literal.
+    */
     const [{ nextval }] = await tx.$queryRaw<Array<{ nextval: bigint }>>`
-      SELECT nextval('payment_receipt_seq') AS nextval
+      SELECT nextval('${this.S}payment_receipt_seq') AS nextval
     `;
     const receiptNumber = `RCP-${String(nextval).padStart(6, '0')}`;
 

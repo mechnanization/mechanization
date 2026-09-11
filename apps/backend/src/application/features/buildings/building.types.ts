@@ -68,6 +68,28 @@ export interface OccupancyRow {
   fromDate: Date;
   toDate: Date | null;
   registrationId: string | null;
+  /**
+   * Whether the citizen's own file claims this flat — i.e. whether the other
+   * half of the record agrees with this one.
+   *
+   * The matrix and the register hold the same fact twice: this row says the
+   * census found them here, and a `PropertyEntry`/`BuildingUnit` link says
+   * their file declares it. A registration writes both. «تسجيل شاغل» writes
+   * only this one, deliberately — an officer standing in a stairwell can
+   * record who answered the door without having their full file to hand — and
+   * that is a legitimate half-finished state, not an error.
+   *
+   * What was not legitimate was that nothing said so. An occupancy with no
+   * card behind it looked exactly like one with, so the flat read as fully
+   * registered while billing — which reads the card — had nothing to charge
+   * and the citizen's own file named a different property entirely.
+   *
+   * Populated only by `get`, where the building is already loaded and the
+   * question can be answered for every unit in two queries. Left `true` on the
+   * write paths, which return the row they just wrote rather than a survey of
+   * the register.
+   */
+  backedByFile: boolean;
 }
 
 /** One logged attempt to survey a unit — P4-T1, D10. */
@@ -111,6 +133,8 @@ export interface BuildingListFilter {
   /** Permitted / going up / standing / abandoned / gone. See `BUILDING_LIFECYCLE`. */
   lifecycleStatus?: string;
   surveyStatus?: string;
+  /** False selects the structures with no entrance recorded — see the schema. */
+  hasEntrance?: boolean;
   damageLevel?: string;
   search?: string;
   limit?: number;
@@ -164,6 +188,15 @@ export interface CensusSummary {
   unitsOutOfScope: number;
   /** Buildings whose *current* level is restricted-use, unsafe, or collapsed. */
   damaged: number;
+  /**
+   * Buildings with no entrance pin, counted over the whole filtered predicate.
+   *
+   * Work, not an error. A structure created from a desk or from a registration
+   * form has no pin by design (D19), so this is the queue of doors somebody
+   * still has to stand at — and a tile is what stops it being a gap nobody can
+   * see.
+   */
+  withoutEntrance: number;
 }
 
 export interface CreateBuildingRow {

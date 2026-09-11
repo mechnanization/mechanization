@@ -109,6 +109,7 @@ export class BuildingsService {
       | 'BUILDING_UNITS_GENERATED'
       | 'BUILDING_CODE_RECOMPUTED'
       | 'UNIT_UPDATED'
+      | 'UNIT_DELETED'
       | 'OCCUPANCY_RECORDED'
       | 'OCCUPANCY_ENDED'
       | 'UNIT_VISIT_LOGGED';
@@ -168,7 +169,7 @@ export class BuildingsService {
       AND: [where, { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never } }],
     };
 
-    const [rows, total, totals, allTotals, damaged] = await withConnectionRetry(() =>
+    const [rows, total, totals, allTotals, damaged, withoutEntrance] = await withConnectionRetry(() =>
       Promise.all([
         this.db.building.findMany({
           where,
@@ -183,6 +184,12 @@ export class BuildingsService {
         }),
         this.db.building.aggregate({ where, _sum: { unitsTotal: true } }),
         this.countAtDamageLevels(where, DAMAGED_LEVELS),
+        /*
+          Counted over the filtered predicate, like every other tile — never
+          over the page. A tile that quietly described the first twenty-five
+          rows would read as a statement about the municipality.
+        */
+        this.db.building.count({ where: { AND: [where, { latitude: null }] } }),
       ]),
     );
 
@@ -213,6 +220,7 @@ export class BuildingsService {
         unitsUnsurveyed: Math.max(0, unitsTotal - unitsSurveyed),
         unitsOutOfScope: Math.max(0, (allTotals._sum.unitsTotal ?? 0) - unitsTotal),
         damaged,
+        withoutEntrance,
       },
     };
   }
@@ -292,6 +300,17 @@ export class BuildingsService {
     if (filter.lifecycleStatus) where.lifecycleStatus = filter.lifecycleStatus as never;
 
     /*
+      «بلا مدخل مُثبت», and its complement.
+
+      `latitude` alone is the predicate: `coordinatePair` refuses half a pin at
+      the schema, so the two columns are always both set or both null and there
+      is no third state to account for.
+    */
+    if (filter.hasEntrance !== undefined) {
+      where.latitude = filter.hasEntrance ? { not: null } : null;
+    }
+
+    /*
       A sector filter, expanded to the parcels the sector owns.
 
       There is no column to filter on — D13 keeps membership in
@@ -331,6 +350,24 @@ export class BuildingsService {
         filter.surveyStatus === 'NOT_SURVEYED'
           ? [{ units: { some: { surveyStatus: 'NOT_SURVEYED' } } }, { units: { none: {} } }]
           : [{ units: { some: { surveyStatus: filter.surveyStatus as never } } }];
+
+      /*
+        And only structures that can hold a household, matching the tiles.
+
+        `summary` excludes non-occupiable lifecycles from its unit figures and
+        `mapPins` withholds a rollup for them, both because a permitted plot, a
+        shell going up, a demolished block and a permit nobody built against are
+        permanent unreachable work. This predicate did not, so «غير ممسوحة» —
+        the filter an officer uses to *build the dispatch list* — still returned
+        every demolished building in the municipality. The tile said they were
+        out of scope and the list handed them over anyway.
+
+        ANDed so it narrows the OR above rather than competing with it.
+      */
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : []),
+        { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never } },
+      ];
     }
 
     /*
@@ -408,6 +445,7 @@ export class BuildingsService {
     if (!row) throw new NotFoundError('المبنى غير موجود');
 
     const zone = await this.zoneOfParcel(row.parcelNumber);
+    const backing = await this.claimsBackingOccupancies(row.id, row.units);
 
     return {
       ...toBuildingRow(row),
@@ -415,11 +453,79 @@ export class BuildingsService {
       zoneName: zone?.name ?? null,
       units: row.units.map((unit) => ({
         ...toUnitRow(unit),
-        occupants: unit.occupancies.map(toOccupancyRow),
+        occupants: unit.occupancies.map((occupancy) =>
+          toOccupancyRow(occupancy, backing.has(`${occupancy.unitId}:${occupancy.citizenId}`)),
+        ),
         visits: unit.visits.map(toVisitRow),
         visitCount: unit._count.visits,
       })),
     };
+  }
+
+  /**
+   * Which `(unit, citizen)` pairs in this building are claimed by the
+   * citizen's own file — the other half of every occupancy row.
+   *
+   * Two queries for the whole building rather than one per occupancy: a
+   * six-flat block with a history of tenants is a few dozen rows, and asking
+   * per row would put the matrix back into the N+1 it was written to avoid.
+   *
+   * The two shapes mirror `CensusSyncService`'s, because this is the same
+   * question it asks on the way in:
+   *
+   *   • **an itemised tick** — a `BuildingUnit` carrying `unitId`, which is how
+   *     a مبنى card names flat 3 out of six;
+   *   • **a منزل on a one-unit structure** — no tick to find, because the card
+   *     has no units array to tick; the claim is `PropertyEntry.buildingId` and
+   *     the unit is inferred. Applied only when the building really does have
+   *     exactly one unit, which is the condition the inference itself is under.
+   *
+   * Getting the second one wrong would be the visible failure: every منزل in
+   * the census would report its own occupant as unbacked, and the warning this
+   * feeds would fire on the commonest correct record in the register.
+   */
+  private async claimsBackingOccupancies(
+    buildingId: string,
+    units: ReadonlyArray<{ id: string; occupancies: ReadonlyArray<{ citizenId: string }> }>,
+  ): Promise<ReadonlySet<string>> {
+    const citizenIds = [
+      ...new Set(units.flatMap((unit) => unit.occupancies.map((row) => row.citizenId))),
+    ];
+    if (citizenIds.length === 0) return new Set();
+
+    const unitIds = units.map((unit) => unit.id);
+
+    const [ticked, wholeBuilding] = await Promise.all([
+      this.db.buildingUnit.findMany({
+        where: {
+          unitId: { in: unitIds },
+          propertyEntry: { registration: { citizenId: { in: citizenIds } } },
+        },
+        select: {
+          unitId: true,
+          propertyEntry: { select: { registration: { select: { citizenId: true } } } },
+        },
+      }),
+      units.length === 1
+        ? this.db.propertyEntry.findMany({
+            where: {
+              buildingId,
+              propertyType: 'HOUSE' as never,
+              registration: { citizenId: { in: citizenIds } },
+            },
+            select: { registration: { select: { citizenId: true } } },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const backed = new Set<string>();
+    for (const link of ticked) {
+      if (link.unitId) backed.add(`${link.unitId}:${link.propertyEntry.registration.citizenId}`);
+    }
+    for (const entry of wholeBuilding) {
+      backed.add(`${unitIds[0]}:${entry.registration.citizenId}`);
+    }
+    return backed;
   }
 
   // ──────────────────────────────  Creation  ──────────────────────────────
@@ -461,8 +567,45 @@ export class BuildingsService {
     const existing = input.clientSubmissionId
       ? await this.db.building.findUnique({ where: { id: input.clientSubmissionId } })
       : null;
+    if (existing && existing.parcelNumber !== parcelNumber) {
+      /*
+        The id matches but the parcel does not, so this is not a replay.
+
+        Returning `existing` here would hand back a building on someone else's
+        عقار as though the officer had just made it, and their actual creation
+        would be dropped without a word. Falling through instead would collide
+        on the primary key with a message naming neither problem. Said loudly,
+        because a client reaching this is confused about which creation it is
+        retrying and no answer this method can invent is the right one.
+      */
+      throw new ConflictError(
+        `المعرّف المرسل يخص مبنى على العقار ${existing.parcelNumber}، لا العقار ${parcelNumber}.`,
+      );
+    }
+
     if (existing) {
-      return { building: toBuildingRow(existing), reconciled: false, deduplicated: true };
+      /*
+        A replay still has to answer "is the code you are quoting the right one?"
+
+        This returned `reconciled: false` unconditionally, and that lost the
+        notice in the one case §4.4 built it for. An officer offline writes
+        «A-1042-A» on a paper form in a stairwell; the drain delivers it; the
+        server allocates `B`; the *response* is lost. The retry lands here, is
+        recognised, and — under the old code — told the phone nothing had
+        changed, so the queue entry was dropped and the officer kept quoting a
+        code no building answers to.
+
+        The comparison is against the row that exists, which is the same
+        question the first delivery answered, so it gives the same answer.
+      */
+      return {
+        building: toBuildingRow(existing),
+        reconciled: Boolean(
+          input.provisionalSuffix &&
+            input.provisionalSuffix.trim().toUpperCase() !== existing.codeSuffix,
+        ),
+        deduplicated: true,
+      };
     }
 
     /*
@@ -559,7 +702,7 @@ export class BuildingsService {
       const codeSuffix = nextBuildingSuffix(taken.map((b) => b.codeSuffix));
       const zone = await this.zoneOfParcel(parcelNumber, tx);
 
-      return tx.building.create({
+      const building = await tx.building.create({
         data: {
           ...(input.clientSubmissionId ? { id: input.clientSubmissionId } : {}),
           parcelNumber,
@@ -576,6 +719,62 @@ export class BuildingsService {
           createdById: actor.id,
         },
       });
+
+      /*
+        The matrix, in the same transaction as the shell.
+
+        Inside it rather than after it because a half-built structure is not a
+        state worth being able to reach: the registration that asked for this
+        building is about to attach a household to one of these units, and a
+        building that exists with only some of them is a card that links to a
+        flat which is not there. Either both, or neither and the officer tries
+        again.
+
+        No advisory lock is taken for the sequences, and none is needed — this
+        building did not exist a statement ago, so nothing else can be filling
+        its matrix. `addUnit` locks because it adds to a matrix other people are
+        already using.
+      */
+      if (input.units?.length) {
+        const usedByFloor = new Map<number, number>();
+
+        await tx.unit.createMany({
+          data: input.units.map((unit) => {
+            const next = unit.sequence ?? (usedByFloor.get(unit.floor) ?? 0) + 1;
+            usedByFloor.set(unit.floor, Math.max(usedByFloor.get(unit.floor) ?? 0, next));
+
+            return {
+              ...(unit.id ? { id: unit.id } : {}),
+              buildingId: building.id,
+              floor: unit.floor,
+              sequence: next,
+              unitCode: formatUnitCode(unit.floor, next),
+              unitType: unit.unitType as never,
+              postedNumber: unit.postedNumber?.trim() || null,
+              side: unit.side?.trim() || null,
+              unitArea: unit.unitArea ?? null,
+              unitStatus: (unit.unitStatus ?? null) as never,
+              surveyStatus: (unit.surveyStatus ?? 'NOT_SURVEYED') as never,
+              notes: unit.notes?.trim() || null,
+            };
+          }),
+        });
+
+        /*
+          `floorsCount` only ever rises, matching `generateUnits`. A caller that
+          sent one floor and three units on floor 2 meant the building is at
+          least three storeys, whatever the field said.
+        */
+        const highest = Math.max(...input.units.map((unit) => unit.floor));
+        if (highest + 1 > building.floorsCount) {
+          return tx.building.update({
+            where: { id: building.id },
+            data: { floorsCount: highest + 1 },
+          });
+        }
+      }
+
+      return building;
     });
 
     /*
@@ -672,10 +871,34 @@ export class BuildingsService {
       is `SetNull`, so the citizen's own record would survive while the
       municipality's record of where they live would not.
     */
-    const occupied = await this.db.unitOccupancy.count({ where: { unit: { buildingId: id } } });
-    if (occupied > 0) {
+    /*
+      Two refusals, because they ask for two different things.
+
+      This counted *every* occupancy row — ended ones included — under a message
+      telling the officer to «أنهِ الإشغالات أولاً». Ending an occupancy sets
+      `toDate` and keeps the row (D2: ended, never deleted), so the count never
+      moved: they followed the instruction, retried, and got the identical error
+      for ever, with the ledger surfacing it verbatim in a toast.
+
+      A current occupancy is something a person can act on, so it keeps the
+      actionable message. A building that only holds *history* is refused too —
+      the cascade would erase the municipality's record of who lived there,
+      which is the whole point of the census outliving the card — but it says
+      so, instead of prescribing a step that changes nothing.
+    */
+    const current = await this.db.unitOccupancy.count({
+      where: { unit: { buildingId: id }, toDate: null },
+    });
+    if (current > 0) {
       throw new ConflictError(
-        `لا يمكن حذف المبنى: ${occupied} إشغال مسجّل على وحداته. أنهِ الإشغالات أولاً`,
+        `لا يمكن حذف المبنى: ${current} إشغال قائم على وحداته. أنهِ الإشغالات أولاً`,
+      );
+    }
+
+    const historical = await this.db.unitOccupancy.count({ where: { unit: { buildingId: id } } });
+    if (historical > 0) {
+      throw new ConflictError(
+        `لا يمكن حذف مبنى سُجّل فيه سكان: ${historical} إشغال سابق على وحداته. حذفه يمحو سجل من سكنها. عدّل بيانات المبنى أو غيّر حالته إلى «مهدوم» بدلاً من الحذف`,
       );
     }
 
@@ -732,6 +955,33 @@ export class BuildingsService {
       );
     }
 
+    /*
+      A blueprint may not reach above the building's own عدد الطوابق.
+
+      The two numbers were unrelated on both sides until now: a building
+      declared `floorsCount: 1` accepted `toFloor: 40` and quietly became a
+      forty-storey block, and `floorsCount` was then *raised* to match — so the
+      form's own field was overwritten by the range beside it, silently, in the
+      same save.
+
+      Refused here rather than reconciled, because this is the one path where
+      the officer states both numbers in one form. Two contradicting statements
+      are an error to show them, not a correction to apply. Where only one
+      number is stated the other is still derived: `addUnit` raises `floorsCount`
+      for a floor discovered one unit at a time, and `create` derives it from
+      inline units on a registration card that never asks for it.
+
+      Floors are 0-indexed — ground is 0 — so the top floor of an N-storey
+      building is N-1. Basements are negative and do not count toward
+      `floorsCount`, which is why only the top of the range is checked.
+    */
+    const topFloor = plan.reduce((max, entry) => Math.max(max, entry.floor), 0);
+    if (topFloor > building.floorsCount - 1) {
+      throw new ValidationError(
+        `الطابق الأعلى في المخطط (${topFloor}) يتجاوز عدد طوابق المبنى (${building.floorsCount}). عدّل عدد الطوابق أو اخفض نطاق الطوابق`,
+      );
+    }
+
     const existing = await this.db.unit.findMany({
       where: { buildingId },
       select: { floor: true, sequence: true },
@@ -781,15 +1031,16 @@ export class BuildingsService {
       await this.db.unit.createMany({ data, skipDuplicates: true });
     }
 
-    // `floorsCount` only ever rises: a blueprint that names fewer floors than
-    // the building already has is not evidence it got shorter.
-    const topFloor = plan.reduce((max, entry) => Math.max(max, entry.floor), 0);
-    if (topFloor + 1 > building.floorsCount) {
-      await this.db.building.update({
-        where: { id: buildingId },
-        data: { floorsCount: topFloor + 1 },
-      });
-    }
+    /*
+      `floorsCount` is not touched here any more.
+
+      It used to be raised to `topFloor + 1`, which is what made the two numbers
+      able to disagree in the first place — the range silently rewrote the field
+      the officer had just filled in. The guard above now refuses that case
+      instead, so by this point the blueprint is known to fit inside the
+      building the officer described. Raising it belongs on `addUnit`, where
+      there is no second number to contradict.
+    */
 
     const units = await this.db.unit.findMany({
       where: { buildingId },
@@ -816,9 +1067,18 @@ export class BuildingsService {
     if (!building) throw new NotFoundError('المبنى غير موجود');
 
     const created = await this.db.$transaction(async (tx) => {
+      /*
+        The schema is a literal here for the same reason it is in `create` —
+        `current_schema()` reads the connection's `search_path`, which this app
+        does not own behind the transaction pooler. A drifted connection returns
+        `public`, so two officers adding a unit to one building take *different*
+        lock keys, both read the same `used` set, both compute the same
+        `sequence`, and the second one hits the unique constraint as a 500
+        instead of being serialised behind the first.
+      */
       await tx.$executeRawUnsafe(
-        'SELECT pg_advisory_xact_lock(hashtext(current_schema() || $1))',
-        `:unit-sequence:${buildingId}`,
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+        `${this.tenantContext.schemaName}:unit-sequence:${buildingId}`,
       );
 
       const used = new Set(
@@ -837,7 +1097,7 @@ export class BuildingsService {
       let sequence = input.sequence ?? 1;
       while (input.sequence === undefined && used.has(sequence)) sequence += 1;
 
-      return tx.unit.create({
+      const unit = await tx.unit.create({
         data: {
           buildingId,
           floor: input.floor,
@@ -852,6 +1112,30 @@ export class BuildingsService {
           notes: input.notes?.trim() || null,
         },
       });
+
+      /*
+        A floor discovered one unit at a time raises عدد الطوابق to cover it.
+
+        The opposite of `generateUnits`, deliberately. There the officer states
+        the floor range and the floor count in one form, so a range above the
+        count is a contradiction and is refused. Here there is no second number
+        to contradict: an officer standing on a fourth floor of a building the
+        register calls three-storey is *correcting* the register, and refusing
+        them would mean going to a different form to raise a number before they
+        can record what they are looking at.
+
+        Only ever upward — recording a ground-floor محل in a six-storey block is
+        not evidence the block got shorter — and basements are negative, so they
+        never move it.
+      */
+      if (input.floor + 1 > building.floorsCount) {
+        await tx.building.update({
+          where: { id: buildingId },
+          data: { floorsCount: input.floor + 1 },
+        });
+      }
+
+      return unit;
     });
 
     this.record({
@@ -918,6 +1202,110 @@ export class BuildingsService {
     });
 
     return toUnitRow(updated);
+  }
+
+  /**
+   * Removes a unit that turned out not to exist — and refuses whenever removing
+   * it would take a record of something that did.
+   *
+   * The counterpart to `addUnit`, for the mistake that one makes possible: a
+   * blueprint of four flats a floor on a floor that has three, or a محل counted
+   * twice from the street. Until now the matrix could only grow, so an officer
+   * who overshot had a permanently wrong denominator — `unitsTotal` feeds the
+   * survey-coverage figures on the dashboard, so a phantom flat is a building
+   * that can never read «مكتملة».
+   *
+   * ## Four refusals, because deleting a unit is quietly destructive
+   *
+   * `Unit` is the parent of more history than its size suggests, and Prisma
+   * cascades most of it without a word:
+   *
+   *   • `UnitOccupancy` — **Cascade**. Who has ever lived here. D2 keeps ended
+   *     spells precisely so the municipality outlives the card; a delete would
+   *     erase them with no audit row naming what went.
+   *   • `UnitVisit` — **Cascade**. The «٣ محاولات» behind a dispatch decision.
+   *   • `DamageAssessment` — **Cascade**. War-damage findings, which are the
+   *     evidentiary basis for compensation. This is the one that would hurt
+   *     most and complain least.
+   *   • `BuildingUnit.unitId` — **SetNull**. A citizen's own card silently
+   *     stops naming a canonical flat, so their file and the census quietly
+   *     disagree about a property that is still theirs.
+   *
+   * So the rule is the same one `delete` applies to a whole building: a unit
+   * may be removed only while it is still nothing but an assertion that a flat
+   * exists. The moment anybody has recorded anything against it, the correction
+   * is `updateUnit` — or «مهدوم» on the building — not deletion.
+   *
+   * Each refusal names its own remedy rather than sharing one message. The
+   * building delete used to answer a historical occupancy with «أنهِ الإشغالات
+   * أولاً», an instruction that changes nothing because ending a spell keeps
+   * the row; officers followed it, retried, and got the identical error for
+   * ever.
+   */
+  async deleteUnit(unitId: string, actor: { id: string; role: string }): Promise<void> {
+    const unit = await this.db.unit.findUnique({
+      where: { id: unitId },
+      select: { id: true, buildingId: true, unitCode: true, floor: true, sequence: true },
+    });
+    if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+
+    const [current, historical, visits, damage, cards] = await Promise.all([
+      this.db.unitOccupancy.count({ where: { unitId, toDate: null } }),
+      this.db.unitOccupancy.count({ where: { unitId } }),
+      this.db.unitVisit.count({ where: { unitId } }),
+      this.db.damageAssessment.count({ where: { unitId } }),
+      this.db.buildingUnit.count({ where: { unitId } }),
+    ]);
+
+    if (current > 0) {
+      throw new ConflictError(
+        `لا يمكن حذف الوحدة ${unit.unitCode}: يوجد ${current} إشغال قائم عليها. أنهِ الإشغال أولاً`,
+      );
+    }
+
+    if (historical > 0) {
+      throw new ConflictError(
+        `لا يمكن حذف الوحدة ${unit.unitCode}: سُجِّل فيها ${historical} إشغال سابق، وحذفها يمحو سجل من سكنها. صحّح بيانات الوحدة بدلاً من حذفها`,
+      );
+    }
+
+    if (cards > 0) {
+      throw new ConflictError(
+        `لا يمكن حذف الوحدة ${unit.unitCode}: ${cards} بطاقة عقار في سجل المواطنين تشير إليها. أزل الربط من ملف المواطن أولاً`,
+      );
+    }
+
+    if (damage > 0) {
+      throw new ConflictError(
+        `لا يمكن حذف الوحدة ${unit.unitCode}: عليها ${damage} كشف ضرر. كشوف الضرر مستند تعويض ولا تُحذف مع الوحدة`,
+      );
+    }
+
+    if (visits > 0) {
+      throw new ConflictError(
+        `لا يمكن حذف الوحدة ${unit.unitCode}: سُجِّلت عليها ${visits} زيارة ميدانية. صحّح بيانات الوحدة بدلاً من حذفها`,
+      );
+    }
+
+    /*
+      `unitsTotal` and `unitsSurveyed` are corrected by the database, not here.
+
+      Migration 0030 puts a row trigger — `units_sync_building_counts` — on
+      INSERT, DELETE and UPDATE of `units`, which recomputes both counters for
+      the affected building. Decrementing them here as well would take the
+      denominator two below the truth on every deletion, and the drift would
+      only show up as a survey-coverage percentage that crept past 100%.
+
+      This is also why `addUnit` and `generateUnits` never touch them either.
+    */
+    await this.db.unit.delete({ where: { id: unitId } });
+
+    this.record({
+      action: 'UNIT_DELETED',
+      buildingId: unit.buildingId,
+      before: { unitCode: unit.unitCode, floor: unit.floor, sequence: unit.sequence },
+      actor,
+    });
   }
 
   // ────────────────────────────  Occupancy  ────────────────────────────
@@ -1014,7 +1402,32 @@ export class BuildingsService {
     return { occupancy: toOccupancyRow(occupancy), casesResolved };
   }
 
-  /** Ends a spell without deleting it — the history is the point (D2). */
+  /**
+   * Ends a spell without deleting it — the history is the point (D2) — and
+   * releases the citizen's own claim on the flat at the same time.
+   *
+   * ## Why the second half exists
+   *
+   * Who is in a flat is recorded in two places: `UnitOccupancy`, which the
+   * matrix shows, and the citizen's `PropertyEntry`/`BuildingUnit` link, which
+   * billing reads and which their file displays. `CensusSyncService` writes
+   * both together because a registration establishes both at once. This method
+   * used to write only the first, and that asymmetry was the bug:
+   *
+   *   • an officer ended a spell from the matrix, saw the occupant disappear,
+   *     and the citizen's file went on claiming the property — so the register
+   *     still answered «من يملك هذه الوحدة؟» with someone the census had
+   *     already moved out;
+   *   • `heldThroughOccupancy` bills from the occupancy, the file shows the
+   *     property, and the two now disagreed about the same flat;
+   *   • worst, it came back. `CensusSyncService` re-reads the card on the next
+   *     save and re-creates the occupancy from the link nobody cleared, so
+   *     correcting a phone number six weeks later silently re-housed a
+   *     household the municipality had evicted on paper.
+   *
+   * Ending a spell is the officer stating the household is not there. That is
+   * one fact, so it is now written to both records or to neither.
+   */
   async endOccupancy(
     occupancyId: string,
     toDate: Date | undefined,
@@ -1032,14 +1445,97 @@ export class BuildingsService {
       include: { citizen: { select: { firstName: true, lastName: true } } },
     });
 
+    const released = await this.releaseCensusClaim({
+      unitId: existing.unitId,
+      buildingId: existing.unit.buildingId,
+      citizenId: existing.citizenId,
+    });
+
     this.record({
       action: 'OCCUPANCY_ENDED',
       buildingId: existing.unit.buildingId,
-      after: { unitCode: existing.unit.unitCode, toDate: updated.toDate },
+      after: {
+        unitCode: existing.unit.unitCode,
+        toDate: updated.toDate,
+        citizenId: existing.citizenId,
+        /*
+          Named in the audit row because this is the part that edits somebody's
+          file rather than the census, and a resident disputing a bill is
+          entitled to see when their card stopped claiming the flat and who
+          did it.
+        */
+        unitLinksCleared: released.unitLinksCleared,
+        buildingLinksCleared: released.buildingLinksCleared,
+      },
       actor,
     });
 
     return toOccupancyRow(updated);
+  }
+
+  /**
+   * Drops this citizen's census link to one unit, so their file stops claiming
+   * a flat they are no longer recorded in.
+   *
+   * Two shapes of claim, because there are two ways a card reaches a unit and
+   * clearing only the explicit one leaves the inferred one to resurrect it.
+   *
+   *   1. **An itemised unit.** A مبنى card ticks flats, and each tick is a
+   *      `BuildingUnit` row carrying `unitId`. Only the link is dropped — the
+   *      row itself is the citizen's own statement about a flat they filed
+   *      (floor, area, أسهم), and deleting it would throw away what they said
+   *      rather than what the census concluded.
+   *
+   *   2. **A منزل standing on a one-unit structure.** Such a card has no units
+   *      to tick, so `CensusSyncService` infers the unit from the building —
+   *      which means the claim lives in `PropertyEntry.buildingId` and
+   *      clearing unit links alone would leave the next sync free to re-create
+   *      exactly the occupancy just ended.
+   *
+   * Narrowed to buildings with exactly one unit, mirroring the inference it is
+   * undoing. A منزل linked to a six-flat block claims nothing by inference, so
+   * severing its `buildingId` would discard a link an officer made deliberately
+   * and answer "this person left flat 3" by forgetting which building it was.
+   *
+   * A مبنى card keeps its `buildingId` for the same reason even when its last
+   * tick is gone: the card is still about that structure, and it claims no unit
+   * now that nothing points at one.
+   */
+  private async releaseCensusClaim(input: {
+    unitId: string;
+    buildingId: string;
+    citizenId: string;
+  }): Promise<{ unitLinksCleared: number; buildingLinksCleared: number }> {
+    const unitLinks = await this.db.buildingUnit.updateMany({
+      where: {
+        unitId: input.unitId,
+        propertyEntry: { registration: { citizenId: input.citizenId } },
+      },
+      data: { unitId: null },
+    });
+
+    const unitsInBuilding = await this.db.unit.count({
+      where: { buildingId: input.buildingId },
+    });
+
+    if (unitsInBuilding !== 1) {
+      return { unitLinksCleared: unitLinks.count, buildingLinksCleared: 0 };
+    }
+
+    const buildingLinks = await this.db.propertyEntry.updateMany({
+      where: {
+        buildingId: input.buildingId,
+        propertyType: 'HOUSE' as never,
+        registration: { citizenId: input.citizenId },
+        // Nothing itemised; the `buildingId` is the whole of the claim. A card
+        // that still ticks a flat elsewhere in this structure is not what the
+        // single-unit inference acts on, and is left alone.
+        units: { none: { unitId: { not: null } } },
+      },
+      data: { buildingId: null },
+    });
+
+    return { unitLinksCleared: unitLinks.count, buildingLinksCleared: buildingLinks.count };
   }
 
   // ──────────────────────────────  Visits  ──────────────────────────────
@@ -1203,14 +1699,21 @@ export class BuildingsService {
     if (buildingIds.length === 0) return new Map();
 
     /*
-      Each id cast at the placeholder, not the column.
+      One array parameter, not one parameter per id — and certainly not two.
 
-      Prisma binds a JS string as `text`, and Postgres has no `uuid = text`
-      operator, so the bare parameter list fails outright. Casting the *column*
-      to text instead would work and would also throw away the index on it,
-      which is the one thing this query exists to use.
+      This was `Prisma.join(...)` embedded in the template twice, once per arm
+      of the UNION. Prisma flattens an embedded `Sql` at *each* occurrence, so
+      the statement carried `2 × N` bind parameters: past ~32,768 candidates it
+      breaks Postgres' 65,535-parameter ceiling and the ledger stops loading
+      altogether, and long before that it is a multi-megabyte statement being
+      re-parsed on every keystroke in the search box.
+
+      `= ANY($1::uuid[])` binds the whole list once and can be reused in both
+      arms for free. The cast is on the parameter rather than the column so the
+      index on `buildingId` is still usable — casting the column instead would
+      work and would throw away the one thing this query exists to use.
     */
-    const ids = Prisma.join(buildingIds.map((id) => Prisma.sql`${id}::uuid`));
+    const ids = Prisma.sql`${buildingIds}::uuid[]`;
 
     /*
       Every table named with its schema — see `tenant-schema-ref.ts`.
@@ -1227,12 +1730,12 @@ export class BuildingsService {
         FROM (
           SELECT d."buildingId", d."level", d."assessedAt"
             FROM ${S}"damage_assessments" d
-           WHERE d."buildingId" IN (${ids})
+           WHERE d."buildingId" = ANY(${ids})
           UNION ALL
           SELECT u."buildingId", d."level", d."assessedAt"
             FROM ${S}"damage_assessments" d
             JOIN ${S}"units" u ON u."id" = d."unitId"
-           WHERE u."buildingId" IN (${ids})
+           WHERE u."buildingId" = ANY(${ids})
         ) t
        ORDER BY t."buildingId", t."assessedAt" DESC
     `;
@@ -1571,17 +2074,26 @@ function toVisitRow(row: {
   };
 }
 
-function toOccupancyRow(row: {
-  id: string;
-  unitId: string;
-  citizenId: string;
-  citizen?: { firstName: string; lastName: string } | null;
-  role: string;
-  shares: number | null;
-  fromDate: Date;
-  toDate: Date | null;
-  registrationId: string | null;
-}): OccupancyRow {
+function toOccupancyRow(
+  row: {
+    id: string;
+    unitId: string;
+    citizenId: string;
+    citizen?: { firstName: string; lastName: string } | null;
+    role: string;
+    shares: number | null;
+    fromDate: Date;
+    toDate: Date | null;
+    registrationId: string | null;
+  },
+  /**
+   * Defaults to `true` so the write paths — which return the row they just
+   * wrote, not a survey of the register — do not have to answer a question
+   * they were not asked. Only `get` passes it, and only `get` has the two
+   * queries in hand to answer it honestly. See `OccupancyRow.backedByFile`.
+   */
+  backedByFile = true,
+): OccupancyRow {
   return {
     id: row.id,
     unitId: row.unitId,
@@ -1592,5 +2104,6 @@ function toOccupancyRow(row: {
     fromDate: row.fromDate,
     toDate: row.toDate,
     registrationId: row.registrationId,
+    backedByFile,
   };
 }

@@ -389,6 +389,68 @@ export interface PaymentSummary {
  * badge, the clerk's verification queue — reads those rows, never the rule,
  * so a later edit to the rule cannot rewrite a debt someone already settled.
  */
+/** The shape `attachOccupancies` needs of a card, and nothing more. */
+interface OccupancyClaimable {
+  buildingId?: string | null;
+  propertyType?: string | null;
+  units?: unknown[];
+}
+
+/**
+ * Hands each building's recorded occupancies to exactly one card.
+ *
+ * `heldThroughOccupancy` bills a مبنى card that itemises no flats from
+ * `UnitOccupancy` — the only per-citizen table that can answer *which* flats
+ * this person holds. The list used to be handed to **every** card linked to
+ * that building, and nothing deduped it, so a citizen with two such cards on
+ * one block and two flats recorded there was assessed for four. Under a
+ * PER_UNIT notice that is double the bill, and every row involved is
+ * individually valid.
+ *
+ * `CensusSyncService` dedupes the mirror of this on the write side with a `Map`
+ * keyed by unit; this is the read side of the same fact. Two rules:
+ *
+ * - **Only a مبنى card with no unit rows may consume the list.** That is the
+ *   only card `heldThroughOccupancy` answers for, and spending it on a card
+ *   that itemises its own flats would leave a later card that needs it with
+ *   nothing — under-billing a resident is worse than the double it fixes.
+ * - **A منزل card on the same building suppresses it entirely.** That card
+ *   already bills the structure's single unit from its own fields, and the
+ *   census's single-unit inference has recorded an occupancy on that very flat,
+ *   so the list would bill it a second time.
+ *
+ * Exported for its own tests: half of it is a rule about *which* card, and a
+ * rule like that is invisible in an assessment that only ever sees one.
+ */
+export function attachOccupancies<T extends OccupancyClaimable, U>(
+  properties: readonly T[],
+  occupanciesByBuilding: Map<string, U[]>,
+): Array<T & { occupiedUnits?: U[] }> {
+  const suppressed = new Set(
+    properties
+      .filter((entry) => entry.buildingId && entry.propertyType !== 'BUILDING')
+      .map((entry) => entry.buildingId as string),
+  );
+  const consumed = new Set<string>();
+
+  return properties.map((entry) => {
+    const buildingId = entry.buildingId;
+    const claimable =
+      buildingId != null &&
+      entry.propertyType === 'BUILDING' &&
+      (entry.units?.length ?? 0) === 0 &&
+      !suppressed.has(buildingId) &&
+      !consumed.has(buildingId);
+
+    if (claimable) consumed.add(buildingId);
+
+    return {
+      ...entry,
+      occupiedUnits: claimable ? occupanciesByBuilding.get(buildingId) : undefined,
+    };
+  });
+}
+
 @Injectable()
 export class FeesService {
   private readonly logger = new Logger(FeesService.name);
@@ -1164,12 +1226,32 @@ export class FeesService {
           occupanciesByBuilding.set(buildingId, list);
         }
 
-        const entries = (row.registrations[0]?.properties ?? []).map((entry) => ({
-          ...entry,
-          occupiedUnits: entry.buildingId
-            ? occupanciesByBuilding.get(entry.buildingId)
-            : undefined,
-        }));
+        /*
+          Each building's holdings are counted once, by one card.
+
+          The list used to be handed to *every* card linked to the building, and
+          `heldThroughOccupancy` fires for any مبنى card with no unit rows — so a
+          citizen with two such cards on one block and two flats recorded there
+          was assessed for four. Under a PER_UNIT notice that is simply double
+          the bill, and every row involved is individually valid.
+
+          `CensusSyncService` dedupes the mirror of this on the write side with a
+          `Map` keyed by unit; this is the read side of the same fact. Two rules:
+
+          - **Only a مبنى card with no unit rows can consume the list**, because
+            that is the only card `heldThroughOccupancy` answers for. Spending it
+            on a card that itemises its flats would leave a later card that needs
+            it with nothing, and under-billing is worse than the double it fixes.
+          - **A منزل card linked to the same building suppresses it entirely.**
+            That card already bills the structure's single unit from its own
+            fields, and `CensusSyncService`'s single-unit inference has recorded
+            an occupancy on that very flat — so the list would bill it a second
+            time.
+        */
+        const entries = attachOccupancies(
+          row.registrations[0]?.properties ?? [],
+          occupanciesByBuilding,
+        );
         const name = [row.firstName, row.lastName].filter(Boolean).join(' ');
         const outcome = assessCitizen(entries as never, notice);
 

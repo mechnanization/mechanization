@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -270,7 +270,17 @@ function reindexFlags(flags: ReadonlyMap<string, string>, removed: number): Map<
 
 /** Drops UI-only fields and coerces the numeric strings the inputs produce. */
 export function toPayloadProperty(property: PropertyDraft): Record<string, unknown> {
-  const { unitArea, shares, units, id, buildingId, ...rest } = property;
+  /*
+    `pendingBuilding` is destructured off and never sent.
+
+    It describes work still to be done — a structure to create before this
+    registration is submitted — not a field of the card. By the time the
+    payload reaches the server the building exists and `buildingId` names it;
+    the intent that produced it is none of the server's business. Dropped here
+    rather than left to `branchFieldsOnly`, which would discard it silently and
+    give the next reader no reason to think it was deliberate.
+  */
+  const { unitArea, shares, units, id, buildingId, pendingBuilding: _pending, ...rest } = property;
 
   return {
     // Present only when this card is editing a stored row; the create endpoint
@@ -421,6 +431,7 @@ export function CitizenForm({
   offline = false,
   onSubmit,
   onCancel,
+  onValuesChange,
   locale = 'ar',
   lockedCensusTarget,
 }: {
@@ -449,6 +460,18 @@ export function CitizenForm({
   offline?: boolean;
   onSubmit: (values: CitizenFormValues) => void;
   onCancel: () => void;
+  /**
+   * Every change to what is on screen, so the parent can persist a draft.
+   *
+   * Reported rather than lifted: `values` stays this component's state. The
+   * form is edited on nearly every keystroke and hoisting it would re-render
+   * the editor — which owns the token, the tenant config and the offline queue
+   * — on each one. The parent is expected to debounce; see `CitizenEditor`.
+   *
+   * Fires once on mount with whatever the form opened with, which is what lets
+   * a restored draft be written straight back and keep its timestamp fresh.
+   */
+  onValuesChange?: (values: CitizenFormValues) => void;
   locale?: string;
   /**
    * Launched from a building's unit matrix — the structure, and possibly the
@@ -487,6 +510,21 @@ export function CitizenForm({
       new Set(initial.properties.length > 1 ? initial.properties.map((_, i) => i) : []),
     );
   }, [initial]);
+
+  /*
+    Tell the parent what the form now holds, so it can keep a draft.
+
+    Depends on `values` alone. Including `onValuesChange` would re-fire this on
+    every render of a parent that passes an inline arrow — which is every
+    parent — and the handler writes to localStorage, so that is a synchronous
+    disk write per render rather than per edit. The callback is invoked through
+    a ref so the one that runs is always the latest, without being a dependency.
+  */
+  const notifyChange = useRef(onValuesChange);
+  notifyChange.current = onValuesChange;
+  useEffect(() => {
+    notifyChange.current?.(values);
+  }, [values]);
 
   const update = useCallback((patch: Partial<CitizenFormValues>) => {
     setValues((current) => ({ ...current, ...patch }));
@@ -555,12 +593,38 @@ export function CitizenForm({
     [values.flags, values.unverified, setFlag, clearFlag, locale],
   );
 
-  const setProperty = useCallback((index: number, next: PropertyDraft) => {
-    setValues((current) => ({
-      ...current,
-      properties: current.properties.map((p, i) => (i === index ? next : p)),
-    }));
-  }, []);
+  /**
+   * One card, updated from whatever it currently is.
+   *
+   * Takes an updater rather than a finished `PropertyDraft`, and that is a
+   * correctness fix rather than a style preference.
+   *
+   * `PropertyCard` used to build the replacement by spreading the `draft` prop
+   * it had been rendered with — `onChange({ ...draft, ...patch })` — so every
+   * write carried a full copy of the card *as it was at that render*. Two
+   * writes landing before React re-rendered therefore both spread the same
+   * stale copy, and the second silently reverted the first.
+   *
+   * That is not a rare interleaving; it is the census picker's ordinary
+   * behaviour. Linking a building sets `buildingId`, which makes the picker
+   * fetch the structure, which fires the effect that copies «اسم المبنى» down
+   * — and that second write, built from the pre-link draft, put `buildingId`
+   * back to undefined. The officer saw the building selected on screen, saved,
+   * and got «بلا ربط بسجل المباني» for a card they had just linked. Ticking two
+   * flats quickly lost the first one the same way.
+   *
+   * An updater cannot express that bug: `p` is whatever the card holds at the
+   * moment the update runs, so writes compose instead of racing.
+   */
+  const setProperty = useCallback(
+    (index: number, update: (current: PropertyDraft) => PropertyDraft) => {
+      setValues((current) => ({
+        ...current,
+        properties: current.properties.map((p, i) => (i === index ? update(p) : p)),
+      }));
+    },
+    [],
+  );
 
   /**
    * A new card.
@@ -647,7 +711,7 @@ export function CitizenForm({
             allowedTypes={allowedTypes}
             collapsed={collapsed.has(index)}
             onToggleCollapse={() => toggleCollapsed(index)}
-            onChange={(next) => setProperty(index, next)}
+            onChange={(update) => setProperty(index, update)}
             onAddOnSameParcel={() => addProperty(index)}
             onViewParcel={token ? setRosterParcel : undefined}
             onRemove={() => removeProperty(index)}
@@ -691,7 +755,7 @@ export function CitizenForm({
                 allowedTypes={allowedTypes}
                 collapsed={collapsed.has(index)}
                 onToggleCollapse={() => toggleCollapsed(index)}
-                onChange={(next) => setProperty(index, next)}
+                onChange={(update) => setProperty(index, update)}
                 onViewParcel={token ? setRosterParcel : undefined}
                 onRemove={() => removeProperty(index)}
                 canRemove

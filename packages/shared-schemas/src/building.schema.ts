@@ -106,6 +106,48 @@ const floorField = z.coerce
   .min(-10, 'الطابق خارج النطاق المقبول')
   .max(100, 'الطابق خارج النطاق المقبول');
 
+/**
+ * A single unit, created or corrected by hand from the matrix.
+ *
+ * `floor` and `sequence` are the durable pair and `unitCode` is derived from
+ * them, so the code is never accepted from a client — see D9 and
+ * `formatUnitCode`.
+ */
+export const upsertUnitSchema = z.object({
+  floor: floorField,
+  /**
+   * Optional on create: the service allocates the next free position on the
+   * floor, which is what stops two officers filling the same matrix from
+   * colliding on the unique `(buildingId, floor, sequence)`.
+   */
+  sequence: z.coerce
+    .number({ invalid_type_error: 'الترتيب يجب أن يكون رقماً' })
+    .int('الترتيب يجب أن يكون رقماً صحيحاً')
+    .min(1, 'الترتيب يبدأ من 1')
+    .max(99, 'الترتيب كبير جداً')
+    .optional(),
+  unitType: unitTypeSchema,
+  postedNumber: postedNumber.optional(),
+  side: z.string().trim().max(60).optional(),
+  unitArea: areaField.optional(),
+  unitStatus: unitStatusSchema.optional(),
+  surveyStatus: surveyStatusSchema.optional(),
+  notes: notes.optional(),
+});
+
+export type UpsertUnitInput = z.infer<typeof upsertUnitSchema>;
+
+/**
+ * How many units one `create` may carry inline.
+ *
+ * Smaller than `MAX_GENERATED_UNITS` on purpose: a blueprint says "twelve
+ * floors of four" in four numbers, while this is a list somebody typed or a
+ * card enumerated, and a registration form has no honest reason to describe
+ * more flats than one household could hold. A genuine tower is created from the
+ * editor and filled from the blueprint generator.
+ */
+const MAX_INLINE_UNITS = 40;
+
 export const createBuildingSchema = z
   .object({
     parcelNumber,
@@ -165,6 +207,48 @@ export const createBuildingSchema = z
      * with the row it already made rather than a second building on the parcel.
      */
     clientSubmissionId: uuid.optional(),
+    /**
+     * The matrix, created in the same request as the shell.
+     *
+     * For the registration form, which creates a structure the officer is
+     * standing in front of and must attach a household to it in the same save.
+     * A shell on its own would be worse than nothing there: `CensusSyncService`
+     * claims a unit only when the card line carries a `unitId`, so a building
+     * with no units links the card and records no occupancy — and
+     * `heldThroughOccupancy` then bills that household for nothing at all.
+     *
+     * One request rather than a `POST` per unit, for two reasons:
+     *
+     * - **Replay safety comes free.** `clientSubmissionId` is the building's
+     *   primary key, so a re-delivered creation is recognised and the whole
+     *   request — units included — is answered with what it already made. A
+     *   separate units call carries no idempotency key and would allocate a
+     *   fresh `sequence` on every retry.
+     * - **Offline has no other path.** The queue has one store for buildings
+     *   and none for units, so a fatter payload is the only shape that survives
+     *   an airplane-mode create.
+     *
+     * `sequence` stays optional and server-allocated, exactly as it is on the
+     * matrix's own form — that is what keeps two officers filling one building
+     * off the same `(buildingId, floor, sequence)`.
+     */
+    units: z
+      .array(
+        upsertUnitSchema.extend({
+          /**
+           * The browser's own id for this unit, for the same reason the
+           * building has one: a phone with no signal has to be able to put a
+           * `unitId` on the card *before* the row exists, and the id it minted
+           * is the id the row will have.
+           */
+          id: uuid.optional(),
+        }),
+      )
+      .max(
+        MAX_INLINE_UNITS,
+        `لا يمكن إنشاء أكثر من ${MAX_INLINE_UNITS} وحدة في طلب واحد`,
+      )
+      .optional(),
   })
   .superRefine(coordinatePair);
 
@@ -278,37 +362,6 @@ export const unitBlueprintSchema = z
   });
 
 export type UnitBlueprint = z.infer<typeof unitBlueprintSchema>;
-
-/**
- * A single unit, created or corrected by hand from the matrix.
- *
- * `floor` and `sequence` are the durable pair and `unitCode` is derived from
- * them, so the code is never accepted from a client — see D9 and
- * `formatUnitCode`.
- */
-export const upsertUnitSchema = z.object({
-  floor: floorField,
-  /**
-   * Optional on create: the service allocates the next free position on the
-   * floor, which is what stops two officers filling the same matrix from
-   * colliding on the unique `(buildingId, floor, sequence)`.
-   */
-  sequence: z.coerce
-    .number({ invalid_type_error: 'الترتيب يجب أن يكون رقماً' })
-    .int('الترتيب يجب أن يكون رقماً صحيحاً')
-    .min(1, 'الترتيب يبدأ من 1')
-    .max(99, 'الترتيب كبير جداً')
-    .optional(),
-  unitType: unitTypeSchema,
-  postedNumber: postedNumber.optional(),
-  side: z.string().trim().max(60).optional(),
-  unitArea: areaField.optional(),
-  unitStatus: unitStatusSchema.optional(),
-  surveyStatus: surveyStatusSchema.optional(),
-  notes: notes.optional(),
-});
-
-export type UpsertUnitInput = z.infer<typeof upsertUnitSchema>;
 
 export const updateUnitSchema = upsertUnitSchema
   .partial()
@@ -455,6 +508,20 @@ export const buildingFilterSchema = z.object({
   damageLevel: damageLevelSchema.optional(),
   /** Matches `code`, `name` or `postedNumber` — what a clerk actually types. */
   search: z.string().trim().max(120).optional(),
+  /**
+   * «بلا مدخل مُثبت» — structures nobody has stood at and pinned.
+   *
+   * A building may be created from a desk, and one created from the
+   * registration form always is: D19 refuses to guess an entrance, because the
+   * parcel centroid is the middle of a plot where no building stands and is
+   * identical for every structure on it. A null pin is therefore the honest
+   * record of "nobody has located this yet" — but left unlistable it is
+   * invisible debt. This is what turns it into a dispatch list.
+   */
+  hasEntrance: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform((value) => value === true || value === 'true')
+    .optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 });

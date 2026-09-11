@@ -5,7 +5,7 @@ import type { FieldFlag } from '@mechanization/shared-schemas';
 /**
  * The queue of citizen registrations recorded with no connection.
  *
- * `wizard-storage` already keeps a *draft* alive across a dropped tab, and it
+ * `citizen-draft` already keeps a *draft* alive across a navigation, and it
  * uses localStorage because a draft is small, single, and disposable. This is
  * the other problem: a field officer works a settlement for three hours with no
  * signal and finishes thirty complete registrations. Those are not drafts —
@@ -83,6 +83,15 @@ export interface QueuedSubmission {
     contact: Record<string, unknown>;
     properties: Array<Record<string, unknown>>;
     flags: FieldFlag[];
+    /**
+     * «سبب عام لنقص البيانات» — set by «حفظ سريع», absent otherwise.
+     *
+     * Queued records are creations only, which is the same restriction the
+     * dialog itself carries: a blanket reason on an edit would excuse gaps in a
+     * record somebody has already reviewed. It is stored here rather than
+     * re-derived on drain because the officer wrote it once, at the door.
+     */
+    blanketFlagReason?: string;
   };
   status: QueuedStatus;
   savedAt: number;
@@ -344,6 +353,21 @@ export interface QueuedBuilding {
      * later, with nobody at the screen to answer the question again.
      */
     acknowledgedDuplicates?: boolean;
+    /**
+     * The matrix, carried with the shell — the registration form's path.
+     *
+     * A registration that creates its own structure must attach a household to
+     * a flat inside it, and there is no unit store here to queue those
+     * separately. Nor should there be: the server creates the shell and these
+     * in one transaction, so a delivery cannot leave a half-built structure
+     * behind, and each unit carries the id the browser minted — which is what
+     * lets a queued registration name a flat that does not exist yet.
+     *
+     * Distinct from `blueprint` below: that describes a matrix by its shape
+     * («ثلاثة طوابق × أربع شقق») and is generated after the fact; this is the
+     * specific flats a card enumerated.
+     */
+    units?: Array<Record<string, unknown>>;
   };
   /** The matrix to generate once the shell exists, if the officer asked for one. */
   blueprint: unknown | null;

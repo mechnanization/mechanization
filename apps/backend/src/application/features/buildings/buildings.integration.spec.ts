@@ -274,9 +274,80 @@ describeIfDb('BuildingsService', () => {
 
   // ─────────────────────────  The unit matrix  ─────────────────────────
 
+  /*
+    عدد الطوابق and the blueprint's range are one statement, not two.
+
+    They were unrelated on both sides: a building declared as one storey
+    accepted a range up to floor 40, generated forty floors of flats, and had
+    its own `floorsCount` silently rewritten to match — so the field the officer
+    had just filled in was overwritten by the field beside it, in the same save.
+
+    Which way the disagreement is resolved depends on whether the officer stated
+    both numbers. In the blueprint form they did, so it is refused; on `addUnit`
+    they did not, so the count follows the unit.
+  */
+  it('refuses a blueprint that reaches above the building it is for', async () => {
+    const { building } = await createBuilding(
+      { parcelNumber: '5010', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 2 },
+      actor(),
+    );
+
+    await expect(
+      buildings.generateUnits(
+        building.id,
+        { kind: 'uniform', fromFloor: 0, toFloor: 5, unitsPerFloor: 1, unitType: 'APARTMENT' },
+        actor(),
+      ),
+    ).rejects.toThrow(/5[\s\S]*2|2[\s\S]*5/);
+
+    // Refused before anything was written, not half-way through it.
+    expect(await db.unit.count({ where: { buildingId: building.id } })).toBe(0);
+    expect((await db.building.findUnique({ where: { id: building.id } }))?.floorsCount).toBe(2);
+  });
+
+  it('accepts a basement without counting it as a storey', async () => {
+    // عدد الطوابق counts what stands above ground, so a قبو never moves the
+    // ceiling and never has to be made room for.
+    const { building } = await createBuilding(
+      { parcelNumber: '5020', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+
+    const result = await buildings.generateUnits(
+      building.id,
+      { kind: 'uniform', fromFloor: -1, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+      actor(),
+    );
+
+    expect(result.created).toBe(2);
+    expect(result.units.map((u) => u.unitCode)).toContain('B101');
+    expect((await db.building.findUnique({ where: { id: building.id } }))?.floorsCount).toBe(1);
+  });
+
+  it('raises the floor count for a unit added on a floor the register did not know about', async () => {
+    /*
+      The other side of the rule. An officer standing on the fourth floor of a
+      building the register calls three-storey is correcting it, and there is no
+      second number in front of them to contradict — so the count follows the
+      unit rather than refusing it.
+    */
+    const { building } = await createBuilding(
+      { parcelNumber: '5030', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 2 },
+      actor(),
+    );
+
+    await buildings.addUnit(building.id, { floor: 4, unitType: 'APARTMENT' }, actor());
+
+    expect((await db.building.findUnique({ where: { id: building.id } }))?.floorsCount).toBe(5);
+
+    // Only ever upward: a ground-floor محل is not evidence the block got shorter.
+    await buildings.addUnit(building.id, { floor: 0, unitType: 'SHOP' }, actor());
+    expect((await db.building.findUnique({ where: { id: building.id } }))?.floorsCount).toBe(5);
+  });
+
   it('generates a matrix and lets the trigger count it', async () => {
     const { building } = await createBuilding(
-      { parcelNumber: '5000', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      { parcelNumber: '5000', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 3 },
       actor(),
     );
 
@@ -293,13 +364,21 @@ describeIfDb('BuildingsService', () => {
     // Maintained by `sync_building_unit_counts`, not by this codebase.
     expect(stored?.unitsTotal).toBe(12);
     expect(stored?.unitsSurveyed).toBe(0);
+    /*
+      Unchanged by the generation, which is the point.
+
+      `generateUnits` used to *raise* `floorsCount` to cover whatever range it
+      was handed — so the field the officer filled in was rewritten by the range
+      beside it. It now refuses a range that does not fit instead, and the
+      number here is the one the building was created with.
+    */
     expect(stored?.floorsCount).toBe(3);
   });
 
   it('tops a matrix up rather than doubling it', async () => {
     // A re-tap on a slow connection must not invent flats.
     const { building } = await createBuilding(
-      { parcelNumber: '5100', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      { parcelNumber: '5100', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 2 },
       actor(),
     );
     const blueprint = {
@@ -342,7 +421,7 @@ describeIfDb('BuildingsService', () => {
 
   it('closes the open case on a unit when somebody is recorded in it', async () => {
     const { building } = await createBuilding(
-      { parcelNumber: '6000', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      { parcelNumber: '6000', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 2 },
       actor(),
     );
     const { units } = await buildings.generateUnits(
@@ -564,7 +643,7 @@ describeIfDb('BuildingsService', () => {
     // and two rows; a history showing only building-level readings would be
     // missing the half that explains it.
     const { building } = await createBuilding(
-      { parcelNumber: '9100', structureType: 'MIXED_USE', floorsCount: 1 },
+      { parcelNumber: '9100', structureType: 'MIXED_USE', floorsCount: 4 },
       actor(),
     );
     const { units } = await buildings.generateUnits(
@@ -1175,7 +1254,7 @@ describeIfDb('BuildingsService', () => {
       {
         parcelNumber: 'LIFE-2',
         structureType: 'RESIDENTIAL_BUILDING',
-        floorsCount: 1,
+        floorsCount: 2,
         lifecycleStatus: 'UNDER_CONSTRUCTION',
       },
       actor(),

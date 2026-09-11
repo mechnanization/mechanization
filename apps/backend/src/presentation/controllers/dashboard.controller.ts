@@ -22,7 +22,22 @@ export class DashboardController {
     private readonly buildings: BuildingsService,
   ) {}
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR')
+  /*
+    «لوحة التحكم» is an oversight screen, and these two endpoints are the whole
+    of it.
+
+    They aggregate the entire municipality — arrears, collection rates,
+    household distributions, every officer's output — which is a different
+    question from anything a role needs to do its own job. `FIELD_INSPECTOR`
+    was on both lists and is not any more: an inspector's figures are their own
+    and are served by `StaffController.getMyProfile`, which answers for the
+    caller rather than for everybody.
+
+    The `map*` endpoints below deliberately keep their wider lists. They feed
+    «الخريطة», a working screen, and narrowing them here would take the map
+    away from the collectors and officers who navigate by it.
+  */
+  @Roles('SUPER_ADMIN', 'AUDITOR')
   @Get('counters')
   async counters() {
     return this.reporting.getDashboardCounters();
@@ -35,7 +50,7 @@ export class DashboardController {
    * the charts have to agree, and separately-cached fetches guarantee a window
    * where a rate computed from one response contradicts a total from another.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR')
+  @Roles('SUPER_ADMIN', 'AUDITOR')
   @Get('analytics')
   async analytics() {
     return this.reporting.getAnalytics();

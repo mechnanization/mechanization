@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, CloudOff, UserPlus, UserRoundPen } from 'lucide-react';
 import {
   ApiRequestError,
+  createBuilding,
   createCitizen,
   getBuilding,
   getCase,
@@ -14,19 +15,33 @@ import {
   updateCase,
   updateCitizen,
 } from '@/lib/api-client';
-import type { BuildingDetail, CaseSummary, CensusSyncResult } from '@/lib/api-client';
+import type {
+  BuildingDetail,
+  CaseSummary,
+  CensusSyncResult,
+  CreateBuildingInput,
+} from '@/lib/api-client';
 import type { PublicTenantConfig } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
+import { formatRelative } from '@/lib/dates';
+import {
+  clearCitizenDraft,
+  draftWorthKeeping,
+  loadCitizenDraft,
+  saveCitizenDraft,
+} from '@/lib/citizen-draft';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import type { PropertyDraft, UnitDraft } from '@/components/citizen/property-card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { LoadingState } from '@/components/ui/states';
-import { flagsFromArray, flagsToArray, unverifiedFromArray } from '@/components/ui/field';
+import { flagsFromArray, unverifiedFromArray } from '@/components/ui/field';
 import { ShellLink, shellNavigate } from './shell-nav';
 import { OfflineQueueNotice } from './offline-queue';
 import { offlineStorageAvailable } from '@/lib/offline-db';
 import {
   getQueuedSubmission,
+  queueBuilding,
   queueSubmission,
   reviseSubmission,
   useOfflineQueue,
@@ -36,11 +51,11 @@ import { useToast } from '@/components/ui/toast';
 import {
   CitizenForm,
   emptyCitizen,
-  toPayloadProperty,
+  toSubmission,
   type CitizenFormValues,
 } from './citizen-form';
-import { STRUCTURE_TYPE_MAP } from '@mechanization/shared-schemas';
-import type { LockedCensusTarget } from './building-unit-picker';
+import { parseFloorLabel, STRUCTURE_TYPE_MAP } from '@mechanization/shared-schemas';
+import { mintId, type LockedCensusTarget } from './building-unit-picker';
 
 /** `null`/`undefined` → absent; a number → the string an `<input>` holds. */
 function text(value: unknown): string | undefined {
@@ -65,8 +80,28 @@ function announceCensus(
   census: CensusSyncResult | null,
   toast: ReturnType<typeof useToast>,
   locale: string,
+  deduplicated = false,
 ): void {
   const en = locale === 'en';
+
+  /*
+    A replay is not a failure, and it used to be reported as one.
+
+    `CitizensService.create` skips the sync entirely for a deduplicated
+    submission — deliberately, so a re-delivered record does not end and reopen
+    the same occupancy or log a second visit against a door somebody stood at
+    once. But it expresses "skipped" as the same `null` that means "the sync
+    threw", so the ordinary offline replay — the case the queue exists for —
+    told the officer the link had failed and sent them to the ledger to make it
+    by hand. The link was already there. Doing as they were told creates an
+    occupancy carrying no `registrationId`, which `endUnclaimed` can then never
+    close: a household stays recorded in a flat their own file no longer claims,
+    and keeps being billed for it.
+
+    Nothing to announce, because nothing happened on this delivery and
+    everything it would have said was said on the first one.
+  */
+  if (deduplicated) return;
 
   /*
     A failed sync is worth saying out loud, and worth saying *softly*.
@@ -127,6 +162,152 @@ function announceCensus(
   toast.success(en ? 'Census updated' : 'تم تحديث سجل المباني', {
     description: parts.join(en ? ' · ' : ' · '),
   });
+}
+
+/**
+ * What the officer should be told before this save, if anything.
+ *
+ * Both cases are legitimate records and neither is refused — a card filed
+ * before anyone has surveyed the parcel is the ordinary case, and a مبنى whose
+ * flats are all «غير مؤكَّد» is an honest one. What neither should be is
+ * silent, which is what they were: the save succeeded, the register learned
+ * nothing about the census, and no screen said so.
+ */
+function censusConcerns(values: CitizenFormValues): string[] {
+  const concerns: string[] = [];
+
+  for (const card of values.properties) {
+    if (card.propertyType !== 'BUILDING' && card.propertyType !== 'HOUSE') continue;
+
+    const where = card.propertyNumber?.trim()
+      ? `العقار ${card.propertyNumber.trim()}`
+      : 'عقار بلا رقم';
+    const what = card.propertyType === 'BUILDING' ? 'مبنى' : 'منزل';
+    const named = card.buildingName?.trim() ? ` «${card.buildingName.trim()}»` : '';
+
+    /*
+      Nothing chosen at all. `buildingId` covers both a linked structure and a
+      pending one, because the pending id *is* the row's id.
+    */
+    if (!card.buildingId) {
+      concerns.push(`${what} · ${where}${named} — بلا ربط بسجل المباني`);
+      continue;
+    }
+
+    /*
+      A مبنى about to be created with no flats in it.
+
+      `CensusSyncService` claims a unit only where the card line carries a
+      `unitId`, so a shell with no units links the card and records no occupancy
+      — and `heldThroughOccupancy` then bills that household for nothing. A منزل
+      is exempt: it always gets exactly one unit, which the sync finds by
+      `buildingId`.
+    */
+    if (
+      card.pendingBuilding &&
+      card.propertyType === 'BUILDING' &&
+      !(card.units ?? []).some((unit) => unit.unitType)
+    ) {
+      concerns.push(`${what} · ${where}${named} — ستُنشأ المنشأة بلا وحدات`);
+      continue;
+    }
+
+    /*
+      A مبنى linked to a structure that already exists, with no flat ticked.
+
+      The same silence as the case above, and the commoner one by far — it was
+      only ever checked for a *pending* building, so linking to a structure the
+      census already holds and then ticking nothing sailed through without a
+      word. The card looks linked on screen, `buildingId` is set, and the sync
+      claims nothing at all: no occupancy, no unit lifted out of «غير ممسوحة»,
+      and a household that bills for nothing.
+
+      It is emphatically not an error — a مبنى card whose flats are still being
+      surveyed is honest, and this is a confirmation rather than a refusal. What
+      it must not be is invisible, which is what sent somebody to the matrix to
+      record the occupant by hand instead, leaving the two halves of the record
+      disagreeing about the same flat.
+
+      A منزل is exempt for the same reason as above: the sync infers its single
+      unit from `buildingId`, so there is nothing to tick and nothing to warn
+      about.
+    */
+    if (card.propertyType === 'BUILDING' && !(card.units ?? []).some((unit) => unit.unitId)) {
+      concerns.push(`${what} · ${where}${named} — مرتبط بالمبنى دون تحديد أي وحدة`);
+    }
+  }
+
+  return concerns;
+}
+
+/** The unit shape `POST /buildings` accepts inline, named once. */
+type NewBuildingUnits = NonNullable<CreateBuildingInput['units']>;
+
+/**
+ * The units a newly created structure should be born with.
+ *
+ * Not an optional flourish. `CensusSyncService` claims a flat only where the
+ * card line carries a `unitId`, with one exception — a منزل linked to a
+ * building holding exactly one unit, which it finds by `buildingId`. So a shell
+ * created with no units links the card and records no occupancy at all, and
+ * `heldThroughOccupancy` then bills that household for nothing: the same silent
+ * under-billing the census write path was built to fix, arriving through the
+ * feature meant to complete it.
+ *
+ * A منزل therefore gets exactly one unit and needs no id travelling back — the
+ * inference finds it. A مبنى gets one per line the officer filled in, each
+ * carrying a browser-minted id that is written onto the card line, which is what
+ * makes the flats claimable the moment the registration lands.
+ */
+function unitsForNewStructure(
+  card: PropertyDraft,
+  structureType: keyof typeof STRUCTURE_TYPE_MAP,
+  mint: () => string,
+): { units: NewBuildingUnits; lines: UnitDraft[] | undefined } {
+  const defaultUnitType = STRUCTURE_TYPE_MAP[structureType].defaultUnitType;
+
+  if (card.propertyType !== 'BUILDING') {
+    return {
+      units: [
+        {
+          floor: 0,
+          unitType: defaultUnitType,
+          ...(card.side ? { side: card.side } : {}),
+          ...(card.unitArea ? { unitArea: Number(card.unitArea) } : {}),
+        },
+      ],
+      lines: card.units,
+    };
+  }
+
+  /*
+    Only lines the officer actually filled in.
+
+    A مبنى card starts life with one empty row, and an empty row is not a flat.
+    `unitType` is the discriminator because the submission schema requires it of
+    every real line — a row without one is either untouched or excused by a
+    flag, and neither should mint a unit in the register.
+  */
+  const lines = card.units ?? [];
+  const units: NewBuildingUnits = [];
+  const withIds: UnitDraft[] = lines.map((line) => {
+    if (!line.unitType) return line;
+    const id = mint();
+    units.push({
+      id,
+      // `parseFloorLabel` is the one-way door between the card's free text
+      // («الأرضي», «ط2») and `Unit.floor`'s signed integer. An unparseable
+      // label lands on the ground floor rather than refusing the whole save.
+      floor: parseFloorLabel(line.floor) ?? 0,
+      unitType: line.unitType,
+      ...(line.side ? { side: line.side } : {}),
+      ...(line.unitArea ? { unitArea: Number(line.unitArea) } : {}),
+      ...(line.unitStatus ? { unitStatus: line.unitStatus } : {}),
+    });
+    return { ...line, unitId: id };
+  });
+
+  return { units, lines: withIds };
 }
 
 /**
@@ -399,7 +580,35 @@ export function CitizenEditor({
   const [reference, setReference] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /**
+   * A save held while the officer reads what it will and will not record.
+   *
+   * Holds the exact values that were validated, so confirming saves what was
+   * checked rather than whatever the form has become in the meantime.
+   */
+  const [pendingSave, setPendingSave] = useState<{
+    values: CitizenFormValues;
+    concerns: string[];
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * When the restored draft was last written, or `null` if this is a fresh
+   * form. Drives the notice above the form — a form that silently arrives
+   * pre-filled is indistinguishable from one showing somebody else's record.
+   */
+  const [restoredAt, setRestoredAt] = useState<Date | null>(null);
+
+  /**
+   * Whether this screen keeps a draft at all.
+   *
+   * Creating only, and the reasoning is `canQueue`'s: a draft of a correction
+   * to a server record is a stale read-modify-write waiting to overwrite a
+   * colleague, while a draft of a new registration has nothing to conflict
+   * with. A queued record is excluded for the opposite reason — it is already
+   * durable in IndexedDB, so a second copy in localStorage would be two
+   * answers to "what did they type" with no rule for which wins.
+   */
+  const keepsDraft = !editing && !isQueuedEdit;
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -507,6 +716,30 @@ export function CitizenEditor({
               ? [fromCaseDraft(fromCase)]
               : null;
 
+          /*
+            Four ways in now, and the saved draft is the one that yields.
+
+            A draft is what this officer was typing *last* time. A census
+            target or a حالة is what they asked for *this* time, in the URL
+            they just followed — «تسجيل أسرة في هذه الوحدة» names a specific
+            flat, and restoring yesterday's half-finished household over it
+            would answer a deliberate request with a stale one, in a form
+            already carrying a locked building the draft knows nothing about.
+
+            So the draft is restored only on a plain arrival at the blank form,
+            which is every arrival from the sidebar. It is not discarded in the
+            other cases — nothing here writes — so following a unit link and
+            then coming back to «تسجيل مواطن جديد» still finds it.
+          */
+          if (!seeded) {
+            const draft = loadCitizenDraft(tenant);
+            if (draft) {
+              setInitial(draft.values);
+              setRestoredAt(draft.savedAt);
+              return;
+            }
+          }
+
           setInitial(seeded ? { ...empty, properties: seeded } : empty);
           return;
         }
@@ -599,18 +832,229 @@ export function CitizenEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenant, token, citizenId, queueId, fromCaseId, base, router, locale]);
 
+  /**
+   * Creates every «منشأة جديدة» the officer chose, and rewrites the cards.
+   *
+   * Returns the form values with each `pendingBuilding` discharged: the card
+   * keeps the `buildingId` it already had — the browser minted it, and
+   * `clientSubmissionId` makes it the row's primary key — and its unit lines
+   * gain the `unitId`s that make them claimable.
+   *
+   * Offline it queues instead of posting. The id is the same either way, which
+   * is the whole reason the queue mints ids at all: buildings drain before
+   * registrations, so by the time the registration is delivered the row it
+   * names exists. `acknowledgedDuplicates` is carried from the officer's own
+   * tap rather than defaulted — the picker refuses to offer this branch
+   * without one whenever the answer might be "there is already a structure
+   * here", including when the census could not be reached to ask.
+   */
+  const materialiseBuildings = useCallback(
+    async (values: CitizenFormValues): Promise<CitizenFormValues> => {
+      const properties = [...values.properties];
+
+      for (let index = 0; index < properties.length; index += 1) {
+        const card = properties[index]!;
+        const pendingBuilding = card.pendingBuilding;
+        if (!pendingBuilding) continue;
+
+        const { units, lines } = unitsForNewStructure(card, pendingBuilding.structureType, mintId);
+
+        const input = {
+          parcelNumber: pendingBuilding.parcelNumber,
+          structureType: pendingBuilding.structureType,
+          clientSubmissionId: pendingBuilding.id,
+          ...(pendingBuilding.acknowledgedDuplicates ? { acknowledgedDuplicates: true } : {}),
+          /*
+            No `latitude`/`longitude`, and no `name`.
+
+            The pin because a guess in the column that means "the entrance" is
+            indistinguishable from a surveyed fact, identical for every
+            structure on the parcel, and points at the middle of a plot where
+            no building stands (D19). The name because the card's «اسم المبنى»
+            is still being typed: `CensusSyncService` promotes it onto the
+            building after the registration commits, and sending it here would
+            lock the field read-only mid-keystroke.
+          */
+          ...(units.length > 0 ? { units } : {}),
+        };
+
+        if (willQueue) {
+          await queueBuilding({
+            id: pendingBuilding.id,
+            tenant,
+            parcelNumber: pendingBuilding.parcelNumber,
+            /*
+              There is no code to show yet and none is invented. The editor's
+              own offline path can preview one because it has the parcel's
+              sector and taken suffixes in hand; this path has neither, and a
+              made-up code on a queue notice is worse than the parcel number.
+            */
+            provisionalCode: pendingBuilding.parcelNumber,
+            provisionalSuffix: '',
+            payload: {
+              parcelNumber: pendingBuilding.parcelNumber,
+              structureType: pendingBuilding.structureType,
+              /*
+                The officer's own answer, not a blanket `true`.
+
+                This was hardcoded, on the reasoning that a person had been
+                asked before it was queued. They had — but on a parcel the
+                census confirmed empty the question put to them was "create one
+                here", not "this is not one of the structures already here", and
+                there were none to be shown. Sending `true` there pre-satisfies
+                D18's guard for a delivery that may land hours later on a parcel
+                somebody else has since built on, with nobody at the screen.
+
+                Where the officer *was* shown neighbours, or was told the census
+                could not be reached, the flag is genuinely theirs and travels.
+              */
+              ...(pendingBuilding.acknowledgedDuplicates
+                ? { acknowledgedDuplicates: true }
+                : {}),
+              ...(units.length > 0 ? { units } : {}),
+            },
+            blueprint: null,
+          });
+        } else {
+          if (!token) throw new Error('no session');
+          await createBuilding(tenant, token, input);
+        }
+
+        properties[index] = { ...card, pendingBuilding: undefined, units: lines };
+      }
+
+      return { ...values, properties };
+    },
+    [tenant, token, willQueue],
+  );
+
+  /*
+    Autosave, debounced, and cancelled on unmount by the timer it owns.
+
+    Half a second rather than every keystroke because each write is a
+    synchronous `JSON.stringify` of the whole form plus a localStorage put, and
+    doing that inside the keystroke handler of a long Arabic text field is felt
+    on the low-end phones this is used on. Half a second is also short enough
+    that the realistic way to lose work — clicking a sidebar link — always
+    lands after the write.
+
+    `draftWorthKeeping` gates the write rather than the read: an officer who
+    opens the form, looks at it and leaves must not create a draft, or the next
+    arrival is met by «استُعيدت مسودة» over a form identical to a blank one.
+  */
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (draftTimer.current) clearTimeout(draftTimer.current);
+    },
+    [],
+  );
+
+  const rememberDraft = useCallback(
+    (values: CitizenFormValues) => {
+      if (!keepsDraft) return;
+      if (draftTimer.current) clearTimeout(draftTimer.current);
+      draftTimer.current = setTimeout(() => {
+        if (draftWorthKeeping(values)) saveCitizenDraft(tenant, values);
+        else clearCitizenDraft(tenant);
+      }, 500);
+    },
+    [keepsDraft, tenant],
+  );
+
+  /**
+   * Drops the draft and stops the pending write that would put it back.
+   *
+   * The second half is not optional. «حفظ» and «إلغاء» are both reachable
+   * within the debounce window of the last keystroke, so clearing storage
+   * without cancelling the timer leaves a scheduled callback that re-saves the
+   * form half a second after the officer asked to be rid of it — and the next
+   * arrival is offered a draft of a household that has already been filed.
+   */
+  const forgetDraft = useCallback(() => {
+    if (draftTimer.current) {
+      clearTimeout(draftTimer.current);
+      draftTimer.current = null;
+    }
+    if (keepsDraft) clearCitizenDraft(tenant);
+  }, [keepsDraft, tenant]);
+
   const submit = useCallback(
-    async (values: CitizenFormValues) => {
+    async (values: CitizenFormValues, confirmed = false) => {
       if (!token) return;
+
+      /*
+        Two things worth saying before a save that cannot be taken back easily.
+
+        Neither is a refusal — both describe legitimate records — but both used
+        to happen in complete silence, and silence is what made them defects
+        rather than choices. A third of the cards in the first municipality to
+        use this are linked to nothing, and no screen anywhere says so.
+      */
+      if (!confirmed) {
+        const concerns = censusConcerns(values);
+        if (concerns.length > 0) {
+          setPendingSave({ values, concerns });
+          return;
+        }
+      }
+
       setSubmitting(true);
       setError(null);
 
-      const payload = {
-        personal: values.personal,
-        contact: values.contact,
-        properties: values.properties.map(toPayloadProperty),
-        flags: flagsToArray(values.flags),
-      };
+      /*
+        `toSubmission`, not a second hand-built copy of it.
+
+        This used to assemble the four sections itself, and it silently dropped
+        the one field it did not know about: `blanketFlagReason`. «حفظ سريع»
+        put the officer's reason on `values`, the form validated a submission
+        that carried it — `validate()` parses `toSubmission(values)` — and then
+        this object went to the wire without it, on both the online save and the
+        queued one. P2-T7's `autoFlags` never fired, so the gaps the reason was
+        written to excuse either failed validation server-side or saved without
+        the record landing at «يتطلب مراجعة».
+
+        One builder for the payload the form validates and the payload the
+        server receives is the only arrangement where that class of bug cannot
+        come back.
+      */
+      /*
+        The structures the officer asked for, created before the registration
+        that names them.
+
+        Before this, and never after. A card carrying a `buildingId` for a
+        building that does not exist is a link to nothing: `CensusSyncService`
+        would read it, find no unit, and record no occupancy — while the officer
+        was told the registration saved, which it did.
+
+        Deliberately *not* inside `CensusSyncService`. That method is
+        contractually forbidden from throwing (a census hiccup must never cost a
+        municipality a registration), so a building created there would vanish
+        on failure with nothing said; and `importMany` runs it once per row, so
+        a five-hundred-row CSV import would mint five hundred structures
+        unattended. Here, a failure is in front of the person who asked for it,
+        at the moment they can answer.
+      */
+      let materialised = values;
+      if (values.properties.some((card) => card.pendingBuilding)) {
+        try {
+          materialised = await materialiseBuildings(values);
+        } catch (caught) {
+          logApiError(caught);
+          setError(
+            caught instanceof ApiRequestError
+              ? caught.payload.message
+              : locale === 'en'
+                ? 'Could not create the new structure. The registration was not saved.'
+                : 'تعذّر إنشاء المنشأة الجديدة. لم يُحفظ السجل.',
+          );
+          setSubmitting(false);
+          return;
+        }
+      }
+
+      const payload = toSubmission(materialised);
 
       const displayName =
         [values.personal.firstName, values.personal.lastName]
@@ -667,6 +1111,11 @@ export function CitizenEditor({
         try {
           await queueSubmission({ tenant, displayName, payload });
 
+          // Stored durably in IndexedDB now, so the localStorage draft has
+          // nothing left to protect — and leaving it would offer the next
+          // arrival a copy of a household already waiting to be sent.
+          forgetDraft();
+
           toast.success(
             locale === 'en'
               ? 'Saved on this device — it will sync automatically when you are back online.'
@@ -696,7 +1145,12 @@ export function CitizenEditor({
           router.push(`${base}/citizens/${citizenId}`);
         } else {
           const created = await createCitizen(tenant, token, payload);
-          announceCensus(created.census, toast, locale);
+          announceCensus(created.census, toast, locale, created.deduplicated);
+
+          // The household is on the server. Cleared here rather than after the
+          // case-linking below, which is allowed to fail without the
+          // registration being in any doubt.
+          forgetDraft();
 
           /*
             The other half of the bridge. Only reachable here — a citizen
@@ -783,7 +1237,21 @@ export function CitizenEditor({
         setSubmitting(false);
       }
     },
-    [tenant, token, citizenId, queueId, fromCaseId, base, router, locale, willQueue, canQueue, toast],
+    [
+      tenant,
+      token,
+      citizenId,
+      queueId,
+      fromCaseId,
+      base,
+      router,
+      locale,
+      willQueue,
+      canQueue,
+      toast,
+      materialiseBuildings,
+      forgetDraft,
+    ],
   );
 
   const cancelHref = useMemo(
@@ -868,6 +1336,43 @@ export function CitizenEditor({
         ) : null}
       </div>
 
+      {/*
+        Says the form did not arrive blank, and offers the way out.
+
+        A pre-filled form with no explanation is the worst version of this
+        feature: it looks like somebody else's record, and an officer who does
+        not trust it clears twenty fields by hand. Naming when it was typed is
+        what makes it recognisable as their own — «منذ قليل» for the trip to the
+        registry they just made, a date for the draft they abandoned yesterday.
+
+        «ابدأ نموذجاً فارغاً» is the discard, and it is here rather than only on
+        «إلغاء» because the two are different intentions: cancel leaves the
+        screen, this stays on it and starts over.
+      */}
+      {restoredAt ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-primary/40 bg-primary/5 px-4 py-3">
+          <p className="text-xs text-foreground/80">
+            {locale === 'en'
+              ? `Restored an unsaved draft (${formatRelative(restoredAt, locale)}). Continue where you left off, or start over.`
+              : `تمت استعادة مسودة غير محفوظة (${formatRelative(restoredAt, locale)}). يمكنك المتابعة من حيث توقفت أو البدء من جديد.`}
+          </p>
+          <button
+            type="button"
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            onClick={() => {
+              forgetDraft();
+              setRestoredAt(null);
+              // A fresh object identity, which is what `CitizenForm`'s
+              // re-seeding effect keys on — handing back the same `initial`
+              // would leave every field exactly as it was.
+              setInitial(emptyCitizen());
+            }}
+          >
+            {locale === 'en' ? 'Start a blank form' : 'ابدأ نموذجاً فارغاً'}
+          </button>
+        </div>
+      ) : null}
+
       {queue.pending > 0 || queue.blocked > 0 ? (
         <OfflineQueueNotice
           pending={queue.pending}
@@ -894,9 +1399,67 @@ export function CitizenEditor({
         // that already lives on this device either way.
         offline={isQueuedEdit ? false : willQueue}
         onSubmit={(values) => void submit(values)}
-        onCancel={() => shellNavigate(router, cancelHref)}
+        onCancel={() => {
+          // «إلغاء» is the officer saying the draft should not survive —
+          // the one exit from this form that means that. Navigating away by
+          // any other route deliberately keeps it.
+          forgetDraft();
+          shellNavigate(router, cancelHref);
+        }}
+        onValuesChange={rememberDraft}
         locale={locale}
         lockedCensusTarget={lockedCensusTarget}
+      />
+
+      {/*
+        Not destructive, and not a refusal.
+
+        Every case it names is a record the municipality is entitled to keep —
+        a card on a parcel nobody has surveyed, a مبنى whose flats are all still
+        «غير مؤكَّد». The dialog exists because these used to happen in silence:
+        the officer saved, the register learned nothing about the census, and no
+        screen said so. `destructive={false}` because the confirm button is the
+        ordinary way through, not the dangerous one.
+      */}
+      <ConfirmDialog
+        open={pendingSave !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingSave(null);
+        }}
+        destructive={false}
+        title={
+          locale === 'en'
+            ? 'Save without linking to the census?'
+            : 'الحفظ دون استكمال الربط بسجل المباني؟'
+        }
+        description={
+          <span className="block space-y-2">
+            <span className="block">
+              {locale === 'en'
+                ? 'The record will be saved. These cards will record no occupancy and will not appear on the map as their own structure:'
+                : 'سيُحفظ السجل. هذه البطاقات لن تُسجّل إشغالاً ولن تظهر على الخريطة كمنشأة خاصة بها:'}
+            </span>
+            <span className="block space-y-1">
+              {(pendingSave?.concerns ?? []).map((line) => (
+                <span key={line} className="block text-foreground">
+                  • {line}
+                </span>
+              ))}
+            </span>
+            <span className="block">
+              {locale === 'en'
+                ? 'This is allowed — the link can be made later from the census ledger.'
+                : 'هذا مسموح — يمكن إتمام الربط لاحقاً من سجل المباني.'}
+            </span>
+          </span>
+        }
+        confirmLabel={locale === 'en' ? 'Save anyway' : 'متابعة بدون ربط'}
+        cancelLabel={locale === 'en' ? 'Go back and link' : 'رجوع والربط'}
+        onConfirm={async () => {
+          const held = pendingSave;
+          setPendingSave(null);
+          if (held) await submit(held.values, true);
+        }}
       />
     </div>
   );

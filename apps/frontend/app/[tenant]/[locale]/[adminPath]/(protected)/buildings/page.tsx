@@ -9,8 +9,10 @@ import {
   ClipboardCheck,
   DoorOpen,
   Download,
+  Filter,
   Grid3x3,
   Loader2,
+  MapPinOff,
   Pencil,
   Plus,
   ShieldAlert,
@@ -124,6 +126,8 @@ function getTableLabels(locale: string): DataTableLabels {
       columns: 'Columns',
       columnsHint: 'Visible columns',
       resetColumns: 'Reset to default',
+      filters: 'Filters',
+      clearFilters: 'Clear filters',
     };
   }
   return {
@@ -147,6 +151,8 @@ function getTableLabels(locale: string): DataTableLabels {
     columns: 'الأعمدة',
     columnsHint: 'الأعمدة الظاهرة',
     resetColumns: 'استعادة الافتراضي',
+    filters: 'الفلاتر',
+    clearFilters: 'مسح الفلاتر',
   };
 }
 
@@ -201,15 +207,30 @@ export default function BuildingsPage({
   const [lifecycleStatus, setLifecycleStatus] = useState('');
   const [surveyStatus, setSurveyStatus] = useState('');
   const [damageLevel, setDamageLevel] = useState('');
+  /**
+   * «بلا مدخل مُثبت», as a filter rather than a select.
+   *
+   * Only one direction of it is worth offering. "Structures that *do* have a
+   * pin" is not a question anybody asks; "the ones that do not" is a morning's
+   * dispatch list, so this is a toggle the tile turns on.
+   */
+  const [withoutEntrance, setWithoutEntrance] = useState(false);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: PAGE_SIZE,
   });
 
   const activeFilters =
-    [zoneId, parcelInput, structureType, lifecycleStatus, surveyStatus, damageLevel, search].filter(
-      Boolean,
-    ).length;
+    [
+      zoneId,
+      parcelInput,
+      structureType,
+      lifecycleStatus,
+      surveyStatus,
+      damageLevel,
+      search,
+      withoutEntrance,
+    ].filter(Boolean).length;
 
   /**
    * The parcel box is debounced; every other filter is not.
@@ -250,6 +271,10 @@ export default function BuildingsPage({
       setStructureType('');
       setSurveyStatus('');
       setDamageLevel('');
+      setWithoutEntrance(false);
+      // `lifecycleStatus` is deliberately absent here, as it was before —
+      // clearing it is not part of what «مسح الفلاتر» has ever meant on this
+      // page. Left alone rather than quietly changed alongside a new filter.
     });
 
   // ── Data ──────────────────────────────────────────────────────────
@@ -274,6 +299,7 @@ export default function BuildingsPage({
       lifecycleStatus,
       surveyStatus,
       damageLevel,
+      withoutEntrance,
       pagination.pageIndex,
       pagination.pageSize,
     ],
@@ -289,6 +315,9 @@ export default function BuildingsPage({
           lifecycleStatus: (lifecycleStatus as BuildingLifecycle) || undefined,
           surveyStatus: (surveyStatus as SurveyStatus) || undefined,
           damageLevel: (damageLevel as DamageLevel) || undefined,
+          // `false` is the whole point of the filter, so it cannot be `||`-ed
+          // away like the string selects above.
+          hasEntrance: withoutEntrance ? false : undefined,
           limit: pagination.pageSize,
           offset: pagination.pageIndex * pagination.pageSize,
         },
@@ -370,12 +399,29 @@ export default function BuildingsPage({
             ? `Building ${result.building.code} created`
             : `تم إنشاء المبنى ${result.building.code}`,
         {
+          /*
+            A top-up that created nothing is not the same as a matrix that was
+            not touched.
+
+            `generateUnits` fills each floor *up to* the requested count, so
+            re-running a blueprint over a complete matrix legitimately writes
+            nothing — and «تم توليد ٠ وحدة» reads as a failure. Naming the
+            skipped positions turns it back into what happened.
+          */
           description:
             result.unitsCreated > 0
-              ? en
-                ? `${result.unitsCreated} units generated at «not surveyed».`
-                : `تم توليد ${result.unitsCreated} وحدة بحالة «غير ممسوحة».`
-              : undefined,
+              ? result.unitsSkipped > 0
+                ? en
+                  ? `${result.unitsCreated} units generated · ${result.unitsSkipped} already existed.`
+                  : `تم توليد ${result.unitsCreated} وحدة · ${result.unitsSkipped} كانت موجودة.`
+                : en
+                  ? `${result.unitsCreated} units generated at «not surveyed».`
+                  : `تم توليد ${result.unitsCreated} وحدة بحالة «غير ممسوحة».`
+              : result.unitsSkipped > 0
+                ? en
+                  ? `No units generated — all ${result.unitsSkipped} requested already existed.`
+                  : `لم تُنشأ وحدات — الوحدات الـ${result.unitsSkipped} المطلوبة موجودة أصلاً.`
+                : undefined,
         },
       );
     }
@@ -436,6 +482,10 @@ export default function BuildingsPage({
         lifecycleStatus: (lifecycleStatus as BuildingLifecycle) || undefined,
         surveyStatus: (surveyStatus as SurveyStatus) || undefined,
         damageLevel: (damageLevel as DamageLevel) || undefined,
+        // The export follows the filters exactly — see the note above; a CSV
+        // that quietly ignored one of them is how two people read the same
+        // screen and disagree about what it said.
+        hasEntrance: withoutEntrance ? false : undefined,
       };
 
       const collected: BuildingLedgerRow[] = [];
@@ -541,6 +591,7 @@ export default function BuildingsPage({
     lifecycleStatus,
     surveyStatus,
     damageLevel,
+    withoutEntrance,
     labels,
     toast,
     en,
@@ -775,7 +826,7 @@ export default function BuildingsPage({
       <BuildingQueueNotice tenant={tenant} locale={locale} />
 
       {/* ── The dispatch decision, in four numbers ─────────────────── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <MetricCard
           label={en ? 'Buildings' : 'عدد المباني'}
           value={(summary?.buildings ?? 0).toLocaleString('en-US')}
@@ -842,18 +893,49 @@ export default function BuildingsPage({
           icon={<DoorOpen className="size-6 text-warning" />}
           accent="bg-warning/10"
         />
+        {/*
+          «بلا مدخل مُثبت» — the doors nobody has stood at.
+
+          No entrance is ever guessed for a building (D19): the parcel centroid
+          is the middle of a plot where no structure stands, it is the same
+          point for every structure on that plot, and stored in the column that
+          means "the entrance" a guess is indistinguishable from a surveyed
+          fact. So a building created from a desk — or from the registration
+          form, which always creates one this way — has no pin until a person
+          places it.
+
+          That is honest and it is also invisible, which is what this tile
+          fixes. Tapping it filters the ledger to exactly those structures, so
+          the gap is a morning's work rather than a number nobody can act on.
+        */}
+        <MetricCard
+          label={en ? 'No entrance placed' : 'بلا مدخل مُثبت'}
+          value={(summary?.withoutEntrance ?? 0).toLocaleString('en-US')}
+          subtext={
+            en
+              ? 'Not on the map until someone pins the door'
+              : 'لا تظهر على الخريطة حتى يُحدَّد بابها'
+          }
+          loading={query.loading}
+          icon={<MapPinOff className="size-6 text-muted-foreground" />}
+        />
       </div>
 
       <Card className="overflow-hidden">
-        <CardHeader className="border-b pb-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <CardHeader className="border-b px-4 py-3.5 sm:px-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="flex items-center gap-2 text-base font-bold">
               <Building2 className="size-5 text-primary" aria-hidden />
               {en ? 'Census Ledger' : 'سجل المباني'}
             </CardTitle>
             {activeFilters > 0 ? (
-              <Button variant="ghost" size="sm" onClick={clearFilters}>
-                <X className="size-4" aria-hidden />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearFilters}
+                className="h-8 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <X className="size-3.5" aria-hidden />
                 {en
                   ? `Clear ${activeFilters} filter(s)`
                   : `مسح ${activeFilters} فلتر`}
@@ -861,8 +943,9 @@ export default function BuildingsPage({
             ) : null}
           </div>
         </CardHeader>
-        <CardContent className="p-4 sm:p-6">
+        <CardContent className="p-0">
           <DataTable
+            className="rounded-none border-0 shadow-none"
             columns={columns}
             data={rows}
             labels={getTableLabels(locale)}
@@ -888,69 +971,121 @@ export default function BuildingsPage({
             totalRowCount={total}
             pagination={pagination}
             onPaginationChange={setPagination}
-            toolbar={
-              /*
-                Wrapping rather than a fixed row: five selects and an input do
-                not fit a phone in one line, and a toolbar that scrolls sideways
-                hides the filter somebody forgot they had switched on.
-              */
-              <div className="flex flex-wrap items-center gap-2">
-                <FilterSelect
-                  label={en ? 'Sector' : 'القطاع'}
-                  value={zoneId}
-                  onChange={(value) => setFilter(() => setZoneId(value))}
-                  options={zones.map((zone) => ({ value: zone.id, label: zone.name }))}
-                  allLabel={en ? 'All sectors' : 'كل القطاعات'}
-                />
-                <FilterSelect
-                  label={en ? 'Structure' : 'المنشأة'}
-                  value={structureType}
-                  onChange={(value) => setFilter(() => setStructureType(value))}
-                  options={STRUCTURE_TYPE.map((value) => ({
-                    value,
-                    label: labels.structureType[value],
-                  }))}
-                  allLabel={en ? 'All structures' : 'كل الأنواع'}
-                />
-                <FilterSelect
-                  label={en ? 'Construction' : 'الحالة الإنشائية'}
-                  value={lifecycleStatus}
-                  onChange={(value) => setFilter(() => setLifecycleStatus(value))}
-                  options={BUILDING_LIFECYCLE.map((value) => ({
-                    value,
-                    label: labels.buildingLifecycle[value],
-                  }))}
-                  allLabel={en ? 'Any construction status' : 'كل الحالات الإنشائية'}
-                />
-                <FilterSelect
-                  label={en ? 'Survey' : 'المسح'}
-                  value={surveyStatus}
-                  onChange={(value) => setFilter(() => setSurveyStatus(value))}
-                  options={SURVEY_STATUS.map((value) => ({
-                    value,
-                    label: labels.surveyStatus[value],
-                  }))}
-                  allLabel={en ? 'Any survey status' : 'كل حالات المسح'}
-                />
-                <FilterSelect
-                  label={en ? 'Condition' : 'الضرر'}
-                  value={damageLevel}
-                  onChange={(value) => setFilter(() => setDamageLevel(value))}
-                  options={DAMAGE_LEVEL.map((value) => ({
-                    value,
-                    label: labels.damageLevel[value],
-                  }))}
-                  allLabel={en ? 'Any condition' : 'كل مستويات الضرر'}
-                />
-                <input
-                  value={parcelInput}
-                  onChange={(event) => setParcelInput(event.target.value)}
-                  dir="ltr"
-                  inputMode="numeric"
-                  aria-label={en ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
-                  placeholder={en ? 'Parcel #' : 'رقم العقار'}
-                  className="h-9 w-28 rounded-md border border-input bg-background px-3 text-start text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
+            activeFiltersCount={activeFilters}
+            onClearFilters={clearFilters}
+            filterBar={
+              <div className="flex flex-col gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:flex-wrap md:items-center">
+                  <div className="hidden items-center gap-1.5 text-xs font-medium text-muted-foreground xl:flex pe-1">
+                    <Filter className="size-3.5 text-muted-foreground" aria-hidden />
+                    <span>{en ? 'Filter:' : 'تصفية:'}</span>
+                  </div>
+
+                  <FilterSelect
+                    label={en ? 'Sector' : 'القطاع'}
+                    value={zoneId}
+                    onChange={(value) => setFilter(() => setZoneId(value))}
+                    options={zones.map((zone) => ({ value: zone.id, label: zone.name }))}
+                    allLabel={en ? 'All sectors' : 'كل القطاعات'}
+                  />
+                  <FilterSelect
+                    label={en ? 'Structure' : 'المنشأة'}
+                    value={structureType}
+                    onChange={(value) => setFilter(() => setStructureType(value))}
+                    options={STRUCTURE_TYPE.map((value) => ({
+                      value,
+                      label: labels.structureType[value],
+                    }))}
+                    allLabel={en ? 'All structures' : 'كل الأنواع'}
+                  />
+                  <FilterSelect
+                    label={en ? 'Construction' : 'الحالة الإنشائية'}
+                    value={lifecycleStatus}
+                    onChange={(value) => setFilter(() => setLifecycleStatus(value))}
+                    options={BUILDING_LIFECYCLE.map((value) => ({
+                      value,
+                      label: labels.buildingLifecycle[value],
+                    }))}
+                    allLabel={en ? 'Any construction status' : 'كل الحالات الإنشائية'}
+                  />
+                  <FilterSelect
+                    label={en ? 'Survey' : 'المسح'}
+                    value={surveyStatus}
+                    onChange={(value) => setFilter(() => setSurveyStatus(value))}
+                    options={SURVEY_STATUS.map((value) => ({
+                      value,
+                      label: labels.surveyStatus[value],
+                    }))}
+                    allLabel={en ? 'Any survey status' : 'كل حالات المسح'}
+                  />
+                  <FilterSelect
+                    label={en ? 'Condition' : 'الضرر'}
+                    value={damageLevel}
+                    onChange={(value) => setFilter(() => setDamageLevel(value))}
+                    options={DAMAGE_LEVEL.map((value) => ({
+                      value,
+                      label: labels.damageLevel[value],
+                    }))}
+                    allLabel={en ? 'Any condition' : 'كل مستويات الضرر'}
+                  />
+
+                  {/* Parcel input with clear button */}
+                  <div className="relative w-full sm:w-32">
+                    <input
+                      value={parcelInput}
+                      onChange={(event) => setParcelInput(event.target.value)}
+                      dir="ltr"
+                      inputMode="numeric"
+                      aria-label={en ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
+                      placeholder={en ? 'Parcel #' : 'رقم العقار'}
+                      className={cn(
+                        'h-9 w-full rounded-md border bg-background px-3 text-start text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring transition-colors',
+                        parcelInput
+                          ? 'border-primary/60 bg-primary/5 text-primary font-medium pe-7'
+                          : 'border-input hover:bg-accent/50',
+                      )}
+                    />
+                    {parcelInput ? (
+                      <button
+                        type="button"
+                        onClick={() => setParcelInput('')}
+                        aria-label={en ? 'Clear parcel number' : 'مسح رقم العقار'}
+                        className="absolute end-1.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {/* Without entrance toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setFilter(() => setWithoutEntrance((on) => !on))}
+                    aria-pressed={withoutEntrance}
+                    className={cn(
+                      'flex h-9 w-full sm:w-auto items-center justify-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors',
+                      withoutEntrance
+                        ? 'border-primary/60 bg-primary/10 text-primary'
+                        : 'border-input bg-background hover:bg-accent/50 text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <MapPinOff className="size-3.5" aria-hidden />
+                    {en ? 'No entrance' : 'بلا مدخل'}
+                  </button>
+
+                  {/* Reset filters shortcut button right inside filterBar */}
+                  {activeFilters > 0 ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearFilters}
+                      className="h-9 gap-1 px-2.5 text-xs text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      <X className="size-3.5" aria-hidden />
+                      {en ? 'Reset' : 'مسح الفلاتر'}
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             }
           />
@@ -979,6 +1114,13 @@ export default function BuildingsPage({
           token={token}
           building={editing}
           onSaved={handleSaved}
+          // The matrix is corrected in its own drawer, one unit at a time. The
+          // editor states what is already there and hands over rather than
+          // trying to be a second place units are edited.
+          onOpenMatrix={(buildingId) => {
+            setEditorOpen(false);
+            setMatrixId(buildingId);
+          }}
           locale={locale}
         />
       ) : null}
@@ -1062,7 +1204,12 @@ function FilterSelect({
     <Select value={value || ALL} onValueChange={(next) => onChange(next === ALL ? '' : next)}>
       <SelectTrigger
         aria-label={label}
-        className={cn('h-9 w-auto min-w-36 gap-2 text-xs', value && 'border-primary text-primary')}
+        className={cn(
+          'h-9 w-full sm:w-auto min-w-[130px] flex-1 sm:flex-initial gap-2 text-xs transition-colors',
+          value
+            ? 'border-primary/60 bg-primary/5 text-primary font-medium'
+            : 'border-input bg-background hover:bg-accent/50',
+        )}
       >
         <SelectValue />
       </SelectTrigger>

@@ -1,6 +1,15 @@
 # Building Census, Zone/Building Numbering & War Damage — Implementation Plan
 
-> **Status:** **All five phases complete** (P1-T1 … P5-T3, 2026-09-10).
+> **Status:** **Seven phases complete** (P1-T1 … P5-T7, plus Phases 6 and 7, 2026-09-10).
+> **Phase 7 (§12) is the most recent work and the first thing to read** — it makes
+> «منشأة جديدة» preselected on an empty parcel, stops an unlinked card saving
+> silently, gives the editor's matrix section something to say in edit mode, and
+> makes عدد الطوابق a ceiling on «إلى الطابق».
+> **Phase 6 (§11) is the phase before it.** It adds
+> register-first building creation *and* fixes fifteen defects found reviewing
+> Phases 1–5 — several of them in behaviour those phases had marked ✅, including
+> «حفظ سريع», which had never reached the server at all. Its DB-backed suites
+> have **not** been run; see §11.3 before trusting it in the field.
 > The handful of things deliberately not covered are listed under "What is not
 > covered" in §6 and §10 — none of them block field use.
 > **Created:** 2026-09-09 · **Branch to use:** `feat/building-census` (off `develop`)
@@ -147,10 +156,11 @@ raise it with the user before changing course.
 | D16 | The registration form **writes into the census**, through one shared service, after the registration commits | The link columns existed from 0030 and nothing acted on them. Two doors (form, matrix) must record the same four facts identically, and a census failure must never cost a municipality a registration. See §10.1. |
 | D17 | Lifecycle is a **third axis on `Building`**, not a `StructureType` value and not a `DamageLevel` | What a thing *is*, what has *happened to it*, and where it is in its *own life* are independent. Folding any pair together is D5 restated. A shell under construction is excluded from the survey denominator; it is not damaged, and it is not a kind of building. See §10.2. |
 | D18 | A second structure on an occupied parcel requires an **explicit acknowledgement**, refused server-side | §4.4's lock solves the opposite problem — it *guarantees* two officers surveying one block from opposite ends get different suffixes, silently. Q5's clockwise sweep is a handbook convention, not a check. See §10.3. |
-| D19 | **A building's entrance is placed by a person or not at all** — the parcel centroid is never used as a default pin | The centroid is the middle of the *plot*, where no building stands; offered to every structure on a parcel it produced *byte-identical* coordinates that no clustering rule can separate; and it was stored in the same column as a surveyed fact, so a guess became indistinguishable from one. A building may still be saved with no pin — it then has no dot of its own and its residents draw on the parcel. See §10.4 and §10.6. |
+| D19 | **A building's entrance is placed by a person or not at all** — the parcel centroid is never used as a default pin. **Reaffirmed in Phase 6** (§11), which creates buildings from the registration form and gives them no pin: `latitude IS NULL` already means "nobody has stood here", and the ledger's «بلا مدخل مُثبت» tile turns that into a work queue | The centroid is the middle of the *plot*, where no building stands; offered to every structure on a parcel it produced *byte-identical* coordinates that no clustering rule can separate; and it was stored in the same column as a surveyed fact, so a guess became indistinguishable from one. A building may still be saved with no pin — it then has no dot of its own and its residents draw on the parcel. See §10.4 and §10.6. |
 | D20 | **رقم القسم and مفرز/غير مفرز are deferred, not rejected** | They are real and legally superior to both `unitCode` and `postedNumber`, and adding them touches ownership, billing and conflict detection at once. Deferred deliberately rather than half-done. See §10.5. |
 | D21 | The staff map keeps **two layers with two grouping rules**: the census layer is one pin per *building*, the registration layer one dot per *parcel* | They answer different questions. P5-T5 made the second match the first and drew a dot on top of every building pin; P5-T7 reverted it. Before changing a marker's grouping, check which layer already answers the question. See §10.6. |
 | D22 | **Every raw query writes its schema into its SQL.** Never rely on `search_path`, and never on `current_schema()` | The app reaches Postgres through a transaction pooler, where session settings are not guaranteed to follow a statement. It produced a real 42P01 on a table that exists, once, unreproducibly. Enforced by `raw-sql-is-schema-qualified.spec.ts`. See §10.7. |
+| D24 | A registration may **create** the structure it names, but only on an explicit tap, and never without its units | Not selecting a building is evidence of a control below the fold, not of a new building; and a shell with no units links the card while recording no occupancy, which is §10.1's under-billing arriving through the fix for it. See §11. |
 | D23 | **Verification builds use their own `distDir`** (`pnpm build:check`) | `next build` and `next dev` share `.next`; building while the dev server runs corrupts it and produces runtime 500s that point at nothing. The frontend twin of the `nest build` EBUSY note in §6. See §10.7. |
 
 ---
@@ -549,6 +559,12 @@ single transaction because of the `@unique` constraint.
 | 12 | 1 | `1201` |
 | −1 (basement) | 2 | `B102` |
 
+**Floors are 0-indexed, and `Building.floorsCount` counts what stands above
+ground.** So an N-storey building's top floor is `N-1`, and a قبو is a negative
+floor that does not move the count. Phase 7 (§12.4) makes that a rule rather
+than a coincidence: a blueprint may not name a floor above `floorsCount - 1`,
+and where only one of the two numbers is stated the other is derived from it.
+
 ### 4.3 Full reference
 
 `A-1042-B-0304` = zone A, parcel 1042, building B, third floor, fourth unit.
@@ -768,6 +784,8 @@ _Update this table as tasks complete. A fresh session reads it to know where to 
 | 2026-09-10 | **P5-T1 … P5-T5** | **Phase 5 complete — see §10.** Closes the gap Phases 1–4 left: the census could be *pointed at* from a registration and nothing acted on the link, which was a silent under-billing path as well as a blank matrix. Also adds `Building.lifecycleStatus` (migration `0033`, applied to staging), the duplicate-structure guard, and — P5-T5 — **one map marker per censused structure instead of one per parcel**, with the parcel-centroid pin guess removed entirely. `pnpm typecheck` clean, `pnpm lint` clean (0 errors; the same 6 pre-existing warnings), `next build` clean. **29 suites, 526 tests, 0 failures with a database attached.** Subdivision/deed modelling (رقم القسم, مفرز) deliberately deferred — §10.5. |
 | 2026-09-10 | **P5-T6** | **Hardening, from a real dev-server log — see §10.7.** Three faults: a genuine 42P01 on staging traced to raw SQL depending on `search_path` behind the transaction pooler (every raw query is now schema-qualified, including the §4.4 advisory-lock key, with a guard test that reads the table list from `schema.prisma`); the dashboard cache never invalidating on `building.changed`, which froze the map's markers for the whole TTL after P5-T5 moved them onto building pins; and `next build` sharing `.next` with a running `next dev` (`pnpm build:check` now isolates it). **30 suites, 0 failures with a database attached.** |
 | 2026-09-10 | **P5-T7** | **Reverted P5-T5 — see §10.6.** The staff map already has a census layer drawing a pin per building at its own entrance, so splitting the *registration* markers per structure put a second dot on top of each of them. Registration markers are one per رقم العقار again, at the parcel's point, with every household on the plot under them; `computeSpatialData` reverted with it. Also gave the integration suites' schema build **and teardown** a realistic timeout — a 60s budget for replaying thirty-odd migrations over a remote link was failing whole suites on a slow connection while every test in them passed. |
+| 2026-09-10 | **Phase 7** | **See §12.** Prompted by a registration that made no building: the refusal was correct — parcel 403 already held two structures — but a third of the municipality's cards were unlinked in silence. «منشأة جديدة» is now preselected on a confirmed-empty parcel, «بدون ربط» is an explicit answer, and a save that records no occupancy says so first. The editor's مصفوفة الوحدات states what a building already has instead of reading as an empty offer — and stops silently generating six units when an empty shell is edited. عدد الطوابق now caps «إلى الطابق» on both sides. `pnpm typecheck`, `pnpm lint` (0 errors) and `pnpm build:check` clean; **571 unit tests, 0 failures**. **No DB-backed suite run — §12.5.** |
+| 2026-09-10 | **Phase 6** | **Register-first creation, and a review of Phases 1–5 — see §11.** Fifteen defects fixed, four of them consequential enough to name here: an unqualified `nextval` that could draw receipt numbers from another municipality's sequence; «حفظ سريع» silently dropping `blanketFlagReason` on every save since P3-T6; a re-delivered offline registration reported as a census *failure*, whose remedy creates an occupancy `endUnclaimed` can never close; and a billing double-count when one citizen holds two مبنى cards on one block. The registration form can now create the structure it names — on an explicit tap, with its units, and **without a pin** (D19 reaffirmed, D24 added). `pnpm typecheck` clean, `pnpm lint` clean (0 errors; the same 6 pre-existing warnings), `pnpm build:check` clean, **571 unit tests across 26 suites, 0 failures**. **No DB-backed suite was run — §11.3.** |
 | 2026-09-09 | — | **`pnpm --filter @mechanization/backend build` cannot be run while `pnpm dev` is up**, and this is environmental rather than a code fault. `nest build` copies the Prisma query-engine `.node` binaries into `dist/`, and a backend already serving from `dist/presentation/main` holds them open — Windows refuses the overwrite with `EBUSY`. `scripts/start.mjs`'s `cleanupStaleProcesses()` exists for exactly this and says so. To verify a build independently, emit somewhere else: `pnpm exec tsc -p tsconfig.json --outDir <tmp>` from `apps/backend`, which compiles and emits the whole backend without touching `dist/`. `pnpm typecheck` covers the same ground for correctness. |
 
 ### What Phase 1 actually changed
@@ -1774,3 +1792,245 @@ webpack's own output.
   as a write lock. Correct here — `buildings` holds 0 rows in production and a
   handful in staging — but a municipality with a populated census would want
   `CONCURRENTLY`, which cannot run inside the migrator's transaction.
+
+---
+
+## 11. Phase 6 — register-first creation, and a review of Phases 1–5 (2026-09-10)
+
+Two halves. The review found more than the feature did, and several of its
+findings were in behaviour Phases 1–5 had marked ✅.
+
+### 11.1 What the review found, and what was done about it
+
+| # | Defect | Fix |
+|---|---|---|
+| 1 | **`nextval('payment_receipt_seq')` was unqualified** in `payment-ledger.service.ts`, while `FROM ${S}citizen_payments` two methods above had been hardened. The sequence is created per tenant schema (0017), so on a drifted pooled connection a settlement either raises 42P01 *inside* the transaction — after the invoice's `FOR UPDATE` — or silently draws from **another municipality's** sequence. These numbers are printed on receipts handed to residents. | Schema-qualified inside the string literal: `nextval('${this.S}payment_receipt_seq')`. |
+| 2 | **«حفظ سريع» had never worked.** `CitizenEditor.submit` rebuilt the payload by hand and omitted `blanketFlagReason` — on the online path *and* the queued one, which share the object. P2-T7's `autoFlags` therefore never fired, and P3-T6's ✅ for it was not true of the shipped code. | The editor calls `toSubmission`. One builder for the payload the form validates and the payload the server receives is the only arrangement where that class of bug cannot recur. |
+| 3 | **A re-delivered offline registration was reported as a census failure.** `create` skips the sync when `deduplicated` and expresses "skipped" as the same `null` that means "threw", so the ordinary replay told the officer the link had failed and sent them to the ledger. Doing as they were told creates an occupancy with `registrationId: null` that `endUnclaimed` can never close — the household stays recorded in a flat their file no longer claims, and keeps being billed for it. | `announceCensus` takes `deduplicated` and stays silent; the wire contract now documents both meanings of `null`. |
+| 4 | **The offline drain lost the unit matrix.** `if (item.blueprint && !response.deduplicated)`: a create that committed with its response lost meant the retry was deduplicated, the blueprint skipped, and the queue record deleted — a building with zero units, permanently, and nothing anywhere to say twelve flats were expected. | The blueprint is sent on every delivery. `generateUnits` is idempotent per floor, as the guard's own comment conceded — it bought nothing and cost the matrix. |
+| 5 | **The reconciliation notice was lost on a re-delivered creation.** The dedup early-return hardcoded `reconciled: false` and never compared `provisionalSuffix` — the one case §4.4's whole apparatus exists for. | The comparison is made against the row that already exists. |
+| 6 | **`remove`'s refusal prescribed an impossible action.** The count had no `toDate: null` filter, so it counted ended spells under a message saying «أنهِ الإشغالات أولاً». Ending sets `toDate` (D2), so the count never moved: the officer followed the instruction, retried, and got the identical error for ever. | Two refusals. A current occupancy keeps the actionable message; a building holding only *history* is still refused — the cascade would erase the record of who lived there — but with a message that says so. |
+| 7 | **A partial census-sync failure skipped `endUnclaimed`**, so a flat the officer unticked stayed open and stayed billed. | The loop keeps the first failure, runs the release, then rethrows. A unit that failed to apply is still in `keep`, so a transient error never releases an occupancy as though it had been unticked. |
+| 8 | **`endUnclaimed` emitted no event and wrote no audit row** — no trail for an eviction that changes what a citizen is billed, and a map cache stale for the full TTL. The reporting handler's docblock claimed it covered "occupancy recorded **or ended**". | Reads the rows before ending them and emits `OCCUPANCY_ENDED` per unit. |
+| 9 | **`addUnit`'s advisory lock still keyed off `current_schema()`** — the exact pattern §10.7 removed everywhere else, and the only one left in executable code. | `tenantContext.schemaName` as a literal, as in `create`. |
+| 10 | **The raw-SQL guard was far narrower than its docblock claimed** — only `FROM`/`JOIN` plus an `@@map` name, case-sensitively. Blind to `nextval(`, `current_schema()`, `INSERT INTO`, `UPDATE … SET` and lowercase keywords, **which is why 1 and 9 shipped.** | Extended, plus a comment-stripper: the old line-prefix heuristic could not see this codebase's block-comment style, so the prose describing a query tripped the check describing it. **Verified by reintroducing both defects and watching it fail, naming both files.** |
+| 11 | **`currentDamageLevels` embedded `Prisma.join(ids)` twice**, once per arm of the UNION, and Prisma flattens an embedded `Sql` at each occurrence — so the statement carried `2 × N` bind parameters. Past ~32,768 candidates that exceeds Postgres' 65,535 ceiling and the ledger stops loading; long before that it is a multi-megabyte statement re-parsed on every keystroke of the search box. | `= ANY(${ids}::uuid[])` — one array parameter, reused in both arms. The cast stays on the parameter so the index on `buildingId` is still usable. |
+| 12 | **Billing double-count.** The same occupancy list was handed to *every* card linked to a building, and `heldThroughOccupancy` fires for any مبنى card with no unit rows — so a citizen with two such cards on one block and two flats recorded there was assessed for **four**. `CensusSyncService` dedupes the mirror of this on the write side; the read side had no equivalent. | `attachOccupancies` — extracted, exported and unit-tested. One card consumes the list; a card that itemises its own flats never does (spending it there would under-bill the card that needs it); a منزل card on the same building suppresses it entirely. |
+| 13 | **A re-tick logged a phantom visit.** The gate was `!current`, which is right for a straight replay — but `endUnclaimed` sets `toDate`, so the *next* claim looks new. Untick a flat by mistake, save, re-tick, save, and the cell reads «٢ محاولة» for a door somebody stood at once. | Scoped to the registration: re-saving one file never logs twice, while a genuinely new registration on the same flat still does. |
+| 14 | **The picker could not tell "no buildings" from "cannot reach the census"** — a failed lookup was caught into an empty list and printed as «لا توجد منشأة مسجَّلة». Offline, where this form mostly lives, it could never say anything else. | A three-state `lookup`. Harmless while the control only offered a link; decisive once it can create one. |
+| 15 | Smaller: `unitId` was taken at face value, so a card linked to building A could carry B's unit ids and move B's counters, statuses and cases; `create`'s dedup ignored the parcel; the survey-status filter still returned the demolished buildings the tiles called out of scope; `changePropertyType` silently dropped `buildingId`; `OCCUPANCY_ROLE_BY_TYPE` was `Record<string, string>` — the opposite of the compile-time hole its docblock promised. | All fixed. |
+
+**Left alone, deliberately.** `geometryCenter` is dead code whose comment points
+at a caller P5-T5 removed, and the picker's parcel lookup is still undebounced.
+Neither is a defect in behaviour. The first is worth a decision rather than a
+reflex: delete it, or keep it as the documented reason not to reintroduce a
+centroid default.
+
+### 11.2 Register-first creation
+
+An officer standing at a door had to leave the form, open «سجل المباني», create
+the building, come back, and re-pick it. Now the form can create it.
+
+**Three decisions, each put to the user and answered:**
+
+- **No pin — D19 stands.** The parcel centroid is *already* stored, on
+  `PropertyEntry.latitude`, and `getRegisteredParcels` already draws every
+  household on it per رقم العقار. Copying it onto `Building.latitude` would be a
+  second copy of a value the system already holds, in a column documented as
+  "the entrance, not the centroid" — and §10.4 rejected exactly that write-back.
+  «Until the user edits the pin» is also not a state this schema can hold: there
+  is no provenance column, so a guess and a surveyed entrance are the same two
+  floats, and nothing could list the buildings awaiting a real one. The map
+  gains nothing either — `mapPins` filters `latitude: { not: null }`, so a
+  pinless building simply has no census pin while its residents still appear on
+  the parcel dot.
+- **An explicit tap — D24, and D18 restated.** Auto-creating because the picker
+  went untouched would mean passing `acknowledgedDuplicates` on a path where
+  nobody acknowledged anything. Five households registered on one parcel would
+  produce A–F on a plot with one block, every row individually valid and no
+  constraint firing — **and by finding 6, none of them could ever be deleted.**
+- **Units in the same request.** `CensusSyncService` claims a flat only where
+  the card line carries a `unitId`, with one exception: a منزل linked to a
+  building holding exactly one unit. A bare shell therefore links the card and
+  records no occupancy at all — §10.1's silent under-billing, arriving through
+  the feature meant to complete it.
+
+**The three lookup outcomes — which is what finding 14 was for:**
+
+| Lookup result | «منشأة جديدة» | `acknowledgedDuplicates` |
+|---|---|---|
+| Parcel confirmed empty | **preselected** — corrected in Phase 7, §12 | not sent |
+| Parcel has structures | offered **below the candidates** | `true` |
+| **Failed / offline** | offered, and says the census could not be checked | `true` |
+
+The third row matters most: offline the listing is *always* empty, so treating
+empty as "safe to create without asking" would mint a structure on every field
+registration.
+
+**Why the creation is client-side, before the registration.** Not inside
+`CensusSyncService`: that method is contractually forbidden from throwing, so a
+building the officer explicitly asked for would vanish on failure and leave the
+card unlinked; and `importMany` funnels every imported citizen through `create`,
+so a 500-row CSV import would mint 500 structures unattended. Client-first also
+needs **no change to `CensusSyncService` at all** — by submit time the card is
+byte-for-byte the shape produced when an officer picks from the matrix, already
+covered by its 20 integration tests — and it inherits the offline path unchanged,
+because `clientSubmissionId` is the row's primary key and buildings already
+drain before registrations (P3-T8).
+
+**What changed.** `createBuildingSchema` gained an optional `units` array,
+reusing `upsertUnitSchema` (whose `sequence` is already server-allocated) plus an
+optional client-minted `id` per unit; `create` writes them inside the same
+transaction as the suffix allocation, so a half-built structure is not a
+reachable state; the picker gained the three-state lookup and the new-structure
+branch; `PropertyDraft.pendingBuilding` carries the intent and is stripped by
+`toPayloadProperty`; `CitizenEditor.materialiseBuildings` issues the creations
+before the registration and queues them offline; and the ledger gained a
+`hasEntrance` filter, a «بلا مدخل مُثبت» tile and a matching CSV filter, so the
+missing pins are a dispatch list rather than invisible debt.
+
+### 11.3 What is still not covered
+
+- **The DB-backed suites were not run for this phase.** The first attempt failed
+  with `Connection terminated unexpectedly` at fixture setup — the connectivity
+  mode §6 says to re-run rather than diagnose — and the re-run was blocked by
+  the sandbox. Everything here is verified by `pnpm typecheck`, `pnpm lint`
+  (0 errors; the same 6 pre-existing warnings), **571 unit tests across 26
+  suites**, and `pnpm build:check`. **Run `buildings.integration`,
+  `census-sync.integration` and `billing-census.integration` before this is
+  trusted in the field** — the inline-units transaction, the `= ANY(::uuid[])`
+  binding, the two-refusal `remove` and `endUnclaimed`'s new read are all claims
+  about a database. Run them one at a time (see the note at the top of §10).
+- **Still no test runner in `apps/frontend`** (§10.8). The picker's three states,
+  `materialiseBuildings` and the ledger tile ship verified by `tsc`, `eslint` and
+  a production build only.
+- **The offline round trip is still unexercised end to end**, and Phase 6 widens
+  what it would exercise: a queued building now carries its units, and the
+  registration behind it names them before they exist.
+- **No merge for duplicate structures.** Finding 6 leaves a building with any
+  occupancy history undeletable, which is defensible — but the census still has
+  no way to say "these two rows are one block". That is the tool the duplicate
+  guard is currently standing in for, and the reason the guard has to be strict.
+
+---
+
+## 12. Phase 7 — the silent link, the empty edit form, and the floor ceiling (2026-09-10)
+
+Prompted by a registration that produced two property cards on parcel 403 and
+**no building**, and by the editor's مصفوفة الوحدات section reading as empty when
+the building it was editing had units in it.
+
+### 12.1 Why no building was created — and why that was right
+
+`pendingBuilding` is written only by a click handler, and `materialiseBuildings`
+is gated on it, so an untouched picker creates nothing. That is the design, and
+on this parcel it was the correct answer: **403 already held `C2-403-A`
+(«بناية الوفاء», 3 units) and `C2-403-B` («بيت محمد»)**, and two more names were
+typed on it. Auto-creating would have produced four structures on a plot that
+has two, with `C2-403-C` and `C2-403-D` going onto notices — and by §11.1's
+finding 6, none of them could ever have been deleted.
+
+Deriving buildings from the cards instead is the same trap one level down.
+`backfill-buildings.ts` groups by `(propertyNumber, buildingName)`, and §10.1
+records what that does to real data: «بناية النور» and «بنايه النور» from two
+tenants of one block. Name-based derivation mints a building per typo, which is
+the problem D1 created the census table to solve.
+
+**What was wrong was the silence, not the refusal.** Five of the fifteen cards in
+this municipality are unlinked — every one of them a مبنى or منزل that could
+carry a link — and nothing said so: not the form, not the ledger, not the citizen
+page.
+
+### 12.2 What changed
+
+| # | Fix |
+|---|---|
+| 1 | **«منشأة جديدة» is preselected on a parcel the census confirms is empty.** What §11.2's table claimed and the code did not do. Nothing stands there, so D18's guard cannot fire and the tap was a formality that cost a building whenever it went unnoticed. Deliberately **not** on a failed lookup: offline the listing is always empty, and preselecting there would mint a structure on every field registration. |
+| 2 | **«بدون ربط بسجل المباني» is an explicit third option.** "No link" and "the officer never saw the control" were the same absence in the draft. It is still a legitimate answer — it just stops being a silent one, and the save-time check below knows not to ask about a card that already answered. |
+| 3 | **A save-time confirmation** naming every مبنى/منزل card that will record no occupancy, and every مبنى about to be created with no units. Not a refusal — both are legitimate records — and `destructive={false}` because continuing is the ordinary way through. |
+| 4 | **A مبنى created with no unit rows is named in that dialog.** `units.length > 0` gates the inline units while `pendingBuilding` alone reaches `createBuilding`, so a shell could be created that links the card and records no occupancy — §10.1's under-billing arriving through the fix for it. Warned rather than blocked: a card whose unit lines are all «غير مؤكَّد» is honest, and inventing a flat would be a guess. |
+| 5 | **The offline queue carries the officer's own `acknowledgedDuplicates`**, not a hardcoded `true`. On a confirmed-empty parcel the question put to them was "create one here", not "this is not one of these" — and there were none to show. Sending `true` pre-satisfied D18 for a delivery landing hours later on a parcel somebody else may have built on. |
+| 6 | **No `getBuilding` for a pending id.** It was a guaranteed 404 whose swallowed failure left «لا توجد منشأة مسجَّلة على هذا العقار بعد» rendered directly above the panel announcing one was about to be created. |
+
+### 12.3 The editor's matrix section in edit mode
+
+`withBlueprint` is seeded `!building || building.unitsTotal === 0`, and
+**everything except the checkbox was gated on it** — so editing a building with
+three flats showed one unchecked box offering to generate a matrix, and nothing
+else. No count, no floors, no survey progress, no way through to the drawer.
+
+- **A «المصفوفة الحالية» summary** now states «٣ وحدات · الطوابق الأرضي–٢ · ٣
+  ممسوحة» with a button into the matrix drawer, which is where units are
+  corrected one at a time. Counts come from the prop and are always available;
+  the floor range needs the units, so it degrades to the counts alone when that
+  request is in flight or fails.
+- **The checkbox relabels to «إضافة الوحدات الناقصة»** when a matrix exists, and
+  says what it does — `generateUnits` tops each floor *up to* the requested count
+  and never replaces. Calling that "generate" over three existing flats invites
+  an officer to expect otherwise.
+- **`skipped` is reported.** A top-up over a complete matrix legitimately creates
+  nothing, and «تم توليد ٠ وحدة» read as a failure.
+
+Two hazards found alongside it and fixed:
+
+- **Editing an empty shell silently generated six units.** `withBlueprint` seeds
+  `true`, the range was hardcoded `0..2 × 2`, and `generateUnits` is gated only
+  on `blueprint !== null` — so opening a shell to fix a typo and saving produced
+  a six-flat matrix. The range is now seeded from the building's own
+  `floorsCount`.
+- **`unitType` leaked between openings.** Absent from the reset effect, and its
+  only other writer is keyed on `[structureType]` — so editing one building as
+  «محل» and opening another of the same structure type generated six shops from
+  a form that looked untouched. `resolving` had a narrower version of the same
+  fault and is reset with it.
+
+### 12.4 عدد الطوابق is now a ceiling on «إلى الطابق»
+
+There was **no relationship at all**, on either side. A building declared
+`floorsCount: 1` accepted `toFloor: 40`, generated forty floors, and had its own
+`floorsCount` *raised* to match — the field the officer had just filled in,
+overwritten by the field beside it, in the same save.
+
+All six buildings in the first municipality satisfy `floorsCount == max(floor) + 1`
+with floors 0-indexed, which is also what `generateUnits` and the inline-units
+path already computed. So:
+
+> **`toFloor ≤ floorsCount - 1`.** Basements are negative and are not counted by
+> عدد الطوابق, so `fromFloor` stays free to `-10`.
+
+**Which way a disagreement resolves depends on whether the officer stated both
+numbers:**
+
+| Path | Rule | Why |
+|---|---|---|
+| Blueprint form | **Cap** `toFloor`, and clamp it when عدد الطوابق is lowered | Both numbers are stated in one form; a contradiction is an error to show, not a correction to apply |
+| `generateUnits` | **Refuse**, naming both numbers | Backstop for a client that skips the UI. The monotonic raise is gone |
+| `addUnit` | **Raise** `floorsCount` | An officer on a fourth floor the register calls three-storey is correcting it, with no second number in front of them |
+| Inline units on `create` | **Derive** `floorsCount = highest + 1` | The registration card never asks for عدد الطوابق |
+
+Also fixed in the same memo, each a line: the `min`/`max` attributes were HTML
+hints a keyboard walked straight past, so a typed `999` reached «٩٩٩ وحدة
+ستُنشأ» and the request; and `plannedUnits` was never checked against
+`MAX_GENERATED_UNITS`, so a 2,000-unit blueprint saved the building and then
+failed on the matrix, rendering as a save error for a building that had in fact
+been saved. **`floorsCount` now defaults to 3 on create**, agreeing with the
+`toFloor: '2'` default beside it — which is what P3-T2's «3-floor / 6-unit»
+acceptance criterion always claimed and the field never did.
+
+### 12.5 What is still not covered
+
+- **No DB-backed suite has been run for Phase 6 or Phase 7.** Verified by
+  `pnpm typecheck`, `pnpm lint` (0 errors; the same 6 pre-existing warnings),
+  **571 unit tests across 26 suites**, and `pnpm build:check`. The floor rule's
+  three new cases live in `buildings.integration.spec.ts` and have **not been
+  executed**. Several existing tests in that file were creating one-storey
+  buildings and generating flats above them — every one was corrected to declare
+  the floors its blueprint describes, which is itself a claim only a run can
+  confirm.
+- **Still no test runner in `apps/frontend`** (§10.8), so `censusConcerns`, the
+  preselect effect and the matrix summary ship verified by `tsc`, `eslint` and a
+  production build only.
+- **`hasEntrance` and the «بلا مدخل مُثبت» tile from Phase 6 are still unexercised**
+  against a database.
+- **No merge for duplicate structures.** Still the missing tool the duplicate
+  guard stands in for, and the reason it has to be strict.

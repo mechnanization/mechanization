@@ -361,6 +361,17 @@ async function drainBuildings(tenant: string, accessToken: string): Promise<numb
         */
         structureType: item.payload.structureType as never,
         lifecycleStatus: item.payload.lifecycleStatus as never,
+        /*
+          The matrix a registration asked for, widened for the same reason.
+
+          These are the specific flats a card enumerated — distinct from
+          `blueprint` below, which describes a matrix by its shape and is
+          generated afterwards. They travel *inside* the create so the shell and
+          its units land in one transaction: a queued registration names these
+          unit ids, and a delivery that made the building but not the flats
+          would leave it pointing at nothing.
+        */
+        units: item.payload.units as never,
         provisionalSuffix: item.provisionalSuffix,
         // The id the phone minted *is* the row's id, which is what makes a
         // re-delivered creation find the building it already made rather than
@@ -369,14 +380,22 @@ async function drainBuildings(tenant: string, accessToken: string): Promise<numb
       });
 
       /*
-        The matrix, if one was asked for, and only for a creation that was not
-        already delivered.
+        The matrix, if one was asked for — sent on every delivery, replay or not.
 
-        `generateUnits` is additive and idempotent per floor, so re-running it
-        would be safe — but `deduplicated` says this exact creation has been
-        seen before, and re-sending its blueprint would be work for no change.
+        This used to skip the blueprint when `deduplicated` was true, on the
+        reasoning that the creation had been seen before so the units had too.
+        The two are not the same delivery. `createBuilding` commits, the
+        connection drops before `generateUnits` runs or before its response
+        lands, and the item goes back to `pending`. The retry is then recognised
+        as a duplicate, the blueprint is skipped, and `dequeueBuilding` deletes
+        the only record that a matrix was ever asked for — leaving a building
+        with zero units and nothing anywhere to say twelve flats were expected.
+
+        The guard bought nothing to begin with: its own note concedes
+        `generateUnits` is additive and idempotent per floor. A floor that
+        already holds the requested count is topped up by zero.
       */
-      if (item.blueprint && !response.deduplicated) {
+      if (item.blueprint) {
         await generateUnits(
           tenant,
           accessToken,

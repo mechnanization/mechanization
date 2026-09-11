@@ -78,6 +78,56 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
+/**
+ * The source with its comments blanked out, newlines preserved.
+ *
+ * The check below used to skip a match whose *line* started with `//`, `*` or
+ * `/*`. That works for JSDoc and fails for the block-comment style used
+ * throughout this codebase, where the prose lines inside a comment carry no
+ * leading marker at all:
+ *
+ *     /* <- opens here
+ *       A bare nextval('payment_receipt_seq') resolves through search_path.
+ *     *\/
+ *
+ * — and that middle line is indistinguishable from code by its prefix. It came
+ * up the moment this spec grew an offender whose name is worth *explaining* in
+ * a comment: the explanation tripped the check it was describing.
+ *
+ * Replacing comment bodies with spaces rather than deleting them keeps every
+ * offset and line number intact, so a real hit still reports its own line.
+ */
+function withoutComments(source: string): string {
+  let out = '';
+  let i = 0;
+
+  while (i < source.length) {
+    const two = source.slice(i, i + 2);
+
+    if (two === '//') {
+      const end = source.indexOf('\n', i);
+      const stop = end === -1 ? source.length : end;
+      out += ' '.repeat(stop - i);
+      i = stop;
+      continue;
+    }
+
+    if (two === '/*') {
+      const end = source.indexOf('*/', i + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      // Newlines survive so line numbers do.
+      out += source.slice(i, stop).replace(/[^\n]/g, ' ');
+      i = stop;
+      continue;
+    }
+
+    out += source[i];
+    i += 1;
+  }
+
+  return out;
+}
+
 describe('raw SQL is schema-qualified', () => {
   const tables = tenantTableNames();
 
@@ -93,9 +143,40 @@ describe('raw SQL is schema-qualified', () => {
   const offenders = tables.map(
     (table) => ({
       table,
-      pattern: new RegExp(String.raw`\b(?:FROM|JOIN)\s+(?!\$\{)"?${table}"?\b`, 'g'),
+      pattern: new RegExp(
+        String.raw`\b(?:FROM|JOIN|INSERT\s+INTO|UPDATE|DELETE\s+FROM|COPY)\s+(?!\$\{)"?${table}"?\b`,
+        'gi',
+      ),
     }),
   );
+
+  /*
+    Two things that are not tables, and both shipped because this spec only
+    looked for tables.
+
+    `nextval('payment_receipt_seq')` — a sequence lives in the tenant schema
+    exactly as a table does, and this one is created per schema by migration
+    0017. Unqualified it resolves through `search_path`, so it can draw from
+    another municipality's sequence, and the numbers it returns are printed on
+    receipts handed to residents.
+
+    `current_schema()` — reads the same session state, and was still keying
+    `addUnit`'s advisory lock long after the rest of the codebase stopped
+    trusting it. A lock whose key depends on a drifted connection is not a
+    lock: two writers take different keys and the race it exists to prevent is
+    back.
+
+    Neither is a `FROM`, so neither was visible to the check above. Named
+    individually rather than pattern-matched, because there are few enough to
+    name and a named offender can say what to do instead.
+  */
+  const nonTableOffenders = [
+    { what: "nextval('…') without its schema", pattern: /nextval\(\s*'(?!\$\{)/g },
+    {
+      what: 'current_schema() — interpolate tenantContext.schemaName instead',
+      pattern: /current_schema\(\)/gi,
+    },
+  ];
 
   const files = sourceFiles(BACKEND_SRC);
 
@@ -108,30 +189,37 @@ describe('raw SQL is schema-qualified', () => {
   it.each(files.map((file) => [file.slice(BACKEND_SRC.length + 1), file]))(
     '%s',
     (_label, file) => {
-      const source = readFileSync(file, 'utf8');
+      const original = readFileSync(file, 'utf8');
 
       // Cheap bail-out: only files that actually issue raw SQL can offend.
-      if (!/\$(?:query|execute)Raw/.test(source)) return;
+      if (!/\$(?:query|execute)Raw/.test(original)) return;
+
+      const source = withoutComments(original);
 
       const found: string[] = [];
+
+      /*
+        The match has to sit inside raw SQL, not in prose.
+
+        These files are heavily commented and several comments quote the very
+        SQL they are warning about, so a scan of the raw text reports its own
+        documentation. `withoutComments` removes that class of false positive
+        outright — offsets are preserved, so the line quoted back below is read
+        from the original and still reads as it does on disk.
+      */
+      const report = (what: string, index: number): void => {
+        const lineStart = original.lastIndexOf('\n', index) + 1;
+        const lineEnd = original.indexOf('\n', index);
+        const line = original.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
+        found.push(`${what} — ${line.trim()}`);
+      };
+
+      for (const { what, pattern } of nonTableOffenders) {
+        for (const match of source.matchAll(pattern)) report(what, match.index);
+      }
+
       for (const { table, pattern } of offenders) {
-        for (const match of source.matchAll(pattern)) {
-          /*
-            The match has to sit inside raw SQL, not in prose.
-
-            These files are heavily commented and several comments quote the
-            SQL they describe. Requiring a backtick-delimited template or a
-            `$queryRawUnsafe` string between the nearest raw-query call and the
-            match would need a parser; checking that the line is not a comment
-            is enough and has no false negatives that matter — a commented-out
-            query does not run.
-          */
-          const lineStart = source.lastIndexOf('\n', match.index) + 1;
-          const line = source.slice(lineStart, source.indexOf('\n', match.index));
-          if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;
-
-          found.push(`${table} — ${line.trim()}`);
-        }
+        for (const match of source.matchAll(pattern)) report(table, match.index);
       }
 
       expect(found).toEqual([]);
