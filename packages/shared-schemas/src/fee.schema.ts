@@ -325,6 +325,18 @@ export const systemSettingsSchema = z.object({
   town: z.string().trim().max(120).optional().or(z.literal('')),
 
   /**
+   * تاريخ ورقم قرار المجلس البلدي adopting the building-numbering scheme.
+   *
+   * Optional, and §7 Q1 is why: naming public roads needs a council decree
+   * (Decreto-Law 118/1977), but internal cadastral indexing and parcel-linked
+   * building numbering is an administrative and fiscal survey power the
+   * municipality already holds. So a notice is valid without this — it cites
+   * the municipal survey authority instead — and carries more weight with it.
+   * Free text, because it references somebody else's document.
+   */
+  councilDecisionRef: z.string().trim().max(200).optional().or(z.literal('')),
+
+  /**
    * The crest as a data URI.
    *
    * The prefix is checked rather than assumed: this string is written into an

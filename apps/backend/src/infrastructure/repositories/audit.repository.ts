@@ -8,6 +8,7 @@ import {
 } from '../../domain/interfaces/audit-repository.interface';
 import { ValidationError } from '../../domain/errors/domain-error';
 import { TenantContextService } from '../context/tenant-context.service';
+import { tenantSchemaRef } from '../prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../prisma/with-connection-retry';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -23,6 +24,18 @@ export class PrismaAuditRepository implements AuditRepository {
 
   private get db() {
     return this.tenantContext.prisma;
+  }
+
+  /**
+   * The schema prefix every raw query in this class writes into its SQL.
+   *
+   * Raw SQL is sent to Postgres untouched, so an unqualified table name resolves
+   * through `search_path` — session state on a connection shared through a
+   * transaction pooler, which is not required to carry it. See
+   * `tenant-schema-ref.ts` for the 42P01 this prevents.
+   */
+  private get S() {
+    return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
   async append(entry: AuditLogEntry): Promise<void> {
@@ -89,7 +102,7 @@ export class PrismaAuditRepository implements AuditRepository {
         }>
       >`
         SELECT *, count(*) OVER()::int AS total
-        FROM audit_log_entries
+        FROM ${this.S}audit_log_entries
         ${where}
         ORDER BY "createdAt" DESC
         LIMIT ${query.limit} OFFSET ${query.offset}

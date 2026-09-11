@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 
 export interface DashboardCounters {
@@ -166,24 +167,38 @@ export interface ParcelFinancials {
  * from a static GeoJSON underneath; an interactive marker is reserved for the
  * handful that actually have citizen data, so a dot on the map always means
  * "there is something to open here".
+ *
+ * **One row per رقم العقار, deliberately.** P5-T5 split it per censused
+ * structure and P5-T7 put it back: the map has a separate census layer that
+ * already draws a pin per building at its own entrance, and two layers saying
+ * the same thing in two visual languages is worse than either alone. This one
+ * is about the plot — everyone registered on it, in one dot, at the parcel's
+ * own point. See §10.6.
  */
 export interface RegisteredParcel {
   propertyNumber: string;
+  /** The parcel's own representative point, from the cadastre. */
   latitude: number;
   longitude: number;
   registrants: ParcelRegistrant[];
   financials?: ParcelFinancials;
-  /** Total structures across all registrants on this parcel */
+  /** Total property cards across every registrant on this parcel. */
   structureCount: number;
 }
 
 /** One unit inside a BUILDING — شقة, عيادة or محل. */
 export interface CitizenProfileUnit {
   id: string;
-  unitType: string;
-  floor: string;
+  /**
+   * Nullable since migration 0031 — a per-unit «غير مؤكَّد» flag blanks the
+   * field it excuses, so the review screen has to be able to render a flat the
+   * officer could not fully describe. Null here means "not established", never
+   * "zero"; the reason is on the registration's `flaggedFields`.
+   */
+  unitType: string | null;
+  floor: string | null;
   side: string | null;
-  unitArea: number;
+  unitArea: number | null;
   sharedRights: string[];
   /** حالة الوحدة — set by the building's owner. Null on a tenant's own card. */
   unitStatus: string | null;
@@ -369,6 +384,18 @@ export class ReportingService {
     return this.tenantContext.prisma;
   }
 
+  /**
+   * The schema prefix every raw query in this class writes into its SQL.
+   *
+   * Raw SQL is sent to Postgres untouched, so an unqualified table name resolves
+   * through `search_path` — session state on a connection shared through a
+   * transaction pooler, which is not required to carry it. See
+   * `tenant-schema-ref.ts` for the 42P01 this prevents.
+   */
+  private get S() {
+    return tenantSchemaRef(this.tenantContext.schemaName);
+  }
+
   private get cacheTtlSeconds(): number {
     return this.config.get<number>('DASHBOARD_CACHE_TTL_SECONDS') ?? 60;
   }
@@ -411,14 +438,14 @@ export class ReportingService {
         }>
       >`
         SELECT
-          (SELECT count(*)::int FROM registrations) AS total,
-          (SELECT count(*)::int FROM registrations WHERE "submittedAt" >= ${sevenDaysAgo}) AS recent,
+          (SELECT count(*)::int FROM ${this.S}registrations) AS total,
+          (SELECT count(*)::int FROM ${this.S}registrations WHERE "submittedAt" >= ${sevenDaysAgo}) AS recent,
           (SELECT COALESCE(json_object_agg("propertyType", cnt), '{}'::json)
-             FROM (SELECT "propertyType", count(*)::int AS cnt FROM property_entries GROUP BY "propertyType") p
+             FROM (SELECT "propertyType", count(*)::int AS cnt FROM ${this.S}property_entries GROUP BY "propertyType") p
           ) AS "byPropertyType",
           (SELECT COALESCE(json_object_agg("residentStatus", cnt), '{}'::json)
              FROM (
-               SELECT "residentStatus", count(*)::int AS cnt FROM users
+               SELECT "residentStatus", count(*)::int AS cnt FROM ${this.S}users
                WHERE kind = 'CITIZEN' AND "residentStatus" IS NOT NULL
                GROUP BY "residentStatus"
              ) u
@@ -469,7 +496,7 @@ export class ReportingService {
     const [row] = await withConnectionRetry(() =>
       this.db.$queryRaw<AnalyticsRow[]>`
         WITH owned_parcels AS (
-          SELECT DISTINCT "propertyNumber" FROM property_entries
+          SELECT DISTINCT "propertyNumber" FROM ${this.S}property_entries
            WHERE "occupancyType" = 'OWNER' AND "propertyNumber" IS NOT NULL
         ),
         -- A TENANT/FREE_OCCUPANT filing of a unit whose رقم العقار some OWNER
@@ -477,35 +504,35 @@ export class ReportingService {
         -- whoever owns it, once by whoever rents it. Excluded from every
         -- property/unit count below so it counts once, not twice.
         excluded_entries AS (
-          SELECT pe.* FROM property_entries pe
+          SELECT pe.* FROM ${this.S}property_entries pe
            WHERE pe."occupancyType" <> 'OWNER'
              AND pe."propertyNumber" IS NOT NULL
              AND EXISTS (SELECT 1 FROM owned_parcels op WHERE op."propertyNumber" = pe."propertyNumber")
         ),
         countable_entries AS (
-          SELECT pe.* FROM property_entries pe
+          SELECT pe.* FROM ${this.S}property_entries pe
            WHERE pe.id NOT IN (SELECT id FROM excluded_entries)
         )
         SELECT
-          (SELECT count(*)::int FROM users WHERE kind = 'CITIZEN')
+          (SELECT count(*)::int FROM ${this.S}users WHERE kind = 'CITIZEN')
             AS "citizenRecords",
-          (SELECT COALESCE(sum("actualHouseholdMembers"), 0)::int FROM users WHERE kind = 'CITIZEN')
+          (SELECT COALESCE(sum("actualHouseholdMembers"), 0)::int FROM ${this.S}users WHERE kind = 'CITIZEN')
             AS "populationTotal",
-          (SELECT COALESCE(sum("totalRegisteredMembers"), 0)::int FROM users WHERE kind = 'CITIZEN')
+          (SELECT COALESCE(sum("totalRegisteredMembers"), 0)::int FROM ${this.S}users WHERE kind = 'CITIZEN')
             AS "grossRegisteredTotal",
           (SELECT COALESCE(sum("totalRegisteredMembers" - "actualHouseholdMembers"), 0)::int
-             FROM users
+             FROM ${this.S}users
             WHERE kind = 'CITIZEN'
               AND "totalRegisteredMembers" IS NOT NULL
               AND "actualHouseholdMembers" IS NOT NULL)
             AS "marriedOffspringTotal",
-          (SELECT count(*)::int FROM users WHERE kind = 'CITIZEN' AND "actualHouseholdMembers" IS NULL)
+          (SELECT count(*)::int FROM ${this.S}users WHERE kind = 'CITIZEN' AND "actualHouseholdMembers" IS NULL)
             AS "householdsWithoutSize",
           (SELECT COALESCE(
                     json_agg(json_build_object('size', size, 'households', c) ORDER BY size),
                     '[]'::json)
              FROM (SELECT "actualHouseholdMembers" AS size, count(*)::int AS c
-                     FROM users
+                     FROM ${this.S}users
                     WHERE kind = 'CITIZEN' AND "actualHouseholdMembers" IS NOT NULL
                     GROUP BY 1) f)
             AS "familySizes",
@@ -524,7 +551,7 @@ export class ReportingService {
           (SELECT COALESCE(json_object_agg(t, n), '{}'::json)
              FROM (SELECT type AS t, sum(n)::int AS n
                      FROM (SELECT bu."unitType"::text AS type, count(*)::int AS n
-                             FROM building_units bu
+                             FROM ${this.S}building_units bu
                              JOIN countable_entries ce ON ce.id = bu."propertyEntryId"
                             GROUP BY 1
                            UNION ALL
@@ -532,33 +559,33 @@ export class ReportingService {
                              FROM countable_entries WHERE "unitType" IS NOT NULL GROUP BY 1) u
                     GROUP BY 1) x)
             AS "unitsByType",
-          (SELECT ((SELECT count(*) FROM building_units bu
+          (SELECT ((SELECT count(*) FROM ${this.S}building_units bu
                       JOIN countable_entries ce ON ce.id = bu."propertyEntryId")
                  + (SELECT count(*) FROM countable_entries WHERE "unitType" IS NOT NULL))::int)
             AS "unitTotal",
           (SELECT count(*)::int FROM excluded_entries)
             AS "duplicatePropertiesExcluded",
           (SELECT (SELECT count(*)::int FROM excluded_entries WHERE "unitType" IS NOT NULL)
-                + (SELECT count(*)::int FROM building_units bu
+                + (SELECT count(*)::int FROM ${this.S}building_units bu
                      JOIN excluded_entries ee ON ee.id = bu."propertyEntryId"))
             AS "duplicateUnitsExcluded",
-          COALESCE((SELECT sum(amount) FROM citizen_payments), 0)::float8
+          COALESCE((SELECT sum(amount) FROM ${this.S}citizen_payments), 0)::float8
             AS "billedTotal",
-          COALESCE((SELECT sum("paidAmount") FROM citizen_payments), 0)::float8
+          COALESCE((SELECT sum("paidAmount") FROM ${this.S}citizen_payments), 0)::float8
             AS "collectedTotal",
-          COALESCE((SELECT sum(amount - "paidAmount") FROM citizen_payments
+          COALESCE((SELECT sum(amount - "paidAmount") FROM ${this.S}citizen_payments
                      WHERE "paymentStatus" <> 'PAID'), 0)::float8
             AS "outstandingTotal",
           -- Derived from the due date on read, never stored: a flag written by
           -- a nightly job is wrong for every hour between a due date passing
           -- and the job next running.
-          COALESCE((SELECT sum(amount - "paidAmount") FROM citizen_payments
+          COALESCE((SELECT sum(amount - "paidAmount") FROM ${this.S}citizen_payments
                      WHERE "paymentStatus" = 'UNPAID' AND "dueDate" < now()), 0)::float8
             AS "overdueTotal",
-          (SELECT count(*)::int FROM citizen_payments
+          (SELECT count(*)::int FROM ${this.S}citizen_payments
             WHERE "paymentStatus" = 'UNPAID' AND "dueDate" < now())
             AS "overdueCount",
-          (SELECT count(*)::int FROM citizen_payments
+          (SELECT count(*)::int FROM ${this.S}citizen_payments
             WHERE "paymentStatus" = 'PENDING_REVIEW')
             AS "pendingReviewCount",
           (SELECT COALESCE(json_agg(row_to_json(m) ORDER BY m.month), '[]'::json)
@@ -576,7 +603,7 @@ export class ReportingService {
                         (date_trunc('month', now()) - interval '5 months')::timestamp,
                         date_trunc('month', now())::timestamp,
                         interval '1 month') AS d(m)
-                 LEFT JOIN citizen_payments p
+                 LEFT JOIN ${this.S}citizen_payments p
                         ON date_trunc('month', p."dueDate") = d.m
                 GROUP BY d.m) m)
             AS "monthly"
@@ -640,6 +667,15 @@ export class ReportingService {
       }),
     );
 
+    /*
+      The card's own point, which is the parcel's.
+
+      P5-T4 made this prefer the linked building's entrance and P5-T7 reverted
+      it, for the reason `computeRegisteredParcels` was reverted: the map draws
+      buildings on their own layer, from `mapPins`, and a second per-building
+      dot from a *registration* endpoint duplicates it. This answers "where is
+      the property this card is about", and the answer is its parcel.
+    */
     return rows.map((row) => ({
       id: row.id,
       propertyNumber: row.propertyNumber!,
@@ -726,6 +762,7 @@ export class ReportingService {
             submittedAt: true,
             status: true,
             flaggedFields: true,
+            notes: true,
             properties: {
               select: {
                 id: true,
@@ -746,6 +783,17 @@ export class ReportingService {
                 sharedRights: true,
                 latitude: true,
                 longitude: true,
+                /*
+                  The censused structure behind the card, when there is one.
+
+                  Two fields and they are not interchangeable (D14): `code` is
+                  the municipality's own `ZONE-PARCEL-SUFFIX`, and
+                  `postedNumber` is what is actually painted on the building.
+                  A notice prints both, because where they disagree the
+                  collector standing in the street trusts the paint.
+                */
+                buildingId: true,
+                building: { select: { code: true, postedNumber: true } },
                 // The units themselves, not just how many: a landlord's claim
                 // over a building *is* the unit list, and a bare count told a
                 // reviewer nothing about which floors were being claimed.
@@ -759,6 +807,8 @@ export class ReportingService {
                     unitArea: true,
                     sharedRights: true,
                     unitStatus: true,
+                    unitId: true,
+                    unit: { select: { unitCode: true, postedNumber: true } },
                   },
                 },
               },
@@ -878,6 +928,16 @@ export class ReportingService {
          * opening the record for editing.
          */
         flags: readRegistrationFlags(registration.flaggedFields),
+        /*
+          «ملاحظات» — on the profile for the same reason the flags above are.
+
+          This is the page a collector opens before knocking on a door, and a
+          note is frequently the single most useful thing on it: «الأسرة تنتقل
+          نهاية الشهر» or «الدرج مكسور، الزيارة القادمة من الخلف» is what the
+          last officer learned by standing there. A note visible only inside
+          the edit form is a note nobody reads before setting out.
+        */
+        notes: registration.notes,
         properties: registration.properties.map((property) => ({
           id: property.id,
           neighborhood: property.neighborhood,
@@ -899,15 +959,21 @@ export class ReportingService {
           sharedRights: property.sharedRights,
           latitude: property.latitude,
           longitude: property.longitude,
+          buildingId: property.buildingId,
+          buildingCode: property.building?.code ?? null,
+          buildingPostedNumber: property.building?.postedNumber ?? null,
           unitCount: property.units.length,
           units: property.units.map((unit) => ({
             id: unit.id,
             unitType: unit.unitType,
             floor: unit.floor,
             side: unit.side,
-            unitArea: Number(unit.unitArea),
+            unitArea: unit.unitArea == null ? null : Number(unit.unitArea),
             sharedRights: unit.sharedRights,
             unitStatus: unit.unitStatus,
+            unitId: unit.unitId,
+            unitCode: unit.unit?.unitCode ?? null,
+            unitPostedNumber: unit.unit?.postedNumber ?? null,
           })),
         })),
         documents: registration.documents.map((document) => ({
@@ -1058,6 +1124,7 @@ export class ReportingService {
       return computed;
     };
 
+    // Keyed by رقم العقار: one entry per parcel, whatever is standing on it.
     const byParcel = new Map<string, RegisteredParcel>();
     /*
       Each parcel's registrants, indexed by citizen id.
@@ -1074,6 +1141,20 @@ export class ReportingService {
       const citizenId = row.registration.citizen.id;
       const propertyNumber = row.propertyNumber!;
 
+      /*
+        One marker per parcel, at the parcel's own point.
+
+        P5-T5 split this by censused structure and P5-T7 reverted it: the map
+        already draws a **separate census layer** — an icon per building at its
+        own entrance, coloured by survey status and ringed by damage — so
+        splitting these too put a second dot on top of every building pin and
+        said the same thing twice in two visual languages.
+
+        This layer answers a question about the *plot*: «who is registered on
+        عقار 403». Everyone on it belongs to one dot, whichever structure they
+        are in, and the parcel's own coordinate is the honest position for an
+        answer about the parcel.
+      */
       let parcel = byParcel.get(propertyNumber);
       if (!parcel) {
         parcel = {
@@ -1324,6 +1405,27 @@ export class ReportingService {
   @OnEvent('fee.issued')
   @OnEvent('payment.declared')
   @OnEvent('payment.reviewed')
+  /**
+   * The census moves the map, so the census has to clear the map's cache.
+   *
+   * This was missing and became visible the moment `getRegisteredParcels`
+   * started positioning its markers on `Building.latitude/longitude` instead of
+   * the parcel centroid: an officer places a building's entrance, reloads the
+   * map, and the dot does not move — for the whole TTL, which is five minutes
+   * in the shipped config and reads exactly like the pin having failed to save.
+   *
+   * `building.changed` covers every write in `BuildingsService` and
+   * `CensusSyncService` — created, edited, deleted, units generated, occupancy
+   * recorded or ended, a visit logged, a code recomputed — and each of those
+   * can change what a marker is, where it sits, or who is listed under it.
+   */
+  @OnEvent('building.changed')
+  /**
+   * Damage is drawn as the ring on every census pin and counted on the ledger's
+   * «مبانٍ متضررة» tile, so an assessment recorded in the field is stale data on
+   * two screens until this fires.
+   */
+  @OnEvent('damage.recorded')
   async onDashboardDataChanged(): Promise<void> {
     await this.cache.invalidatePrefix(`dashboard:${this.tenantContext.tenantSlug}:`);
   }

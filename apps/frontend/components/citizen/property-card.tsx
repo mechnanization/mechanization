@@ -1,45 +1,40 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CheckCircle2,
   ChevronDown,
-  DoorOpen,
-  FileQuestion,
-  HardHat,
-  House,
-  KeyRound,
   Loader2,
   MapPin,
   Plus,
-  Trash2,
   TriangleAlert,
   Users,
-  X,
 } from 'lucide-react';
 import {
   getLabels,
-  isFlaggablePath,
   isUnoccupied,
   LAND_TYPE,
   OCCUPANCY_TYPE,
   PROPERTY_FIELD_MAP,
-  UNIT_STATUS,
-  UNIT_TYPE,
+  STRUCTURE_TYPE_MAP,
 } from '@mechanization/shared-schemas';
 import type {
   LandType,
   OccupancyType,
   PropertyType,
+  StructureType,
   UnitStatus,
   UnitType,
 } from '@mechanization/shared-schemas';
-import { checkPropertyNumber, type PropertyNumberCheck } from '@/lib/api-client';
+import {
+  checkPropertyNumber,
+  peekPropertyNumberCheck,
+  type PropertyNumberCheck,
+} from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Field, useFieldFlags } from '@/components/ui/field';
+import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -49,9 +44,28 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SegmentedControl } from '@/components/ui/segmented-control';
+import {
+  BuildingUnitPicker,
+  type LockedCensusTarget,
+} from '@/components/admin/building-unit-picker';
 import { cn, scopeErrors } from '@/lib/utils';
+import {
+  flagPath,
+  SharedRightsField,
+  UnitsEditor,
+  UnitStatusChoice,
+} from '@/components/citizen/unit-fields';
 
 export interface UnitDraft {
+  /**
+   * The canonical `Unit` this line describes, when the officer linked one.
+   *
+   * Set by `BuildingUnitPicker` and never typed. Where it is present the
+   * census record outranks this row field by field (P2-T8); where it is absent
+   * — a card filed before the building was surveyed — this row is all there is,
+   * and that is permanent rather than transitional.
+   */
+  unitId?: string;
   unitType?: UnitType;
   floor?: string;
   side?: string;
@@ -63,6 +77,34 @@ export interface UnitDraft {
 
 export interface PropertyDraft {
   id?: string;
+  /** The censused structure this card is about, when one was linked (§3.7). */
+  buildingId?: string;
+  /**
+   * Set when the officer chose «منشأة جديدة على هذا العقار» and the building
+   * does not exist yet.
+   *
+   * `buildingId` is filled in at the same moment, with the id carried here —
+   * the browser mints it, and `clientSubmissionId` makes it the row's primary
+   * key, so every other part of the form can reference the structure before it
+   * has been sent. The creation itself is issued at submit time, before the
+   * registration, because a card must never name a building that failed to be
+   * made.
+   *
+   * Stripped by `toPayloadProperty`: this describes work still to be done, not
+   * a field of the card.
+   */
+  pendingBuilding?: {
+    /** Minted in the picker; becomes `Building.id` via `clientSubmissionId`. */
+    id: string;
+    parcelNumber: string;
+    structureType: StructureType;
+    /**
+     * «تحقَّقت، وهذه منشأة مختلفة» (D18), or "the census could not be reached
+     * and a person said to create one anyway". Both are a human answering the
+     * question, which is the only thing the server's guard is asking for.
+     */
+    acknowledgedDuplicates: boolean;
+  };
   occupancyType?: OccupancyType;
   landlordName?: string;
   landlordPhone?: string;
@@ -84,31 +126,6 @@ export interface PropertyDraft {
 
 const CHECK_DEBOUNCE_MS = 500;
 
-/**
- * The unit types a مبنى can actually contain.
- *
- * Derived from `UNIT_TYPE` rather than retyped, which is the whole point: this
- * list said شقة / عيادة / محل for as long as it was a literal, and went on
- * saying it after the taxonomy gained مكتب and مستودع — so a municipality whose
- * schedule of fees charges a warehouse differently from a shop had no way to
- * record one, and two values sat in the database and in the fee-target list
- * reachable from nothing. Subtracting from the enum keeps this correct the next
- * time it widens.
- */
-const BUILDING_UNIT_TYPES = UNIT_TYPE.filter((type) => type !== 'INDEPENDENT_HOUSE');
-
-/**
- * This card's dot-path for one of its fields — `properties.2.propertyNumber`.
- *
- * The index is the card's position in the form, which is the same index the
- * server's flag paths and the validator's error keys use. Written here rather
- * than interpolated at each of a dozen call sites so there is one place the
- * three vocabularies are made to agree.
- */
-function flagPath(index: number, field: string): string {
-  return `properties.${index}.${field}`;
-}
-
 export function PropertyCard({
   tenant,
   index,
@@ -124,14 +141,37 @@ export function PropertyCard({
   errors = {},
   locale = 'ar',
   title,
+  token,
+  citizenId,
+  censusPicker = false,
+  lockedCensusTarget,
 }: {
   tenant: string;
   index: number;
   draft: PropertyDraft;
+  /**
+   * The citizen this card belongs to, when they already have an id.
+   *
+   * Forwarded to `BuildingUnitPicker` and read only by its unit chips, to tell
+   * "this person is already recorded in that flat" from "somebody else is".
+   * The first is a confirmation and the second decides who pays the رسم نظافة;
+   * without an id the control could not distinguish them and said the same
+   * thing for both.
+   */
+  citizenId?: string;
   allowedTypes: readonly PropertyType[];
   collapsed: boolean;
   onToggleCollapse: () => void;
-  onChange: (next: PropertyDraft) => void;
+  /**
+   * An updater, deliberately — never a finished draft.
+   *
+   * Forcing every caller through `(current) => next` is what makes concurrent
+   * writes compose instead of clobbering each other. A signature that also
+   * accepted a plain `PropertyDraft` would let the old snapshot-spreading shape
+   * back in, and its failure mode is silent: the card renders correctly and the
+   * value is lost on save. See `set` below.
+   */
+  onChange: (update: (current: PropertyDraft) => PropertyDraft) => void;
   /**
    * Start another structure on this same رقم العقار.
    *
@@ -148,15 +188,85 @@ export function PropertyCard({
   locale?: string;
   /** Overrides the default "العقار {index+1}" heading — used when grouped under a shared parcel. */
   title?: string;
+  /** A staff session. Without one the census picker is not rendered at all. */
+  token?: string | null;
+  /** Opt-in, so the citizen wizard's own use of this card is unchanged. */
+  censusPicker?: boolean;
+  /** Set when the form was launched from a building's unit matrix. */
+  lockedCensusTarget?: LockedCensusTarget | null;
 }) {
   const labels = getLabels(locale);
   const visible: readonly string[] = draft.propertyType
     ? PROPERTY_FIELD_MAP[draft.propertyType]
     : [];
 
-  const set = (patch: Partial<PropertyDraft>) => onChange({ ...draft, ...patch });
+  /*
+    Every write is expressed against the card's *current* value, never against
+    the `draft` prop this render closed over.
+
+    `onChange({ ...draft, ...patch })` was the old shape, and it made each write
+    a full-copy replacement built from a snapshot. Two writes landing in one
+    commit both spread the same snapshot, so the second reverted the first —
+    and the census picker issues exactly that pattern: linking a building sets
+    `buildingId`, the fetch it triggers fires the effect that copies
+    «اسم المبنى» down, and that second write — built from the pre-link snapshot
+    — put `buildingId` back to undefined. The officer watched the building stay
+    selected, saved, and was told «بلا ربط بسجل المباني».
+  */
+  const set = (patch: Partial<PropertyDraft>) =>
+    onChange((current) => ({ ...current, ...patch }));
 
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+
+  /**
+   * The censused structure this card is linked to, reported up by the picker.
+   *
+   * Held here rather than fetched again because the picker already loads it,
+   * and two components asking the server the same question is how they end up
+   * disagreeing about the answer. It is what «اسم المبنى» reads from when the
+   * register has a name for the block.
+   */
+  const [linkedBuilding, setLinkedBuilding] = useState<{
+    id: string;
+    code: string;
+    name: string | null;
+    units: Array<{ id: string; unitCode: string }>;
+  } | null>(null);
+
+  /**
+   * `unitId` → `0202`, so «وحدات المبنى» can head a linked row by the code the
+   * officer picked off the matrix rather than by its position in this form.
+   *
+   * Derived from what the picker already loaded. The alternative — the card
+   * fetching the building a second time — is how two components start
+   * disagreeing about it, which is the same reason `linkedBuilding` is
+   * reported upward rather than re-read.
+   */
+  /**
+   * What «نوع الوحدة» starts as on a new row, decided by the structure.
+   *
+   * `STRUCTURE_TYPE_MAP` is the one statement of which unit a structure is made
+   * of, and the building editor has always read it — picking «مستودع / هنغار»
+   * there defaults the blueprint to مستودع. This card offered the same
+   * structure-type list and then asked the question again per flat.
+   *
+   * Read from the *pending* structure only. A card linked to a building that
+   * already exists gets its unit rows from the matrix, where each flat carries
+   * the type the census recorded for it, and a default would be overruling a
+   * surveyed fact with a guess about the block as a whole.
+   */
+  const defaultUnitType = draft.pendingBuilding
+    ? STRUCTURE_TYPE_MAP[draft.pendingBuilding.structureType].defaultUnitType
+    : undefined;
+
+  const unitCodes = useMemo(() => {
+    const codes: Record<string, string> = {};
+    for (const unit of linkedBuilding?.units ?? []) codes[unit.id] = unit.unitCode;
+    return codes;
+  }, [linkedBuilding]);
+
+  /** The register has an answer, so the field states it instead of asking. */
+  const namedByCensus = Boolean(draft.buildingId && linkedBuilding?.name);
 
   const isBuilding = draft.propertyType === 'BUILDING';
   const units = draft.units ?? [];
@@ -213,7 +323,29 @@ export function PropertyCard({
         ) : null}
       </CardHeader>
 
-      {collapsed ? null : (
+      {/*
+        Folded away with CSS, not unmounted.
+
+        `{collapsed ? null : …}` threw the body away, and with it everything the
+        census picker had loaded and decided. Re-opening a card re-mounted the
+        picker, which re-fetched the parcel's structures and the linked
+        building's matrix — «جاري مراجعة سجل المباني…» again on every fold, on
+        the phones least able to afford it.
+
+        Worse than the spinner was what came back wrong. «بدون ربط» lives in the
+        picker's own state, because "declined" and "not yet decided" are the
+        same absence in the draft; a re-mount forgot it, and the auto-preselect
+        that arms a new structure on an empty parcel was then free to fire
+        again. Folding a card the officer had deliberately left unlinked could
+        silently queue a building for creation.
+
+        Hidden rather than removed, so the picker keeps its fetches and its
+        answers for as long as the form is open. The cost is that a collapsed
+        card loads its matrix too — which is work the officer was going to
+        need anyway, and it is now done before they open the card rather than
+        while they wait.
+      */}
+      <div className={cn(collapsed && 'hidden')}>
         <CardContent className="space-y-4 pt-4">
           <div className="grid gap-3.5 sm:grid-cols-2">
             <Field
@@ -241,6 +373,33 @@ export function PropertyCard({
               locale={locale}
             />
           </div>
+
+          {/*
+            The census link, on the two types that can stand on a structure.
+
+            Staff-only, because it needs a session to read the census — the
+            citizen wizard renders this same card and simply does not get the
+            control, which is correct: a resident has no view of the
+            municipality's survey and nothing to link against.
+
+            أرض has nothing standing on it and a خيمة stays a bare card (Q2), so
+            neither is offered one.
+          */}
+          {token && censusPicker && (draft.propertyType === 'BUILDING' || draft.propertyType === 'HOUSE') ? (
+            <BuildingUnitPicker
+              tenant={tenant}
+              token={token}
+              draft={draft}
+              citizenId={citizenId}
+              // The card's own updater, passed straight through rather than
+              // wrapped in `set`: the picker computes `units` from the previous
+              // array, so it needs the current card, not a patch applied to it.
+              onChange={onChange}
+              onLinkedBuilding={setLinkedBuilding}
+              locked={lockedCensusTarget}
+              locale={locale}
+            />
+          ) : null}
 
           {onAddOnSameParcel && draft.propertyNumber ? (
             <button
@@ -282,7 +441,9 @@ export function PropertyCard({
               <SegmentedControl
                 value={draft.propertyType ?? ''}
                 invalid={Boolean(errors.propertyType)}
-                onChange={(v) => onChange(changePropertyType(draft, v as PropertyType))}
+                onChange={(v) =>
+                  onChange((current) => changePropertyType(current, v as PropertyType))
+                }
                 options={allowedTypes.map((option) => ({
                   value: option,
                   label: labels.propertyType[option] ?? option,
@@ -324,13 +485,24 @@ export function PropertyCard({
                 path={isTenant ? flagPath(index, 'landlordPhone') : undefined}
                 required={isTenant}
                 error={errors.landlordPhone}
+                /*
+                  The field most likely to hold a foreign number of any on this
+                  form. A شاغل بتسامح's landlord is typically a relative abroad
+                  — which is exactly why `occupancyBranch` makes this optional
+                  for them — and a مستأجر's owner is often no nearer.
+                */
+                hint={
+                  locale === 'en'
+                    ? 'Lebanese numbers need no country code; for another country start with +.'
+                    : 'الرقم اللبناني لا يحتاج رمز الدولة؛ لرقم من دولة أخرى ابدأ بـ +.'
+                }
               >
                 <Input
                   id={`lp-${index}`}
                   type="tel"
                   inputMode="tel"
                   dir="ltr"
-                  placeholder="03 123456"
+                  placeholder="03 123456 / +33 6 12 34 56 78"
                   className="text-start"
                   invalid={Boolean(errors.landlordPhone)}
                   value={draft.landlordPhone ?? ''}
@@ -353,12 +525,40 @@ export function PropertyCard({
                 path={flagPath(index, 'buildingName')}
                 required
                 error={errors.buildingName}
+                /*
+                  Where the register has a name, this field states it rather
+                  than asks for it.
+
+                  Two tenants of one block used to produce «بناية النور» and
+                  «بنايه الن‍ور» in two rows nothing could recognise as the same
+                  building, because `PropertyEntry.buildingName` and
+                  `Building.name` were unrelated free-text columns with nothing
+                  comparing them. Linked, the register is the single answer and
+                  every card in the building shows it.
+
+                  The lock is deliberately one-directional. A building with *no*
+                  name leaves the field open, because the officer standing in
+                  its stairwell is the person who learns what residents call it
+                  — and what they type is promoted onto the building itself on
+                  save. Locking an empty field would make the name unrecordable
+                  by the only person who knows it.
+                */
+                hint={
+                  namedByCensus
+                    ? locale === 'en'
+                      ? `From the census record for ${linkedBuilding!.code}. Edit it on the building itself.`
+                      : `من سجل المباني (${linkedBuilding!.code}). التعديل يتم على المبنى نفسه.`
+                    : undefined
+                }
               >
                 <Input
                   id={`bn-${index}`}
                   invalid={Boolean(errors.buildingName)}
                   value={draft.buildingName ?? ''}
                   onChange={(e) => set({ buildingName: e.target.value })}
+                  readOnly={namedByCensus}
+                  aria-readonly={namedByCensus || undefined}
+                  className={cn(namedByCensus && 'bg-muted text-muted-foreground')}
                 />
               </Field>
             ) : null}
@@ -496,14 +696,18 @@ export function PropertyCard({
             <UnitsEditor
               index={index}
               units={units}
+              unitCodes={unitCodes}
+              defaultUnitType={defaultUnitType}
               asksUnitStatus={asksUnitStatus}
               errors={scopeErrors(errors, 'units')}
-              onChange={(next) => set({ units: next })}
+              onChange={(update) =>
+                onChange((current) => ({ ...current, units: update(current.units ?? []) }))
+              }
               locale={locale}
             />
           ) : null}
         </CardContent>
-      )}
+      </div>
 
       <ConfirmDialog
         open={confirmingRemove}
@@ -545,9 +749,32 @@ function changePropertyType(draft: PropertyDraft, propertyType: PropertyType): P
     propertyType,
   };
 
+  /*
+    The census link survives a move between the two types that can hold one.
+
+    `buildingId` used to be absent from every branch below, so switching a card
+    from مبنى to منزل — a correction an officer makes constantly, since it is
+    the same structure described differently — silently discarded the link.
+    The building stayed, the card stopped pointing at it, and `Unit`'s authority
+    over the row went with it, which is what a bill is computed from.
+
+    It is dropped on أرض and خيمة, and that is not the same event: land has
+    nothing standing on it and a tent stays a bare card (Q2), so `buildingId`
+    has no meaning there and `branchFieldsOnly` refuses it server-side anyway.
+
+    `units[].unitId` is deliberately *not* carried across. A منزل card has no
+    units array at all, and a مبنى's flats are picked against a specific matrix
+    — the building is the same, the choice of flats within it is not.
+  */
+  const censusLink: Pick<PropertyDraft, 'buildingId' | 'pendingBuilding'> = {
+    buildingId: draft.buildingId,
+    pendingBuilding: draft.pendingBuilding,
+  };
+
   if (propertyType === 'BUILDING') {
     keep.buildingName = draft.buildingName;
-    keep.units = draft.units?.length ? draft.units : [{}];
+    keep.units = draft.units?.length ? draft.units.map(({ unitId: _drop, ...u }) => u) : [{}];
+    Object.assign(keep, censusLink);
   }
   if (propertyType === 'HOUSE') {
     keep.buildingName = draft.buildingName;
@@ -555,6 +782,7 @@ function changePropertyType(draft: PropertyDraft, propertyType: PropertyType): P
     keep.unitArea = draft.unitArea;
     keep.sharedRights = draft.sharedRights;
     keep.unitStatus = draft.unitStatus;
+    Object.assign(keep, censusLink);
   }
   if (propertyType === 'LAND') {
     keep.landType = draft.landType;
@@ -627,484 +855,6 @@ function summarise(draft: PropertyDraft, locale: string = 'ar'): string {
  * مؤجرة by accident has to be able to get back to having said nothing, which
  * is a different claim from any of the four.
  */
-function UnitStatusChoice({
-  idPrefix,
-  value,
-  onChange,
-  locale = 'ar',
-}: {
-  idPrefix: string;
-  value: UnitStatus | undefined;
-  onChange: (next: UnitStatus | undefined) => void;
-  locale?: string;
-}) {
-  const labels = getLabels(locale);
-  const isEnglish = locale === 'en';
-
-  return (
-    <Field
-      label={isEnglish ? 'Unit Status' : 'حالة الوحدة'}
-      htmlFor={idPrefix}
-      hint={
-        isEnglish
-          ? 'Optional. Leave blank if not established — a blank unit is treated as occupied.'
-          : 'اختياري. اتركه فارغاً إذا لم يُتحقَّق منه — الوحدة غير المحدَّدة تُعامَل كمشغولة.'
-      }
-    >
-      <div id={idPrefix} className="flex flex-wrap gap-2 pt-1">
-        {UNIT_STATUS.map((option) => {
-          const Icon = UNIT_STATUS_ICON[option];
-          const selected = value === option;
-          // The two states that can exempt a unit from a fee are tinted apart
-          // from the two that cannot, so what a tap costs is visible before it
-          // is made.
-          const exempting = isUnoccupied(option);
-
-          return (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => onChange(selected ? undefined : option)}
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors select-none',
-                selected
-                  ? exempting
-                    ? 'border-warning/60 bg-warning/15 text-warning'
-                    : 'border-primary/60 bg-primary/10 text-primary'
-                  : 'border-border/70 bg-card text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-              )}
-            >
-              <Icon className="size-3.5 shrink-0" aria-hidden />
-              <span className="whitespace-nowrap">{labels.unitStatus[option]}</span>
-            </button>
-          );
-        })}
-      </div>
-    </Field>
-  );
-}
-
-/** One glyph per status, so the four are told apart before they are read. */
-const UNIT_STATUS_ICON: Record<UnitStatus, typeof House> = {
-  OWNER_OCCUPIED: House,
-  RENTED: KeyRound,
-  VACANT: DoorOpen,
-  UNDER_CONSTRUCTION: HardHat,
-};
-
-function SharedRightsField({
-  idPrefix,
-  path,
-  selected,
-  onChange,
-  locale = 'ar',
-}: {
-  idPrefix: string;
-  /**
-   * Absent for a unit's own shared rights — those live inside a building's
-   * units, and this form flags the unit collection as a whole rather than
-   * field by field inside it. See `UnitsEditor`.
-   */
-  path?: string;
-  selected: string[];
-  onChange: (next: string[]) => void;
-  locale?: string;
-}) {
-  const sharedRightsOptions = locale === 'en'
-    ? ['Parking space', 'Shared entrance', 'Shared rooftop', 'Shared garden']
-    : ['موقف سيارات', 'مدخل مشترك', 'سطح مشترك', 'حديقة مشتركة'];
-
-  return (
-    <Field
-      label={locale === 'en' ? 'Shared Rights' : 'حقوق مشتركة'}
-      htmlFor={idPrefix}
-      path={path}
-    >
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 pt-1">
-        {sharedRightsOptions.map((right, rightIndex) => {
-          const checked = selected.includes(right);
-          const id = `${idPrefix}-${rightIndex}`;
-          return (
-            <label
-              key={right}
-              htmlFor={id}
-              className="flex items-center gap-2 rounded-lg border border-border/70 bg-card px-2.5 py-1.5 text-xs text-foreground cursor-pointer select-none hover:bg-muted/40 transition-colors"
-            >
-              <Checkbox
-                id={id}
-                checked={checked}
-                onCheckedChange={() =>
-                  onChange(
-                    checked ? selected.filter((r) => r !== right) : [...selected, right],
-                  )
-                }
-              />
-              <span className="truncate">{right}</span>
-            </label>
-          );
-        })}
-      </div>
-    </Field>
-  );
-}
-
-/**
- * The units inside a building.
- *
- * A citizen who owns the whole building has one عقار — one رقم العقار, one
- * اسم المبنى — and several apartments or shops inside it. Filing that as one
- * property card per apartment is not possible: رقم العقار is unique per
- * municipality, so the second card would be rejected as a duplicate of the
- * first. The units therefore live inside the building rather than beside it.
- *
- * Collapsible for the same reason the property cards above it are: a citizen
- * filing a ten-unit building should not have to scroll past nine finished
- * units to reach the tenth, so adding one folds the rest shut — every unit
- * stays a tap away, because copying a floor's details from the one above it
- * is the usual reason to open an earlier one again.
- */
-function UnitsEditor({
-  index,
-  units,
-  asksUnitStatus,
-  errors,
-  onChange,
-  locale = 'ar',
-}: {
-  index: number;
-  units: UnitDraft[];
-  /** False on a tenant's or free occupant's card — see `asksUnitStatus`. */
-  asksUnitStatus: boolean;
-  errors: Record<string, string>;
-  onChange: (next: UnitDraft[]) => void;
-  locale?: string;
-}) {
-  const labels = getLabels(locale);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
-
-  /*
-    The whole unit list is flaggable; the fields inside one are not.
-
-    "We could not go through the building" is a real afternoon — the caretaker
-    was out, the stairwell was locked, the owner is abroad — and it is the
-    answer this control records. "We wrote down apartment 3 but not its floor"
-    is not that; it is an unfinished form, and letting it through one field at
-    a time would turn a building into a list of half-units nobody can bill.
-  */
-  const flagging = useFieldFlags();
-  const path = flagPath(index, 'units');
-  const flaggable = Boolean(flagging && isFlaggablePath(path));
-  const reason = flaggable ? flagging?.flags.get(path) : undefined;
-  const flagged = reason !== undefined;
-
-  const setUnit = (unitIndex: number, patch: Partial<UnitDraft>) =>
-    onChange(units.map((u, i) => (i === unitIndex ? { ...u, ...patch } : u)));
-
-  const toggleCollapsed = (unitIndex: number) =>
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(unitIndex)) next.delete(unitIndex);
-      else next.add(unitIndex);
-      return next;
-    });
-
-  const addUnit = () => {
-    // Inherits the previous unit's type *and* status: a floor of eight
-    // identical rented flats is the ordinary case, and re-answering both
-    // questions eight times is how the second one stops being answered.
-    const previous = units.at(-1);
-    onChange([...units, { unitType: previous?.unitType, unitStatus: previous?.unitStatus }]);
-    setCollapsed(new Set(units.map((_, i) => i)));
-  };
-
-  /**
-   * One status onto every unit at once.
-   *
-   * The control that decides whether this field is used at all. A landlord
-   * filing a twenty-flat building is answering the same question twenty times,
-   * and a form that demands that gets one of two things: a blank column, or a
-   * column filled in by pattern rather than by looking. Setting the common case
-   * in one tap leaves the officer with the handful of units that differ, which
-   * is the number of real decisions there actually were.
-   */
-  const setAllStatuses = (unitStatus: UnitStatus) =>
-    onChange(units.map((unit) => ({ ...unit, unitStatus })));
-
-  const removeUnit = (unitIndex: number) => {
-    onChange(units.filter((_, i) => i !== unitIndex));
-    setCollapsed((current) => {
-      const next = new Set<number>();
-      for (const i of current) {
-        if (i < unitIndex) next.add(i);
-        else if (i > unitIndex) next.add(i - 1);
-      }
-      return next;
-    });
-  };
-
-  return (
-    <section className="space-y-4">
-      <header className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0 space-y-1">
-          <h3 className="text-lg font-semibold">
-            {locale === 'en' ? 'Building Units' : 'وحدات المبنى'}
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {locale === 'en'
-              ? 'If you own the entire building, add each unit separately. Property number and building name remain the same for all units.'
-              : 'إذا كنت تملك المبنى بالكامل، أضف كل وحدة فيه على حدة. رقم العقار واسم المبنى يبقيان كما هما لجميع الوحدات.'}
-          </p>
-        </div>
-
-        {flaggable ? (
-          <button
-            type="button"
-            onClick={() => (flagged ? flagging?.clear(path) : flagging?.set(path, ''))}
-            aria-pressed={flagged}
-            className={cn(
-              'inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium transition-colors',
-              flagged
-                ? 'bg-warning/15 text-warning ring-1 ring-warning/40'
-                : 'text-muted-foreground/70 hover:bg-muted hover:text-foreground',
-            )}
-          >
-            {flagged ? (
-              <X className="size-3 shrink-0" aria-hidden />
-            ) : (
-              <FileQuestion className="size-3 shrink-0" aria-hidden />
-            )}
-            {flagged
-              ? locale === 'en'
-                ? 'Undo'
-                : 'تراجع'
-              : locale === 'en'
-                ? 'Units not surveyed'
-                : 'الوحدات غير مجرودة'}
-          </button>
-        ) : null}
-      </header>
-
-      {flagged ? (
-        <div className="space-y-1.5 rounded-lg border border-warning/40 bg-warning/5 p-2">
-          <label
-            htmlFor={`units-reason-${index}`}
-            className="text-[11px] font-medium text-warning"
-          >
-            {locale === 'en'
-              ? 'Why were the units not recorded? (required)'
-              : 'سبب عدم جرد الوحدات (إلزامي)'}
-          </label>
-          <input
-            id={`units-reason-${index}`}
-            value={reason ?? ''}
-            onChange={(event) => flagging?.set(path, event.target.value)}
-            placeholder={
-              locale === 'en'
-                ? 'e.g. Caretaker absent — return visit scheduled'
-                : 'مثال: الناطور غير موجود — زيارة لاحقة'
-            }
-            className="h-9 w-full rounded-md border border-warning/40 bg-background px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
-          />
-        </div>
-      ) : null}
-
-      {flagged || !asksUnitStatus || units.length < 2 ? null : (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border/70 bg-muted/20 p-2.5">
-          <span className="text-[11px] font-medium text-muted-foreground">
-            {locale === 'en'
-              ? `Set all ${units.length} units to:`
-              : `تعيين حالة الوحدات الـ${units.length} جميعاً:`}
-          </span>
-          {UNIT_STATUS.map((option) => {
-            const Icon = UNIT_STATUS_ICON[option];
-            return (
-              <button
-                key={option}
-                type="button"
-                onClick={() => setAllStatuses(option)}
-                className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <Icon className="size-3 shrink-0" aria-hidden />
-                {labels.unitStatus[option]}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {flagged ? null : units.map((unit, unitIndex) => {
-        const unitCollapsed = collapsed.has(unitIndex);
-        const unitErrors = scopeErrors(errors, String(unitIndex));
-
-        return (
-          <div
-            key={unitIndex}
-            className="space-y-5 rounded-lg border border-s-2 border-s-primary/40 bg-muted/20 p-4"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => toggleCollapsed(unitIndex)}
-                aria-expanded={!unitCollapsed}
-                className="-m-2 flex min-w-0 flex-1 items-center gap-2 rounded-md p-2 text-start transition-colors hover:bg-accent"
-              >
-                <ChevronDown
-                  className={cn(
-                    'size-4 shrink-0 text-muted-foreground transition-transform',
-                    unitCollapsed && '-rotate-90 rtl:rotate-90',
-                  )}
-                  aria-hidden
-                />
-                <span className="min-w-0">
-                  <h4 className="font-semibold">
-                    {locale === 'en' ? `Unit ${unitIndex + 1}` : `الوحدة ${unitIndex + 1}`}
-                  </h4>
-                  {unitCollapsed ? (
-                    <span className="mt-0.5 block truncate text-sm font-normal text-muted-foreground">
-                      {summariseUnit(unit, locale)}
-                    </span>
-                  ) : null}
-                </span>
-              </button>
-
-              {units.length > 1 ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  onClick={() => removeUnit(unitIndex)}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                  {locale === 'en' ? 'Delete' : 'حذف'}
-                </Button>
-              ) : null}
-            </div>
-
-            {unitCollapsed ? null : (
-              <>
-                <div className="grid gap-3.5 sm:grid-cols-2">
-                  <Field
-                    label={locale === 'en' ? 'Unit Type' : 'نوع الوحدة'}
-                    htmlFor={`ut-${index}-${unitIndex}`}
-                    required
-                    error={unitErrors.unitType}
-                  >
-                    <Select
-                      value={unit.unitType ?? ''}
-                      onValueChange={(next) => setUnit(unitIndex, { unitType: next as UnitType })}
-                    >
-                      <SelectTrigger id={`ut-${index}-${unitIndex}`}>
-                        <SelectValue placeholder={locale === 'en' ? 'Select…' : 'اختر…'} />
-                      </SelectTrigger>
-                      {/*
-                        `INDEPENDENT_HOUSE` is the one exclusion, and not an
-                        oversight: a منزل مستقل is not a unit inside a building,
-                        it is what a whole منزل card is. `PropertyEntry` derives
-                        it there, so offering it here would invite someone to
-                        file a house as a flat on the third floor — and produce
-                        a row that a fee aimed at «منازل مستقلة» would then
-                        charge twice over.
-                      */}
-                      <SelectContent>
-                        {BUILDING_UNIT_TYPES.map((o) => (
-                          <SelectItem key={o} value={o}>
-                            {labels.unitType[o]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-
-                  <Field
-                    label={locale === 'en' ? 'Floor' : 'الطابق'}
-                    htmlFor={`fl-${index}-${unitIndex}`}
-                    required
-                    error={unitErrors.floor}
-                  >
-                    <Input
-                      id={`fl-${index}-${unitIndex}`}
-                      invalid={Boolean(unitErrors.floor)}
-                      value={unit.floor ?? ''}
-                      onChange={(e) => setUnit(unitIndex, { floor: e.target.value })}
-                    />
-                  </Field>
-                </div>
-
-                <div className="grid gap-3.5 sm:grid-cols-2">
-                  <Field
-                    label={locale === 'en' ? 'Unit Area (sq. meters)' : 'مساحة الوحدة (متر مربع)'}
-                    htmlFor={`ua-${index}-${unitIndex}`}
-                    required
-                    error={unitErrors.unitArea}
-                  >
-                    <Input
-                      id={`ua-${index}-${unitIndex}`}
-                      inputMode="decimal"
-                      invalid={Boolean(unitErrors.unitArea)}
-                      value={unit.unitArea ?? ''}
-                      onChange={(e) => setUnit(unitIndex, { unitArea: e.target.value })}
-                    />
-                  </Field>
-
-                  <Field
-                    label={locale === 'en' ? 'Side / Orientation' : 'الجهة'}
-                    htmlFor={`sd-${index}-${unitIndex}`}
-                  >
-                    <Input
-                      id={`sd-${index}-${unitIndex}`}
-                      placeholder={locale === 'en' ? 'e.g. North, South' : 'مثال: شمالي، جنوبي'}
-                      value={unit.side ?? ''}
-                      onChange={(e) => setUnit(unitIndex, { side: e.target.value })}
-                    />
-                  </Field>
-                </div>
-
-                <SharedRightsField
-                  idPrefix={`sr-${index}-${unitIndex}`}
-                  selected={unit.sharedRights ?? []}
-                  onChange={(sharedRights) => setUnit(unitIndex, { sharedRights })}
-                  locale={locale}
-                />
-
-                {asksUnitStatus ? (
-                  <UnitStatusChoice
-                    idPrefix={`us-${index}-${unitIndex}`}
-                    value={unit.unitStatus}
-                    onChange={(unitStatus) => setUnit(unitIndex, { unitStatus })}
-                    locale={locale}
-                  />
-                ) : null}
-              </>
-            )}
-          </div>
-        );
-      })}
-
-      {flagged ? null : (
-        <Button variant="outline" className="w-full border-dashed" onClick={addUnit}>
-          <Plus className="size-4" aria-hidden />
-          {locale === 'en' ? 'Add Another Unit' : 'إضافة وحدة أخرى'}
-        </Button>
-      )}
-    </section>
-  );
-}
-
-function summariseUnit(unit: UnitDraft, locale: string = 'ar'): string {
-  const labels = getLabels(locale);
-  const parts = [
-    unit.unitType ? labels.unitType[unit.unitType] : (locale === 'en' ? 'Unspecified type' : 'لم يُحدَّد النوع'),
-    unit.floor ? (locale === 'en' ? `Floor ${unit.floor}` : `طابق ${unit.floor}`) : null,
-    unit.unitArea ? `${unit.unitArea} ${locale === 'en' ? 'm²' : 'م²'}` : null,
-    // Carried into the collapsed line because a building is reviewed folded:
-    // the officer checking their work scrolls a list of one-line summaries, and
-    // a vacancy invisible there is a vacancy nobody re-reads before saving.
-    unit.unitStatus ? labels.unitStatus[unit.unitStatus] : null,
-  ];
-  return parts.filter(Boolean).join(' — ');
-}
-
 function PropertyNumberField({
   tenant,
   index,
@@ -1120,7 +870,18 @@ function PropertyNumberField({
   onViewParcel?: (propertyNumber: string) => void;
   locale?: string;
 }) {
-  const [result, setResult] = useState<PropertyNumberCheck | null>(null);
+  /*
+    A verdict this tab already has is stated on the first frame.
+
+    The check is debounced by half a second and fires from a mount effect, so
+    re-opening a card the officer had already filled in — or opening the edit
+    form on a record whose عقار was checked minutes ago — replayed «جارٍ التحقق
+    من الكاداستر…» before printing the same «رقم صحيح» as last time. The parcel
+    had not changed; only the component had been unmounted.
+  */
+  const [result, setResult] = useState<PropertyNumberCheck | null>(
+    () => peekPropertyNumberCheck(tenant, value.trim()) ?? null,
+  );
   const [checking, setChecking] = useState(false);
 
   const requestId = useRef(0);
@@ -1150,9 +911,22 @@ function PropertyNumberField({
       return;
     }
 
+    /*
+      Only typing is debounced. A number whose verdict is already held is
+      settled now — waiting half a second to re-state it is the spinner this
+      field was showing on every mount.
+    */
+    const known = peekPropertyNumberCheck(tenant, trimmed);
+    if (known) {
+      requestId.current += 1;
+      setResult(known);
+      setChecking(false);
+      return;
+    }
+
     const timer = setTimeout(() => void verify(trimmed), CHECK_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [value, verify]);
+  }, [tenant, value, verify]);
 
   const stale = result !== null && result.propertyNumber !== value.trim();
   const settled = result !== null && !stale && !checking;

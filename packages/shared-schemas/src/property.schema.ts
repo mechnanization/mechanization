@@ -8,7 +8,7 @@ import {
   unitTypeSchema,
   type PropertyType,
 } from './enums';
-import { arabicOrLatinName, lebanesePhone } from './primitives';
+import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
 
 /**
  * Steps 3–4 — a single repeatable "property card".
@@ -41,7 +41,7 @@ const occupancyBranch = z.discriminatedUnion(
     z.object({
       occupancyType: z.literal('TENANT'),
       landlordName: arabicOrLatinName,
-      landlordPhone: lebanesePhone,
+      landlordPhone: internationalPhone,
     }),
     /**
      * شاغل بتسامح — occupying without paying بدل.
@@ -59,7 +59,7 @@ const occupancyBranch = z.discriminatedUnion(
     z.object({
       occupancyType: z.literal('FREE_OCCUPANT'),
       landlordName: arabicOrLatinName,
-      landlordPhone: lebanesePhone.optional(),
+      landlordPhone: internationalPhone.optional(),
     }),
   ],
   { errorMap: () => ({ message: 'نوع الإشغال مطلوب' }) },
@@ -140,6 +140,17 @@ export const neighborhoodField = z
  * the parcel instead of duplicating it.
  */
 export const buildingUnitSchema = z.object({
+  /**
+   * The canonical `Unit` this card line describes, when the officer picked one.
+   *
+   * The link the census turns on (§3.7, P2-T8): where it is set the `Unit` is
+   * authoritative field by field, and the flat the citizen filed and the flat
+   * the municipality surveyed are known to be the same flat rather than two
+   * rows that happen to agree. Null everywhere it was not offered — a card
+   * filed before the building was censused, or one whose parcel nobody has
+   * surveyed — and that is permanent rather than transitional.
+   */
+  unitId: uuid.optional(),
   unitType: unitTypeSchema,
   floor: z.string({ required_error: 'الطابق مطلوب' }).trim().min(1, 'الطابق مطلوب').max(20),
   side: z.string().trim().max(60).optional(),
@@ -161,6 +172,35 @@ export const buildingUnitsSchema = z
   .min(1, 'يجب إضافة وحدة واحدة على الأقل')
   .max(60, 'عدد الوحدات كبير جداً — يرجى مراجعة البلدية');
 
+/**
+ * The same unit with nothing required — the coercion shape, not a second
+ * rulebook.
+ *
+ * Stands to `buildingUnitSchema` exactly as `partialPropertyEntrySchema` stands
+ * to `propertyEntrySchema`, and exists for the same reason one level further
+ * down: a card carrying a per-unit «غير مؤكَّد» flag has had that field blanked
+ * before anything is parsed, so the strict unit schema would refuse to *shape*
+ * a record its own strict pass had already (correctly) accepted. Without it a
+ * flag on `properties.0.units.9.unitArea` passes validation and then throws in
+ * `shapeSubmission`, which is the worst of the three possible outcomes.
+ *
+ * The element rules are the identical field constants either way; what is
+ * dropped is only the requiredness the flag has accounted for.
+ */
+export const partialBuildingUnitSchema = buildingUnitSchema.partial();
+
+/**
+ * No `min(1)` here, and that is not a loosening.
+ *
+ * "At least one unit" is a rule about whether a مبنى card is acceptable, which
+ * the strict pass has already settled — either the card had units, or the
+ * officer flagged the whole array and said why. Re-asserting it on the
+ * coercion pass could only ever fail a record that was already accepted.
+ */
+export const partialBuildingUnitsSchema = z
+  .array(partialBuildingUnitSchema)
+  .max(60, 'عدد الوحدات كبير جداً — يرجى مراجعة البلدية');
+
 const propertyBranch = z.discriminatedUnion(
   'propertyType',
   [
@@ -168,6 +208,14 @@ const propertyBranch = z.discriminatedUnion(
       propertyType: z.literal('BUILDING'),
       neighborhood: neighborhoodField,
       propertyNumber: propertyNumberField,
+      /**
+       * The censused structure this card is about, when one was picked.
+       *
+       * On BUILDING and HOUSE only. أرض has nothing standing on it and never
+       * gets one, and a خيمة stays a bare card by Q2 — offering the field there
+       * would invite a link the census deliberately does not model.
+       */
+      buildingId: uuid.optional(),
       buildingName: z
         .string({ required_error: 'اسم المبنى مطلوب' })
         .trim()
@@ -179,6 +227,7 @@ const propertyBranch = z.discriminatedUnion(
       propertyType: z.literal('HOUSE'),
       neighborhood: neighborhoodField,
       propertyNumber: propertyNumberField,
+      buildingId: uuid.optional(),
       buildingName: z
         .string({ required_error: 'اسم المبنى/المنزل مطلوب' })
         .trim()
@@ -253,10 +302,11 @@ export const partialPropertyEntrySchema = z
   .object({
     occupancyType: occupancyTypeSchema,
     landlordName: arabicOrLatinName,
-    landlordPhone: lebanesePhone,
+    landlordPhone: internationalPhone,
     propertyType: propertyTypeSchema,
     neighborhood: neighborhoodField,
     propertyNumber: propertyNumberField,
+    buildingId: uuid,
     buildingName: z.string().trim().min(1).max(120),
     side: z.string().trim().max(60),
     landType: landTypeSchema,
@@ -265,7 +315,7 @@ export const partialPropertyEntrySchema = z
     shares: sharesField,
     sharedRights: sharedRightsField,
     unitStatus: unitStatusSchema,
-    units: buildingUnitsSchema,
+    units: partialBuildingUnitsSchema,
   })
   .partial()
   /**

@@ -2,6 +2,9 @@ node_modules/
 dist/
 build/
 .next/
+# `pnpm build:check` — a verification build kept out of the dev server's
+# `.next`, which the two would otherwise share and corrupt.
+.next-check/
 .turbo/
 /coverage/
 apps/*/coverage/

@@ -26,6 +26,7 @@
     "tenant:provision": "pnpm --filter @mechanization/backend tenant:provision",
     "lint": "eslint .",
     "typecheck": "pnpm --filter @mechanization/backend exec tsc --noEmit && pnpm --filter @mechanization/frontend exec tsc --noEmit",
+    "build:check": "pnpm --filter @mechanization/frontend build:check",
     "auth:sync-templates": "node scripts/sync-supabase-templates.mjs"
   },
   "pnpm": {

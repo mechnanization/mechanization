@@ -47,6 +47,13 @@ function cleanupStaleProcesses() {
 // Clean up any stale background processes from prior aborted runs that might hold file locks on Prisma engine DLLs
 cleanupStaleProcesses();
 
+// Ensure shared packages are built before apps start
+try {
+  execSync('pnpm --filter "./packages/*" build', { stdio: 'ignore' });
+} catch {
+  // Continue even if package build fails; dev watch will surface issues
+}
+
 function dockerAvailable() {
   try {
     execSync('docker info', { stdio: 'ignore' });
@@ -100,7 +107,7 @@ if (await ensureDockerRunning()) {
 // dump through behind it.
 let errorTailLinesRemaining = 0;
 const ERROR_TAIL_LINES = 30;
-const ERROR_PATTERN = /\bERROR\b|Error:|EADDRINUSE|EPERM|Cannot find module|Failed to compile|Failed to start/;
+const ERROR_PATTERN = /\bERROR\b|Error:|error TS\d+:|EADDRINUSE|EPERM|Cannot find module|Failed to compile|Failed to start/i;
 const WARN_PATTERN = /\bWARN\b/;
 const RESTART_TRIGGER_PATTERN = /Starting compilation in watch mode|File change detected|Starting incremental compilation/;
 const COMPILE_RESULT_PATTERN = /Found (\d+) errors?\. Watching for file changes\./;

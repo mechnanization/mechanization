@@ -81,6 +81,7 @@ export function PaymentReceipt({
   contactPhone,
   officeWhatsapp,
   receivedAmount,
+  councilDecisionRef,
   locale = 'ar',
 }: {
   open: boolean;
@@ -97,6 +98,15 @@ export function PaymentReceipt({
   contactPhone?: string | null;
   officeWhatsapp?: string | null;
   receivedAmount?: number;
+  /**
+   * تاريخ ورقم قرار المجلس البلدي, if the council has issued one (§7 Q1).
+   *
+   * Optional, and the footer says something either way: with a decision it
+   * cites the decision, without one it cites the municipal survey and valuation
+   * authority — which is the power the numbering actually rests on. What it
+   * never does is print a building code with nothing behind it.
+   */
+  councilDecisionRef?: string | null;
   locale?: string;
 }) {
   const printRef = React.useRef<HTMLDivElement>(null);
@@ -229,6 +239,7 @@ export function PaymentReceipt({
                 municipalityName={municipalityName}
                 governorate={governorate}
                 district={district}
+                councilDecisionRef={councilDecisionRef}
               />
             )}
           </div>
@@ -317,11 +328,14 @@ function DrawnFacsimile({
   municipalityName,
   governorate,
   district,
+  councilDecisionRef,
 }: FacsimileProps & {
   isDisplaced: boolean;
   municipalityName: string;
   governorate?: string | null;
   district?: string | null;
+  /** §7 Q1 — see the note on the prop of the same name above. */
+  councilDecisionRef?: string | null;
 }) {
   return (
     <div className="p-4">
@@ -404,6 +418,39 @@ function DrawnFacsimile({
               />
             </div>
 
+            {/*
+              The building's code and the number painted on it, side by side —
+              and both, never one (D14).
+
+              Where the register says `A-1042-B` and the door says `12`, the
+              collector standing in the street trusts the door. A notice that
+              printed only our code would send them looking for a building
+              nobody in the neighbourhood calls by that name; one that printed
+              only the painted number could not be looked up in the register.
+              The row is omitted entirely when the card was never linked to a
+              censused structure, which is most cards until a parcel is
+              surveyed.
+            */}
+            {property?.buildingCode ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <DottedField
+                  label="رمز المبنى (مسح البلدية)"
+                  value={property.buildingCode}
+                  flex="flex-[2]"
+                />
+                <DottedField
+                  label="الرقم المكتوب على المبنى"
+                  value={property.buildingPostedNumber || '—'}
+                  flex="flex-[1]"
+                />
+                <DottedField
+                  label="رقم الوحدة"
+                  value={property.units?.find((unit) => unit.unitCode)?.unitCode || '—'}
+                  flex="flex-[1]"
+                />
+              </div>
+            ) : null}
+
             <div className="flex flex-wrap items-center gap-3">
               <DottedField
                 label="رقم السجل"
@@ -480,6 +527,25 @@ function DrawnFacsimile({
               <div className="w-24 sm:w-32 border-b-2 border-black mt-6 mx-auto" />
             </div>
           </div>
+
+          {/*
+            Where the building code on this notice comes from (§7 Q1).
+
+            Printed only when the notice actually carries a code, because
+            otherwise it cites an authority for nothing. With a council decision
+            on file it names the decision; without one it names the power the
+            numbering already rests on — internal cadastral indexing and
+            parcel-linked building numbering are an administrative and fiscal
+            survey competence, which is precisely why Q1 concluded that no
+            decree is needed for the codes to be valid.
+          */}
+          {property?.buildingCode ? (
+            <p className="mt-3 border-t border-black/30 pt-2 text-center text-[10px] leading-relaxed text-black/70">
+              {councilDecisionRef
+                ? `رمز المبنى معتمد بموجب ${councilDecisionRef}.`
+                : 'رمز المبنى صادر ضمن أعمال المسح والتخمين البلدي، وهو رمز مسحي داخلي لا يحل محل رقم العقار في السجل العقاري.'}
+            </p>
+          ) : null}
         </div>
       </div>
     </div>

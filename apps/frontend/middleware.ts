@@ -120,7 +120,7 @@ export function middleware(request: NextRequest) {
 
   const [tenant, maybeLocale] = segments;
 
-  if (tenant === 'api' || maybeLocale === 'dashboard' || maybeLocale === 'admin') {
+  if (tenant === 'api' || tenant === '_next' || maybeLocale === 'dashboard' || maybeLocale === 'admin') {
     /**
      * Reserved segments that would otherwise shadow a municipality slug.
      *

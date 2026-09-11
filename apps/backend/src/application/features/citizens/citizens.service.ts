@@ -18,6 +18,7 @@ import type {
   ImportRow,
 } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { Prisma } from '../../../generated/tenant-client';
@@ -29,6 +30,7 @@ import type {
   ParcelRepository,
 } from '../../../domain/interfaces/parcel-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { CensusSyncService } from '../buildings/census-sync.service';
 import {
   RegistrationService,
   unestablishedOnCard,
@@ -206,11 +208,24 @@ export class CitizensService {
     private readonly registrations: RegistrationService,
     private readonly tenants: TenantService,
     @Inject(PARCEL_REPOSITORY) private readonly parcels: ParcelRepository,
+    private readonly census: CensusSyncService,
     private readonly events: EventEmitter2,
   ) {}
 
   private get db() {
     return this.tenantContext.prisma;
+  }
+
+  /**
+   * The schema prefix every raw query in this class writes into its SQL.
+   *
+   * Raw SQL is sent to Postgres untouched, so an unqualified table name resolves
+   * through `search_path` — session state on a connection shared through a
+   * transaction pooler, which is not required to carry it. See
+   * `tenant-schema-ref.ts` for the 42P01 this prevents.
+   */
+  private get S() {
+    return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
   // ──────────────────────────────  Read  ──────────────────────────────
@@ -279,7 +294,7 @@ export class CitizensService {
     */
     const statusFilter = filter.status
       ? Prisma.sql`AND (
-          SELECT r.status::text FROM registrations r
+          SELECT r.status::text FROM ${this.S}registrations r
            WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1
         ) = ${filter.status}`
       : Prisma.empty;
@@ -319,17 +334,17 @@ export class CitizensService {
           u."residentStatus"::text   AS "residentStatus",
           u."isActive",
           u."createdAt",
-          (SELECT count(*)::int FROM registrations r WHERE r."citizenId" = u.id)
+          (SELECT count(*)::int FROM ${this.S}registrations r WHERE r."citizenId" = u.id)
             AS "registrationCount",
           (SELECT count(*)::int
-             FROM property_entries pe
-             JOIN registrations r ON r.id = pe."registrationId"
+             FROM ${this.S}property_entries pe
+             JOIN ${this.S}registrations r ON r.id = pe."registrationId"
             WHERE r."citizenId" = u.id)
             AS "propertyCount",
-          (SELECT r.status::text FROM registrations r
+          (SELECT r.status::text FROM ${this.S}registrations r
             WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1)
             AS "latestStatus",
-          (SELECT r."submittedAt" FROM registrations r
+          (SELECT r."submittedAt" FROM ${this.S}registrations r
             WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1)
             AS "latestSubmittedAt",
           -- How many «غير مؤكَّد» fields that latest registration carries.
@@ -339,32 +354,32 @@ export class CitizensService {
           COALESCE((SELECT
               CASE WHEN jsonb_typeof(r."flaggedFields") = 'array'
                    THEN jsonb_array_length(r."flaggedFields") ELSE 0 END
-             FROM registrations r
+             FROM ${this.S}registrations r
             WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1), 0)::int
             AS "unestablishedFieldCount",
-          COALESCE((SELECT sum(p.amount) FROM citizen_payments p
+          COALESCE((SELECT sum(p.amount) FROM ${this.S}citizen_payments p
                      WHERE p."citizenId" = u.id), 0)::float8
             AS "feesTotal",
-          COALESCE((SELECT sum(p."paidAmount") FROM citizen_payments p
+          COALESCE((SELECT sum(p."paidAmount") FROM ${this.S}citizen_payments p
                      WHERE p."citizenId" = u.id), 0)::float8
             AS "paidTotal",
-          COALESCE((SELECT sum(p.amount - p."paidAmount") FROM citizen_payments p
+          COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
                      WHERE p."citizenId" = u.id AND p."paymentStatus" <> 'PAID'), 0)::float8
             AS "outstandingTotal",
-          COALESCE((SELECT sum(p.amount - p."paidAmount") FROM citizen_payments p
+          COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
                      WHERE p."citizenId" = u.id
                        AND p."paymentStatus" = 'UNPAID'
                        AND p."dueDate" < now()), 0)::float8
             AS "overdueTotal",
-          (SELECT count(*)::int FROM citizen_payments p
+          (SELECT count(*)::int FROM ${this.S}citizen_payments p
             WHERE p."citizenId" = u.id
               AND p."paymentStatus" = 'UNPAID'
               AND p."dueDate" < now())
             AS "overdueCount",
-          (SELECT count(*)::int FROM citizen_payments p
+          (SELECT count(*)::int FROM ${this.S}citizen_payments p
             WHERE p."citizenId" = u.id AND p."paymentStatus" = 'PENDING_REVIEW')
             AS "pendingReviewCount"
-        FROM users u
+        FROM ${this.S}users u
         WHERE u.kind = 'CITIZEN'
         ${searchFilter}
         ${statusFilter}
@@ -382,17 +397,17 @@ export class CitizensService {
         SELECT
           count(*)::int AS total,
           COALESCE(sum(
-            COALESCE((SELECT sum(p.amount - p."paidAmount") FROM citizen_payments p
+            COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
                        WHERE p."citizenId" = u.id AND p."paymentStatus" <> 'PAID'), 0)
           ), 0)::float8 AS "allOutstanding",
           COALESCE(sum(
-            COALESCE((SELECT sum(p.amount - p."paidAmount") FROM citizen_payments p
+            COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
                        WHERE p."citizenId" = u.id
                          AND p."paymentStatus" = 'UNPAID'
                          AND p."dueDate" < now()), 0)
           ), 0)::float8 AS "allOverdue",
           count(*) FILTER (
-            WHERE (SELECT count(*) FROM citizen_payments p
+            WHERE (SELECT count(*) FROM ${this.S}citizen_payments p
                     WHERE p."citizenId" = u.id
                       AND p."paymentStatus" = 'UNPAID'
                       AND p."dueDate" < now()) > 0
@@ -405,11 +420,11 @@ export class CitizensService {
             narrowed too, ticking it would make the tab read its own result back.
           */
           count(*) FILTER (
-            WHERE (SELECT r.status::text FROM registrations r
+            WHERE (SELECT r.status::text FROM ${this.S}registrations r
                     WHERE r."citizenId" = u.id
                     ORDER BY r."submittedAt" DESC LIMIT 1) = 'REQUIRES_REVIEW'
           )::int AS "allRequiringReview"
-        FROM users u
+        FROM ${this.S}users u
         WHERE u.kind = 'CITIZEN'
         ${searchFilter}
       `,
@@ -491,6 +506,7 @@ export class CitizensService {
               referenceNumber: true,
               status: true,
               flaggedFields: true,
+              notes: true,
               properties: {
                 orderBy: { createdAt: 'asc' },
                 include: { units: { orderBy: { createdAt: 'asc' } } },
@@ -516,6 +532,15 @@ export class CitizensService {
        * whoever completes it re-derive which blanks were deliberate.
        */
       flags: readFlags(registration?.flaggedFields),
+      /*
+        Loaded back so an edit opens with the note already in the box.
+
+        Without this the field renders empty on every edit and the officer's
+        save — which replaces the note rather than merging it — would silently
+        delete whatever the last visit wrote. A write-only note is worse than
+        no note at all.
+      */
+      notes: registration?.notes ?? null,
       personal: {
         firstName: citizen.firstName,
         middleName: citizen.middleName ?? '',
@@ -557,6 +582,16 @@ export class CitizensService {
         shares: property.shares,
         sharedRights: property.sharedRights,
         unitStatus: property.unitStatus,
+        /*
+          The census link travels back to the form so a re-save keeps it.
+
+          Without this the edit path is silently destructive: an officer
+          correcting a phone number would re-submit the card with no
+          `buildingId`, and the link a colleague made from the matrix would be
+          gone — along with `Unit`'s authority over the row (P2-T8), which is
+          what a bill is computed from.
+        */
+        buildingId: property.buildingId,
         units: property.units.map((unit) => ({
           id: unit.id,
           unitType: unit.unitType,
@@ -565,6 +600,7 @@ export class CitizensService {
           unitArea: Number(unit.unitArea),
           sharedRights: unit.sharedRights,
           unitStatus: unit.unitStatus,
+          unitId: unit.unitId,
         })),
       })),
     };
@@ -590,6 +626,27 @@ export class CitizensService {
       payload: input.payload,
       createdById: input.actor.id,
     });
+
+    /*
+      The census learns what the register just learned (P5-T1).
+
+      Runs only for a submission that actually wrote something. A re-delivered
+      offline record changed nothing, and re-syncing it would end and re-open
+      the same occupancy — harmless, but it would log a second visit against a
+      door somebody stood at once.
+
+      `syncQuietly` never throws: the citizen is already committed, and a census
+      that failed to keep up must not be reported to the officer as a
+      registration that failed to save. The result rides back on the response so
+      the form can say what it linked.
+    */
+    const census = result.deduplicated
+      ? null
+      : await this.census.syncQuietly({
+          registrationId: result.registrationId,
+          citizenId: result.citizenId,
+          actor: input.actor,
+        });
 
     // A re-delivered offline submission created nothing, so it is not a change
     // to announce: the audit log already carries the entry the first delivery
@@ -619,6 +676,22 @@ export class CitizensService {
       status: result.status,
       /** The queue reads this to tell "created" from "already had it". */
       deduplicated: result.deduplicated,
+      /**
+       * What the census did about it — units linked, cases closed, a building
+       * named.
+       *
+       * `null` carries two meanings and the caller must read `deduplicated`
+       * above to tell them apart. With `deduplicated: false` the sync **failed**
+       * and the link is still to be made from the ledger. With
+       * `deduplicated: true` it was **skipped**, because this delivery changed
+       * nothing and the first one already did all of this — announcing a
+       * failure there sends an officer to re-link a building that is already
+       * linked, and the occupancy they would create carries no `registrationId`
+       * for `endUnclaimed` to ever close.
+       *
+       * The record itself is safe in all three cases.
+       */
+      census,
     };
   }
 
@@ -699,7 +772,23 @@ export class CitizensService {
             survey office has not exported yet — now lands as «يتطلب مراجعة»
             with the number intact and the reason attached.
           */
-          payload: { ...parsed.data, flags: [], clientSubmissionId: undefined },
+          /*
+            A spreadsheet row carries no blanket reason either, and could not.
+            The reason is a sentence an officer says about a visit they made;
+            a row typed from a ledger years ago has no visit behind it, and
+            inventing one would put words in somebody's mouth on a record that
+            outlives them.
+          */
+          payload: {
+            ...parsed.data,
+            flags: [],
+            blanketFlagReason: undefined,
+            // Nor a note, and for the same reason: a note is something an
+            // officer observed at a door. A spreadsheet row has no visit
+            // behind it to have observed anything.
+            notes: undefined,
+            clientSubmissionId: undefined,
+          },
           actor: input.actor,
         });
         results.push({ row, ok: true, name, referenceNumber: created.referenceNumber });
@@ -829,7 +918,10 @@ export class CitizensService {
     // just filled in leaves «يتطلب مراجعة» by the same rule that put it there.
     const nextStatus: CitizenRecordStatus = statusForFlags(flags);
 
-    await this.db.$transaction(async (tx) => {
+    // Returned from the transaction rather than re-derived after it: the branch
+    // below creates a registration where none existed, so "this citizen's
+    // newest registration" is not necessarily the row this save just wrote to.
+    const registrationId = await this.db.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: citizen.id },
         data: {
@@ -886,6 +978,7 @@ export class CitizensService {
               referenceNumber: ReferenceNumber.generate(tenant.referencePrefix).value,
               status: nextStatus,
               flaggedFields: flags as never,
+              notes: input.payload.notes ?? null,
             },
             select: { id: true },
           })
@@ -904,7 +997,18 @@ export class CitizensService {
       if (existing?.id) {
         await tx.registration.update({
           where: { id: existing.id },
-          data: { status: nextStatus, flaggedFields: flags as never },
+          data: {
+            status: nextStatus,
+            flaggedFields: flags as never,
+            /*
+              Replaced by this save, exactly as the flags above are, and for
+              the same reason: the edit form shows the note and the officer
+              submits the whole record. An absent one means they cleared the
+              box, which has to be able to delete a note — merging would make a
+              note written by mistake permanent.
+            */
+            notes: input.payload.notes ?? null,
+          },
         });
       }
 
@@ -935,6 +1039,7 @@ export class CitizensService {
           unitStatus: (p.unitStatus ?? null) as never,
           latitude: p.latitude ?? null,
           longitude: p.longitude ?? null,
+          buildingId: p.buildingId ?? null,
         };
 
         const units = (p.units ?? []).map((unit) => ({
@@ -944,6 +1049,7 @@ export class CitizensService {
           unitArea: unit.unitArea,
           sharedRights: unit.sharedRights ?? [],
           unitStatus: (unit.unitStatus ?? null) as never,
+          unitId: unit.unitId ?? null,
         }));
 
         if (id) {
@@ -964,6 +1070,28 @@ export class CitizensService {
           });
         }
       }
+
+      return registrationId;
+    });
+
+    /*
+      And the census follows the correction (P5-T1).
+
+      The edit path needs this at least as much as the create path does, and for
+      a reason that only shows up on the second save: a card's unit links are
+      replaced wholesale above, so an officer who unticks a flat has said the
+      household is no longer in it. Without a sync the occupancy would stand,
+      the matrix would keep showing them there, and P2-T8's `heldThroughOccupancy`
+      would keep billing them for a flat their own file no longer claims.
+
+      `syncQuietly` for the same reason as on create: the correction is already
+      committed, and answering a saved edit with an error would send the officer
+      round again.
+    */
+    const census = await this.census.syncQuietly({
+      registrationId,
+      citizenId: citizen.id,
+      actor: input.actor,
     });
 
     this.events.emit('citizen.changed', {
@@ -980,7 +1108,7 @@ export class CitizensService {
       actorRole: input.actor.role,
     });
 
-    return { updated: true, citizenId: citizen.id, status: nextStatus };
+    return { updated: true, citizenId: citizen.id, status: nextStatus, census };
   }
 
   /**

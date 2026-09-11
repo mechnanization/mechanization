@@ -75,8 +75,24 @@ function leafOf(path: string): string {
  * path outside them cannot resolve to an input whatever it says. A misspelled
  * but well-formed path is harmless — it silences no real validation issue,
  * because issues are matched by exact path.
+ *
+ * The third alternative is the per-unit one, and it was missing. A مبنى is a
+ * card with an array of units under it, so the only flag an officer could
+ * raise about a building was on the whole `properties.0.units` array — "we
+ * could not go through the building at all". That is a real afternoon and the
+ * control still exists for it, but it was also the *only* thing expressible:
+ * a stairwell where nine flats were surveyed and the tenth did not answer had
+ * to be filed either as a complete building with an invented tenth unit, or as
+ * a building nobody entered. `properties.0.units.9.unitArea` is the path that
+ * was refused, and both walkers below — `withoutFlagged` here and
+ * `unexcusedIssues` in `admin-citizen.schema.ts` — now speak it.
+ *
+ * The index widths are bounded (`\d{1,2}`) for the same reason they always
+ * were: 25 cards and 60 units are the schema's own ceilings, so a
+ * three-digit index is not a path this form can produce.
  */
-const FLAG_PATH = /^(personal|contact)\.[a-zA-Z][a-zA-Z0-9]*$|^properties\.\d{1,2}\.[a-zA-Z][a-zA-Z0-9]*$/;
+const FLAG_PATH =
+  /^(personal|contact)\.[a-zA-Z][a-zA-Z0-9]*$|^properties\.\d{1,2}\.[a-zA-Z][a-zA-Z0-9]*$|^properties\.\d{1,2}\.units\.\d{1,2}\.[a-zA-Z][a-zA-Z0-9]*$/;
 
 export function isFlaggablePath(path: string): boolean {
   if (!FLAG_PATH.test(path)) return false;
@@ -191,6 +207,33 @@ export function withoutFlagged<T extends Record<string, unknown>>(
   for (const key of Object.keys(out)) {
     if (paths.has(`${prefix}.${key}`)) delete out[key];
   }
+
+  /*
+    One level down, into a building's units.
+
+    Recursive rather than a second bespoke loop, because a unit is the same
+    kind of thing this function already handles — a flat record of fields under
+    an indexed prefix — and the indices have to line up exactly with the ones
+    `issuePath` produces from a Zod issue's path, which is what lets a flag be
+    matched to the complaint it excuses instead of to a neighbouring field.
+
+    `units` deleted just above short-circuits this, and correctly: a flag on
+    the whole array says the officer never got into the building, so there are
+    no units left to walk and no per-unit reasons to look for.
+
+    Only `units` is descended into and the recursion stops there. It is the one
+    nested array in a card, and a generic deep walk would happily strip a field
+    out of `sharedRights` — a plain array of strings whose indices mean nothing
+    a flag path could name.
+  */
+  if (Array.isArray(out.units)) {
+    out.units = out.units.map((unit, index) =>
+      unit !== null && typeof unit === 'object' && !Array.isArray(unit)
+        ? withoutFlagged(unit as Record<string, unknown>, `${prefix}.units.${index}`, paths)
+        : unit,
+    );
+  }
+
   return out as T;
 }
 

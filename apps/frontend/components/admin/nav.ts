@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   BadgeDollarSign,
+  Building2,
   ClipboardList,
   KeyRound,
   LayoutDashboard,
@@ -9,10 +10,29 @@ import {
   Receipt,
   Settings,
   ShieldCheck,
+  UserPlus,
   Users,
   UsersRound,
   type LucideIcon,
 } from 'lucide-react';
+import { STAFF_ROLE } from '@mechanization/shared-schemas';
+
+/**
+ * Every staff role there is — spelled out rather than left implicit.
+ *
+ * `roles` used to be optional, and an omitted list meant "everyone". That reads
+ * as a decision but is indistinguishable from an oversight, and the two had
+ * already diverged: «الرسوم والمدفوعات» carried no list while
+ * `FeesController` refuses `FIELD_INSPECTOR` on every endpoint the page calls,
+ * so an inspector saw the row, opened it and got a 403 from a link the portal
+ * had offered them.
+ *
+ * Now every row states who may see it. A row that genuinely is universal says
+ * so with this constant, which also means a role added to `STAFF_ROLE` later
+ * has to be placed deliberately on each row instead of silently inheriting the
+ * whole sidebar.
+ */
+const EVERY_STAFF_ROLE: readonly string[] = STAFF_ROLE;
 
 /**
  * The admin section list, and the rules for reading it.
@@ -30,8 +50,11 @@ export interface NavItem {
   label: string;
   labelEn?: string;
   icon: LucideIcon;
-  /** Omitted = every staff role can see it. */
-  roles?: string[];
+  /**
+   * Who may see this row. Required — see `EVERY_STAFF_ROLE` for why a row that
+   * is open to everybody says so rather than leaving it off.
+   */
+  roles: readonly string[];
   /** Extra words the command palette matches on, beyond the label. */
   keywords?: string[];
 }
@@ -40,8 +63,8 @@ export interface NavGroup {
   /** Shown as a small caps heading; hidden when the rail is folded. */
   label: string;
   labelEn?: string;
-  /** Omitted = every staff role can see it. */
-  roles?: string[];
+  /** Omitted = the group itself gates nothing; its rows still do. */
+  roles?: readonly string[];
   items: NavItem[];
 }
 
@@ -59,30 +82,71 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'السجل',
     labelEn: 'Registry',
     items: [
-      // The register's overview, so the register's roles — see DashboardController.
+      /*
+        Oversight only.
+
+        The whole municipality's figures on one screen — arrears, collection
+        rates, household distributions — is a管理 view, not a working one, so
+        it is held to the roles that answer for those numbers rather than the
+        ones that generate them. `FIELD_INSPECTOR` used to be on this list and
+        is not any more: an inspector's own screen is «أرباحي والمسح الميداني»
+        below, which reports their work without exposing everybody else's.
+
+        `DashboardController.counters` and `.analytics` were narrowed to match.
+        The `map*` endpoints on that same controller keep their wider lists —
+        they serve «الخريطة», which is a working screen.
+      */
       {
         path: '/dashboard',
         label: 'لوحة التحكم',
         labelEn: 'Dashboard',
         icon: LayoutDashboard,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR'],
+        roles: ['SUPER_ADMIN', 'AUDITOR'],
         keywords: ['مؤشرات', 'تحليلات', 'إحصاءات', 'dashboard', 'analytics'],
       },
+      // Self-service: `StaffController.getMyProfile` answers for whoever is
+      // asking, so every role has a page here and none of them can see another
+      // person's.
       {
         path: '/inspector/profile',
         label: 'أرباحي والمسح الميداني',
         labelEn: 'Inspector Earnings',
         icon: BadgeDollarSign,
+        roles: EVERY_STAFF_ROLE,
         keywords: ['أرباح', 'عمولة', 'مفتش', 'مسح', 'عقارات', 'inspector', 'earnings'],
       },
-      // Directly under the dashboard: the dashboard reports on the register,
-      // and this is the register itself — one row per person.
+      // The register itself — one row per person. Readable by every role;
+      // writing is narrower, which is «تسجيل مواطن جديد» below.
       {
         path: '/citizens',
         label: 'المواطنون',
         labelEn: 'Citizens',
         icon: Users,
+        roles: EVERY_STAFF_ROLE,
         keywords: ['سجل', 'مواطن', 'عقار', 'استيراد', 'citizens', 'registry'],
+      },
+      /*
+        The counter's most-used action, promoted to a row of its own.
+
+        It was reachable only as a button on «المواطنون», which put the one
+        thing a clerk does forty times a day two screens from where they land
+        and made it invisible to the command palette. A distinct row also gives
+        the draft-restore notice somewhere to live: leaving this page no longer
+        discards what has been typed (see `citizen-draft.ts`), and that promise
+        only makes sense if there is a page to come back *to*.
+
+        Narrower than «المواطنون» deliberately — these are the roles
+        `CitizenEditor` admits and `CitizenController.create` accepts. An
+        `AUDITOR` reads the register and does not add to it, so offering them
+        the form would be offering a save the server refuses.
+      */
+      {
+        path: '/citizens/new',
+        label: 'تسجيل مواطن جديد',
+        labelEn: 'Register Citizen',
+        icon: UserPlus,
+        roles: ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'],
+        keywords: ['تسجيل', 'مواطن', 'جديد', 'إضافة', 'أسرة', 'نموذج', 'register', 'new', 'add'],
       },
       // A visit that didn't produce a citizen — nobody home, gate locked —
       // sits next to the registry it feeds rather than under land/map, since
@@ -92,15 +156,23 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'الحالات',
         labelEn: 'Cases',
         icon: ClipboardList,
+        roles: EVERY_STAFF_ROLE,
         keywords: ['زيارة', 'لا أحد في المنزل', 'متابعة', 'cases', 'follow-up', 'visit'],
       },
-      // Next to the registry rather than under settings: a fee is issued
-      // against the citizens in it, not configured in isolation.
+      /*
+        Next to the registry rather than under settings: a fee is issued
+        against the citizens in it, not configured in isolation.
+
+        `FIELD_INSPECTOR` is absent, and that is not a new restriction — it is
+        the one `FeesController` has always enforced on `notices`, `summary`,
+        `titles` and `payments`. The row simply stopped claiming otherwise.
+      */
       {
         path: '/fees',
         label: 'الرسوم والمدفوعات',
         labelEn: 'Fees & Billing',
         icon: Receipt,
+        roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER'],
         keywords: ['رسم', 'مطالبة', 'فاتورة', 'دفع', 'fees', 'billing'],
       },
       // Read-only: the ledger above answers "who owes what", this answers
@@ -126,6 +198,25 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: MapIcon,
         roles: ['SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER'],
         keywords: ['عقارات', 'مواقع', 'مسح', 'map', 'cadastre'],
+      },
+      // Between the map and the sectors on purpose: the census is what the map
+      // draws pins from and what a sector is ultimately a count of. Open to
+      // every staff role that may open the map — a collector needs a building's
+      // code to find a door as much as an inspector needs it to survey one.
+      {
+        path: '/buildings',
+        label: 'سجل المباني',
+        labelEn: 'Building Census',
+        icon: Building2,
+        roles: [
+          'SUPER_ADMIN',
+          'AUDITOR',
+          'FIELD_INSPECTOR',
+          'COLLECTOR',
+          'ACCOUNTANT',
+          'ADMINISTRATIVE_OFFICER',
+        ],
+        keywords: ['مبنى', 'مباني', 'وحدات', 'شقق', 'مسح', 'ضرر', 'إحصاء', 'buildings', 'units', 'census', 'damage'],
       },
       {
         path: '/zones',
@@ -165,24 +256,36 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: ['SUPER_ADMIN'],
         keywords: ['موظف', 'صلاحيات', 'حساب', 'staff', 'users'],
       },
+      // Everyone has a password to change and a second factor to enrol, and it
+      // is their own — there is no role for which this is someone else's data.
       {
         path: '/account',
         label: 'أمان الحساب',
         labelEn: 'Account Security',
         icon: KeyRound,
+        roles: EVERY_STAFF_ROLE,
         keywords: ['كلمة المرور', 'أمان', 'حسابي', 'مصادقة', '2fa', 'password', 'security', 'account'],
       },
     ],
   },
 ];
 
-/** The groups this role may see, with empty groups dropped entirely. */
+/**
+ * The groups this role may see, with empty groups dropped entirely.
+ *
+ * A role of `undefined` — a session still loading, or one whose claim carries
+ * no role — now sees **nothing**, where it previously saw every unguarded row.
+ * That inversion is the point of making `roles` required: the sidebar renders
+ * before the session is read, and "we do not know who this is yet" must not be
+ * the state in which the most permissive answer is given.
+ */
 export function visibleGroups(role: string | undefined): NavGroup[] {
+  if (!role) return [];
   return NAV_GROUPS
-    .filter((group) => !group.roles || (role && group.roles.includes(role)))
+    .filter((group) => !group.roles || group.roles.includes(role))
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => !item.roles || (role && item.roles.includes(role))),
+      items: group.items.filter((item) => item.roles.includes(role)),
     }))
     .filter((group) => group.items.length > 0);
 }

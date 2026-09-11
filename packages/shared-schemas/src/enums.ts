@@ -87,6 +87,21 @@ export const NON_OWNER_OCCUPANCY = ['TENANT', 'FREE_OCCUPANT'] as const;
  * is two charges for one flat unless something says which of the two rows is
  * the tenancy. This is that something.
  *
+ * `FREE_OCCUPIED` — «مشغولة بتسامح» — is the same escape for the third way of
+ * being the شاغل, and it was missing. `OCCUPANCY_TYPE.FREE_OCCUPANT` above
+ * describes the *person* living in a relative's flat without بدل; this
+ * describes the *unit* they are in, from the owner's side. Without it an owner
+ * whose son occupies the flat had no true answer: not `RENTED` (there is no
+ * lease, and writing one here is the falsehood `FREE_OCCUPANT` exists to
+ * refuse), not `VACANT` (somebody is in it), not `UNDER_CONSTRUCTION`. They
+ * picked `OWNER_OCCUPIED` or left it blank, and both read as "the owner is the
+ * شاغل" — so the owner was charged the occupancy fee *and* the son was charged
+ * it on his own card. The same double-count `RENTED` ends for tenancies, left
+ * standing for the one arrangement whose occupants are least able to argue.
+ *
+ * It also made the register's own figures dishonest in whichever direction the
+ * owner guessed: a شاغل بتسامح counted as rented stock, or as owner-occupied.
+ *
  * `VACANT` and `UNDER_CONSTRUCTION` are the two ways a unit has no شاغل at
  * all, which is what رسم الإشغال and رسم النظافة are levied on. They are kept
  * apart rather than folded into one «فارغة» because they are exempt for
@@ -96,6 +111,7 @@ export const NON_OWNER_OCCUPANCY = ['TENANT', 'FREE_OCCUPANT'] as const;
 export const UNIT_STATUS = [
   'OWNER_OCCUPIED',
   'RENTED',
+  'FREE_OCCUPIED',
   'VACANT',
   'UNDER_CONSTRUCTION',
 ] as const;
@@ -112,6 +128,59 @@ export type UnitStatus = z.infer<typeof unitStatusSchema>;
  * search for `=== 'VACANT'`.
  */
 export const UNOCCUPIED_UNIT_STATUS = ['VACANT', 'UNDER_CONSTRUCTION'] as const;
+
+/**
+ * The states in which somebody *other than the owner* is the شاغل.
+ *
+ * The owner's exemption from an occupant-borne fee (النظافة, القيمة التأجيرية)
+ * is not "this flat is rented" — it is "somebody else is the one inside, and
+ * they are billed on their own card". `RENTED` was the only way to say that,
+ * so the exemption was written as `!== 'RENTED'` at its one call site and a
+ * شاغل بتسامح fell straight through it.
+ *
+ * A named set rather than a second inline comparison, for the reason
+ * `UNOCCUPIED_UNIT_STATUS` above gives and this enum has now proven twice:
+ * the condition grows, and a growing condition spelled out at each call site
+ * is a search for `=== 'RENTED'` that somebody eventually loses.
+ *
+ * Deliberately **disjoint from** `UNOCCUPIED_UNIT_STATUS` rather than a
+ * superset of it. Both exempt the owner and they are not the same finding: a
+ * vacant flat has nobody to bill, and a tenanted one has somebody else. Fold
+ * them together and the register can no longer answer how much of the town is
+ * occupied — which is most of what the census is for.
+ */
+export const OCCUPIED_BY_OTHERS = ['RENTED', 'FREE_OCCUPIED'] as const;
+
+/**
+ * Whether this unit's شاغل is somebody other than its owner — **false for
+ * null**, exactly as `isUnoccupied` is, and for the same reason: a unit nobody
+ * was asked about is billed, and the resident who is owed the exemption comes
+ * and says so.
+ */
+export function isOccupiedByOthers(status: string | null | undefined): boolean {
+  return status != null && (OCCUPIED_BY_OTHERS as readonly string[]).includes(status);
+}
+
+/**
+ * The حالة الوحدة implied by a person's capacity in it — the census's answer
+ * to a question the owner's card asks separately.
+ *
+ * Who is in a flat is recorded in `UnitOccupancy`; what the flat's state is
+ * lives in `unitStatus` on two other rows. They are two statements of one fact
+ * maintained by two different screens, and nothing connected them: recording a
+ * مستأجر never made the unit «مؤجرة», so the owner's card went on saying
+ * «مشغولة من المالك» and both parties were billed for the flat.
+ *
+ * `OWNER` returns null on purpose. An owner in the occupancy table says
+ * nothing about whether they *live* there — the deed is not a statement of
+ * residence, and an owner abroad with a tenant downstairs is the case this
+ * whole join table exists for (D2). Only a non-owner spell settles the state.
+ */
+export function unitStatusForRole(role: string | null | undefined): string | null {
+  if (role === 'TENANT') return 'RENTED';
+  if (role === 'FREE_OCCUPANT') return 'FREE_OCCUPIED';
+  return null;
+}
 
 /**
  * Whether this unit has no occupant — and, crucially, **false for null**.
@@ -160,6 +229,295 @@ export type UnitType = z.infer<typeof unitTypeSchema>;
 export const LAND_TYPE = ['AGRICULTURAL', 'INDUSTRIAL'] as const;
 export const landTypeSchema = arabicEnum(LAND_TYPE, 'نوع الأرض مطلوب');
 export type LandType = z.infer<typeof landTypeSchema>;
+
+// ───────────────────────────  Building census  ───────────────────────────
+//
+// The vocabulary of the *structure*, as opposed to the vocabulary of the
+// citizen's property card above it. The two describe the same town and answer
+// different questions: a card says what one person filed about what they hold,
+// a building row says what stands on a parcel whether or not anyone has ever
+// been surveyed inside it. See docs/building-census-plan.md §3.
+
+/**
+ * What physically stands on a parcel.
+ *
+ * Kept separate from `PROPERTY_TYPE` rather than reused, because the two ask
+ * different questions and folding them together would produce a third,
+ * ambiguous one. `PropertyType.BUILDING` covers an apartment block, a shopping
+ * arcade and a hangar alike — adequate for "which fields does this card
+ * render", useless for "what is this structure and what units should it have".
+ * The explicit correspondence lives in `STRUCTURE_TYPE_MAP` below and nowhere
+ * else.
+ */
+export const STRUCTURE_TYPE = [
+  'RESIDENTIAL_BUILDING',
+  'INDEPENDENT_HOUSE',
+  'COMMERCIAL_CENTER',
+  'WAREHOUSE_HANGAR',
+  'MIXED_USE',
+  /**
+   * A mapped informal settlement or shelter cluster, registered deliberately as
+   * one structure on a parcel.
+   *
+   * Not what an ordinary tent card becomes. A خيمة filed by a refugee stays a
+   * bare `PropertyEntry`: tents have no permanent cadastral footprint, no fixed
+   * entrance to navigate to and no floor matrix, and they move between
+   * agricultural plots by season — so minting a one-unit building shell for
+   * each would corrupt every building-density, structural-inventory and
+   * war-damage figure the census exists to produce. This value is for the
+   * opposite case, where a field inspector means to put a whole settlement on
+   * the map as something to revisit.
+   */
+  'TENT_SHELTER',
+] as const;
+export const structureTypeSchema = arabicEnum(STRUCTURE_TYPE, 'نوع المنشأة مطلوب');
+export type StructureType = z.infer<typeof structureTypeSchema>;
+
+/**
+ * Where a structure stands in its own life, as distinct from what kind of thing
+ * it is and from what condition it is in.
+ *
+ * The third axis the census was missing. `STRUCTURE_TYPE` says *what* is on the
+ * parcel and `DAMAGE_LEVEL` says what has happened *to* it — neither can say
+ * that the thing is a poured foundation, or a permit nobody ever built against.
+ * Before this, an officer standing in front of a half-built shell had two
+ * options: invent a `RESIDENTIAL_BUILDING` with a fictional matrix, which then
+ * counts in every occupancy and coverage figure the census produces, or record
+ * nothing at all and leave the parcel looking unvisited.
+ *
+ * The ladder is the Dutch BAG's *pand* lifecycle, minus the states that only
+ * exist because their register is driven by permit paperwork we do not receive
+ * (`Pand in gebruik (niet ingemeten)`, `Verbouwing pand`, `Sloopvergunning
+ * verleend`). What is kept is the part a surveyor can establish by looking:
+ * whether it is permitted, going up, standing and used, standing and abandoned,
+ * gone, or abandoned before it was ever finished.
+ *
+ * Deliberately **not** merged into `DAMAGE_LEVEL` — that is D5 restated one
+ * level up. A building under construction has no damage history to overwrite,
+ * and a demolished-by-choice building is a different fact from a collapsed one.
+ */
+export const BUILDING_LIFECYCLE = [
+  /** رخصة بناء صادرة — permitted, nothing on the ground yet. */
+  'PERMITTED',
+  /** قيد الإنشاء — foundations poured or higher, not yet habitable. */
+  'UNDER_CONSTRUCTION',
+  /** قائم ومستعمل — standing and in use. The overwhelming default. */
+  'IN_USE',
+  /**
+   * مهجور — standing, structurally there, nobody using it as intended.
+   *
+   * Counted as occupiable below, and that is not an oversight: an abandoned
+   * building with squatters or a displaced family in it is exactly the case a
+   * war-damage census exists to find, and excluding it from the denominator
+   * would hide those households from every coverage figure.
+   */
+  'DERELICT',
+  /** مهدوم — taken down. Distinct from `TOTAL_COLLAPSE`, which is damage. */
+  'DEMOLISHED',
+  /** لم يُنفَّذ — permitted, then abandoned or revoked. BAG's `niet gerealiseerd`. */
+  'NOT_REALISED',
+] as const;
+export const buildingLifecycleSchema = arabicEnum(
+  BUILDING_LIFECYCLE,
+  'حالة المبنى الإنشائية غير صالحة',
+);
+export type BuildingLifecycle = z.infer<typeof buildingLifecycleSchema>;
+
+/**
+ * The lifecycle states in which a structure can hold households.
+ *
+ * This is the census denominator. A building that is permitted, going up,
+ * demolished or never built has no doors to knock on, so counting its units as
+ * «غير ممسوحة» would park permanent unreachable work on every dispatch list and
+ * hold the municipality's coverage percentage below 100 for ever.
+ *
+ * `DERELICT` is in, for the reason given on the value itself.
+ */
+export const OCCUPIABLE_LIFECYCLE = ['IN_USE', 'DERELICT'] as const;
+
+/**
+ * Whether this structure's units belong in survey and occupancy figures.
+ *
+ * Null reads as occupiable, matching every other nullable census field in this
+ * file: a building recorded before the column existed is a building somebody
+ * surveyed, and defaulting it out of the denominator would silently shrink the
+ * census the day the column shipped.
+ */
+export function isOccupiableLifecycle(status: string | null | undefined): boolean {
+  return status == null || (OCCUPIABLE_LIFECYCLE as readonly string[]).includes(status);
+}
+
+/**
+ * Per-unit survey progress — the state machine that makes an unsurveyed flat a
+ * row rather than an absence.
+ *
+ * `NOT_SURVEYED` and `VISITED_NO_ANSWER` are the two the whole table exists
+ * for. Before it, "nobody has ever tried this door" and "three officers have
+ * stood at it and got no answer" were the same thing — nothing — and neither
+ * could be dispatched against. A building's figure is a rollup of these; see
+ * `isSurveyed` below and D11 in the plan.
+ */
+export const SURVEY_STATUS = [
+  'NOT_SURVEYED',
+  'VISITED_NO_ANSWER',
+  'PARTIAL',
+  'COMPLETE',
+  'REFUSED',
+  'INACCESSIBLE',
+  'VACANT_CONFIRMED',
+  'DEMOLISHED',
+] as const;
+export const surveyStatusSchema = arabicEnum(SURVEY_STATUS, 'حالة المسح غير صالحة');
+export type SurveyStatus = z.infer<typeof surveyStatusSchema>;
+
+/**
+ * The statuses that count as a unit the municipality has an answer for.
+ *
+ * Narrow on purpose, and narrower than "the visit is over". `REFUSED` and
+ * `INACCESSIBLE` end a visit without producing any of the data the census is
+ * collecting, and `PARTIAL` says so in its name; counting any of them as
+ * surveyed would let a coverage percentage climb while the register stayed
+ * empty, which is precisely the number that would then be worthless. What is
+ * left is the three outcomes that are a finding about the unit: it was
+ * surveyed, it was confirmed empty, or it is no longer standing.
+ *
+ * Mirrored in SQL by migration 0030's `sync_building_unit_counts` trigger,
+ * which maintains `Building.unitsSurveyed`. Change one and change the other, or
+ * the map's colours and the ledger's percentages will quietly disagree.
+ */
+export const SURVEYED_STATUS = ['COMPLETE', 'VACANT_CONFIRMED', 'DEMOLISHED'] as const;
+
+/** Whether this unit's survey produced an answer. False for null, as ever. */
+export function isSurveyed(status: string | null | undefined): boolean {
+  return status != null && (SURVEYED_STATUS as readonly string[]).includes(status);
+}
+
+/**
+ * UN-Habitat's rapid building-level damage scale, verbatim.
+ *
+ * Not adjusted, not simplified and not extended — it is already the vocabulary
+ * of the Beirut Municipality and Bourj Hammoud assessments and of the national
+ * Building Destruction and Debris Quantities Assessment, so a municipality
+ * using these levels produces figures that aggregate with the national
+ * reconstruction datasets instead of standing alone.
+ *
+ * The split carrying the most weight in practice is `UNSAFE_EVACUATE` against
+ * `RESTRICTED_USE`: both are damaged buildings, and only the first means the
+ * residents must be out of it tonight. Aid allocation turns on that line, which
+ * is why the scale is not collapsed to "damaged / not damaged".
+ *
+ * `UNDER_CONSTRUCTION` is deliberately absent — it is a lifecycle state, it
+ * already exists in `UNIT_STATUS`, and admitting it here would overwrite a
+ * building's damage history with a fact about its building permit.
+ */
+export const DAMAGE_LEVEL = [
+  'NOT_AFFECTED',
+  'SAFE_MINOR_DAMAGE',
+  'RESTRICTED_USE',
+  'UNSAFE_EVACUATE',
+  'TOTAL_COLLAPSE',
+  'UNCLASSIFIED',
+] as const;
+export const damageLevelSchema = arabicEnum(DAMAGE_LEVEL, 'مستوى الضرر مطلوب');
+export type DamageLevel = z.infer<typeof damageLevelSchema>;
+
+/**
+ * Where a damage reading came from, and therefore how far to trust it.
+ *
+ * Recorded on every assessment rather than inferred from who wrote it: a
+ * satellite-derived level and an engineer's site visit disagreeing about the
+ * same building is ordinary, and is information — not a conflict to be resolved
+ * by overwriting one with the other.
+ */
+export const DAMAGE_SOURCE = [
+  'FIELD_VISIT',
+  'SATELLITE',
+  'SELF_REPORTED',
+  'OFFICIAL_REPORT',
+] as const;
+export const damageSourceSchema = arabicEnum(DAMAGE_SOURCE, 'مصدر التقييم مطلوب');
+export type DamageSource = z.infer<typeof damageSourceSchema>;
+
+/**
+ * Why a visit did not become a registration.
+ *
+ * There is no `WAR_DAMAGE` here and there will not be one. A حالة is a *failed
+ * visit* — something to do again — and damage is a *fact about a structure*.
+ * Merge them and «مُعالجة» stops having an answer: revisited, or repaired? A
+ * case may point at the `DamageAssessment` that prompted it instead, which
+ * keeps the reference without conflating the two lifecycles.
+ */
+export const CASE_TYPE = [
+  'UNIT_UNREACHABLE',
+  'ACCESS_REFUSED',
+  'VACANT_UNCONFIRMED',
+  'OWNERSHIP_DISPUTE',
+  'GENERAL_NOTE',
+] as const;
+export const caseTypeSchema = arabicEnum(CASE_TYPE, 'نوع الحالة غير صالح');
+export type CaseType = z.infer<typeof caseTypeSchema>;
+
+/**
+ * A person's relationship to a canonical unit.
+ *
+ * The same three values as `OCCUPANCY_TYPE`, and deliberately a separate enum:
+ * that one is a field on a citizen's property card and cannot exist without a
+ * registration behind it, this one is a row on the unit matrix and routinely
+ * does — an officer walking a stairwell can record that flat 3 is rented, and
+ * who its owner is, before either person has a file. Keeping them apart is what
+ * lets the unit-level fact outlive, or precede, the citizen-level one.
+ */
+export const OCCUPANCY_ROLE = ['OWNER', 'TENANT', 'FREE_OCCUPANT'] as const;
+export const occupancyRoleSchema = arabicEnum(OCCUPANCY_ROLE, 'صفة الإشغال مطلوبة');
+export type OccupancyRole = z.infer<typeof occupancyRoleSchema>;
+
+/**
+ * The one place the three taxonomies are allowed to meet.
+ *
+ * `StructureType` describes what stands on the parcel, `PropertyType` describes
+ * the card a citizen files about it, and `UnitType` describes what is inside.
+ * Every conversion between them goes through this table — hand-coding the
+ * correspondence at a call site is how three vocabularies drift into
+ * disagreeing, and the disagreement surfaces months later as a building that
+ * cannot be filtered or a unit generator producing the wrong default.
+ *
+ * `propertyType` is what the legacy card would have called this structure,
+ * which is what the backfill reads to decide which cards become buildings.
+ * `defaultUnitType` is what a generated unit is unless the officer says
+ * otherwise — a default, never a constraint: a ground-floor محل in a
+ * residential block is entirely ordinary, and is set per unit.
+ *
+ * `LAND` is absent because land has nothing standing on it and never gets a
+ * building; a land card stays a bare `PropertyEntry`.
+ */
+export const STRUCTURE_TYPE_MAP = {
+  RESIDENTIAL_BUILDING: { propertyType: 'BUILDING', defaultUnitType: 'APARTMENT' },
+  INDEPENDENT_HOUSE: { propertyType: 'HOUSE', defaultUnitType: 'INDEPENDENT_HOUSE' },
+  COMMERCIAL_CENTER: { propertyType: 'BUILDING', defaultUnitType: 'SHOP' },
+  WAREHOUSE_HANGAR: { propertyType: 'BUILDING', defaultUnitType: 'WAREHOUSE' },
+  MIXED_USE: { propertyType: 'BUILDING', defaultUnitType: 'APARTMENT' },
+  TENT_SHELTER: { propertyType: 'TENT', defaultUnitType: 'INDEPENDENT_HOUSE' },
+} as const satisfies Record<
+  StructureType,
+  { propertyType: PropertyType; defaultUnitType: UnitType }
+>;
+
+/**
+ * The structure a legacy property card describes, or null when it describes no
+ * structure at all.
+ *
+ * `LAND` and `TENT` both return null, for different reasons arriving at the
+ * same place: land has nothing standing on it, and a tent card is not a mapped
+ * settlement — see `TENT_SHELTER` above. Anything backfilling or migrating
+ * cards reads this rather than testing `propertyType` for itself.
+ */
+export function structureTypeForProperty(
+  propertyType: string | null | undefined,
+): StructureType | null {
+  if (propertyType === 'BUILDING') return 'RESIDENTIAL_BUILDING';
+  if (propertyType === 'HOUSE') return 'INDEPENDENT_HOUSE';
+  return null;
+}
 
 /*
  * `REPORT_STATUS` / `reportStatusSchema` / `ReportStatus` were here.

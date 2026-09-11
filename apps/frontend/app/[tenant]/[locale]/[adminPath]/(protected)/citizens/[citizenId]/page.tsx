@@ -29,6 +29,7 @@ import {
   Phone,
   Receipt as ReceiptIcon,
   Ruler,
+  StickyNote,
   Tent,
   Trees,
   User,
@@ -522,6 +523,7 @@ export default function CitizenProfilePage({
         canManage={canManage}
         municipalityName={municipalityName}
         governorate={settings?.governorate}
+        councilDecisionRef={settings?.councilDecisionRef}
         district={settings?.district}
         contactPhone={settings?.contactPhone}
         officeWhatsapp={settings?.whatsappNumber}
@@ -591,6 +593,30 @@ export default function CitizenProfilePage({
                       {locale === 'en' ? 'Complete this record' : 'استكمال بيانات السجل'}
                     </Link>
                   ) : null}
+                </div>
+              ) : null}
+
+              {/*
+                «ملاحظات» — what the last officer learned by standing there.
+
+                Under the flags and above the properties. It is not a warning,
+                so it does not wear the warning colours the flag block does;
+                it is frequently the most useful line on the page for whoever
+                is about to knock on this door, so it is not buried under the
+                property cards either.
+
+                `whitespace-pre-line` because a note is written as a note: line
+                breaks the officer typed are part of what they said.
+              */}
+              {registration.notes ? (
+                <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
+                  <p className="flex items-center gap-1.5 text-sm font-semibold">
+                    <StickyNote className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    {locale === 'en' ? 'Notes' : 'ملاحظات'}
+                  </p>
+                  <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+                    {registration.notes}
+                  </p>
                 </div>
               ) : null}
 
@@ -683,6 +709,7 @@ function FeesPanel({
   canManage,
   municipalityName,
   governorate,
+  councilDecisionRef,
   district,
   contactPhone,
   officeWhatsapp,
@@ -695,6 +722,7 @@ function FeesPanel({
   canManage: boolean;
   municipalityName: string;
   governorate?: string | null;
+  councilDecisionRef?: string | null;
   district?: string | null;
   contactPhone?: string | null;
   officeWhatsapp?: string | null;
@@ -922,6 +950,7 @@ function FeesPanel({
         receivedAmount={receipt?.received}
         municipalityName={municipalityName}
         governorate={governorate}
+        councilDecisionRef={councilDecisionRef}
         district={district}
         contactPhone={contactPhone}
         officeWhatsapp={officeWhatsapp}
@@ -988,6 +1017,21 @@ function PropertyCard({
       icon: Building2,
       label: locale === 'en' ? 'Building Name' : 'اسم المبنى',
       value: property.buildingName,
+    },
+    /*
+      The censused structure this card is attached to.
+
+      `buildingCode` has been on the profile since P4-T4 and this screen showed
+      `buildingName` instead — a free-text string that looks identical whether
+      the card is linked to the register or not. An officer looking at a card
+      they had just registered into a specific flat had no way to tell it had
+      worked, which is exactly the doubt that sends someone to re-enter it.
+    */
+    {
+      icon: Building2,
+      label: locale === 'en' ? 'Census Record' : 'سجل المباني',
+      value: property.buildingCode,
+      ltr: true,
     },
     {
       icon: Trees,

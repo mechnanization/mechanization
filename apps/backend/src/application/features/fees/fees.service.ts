@@ -15,7 +15,7 @@ import type {
   PaymentMethod,
   SystemSettingsInput,
 } from '@mechanization/shared-schemas';
-import { isUnoccupied } from '@mechanization/shared-schemas';
+import { isOccupiedByOthers, isUnoccupied } from '@mechanization/shared-schemas';
 import {
   billableUnits,
   isUnsurveyed,
@@ -87,9 +87,17 @@ function unitMatches(unit: BillableUnit, category?: string): boolean {
  *  - **An occupant-borne fee** (النظافة, القيمة التأجيرية) follows who is
  *    inside. A مستأجر or a شاغل بتسامح is by definition the occupant of the
  *    card they filed, so it always counts. An owner's unit counts unless they
- *    have said someone else is in it (مؤجرة — that tenant is billed on their
- *    own card, and charging both is the double-count this whole enum exists to
- *    end) or that nobody is (شاغرة, قيد الإنجاز).
+ *    have said someone else is in it (مؤجرة or مشغولة بتسامح — that person is
+ *    billed on their own card, and charging both is the double-count this whole
+ *    enum exists to end) or that nobody is (شاغرة, قيد الإنجاز).
+ *
+ * The owner's exemption reads `isOccupiedByOthers`, not `!== 'RENTED'`, and the
+ * difference is not cosmetic. The register has three ways to be the شاغل and
+ * had only two ways to say so, so a شاغل بتسامح fell through the comparison:
+ * their owner answered «مشغولة من المالك» — the only value left — and paid the
+ * occupancy fee on a flat somebody else lived in, while that somebody paid it
+ * too. `FREE_OCCUPIED` is the missing value and this is the predicate that
+ * reads it. See `OCCUPIED_BY_OTHERS`.
  *
  * Null status counts as charged, as everywhere else: it means the question was
  * never put, not that the flat is empty. That is what makes OCCUPANT safe as a
@@ -103,7 +111,7 @@ function bearsFee(unit: BillableUnit, bearer: FeeBearer): boolean {
   // A non-owner card is the occupant's own, and carries no status to consult.
   if (unit.occupancyType !== 'OWNER') return true;
 
-  return unit.unitStatus !== 'RENTED' && !isUnoccupied(unit.unitStatus);
+  return !isOccupiedByOthers(unit.unitStatus) && !isUnoccupied(unit.unitStatus);
 }
 
 /**
@@ -389,6 +397,68 @@ export interface PaymentSummary {
  * badge, the clerk's verification queue — reads those rows, never the rule,
  * so a later edit to the rule cannot rewrite a debt someone already settled.
  */
+/** The shape `attachOccupancies` needs of a card, and nothing more. */
+interface OccupancyClaimable {
+  buildingId?: string | null;
+  propertyType?: string | null;
+  units?: unknown[];
+}
+
+/**
+ * Hands each building's recorded occupancies to exactly one card.
+ *
+ * `heldThroughOccupancy` bills a مبنى card that itemises no flats from
+ * `UnitOccupancy` — the only per-citizen table that can answer *which* flats
+ * this person holds. The list used to be handed to **every** card linked to
+ * that building, and nothing deduped it, so a citizen with two such cards on
+ * one block and two flats recorded there was assessed for four. Under a
+ * PER_UNIT notice that is double the bill, and every row involved is
+ * individually valid.
+ *
+ * `CensusSyncService` dedupes the mirror of this on the write side with a `Map`
+ * keyed by unit; this is the read side of the same fact. Two rules:
+ *
+ * - **Only a مبنى card with no unit rows may consume the list.** That is the
+ *   only card `heldThroughOccupancy` answers for, and spending it on a card
+ *   that itemises its own flats would leave a later card that needs it with
+ *   nothing — under-billing a resident is worse than the double it fixes.
+ * - **A منزل card on the same building suppresses it entirely.** That card
+ *   already bills the structure's single unit from its own fields, and the
+ *   census's single-unit inference has recorded an occupancy on that very flat,
+ *   so the list would bill it a second time.
+ *
+ * Exported for its own tests: half of it is a rule about *which* card, and a
+ * rule like that is invisible in an assessment that only ever sees one.
+ */
+export function attachOccupancies<T extends OccupancyClaimable, U>(
+  properties: readonly T[],
+  occupanciesByBuilding: Map<string, U[]>,
+): Array<T & { occupiedUnits?: U[] }> {
+  const suppressed = new Set(
+    properties
+      .filter((entry) => entry.buildingId && entry.propertyType !== 'BUILDING')
+      .map((entry) => entry.buildingId as string),
+  );
+  const consumed = new Set<string>();
+
+  return properties.map((entry) => {
+    const buildingId = entry.buildingId;
+    const claimable =
+      buildingId != null &&
+      entry.propertyType === 'BUILDING' &&
+      (entry.units?.length ?? 0) === 0 &&
+      !suppressed.has(buildingId) &&
+      !consumed.has(buildingId);
+
+    if (claimable) consumed.add(buildingId);
+
+    return {
+      ...entry,
+      occupiedUnits: claimable ? occupanciesByBuilding.get(buildingId) : undefined,
+    };
+  });
+}
+
 @Injectable()
 export class FeesService {
   private readonly logger = new Logger(FeesService.name);
@@ -454,6 +524,7 @@ export class FeesService {
       governorate: row?.governorate ?? null,
       district: row?.district ?? null,
       town: row?.town ?? null,
+      councilDecisionRef: row?.councilDecisionRef ?? null,
       // `undefined` rather than null for a citizen: the key is absent, so a
       // client cannot mistake "not sent to you" for "no logo configured".
       logoDataUri: includeLogo ? (row?.logoDataUri ?? null) : undefined,
@@ -526,6 +597,7 @@ export class FeesService {
       governorate: blankToNull(input.governorate),
       district: blankToNull(input.district),
       town: blankToNull(input.town),
+      councilDecisionRef: blankToNull(input.councilDecisionRef),
       logoDataUri: blankToNull(input.logoDataUri),
 
       defaultFeeFrequency: input.defaultFeeFrequency,
@@ -937,14 +1009,48 @@ export class FeesService {
           OR: [
             { unitType: category as never },
             { units: { some: { unitType: category as never } } },
+            /*
+              And the canonical row, since P2-T8 made it the authority.
+
+              Selection and assessment have to look in the same places or they
+              disagree in the one direction nobody notices: a shop whose type
+              lives only on its linked `Unit` would be counted by
+              `assessCitizen` and yet never put its owner on the notice, so the
+              register would report that the municipality has no shops while
+              happily charging for them the moment someone was targeted another
+              way.
+            */
+            { units: { some: { unit: { unitType: category as never } } } },
           ],
         };
+
+    /*
+      Held on a card, *or* held through an occupancy.
+
+      A citizen whose only محل is a flat the census recorded them in — their card
+      itemising nothing — is charged for it by `assessCitizen` and would never
+      have been put on the notice by the card query alone.
+
+      Deliberately a superset rather than an exact mirror of the assessment.
+      Reproducing "a BUILDING card with no unit rows linked to this building" in
+      SQL would be a second copy of a rule that already lives in one place, and
+      the two would drift. Over-selecting is free — `assessCitizen` returns
+      nothing for a citizen who holds none of what the notice charges for, and
+      they are skipped. Under-selecting is the silent one: a resident simply
+      never billed, which nothing downstream reports.
+    */
+    const occupancyWhere = PROPERTY_TYPE_CATEGORIES.has(category)
+      ? undefined
+      : { some: { toDate: null, unit: { unitType: category as never } } };
 
     const rows = await this.db.user.findMany({
       where: {
         kind: 'CITIZEN',
         isActive: true,
-        registrations: { some: { properties: { some: propertyWhere } } },
+        OR: [
+          { registrations: { some: { properties: { some: propertyWhere } } } },
+          ...(occupancyWhere ? [{ unitOccupancies: occupancyWhere }] : []),
+        ],
       },
       select: { id: true },
     });
@@ -1030,7 +1136,69 @@ export class FeesService {
                     */
                     occupancyType: true,
                     unitStatus: true,
-                    units: { select: { unitType: true, unitArea: true, unitStatus: true } },
+                    /*
+                      P2-T8 — the authority flip.
+
+                      Each card line now carries the canonical `Unit` it was
+                      linked to, where one exists, and `billableUnits` prefers
+                      it field by field. The municipality's own row is the
+                      better record of a flat: it survives the card being
+                      edited, it is what an officer corrects from the matrix,
+                      and it is what two cards describing the same flat both
+                      point at.
+
+                      The fallback is not transitional. A منزل, an أرض and a
+                      خيمة never get a `Unit`, and neither does a building on a
+                      parcel nobody has surveyed — a biller that could only read
+                      the new tables would stop charging for most of the
+                      register.
+
+                      A card with no unit rows of its own is not automatically
+                      unassessable any more: `buildingId` plus this citizen's
+                      own occupancies (loaded beside the registration below)
+                      answer "which flats do they hold here" — which is the
+                      question, and the one a building's unit *count* cannot
+                      answer. See `heldThroughOccupancy`.
+                    */
+                    buildingId: true,
+                    units: {
+                      select: {
+                        unitType: true,
+                        unitArea: true,
+                        unitStatus: true,
+                        unit: {
+                          select: { unitType: true, unitArea: true, unitStatus: true },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            /*
+              This citizen's current occupancies, for the cards that itemise
+              nothing themselves.
+
+              Loaded on the user rather than per property card, and filtered to
+              the ones still running: an occupancy that ended is a fact about
+              the flat's history, not about what this person holds today, and
+              billing a former tenant for a flat they moved out of is the
+              clearest possible way to lose a resident's trust.
+
+              One extra join for the whole batch — the same 500-citizen page the
+              registrations come from — so this stays the same number of
+              queries it was.
+            */
+            unitOccupancies: {
+              where: { toDate: null },
+              select: {
+                role: true,
+                unit: {
+                  select: {
+                    buildingId: true,
+                    unitType: true,
+                    unitArea: true,
+                    unitStatus: true,
                   },
                 },
               },
@@ -1040,9 +1208,60 @@ export class FeesService {
       );
 
       for (const row of rows) {
-        const entries = row.registrations[0]?.properties ?? [];
+        /*
+          Occupancies attached to the card they belong to.
+
+          Grouped by building so a citizen who holds flats in two of them does
+          not have one card's holdings counted against the other. A card with no
+          `buildingId` gets nothing, which is correct — there is no building to
+          hold flats in.
+        */
+        const occupanciesByBuilding = new Map<string, Array<{
+          role: string;
+          unitType: string | null;
+          unitArea: unknown;
+          unitStatus: string | null;
+        }>>();
+        for (const occupancy of row.unitOccupancies) {
+          const buildingId = occupancy.unit.buildingId;
+          const list = occupanciesByBuilding.get(buildingId) ?? [];
+          list.push({
+            role: occupancy.role,
+            unitType: occupancy.unit.unitType,
+            unitArea: occupancy.unit.unitArea,
+            unitStatus: occupancy.unit.unitStatus,
+          });
+          occupanciesByBuilding.set(buildingId, list);
+        }
+
+        /*
+          Each building's holdings are counted once, by one card.
+
+          The list used to be handed to *every* card linked to the building, and
+          `heldThroughOccupancy` fires for any مبنى card with no unit rows — so a
+          citizen with two such cards on one block and two flats recorded there
+          was assessed for four. Under a PER_UNIT notice that is simply double
+          the bill, and every row involved is individually valid.
+
+          `CensusSyncService` dedupes the mirror of this on the write side with a
+          `Map` keyed by unit; this is the read side of the same fact. Two rules:
+
+          - **Only a مبنى card with no unit rows can consume the list**, because
+            that is the only card `heldThroughOccupancy` answers for. Spending it
+            on a card that itemises its flats would leave a later card that needs
+            it with nothing, and under-billing is worse than the double it fixes.
+          - **A منزل card linked to the same building suppresses it entirely.**
+            That card already bills the structure's single unit from its own
+            fields, and `CensusSyncService`'s single-unit inference has recorded
+            an occupancy on that very flat — so the list would bill it a second
+            time.
+        */
+        const entries = attachOccupancies(
+          row.registrations[0]?.properties ?? [],
+          occupanciesByBuilding,
+        );
         const name = [row.firstName, row.lastName].filter(Boolean).join(' ');
-        const outcome = assessCitizen(entries, notice);
+        const outcome = assessCitizen(entries as never, notice);
 
         if (outcome.kind === 'unassessable') {
           unassessable.push({ citizenId: row.id, name, reason: outcome.reason });

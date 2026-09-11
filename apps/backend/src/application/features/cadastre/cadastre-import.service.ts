@@ -61,13 +61,31 @@ export class CadastreImportService {
       throw new ValidationError('لم يتم العثور على أي عقارات أو حدود صالحة في الملف');
     }
 
+    // The upload carries lines and labels but no shapes; the zone editor needs
+    // parcels it can click and an outline to draw, so both are reconstructed
+    // here. Derived *before* the table is rebuilt, because the outlines are
+    // written onto the parcel rows themselves — see `Parcel.boundary`.
+    const geometry = buildCadastreGeometryAssets(
+      lines.map((line) => ({ kind: line.layer, coordinates: line.coordinates })),
+      parcels,
+    );
+
     if (parcels.length > 0) {
+      const boundaries = new Map(
+        geometry.parcelBoundaries.map((entry) => [entry.parcelNumber, entry.geometry]),
+      );
+
       await this.parcels.replaceAll(
         parcels.map((parcel) => ({
           parcelNumber: parcel.parcelNumber,
           latitude: parcel.latitude,
           longitude: parcel.longitude,
           pointCount: 1,
+          // Absent rather than null for a parcel with no traced shape: Prisma
+          // omits an undefined field, so the column takes its own null and the
+          // two states — "not traced" and "explicitly nothing" — do not have to
+          // be told apart later.
+          boundary: boundaries.get(parcel.parcelNumber),
         })),
       );
     }
@@ -78,13 +96,6 @@ export class CadastreImportService {
     if (lines.length > 0) {
       await this.storage.upload(input.tenantSlug, 'cadastre.geojson', this.cadastreGeoJson(lines));
     }
-
-    // The upload carries lines and labels but no shapes; the zone editor needs
-    // parcels it can click and an outline to draw, so both are reconstructed here.
-    const geometry = buildCadastreGeometryAssets(
-      lines.map((line) => ({ kind: line.layer, coordinates: line.coordinates })),
-      parcels,
-    );
     if (geometry.parcelPolygonsGeoJson) {
       await this.storage.upload(
         input.tenantSlug,

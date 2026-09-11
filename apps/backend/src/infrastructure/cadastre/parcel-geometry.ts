@@ -49,11 +49,40 @@ export interface ParcelShape {
   areaSqM: number;
 }
 
+/**
+ * One parcel outline as it is stored on the row, rather than drawn on a map.
+ *
+ * A bare GeoJSON *geometry*, not a Feature: the row it lands on already carries
+ * the parcel number and everything else a Feature's `properties` would repeat,
+ * and a wrapper the database never reads is a wrapper every query has to step
+ * over.
+ *
+ * `MultiPolygon` is not defensive typing — the survey genuinely draws some
+ * parcels as several disconnected pieces, which is what `Parcel.pointCount > 1`
+ * has always recorded. Keeping only the last traced piece would put a building
+ * pin "outside its parcel" for every structure standing on one of the others.
+ */
+export interface ParcelBoundary {
+  parcelNumber: string;
+  geometry:
+    | { type: 'Polygon'; coordinates: Position[][] }
+    | { type: 'MultiPolygon'; coordinates: Position[][][] };
+}
+
 export interface CadastreGeometryAssets {
   /** Static layer of parcel polygons, or null when no shape could be traced. */
   parcelPolygonsGeoJson: string | null;
   /** Static layer holding the derived municipality outline, or null. */
   cityBoundaryGeoJson: string | null;
+  /**
+   * The same polygons, per parcel, for `Parcel.boundary`.
+   *
+   * The identical rings the asset above draws — rounded once, here, so the file
+   * and the column cannot disagree about where a parcel's edge is. Empty when
+   * nothing could be traced; a parcel absent from this list keeps a null
+   * boundary, which means "outline unknown" and never "no area".
+   */
+  parcelBoundaries: ParcelBoundary[];
   shapeCount: number;
   /** Parcels whose label point landed in no face — they stay point-only. */
   unmatchedCount: number;
@@ -365,17 +394,50 @@ export function buildCadastreGeometryAssets(
   const { shapes, unmatched } = buildParcelShapes(lines, points);
   const boundary = deriveCityBoundary(points);
 
+  /*
+    Rounded once, and the same rings feed both consumers below.
+
+    The asset the browser draws and the column the server tests pins against
+    have to be the *same* polygon. Rounding them twice is how a pin lands inside
+    the parcel the officer can see and outside the one the API checks.
+  */
+  const rings = shapes.map((shape) => roundRing(shape.ring));
+
   const parcelPolygonsGeoJson =
     shapes.length > 0
       ? JSON.stringify({
           type: 'FeatureCollection',
-          features: shapes.map((shape) => ({
+          features: shapes.map((shape, index) => ({
             type: 'Feature',
             properties: { parcelNumber: shape.parcelNumber, areaSqM: shape.areaSqM },
-            geometry: { type: 'Polygon', coordinates: [roundRing(shape.ring)] },
+            geometry: { type: 'Polygon', coordinates: [rings[index]!] },
           })),
         })
       : null;
+
+  /*
+    Grouped by رقم العقار, because a parcel the survey split into pieces has one
+    label point per piece and therefore several traced faces — and one row to
+    put them on. Two or more become a MultiPolygon rather than the last one
+    winning, which would silently shrink the parcel to whichever fragment the
+    file happened to list last.
+  */
+  const ringsByParcel = new Map<string, Position[][]>();
+  shapes.forEach((shape, index) => {
+    const existing = ringsByParcel.get(shape.parcelNumber);
+    if (existing) existing.push(rings[index]!);
+    else ringsByParcel.set(shape.parcelNumber, [rings[index]!]);
+  });
+
+  const parcelBoundaries: ParcelBoundary[] = [...ringsByParcel.entries()].map(
+    ([parcelNumber, parcelRings]) => ({
+      parcelNumber,
+      geometry:
+        parcelRings.length === 1
+          ? { type: 'Polygon' as const, coordinates: [parcelRings[0]!] }
+          : { type: 'MultiPolygon' as const, coordinates: parcelRings.map((ring) => [ring]) },
+    }),
+  );
 
   const cityBoundaryGeoJson = boundary
     ? JSON.stringify({
@@ -396,6 +458,7 @@ export function buildCadastreGeometryAssets(
   return {
     parcelPolygonsGeoJson,
     cityBoundaryGeoJson,
+    parcelBoundaries,
     shapeCount: shapes.length,
     unmatchedCount: unmatched.length,
   };

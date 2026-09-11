@@ -84,3 +84,23 @@ export function invalidateRequests(prefix: string): void {
     if (key.startsWith(prefix)) entries.delete(key);
   }
 }
+
+/**
+ * The value held for `key`, if one is there and still fresh. Never fetches.
+ *
+ * For a caller that can render the answer on its first frame instead of
+ * waiting a microtask for `cachedRequest` to hand back something it already
+ * has. The difference is not speed — it is whether a control that re-mounts
+ * (a card unfolded, an edit form opened on a record whose parcel was read a
+ * minute ago) flashes its spinner again. To the officer that flash is
+ * indistinguishable from work being redone, which is precisely the complaint:
+ * "it keeps reloading — wasn't this saved?"
+ *
+ * An in-flight request is deliberately reported as absent. There is no value
+ * yet, and showing that it is loading is the correct thing to do in that state.
+ */
+export function peekCachedRequest<T>(key: string): T | undefined {
+  const entry = entries.get(key) as Entry<T> | undefined;
+  if (!entry || entry.expiresAt <= Date.now()) return undefined;
+  return entry.value;
+}

@@ -159,3 +159,124 @@ export function computeGeoJsonArea(geometry: GeoJSON.Geometry | null | undefined
     squareKilometers: Math.round((totalSqM / 1_000_000) * 1000) / 1000,
   };
 }
+/**
+ * Is this point inside this ring? Even-odd ray casting.
+ *
+ * Planar rather than geodesic, deliberately. A cadastral parcel is a few
+ * hundred metres across, and over that span the difference between a great
+ * circle and a straight line in degrees is far below the survey's own
+ * precision — while a spherical formulation would cost an order of magnitude
+ * more arithmetic on a test that runs on every drag of a map pin.
+ *
+ * The `!==` on the two latitude comparisons is what makes the rule even-odd
+ * and half-open: a vertex exactly at the ray's latitude is counted once, not
+ * twice, so a point sitting on a shared boundary lands in exactly one of the
+ * two parcels rather than both or neither.
+ */
+function pointInRing(point: [number, number], ring: readonly (readonly number[])[]): boolean {
+  const [x, y] = point;
+  let inside = false;
+
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0];
+    const yi = ring[i][1];
+    const xj = ring[j][0];
+    const yj = ring[j][1];
+
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+}
+
+/**
+ * Whether a `[lng, lat]` pin falls inside a parcel outline.
+ *
+ * Handles the holes a `Polygon` may carry and the several disconnected pieces a
+ * `MultiPolygon` is — six of this cadastre's parcels were surveyed as separate
+ * fragments, and a pin in the second fragment is as inside the parcel as one in
+ * the first.
+ *
+ * A geometry that is missing, or of any other type, returns `false`. The caller
+ * decides what that means: the building editor treats "no outline on file" as
+ * unverifiable rather than as a rejection, since about 1.4% of parcels here
+ * could not be closed by the tracer and refusing their buildings would make
+ * them permanently uncensusable.
+ */
+export function pointInGeometry(
+  point: [number, number],
+  geometry: GeoJSON.Geometry | null | undefined,
+): boolean {
+  if (!geometry) return false;
+
+  const polygons =
+    geometry.type === 'Polygon'
+      ? [(geometry as GeoJSON.Polygon).coordinates]
+      : geometry.type === 'MultiPolygon'
+        ? (geometry as GeoJSON.MultiPolygon).coordinates
+        : [];
+
+  for (const rings of polygons) {
+    if (rings.length === 0) continue;
+    if (!pointInRing(point, rings[0])) continue;
+    // Inside the outline — unless it is inside one of the holes punched in it.
+    const inHole = rings.slice(1).some((hole) => pointInRing(point, hole));
+    if (!inHole) return true;
+  }
+
+  return false;
+}
+
+/**
+ * `[west, south, east, north]` for a geometry, or null if it has no coordinates.
+ *
+ * What `map.fitBounds` needs to frame a parcel, and what the pin picker falls
+ * back to for a starting position when a building has none yet.
+ */
+export function geometryBounds(
+  geometry: GeoJSON.Geometry | null | undefined,
+): [number, number, number, number] | null {
+  if (!geometry) return null;
+
+  let west = Infinity;
+  let south = Infinity;
+  let east = -Infinity;
+  let north = -Infinity;
+
+  const visit = (coordinates: unknown): void => {
+    if (!Array.isArray(coordinates)) return;
+    if (typeof coordinates[0] === 'number' && typeof coordinates[1] === 'number') {
+      const [lng, lat] = coordinates as [number, number];
+      if (lng < west) west = lng;
+      if (lng > east) east = lng;
+      if (lat < south) south = lat;
+      if (lat > north) north = lat;
+      return;
+    }
+    for (const child of coordinates) visit(child);
+  };
+
+  visit((geometry as { coordinates?: unknown }).coordinates);
+
+  return Number.isFinite(west) ? [west, south, east, north] : null;
+}
+
+/**
+ * The centre of a geometry's bounding box.
+ *
+ * Not the centroid, and the difference matters for one reason only: on an
+ * L-shaped or crescent parcel a true area centroid can fall *outside* the
+ * outline, which would have the editor auto-fill a pin its own boundary check
+ * then rejects. The caller tests the result and only accepts it when it lands
+ * inside — see `building-editor-dialog.tsx`.
+ */
+export function geometryCenter(
+  geometry: GeoJSON.Geometry | null | undefined,
+): [number, number] | null {
+  const bounds = geometryBounds(geometry);
+  if (!bounds) return null;
+  const [west, south, east, north] = bounds;
+  return [(west + east) / 2, (south + north) / 2];
+}

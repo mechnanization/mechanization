@@ -1,0 +1,44 @@
+-- 0031_unit_fields_flaggable
+--
+-- Closes the half-open door that P1-T7 left.
+--
+-- Migration 0030 and the schema change beside it made a per-unit «غير مؤكَّد»
+-- flag *expressible*: `properties.0.units.3.unitArea` is now a path the
+-- validator accepts, `withoutFlagged` walks into the units array, and the
+-- partial schemas shape a card whose unit field was blanked. What none of that
+-- could do was store the result — `building_units.floor`, `unitType` and
+-- `unitArea` are NOT NULL, and a flag blanks the field it excuses, so a
+-- submission that passed validation failed at the INSERT.
+--
+-- Nothing hits that path today: the only per-unit control in the form flags the
+-- whole `units` array, and Phase 1 shipped no UI. But leaving it would mean
+-- P3-T3 and P3-T6 could not ship the per-unit control the census is for.
+--
+-- == Why nullable, rather than writing the unit into `units` instead =========
+--
+-- The alternative considered in the plan was to route a flagged unit onto the
+-- new canonical `units` table, where `unitArea` is already nullable, and let
+-- `building_units` keep only what it can hold. It is rejected because it makes
+-- the *legacy* row the lossy one: a card would then describe a flat whose area
+-- lives on a different table, and until P2-T8's authority flip that is the
+-- table billing does not read. A flat with no area would silently bill as if it
+-- had one.
+--
+-- Nullable columns say the true thing in the place that already reads them.
+-- `BillableUnit` has carried `unitArea: number | null` and `unitType: string |
+-- null` since per-unit billing was written, and `assessCitizen` already refuses
+-- to assess a PER_AREA notice against a unit with no recorded area — it returns
+-- the citizen as unassessable, by name, with a reason the municipality can act
+-- on. That is exactly the "refuse to guess" behaviour this needs; the columns
+-- being NOT NULL is what stopped the honest value from ever reaching it.
+--
+-- == What this does NOT relax ===============================================
+--
+-- `buildingUnitSchema` still requires all three of an ordinary submission. The
+-- only way to store a null here is an `UNESTABLISHED` flag naming that exact
+-- unit field, with the officer's written reason attached, on a record that
+-- lands at «يتطلب مراجعة». The column is nullable; the form is not.
+
+ALTER TABLE "building_units" ALTER COLUMN "floor" DROP NOT NULL;
+ALTER TABLE "building_units" ALTER COLUMN "unitType" DROP NOT NULL;
+ALTER TABLE "building_units" ALTER COLUMN "unitArea" DROP NOT NULL;

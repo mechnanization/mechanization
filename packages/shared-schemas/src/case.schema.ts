@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { landTypeSchema, propertyTypeSchema } from './enums';
+import { caseTypeSchema, landTypeSchema, propertyTypeSchema } from './enums';
 import { uuid } from './primitives';
 
 /**
@@ -14,7 +14,19 @@ import { uuid } from './primitives';
  * that I tried".
  */
 
-export const CASE_STATUS = ['OPEN', 'RESOLVED'] as const;
+/**
+ * Where a حالة stands.
+ *
+ * `SCHEDULED` is the state that was missing and was being carried in someone's
+ * head: a case an officer has already agreed a return date for is neither open
+ * work waiting to be picked up nor settled, and leaving it `OPEN` meant every
+ * dispatch list re-proposed a visit that was already arranged. It is a
+ * *promise*, not an outcome — `scheduledRevisitAt` on the case carries the date
+ * — and the only way out of it is still `RESOLVED`.
+ *
+ * Ordered as the work moves, which is also the order the tabs render in.
+ */
+export const CASE_STATUS = ['OPEN', 'SCHEDULED', 'RESOLVED'] as const;
 export type CaseStatus = (typeof CASE_STATUS)[number];
 
 const notesField = z
@@ -24,6 +36,35 @@ const notesField = z
   .max(500, 'وصف الحالة طويل جداً');
 
 const optionalText = (max: number) => z.string().trim().max(max).optional();
+
+/**
+ * The census links a case may carry.
+ *
+ * All optional, and they do not replace the free-text `buildingName`/`floor`
+ * above. On a parcel whose buildings have not been surveyed yet — which is most
+ * of them, most of the time — the free text is the only thing an officer at a
+ * door can write down. These are the *resolved* form, set when the case can be
+ * attached to rows, and they are what turn "every open case in this building"
+ * from a string search into a query.
+ */
+const censusLinks = {
+  caseType: caseTypeSchema.optional(),
+  buildingId: uuid.optional(),
+  unitId: uuid.optional(),
+  damageAssessmentId: uuid.optional(),
+  /**
+   * When someone has agreed to go back.
+   *
+   * Not required by `SCHEDULED` and not forbidden without it. A date with no
+   * status is an officer noting an intention before committing to it, and a
+   * `SCHEDULED` with no date is a revisit agreed as "next week" — both are real
+   * things a doorstep produces, and refusing either would only move the loss
+   * from the record to the officer's memory.
+   */
+  scheduledRevisitAt: z.coerce
+    .date({ invalid_type_error: 'تاريخ الزيارة غير صالح' })
+    .optional(),
+};
 
 export const createCaseSchema = z.object({
   notes: notesField,
@@ -35,6 +76,7 @@ export const createCaseSchema = z.object({
   side: optionalText(60),
   landType: landTypeSchema.optional(),
   tentLocation: optionalText(200),
+  ...censusLinks,
 });
 
 export type CreateCaseInput = z.infer<typeof createCaseSchema>;
@@ -70,6 +112,14 @@ export const updateCaseSchema = z
     landType: landTypeSchema.optional(),
     tentLocation: optionalText(200).nullable(),
     status: z.enum(CASE_STATUS).optional(),
+    caseType: caseTypeSchema.optional(),
+    buildingId: uuid.nullable().optional(),
+    unitId: uuid.nullable().optional(),
+    damageAssessmentId: uuid.nullable().optional(),
+    scheduledRevisitAt: z.coerce
+      .date({ invalid_type_error: 'تاريخ الزيارة غير صالح' })
+      .nullable()
+      .optional(),
     /**
      * The bridge to the citizen registry. Setting this always resolves the
      * case (see `CasesService.update`); passing `null` only clears the link

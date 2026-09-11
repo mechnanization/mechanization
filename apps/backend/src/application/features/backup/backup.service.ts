@@ -2,6 +2,7 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { tenantSchemaPrefix } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ValidationError } from '../../common/exceptions';
 
 /**
@@ -64,15 +65,50 @@ const MAX_SNAPSHOT_INFLATED_BYTES = 512 * 1024 * 1024;
  * data returns to its snapshot state and the trail keeps accumulating across
  * it, including a `REGISTER_RESTORED` entry recording the restore itself.
  */
+/**
+ * Every table a snapshot carries, parents before children.
+ *
+ * The order is the whole contract: rows are written in it and deleted in
+ * reverse, so a table listed before something it points at fails the restore on
+ * a foreign key — inside the one transaction that was meant to make a restore
+ * survivable.
+ *
+ * The census block (`building` … `damageAssessment`) and `case` were added with
+ * Phase 2, and `unitVisit` with Phase 4. Their absence was not a missing feature, it was silent data loss:
+ * `unit_occupancies.citizenId` cascades from `users`, so a restore — which
+ * deletes and rewrites every user — destroyed every record of who lives where
+ * and then did not put it back. A municipality would have found that out at the
+ * exact moment it needed a restore to work.
+ *
+ * `case` had the same hole since 0027 and is fixed here rather than separately,
+ * because a case now points at a building, a unit and a damage assessment: it
+ * cannot be ordered correctly except alongside them.
+ */
 const TABLE_ORDER = [
   'user',
   'otpChallenge',
   'parcel',
   'zone',
   'systemSettings',
+  // A building stands on a parcel and is created by a user; it depends on no
+  // registration, which is the entire point of it existing (D1).
+  'building',
+  'unit',
   'registration',
   'propertyEntry',
   'buildingUnit',
+  // After `unit`, `user` and `registration` — it references all three.
+  'unitOccupancy',
+  // The same reasoning as `unitOccupancy`, one table further on: a visit
+  // references a unit and an officer, and `officerId` is a `users` row a
+  // restore deletes and rewrites. Losing these would erase the municipality's
+  // evidence that a door was tried — which is exactly what a resident
+  // disputing a notice asks to see.
+  'unitVisit',
+  'damageAssessment',
+  // Last of the census block: a case may point at a building, a unit and the
+  // damage assessment that prompted it.
+  'case',
   'document',
   'feeNotice',
   'citizenPayment',
@@ -172,8 +208,15 @@ export class BackupService {
 
   /** The migrations this schema has applied, so a restore can refuse a mismatch. */
   private async appliedMigrations(): Promise<string[]> {
+    /*
+      Schema-qualified like every other raw query here — `search_path` is not
+      ours to rely on behind a transaction pooler (`tenant-schema-ref.ts`), and
+      a restore that read *another* schema's migration list would compare the
+      snapshot against the wrong history and either refuse a good restore or
+      accept a mismatched one.
+    */
     const rows = await this.db.$queryRawUnsafe<Array<{ name: string }>>(
-      'SELECT "name" FROM "_tenant_migrations" ORDER BY "name"',
+      `SELECT "name" FROM ${tenantSchemaPrefix(this.tenantContext.schemaName)}"_tenant_migrations" ORDER BY "name"`,
     );
     return rows.map((row) => row.name);
   }

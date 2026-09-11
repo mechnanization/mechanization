@@ -128,6 +128,8 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
             */
             status: input.status,
             flaggedFields: input.flaggedFields as never,
+            blanketFlagReason: input.blanketFlagReason ?? null,
+            notes: input.notes ?? null,
             createdById: input.createdById ?? null,
             clientSubmissionId: input.clientSubmissionId ?? null,
           },
@@ -158,6 +160,9 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
               unitStatus: (p.unitStatus ?? null) as never,
               latitude: p.latitude ?? null,
               longitude: p.longitude ?? null,
+              // The census link, where the officer picked a structure. Nullable
+              // through and through — see §3.7 and P2-T8's authority rule.
+              buildingId: p.buildingId ?? null,
               // A building carries its units here rather than in the columns
               // above — one parcel, one رقم العقار, many apartments.
               units: {
@@ -168,6 +173,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
                   unitArea: unit.unitArea,
                   sharedRights: unit.sharedRights ?? [],
                   unitStatus: (unit.unitStatus ?? null) as never,
+                  unitId: unit.unitId ?? null,
                 })),
               },
             },
@@ -292,6 +298,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
           shares: p.shares as number | null,
           sharedRights: (p.sharedRights as string[]) ?? [],
           unitStatus: p.unitStatus as never,
+          buildingId: (p.buildingId as string | undefined) ?? null,
           units: ((p.units as Array<Record<string, unknown>>) ?? []).map((unit) => ({
             unitType: unit.unitType as never,
             floor: unit.floor as string,
@@ -299,6 +306,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
             unitArea: Number(unit.unitArea),
             sharedRights: (unit.sharedRights as string[]) ?? [],
             unitStatus: unit.unitStatus as never,
+            unitId: (unit.unitId as string | undefined) ?? null,
           })),
           latitude: p.latitude as number | null,
           longitude: p.longitude as number | null,

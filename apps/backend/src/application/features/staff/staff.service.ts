@@ -504,7 +504,7 @@ export class StaffService {
               breakdown.apartments++;
             } else if (u.unitType === 'INDEPENDENT_HOUSE') {
               breakdown.houses++;
-            } else if (['SHOP', 'OFFICE', 'CLINIC', 'WAREHOUSE'].includes(u.unitType)) {
+            } else if (u.unitType && ['SHOP', 'OFFICE', 'CLINIC', 'WAREHOUSE'].includes(u.unitType)) {
               breakdown.commercial++;
             } else {
               breakdown.other++;

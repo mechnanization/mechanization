@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type {
   Case,
+  CaseCensusLinks,
   CaseListFilter,
   CaseRepository,
 } from '../../domain/interfaces/case-repository.interface';
@@ -19,6 +20,13 @@ type CaseRow = {
   landType: string | null;
   tentLocation: string | null;
   status: string;
+  caseType: string;
+  buildingId: string | null;
+  building: { code: string } | null;
+  unitId: string | null;
+  unit: { unitCode: string } | null;
+  damageAssessmentId: string | null;
+  scheduledRevisitAt: Date | null;
   resolvedCitizenId: string | null;
   resolvedCitizen: { firstName: string; lastName: string } | null;
   resolvedAt: Date | null;
@@ -41,6 +49,13 @@ function toDomain(row: CaseRow): Case {
     landType: row.landType,
     tentLocation: row.tentLocation,
     status: row.status as Case['status'],
+    caseType: row.caseType,
+    buildingId: row.buildingId,
+    buildingCode: row.building?.code ?? null,
+    unitId: row.unitId,
+    unitCode: row.unit?.unitCode ?? null,
+    damageAssessmentId: row.damageAssessmentId,
+    scheduledRevisitAt: row.scheduledRevisitAt,
     resolvedCitizenId: row.resolvedCitizenId,
     resolvedCitizenName: row.resolvedCitizen
       ? `${row.resolvedCitizen.firstName} ${row.resolvedCitizen.lastName}`
@@ -56,6 +71,11 @@ function toDomain(row: CaseRow): Case {
 const includeRelations = {
   createdBy: { select: { firstName: true, lastName: true } },
   resolvedCitizen: { select: { firstName: true, lastName: true } },
+  // Codes rather than whole rows: a case list shows «A-1042-B · 0304» and
+  // nothing else about the structure, and joining the full building onto every
+  // case would carry a unit matrix into a table that never draws one.
+  building: { select: { code: true } },
+  unit: { select: { unitCode: true } },
 } as const;
 
 @Injectable()
@@ -72,6 +92,9 @@ export class PrismaCaseRepository implements CaseRepository {
         where: {
           ...(filter?.propertyNumber ? { propertyNumber: filter.propertyNumber } : {}),
           ...(filter?.status ? { status: filter.status as never } : {}),
+          ...(filter?.caseType ? { caseType: filter.caseType as never } : {}),
+          ...(filter?.buildingId ? { buildingId: filter.buildingId } : {}),
+          ...(filter?.unitId ? { unitId: filter.unitId } : {}),
         },
         include: includeRelations,
         orderBy: { createdAt: 'desc' },
@@ -98,7 +121,7 @@ export class PrismaCaseRepository implements CaseRepository {
     landType?: string;
     tentLocation?: string;
     createdById?: string;
-  }): Promise<Case> {
+  } & CaseCensusLinks): Promise<Case> {
     const row = await this.db.case.create({
       data: {
         notes: input.notes,
@@ -111,10 +134,43 @@ export class PrismaCaseRepository implements CaseRepository {
         landType: (input.landType as never) ?? null,
         tentLocation: input.tentLocation ?? null,
         createdById: input.createdById ?? null,
+        ...(input.caseType ? { caseType: input.caseType as never } : {}),
+        buildingId: input.buildingId ?? null,
+        unitId: input.unitId ?? null,
+        damageAssessmentId: input.damageAssessmentId ?? null,
+        scheduledRevisitAt: input.scheduledRevisitAt ?? null,
       },
       include: includeRelations,
     });
     return toDomain(row as unknown as CaseRow);
+  }
+
+  /**
+   * Closes every case still open against a unit.
+   *
+   * `updateMany` in one statement rather than read-then-write per row: this
+   * runs on the occupancy path, which is already doing several writes, and the
+   * set it targets is "whatever is still open right now" — a value that a
+   * separate read could only make stale.
+   *
+   * `SCHEDULED` is included in the target set on purpose. A revisit that was
+   * arranged for a flat somebody has since been recorded in is a visit nobody
+   * needs to make; leaving it would put an officer back at a door the
+   * municipality has already been through.
+   */
+  async resolveOpenForUnit(unitId: string, citizenId: string): Promise<number> {
+    const result = await this.db.case.updateMany({
+      where: { unitId, status: { in: ['OPEN', 'SCHEDULED'] as never } },
+      data: {
+        status: 'RESOLVED',
+        resolvedCitizenId: citizenId,
+        resolvedAt: new Date(),
+        // The arrangement is void either way; leaving the date would have the
+        // cases page still listing a revisit for a closed case.
+        scheduledRevisitAt: null,
+      },
+    });
+    return result.count;
   }
 
   async update(
@@ -132,7 +188,7 @@ export class PrismaCaseRepository implements CaseRepository {
       status?: string;
       resolvedCitizenId?: string | null;
       resolvedAt?: Date | null;
-    },
+    } & CaseCensusLinks,
   ): Promise<Case> {
     const row = await this.db.case.update({
       where: { id },
@@ -151,6 +207,15 @@ export class PrismaCaseRepository implements CaseRepository {
           ? { resolvedCitizenId: input.resolvedCitizenId }
           : {}),
         ...(input.resolvedAt !== undefined ? { resolvedAt: input.resolvedAt } : {}),
+        ...(input.caseType !== undefined ? { caseType: input.caseType as never } : {}),
+        ...(input.buildingId !== undefined ? { buildingId: input.buildingId } : {}),
+        ...(input.unitId !== undefined ? { unitId: input.unitId } : {}),
+        ...(input.damageAssessmentId !== undefined
+          ? { damageAssessmentId: input.damageAssessmentId }
+          : {}),
+        ...(input.scheduledRevisitAt !== undefined
+          ? { scheduledRevisitAt: input.scheduledRevisitAt }
+          : {}),
       },
       include: includeRelations,
     });

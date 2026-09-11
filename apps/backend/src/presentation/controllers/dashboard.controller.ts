@@ -1,4 +1,5 @@
 import { Controller, Get, Header, Param } from '@nestjs/common';
+import { BuildingsService } from '../../application/features/buildings/buildings.service';
 import { ReportingService } from '../../application/features/reporting/reporting.service';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
@@ -16,9 +17,27 @@ import type { SessionClaims } from '../../application/features/identity/identity
  */
 @Controller('t/:tenantSlug/dashboard')
 export class DashboardController {
-  constructor(private readonly reporting: ReportingService) {}
+  constructor(
+    private readonly reporting: ReportingService,
+    private readonly buildings: BuildingsService,
+  ) {}
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR')
+  /*
+    «لوحة التحكم» is an oversight screen, and these two endpoints are the whole
+    of it.
+
+    They aggregate the entire municipality — arrears, collection rates,
+    household distributions, every officer's output — which is a different
+    question from anything a role needs to do its own job. `FIELD_INSPECTOR`
+    was on both lists and is not any more: an inspector's figures are their own
+    and are served by `StaffController.getMyProfile`, which answers for the
+    caller rather than for everybody.
+
+    The `map*` endpoints below deliberately keep their wider lists. They feed
+    «الخريطة», a working screen, and narrowing them here would take the map
+    away from the collectors and officers who navigate by it.
+  */
+  @Roles('SUPER_ADMIN', 'AUDITOR')
   @Get('counters')
   async counters() {
     return this.reporting.getDashboardCounters();
@@ -31,7 +50,7 @@ export class DashboardController {
    * the charts have to agree, and separately-cached fetches guarantee a window
    * where a rate computed from one response contradicts a total from another.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR')
+  @Roles('SUPER_ADMIN', 'AUDITOR')
   @Get('analytics')
   async analytics() {
     return this.reporting.getAnalytics();
@@ -42,6 +61,26 @@ export class DashboardController {
   @Get('map')
   async spatial() {
     return { features: await this.reporting.getSpatialData() };
+  }
+
+  /**
+   * Every building pin, with the three channels the map styles off: what kind
+   * of structure it is, how far its survey has got, and what condition it is in.
+   *
+   * `surveyRollup` is the **worst** status among its units, never the majority
+   * (D11) — a block of twelve flats with one nobody answered is not a surveyed
+   * building, and colouring it complete hides the one fact the map was drawn to
+   * show.
+   *
+   * Not cached, unlike the counters and analytics beside it. This is the screen
+   * a field officer refreshes after recording an occupancy, and a five-minute
+   * TTL there reads as "the survey did not save".
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Get('map/buildings')
+  @Header('Cache-Control', 'no-store')
+  async buildingPins() {
+    return { buildings: await this.buildings.mapPins() };
   }
 
   /**
