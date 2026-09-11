@@ -16,6 +16,7 @@ import {
   LAND_TYPE,
   OCCUPANCY_TYPE,
   PROPERTY_FIELD_MAP,
+  STRUCTURE_TYPE_MAP,
 } from '@mechanization/shared-schemas';
 import type {
   LandType,
@@ -226,6 +227,23 @@ export function PropertyCard({
    * disagreeing about it, which is the same reason `linkedBuilding` is
    * reported upward rather than re-read.
    */
+  /**
+   * What «نوع الوحدة» starts as on a new row, decided by the structure.
+   *
+   * `STRUCTURE_TYPE_MAP` is the one statement of which unit a structure is made
+   * of, and the building editor has always read it — picking «مستودع / هنغار»
+   * there defaults the blueprint to مستودع. This card offered the same
+   * structure-type list and then asked the question again per flat.
+   *
+   * Read from the *pending* structure only. A card linked to a building that
+   * already exists gets its unit rows from the matrix, where each flat carries
+   * the type the census recorded for it, and a default would be overruling a
+   * surveyed fact with a guess about the block as a whole.
+   */
+  const defaultUnitType = draft.pendingBuilding
+    ? STRUCTURE_TYPE_MAP[draft.pendingBuilding.structureType].defaultUnitType
+    : undefined;
+
   const unitCodes = useMemo(() => {
     const codes: Record<string, string> = {};
     for (const unit of linkedBuilding?.units ?? []) codes[unit.id] = unit.unitCode;
@@ -652,6 +670,7 @@ export function PropertyCard({
               index={index}
               units={units}
               unitCodes={unitCodes}
+              defaultUnitType={defaultUnitType}
               asksUnitStatus={asksUnitStatus}
               errors={scopeErrors(errors, 'units')}
               onChange={(update) =>

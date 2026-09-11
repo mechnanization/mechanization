@@ -5,6 +5,7 @@ import { Building2, Check, Link2, Loader2, Lock, Plus, TriangleAlert, Unlink } f
 import {
   getLabels,
   STRUCTURE_TYPE,
+  STRUCTURE_TYPE_MAP,
   structureTypeForProperty,
   type StructureType,
   type UpsertUnitInput,
@@ -688,10 +689,7 @@ export function BuildingUnitPicker({
             onCancel={unlink}
             onStructureType={(structureType) =>
               pending
-                ? onChange((current) => ({
-                    ...current,
-                    pendingBuilding: { ...pending, structureType },
-                  }))
+                ? onChange((current) => applyStructureType(current, pending, structureType))
                 : undefined
             }
           />
@@ -772,10 +770,7 @@ export function BuildingUnitPicker({
               onCancel={unlink}
               onStructureType={(structureType) =>
                 pending
-                ? onChange((current) => ({
-                    ...current,
-                    pendingBuilding: { ...pending, structureType },
-                  }))
+                ? onChange((current) => applyStructureType(current, pending, structureType))
                 : undefined
               }
             />
@@ -818,7 +813,10 @@ export function BuildingUnitPicker({
                   error={addError}
                   onOpen={() => {
                     setAddError(null);
-                    setAdding({ floor: '0', unitType: '' });
+                    setAdding({
+                      floor: '0',
+                      unitType: STRUCTURE_TYPE_MAP[detail.structureType].defaultUnitType,
+                    });
                   }}
                   onChange={setAdding}
                   onCancel={() => {
@@ -903,7 +901,13 @@ export function BuildingUnitPicker({
                   // Seeded from the top floor already in the matrix: units are
                   // added upward far more often than a basement is discovered.
                   const highest = Math.max(...detail.units.map((unit) => unit.floor));
-                  setAdding({ floor: String(highest), unitType: '' });
+                  // Seeded from what this structure is made of, exactly as the
+                  // building editor seeds its blueprint — a مستودع's next unit
+                  // is a مستودع until somebody says otherwise.
+                  setAdding({
+                    floor: String(highest),
+                    unitType: STRUCTURE_TYPE_MAP[detail.structureType].defaultUnitType,
+                  });
                 }}
                 onChange={setAdding}
                 onCancel={() => {
@@ -1253,4 +1257,35 @@ function AddUnitInline({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Records a change of نوع المنشأة, and lets it reach the unit rows.
+ *
+ * `STRUCTURE_TYPE_MAP` says what a structure is made of — a مجمع تجاري of
+ * محال, a مستودع of مستودعات — and the building editor has always applied it:
+ * changing the structure type there re-seeds the blueprint's unit type. This
+ * control offered the identical list and changed nothing but a label, so the
+ * same building created from the two screens came out differently.
+ *
+ * Applied only to rows nobody has answered yet. A row whose «نوع الوحدة» the
+ * officer has set is their statement about that flat — a ground-floor محل in a
+ * مبنى سكني is the ordinary case, not a contradiction to be tidied away — and
+ * overwriting it would silently undo a deliberate answer on a control two
+ * sections above it.
+ */
+function applyStructureType(
+  current: PropertyDraft,
+  pending: NonNullable<PropertyDraft['pendingBuilding']>,
+  structureType: StructureType,
+): PropertyDraft {
+  const defaultUnitType = STRUCTURE_TYPE_MAP[structureType].defaultUnitType;
+
+  return {
+    ...current,
+    pendingBuilding: { ...pending, structureType },
+    units: (current.units ?? []).map((row) =>
+      row.unitType ? row : { ...row, unitType: defaultUnitType },
+    ),
+  };
 }

@@ -25,6 +25,7 @@ import {
   getLabels,
   OCCUPANCY_ROLE,
   isOccupiableLifecycle,
+  STRUCTURE_TYPE_MAP,
   SURVEY_STATUS,
   type CaseType,
   type DamageLevel,
@@ -563,7 +564,12 @@ export function BuildingUnitMatrixDrawer({
                           disabled={busy}
                           onClick={() => {
                             setAddingFloor(floor);
-                            setAddingType('');
+                            // What this structure is made of, per
+                            // `STRUCTURE_TYPE_MAP` — the same default the
+                            // building editor's blueprint starts from.
+                            setAddingType(
+                              STRUCTURE_TYPE_MAP[building.structureType].defaultUnitType,
+                            );
                             setActionError(null);
                           }}
                           className="inline-flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"

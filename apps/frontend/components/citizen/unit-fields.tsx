@@ -231,6 +231,7 @@ export function UnitsEditor({
   index,
   units,
   unitCodes = {},
+  defaultUnitType,
   asksUnitStatus,
   errors,
   onChange,
@@ -248,6 +249,18 @@ export function UnitsEditor({
    * back to its position.
    */
   unitCodes?: Record<string, string>;
+  /**
+   * What a new row's «نوع الوحدة» starts as, from the structure this card is
+   * about — `STRUCTURE_TYPE_MAP[structureType].defaultUnitType`.
+   *
+   * The building editor has always done this: choosing «مجمع تجاري» there sets
+   * the blueprint's unit type to محل, «مستودع / هنغار» to مستودع. This form
+   * offered the identical structure-type list and then left every unit's type
+   * blank, so the same building created from the two screens came out
+   * differently — and the officer re-answered a question the structure type
+   * had already answered, once per flat.
+   */
+  defaultUnitType?: UnitType;
   /** False on a tenant's or free occupant's card — see `asksUnitStatus`. */
   asksUnitStatus: boolean;
   errors: Record<string, string>;
@@ -295,7 +308,13 @@ export function UnitsEditor({
     // questions eight times is how the second one stops being answered.
     onChange((current) => {
       const previous = current.at(-1);
-      return [...current, { unitType: previous?.unitType, unitStatus: previous?.unitStatus }];
+      return [
+        ...current,
+        // The previous row first — a floor of eight identical flats is the
+        // ordinary case — then the structure's own default, so the first row
+        // on a مجمع تجاري starts as محل rather than as nothing.
+        { unitType: previous?.unitType ?? defaultUnitType, unitStatus: previous?.unitStatus },
+      ];
     });
     setCollapsed(new Set(units.map((_, i) => i)));
   };
