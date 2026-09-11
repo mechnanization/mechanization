@@ -542,6 +542,30 @@ describe('assessment', () => {
         owner: false,
         why: 'a free occupant occupies but owns nothing',
       },
+      /*
+        The two rows this table could not previously express, and whose absence
+        was a live double-charge rather than a gap in coverage.
+
+        `UnitStatus` had no value for «somebody is living here without a lease»,
+        so an owner in that position answered OWNER_OCCUPIED — the only value
+        left — and `bearsFee` read it as "the owner is the شاغل" and charged
+        them, while the شاغل بتسامح was charged on their own card. The owner who
+        lied and said «مؤجرة» escaped; the one who answered honestly paid.
+      */
+      {
+        occupancyType: 'OWNER',
+        unitStatus: 'FREE_OCCUPIED',
+        occupant: false,
+        owner: true,
+        why: 'someone else lives there rent-free — they are billed, not the owner',
+      },
+      {
+        occupancyType: 'OWNER',
+        unitStatus: 'RENTED',
+        occupant: false,
+        owner: true,
+        why: 'let out — the tenant is billed on their own card',
+      },
     ];
 
     for (const entry of cases) {
@@ -606,6 +630,65 @@ describe('assessment', () => {
         (landlordBill.kind === 'assessed' ? landlordBill.amount : 0) +
         (tenantBill.kind === 'assessed' ? tenantBill.amount : 0);
       expect(total).toBe(200_000);
+    });
+
+    it('ends the double-charge on a flat occupied rent-free', () => {
+      /*
+        The same shape as the test above, for the third way of being the شاغل —
+        and the one that had no escape at all until `FREE_OCCUPIED` existed.
+
+        A father's building, one flat lived in by his son with no بدل. The son
+        files his own card as a شاغل بتسامح, which always bears an occupant fee
+        (he is by definition the occupant of what he filed). The father's card
+        had no way to say so, so the flat read as owner-occupied and he was
+        charged for it too — two charges, one flat, both rows individually
+        valid and nothing anywhere logging it.
+
+        Deliberately asserted as a *pair*. Either card alone passes in both the
+        broken and the fixed world, which is exactly why a suite of single-card
+        assessments stayed green over a defect that doubled somebody's bill.
+      */
+      const father = () =>
+        building('1553', [
+          ['APARTMENT', 100, 'OWNER_OCCUPIED'],
+          ['APARTMENT', 100, 'FREE_OCCUPIED'],
+        ]);
+      const son = () => building('1553', [['APARTMENT', 100]], 'FREE_OCCUPANT');
+
+      const fatherBill = assessCitizen([father()], { ...flats, bearer: 'OCCUPANT' });
+      const sonBill = assessCitizen([son()], { ...flats, bearer: 'OCCUPANT' });
+
+      expect(fatherBill.kind === 'assessed' && fatherBill.amount).toBe(100_000);
+      expect(sonBill.kind === 'assessed' && sonBill.amount).toBe(100_000);
+
+      // Two flats on the parcel, two charges raised — not three.
+      const total =
+        (fatherBill.kind === 'assessed' ? fatherBill.amount : 0) +
+        (sonBill.kind === 'assessed' ? sonBill.amount : 0);
+      expect(total).toBe(200_000);
+    });
+
+    it('still bills the owner of a rent-free flat when the fee is owner-borne', () => {
+      /*
+        The half that must *not* move. «مشغولة بتسامح» exempts the owner from
+        the occupancy fee and from nothing else — they still hold the deed, the
+        pavement outside is still theirs, and the شاغل owns none of it. An
+        exemption written as "this unit is somebody else's problem" rather than
+        "somebody else is the شاغل" would have quietly stopped collecting
+        الأرصفة on every flat a relative lives in.
+      */
+      const father = () =>
+        building('1553', [
+          ['APARTMENT', 100, 'OWNER_OCCUPIED'],
+          ['APARTMENT', 100, 'FREE_OCCUPIED'],
+        ]);
+      const son = () => building('1553', [['APARTMENT', 100]], 'FREE_OCCUPANT');
+
+      const fatherBill = assessCitizen([father()], { ...flats, bearer: 'OWNER' });
+      const sonBill = assessCitizen([son()], { ...flats, bearer: 'OWNER' });
+
+      expect(fatherBill.kind === 'assessed' && fatherBill.amount).toBe(200_000);
+      expect(sonBill.kind === 'assessed' && sonBill.amount).toBe(0);
     });
 
     it('bills the owner for both flats when the fee is owner-borne', () => {

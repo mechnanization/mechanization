@@ -15,7 +15,7 @@ import type {
   PaymentMethod,
   SystemSettingsInput,
 } from '@mechanization/shared-schemas';
-import { isUnoccupied } from '@mechanization/shared-schemas';
+import { isOccupiedByOthers, isUnoccupied } from '@mechanization/shared-schemas';
 import {
   billableUnits,
   isUnsurveyed,
@@ -87,9 +87,17 @@ function unitMatches(unit: BillableUnit, category?: string): boolean {
  *  - **An occupant-borne fee** (النظافة, القيمة التأجيرية) follows who is
  *    inside. A مستأجر or a شاغل بتسامح is by definition the occupant of the
  *    card they filed, so it always counts. An owner's unit counts unless they
- *    have said someone else is in it (مؤجرة — that tenant is billed on their
- *    own card, and charging both is the double-count this whole enum exists to
- *    end) or that nobody is (شاغرة, قيد الإنجاز).
+ *    have said someone else is in it (مؤجرة or مشغولة بتسامح — that person is
+ *    billed on their own card, and charging both is the double-count this whole
+ *    enum exists to end) or that nobody is (شاغرة, قيد الإنجاز).
+ *
+ * The owner's exemption reads `isOccupiedByOthers`, not `!== 'RENTED'`, and the
+ * difference is not cosmetic. The register has three ways to be the شاغل and
+ * had only two ways to say so, so a شاغل بتسامح fell through the comparison:
+ * their owner answered «مشغولة من المالك» — the only value left — and paid the
+ * occupancy fee on a flat somebody else lived in, while that somebody paid it
+ * too. `FREE_OCCUPIED` is the missing value and this is the predicate that
+ * reads it. See `OCCUPIED_BY_OTHERS`.
  *
  * Null status counts as charged, as everywhere else: it means the question was
  * never put, not that the flat is empty. That is what makes OCCUPANT safe as a
@@ -103,7 +111,7 @@ function bearsFee(unit: BillableUnit, bearer: FeeBearer): boolean {
   // A non-owner card is the occupant's own, and carries no status to consult.
   if (unit.occupancyType !== 'OWNER') return true;
 
-  return unit.unitStatus !== 'RENTED' && !isUnoccupied(unit.unitStatus);
+  return !isOccupiedByOthers(unit.unitStatus) && !isUnoccupied(unit.unitStatus);
 }
 
 /**

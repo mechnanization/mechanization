@@ -459,6 +459,24 @@ function toDraft(property: Record<string, unknown>): PropertyDraft {
 
   return {
     id: text(property.id),
+    /*
+      The census link, read back the way it was saved.
+
+      Dropped here until now, and the loss was double. On screen the picker had
+      nothing to select from — «المنشأة في سجل المباني» reads `draft.buildingId`
+      to decide which chip is chosen — so an officer opening a record that was
+      linked to `C2-403-A` was shown an unlinked card and reasonably concluded
+      the link had never saved. Worse, it then wasn't: `toPayloadProperty` sends
+      `buildingId` only when the draft carries one, so re-saving that card wrote
+      the link away, along with `Unit`'s authority over the row (P2-T8) and the
+      occupancy the census had derived from it. Correcting a phone number
+      unlinked a building.
+
+      The server has always sent both halves back for exactly this reason — see
+      the note beside `buildingId` in `CitizensService.form` — so nothing here
+      is new information, it is simply no longer thrown away on the way in.
+    */
+    buildingId: text(property.buildingId),
     occupancyType: property.occupancyType as PropertyDraft['occupancyType'],
     landlordName: text(property.landlordName),
     landlordPhone: text(property.landlordPhone),
@@ -483,6 +501,10 @@ function toDraft(property: Record<string, unknown>): PropertyDraft {
       ? {
           units: units.map(
             (unit): UnitDraft => ({
+              // The per-flat half of the same link: which canonical `Unit` this
+              // line is about. Without it the matrix chips come back unticked
+              // and a re-save orphans every row that named a surveyed flat.
+              unitId: text((unit as Record<string, unknown>).unitId),
               unitType: (unit as Record<string, unknown>).unitType as UnitDraft['unitType'],
               floor: text((unit as Record<string, unknown>).floor),
               side: text((unit as Record<string, unknown>).side),
@@ -687,6 +709,8 @@ export function CitizenEditor({
             // A queued record has never reached the server, so nothing has had
             // the cadastre to check it against yet.
             unverified: new Map(),
+            // Whatever the officer typed before the phone lost signal.
+            notes: queued.payload.notes,
           });
 
           // Shown as though it were the result of this visit's own attempt —
@@ -750,6 +774,15 @@ export function CitizenEditor({
           // finish sees which blanks were deliberate and what was said about
           // each — and clears one simply by filling the field in.
           flags: flagsFromArray(form.flags ?? []),
+          /*
+            The note from the last visit, restored into the box.
+
+            A save replaces the note rather than merging it — an officer who
+            clears the box means to delete it — so opening the form with an
+            empty box would make every ordinary edit silently destroy what the
+            previous visit wrote.
+          */
+          notes: form.notes ?? undefined,
           /*
             And, separately, the fields the server could not confirm against
             its cadastre.
@@ -1388,6 +1421,7 @@ export function CitizenEditor({
       <CitizenForm
         tenant={tenant}
         token={token}
+        citizenId={citizenId}
         config={config}
         mode={editing || isQueuedEdit ? 'edit' : 'create'}
         initial={initial}

@@ -29,6 +29,7 @@ import {
   Phone,
   Receipt as ReceiptIcon,
   Ruler,
+  StickyNote,
   Tent,
   Trees,
   User,
@@ -592,6 +593,30 @@ export default function CitizenProfilePage({
                       {locale === 'en' ? 'Complete this record' : 'استكمال بيانات السجل'}
                     </Link>
                   ) : null}
+                </div>
+              ) : null}
+
+              {/*
+                «ملاحظات» — what the last officer learned by standing there.
+
+                Under the flags and above the properties. It is not a warning,
+                so it does not wear the warning colours the flag block does;
+                it is frequently the most useful line on the page for whoever
+                is about to knock on this door, so it is not buried under the
+                property cards either.
+
+                `whitespace-pre-line` because a note is written as a note: line
+                breaks the officer typed are part of what they said.
+              */}
+              {registration.notes ? (
+                <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
+                  <p className="flex items-center gap-1.5 text-sm font-semibold">
+                    <StickyNote className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    {locale === 'en' ? 'Notes' : 'ملاحظات'}
+                  </p>
+                  <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+                    {registration.notes}
+                  </p>
                 </div>
               ) : null}
 

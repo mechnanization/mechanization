@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { unitStatusForRole } from '@mechanization/shared-schemas';
 import type { OccupancyRole, OccupancyType } from '@mechanization/shared-schemas';
 import { CasesService } from '../cases/cases.service';
 
@@ -347,6 +348,24 @@ export class CensusSyncService {
       where: { id: input.unitId, surveyStatus: { in: UNRESOLVED_SURVEY_STATES as never } },
       data: { surveyStatus: 'COMPLETE' },
     });
+
+    /*
+      حالة الوحدة, from the capacity just recorded — the same write
+      `recordOccupancy` now makes, because the two paths must leave the census
+      in the same state or the door an officer came through changes the answer.
+
+      Null-only, so a status somebody set by hand survives. See the note there
+      for the double-charge this closes: a مستأجر recorded here with the unit
+      left null meant the landlord's card kept «مشغولة من المالك» and both of
+      them were billed for the flat.
+    */
+    const impliedStatus = unitStatusForRole(input.role);
+    if (impliedStatus) {
+      await this.db.unit.updateMany({
+        where: { id: input.unitId, unitStatus: null },
+        data: { unitStatus: impliedStatus as never },
+      });
+    }
 
     /*
       A visit is logged only the first time this household is recorded here —

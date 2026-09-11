@@ -828,6 +828,7 @@ export default function CasesPage({
           registerHref={(buildingId, unitId) =>
             `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}`
           }
+          citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
           locale={locale}
         />
       ) : null}

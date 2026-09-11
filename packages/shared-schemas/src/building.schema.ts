@@ -133,6 +133,28 @@ export const upsertUnitSchema = z.object({
   unitStatus: unitStatusSchema.optional(),
   surveyStatus: surveyStatusSchema.optional(),
   notes: notes.optional(),
+  /**
+   * «نعم، هذه وحدة مختلفة» — the unit-level twin of
+   * `createBuildingSchema.acknowledgedDuplicates`, and it was missing.
+   *
+   * `addUnit` allocates the next free position on the floor, so a second محل on
+   * a ground floor that already has one is *always* created and the unique
+   * `(buildingId, floor, sequence)` can never fire — it is satisfied by
+   * construction. The only shape the constraint catches is an explicitly
+   * supplied `sequence`, which this control never sends.
+   *
+   * That is the same hole D18 closed one level up: two officers, or one officer
+   * on two visits, record the same physical unit twice and nothing in the
+   * database is in a position to notice. The remedy there is also the remedy
+   * here — show them what is already on that floor and make them say this is
+   * not one of them.
+   *
+   * Not a validation rule, a confirmation. The answer is always allowed to be
+   * yes; four flats a floor is ordinary. What is not allowed is never being
+   * asked, because the second محل is not ordinary and looks identical from the
+   * form.
+   */
+  acknowledgedDuplicates: z.boolean().optional(),
 });
 
 export type UpsertUnitInput = z.infer<typeof upsertUnitSchema>;
@@ -234,7 +256,14 @@ export const createBuildingSchema = z
      */
     units: z
       .array(
-        upsertUnitSchema.extend({
+        /*
+          `acknowledgedDuplicates` is omitted rather than ignored. It answers
+          "is this a second unit on a floor that already has one like it", and
+          this building did not exist a statement ago — there is nothing on any
+          of its floors to be a duplicate of, which is the same reason `create`
+          takes no advisory lock for these sequences.
+        */
+        upsertUnitSchema.omit({ acknowledgedDuplicates: true }).extend({
           /**
            * The browser's own id for this unit, for the same reason the
            * building has one: a phone with no signal has to be able to put a
@@ -364,6 +393,13 @@ export const unitBlueprintSchema = z
 export type UnitBlueprint = z.infer<typeof unitBlueprintSchema>;
 
 export const updateUnitSchema = upsertUnitSchema
+  /*
+    Correcting a unit cannot create one, so there is no duplicate to
+    acknowledge. Omitted rather than left to be ignored: `.partial()` below
+    counts any present key as a change, so a PATCH carrying nothing but this
+    flag would pass the "at least one field" guard and then save nothing.
+  */
+  .omit({ acknowledgedDuplicates: true })
   .partial()
   .superRefine((value, ctx) => {
     if (Object.values(value).some((v) => v !== undefined)) return;

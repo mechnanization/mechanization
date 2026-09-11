@@ -8,7 +8,7 @@ import {
   unitTypeSchema,
   type PropertyType,
 } from './enums';
-import { arabicOrLatinName, lebanesePhone, uuid } from './primitives';
+import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
 
 /**
  * Steps 3–4 — a single repeatable "property card".
@@ -41,7 +41,7 @@ const occupancyBranch = z.discriminatedUnion(
     z.object({
       occupancyType: z.literal('TENANT'),
       landlordName: arabicOrLatinName,
-      landlordPhone: lebanesePhone,
+      landlordPhone: internationalPhone,
     }),
     /**
      * شاغل بتسامح — occupying without paying بدل.
@@ -59,7 +59,7 @@ const occupancyBranch = z.discriminatedUnion(
     z.object({
       occupancyType: z.literal('FREE_OCCUPANT'),
       landlordName: arabicOrLatinName,
-      landlordPhone: lebanesePhone.optional(),
+      landlordPhone: internationalPhone.optional(),
     }),
   ],
   { errorMap: () => ({ message: 'نوع الإشغال مطلوب' }) },
@@ -302,7 +302,7 @@ export const partialPropertyEntrySchema = z
   .object({
     occupancyType: occupancyTypeSchema,
     landlordName: arabicOrLatinName,
-    landlordPhone: lebanesePhone,
+    landlordPhone: internationalPhone,
     propertyType: propertyTypeSchema,
     neighborhood: neighborhoodField,
     propertyNumber: propertyNumberField,

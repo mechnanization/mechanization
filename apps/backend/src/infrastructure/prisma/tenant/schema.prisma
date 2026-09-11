@@ -296,6 +296,17 @@ model Registration {
   /// field by field and overridable field by field.
   blanketFlagReason String?
 
+  /// «ملاحظات» — free text the officer adds, asked for by no field.
+  ///
+  /// Deliberately separate from `blanketFlagReason` directly above, which they
+  /// were previously forced to share. That one is a *reason data is missing*:
+  /// it propagates onto every remaining gap as a default and its presence is
+  /// part of what lands a record at «يتطلب مراجعة». A note carries none of
+  /// that. It flags nothing, excuses nothing, changes no status — it is the
+  /// back of the paper form, which is where «الأسرة تنتقل نهاية الشهر» used to
+  /// be written and lost.
+  notes String?
+
   properties      PropertyEntry[]
   documents       Document[]
   unitOccupancies UnitOccupancy[]
@@ -333,6 +344,16 @@ enum UnitStatus {
   /// Occupied under a lease. The value that lets a landlord's building and a
   /// tenant's own card describe the same flat without both being charged for it.
   RENTED
+  /// مشغولة بتسامح — the same escape as RENTED, for the شاغل بتسامح.
+  ///
+  /// Added by migration 0034. Its absence was a live double-charge: an owner
+  /// whose son occupies the flat rent-free had no true value to pick — RENTED
+  /// asserts a lease that does not exist, VACANT denies an occupant who does —
+  /// so they answered OWNER_OCCUPIED or nothing, and `bearsFee` then charged
+  /// the owner the occupancy fee while the son's own card was charged it too.
+  /// See `OCCUPIED_BY_OTHERS` in shared-schemas, which is what the exemption
+  /// now reads instead of comparing against RENTED alone.
+  FREE_OCCUPIED
   VACANT
   UNDER_CONSTRUCTION
 }

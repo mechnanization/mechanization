@@ -92,6 +92,14 @@ export interface QueuedSubmission {
      * re-derived on drain because the officer wrote it once, at the door.
      */
     blanketFlagReason?: string;
+    /**
+     * «ملاحظات» — carried with the queued record like everything else on it.
+     *
+     * Unlike `blanketFlagReason` above, this is *not* restricted to creations:
+     * a note is an observation about a visit and carries no status
+     * consequence, so it is as valid on a queued edit as on a queued create.
+     */
+    notes?: string;
   };
   status: QueuedStatus;
   savedAt: number;

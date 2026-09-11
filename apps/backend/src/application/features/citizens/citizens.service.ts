@@ -506,6 +506,7 @@ export class CitizensService {
               referenceNumber: true,
               status: true,
               flaggedFields: true,
+              notes: true,
               properties: {
                 orderBy: { createdAt: 'asc' },
                 include: { units: { orderBy: { createdAt: 'asc' } } },
@@ -531,6 +532,15 @@ export class CitizensService {
        * whoever completes it re-derive which blanks were deliberate.
        */
       flags: readFlags(registration?.flaggedFields),
+      /*
+        Loaded back so an edit opens with the note already in the box.
+
+        Without this the field renders empty on every edit and the officer's
+        save — which replaces the note rather than merging it — would silently
+        delete whatever the last visit wrote. A write-only note is worse than
+        no note at all.
+      */
+      notes: registration?.notes ?? null,
       personal: {
         firstName: citizen.firstName,
         middleName: citizen.middleName ?? '',
@@ -773,6 +783,10 @@ export class CitizensService {
             ...parsed.data,
             flags: [],
             blanketFlagReason: undefined,
+            // Nor a note, and for the same reason: a note is something an
+            // officer observed at a door. A spreadsheet row has no visit
+            // behind it to have observed anything.
+            notes: undefined,
             clientSubmissionId: undefined,
           },
           actor: input.actor,
@@ -964,6 +978,7 @@ export class CitizensService {
               referenceNumber: ReferenceNumber.generate(tenant.referencePrefix).value,
               status: nextStatus,
               flaggedFields: flags as never,
+              notes: input.payload.notes ?? null,
             },
             select: { id: true },
           })
@@ -982,7 +997,18 @@ export class CitizensService {
       if (existing?.id) {
         await tx.registration.update({
           where: { id: existing.id },
-          data: { status: nextStatus, flaggedFields: flags as never },
+          data: {
+            status: nextStatus,
+            flaggedFields: flags as never,
+            /*
+              Replaced by this save, exactly as the flags above are, and for
+              the same reason: the edit form shows the note and the officer
+              submits the whole record. An absent one means they cleared the
+              box, which has to be able to delete a note — merging would make a
+              note written by mistake permanent.
+            */
+            notes: input.payload.notes ?? null,
+          },
         });
       }
 

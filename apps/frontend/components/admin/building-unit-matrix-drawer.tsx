@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   AlertTriangle,
   Building2,
@@ -138,16 +139,36 @@ function cellBadge(
   labels: ReturnType<typeof getLabels>,
   en: boolean,
 ): { text: string; variant: 'soft-success' | 'soft-warning' | 'soft-destructive' | 'soft-info' | 'soft-muted' } {
-  const current = unit.occupants.find((occupant) => occupant.toDate === null);
+  /*
+    Named after whoever is *inside*, not whoever registered most recently.
+
+    This took the first current spell the server happened to return, ordered by
+    `toDate` then `fromDate`. So a flat with an owner and a tenant on it was
+    labelled with whichever of the two filed last, and two identical situations
+    on one floor read as two different kinds of record — «مسجلة (المستأجر)»
+    beside «مسجلة (المالك)», with nothing to say why they differed.
+
+    A مستأجر or a شاغل بتسامح outranks a مالك because the cell answers «من في
+    هذه الوحدة؟», and an owner in the occupancy table has not said they live
+    there — the deed is not a statement of residence (D2). Where the only
+    current spell is an owner's, they are the answer.
+  */
+  const current = unit.occupants
+    .filter((occupant) => occupant.toDate === null)
+    .sort((a, b) => {
+      const rank = (role: string) => (role === 'OWNER' ? 1 : 0);
+      if (rank(a.role) !== rank(b.role)) return rank(a.role) - rank(b.role);
+      // Within one rank the newest spell wins — a flat re-let this month is
+      // described by its present tenant, not the one before them.
+      return a.fromDate < b.fromDate ? 1 : -1;
+    })[0];
+
   if (current) {
+    const who = current.citizenName
+      ? `${labels.occupancyRole[current.role]}: ${current.citizenName}`
+      : labels.occupancyRole[current.role];
     return {
-      text: current.citizenName
-        ? en
-          ? `Registered (${current.citizenName})`
-          : `مسجلة (${current.citizenName})`
-        : en
-          ? 'Registered'
-          : 'مسجلة',
+      text: en ? `Registered (${who})` : `مسجلة (${who})`,
       variant: 'soft-success',
     };
   }
@@ -193,6 +214,7 @@ export function BuildingUnitMatrixDrawer({
   onChanged,
   onEditBuilding,
   registerHref,
+  citizenHref,
   locale = 'ar',
 }: {
   open: boolean;
@@ -215,6 +237,19 @@ export function BuildingUnitMatrixDrawer({
    * admin base paths it has no business reconstructing.
    */
   registerHref?: (buildingId: string, unitId: string) => string;
+  /**
+   * Where an occupant's name goes — their own record.
+   *
+   * Built by the caller for the same reason `registerHref` is: three routes
+   * open this drawer and none of their admin base paths are this component's
+   * to reconstruct. Optional, and where it is absent the name renders as plain
+   * text rather than a link that goes nowhere.
+   *
+   * The occupancy list is the one place in the census that names a person, and
+   * it was a dead end: an officer reading «مستأجر: فلان» had to memorise the
+   * name, leave the matrix, and search the citizens page for it.
+   */
+  citizenHref?: (citizenId: string) => string;
   locale?: string;
 }) {
   const en = locale === 'en';
@@ -290,6 +325,24 @@ export function BuildingUnitMatrixDrawer({
   const selectedUnit = useMemo(
     () => building?.units.find((unit) => unit.id === selectedUnitId) ?? null,
     [building, selectedUnitId],
+  );
+
+  /**
+   * The spells running in the open unit **right now**.
+   *
+   * Deliberately not the same question the delete guard asks. That one tests
+   * `occupants.length === 0` — every spell ever, ended ones included — because
+   * `deleteUnit` refuses on a historical occupancy too: D2 keeps ended spells
+   * precisely so the municipality outlives the card, and a cascade would erase
+   * them. Narrowing it to live spells would show «حذف الوحدة» on a unit the
+   * server will refuse to delete.
+   *
+   * «تأكيد الشغور» is the opposite: a flat whose last tenant moved out *is*
+   * empty and may be marked so. Only a live spell contradicts it.
+   */
+  const liveOccupants = useMemo(
+    () => (selectedUnit?.occupants ?? []).filter((occupant) => occupant.toDate === null),
+    [selectedUnit],
   );
 
   /** Which floor's «إضافة وحدة» row is open, and the type chosen in it. */
@@ -741,9 +794,35 @@ export function BuildingUnitMatrixDrawer({
                         )}
                       >
                         <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                        <span className={cn(current ? 'font-medium' : 'font-normal line-through')}>
-                          {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
-                        </span>
+                        {/*
+                          The name opens their record.
+
+                          This list is the one place the census names a person,
+                          and it was a dead end: «مستأجر: فلان» with no way
+                          through meant memorising the name, leaving the matrix
+                          and searching the citizens page for it — which is also
+                          how an officer ends up filing a second record for
+                          somebody already registered.
+
+                          A former occupant's name is a link too. Their spell
+                          ended; their file did not, and it is frequently the
+                          record somebody is looking for.
+                        */}
+                        {citizenHref ? (
+                          <Link
+                            href={citizenHref(occupant.citizenId)}
+                            className={cn(
+                              'underline-offset-2 hover:underline',
+                              current ? 'font-medium' : 'font-normal line-through',
+                            )}
+                          >
+                            {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
+                          </Link>
+                        ) : (
+                          <span className={cn(current ? 'font-medium' : 'font-normal line-through')}>
+                            {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
+                          </span>
+                        )}
                         <Badge variant="soft-muted">{labels.occupancyRole[occupant.role]}</Badge>
                         {!current ? (
                           <Badge variant="outline">{en ? 'Former' : 'سابق'}</Badge>
@@ -813,10 +892,33 @@ export function BuildingUnitMatrixDrawer({
                     <ClipboardList className="size-4" aria-hidden />
                     {en ? 'Log a case' : 'تسجيل حالة'}
                   </Button>
+                  {/*
+                    A flat cannot be empty and lived in at the same time.
+
+                    This was enabled over live occupancies and wrote «شاغرة»
+                    straight across them — leaving a unit that says nobody is
+                    there beside the rows naming who is, and quietly dropping
+                    the owner's occupancy fee, because `isUnoccupied` exempts a
+                    vacant flat. `updateUnit` now refuses it outright; the
+                    button says why rather than letting an officer discover it
+                    from an error, and «إنهاء الإشغال» directly above is the
+                    action that actually means what they want.
+                  */}
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={busy || selectedUnit.surveyStatus === 'VACANT_CONFIRMED'}
+                    disabled={
+                      busy ||
+                      selectedUnit.surveyStatus === 'VACANT_CONFIRMED' ||
+                      liveOccupants.length > 0
+                    }
+                    title={
+                      liveOccupants.length > 0
+                        ? en
+                          ? 'End the occupancies first — this unit has people recorded in it'
+                          : 'أنهِ الإشغال أولاً — يوجد شاغل مسجَّل في هذه الوحدة'
+                        : undefined
+                    }
                     onClick={() => void markVacant(selectedUnit)}
                   >
                     <DoorClosed className="size-4" aria-hidden />

@@ -8,16 +8,21 @@ import {
   STRUCTURE_TYPE_MAP,
   structureTypeForProperty,
   type StructureType,
+  type UnitStatus,
   type UpsertUnitInput,
 } from '@mechanization/shared-schemas';
 import {
   addUnit,
   ApiRequestError,
-  getBuilding,
-  getBuildings,
+  duplicateUnitsOf,
+  getBuildingCached,
+  getParcelBuildings,
   logApiError,
+  peekBuilding,
+  peekParcelBuildings,
   type BuildingDetail,
   type BuildingLedgerRow,
+  type DuplicateUnitCandidate,
   type UnitWithOccupants,
 } from '@/lib/api-client';
 import type { PropertyDraft, UnitDraft } from '@/components/citizen/property-card';
@@ -85,6 +90,7 @@ export function BuildingUnitPicker({
   tenant,
   token,
   draft,
+  citizenId,
   onChange,
   onLinkedBuilding,
   locked,
@@ -93,6 +99,19 @@ export function BuildingUnitPicker({
   tenant: string;
   token: string;
   draft: PropertyDraft;
+  /**
+   * The citizen whose card this is, when the register already has an id for
+   * them — absent on a create, where nobody has been saved yet.
+   *
+   * Only the unit chips read it, and only to answer "is this spell theirs or
+   * somebody else's". Without it the control could see *that* a flat had an
+   * occupant and never *whose*, so it warned an owner about his own recorded
+   * occupancy in exactly the same words it used for a tenant living in his
+   * flat. Absent, every spell reads as somebody else's — which is the safe
+   * direction on a create, because a citizen who does not exist yet cannot be
+   * the person already in the flat.
+   */
+  citizenId?: string;
   /**
    * An updater, matching `PropertyCard`'s own.
    *
@@ -137,7 +156,23 @@ export function BuildingUnitPicker({
   const parcelNumber = draft.propertyNumber?.trim() ?? '';
   const isBuilding = draft.propertyType === 'BUILDING';
 
-  const [candidates, setCandidates] = useState<BuildingLedgerRow[]>([]);
+  /*
+    Seeded from what this tab has already read, not from empty.
+
+    The control re-mounts constantly — one per property card, again on every
+    unfold, again each time the edit form is opened — and every mount used to
+    start at `[]`/`'idle'` and announce «جاري مراجعة سجل المباني…» while it
+    re-asked a question already answered. Even with the read cached the answer
+    arrives a microtask later, and that is still one rendered frame of the
+    message — long enough to read as the choice being thrown away and made
+    again, which is exactly how officers described it.
+
+    Lazy initialisers, so the peek happens once on mount. A *changed* parcel is
+    the effect's business below.
+  */
+  const [candidates, setCandidates] = useState<BuildingLedgerRow[]>(
+    () => (parcelNumber ? peekParcelBuildings(tenant, parcelNumber)?.buildings : undefined) ?? [],
+  );
   /*
     Three answers, not two.
 
@@ -149,9 +184,13 @@ export function BuildingUnitPicker({
     list is the state in which creating is safe, and treating an unreachable
     census as an empty one would mint a structure on every field registration.
   */
-  const [lookup, setLookup] = useState<'idle' | 'loading' | 'ok' | 'failed'>('idle');
+  const [lookup, setLookup] = useState<'idle' | 'loading' | 'ok' | 'failed'>(() =>
+    parcelNumber && peekParcelBuildings(tenant, parcelNumber) ? 'ok' : 'idle',
+  );
   const loading = lookup === 'loading';
-  const [detail, setDetail] = useState<BuildingDetail | null>(null);
+  const [detail, setDetail] = useState<BuildingDetail | null>(
+    () => (draft.buildingId ? peekBuilding(tenant, draft.buildingId) : undefined) ?? null,
+  );
   const [detailLoading, setDetailLoading] = useState(false);
   /**
    * The officer said «بدون ربط» for this parcel.
@@ -177,6 +216,16 @@ export function BuildingUnitPicker({
   const [adding, setAdding] = useState<{ floor: string; unitType: string } | null>(null);
   const [addingBusy, setAddingBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  /**
+   * The units the server held out when «إضافة وحدة» hit its duplicate guard.
+   *
+   * Null is "not asked"; a list is "asked, awaiting the answer". Kept beside
+   * `adding` rather than inside it because the sub-form's own state is what the
+   * officer typed, and this is what the register replied — clearing one must
+   * not clear the other, or declining the prompt would throw away the floor and
+   * type they had just entered.
+   */
+  const [duplicateUnits, setDuplicateUnits] = useState<DuplicateUnitCandidate[] | null>(null);
 
   // ── Which structures stand on this parcel ─────────────────────────
   useEffect(() => {
@@ -196,9 +245,20 @@ export function BuildingUnitPicker({
       notice they are on the wrong one.
     */
     let cancelled = false;
-    setLookup('loading');
+    /*
+      A parcel this tab has already read is answered before the request is even
+      issued — `getParcelBuildings` hands back exactly this value, so all
+      `'loading'` would add is the spinner frame.
+    */
+    const known = peekParcelBuildings(tenant, parcelNumber);
+    if (known) {
+      setCandidates(known.buildings);
+      setLookup('ok');
+    } else {
+      setLookup('loading');
+    }
 
-    getBuildings(tenant, token, { parcelNumber, limit: 50 })
+    getParcelBuildings(tenant, token, parcelNumber)
       .then((response) => {
         if (cancelled) return;
         setCandidates(response.buildings);
@@ -237,9 +297,17 @@ export function BuildingUnitPicker({
       return;
     }
     let cancelled = false;
-    setDetailLoading(true);
+    /*
+      The matrix, when this tab already holds it — same reasoning as the parcel
+      listing above. Freshness is not lost by it: every census write drops the
+      entry, so the `matrixVersion` bump after «إضافة وحدة» still reaches the
+      network.
+    */
+    const known = peekBuilding(tenant, buildingId);
+    if (known) setDetail(known);
+    setDetailLoading(!known);
 
-    getBuilding(tenant, token, buildingId)
+    getBuildingCached(tenant, token, buildingId)
       .then((response) => {
         if (!cancelled) setDetail(response);
       })
@@ -360,15 +428,24 @@ export function BuildingUnitPicker({
         ticking eight of them was asked the same question eight times — which is
         the exact inflation `addUnit` already avoids by inheriting it. The
         canonical answer still wins wherever the census has one.
+
+        The inheritance stops dead at a flat somebody else is living in, and
+        that exception is the whole billing fix on this side. A landlord ticking
+        eight flats, one of which is let, used to have the *previous* flat's
+        «مشغولة من المالك» copied onto the let one — and `bearsFee` then charged
+        them the occupancy fee for a flat whose tenant was being charged it too.
+        A guess about flat 7 is not evidence about flat 8, least of all when the
+        census is holding the answer for flat 8. `occupancyStatusOf` reads it.
       */
       const previous = units.at(-1);
+      const occupied = occupancyStatusOf(unit);
       const row: UnitDraft = {
         unitId: unit.id,
         unitType: unit.unitType,
         floor: floorText(unit.floor, en),
         side: unit.side ?? undefined,
         unitArea: unit.unitArea != null ? String(unit.unitArea) : undefined,
-        unitStatus: unit.unitStatus ?? previous?.unitStatus,
+        unitStatus: unit.unitStatus ?? occupied ?? previous?.unitStatus,
       };
 
       /*
@@ -415,7 +492,7 @@ export function BuildingUnitPicker({
    * two officers filling one matrix from colliding. So the row is built from
    * the response, never from what was typed here.
    */
-  const submitNewUnit = async () => {
+  const submitNewUnit = async (acknowledgedDuplicates = false) => {
     if (!adding || !buildingId || addingBusy) return;
 
     const floor = Number(adding.floor);
@@ -434,6 +511,7 @@ export function BuildingUnitPicker({
       const created = await addUnit(tenant, token, buildingId, {
         floor,
         unitType: adding.unitType as UpsertUnitInput['unitType'],
+        ...(acknowledgedDuplicates ? { acknowledgedDuplicates: true } : {}),
       });
 
       onChange((current) => ({
@@ -454,9 +532,30 @@ export function BuildingUnitPicker({
       }));
 
       setAdding(null);
+      setDuplicateUnits(null);
       setMatrixVersion((version) => version + 1);
     } catch (caught) {
       logApiError(caught);
+
+      /*
+        The floor already has a unit of this type, and the server is holding it
+        out rather than refusing outright.
+
+        This is the moment «إضافة وحدة» needed and never had. `addUnit`
+        allocates the next free position, so a second محل beside an existing محل
+        was always created and no constraint could fire — the mistake that put
+        one physical shop into the register twice. The candidates arrive with
+        the refusal so the prompt can name them without a second request, which
+        matters most to the offline phone least able to make one.
+
+        Not an error state: the answer is allowed to be yes.
+      */
+      const clashes = duplicateUnitsOf(caught);
+      if (clashes) {
+        setDuplicateUnits(clashes);
+        return;
+      }
+
       /*
         Surfaced verbatim where the server sent one. `addUnit` refuses a
         position already taken with «الوحدة رقم ٢ موجودة على هذا الطابق», which
@@ -813,17 +912,30 @@ export function BuildingUnitPicker({
                   error={addError}
                   onOpen={() => {
                     setAddError(null);
+                    setDuplicateUnits(null);
                     setAdding({
                       floor: '0',
                       unitType: STRUCTURE_TYPE_MAP[detail.structureType].defaultUnitType,
                     });
                   }}
-                  onChange={setAdding}
+                  onChange={(next) => {
+                    // A changed floor or type is a different question, so an
+                    // answer given about the old one stops applying.
+                    setDuplicateUnits(null);
+                    setAdding(next);
+                  }}
                   onCancel={() => {
                     setAdding(null);
                     setAddError(null);
+                    setDuplicateUnits(null);
                   }}
                   onSubmit={() => void submitNewUnit()}
+                  duplicates={duplicateUnits}
+                  onConfirmDuplicates={() => void submitNewUnit(true)}
+                  onDeclineDuplicates={() => {
+                    setDuplicateUnits(null);
+                    setAdding(null);
+                  }}
                 />
               ) : null}
             </>
@@ -832,9 +944,32 @@ export function BuildingUnitPicker({
               <ul className="flex flex-wrap gap-1.5">
                 {detail.units.map((unit) => {
                   const active = linkedUnitIds.has(unit.id);
-                  const takenBySomeoneElse = unit.occupants.some(
-                    (occupant) => occupant.toDate === null,
-                  );
+                  const occupants = currentOccupants(unit);
+                  /*
+                    Whose occupancy, not merely whether there is one.
+
+                    This used to be `occupants.some(current)` under the name
+                    `takenBySomeoneElse` — a variable that did not check *whose*,
+                    because the control was never told which citizen it was
+                    editing. So an owner already recorded in flat 3 was warned
+                    about himself, and an owner ticking a genuinely let flat got
+                    the identical amber dot. One of those is nothing and the
+                    other decides who pays the رسم نظافة; they cannot look the
+                    same.
+                  */
+                  const mine = citizenId
+                    ? occupants.filter((occupant) => occupant.citizenId === citizenId)
+                    : [];
+                  const others = citizenId
+                    ? occupants.filter((occupant) => occupant.citizenId !== citizenId)
+                    : occupants;
+                  /*
+                    Only a *non-owner* spell is a fee-bearing collision. Two
+                    owners on one flat are co-heirs, which Lebanese inheritance
+                    makes the normal case (D2) and which costs nobody anything.
+                  */
+                  const heldByOccupant = others.some((occupant) => occupant.role !== 'OWNER');
+
                   return (
                     <li key={unit.id}>
                       <button
@@ -842,30 +977,103 @@ export function BuildingUnitPicker({
                         disabled={Boolean(locked?.unitId) && locked?.unitId !== unit.id}
                         onClick={() => toggleUnit(unit)}
                         aria-pressed={active}
-                        title={
-                          takenBySomeoneElse
-                            ? en
-                              ? 'Somebody is already recorded in this unit'
-                              : 'يوجد شاغل مسجَّل في هذه الوحدة'
-                            : undefined
-                        }
                         className={cn(
-                          'flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-xs transition-colors',
+                          'flex flex-col items-stretch gap-0.5 rounded-md border px-2 py-1.5 text-start text-xs transition-colors',
                           active
                             ? 'border-primary bg-primary/10 text-primary'
                             : 'hover:bg-accent disabled:opacity-40',
                         )}
                       >
-                        {active ? <Link2 className="size-3" aria-hidden /> : null}
-                        <span dir="ltr">{unit.unitCode}</span>
                         {/*
-                          A dot, not a refusal. Co-ownership and an owner abroad
-                          with a tenant in the flat are both ordinary (D2), so a
-                          unit that already has somebody in it is flagged for the
-                          officer to notice — not blocked.
+                          What the officer needs to recognise the flat from the
+                          doorway, which a bare code never gave them.
+
+                          The chip rendered `unitCode` and a dot, so an officer
+                          registering the owner of «the shop on the ground
+                          floor» saw «0001» and had no way to tell whether that
+                          *was* their shop. Pressing «إضافة وحدة» is the
+                          rational next move from that screen, and it mints a
+                          second row for one physical unit. Every value below
+                          was already in the payload and simply was not drawn.
                         */}
-                        {takenBySomeoneElse ? (
-                          <span aria-hidden className="size-1.5 rounded-full bg-amber-500" />
+                        <span className="flex items-center gap-1 font-mono">
+                          {active ? <Link2 className="size-3 shrink-0" aria-hidden /> : null}
+                          <span dir="ltr">{unit.unitCode}</span>
+                          {unit.postedNumber && unit.postedNumber !== unit.unitCode ? (
+                            <span className="text-muted-foreground" dir="ltr">
+                              ({unit.postedNumber})
+                            </span>
+                          ) : null}
+                        </span>
+
+                        <span className="font-sans text-[11px] text-muted-foreground">
+                          {[
+                            labels.unitType[unit.unitType],
+                            floorText(unit.floor, en),
+                            unit.side,
+                            unit.unitArea != null
+                              ? en
+                                ? `${unit.unitArea} m²`
+                                : `${unit.unitArea} م²`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </span>
+
+                        {/*
+                          Who is in it, by name and capacity.
+
+                          «مستأجر: فلان» is a fact an officer can act on;
+                          «يوجد شاغل مسجَّل» — the old tooltip — is one they
+                          cannot. The owner's own spell is named separately so
+                          the commonest reason the chip lights up, that this is
+                          the very person being edited, stops reading as a
+                          clash.
+                        */}
+                        {mine.length > 0 ? (
+                          <span className="font-sans text-[11px] font-medium text-primary">
+                            {en ? 'Already linked to this citizen' : 'مسجَّل لهذا المواطن'}
+                            {' · '}
+                            {mine.map((row) => labels.occupancyRole[row.role]).join('، ')}
+                          </span>
+                        ) : null}
+
+                        {others.map((occupant) => (
+                          <span
+                            key={occupant.id}
+                            className={cn(
+                              'font-sans text-[11px]',
+                              occupant.role === 'OWNER'
+                                ? 'text-muted-foreground'
+                                : 'font-medium text-amber-700 dark:text-amber-500',
+                            )}
+                          >
+                            {labels.occupancyRole[occupant.role]}
+                            {': '}
+                            {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
+                          </span>
+                        ))}
+
+                        {/*
+                          Said once, plainly, where it changes the bill.
+
+                          A flat somebody else occupies is «مؤجرة» or «مشغولة
+                          بتسامح» on this card whether or not anyone types it,
+                          and `toggleUnit` writes exactly that. Announcing it
+                          here is what stops the owner's card asserting
+                          «مشغولة من المالك» over a tenant the register is
+                          already holding — the state in which both of them get
+                          charged the occupancy fee for one flat.
+                        */}
+                        {heldByOccupant ? (
+                          <span className="font-sans text-[11px] text-amber-700 dark:text-amber-500">
+                            {en
+                              ? 'Occupied by someone else — this card will record it as such'
+                              : `تُسجَّل على هذه البطاقة «${
+                                  labels.unitStatus[occupancyStatusOf(unit) ?? 'RENTED']
+                                }»`}
+                          </span>
                         ) : null}
                       </button>
                     </li>
@@ -898,6 +1106,7 @@ export function BuildingUnitPicker({
                 error={addError}
                 onOpen={() => {
                   setAddError(null);
+                  setDuplicateUnits(null);
                   // Seeded from the top floor already in the matrix: units are
                   // added upward far more often than a basement is discovered.
                   const highest = Math.max(...detail.units.map((unit) => unit.floor));
@@ -909,12 +1118,22 @@ export function BuildingUnitPicker({
                     unitType: STRUCTURE_TYPE_MAP[detail.structureType].defaultUnitType,
                   });
                 }}
-                onChange={setAdding}
+                onChange={(next) => {
+                  setDuplicateUnits(null);
+                  setAdding(next);
+                }}
                 onCancel={() => {
                   setAdding(null);
                   setAddError(null);
+                  setDuplicateUnits(null);
                 }}
                 onSubmit={() => void submitNewUnit()}
+                duplicates={duplicateUnits}
+                onConfirmDuplicates={() => void submitNewUnit(true)}
+                onDeclineDuplicates={() => {
+                  setDuplicateUnits(null);
+                  setAdding(null);
+                }}
               />
 
             </>
@@ -1113,6 +1332,40 @@ function floorText(floor: number, en: boolean): string {
 }
 
 /**
+ * The spells running in this flat right now, newest first.
+ *
+ * Sorted here rather than trusted from the wire: the matrix orders occupancies
+ * by `toDate` then `fromDate`, which puts *ended* spells first under Postgres'
+ * NULLS LAST, and every reader that wanted "who is in there" was taking
+ * whichever current row happened to come back first.
+ */
+function currentOccupants(unit: UnitWithOccupants) {
+  return unit.occupants
+    .filter((occupant) => occupant.toDate === null)
+    .sort((a, b) => (a.fromDate < b.fromDate ? 1 : -1));
+}
+
+/**
+ * The حالة الوحدة this flat's occupancies imply, or undefined for none.
+ *
+ * The client half of the rule the two write paths now apply server-side: a
+ * non-owner spell settles the state of the unit, and an OWNER spell does not —
+ * a deed is not a statement of residence.
+ *
+ * Only ever used to *fill a blank*, never to overwrite. Where the census has
+ * already recorded a status that one it wins, which is the same precedence
+ * `preferLinked` applies when the bill is computed.
+ */
+function occupancyStatusOf(unit: UnitWithOccupants): UnitStatus | undefined {
+  const roles = new Set(currentOccupants(unit).map((occupant) => occupant.role));
+  // RENTED ahead of FREE_OCCUPIED where a flat somehow carries both, matching
+  // migration 0035: a عقد إيجار is the fact with a fee schedule behind it.
+  if (roles.has('TENANT')) return 'RENTED';
+  if (roles.has('FREE_OCCUPANT')) return 'FREE_OCCUPIED';
+  return undefined;
+}
+
+/**
  * A unit line nobody has typed into yet.
  *
  * `unitType` and `unitStatus` are excluded on purpose: «إضافة وحدة» seeds both
@@ -1158,6 +1411,9 @@ function AddUnitInline({
   onChange,
   onCancel,
   onSubmit,
+  duplicates,
+  onConfirmDuplicates,
+  onDeclineDuplicates,
 }: {
   en: boolean;
   labels: ReturnType<typeof getLabels>;
@@ -1169,6 +1425,15 @@ function AddUnitInline({
   onChange: (next: { floor: string; unitType: string }) => void;
   onCancel: () => void;
   onSubmit: () => void;
+  /**
+   * The units already on this floor, when the server refused for want of an
+   * acknowledgement. Null while nothing has been asked.
+   */
+  duplicates: DuplicateUnitCandidate[] | null;
+  /** «نعم، هذه وحدة مختلفة» — re-sends the same unit with the flag set. */
+  onConfirmDuplicates: () => void;
+  /** «لا، إنها إحداها» — abandons the addition and closes the sub-form. */
+  onDeclineDuplicates: () => void;
 }) {
   if (!state) {
     return (
@@ -1226,7 +1491,7 @@ function AddUnitInline({
 
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || duplicates !== null}
           onClick={onSubmit}
           className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-2.5 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
         >
@@ -1249,6 +1514,103 @@ function AddUnitInline({
           ? 'The unit is added to the census and ticked for this citizen. Its code is assigned from the floor.'
           : 'تُضاف الوحدة إلى سجل المباني وتُحدَّد لهذا المواطن. يُشتق رمزها من الطابق.'}
       </p>
+
+      {/*
+        The floor already has one of these — the moment of noticing.
+
+        `addUnit` takes the next free position on the floor, so nothing in the
+        database could ever refuse a second محل beside an existing محل: the
+        unique `(buildingId, floor, sequence)` is satisfied by construction.
+        That is how one physical shop came to be in the register twice, and it
+        is the same hole D18 closed one level up for structures on a parcel.
+
+        Shown rather than refused, because four flats a floor is ordinary and a
+        guard that says no is a guard officers learn to route around. What it
+        must not be is absent: the two units look identical from this form, and
+        only the names below tell them apart.
+      */}
+      {duplicates && duplicates.length > 0 ? (
+        <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2.5">
+          <p className="flex items-start gap-1.5 text-[11px] font-medium leading-relaxed">
+            <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+            {en
+              ? 'This floor already has a unit of the same type. Is the one you are adding different?'
+              : 'يوجد على هذا الطابق وحدة من النوع نفسه. هل الوحدة التي تضيفها مختلفة عنها؟'}
+          </p>
+
+          <ul className="space-y-1">
+            {duplicates.map((row) => (
+              <li
+                key={row.id}
+                className="rounded-md bg-background/70 px-2 py-1.5 text-[11px] leading-relaxed"
+              >
+                <span className="font-mono font-medium" dir="ltr">
+                  {row.unitCode}
+                </span>
+                {row.postedNumber && row.postedNumber !== row.unitCode ? (
+                  <span className="text-muted-foreground" dir="ltr">
+                    {' '}
+                    ({row.postedNumber})
+                  </span>
+                ) : null}
+                <span className="text-muted-foreground">
+                  {' — '}
+                  {[
+                    labels.unitType[row.unitType],
+                    row.side,
+                    row.unitArea != null ? (en ? `${row.unitArea} m²` : `${row.unitArea} م²`) : null,
+                    row.unitStatus ? labels.unitStatus[row.unitStatus] : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+
+                {/*
+                  The names are what actually answer the question. A floor whose
+                  one محل already has a مستأجر on it is a floor where this
+                  button is almost certainly the wrong one.
+                */}
+                {row.occupants.length > 0 ? (
+                  <span className="mt-0.5 block font-medium">
+                    {row.occupants
+                      .map(
+                        (occupant) =>
+                          `${labels.occupancyRole[occupant.role]}: ${
+                            occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')
+                          }`,
+                      )
+                      .join('، ')}
+                  </span>
+                ) : (
+                  <span className="mt-0.5 block text-muted-foreground">
+                    {en ? 'No occupant recorded' : 'لا يوجد شاغل مسجَّل'}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onConfirmDuplicates}
+              className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2.5 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {busy ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
+              {en ? 'Yes, it is a different unit' : 'نعم، هذه وحدة مختلفة'}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onDeclineDuplicates}
+              className="h-7 px-1.5 text-[11px] text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+            >
+              {en ? 'No — it is one of these' : 'لا، إنها إحدى هذه الوحدات'}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {error ? (
         <p role="alert" className="text-[11px] text-destructive">

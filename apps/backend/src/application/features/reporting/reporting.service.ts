@@ -762,6 +762,7 @@ export class ReportingService {
             submittedAt: true,
             status: true,
             flaggedFields: true,
+            notes: true,
             properties: {
               select: {
                 id: true,
@@ -927,6 +928,16 @@ export class ReportingService {
          * opening the record for editing.
          */
         flags: readRegistrationFlags(registration.flaggedFields),
+        /*
+          «ملاحظات» — on the profile for the same reason the flags above are.
+
+          This is the page a collector opens before knocking on a door, and a
+          note is frequently the single most useful thing on it: «الأسرة تنتقل
+          نهاية الشهر» or «الدرج مكسور، الزيارة القادمة من الخلف» is what the
+          last officer learned by standing there. A note visible only inside
+          the edit form is a note nobody reads before setting out.
+        */
+        notes: registration.notes,
         properties: registration.properties.map((property) => ({
           id: property.id,
           neighborhood: property.neighborhood,

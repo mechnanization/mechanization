@@ -188,6 +188,7 @@ interface SubmissionInput {
   properties: Array<Record<string, unknown>>;
   flags: FieldFlag[];
   blanketFlagReason?: string;
+  notes?: string;
   clientSubmissionId?: string;
 }
 
@@ -410,6 +411,13 @@ function shapeSubmission(input: SubmissionInput) {
      */
     blanketFlagReason: input.blanketFlagReason?.trim() || undefined,
     /*
+      Carried through untouched, and emptied to `undefined` rather than kept as
+      `''`: a note somebody opened and closed without typing is not a note, and
+      storing the empty string would make «هل هناك ملاحظة؟» answerable only by
+      checking its length.
+    */
+    notes: input.notes?.trim() || undefined,
+    /*
       Only the officer's own flags survive the wire.
 
       `UNVERIFIED` says "this value exists and the municipality's records do not
@@ -452,6 +460,29 @@ const submissionEnvelope = {
     .trim()
     .min(4, 'يرجى ذكر سبب عدم اكتمال البيانات')
     .max(300, 'السبب طويل جداً')
+    .optional(),
+  /**
+   * «ملاحظات» — whatever the officer needs to say that no field asks for.
+   *
+   * Free text and genuinely optional, which is the whole design: the form is a
+   * long list of required answers, and the things that actually matter at a
+   * doorstep are frequently not among them. «الأسرة تنتقل نهاية الشهر»،
+   * «الدرج مكسور، الزيارة القادمة من الخلف»، «الأخ يدفع عن الوالدة» — each of
+   * these used to be written on the back of a paper form and lost, or forced
+   * into `blanketFlagReason`, which is a different thing entirely and carries
+   * a consequence: that one propagates onto every gap in the record and lands
+   * it at «يتطلب مراجعة». A note is a note. It flags nothing, excuses nothing,
+   * and changes no status.
+   *
+   * Capped at 2000 rather than the 300 a flag reason gets. A reason has to fit
+   * beside thirty field names; this is the only place on the record where
+   * somebody can write a paragraph, and truncating it into uselessness is how
+   * a notes field stops being used at all.
+   */
+  notes: z
+    .string()
+    .trim()
+    .max(2000, 'الملاحظات طويلة جداً')
     .optional(),
   clientSubmissionId: uuid.optional(),
 };

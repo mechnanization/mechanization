@@ -1,0 +1,37 @@
+-- 0036_registration_notes
+--
+-- «ملاحظات» — the back of the paper form, which the digital one never had.
+--
+-- == What officers were doing instead =====================================
+--
+-- The registration form is a long list of required answers, and the things
+-- that actually matter at a doorstep are frequently not among them: «الأسرة
+-- تنتقل نهاية الشهر»، «الدرج مكسور، الزيارة القادمة من الخلف»، «الأخ يدفع عن
+-- الوالدة». None of those is a field, so they went one of two places — onto
+-- paper that does not reach the register, or into `blanketFlagReason`, which
+-- is the only free-text box the form had.
+--
+-- The second is the reason this column exists rather than a wider cap on that
+-- one. `blanketFlagReason` is not a note: it is a *reason data is missing*, it
+-- is copied onto every remaining gap in the record as an overridable default,
+-- and its presence is part of what lands a registration at «يتطلب مراجعة».
+-- Writing «الأسرة تنتقل نهاية الشهر» into it flags a clean record for review
+-- and attaches that sentence to fields it does not describe.
+--
+-- A note carries none of that. It flags nothing, excuses nothing, and changes
+-- no status.
+--
+-- == Why on the registration and not the citizen ===========================
+--
+-- Because it is about a visit, not a person. The same household visited twice
+-- in a year produces two registrations and two sets of circumstances, and a
+-- note on the citizen would have the second silently overwrite the first — or
+-- accumulate into one box with no way to tell which visit said what.
+--
+-- Nullable with no default and no backfill: every existing registration
+-- genuinely has no note, and that is exactly what null says here.
+--
+-- Written unqualified: the migrator sets `search_path` to the target tenant
+-- schema before running this.
+
+ALTER TABLE "registrations" ADD COLUMN IF NOT EXISTS "notes" TEXT;

@@ -2324,6 +2324,9 @@ export function FullscreenMap({
               ? (buildingId, unitId) => registerHref(buildingId, unitId)
               : undefined
           }
+          // The same builder the parcel popups already use, so an occupant's
+          // name leads to the same record from either layer.
+          citizenHref={citizenHref}
           onChanged={() => {
             // The pin's own fill and ring are derived from what just changed,
             // so the layer is re-read rather than left showing the old rollup.

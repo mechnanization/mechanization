@@ -7,7 +7,9 @@ import {
   nextBuildingSuffix,
   OCCUPIABLE_LIFECYCLE,
   STRUCTURE_TYPE_MAP,
+  isUnoccupied,
   SURVEYED_STATUS,
+  unitStatusForRole,
   type CreateBuildingInput,
   type StructureType,
   type UnitBlueprint,
@@ -1066,6 +1068,85 @@ export class BuildingsService {
     const building = await this.db.building.findUnique({ where: { id: buildingId } });
     if (!building) throw new NotFoundError('المبنى غير موجود');
 
+    /*
+      The same shape of hole D18 closed for buildings, one level down.
+
+      `sequence` is allocated below as the next free position, so a second محل
+      on a ground floor that already has one is always created and the unique
+      `(buildingId, floor, sequence)` never fires — it is satisfied by
+      construction. The constraint only catches an explicitly supplied
+      `sequence`, which the registration form never sends.
+
+      So the matrix could only grow, silently, and the officer standing in front
+      of the one shop on the ground floor had no way to tell whether the `0001`
+      chip on their screen *was* that shop. Pressing «إضافة وحدة» is the
+      rational move when the chip shows nothing but a number, and it produced a
+      second row for one physical unit.
+
+      Matched on floor **and** unit type, not floor alone. Four apartments on
+      one floor is the ordinary shape of a building and refusing it would make
+      the guard noise; a second محل beside an existing محل is the shape of the
+      mistake. Where it fires the answer is still allowed to be yes — what is
+      not allowed is never being asked.
+
+      Refused before the transaction, like the building guard, so an
+      acknowledgement never arrives after a row it was meant to prevent.
+    */
+    if (!input.acknowledgedDuplicates) {
+      const siblings = await this.db.unit.findMany({
+        where: { buildingId, floor: input.floor, unitType: input.unitType as never },
+        orderBy: { sequence: 'asc' },
+        select: {
+          id: true,
+          unitCode: true,
+          unitType: true,
+          floor: true,
+          side: true,
+          unitArea: true,
+          postedNumber: true,
+          unitStatus: true,
+          surveyStatus: true,
+          /*
+            Who is in them travels with the refusal, because it is the fact that
+            settles the question. «0001 — محل تجاري، يمين، ٤٠م²، مستأجر: فلان»
+            is answerable from the doorway; «0001» is not, and the dialog cannot
+            fetch it — the phone that most needs this guard is the one with no
+            signal.
+          */
+          occupancies: {
+            where: { toDate: null },
+            select: {
+              role: true,
+              citizen: { select: { firstName: true, lastName: true } },
+            },
+          },
+        },
+      });
+
+      if (siblings.length > 0) {
+        throw new ConflictError(
+          `يوجد على هذا الطابق ${
+            siblings.length === 1 ? 'وحدة مسجَّلة' : `${siblings.length} وحدات مسجَّلة`
+          } من النوع نفسه (${siblings.map((row) => row.unitCode).join('، ')}). تأكَّد أن هذه وحدة مختلفة قبل المتابعة.`,
+          {
+            buildingId,
+            floor: input.floor,
+            unitType: input.unitType,
+            candidates: siblings.map(({ occupancies, ...row }) => ({
+              ...row,
+              unitArea: row.unitArea != null ? Number(row.unitArea) : null,
+              occupants: occupancies.map((row) => ({
+                role: row.role,
+                citizenName: row.citizen
+                  ? `${row.citizen.firstName} ${row.citizen.lastName}`
+                  : null,
+              })),
+            })),
+          },
+        );
+      }
+    }
+
     const created = await this.db.$transaction(async (tx) => {
       /*
         The schema is a literal here for the same reason it is in `create` —
@@ -1172,6 +1253,35 @@ export class BuildingsService {
       });
       if (clash) {
         throw new ConflictError(`الموقع ${formatUnitCode(floor, sequence)} مشغول بوحدة أخرى`);
+      }
+    }
+
+    /*
+      A flat cannot be empty and lived in at the same time.
+
+      «تأكيد الشغور» sends `unitStatus: 'VACANT'` with `surveyStatus:
+      'VACANT_CONFIRMED'`, and it used to write both over a unit holding live
+      occupancies without a word — leaving a row that says nobody is there
+      beside two rows naming who is. `isUnoccupied` then exempted the owner from
+      the occupancy fee, so the contradiction was not merely untidy: it silently
+      stopped a bill.
+
+      Refused rather than cascaded into ending the spells, because those are
+      opposite statements about people and only the officer knows which is true.
+      «أنهِ الإشغال» is one click away in the same drawer and says who moved out
+      and when; guessing that here would close somebody's tenancy as a side
+      effect of a status change.
+    */
+    const goingEmpty =
+      (input.unitStatus !== undefined && isUnoccupied(input.unitStatus)) ||
+      input.surveyStatus === 'VACANT_CONFIRMED';
+
+    if (goingEmpty) {
+      const live = await this.db.unitOccupancy.count({ where: { unitId, toDate: null } });
+      if (live > 0) {
+        throw new ConflictError(
+          `لا يمكن تسجيل الوحدة ${before.unitCode} كشاغرة: يوجد ${live} إشغال قائم عليها. أنهِ الإشغال أولاً`,
+        );
       }
     }
 
@@ -1384,6 +1494,34 @@ export class BuildingsService {
       where: { id: input.unitId, surveyStatus: { in: OPEN_STATES as never } },
       data: { surveyStatus: 'COMPLETE' },
     });
+
+    /*
+      A non-owner spell settles حالة الوحدة — and nothing used to write it.
+
+      Who is in a flat and what state the flat is in are one fact stored twice,
+      and this path wrote only the first. So recording a مستأجر never made the
+      unit «مؤجرة»; the owner's card went on saying «مشغولة من المالك»,
+      `bearsFee` read that and charged them the occupancy fee, and the tenant
+      was charged it too on their own card. One flat, two bills, every row
+      individually valid.
+
+      `unitStatusForRole` returns null for OWNER on purpose: a deed is not a
+      statement of residence, and an owner abroad with a tenant downstairs is
+      the case the join table exists for (D2).
+
+      Narrowed to `unitStatus: null` for the same reason the lift above is
+      narrowed — only "nobody was asked" may be answered by a side effect. An
+      officer who set «شاغرة» and an occupancy that says otherwise are a
+      contradiction for a person to look at, and the drawer now shows it rather
+      than letting this quietly win.
+    */
+    const impliedStatus = unitStatusForRole(input.role);
+    if (impliedStatus) {
+      await this.db.unit.updateMany({
+        where: { id: input.unitId, unitStatus: null },
+        data: { unitStatus: impliedStatus as never },
+      });
+    }
 
     const casesResolved = await this.cases.resolveForUnit(input.unitId, input.citizenId, actor);
 

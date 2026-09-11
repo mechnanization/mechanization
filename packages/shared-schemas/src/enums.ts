@@ -87,6 +87,21 @@ export const NON_OWNER_OCCUPANCY = ['TENANT', 'FREE_OCCUPANT'] as const;
  * is two charges for one flat unless something says which of the two rows is
  * the tenancy. This is that something.
  *
+ * `FREE_OCCUPIED` — «مشغولة بتسامح» — is the same escape for the third way of
+ * being the شاغل, and it was missing. `OCCUPANCY_TYPE.FREE_OCCUPANT` above
+ * describes the *person* living in a relative's flat without بدل; this
+ * describes the *unit* they are in, from the owner's side. Without it an owner
+ * whose son occupies the flat had no true answer: not `RENTED` (there is no
+ * lease, and writing one here is the falsehood `FREE_OCCUPANT` exists to
+ * refuse), not `VACANT` (somebody is in it), not `UNDER_CONSTRUCTION`. They
+ * picked `OWNER_OCCUPIED` or left it blank, and both read as "the owner is the
+ * شاغل" — so the owner was charged the occupancy fee *and* the son was charged
+ * it on his own card. The same double-count `RENTED` ends for tenancies, left
+ * standing for the one arrangement whose occupants are least able to argue.
+ *
+ * It also made the register's own figures dishonest in whichever direction the
+ * owner guessed: a شاغل بتسامح counted as rented stock, or as owner-occupied.
+ *
  * `VACANT` and `UNDER_CONSTRUCTION` are the two ways a unit has no شاغل at
  * all, which is what رسم الإشغال and رسم النظافة are levied on. They are kept
  * apart rather than folded into one «فارغة» because they are exempt for
@@ -96,6 +111,7 @@ export const NON_OWNER_OCCUPANCY = ['TENANT', 'FREE_OCCUPANT'] as const;
 export const UNIT_STATUS = [
   'OWNER_OCCUPIED',
   'RENTED',
+  'FREE_OCCUPIED',
   'VACANT',
   'UNDER_CONSTRUCTION',
 ] as const;
@@ -112,6 +128,59 @@ export type UnitStatus = z.infer<typeof unitStatusSchema>;
  * search for `=== 'VACANT'`.
  */
 export const UNOCCUPIED_UNIT_STATUS = ['VACANT', 'UNDER_CONSTRUCTION'] as const;
+
+/**
+ * The states in which somebody *other than the owner* is the شاغل.
+ *
+ * The owner's exemption from an occupant-borne fee (النظافة, القيمة التأجيرية)
+ * is not "this flat is rented" — it is "somebody else is the one inside, and
+ * they are billed on their own card". `RENTED` was the only way to say that,
+ * so the exemption was written as `!== 'RENTED'` at its one call site and a
+ * شاغل بتسامح fell straight through it.
+ *
+ * A named set rather than a second inline comparison, for the reason
+ * `UNOCCUPIED_UNIT_STATUS` above gives and this enum has now proven twice:
+ * the condition grows, and a growing condition spelled out at each call site
+ * is a search for `=== 'RENTED'` that somebody eventually loses.
+ *
+ * Deliberately **disjoint from** `UNOCCUPIED_UNIT_STATUS` rather than a
+ * superset of it. Both exempt the owner and they are not the same finding: a
+ * vacant flat has nobody to bill, and a tenanted one has somebody else. Fold
+ * them together and the register can no longer answer how much of the town is
+ * occupied — which is most of what the census is for.
+ */
+export const OCCUPIED_BY_OTHERS = ['RENTED', 'FREE_OCCUPIED'] as const;
+
+/**
+ * Whether this unit's شاغل is somebody other than its owner — **false for
+ * null**, exactly as `isUnoccupied` is, and for the same reason: a unit nobody
+ * was asked about is billed, and the resident who is owed the exemption comes
+ * and says so.
+ */
+export function isOccupiedByOthers(status: string | null | undefined): boolean {
+  return status != null && (OCCUPIED_BY_OTHERS as readonly string[]).includes(status);
+}
+
+/**
+ * The حالة الوحدة implied by a person's capacity in it — the census's answer
+ * to a question the owner's card asks separately.
+ *
+ * Who is in a flat is recorded in `UnitOccupancy`; what the flat's state is
+ * lives in `unitStatus` on two other rows. They are two statements of one fact
+ * maintained by two different screens, and nothing connected them: recording a
+ * مستأجر never made the unit «مؤجرة», so the owner's card went on saying
+ * «مشغولة من المالك» and both parties were billed for the flat.
+ *
+ * `OWNER` returns null on purpose. An owner in the occupancy table says
+ * nothing about whether they *live* there — the deed is not a statement of
+ * residence, and an owner abroad with a tenant downstairs is the case this
+ * whole join table exists for (D2). Only a non-owner spell settles the state.
+ */
+export function unitStatusForRole(role: string | null | undefined): string | null {
+  if (role === 'TENANT') return 'RENTED';
+  if (role === 'FREE_OCCUPANT') return 'FREE_OCCUPIED';
+  return null;
+}
 
 /**
  * Whether this unit has no occupant — and, crucially, **false for null**.

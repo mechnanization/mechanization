@@ -1,5 +1,5 @@
 import { IMPORT_BATCH_SIZE } from '@mechanization/shared-schemas';
-import { cachedRequest, invalidateRequests } from './request-cache';
+import { cachedRequest, invalidateRequests, peekCachedRequest } from './request-cache';
 import type {
   BackupSchedule,
   CitizenImportResult,
@@ -92,6 +92,50 @@ export function duplicateBuildingsOf(caught: unknown): DuplicateBuildingCandidat
 
   const candidates = (details as { candidates?: unknown }).candidates;
   return Array.isArray(candidates) ? (candidates as DuplicateBuildingCandidate[]) : null;
+}
+
+/** One unit already standing on the floor a new one is being added to. */
+export interface DuplicateUnitCandidate {
+  id: string;
+  unitCode: string;
+  unitType: UnitType;
+  floor: number;
+  side: string | null;
+  unitArea: number | null;
+  postedNumber: string | null;
+  unitStatus: UnitStatus | null;
+  surveyStatus: SurveyStatus;
+  /**
+   * Who is in it now. The fact that actually settles the question — a floor
+   * with one محل whose مستأجر is already named is a floor where «إضافة وحدة»
+   * is almost certainly the wrong button, and no amount of code and area says
+   * that as directly as a name does.
+   */
+  occupants: Array<{ role: OccupancyRole; citizenName: string | null }>;
+}
+
+/**
+ * The units carried by a duplicate-unit refusal, or null for any other error.
+ *
+ * The twin of `duplicateBuildingsOf`, and narrowed the same way for the same
+ * reason. Told apart from it by shape — a building candidate carries `code`, a
+ * unit carries `unitCode` — so a caller that asks the wrong question gets null
+ * rather than a list it will render as the wrong thing.
+ */
+export function duplicateUnitsOf(caught: unknown): DuplicateUnitCandidate[] | null {
+  if (!(caught instanceof ApiRequestError) || caught.payload.code !== 'CONFLICT') return null;
+
+  const details = caught.payload.details;
+  if (!details || Array.isArray(details)) return null;
+
+  const candidates = (details as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidates)) return null;
+
+  return candidates.every(
+    (row) => row && typeof row === 'object' && 'unitCode' in row && 'occupants' in row,
+  )
+    ? (candidates as DuplicateUnitCandidate[])
+    : null;
 }
 
 export class ApiRequestError extends Error {
@@ -263,12 +307,40 @@ export interface PropertyNumberCheck {
   registeredCount: number;
 }
 
-/** Blur-check for رقم العقار while it is being typed into the entry form. */
+/**
+ * Blur-check for رقم العقار while it is being typed into the entry form.
+ *
+ * Remembered per parcel, because the answer is a property of the cadastre
+ * rather than of this visit: the same عقار is checked again by every card of a
+ * household on it, again when the card is unfolded, and again when the record
+ * is opened to fix a phone number. Only `registeredCount` moves, and a citizen
+ * write drops the entry (see `invalidateParcelChecks`).
+ */
 export function checkPropertyNumber(tenant: string, propertyNumber: string) {
-  return apiFetch<PropertyNumberCheck>(
-    tenant,
-    `/registrations/property-number/${encodeURIComponent(propertyNumber)}/availability`,
+  return cachedRequest(parcelCheckKey(tenant, propertyNumber), PARCEL_CHECK_TTL_MS, () =>
+    apiFetch<PropertyNumberCheck>(
+      tenant,
+      `/registrations/property-number/${encodeURIComponent(propertyNumber)}/availability`,
+    ),
   );
+}
+
+const PARCEL_CHECK_TTL_MS = 5 * 60 * 1000;
+
+const parcelCheckKey = (tenant: string, propertyNumber: string) =>
+  `parcel-check:${tenant}:${propertyNumber}`;
+
+function invalidateParcelChecks(tenant: string): void {
+  invalidateRequests(`parcel-check:${tenant}:`);
+}
+
+/**
+ * The verdict already held for this parcel, for a field seeding its first
+ * render. A control that re-mounts on an unchanged number should state what it
+ * knows, not spend half a second saying «جارٍ التحقق» about it again.
+ */
+export function peekPropertyNumberCheck(tenant: string, propertyNumber: string) {
+  return peekCachedRequest<PropertyNumberCheck>(parcelCheckKey(tenant, propertyNumber));
 }
 
 export interface Session {
@@ -1071,6 +1143,78 @@ export function getBuilding(tenant: string, token: string, id: string, signal?: 
   });
 }
 
+/*
+  ── The census as a *form control* reads it ──────────────────────────
+
+  The two readers below answer the same questions as `getBuildings` and
+  `getBuilding` above, and differ only in that they remember the answer.
+
+  The ledger screen must not: an officer reloads it precisely to see what a
+  colleague just entered, and a stale ledger is how one structure gets created
+  twice. `BuildingUnitPicker` is the opposite case. It asks the same two
+  questions — "what stands on عقار 403" and "what flats are in this one" —
+  every time it mounts, and it mounts far more often than anything changes:
+  each card of a multi-property household, each fold and unfold, each open of
+  the edit form on a record whose parcel was read a minute ago. Every one of
+  those re-asks was a spinner over an answer the tab already had.
+
+  Memory-only and dropped by any census write (see `invalidateCensus`), so the
+  window in which this can be wrong is one officer's own tab, between their own
+  changes — and a hard reload still goes to the network, which is what makes
+  reloading the honest way to demand fresh data.
+*/
+const CENSUS_TTL_MS = 5 * 60 * 1000;
+
+const parcelKey = (tenant: string, parcelNumber: string) =>
+  `census:${tenant}:parcel:${parcelNumber}`;
+const buildingKey = (tenant: string, id: string) => `census:${tenant}:building:${id}`;
+
+/**
+ * Dropped wholesale rather than surgically.
+ *
+ * A unit added to one building changes that building's matrix, the parcel
+ * listing that counts its units, and — once occupancy is recorded — the
+ * occupants on a unit two screens away. Working out which keys a given write
+ * touched is a rule that has to be re-derived every time an endpoint grows a
+ * field, and the failure mode of getting it wrong is a form showing an officer
+ * their own edit as though it had not saved. The prefix is per-tenant, the map
+ * holds a handful of entries, and re-reading is one request.
+ */
+function invalidateCensus(tenant: string): void {
+  invalidateRequests(`census:${tenant}:`);
+}
+
+/** Structures standing on one عقار, remembered for the life of the tab. */
+export function getParcelBuildings(tenant: string, token: string, parcelNumber: string) {
+  return cachedRequest(parcelKey(tenant, parcelNumber), CENSUS_TTL_MS, () =>
+    getBuildings(tenant, token, { parcelNumber, limit: 50 }),
+  );
+}
+
+/** `getBuilding`, remembered — the matrix a picker re-reads on every mount. */
+export function getBuildingCached(tenant: string, token: string, id: string) {
+  return cachedRequest(buildingKey(tenant, id), CENSUS_TTL_MS, () =>
+    getBuilding(tenant, token, id),
+  );
+}
+
+/**
+ * What is already known, for a control seeding its first render.
+ *
+ * Without these a re-mount renders one frame of «جاري مراجعة سجل المباني…»
+ * before the cached promise settles in the next microtask — brief, but it is
+ * the frame the officer reads as the work being redone.
+ */
+export function peekParcelBuildings(tenant: string, parcelNumber: string) {
+  return peekCachedRequest<{ buildings: BuildingLedgerRow[]; total: number; summary: CensusSummary }>(
+    parcelKey(tenant, parcelNumber),
+  );
+}
+
+export function peekBuilding(tenant: string, id: string) {
+  return peekCachedRequest<BuildingDetail>(buildingKey(tenant, id));
+}
+
 /**
  * The condition log for one structure, newest first, plus the current level.
  *
@@ -1098,34 +1242,45 @@ export function getBuildingDamage(
  * quoting a code that names nothing. `deduplicated: true` means this exact
  * creation had already been delivered, so nothing new was made.
  */
-export function createBuilding(tenant: string, token: string, input: CreateBuildingInput) {
-  return apiFetch<{ building: BuildingSummary; reconciled: boolean; deduplicated: boolean }>(
-    tenant,
-    '/buildings',
-    { token, method: 'POST', body: JSON.stringify(input) },
-  );
+export async function createBuilding(
+  tenant: string,
+  token: string,
+  input: CreateBuildingInput,
+) {
+  const result = await apiFetch<{
+    building: BuildingSummary;
+    reconciled: boolean;
+    deduplicated: boolean;
+  }>(tenant, '/buildings', { token, method: 'POST', body: JSON.stringify(input) });
+  invalidateCensus(tenant);
+  return result;
 }
 
 /** Omitted fields are left alone. `parcelNumber` cannot be changed — see the schema. */
-export function updateBuilding(
+export async function updateBuilding(
   tenant: string,
   token: string,
   id: string,
   input: UpdateBuildingInput,
 ) {
-  return apiFetch<BuildingSummary>(tenant, `/buildings/${encodeURIComponent(id)}`, {
+  const result = await apiFetch<BuildingSummary>(tenant, `/buildings/${encodeURIComponent(id)}`, {
     token,
     method: 'PATCH',
     body: JSON.stringify(input),
   });
+  invalidateCensus(tenant);
+  return result;
 }
 
 /** SUPER_ADMIN only. Refused server-side once anyone is recorded as living in it. */
-export function deleteBuilding(tenant: string, token: string, id: string) {
-  return apiFetch<{ deleted: boolean }>(tenant, `/buildings/${encodeURIComponent(id)}`, {
-    token,
-    method: 'DELETE',
-  });
+export async function deleteBuilding(tenant: string, token: string, id: string) {
+  const result = await apiFetch<{ deleted: boolean }>(
+    tenant,
+    `/buildings/${encodeURIComponent(id)}`,
+    { token, method: 'DELETE' },
+  );
+  invalidateCensus(tenant);
+  return result;
 }
 
 /**
@@ -1133,48 +1288,54 @@ export function deleteBuilding(tenant: string, token: string, id: string) {
  * already holds the requested number of units is topped up, never doubled, so a
  * re-tap on a slow connection cannot invent flats.
  */
-export function generateUnits(
+export async function generateUnits(
   tenant: string,
   token: string,
   buildingId: string,
   blueprint: UnitBlueprintInput,
 ) {
-  return apiFetch<{ created: number; skipped: number; units: UnitRow[] }>(
+  const result = await apiFetch<{ created: number; skipped: number; units: UnitRow[] }>(
     tenant,
     `/buildings/${encodeURIComponent(buildingId)}/units/generate`,
     { token, method: 'POST', body: JSON.stringify(blueprint) },
   );
+  invalidateCensus(tenant);
+  return result;
 }
 
 /** Adds one unit by hand. Without a `sequence` the server takes the next free one. */
-export function addUnit(
+export async function addUnit(
   tenant: string,
   token: string,
   buildingId: string,
   input: UpsertUnitInput,
 ) {
-  return apiFetch<UnitRow>(tenant, `/buildings/${encodeURIComponent(buildingId)}/units`, {
-    token,
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+  const result = await apiFetch<UnitRow>(
+    tenant,
+    `/buildings/${encodeURIComponent(buildingId)}/units`,
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
+  invalidateCensus(tenant);
+  return result;
 }
 
 /**
  * Corrects one unit. Not nested under its building — a unit id is unique on its
  * own, and a path carrying both would let the two disagree.
  */
-export function updateUnit(
+export async function updateUnit(
   tenant: string,
   token: string,
   unitId: string,
   input: Partial<UpsertUnitInput>,
 ) {
-  return apiFetch<UnitRow>(tenant, `/buildings/units/${encodeURIComponent(unitId)}`, {
-    token,
-    method: 'PATCH',
-    body: JSON.stringify(input),
-  });
+  const result = await apiFetch<UnitRow>(
+    tenant,
+    `/buildings/units/${encodeURIComponent(unitId)}`,
+    { token, method: 'PATCH', body: JSON.stringify(input) },
+  );
+  invalidateCensus(tenant);
+  return result;
 }
 
 /**
@@ -1187,11 +1348,14 @@ export function updateUnit(
  * message names the remedy, so callers should surface it verbatim rather than
  * replacing it with a generic failure.
  */
-export function deleteUnit(tenant: string, token: string, unitId: string) {
-  return apiFetch<{ deleted: true }>(tenant, `/buildings/units/${encodeURIComponent(unitId)}`, {
-    token,
-    method: 'DELETE',
-  });
+export async function deleteUnit(tenant: string, token: string, unitId: string) {
+  const result = await apiFetch<{ deleted: true }>(
+    tenant,
+    `/buildings/units/${encodeURIComponent(unitId)}`,
+    { token, method: 'DELETE' },
+  );
+  invalidateCensus(tenant);
+  return result;
 }
 
 /**
@@ -1201,26 +1365,34 @@ export function deleteUnit(tenant: string, token: string, unitId: string) {
  * somebody else's dispatch item is how a case list stops being believed, so the
  * number is surfaced to the officer who caused it.
  */
-export function recordOccupancy(tenant: string, token: string, input: RecordOccupancyInput) {
-  return apiFetch<{ occupancy: UnitOccupant; casesResolved: number }>(
+export async function recordOccupancy(
+  tenant: string,
+  token: string,
+  input: RecordOccupancyInput,
+) {
+  const result = await apiFetch<{ occupancy: UnitOccupant; casesResolved: number }>(
     tenant,
     '/buildings/occupancies',
     { token, method: 'POST', body: JSON.stringify(input) },
   );
+  invalidateCensus(tenant);
+  return result;
 }
 
 /** Ends a spell without deleting it — the history is the point (D2). */
-export function endOccupancy(
+export async function endOccupancy(
   tenant: string,
   token: string,
   occupancyId: string,
   toDate?: string,
 ) {
-  return apiFetch<UnitOccupant>(
+  const result = await apiFetch<UnitOccupant>(
     tenant,
     `/buildings/occupancies/${encodeURIComponent(occupancyId)}/end`,
     { token, method: 'PATCH', body: JSON.stringify(toDate ? { toDate } : {}) },
   );
+  invalidateCensus(tenant);
+  return result;
 }
 
 /**
@@ -1228,12 +1400,14 @@ export function endOccupancy(
  * was unsafe in 2024 and repaired in 2026 is two facts, and the first is what a
  * compensation claim rests on (D3).
  */
-export function recordDamage(tenant: string, token: string, input: RecordDamageInput) {
-  return apiFetch<DamageAssessmentRow>(tenant, '/buildings/damage', {
+export async function recordDamage(tenant: string, token: string, input: RecordDamageInput) {
+  const result = await apiFetch<DamageAssessmentRow>(tenant, '/buildings/damage', {
     token,
     method: 'POST',
     body: JSON.stringify(input),
   });
+  invalidateCensus(tenant);
+  return result;
 }
 
 /**
@@ -1266,12 +1440,14 @@ export interface LogVisitInput {
  * `visitCount` comes back because it is the number the matrix shows: «٣
  * محاولات» is the difference between assigning a door and escalating it.
  */
-export function logUnitVisit(tenant: string, token: string, input: LogVisitInput) {
-  return apiFetch<{ visit: UnitVisitRow; visitCount: number }>(tenant, '/buildings/visits', {
-    token,
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+export async function logUnitVisit(tenant: string, token: string, input: LogVisitInput) {
+  const result = await apiFetch<{ visit: UnitVisitRow; visitCount: number }>(
+    tenant,
+    '/buildings/visits',
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
+  invalidateCensus(tenant);
+  return result;
 }
 
 /** Every attempt on one unit, newest first — the panel behind the count. */
@@ -1433,6 +1609,14 @@ export interface CitizenProfileRegistration {
    * opening the record for editing.
    */
   flags: FieldFlag[];
+  /**
+   * «ملاحظات» — free text from the visit, or null.
+   *
+   * Beside the flags rather than among them, because it is a different kind of
+   * statement. A flag says a required value is missing and why; a note says
+   * something no field asked about, flags nothing, and changes no status.
+   */
+  notes: string | null;
   properties: CitizenProfileProperty[];
   documents: CitizenProfileDocument[];
 }
@@ -1671,6 +1855,8 @@ export interface CitizenFormData {
    * the field in, which is what takes the record out of «يتطلب مراجعة».
    */
   flags: FieldFlag[];
+  /** «ملاحظات» on the most recent registration, or null for none. */
+  notes: string | null;
 }
 
 export function getCitizenForm(tenant: string, token: string, citizenId: string) {
@@ -1774,8 +1960,8 @@ export async function importCitizens(
  * that as delivered, because it is: the household is on the register, and the
  * only thing that ever went missing was a response.
  */
-export function createCitizen(tenant: string, token: string, input: CitizenWriteInput) {
-  return apiFetch<{
+export async function createCitizen(tenant: string, token: string, input: CitizenWriteInput) {
+  const result = await apiFetch<{
     citizenId: string;
     registrationId: string;
     referenceNumber: string;
@@ -1784,6 +1970,17 @@ export function createCitizen(tenant: string, token: string, input: CitizenWrite
     deduplicated: boolean;
     census: CensusSyncResult | null;
   }>(tenant, '/citizens', { token, method: 'POST', body: JSON.stringify(input) });
+  /*
+    A registration is a census write too.
+
+    `census` in the response is the proof: saving this card opened occupancies,
+    moved units out of «غير ممسوحة» and possibly created the structure itself.
+    Anything the tab remembered about the parcel or the building describes the
+    moment before that, including the roster count the رقم العقار field prints.
+  */
+  invalidateCensus(tenant);
+  invalidateParcelChecks(tenant);
+  return result;
 }
 
 /**
@@ -1791,13 +1988,13 @@ export function createCitizen(tenant: string, token: string, input: CitizenWrite
  * registration: an entry with an `id` is updated, one without is created, and
  * a stored entry absent from the payload is deleted along with its documents.
  */
-export function updateCitizen(
+export async function updateCitizen(
   tenant: string,
   token: string,
   citizenId: string,
   input: CitizenWriteInput,
 ) {
-  return apiFetch<{
+  const result = await apiFetch<{
     updated: boolean;
     citizenId: string;
     status: CitizenRecordStatus;
@@ -1807,6 +2004,10 @@ export function updateCitizen(
     method: 'PATCH',
     body: JSON.stringify(input),
   });
+  // Same reasoning as `createCitizen`: the save re-ran the census sync.
+  invalidateCensus(tenant);
+  invalidateParcelChecks(tenant);
+  return result;
 }
 
 /** Soft delete and its undo — a deactivated citizen is skipped by the biller. */

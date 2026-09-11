@@ -129,6 +129,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
             status: input.status,
             flaggedFields: input.flaggedFields as never,
             blanketFlagReason: input.blanketFlagReason ?? null,
+            notes: input.notes ?? null,
             createdById: input.createdById ?? null,
             clientSubmissionId: input.clientSubmissionId ?? null,
           },

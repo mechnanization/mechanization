@@ -26,7 +26,11 @@ import type {
   UnitStatus,
   UnitType,
 } from '@mechanization/shared-schemas';
-import { checkPropertyNumber, type PropertyNumberCheck } from '@/lib/api-client';
+import {
+  checkPropertyNumber,
+  peekPropertyNumberCheck,
+  type PropertyNumberCheck,
+} from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -138,12 +142,23 @@ export function PropertyCard({
   locale = 'ar',
   title,
   token,
+  citizenId,
   censusPicker = false,
   lockedCensusTarget,
 }: {
   tenant: string;
   index: number;
   draft: PropertyDraft;
+  /**
+   * The citizen this card belongs to, when they already have an id.
+   *
+   * Forwarded to `BuildingUnitPicker` and read only by its unit chips, to tell
+   * "this person is already recorded in that flat" from "somebody else is".
+   * The first is a confirmation and the second decides who pays the رسم نظافة;
+   * without an id the control could not distinguish them and said the same
+   * thing for both.
+   */
+  citizenId?: string;
   allowedTypes: readonly PropertyType[];
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -375,6 +390,7 @@ export function PropertyCard({
               tenant={tenant}
               token={token}
               draft={draft}
+              citizenId={citizenId}
               // The card's own updater, passed straight through rather than
               // wrapped in `set`: the picker computes `units` from the previous
               // array, so it needs the current card, not a patch applied to it.
@@ -469,13 +485,24 @@ export function PropertyCard({
                 path={isTenant ? flagPath(index, 'landlordPhone') : undefined}
                 required={isTenant}
                 error={errors.landlordPhone}
+                /*
+                  The field most likely to hold a foreign number of any on this
+                  form. A شاغل بتسامح's landlord is typically a relative abroad
+                  — which is exactly why `occupancyBranch` makes this optional
+                  for them — and a مستأجر's owner is often no nearer.
+                */
+                hint={
+                  locale === 'en'
+                    ? 'Lebanese numbers need no country code; for another country start with +.'
+                    : 'الرقم اللبناني لا يحتاج رمز الدولة؛ لرقم من دولة أخرى ابدأ بـ +.'
+                }
               >
                 <Input
                   id={`lp-${index}`}
                   type="tel"
                   inputMode="tel"
                   dir="ltr"
-                  placeholder="03 123456"
+                  placeholder="03 123456 / +33 6 12 34 56 78"
                   className="text-start"
                   invalid={Boolean(errors.landlordPhone)}
                   value={draft.landlordPhone ?? ''}
@@ -843,7 +870,18 @@ function PropertyNumberField({
   onViewParcel?: (propertyNumber: string) => void;
   locale?: string;
 }) {
-  const [result, setResult] = useState<PropertyNumberCheck | null>(null);
+  /*
+    A verdict this tab already has is stated on the first frame.
+
+    The check is debounced by half a second and fires from a mount effect, so
+    re-opening a card the officer had already filled in — or opening the edit
+    form on a record whose عقار was checked minutes ago — replayed «جارٍ التحقق
+    من الكاداستر…» before printing the same «رقم صحيح» as last time. The parcel
+    had not changed; only the component had been unmounted.
+  */
+  const [result, setResult] = useState<PropertyNumberCheck | null>(
+    () => peekPropertyNumberCheck(tenant, value.trim()) ?? null,
+  );
   const [checking, setChecking] = useState(false);
 
   const requestId = useRef(0);
@@ -873,9 +911,22 @@ function PropertyNumberField({
       return;
     }
 
+    /*
+      Only typing is debounced. A number whose verdict is already held is
+      settled now — waiting half a second to re-state it is the spinner this
+      field was showing on every mount.
+    */
+    const known = peekPropertyNumberCheck(tenant, trimmed);
+    if (known) {
+      requestId.current += 1;
+      setResult(known);
+      setChecking(false);
+      return;
+    }
+
     const timer = setTimeout(() => void verify(trimmed), CHECK_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [value, verify]);
+  }, [tenant, value, verify]);
 
   const stale = result !== null && result.propertyNumber !== value.trim();
   const settled = result !== null && !stale && !checking;

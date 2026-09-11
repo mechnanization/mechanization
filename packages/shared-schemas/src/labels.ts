@@ -163,6 +163,7 @@ export const ar = {
   unitStatus: {
     OWNER_OCCUPIED: 'مشغولة من المالك',
     RENTED: 'مؤجرة',
+    FREE_OCCUPIED: 'مشغولة بتسامح (بدون بدل)',
     VACANT: 'شاغرة (غير مأهولة)',
     UNDER_CONSTRUCTION: 'قيد الإنجاز',
   } satisfies Record<UnitStatus, string>,
@@ -461,6 +462,7 @@ export const en = {
   unitStatus: {
     OWNER_OCCUPIED: 'Owner-occupied',
     RENTED: 'Rented out',
+    FREE_OCCUPIED: 'Occupied rent-free',
     VACANT: 'Vacant',
     UNDER_CONSTRUCTION: 'Under construction',
   } satisfies Record<UnitStatus, string>,

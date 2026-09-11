@@ -5,6 +5,7 @@ import {
   ChevronDown,
   DoorOpen,
   FileQuestion,
+  HandHeart,
   HardHat,
   House,
   KeyRound,
@@ -148,10 +149,15 @@ export function UnitStatusChoice({
   );
 }
 
-/** One glyph per status, so the four are told apart before they are read. */
+/** One glyph per status, so the five are told apart before they are read. */
 const UNIT_STATUS_ICON: Record<UnitStatus, typeof House> = {
   OWNER_OCCUPIED: House,
   RENTED: KeyRound,
+  // A key for the tenancy, an open hand for the arrangement with no key and no
+  // بدل — «مشغولة بتسامح» sits between «مؤجرة» and «مشغولة من المالك» and has
+  // to be distinguishable from both at a glance, because picking the wrong one
+  // of the three is what decides whether two people are billed for one flat.
+  FREE_OCCUPIED: HandHeart,
   VACANT: DoorOpen,
   UNDER_CONSTRUCTION: HardHat,
 };

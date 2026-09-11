@@ -1141,6 +1141,7 @@ export default function BuildingsPage({
           registerHref={(buildingId, unitId) =>
             `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}`
           }
+          citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
           locale={locale}
         />
       ) : null}

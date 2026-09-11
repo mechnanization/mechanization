@@ -11,6 +11,7 @@ import {
   Loader2,
   Plus,
   Save,
+  StickyNote,
   TriangleAlert,
   UsersRound,
   Zap,
@@ -24,13 +25,14 @@ import {
 import type { PublicTenantConfig } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Textarea } from '@/components/ui/textarea';
 import { ContactStep, PersonalStep } from '@/components/citizen/steps';
 import {
   PropertyCard,
   type PropertyDraft,
   type UnitDraft,
 } from '@/components/citizen/property-card';
-import { FieldFlagProvider, flagsToArray } from '@/components/ui/field';
+import { Field, FieldFlagProvider, flagsToArray } from '@/components/ui/field';
 import { UnverifiedFieldsDialog } from './unverified-fields-dialog';
 import { QuickSaveDialog } from './quick-save-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
@@ -68,6 +70,17 @@ export interface CitizenFormValues {
    * ordinary save, which is the overwhelming majority of them.
    */
   blanketFlagReason?: string;
+  /**
+   * «ملاحظات» — free text the officer adds, asked for by no field.
+   *
+   * Deliberately *not* `blanketFlagReason`, which is the only free-text box
+   * this form used to have and which officers were therefore using for this.
+   * That one is a reason data is missing: it propagates onto every gap in the
+   * record and its presence is part of what lands a registration at
+   * «يتطلب مراجعة». Writing «الأسرة تنتقل نهاية الشهر» into it flags a clean
+   * record for review. A note flags nothing.
+   */
+  notes?: string;
 }
 
 /**
@@ -318,6 +331,14 @@ export function toSubmission(values: CitizenFormValues) {
     // schema's four-character floor would reject an empty string, and an
     // ordinary save must not have to think about this field at all.
     ...(values.blanketFlagReason ? { blanketFlagReason: values.blanketFlagReason } : {}),
+    /*
+      Sent as `undefined` when blank, never `''`.
+
+      The server treats an absent note and an empty one identically — both
+      store null — but sending `''` would make «هل هناك ملاحظة؟» a question
+      about string length rather than presence, on both sides of the wire.
+    */
+    ...(values.notes?.trim() ? { notes: values.notes.trim() } : {}),
   };
 }
 
@@ -423,6 +444,7 @@ function validate(values: CitizenFormValues): Record<string, string> {
 export function CitizenForm({
   tenant,
   token,
+  citizenId,
   config,
   mode,
   initial,
@@ -444,6 +466,16 @@ export function CitizenForm({
    * plain count it always was.
    */
   token?: string | null;
+  /**
+   * The citizen being edited, when there is one.
+   *
+   * Passed through to the census picker's unit chips and used for one
+   * question only: is the occupancy already recorded in this flat *theirs*, or
+   * somebody else's. Undefined on a create, and on the citizen-facing wizard,
+   * which is the safe direction — a record that does not exist yet cannot be
+   * the one already in the unit.
+   */
+  citizenId?: string;
   config: PublicTenantConfig;
   mode: 'create' | 'edit';
   initial: CitizenFormValues;
@@ -708,6 +740,7 @@ export function CitizenForm({
             tenant={tenant}
             index={index}
             draft={property}
+            citizenId={citizenId}
             allowedTypes={allowedTypes}
             collapsed={collapsed.has(index)}
             onToggleCollapse={() => toggleCollapsed(index)}
@@ -752,6 +785,7 @@ export function CitizenForm({
                 tenant={tenant}
                 index={index}
                 draft={property}
+                citizenId={citizenId}
                 allowedTypes={allowedTypes}
                 collapsed={collapsed.has(index)}
                 onToggleCollapse={() => toggleCollapsed(index)}
@@ -1342,6 +1376,59 @@ export function CitizenForm({
                   : 'إضافة عقار آخر'}
             </Button>
           </div>
+        </FormSection>
+
+        {/*
+          «ملاحظات» — the back of the paper form.
+
+          Deliberately *not* a fourth entry in `SECTIONS`. That array drives the
+          wizard's step nav, its «الخطوة ٣ من ٣» counter and the next/back
+          buttons, and a field nobody is required to fill in must not become a
+          step somebody has to pass through. It sits after the last step, says
+          «اختياري» where the others carry a number, and gates nothing.
+
+          Not `blanketFlagReason`, which is the box officers were using for this
+          because it was the only free text on the form. That one is a *reason
+          data is missing*: it is copied onto every gap in the record and its
+          presence is part of what lands a registration at «يتطلب مراجعة», so
+          writing «الأسرة تنتقل نهاية الشهر» into it flags a clean record for
+          review and attaches that sentence to fields it does not describe.
+        */}
+        <FormSection
+          id="notes"
+          step={locale === 'en' ? 'Optional' : 'اختياري'}
+          icon={StickyNote}
+          title={locale === 'en' ? 'Notes' : 'ملاحظات'}
+          description={
+            locale === 'en'
+              ? 'Anything about this visit that no field above asks for.'
+              : 'أي ملاحظة عن هذه الزيارة لا يسأل عنها أي حقل أعلاه.'
+          }
+          invalid={Boolean(shown['notes'])}
+        >
+          <Field
+            label={locale === 'en' ? 'Notes' : 'ملاحظات'}
+            htmlFor="notes"
+            error={shown['notes']}
+            hint={
+              locale === 'en'
+                ? 'Optional. Does not flag the record or change its status.'
+                : 'اختياري. لا يضع علامة على السجل ولا يغيّر حالته.'
+            }
+          >
+            <Textarea
+              id="notes"
+              rows={3}
+              maxLength={2000}
+              placeholder={
+                locale === 'en'
+                  ? 'e.g. the family is moving at the end of the month; the stairs are broken, use the back entrance.'
+                  : 'مثال: الأسرة تنتقل نهاية الشهر · الدرج مكسور، الزيارة القادمة من الخلف.'
+              }
+              value={values.notes ?? ''}
+              onChange={(event) => update({ notes: event.target.value })}
+            />
+          </Field>
         </FormSection>
       </div>
 

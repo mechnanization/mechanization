@@ -88,6 +88,8 @@ interface StoredDraft {
   flags: [string, string][];
   unverified: [string, string][];
   blanketFlagReason?: string;
+  /** «ملاحظات» — kept in the autosaved draft like every other typed value. */
+  notes?: string;
 }
 
 /**
@@ -114,7 +116,11 @@ export function draftWorthKeeping(values: CitizenFormValues): boolean {
     typed(values.contact, ['whatsappSameAsPhone']) ||
     values.properties.length > 0 ||
     values.flags.size > 0 ||
-    Boolean(values.blanketFlagReason)
+    Boolean(values.blanketFlagReason) ||
+    // A note alone is worth keeping. It is frequently the *first* thing typed
+    // at a door and, being optional, the one an officer would least expect the
+    // form to have thrown away.
+    Boolean(values.notes?.trim())
   );
 }
 
@@ -128,6 +134,7 @@ export function saveCitizenDraft(tenant: string, values: CitizenFormValues): voi
       flags: [...values.flags],
       unverified: [...values.unverified],
       blanketFlagReason: values.blanketFlagReason,
+      notes: values.notes,
     };
     localStorage.setItem(key(tenant), JSON.stringify(payload));
   } catch {
@@ -161,6 +168,7 @@ export function loadCitizenDraft(
         flags: new Map(parsed.flags ?? []),
         unverified: new Map(parsed.unverified ?? []),
         blanketFlagReason: parsed.blanketFlagReason,
+        notes: parsed.notes,
       },
       savedAt: new Date(parsed.savedAt),
     };

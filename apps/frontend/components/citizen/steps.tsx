@@ -365,6 +365,21 @@ export function ContactStep({
           path="contact.phone"
           required
           error={errors['contact.phone']}
+          /*
+            Said once, where the number is typed.
+
+            A Lebanese number needs no code and never has — asking for one on
+            every registration to accommodate the rare foreign number would
+            slow down every registration in the municipality. The hint exists
+            for the other direction: somebody holding an owner's number in
+            Abidjan has no way to guess that a `+` is what makes it accepted,
+            and the field used to simply refuse them with «رقم الهاتف غير صالح».
+          */
+          hint={
+            locale === 'en'
+              ? 'A Lebanese number needs no country code. For any other country, start with + and the code.'
+              : 'الرقم اللبناني لا يحتاج رمز الدولة. لرقم من دولة أخرى، ابدأ بـ + ثم رمز الدولة.'
+          }
         >
           <Input
             id="phone"
@@ -372,7 +387,7 @@ export function ContactStep({
             inputMode="tel"
             autoComplete="tel"
             dir="ltr"
-            placeholder="03 123456"
+            placeholder="03 123456 / +33 6 12 34 56 78"
             className="text-start"
             invalid={Boolean(errors['contact.phone'])}
             value={str(value.phone)}
@@ -402,7 +417,7 @@ export function ContactStep({
               inputMode="tel"
               autoComplete="tel"
               dir="ltr"
-              placeholder="70 123456"
+              placeholder="70 123456 / +33 6 12 34 56 78"
               className="text-start"
               invalid={Boolean(errors['contact.whatsapp'])}
               value={str(value.whatsapp)}

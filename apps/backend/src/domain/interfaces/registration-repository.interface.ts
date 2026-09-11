@@ -22,6 +22,8 @@ export interface SubmitRegistrationInput {
    * the same sentence typed thirty times. See `autoFlags`.
    */
   blanketFlagReason?: string;
+  /** «ملاحظات» — free text, carrying no status consequence. */
+  notes?: string;
   /** The staff user / field inspector who registered this record. */
   createdById?: string;
   /** The browser's own id for this submission, when it was filed offline. */
