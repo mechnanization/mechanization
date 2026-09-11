@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { staffRoleSchema } from './enums';
-import { lebanesePhone } from './primitives';
+import { internationalPhone } from './primitives';
 
 /**
  * One auth vocabulary for both citizens and staff.
@@ -36,8 +36,25 @@ export const totpEnrolmentSchema = z.object({
 
 // ────────────────────────────  Citizens  ────────────────────────────
 
+/*
+  The same phone rule the registration form uses, and it has to be.
+
+  A citizen registered on a foreign number — an owner abroad, a family that
+  kept the number they lived on — would otherwise exist in the register and be
+  unable to type their own number into the login box. A field that accepts a
+  value on the way in and refuses it on the way back is a person locked out of
+  their own record, which is the outcome the رقم مرجعي counter fallback exists
+  to rescue and should not have to.
+
+  It widens what may be *asked for*, not what can be delivered:
+  `SmsProviderService` still routes to Lebanese networks, and a code for a
+  foreign number will fail to arrive until a provider that can reach one is
+  chosen (see open-decisions #2). Failing at delivery, visibly, is the better
+  of the two failures — the alternative refuses the number before anyone has
+  found out whether it could have been reached.
+*/
 export const requestOtpSchema = z.object({
-  phone: lebanesePhone,
+  phone: internationalPhone,
   /**
    * Resend counter. From the second attempt the server switches SMS route, so a
    * provider that is silently dropping messages is not simply retried.
@@ -50,7 +67,7 @@ export const requestOtpSchema = z.object({
  * several household members.
  */
 export const verifyOtpSchema = z.object({
-  phone: lebanesePhone,
+  phone: internationalPhone,
   /**
    * Optional on the wire, required in practice whenever OTP is switched on —
    * `OtpService.verify` is what refuses a missing or wrong code. Optional here

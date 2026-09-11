@@ -365,6 +365,21 @@ export function ContactStep({
           path="contact.phone"
           required
           error={errors['contact.phone']}
+          /*
+            Said once, where the number is typed.
+
+            A Lebanese number needs no code and never has — asking for one on
+            every registration to accommodate the rare foreign number would
+            slow down every registration in the municipality. The hint exists
+            for the other direction: somebody holding an owner's number in
+            Abidjan has no way to guess that a `+` is what makes it accepted,
+            and the field used to simply refuse them with «رقم الهاتف غير صالح».
+          */
+          hint={
+            locale === 'en'
+              ? 'A Lebanese number needs no country code. For any other country, start with + and the code.'
+              : 'الرقم اللبناني لا يحتاج رمز الدولة. لرقم من دولة أخرى، ابدأ بـ + ثم رمز الدولة.'
+          }
         >
           <Input
             id="phone"
@@ -372,7 +387,7 @@ export function ContactStep({
             inputMode="tel"
             autoComplete="tel"
             dir="ltr"
-            placeholder="03 123456"
+            placeholder="03 123456 / +33 6 12 34 56 78"
             className="text-start"
             invalid={Boolean(errors['contact.phone'])}
             value={str(value.phone)}
@@ -402,7 +417,7 @@ export function ContactStep({
               inputMode="tel"
               autoComplete="tel"
               dir="ltr"
-              placeholder="70 123456"
+              placeholder="70 123456 / +33 6 12 34 56 78"
               className="text-start"
               invalid={Boolean(errors['contact.whatsapp'])}
               value={str(value.whatsapp)}
@@ -459,6 +474,28 @@ export function ContactStep({
           className="text-start max-w-xs"
           invalid={Boolean(errors['contact.actualHouseholdMembers'])}
           value={str(value.actualHouseholdMembers)}
+          /*
+            `totalRegisteredMembers` is written from this one field and is no
+            longer asked for separately.
+
+            The form used to ask twice — once for the قيد العائلي headcount
+            including married children, once for who actually sleeps in the
+            house — and showed the subtraction between them as a read-only
+            «عدد الأبناء المتزوجين المستقلين (تلقائي)». The municipality only
+            registers the resident household now, so the second number has no
+            one to supply it and the subtraction had nothing left to mean: it
+            sat under the field reading 0 on every record.
+
+            Kept mirrored rather than dropped because the column is still
+            written, read by `reporting.service`'s `marriedOffspringTotal` and
+            shown on the citizen's file. Leaving it unset would let the schema
+            default it to `actualHouseholdMembers` on a create — the same value
+            — but would strand an *edit* of an older record at whatever gross
+            total it was filed with, so correcting the resident count from 5 to
+            3 would silently report two married children who were never
+            entered. Writing both keeps the derived figure at 0, which is what
+            «دون المتزوجين» now means for every record this form touches.
+          */
           onChange={(e) =>
             set({
               actualHouseholdMembers: e.target.value,
@@ -467,21 +504,6 @@ export function ContactStep({
           }
         />
       </Field>
-
-      {(() => {
-        const total = Number(value.totalRegisteredMembers);
-        const actual = Number(value.actualHouseholdMembers);
-        if (!Number.isFinite(total) || !Number.isFinite(actual)) return null;
-        const married = total - actual;
-        if (married < 0) return null;
-        return (
-          <div className="flex h-10 items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-3 text-xs text-muted-foreground">
-            {locale === 'en'
-              ? `Married children count (auto): ${married}`
-              : `عدد الأبناء المتزوجين المستقلين (تلقائي): ${married}`}
-          </div>
-        );
-      })()}
     </div>
   );
 }

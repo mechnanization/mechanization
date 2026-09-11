@@ -5,8 +5,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
+  CalendarClock,
   CheckCircle2,
   ClipboardList,
+  Grid3x3,
   Link2,
   Pencil,
   Plus,
@@ -14,10 +16,18 @@ import {
   TrendingUp,
   Trash2,
   UserPlus,
+  X,
 } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, type CaseStatus, type CaseType } from '@mechanization/shared-schemas';
 import type { CitizenListItem } from '@/lib/api-client';
-import { ApiRequestError, deleteCase, getCases, logApiError, updateCase } from '@/lib/api-client';
+import {
+  ApiRequestError,
+  deleteCase,
+  getCases,
+  getZoneParcelIndex,
+  logApiError,
+  updateCase,
+} from '@/lib/api-client';
 import type { CaseSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
@@ -30,6 +40,8 @@ import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { LinkCaseCitizenDialog } from '@/components/admin/link-case-citizen-dialog';
+import { cn } from '@/lib/utils';
+import { BuildingUnitMatrixDrawer } from '@/components/admin/building-unit-matrix-drawer';
 
 function getTableLabels(locale: string): DataTableLabels {
   if (locale === 'en') {
@@ -81,6 +93,54 @@ function getTableLabels(locale: string): DataTableLabels {
 }
 
 /**
+ * The four tabs, as groups of `CaseType` rather than one type each.
+ *
+ * The tab an officer wants is not "cases of type X", it is "cases I do the same
+ * thing about". A locked door and a flat somebody thinks is empty are both
+ * *go back and knock*; a refusal and an ownership dispute both need a person
+ * with authority rather than another visit. Grouping them is what makes the
+ * tabs a work queue instead of a second copy of the enum.
+ *
+ * `null` on the first tab is "no filter", not "no type" — every case is in it.
+ */
+const CASE_TABS: ReadonlyArray<{
+  id: string;
+  ar: string;
+  en: string;
+  types: readonly CaseType[] | null;
+}> = [
+  { id: 'all', ar: 'الكل', en: 'All', types: null },
+  {
+    id: 'revisit',
+    ar: 'إعادة زيارة',
+    en: 'Revisit',
+    types: ['UNIT_UNREACHABLE', 'VACANT_UNCONFIRMED'],
+  },
+  {
+    id: 'disputes',
+    ar: 'رفض ونزاعات',
+    en: 'Refusals & disputes',
+    types: ['ACCESS_REFUSED', 'OWNERSHIP_DISPUTE'],
+  },
+  { id: 'notes', ar: 'ملاحظات', en: 'Notes', types: ['GENERAL_NOTE'] },
+];
+
+/**
+ * The next state a quick tap moves a case to — `OPEN → SCHEDULED → RESOLVED`,
+ * and from `RESOLVED` back to `OPEN`.
+ *
+ * A cycle rather than three buttons, because it is one control in a table row
+ * and the order is the order a case actually travels: somebody agrees to a
+ * revisit before the revisit happens. Reopening from the end is the correction
+ * path — a case closed in error, or a household that moved out again.
+ */
+function nextStatus(status: CaseStatus): CaseStatus {
+  if (status === 'OPEN') return 'SCHEDULED';
+  if (status === 'SCHEDULED') return 'RESOLVED';
+  return 'OPEN';
+}
+
+/**
  * حالات — field visits that could not become a citizen registration.
  *
  * Nobody home, the gate was locked, access was refused: this is where whatever
@@ -123,6 +183,14 @@ export default function CasesPage({
   const [linkSubmitting, setLinkSubmitting] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
 
+  // ── Tabs and census filters (P3-T7) ────────────────────────────────
+  const [tab, setTab] = useState('all');
+  const [zoneId, setZoneId] = useState('');
+  const [parcelNumber, setParcelNumber] = useState('');
+  const [buildingCode, setBuildingCode] = useState('');
+  /** Which building's matrix is open from a case row, if any. */
+  const [matrixId, setMatrixId] = useState<string | null>(null);
+
   const canWrite = role !== 'AUDITOR' && role !== 'ACCOUNTANT';
   const canDelete = role === 'SUPER_ADMIN';
 
@@ -135,8 +203,77 @@ export default function CasesPage({
     errorMessage: 'تعذّر تحميل الحالات.',
   });
 
-  const items = useMemo(() => query.data?.cases ?? [], [query.data]);
+  const allItems = useMemo(() => query.data?.cases ?? [], [query.data]);
   const error = actionError;
+
+  /**
+   * Parcel → sector, for the zone filter.
+   *
+   * A case carries a `propertyNumber`, never a sector: membership lives in
+   * `Zone.parcelNumbers` and nowhere else (D13). Resolving it here is the same
+   * index the building editor uses, cached for five minutes.
+   */
+  const [zoneOfParcel, setZoneOfParcel] = useState<Record<string, { id: string; name: string }>>({});
+  const [zones, setZones] = useState<Array<{ id: string; name: string }>>([]);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+
+    getZoneParcelIndex(tenant, token)
+      .then((index) => {
+        if (cancelled) return;
+        setZoneOfParcel(index);
+        const seen = new Map<string, string>();
+        for (const zone of Object.values(index)) seen.set(zone.id, zone.name);
+        setZones([...seen.entries()].map(([id, name]) => ({ id, name })));
+      })
+      // The sector filter is an enrichment; every other filter still works.
+      .catch(logApiError);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tenant, token]);
+
+  /**
+   * Filtering is client-side, and deliberately.
+   *
+   * `GET /cases` returns the whole list — it has no pagination — and the
+   * conversion strip above the table is computed over *every* resolved case
+   * ever. Narrowing the request would quietly change what that number means
+   * from "the register's conversion rate" to "this tab's", which is a different
+   * claim in the same words.
+   */
+  const items = useMemo(() => {
+    const types = CASE_TABS.find((entry) => entry.id === tab)?.types ?? null;
+    const parcel = parcelNumber.trim();
+    const code = buildingCode.trim().toLowerCase();
+
+    return allItems.filter((item) => {
+      if (types && !types.includes(item.caseType)) return false;
+      if (parcel && item.propertyNumber !== parcel) return false;
+      if (code && !(item.buildingCode ?? '').toLowerCase().includes(code)) return false;
+      if (zoneId) {
+        const zone = item.propertyNumber ? zoneOfParcel[item.propertyNumber] : undefined;
+        if (zone?.id !== zoneId) return false;
+      }
+      return true;
+    });
+  }, [allItems, tab, parcelNumber, buildingCode, zoneId, zoneOfParcel]);
+
+  /** How many cases each tab holds, so an empty queue is visible before it is opened. */
+  const tabCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const entry of CASE_TABS) {
+      counts[entry.id] = entry.types
+        ? allItems.filter((item) => entry.types!.includes(item.caseType)).length
+        : allItems.length;
+    }
+    return counts;
+  }, [allItems]);
+
+  const activeFilters = [zoneId, parcelNumber, buildingCode].filter(Boolean).length;
 
   /**
    * The number this whole bridge exists to answer. Of every case ever
@@ -145,10 +282,13 @@ export default function CasesPage({
    * vacant, refused, duplicate).
    */
   const conversion = useMemo(() => {
-    const resolved = items.filter((item) => item.status === 'RESOLVED');
+    // `allItems`, not the filtered set: this line is a statement about the
+    // register, and recomputing it per tab would silently change what it
+    // claims while the sentence around it stayed the same.
+    const resolved = allItems.filter((item) => item.status === 'RESOLVED');
     const withCitizen = resolved.filter((item) => item.resolvedCitizenId);
     return { resolvedCount: resolved.length, linkedCount: withCitizen.length };
-  }, [items]);
+  }, [allItems]);
 
   const queryClient = useQueryClient();
   const load = useCallback(
@@ -156,15 +296,36 @@ export default function CasesPage({
     [queryClient, tenant],
   );
 
-  const toggleStatus = useCallback(
+  /**
+   * One tap moves a case one step: `OPEN → SCHEDULED → RESOLVED`, and back to
+   * `OPEN` from the end.
+   *
+   * The middle state is the one worth having. «زيارة مجدولة» says somebody has
+   * agreed to a time, which is different from both "still to do" and "done",
+   * and it is the difference between a dispatch list that can be planned and
+   * one that can only be counted.
+   */
+  const advanceStatus = useCallback(
     async (item: CaseSummary) => {
       if (!token) return;
+      const next = nextStatus(item.status);
       setBusyId(item.id);
-      const resolving = item.status === 'OPEN';
       try {
-        await updateCase(tenant, token, item.id, { status: resolving ? 'RESOLVED' : 'OPEN' });
+        await updateCase(tenant, token, item.id, { status: next });
         await load();
-        toast.success(resolving ? 'تم وضع علامة محلولة' : 'تمت إعادة فتح الحالة');
+        toast.success(
+          next === 'RESOLVED'
+            ? locale === 'en'
+              ? 'Marked resolved'
+              : 'تم وضع علامة مُعالجة'
+            : next === 'SCHEDULED'
+              ? locale === 'en'
+                ? 'Marked as a scheduled revisit'
+                : 'تم وضعها كزيارة مجدولة'
+              : locale === 'en'
+                ? 'Case reopened'
+                : 'تمت إعادة فتح الحالة',
+        );
       } catch (caught) {
         logApiError(caught);
         const message = caught instanceof ApiRequestError ? caught.message : 'تعذّر تحديث الحالة.';
@@ -174,7 +335,7 @@ export default function CasesPage({
         setBusyId(null);
       }
     },
-    [tenant, token, load, toast],
+    [tenant, token, load, toast, locale],
   );
 
   const removeCase = useCallback(
@@ -285,13 +446,26 @@ export default function CasesPage({
               {item.status === 'RESOLVED' ? (
                 <Badge className="gap-1.5 border-emerald-600/30 bg-emerald-600/10 py-1 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" variant="outline">
                   <CheckCircle2 className="size-3.5" aria-hidden />
-                  {locale === 'en' ? 'Resolved' : 'محلولة'}
+                  {labels.caseStatus.RESOLVED}
+                </Badge>
+              ) : item.status === 'SCHEDULED' ? (
+                <Badge className="gap-1.5 py-1" variant="soft-warning">
+                  <CalendarClock className="size-3.5" aria-hidden />
+                  {labels.caseStatus.SCHEDULED}
                 </Badge>
               ) : (
                 <Badge className="gap-1.5 py-1" variant="outline">
-                  {locale === 'en' ? 'Open' : 'مفتوحة'}
+                  {labels.caseStatus.OPEN}
                 </Badge>
               )}
+              {/* The date is what «مجدولة» means; a status without it is a
+                  promise nobody can plan around. */}
+              {item.scheduledRevisitAt ? (
+                <p className="text-[11px] text-muted-foreground">
+                  {locale === 'en' ? 'Revisit ' : 'العودة '}
+                  {formatDate(item.scheduledRevisitAt)}
+                </p>
+              ) : null}
               {item.resolvedCitizenName ? (
                 <button
                   type="button"
@@ -361,27 +535,55 @@ export default function CasesPage({
                 </Button>
               </ActionTooltip>
 
+              {/* One tap, one step along OPEN → SCHEDULED → RESOLVED. The
+                  label names where it goes, never where it is. */}
               <ActionTooltip
                 label={
                   item.status === 'OPEN'
-                    ? (locale === 'en' ? 'Mark Resolved' : 'وضع علامة محلولة')
-                    : (locale === 'en' ? 'Reopen' : 'إعادة فتح')
+                    ? locale === 'en'
+                      ? 'Schedule a revisit'
+                      : 'جدولة زيارة'
+                    : item.status === 'SCHEDULED'
+                      ? locale === 'en'
+                        ? 'Mark resolved'
+                        : 'وضع علامة مُعالجة'
+                      : locale === 'en'
+                        ? 'Reopen'
+                        : 'إعادة فتح'
                 }
               >
                 <Button
                   variant="outline"
                   size="icon-sm"
-                  aria-label={locale === 'en' ? 'Toggle status' : 'تغيير الحالة'}
+                  aria-label={locale === 'en' ? 'Advance status' : 'تقديم حالة المعاملة'}
                   disabled={busy}
-                  onClick={() => void toggleStatus(item)}
+                  onClick={() => void advanceStatus(item)}
                 >
                   {item.status === 'OPEN' ? (
+                    <CalendarClock className="size-4" aria-hidden />
+                  ) : item.status === 'SCHEDULED' ? (
                     <CheckCircle2 className="size-4" aria-hidden />
                   ) : (
                     <RotateCcw className="size-4" aria-hidden />
                   )}
                 </Button>
               </ActionTooltip>
+
+              {/* A case pinned to a censused structure opens its matrix — the
+                  fastest route from "somebody should go back" to the flat. */}
+              {item.buildingId ? (
+                <ActionTooltip label={locale === 'en' ? 'Open the unit matrix' : 'فتح مصفوفة الوحدات'}>
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label={locale === 'en' ? 'Open the unit matrix' : 'فتح مصفوفة الوحدات'}
+                    disabled={busy}
+                    onClick={() => setMatrixId(item.buildingId)}
+                  >
+                    <Grid3x3 className="size-4" aria-hidden />
+                  </Button>
+                </ActionTooltip>
+              ) : null}
 
               <ActionTooltip label={locale === 'en' ? 'Edit' : 'تعديل'}>
                 <Button
@@ -414,7 +616,7 @@ export default function CasesPage({
         },
       },
     ],
-    [busyId, canWrite, canDelete, locale, labels, toggleStatus, router, base],
+    [busyId, canWrite, canDelete, locale, labels, advanceStatus, router, base],
   );
 
   if (!token) return null;
@@ -441,6 +643,106 @@ export default function CasesPage({
             {locale === 'en' ? 'Log a Case' : 'تسجيل حالة'}
           </Button>
         ) : null}
+      </div>
+
+      {/*
+        Tabs as a work queue, not a copy of the enum.
+
+        Each one groups the case types an officer does the same thing about —
+        knock again, escalate to a person with authority, or just read. The
+        count rides on the tab so an empty queue is visible before it is opened.
+      */}
+      <div
+        role="tablist"
+        aria-label={locale === 'en' ? 'Case queues' : 'قوائم الحالات'}
+        className="flex flex-wrap gap-1.5 border-b pb-2"
+      >
+        {CASE_TABS.map((entry) => {
+          const active = entry.id === tab;
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setTab(entry.id)}
+              className={cn(
+                'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+                active ? 'border-primary bg-primary/10 text-primary' : 'hover:bg-accent',
+              )}
+            >
+              {locale === 'en' ? entry.en : entry.ar}
+              <span
+                className={cn(
+                  'rounded-full px-1.5 text-[10px] font-bold',
+                  active ? 'bg-primary/20' : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {tabCounts[entry.id] ?? 0}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Zone, parcel and building — the three ways a dispatch list is cut. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={zoneId}
+          onChange={(event) => setZoneId(event.target.value)}
+          aria-label={locale === 'en' ? 'Filter by sector' : 'تصفية حسب القطاع'}
+          className={cn(
+            'h-9 rounded-md border border-input bg-background px-3 text-xs ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring',
+            zoneId && 'border-primary text-primary',
+          )}
+        >
+          <option value="">{locale === 'en' ? 'All sectors' : 'كل القطاعات'}</option>
+          {zones.map((zone) => (
+            <option key={zone.id} value={zone.id}>
+              {zone.name}
+            </option>
+          ))}
+        </select>
+
+        <input
+          value={parcelNumber}
+          onChange={(event) => setParcelNumber(event.target.value)}
+          dir="ltr"
+          inputMode="numeric"
+          aria-label={locale === 'en' ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
+          placeholder={locale === 'en' ? 'Parcel #' : 'رقم العقار'}
+          className="h-9 w-28 rounded-md border border-input bg-background px-3 text-start text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+
+        <input
+          value={buildingCode}
+          onChange={(event) => setBuildingCode(event.target.value)}
+          dir="ltr"
+          aria-label={locale === 'en' ? 'Filter by building code' : 'تصفية حسب رمز المبنى'}
+          placeholder={locale === 'en' ? 'Building code' : 'رمز المبنى'}
+          className="h-9 w-36 rounded-md border border-input bg-background px-3 text-start text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+
+        {activeFilters > 0 ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setZoneId('');
+              setParcelNumber('');
+              setBuildingCode('');
+            }}
+          >
+            <X className="size-4" aria-hidden />
+            {locale === 'en' ? `Clear ${activeFilters} filter(s)` : `مسح ${activeFilters} فلتر`}
+          </Button>
+        ) : null}
+
+        <span className="ms-auto text-xs text-muted-foreground">
+          {locale === 'en'
+            ? `${items.length} of ${allItems.length} cases`
+            : `${items.length} من ${allItems.length} حالة`}
+        </span>
       </div>
 
       {conversion.resolvedCount > 0 ? (
@@ -511,6 +813,25 @@ export default function CasesPage({
           if (pendingDelete) await removeCase(pendingDelete);
         }}
       />
+
+      {token ? (
+        <BuildingUnitMatrixDrawer
+          open={matrixId !== null}
+          onClose={() => setMatrixId(null)}
+          tenant={tenant}
+          token={token}
+          buildingId={matrixId}
+          canWrite={canWrite}
+          // A visit or an occupancy logged from here can auto-resolve the very
+          // case the drawer was opened from, so the list is re-read on close.
+          onChanged={() => void load()}
+          registerHref={(buildingId, unitId) =>
+            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}`
+          }
+          citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
+          locale={locale}
+        />
+      ) : null}
 
       {token ? (
         <LinkCaseCitizenDialog

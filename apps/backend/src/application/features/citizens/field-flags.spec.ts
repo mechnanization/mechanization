@@ -261,6 +261,168 @@ describe('citizen submission — a flag excuses one field', () => {
   });
 });
 
+
+/**
+ * Per-unit flags — a stairwell where nine flats answered and the tenth did not.
+ *
+ * The only building-level flag that existed was on the whole `units` array:
+ * «we could not go through the building». That is a real afternoon and the
+ * control is still there for it, but it was also the *only* thing anybody could
+ * say — so a building where one flat did not answer had to be filed either as
+ * complete, with an invented tenth unit, or as a building nobody entered.
+ *
+ * These run against the same schema object the controller's pipe and the
+ * browser form use, which is what makes them worth writing at this level: a
+ * record filed offline is validated in a browser hours before a server sees it,
+ * and a browser that accepted what the server refuses queues a registration
+ * that fails on arrival in a settlement nobody is going back to.
+ */
+describe('citizen submission — per-unit flags', () => {
+  const building = (units: Array<Record<string, unknown>>) => {
+    const input = complete();
+    input.properties = [
+      {
+        occupancyType: 'OWNER',
+        propertyType: 'BUILDING',
+        neighborhood: 'الحي الشرقي',
+        propertyNumber: '1553',
+        buildingName: 'بناية النور',
+        units,
+      } as Record<string, unknown>,
+    ];
+    return input;
+  };
+
+  const unit = (extra: Record<string, unknown> = {}) => ({
+    unitType: 'APARTMENT',
+    floor: '3',
+    unitArea: '120',
+    ...extra,
+  });
+
+  it('accepts a per-unit path as flaggable', () => {
+    expect(isFlaggablePath('properties.0.units.3.unitArea')).toBe(true);
+    expect(isFlaggablePath('properties.0.units.0.floor')).toBe(true);
+    // The whole-array flag it never replaced.
+    expect(isFlaggablePath('properties.0.units')).toBe(true);
+  });
+
+  it('still refuses a path no input can resolve to', () => {
+    expect(isFlaggablePath('properties.0.units.3')).toBe(false);
+    expect(isFlaggablePath('properties.0.units.unitArea')).toBe(false);
+    expect(isFlaggablePath('properties.0.units.3.sharedRights.0')).toBe(false);
+    expect(isFlaggablePath('units.3.unitArea')).toBe(false);
+  });
+
+  it('excuses the one unit field the officer flagged', () => {
+    const input = building([unit(), unit({ unitArea: undefined, floor: '4' })]);
+    input.flags = [
+      { path: 'properties.0.units.1.unitArea', reason: 'الشقة مقفلة ولم نتمكن من القياس' },
+    ];
+
+    const result = adminCreateCitizenSubmissionSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    // The building is still here, with both flats. Before this the record's
+    // only options were an invented area or no building at all.
+    expect(result.data.properties[0]?.units).toHaveLength(2);
+    expect(result.data.properties[0]?.units?.[0]?.unitArea).toBe(120);
+    expect(result.data.properties[0]?.units?.[1]?.unitArea).toBeUndefined();
+    expect(statusForFlags(result.data.flags)).toBe('REQUIRES_REVIEW');
+  });
+
+  it('does not excuse the same field on the unit next to it', () => {
+    const input = building([unit({ unitArea: undefined }), unit({ unitArea: undefined })]);
+    input.flags = [{ path: 'properties.0.units.0.unitArea', reason: 'الشقة مقفلة' }];
+
+    expect(failures(input)).toEqual(['properties.0.units.1.unitArea']);
+  });
+
+  it('does not excuse a different field on the same unit', () => {
+    const input = building([unit({ unitArea: undefined, floor: undefined })]);
+    input.flags = [{ path: 'properties.0.units.0.unitArea', reason: 'الشقة مقفلة' }];
+
+    expect(failures(input)).toEqual(['properties.0.units.0.floor']);
+  });
+
+  it('does not excuse a unit on a different property card', () => {
+    const input = building([unit({ unitArea: undefined })]);
+    input.properties.push({
+      ...(input.properties[0] as Record<string, unknown>),
+      propertyNumber: '1554',
+    });
+    input.flags = [{ path: 'properties.0.units.0.unitArea', reason: 'الشقة مقفلة' }];
+
+    expect(failures(input)).toEqual(['properties.1.units.0.unitArea']);
+  });
+
+  it('discards a value the officer flagged rather than storing it', () => {
+    // The officer estimated an area, then flagged it. The estimate must not
+    // survive: the record says this was never established.
+    const input = building([unit({ unitArea: '999' })]);
+    input.flags = [{ path: 'properties.0.units.0.unitArea', reason: 'تقدير بالنظر فقط' }];
+
+    const result = adminCreateCitizenSubmissionSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.properties[0]?.units?.[0]?.unitArea).toBeUndefined();
+  });
+
+  it('leaves the whole-array flag doing exactly what it did', () => {
+    // «we could not go through the building at all» — the units are gone, and
+    // the per-unit walk has nothing to descend into.
+    const input = building([]);
+    delete (input.properties[0] as Record<string, unknown>).units;
+    input.flags = [{ path: 'properties.0.units', reason: 'الدرج مقفل والناطور غائب' }];
+
+    const result = adminCreateCitizenSubmissionSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.properties[0]?.units).toBeUndefined();
+  });
+
+  it('shapes a flagged card instead of throwing on the way to storage', () => {
+    /*
+      The failure this is really about.
+
+      `unexcusedIssues` and `shapeSubmission` are two passes over one record: the
+      first decides the flags account for every complaint, the second coerces
+      what survived. They have to agree about a blanked unit field — a strict
+      unit schema on the second pass would refuse a card the first had already
+      accepted, and a `.parse` there throws rather than returning an error, so
+      the request would 500 instead of validating.
+    */
+    const input = building([unit({ unitArea: undefined, floor: undefined, unitType: undefined })]);
+    input.flags = [
+      { path: 'properties.0.units.0.unitArea', reason: 'الشقة مقفلة' },
+      { path: 'properties.0.units.0.floor', reason: 'لم نصعد الطوابق' },
+      { path: 'properties.0.units.0.unitType', reason: 'لم نتمكن من المعاينة' },
+    ];
+
+    expect(() => adminCreateCitizenSubmissionSchema.parse(input)).not.toThrow();
+  });
+
+  it('still coerces the units it kept', () => {
+    const input = building([unit({ unitArea: '85.5', sharedRights: ['مصعد'] })]);
+
+    const result = adminCreateCitizenSubmissionSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.properties[0]?.units?.[0]?.unitArea).toBe(85.5);
+    expect(result.data.properties[0]?.units?.[0]?.sharedRights).toEqual(['مصعد']);
+  });
+
+  it('refuses the same unit field flagged twice', () => {
+    const input = building([unit({ unitArea: undefined })]);
+    input.flags = [
+      { path: 'properties.0.units.0.unitArea', reason: 'سبب أول' },
+      { path: 'properties.0.units.0.unitArea', reason: 'سبب ثانٍ' },
+    ];
+
+    expect(failures(input)).toEqual(['flags.1.path']);
+  });
+});
 describe('citizen submission — cross-field rules', () => {
   it('still refuses a tent for someone who is not a refugee', () => {
     const input = complete();

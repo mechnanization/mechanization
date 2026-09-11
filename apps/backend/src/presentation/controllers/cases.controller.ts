@@ -29,14 +29,23 @@ export class CasesController {
    * `propertyNumber` is what the registration form's "an open case exists
    * here" lookup filters on; `status` narrows to OPEN for that same lookup,
    * or is left off entirely for the cases list's own table.
+   *
+   * `caseType`, `buildingId` and `unitId` are what the cases page's tabs and
+   * the unit matrix's "cases on this flat" panel filter on. Every one is
+   * optional and they compose, because the page's controls stack.
    */
   @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
   @Get()
   async list(
     @Query('propertyNumber') propertyNumber?: string,
     @Query('status') status?: string,
+    @Query('caseType') caseType?: string,
+    @Query('buildingId') buildingId?: string,
+    @Query('unitId') unitId?: string,
   ) {
-    return { cases: await this.cases.list({ propertyNumber, status }) };
+    return {
+      cases: await this.cases.list({ propertyNumber, status, caseType, buildingId, unitId }),
+    };
   }
 
   @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')

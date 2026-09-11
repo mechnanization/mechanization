@@ -1,6 +1,7 @@
 export * from './enums';
 export * from './labels';
 export * from './primitives';
+export * from './numbering';
 export * from './citizen.schema';
 export * from './field-flag.schema';
 export * from './property.schema';
@@ -11,5 +12,6 @@ export * from './fee.schema';
 export * from './auth.schema';
 export * from './tenant.schema';
 export * from './zone.schema';
+export * from './building.schema';
 export * from './staff.schema';
 export * from './case.schema';

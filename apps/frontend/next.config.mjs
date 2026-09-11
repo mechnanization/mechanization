@@ -60,6 +60,28 @@ const SECURITY_HEADERS = [
 
 const nextConfig = {
   reactStrictMode: true,
+  /**
+   * Where the compiled output goes — `.next` normally, elsewhere on request.
+   *
+   * `next build` and `next dev` share `.next` by default, and a build run while
+   * the dev server is up rewrites the very chunks that server is mid-way through
+   * serving. What comes out the other side is not a build error, it is the dev
+   * server failing at *runtime* on a file that no longer exists:
+   *
+   *   Error: Cannot find module './vendor-chunks/zod@3.25.76.js'
+   *   Require stack: … .next/server/webpack-runtime.js
+   *
+   * — a 500 on a page whose source is fine, repeating on every request, plus
+   * "Fast Refresh had to perform a full reload" and a stream of 404s for
+   * hot-update chunks. It is unrecoverable without killing the dev server, and
+   * it looks exactly like whatever change was made last having broken the app.
+   *
+   * `pnpm build:check` sets `NEXT_DIST_DIR` so a verification build gets its own
+   * directory and cannot touch a running dev server. The backend has the same
+   * hazard for the same reason — `nest build` copies Prisma's engine binaries
+   * over ones a running server holds open — and `scripts/start.mjs` documents it.
+   */
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   transpilePackages: ['@mechanization/shared-schemas'],
   eslint: { ignoreDuringBuilds: false },
   // `poweredByHeader` names the framework and version to anyone scanning.

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
+import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { ConflictError } from '../../common/exceptions';
 import { PaymentLedgerService } from './payment-ledger.service';
@@ -28,6 +29,31 @@ const SCHEMA = 'tenant_ledger_spec';
 
 const describeIfDb = TEST_DATABASE_URL ? describe : describe.skip;
 
+/**
+ * Jest's 5-second default is a budget for a local socket, and there is no local
+ * Postgres in this project — `TARGETS.local` in `scripts/db/targets.mjs` points
+ * at the hosted staging database, so "local" describes where the process runs
+ * and not where the data is. A reversal test here is three or four round trips
+ * a couple of hundred milliseconds apart, which overran the default and failed
+ * as a timeout rather than as anything about the ledger.
+ */
+jest.setTimeout(60_000);
+
+/**
+ * The schema-building hook gets its own, larger budget.
+ *
+ * `beforeAll` drops the spec's schema and replays the **whole migration chain**
+ * — thirty-odd hand-written files — against whatever `TEST_DATABASE_URL` points
+ * at, which in practice is a hosted Postgres a few hundred milliseconds away.
+ * At 60s that hook fails on a slow link while every test in the suite would
+ * have passed, and a suite that reports "failed to run" for a network hiccup is
+ * a suite people learn to re-run rather than read.
+ *
+ * The per-test budget stays at 60s: an individual assertion taking a minute is
+ * a real problem, and this must not hide it.
+ */
+const SETUP_TIMEOUT_MS = 240_000;
+
 describeIfDb('PaymentLedgerService', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
@@ -51,23 +77,34 @@ describeIfDb('PaymentLedgerService', () => {
     await ddl.query(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`);
     await migrateTenantSchema(ddl, SCHEMA);
 
-    const url = new URL(TEST_DATABASE_URL!);
-    url.searchParams.set('schema', SCHEMA);
-    db = new TenantPrismaClient({ datasources: { db: { url: url.toString() } } });
+    db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
 
     ledger = new PaymentLedgerService({
       get prisma() {
         return db;
       },
       tenantSlug: 'ledger',
+      /*
+        Raw queries now write this into their SQL rather than leaning on
+        `search_path` — see `tenant-schema-ref.ts`. Supplying it here is what
+        makes these suites exercise the qualified form rather than a shape
+        that only works because the test client pins one schema per connection.
+      */
+      schemaName: SCHEMA,
     } as unknown as TenantContextService);
-  }, 60_000);
+  }, SETUP_TIMEOUT_MS);
 
   afterAll(async () => {
+    /*
+      The same budget as the hook that built it: this drops the schema CASCADE
+      over the same link, and a teardown that times out is reported as "Test
+      suite failed to run" even when every test in the file passed — which reads
+      as a broken suite rather than a slow one.
+    */
     await db?.$disconnect();
     await ddl?.query(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`);
     await ddl?.end();
-  });
+  }, SETUP_TIMEOUT_MS);
 
   beforeEach(async () => {
     citizenId = randomUUID();

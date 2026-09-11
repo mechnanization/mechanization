@@ -39,6 +39,11 @@ export interface BuildingUnitProps {
   sharedRights?: string[];
   /** Owner cards only; `normalise` clears it on anyone else's. */
   unitStatus?: UnitStatus | null;
+  /**
+   * The canonical `Unit` this line describes, when the officer picked one.
+   * Where set, the `Unit` outranks this row field by field — see P2-T8.
+   */
+  unitId?: string | null;
 }
 
 export interface PropertyEntryProps {
@@ -68,6 +73,14 @@ export interface PropertyEntryProps {
    * question on every tent registration in a settlement.
    */
   unitStatus?: UnitStatus | null;
+  /**
+   * The censused structure this card is about, when one was picked.
+   *
+   * BUILDING and HOUSE only, and `normalise` clears it on the other two: أرض
+   * has nothing standing on it and a خيمة stays a bare card (Q2), so a link on
+   * either would assert a structure the census does not model.
+   */
+  buildingId?: string | null;
   /** BUILDING only — every other type describes its single unit inline. */
   units?: BuildingUnitProps[];
   latitude?: number | null;
@@ -329,6 +342,11 @@ export class PropertyEntry {
       // states this per unit below, and أرض and خيمة are never asked.
       unitStatus:
         isOwner && props.propertyType === 'HOUSE' ? (props.unitStatus ?? null) : null,
+      // A link to a structure, on the two types that can stand on one.
+      buildingId:
+        props.propertyType === 'BUILDING' || props.propertyType === 'HOUSE'
+          ? (props.buildingId ?? null)
+          : null,
       units: isBuilding
         ? (props.units ?? []).map((unit) => ({
             ...unit,
@@ -336,6 +354,7 @@ export class PropertyEntry {
             side: unit.side?.trim() || null,
             sharedRights: unit.sharedRights ?? [],
             unitStatus: isOwner ? (unit.unitStatus ?? null) : null,
+            unitId: unit.unitId ?? null,
           }))
         : [],
       propertyNumber: props.propertyNumber?.trim() || null,

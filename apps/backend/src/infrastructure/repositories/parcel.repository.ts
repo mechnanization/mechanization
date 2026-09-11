@@ -4,6 +4,7 @@ import {
   ParcelRepository,
 } from '../../domain/interfaces/parcel-repository.interface';
 import { TenantContextService } from '../context/tenant-context.service';
+import { tenantSchemaPrefix } from '../prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../prisma/with-connection-retry';
 
 @Injectable()
@@ -12,6 +13,11 @@ export class PrismaParcelRepository implements ParcelRepository {
 
   private get db() {
     return this.tenantContext.prisma;
+  }
+
+  /** Schema prefix for this class's one raw query — see `tenant-schema-ref.ts`. */
+  private get schemaPrefix(): string {
+    return tenantSchemaPrefix(this.tenantContext.schemaName);
   }
 
   async count(): Promise<number> {
@@ -61,7 +67,7 @@ export class PrismaParcelRepository implements ParcelRepository {
       `SELECT "parcelNumber" FROM (
         SELECT "parcelNumber",
                CAST(split_part(split_part("parcelNumber", '/', 1), '-', 1) AS bigint) AS root_num
-        FROM "parcels"
+        FROM ${this.schemaPrefix}"parcels"
         WHERE split_part(split_part("parcelNumber", '/', 1), '-', 1) ~ '^[0-9]+$'
       ) AS num_parcels
       ORDER BY abs(root_num - $1::bigint), root_num, "parcelNumber"
@@ -74,7 +80,13 @@ export class PrismaParcelRepository implements ParcelRepository {
   }
 
   async replaceAll(
-    parcels: readonly { parcelNumber: string; latitude: number; longitude: number; pointCount: number }[],
+    parcels: readonly {
+      parcelNumber: string;
+      latitude: number;
+      longitude: number;
+      pointCount: number;
+      boundary?: unknown;
+    }[],
   ): Promise<void> {
     await this.db.$transaction([
       this.db.parcel.deleteMany({}),

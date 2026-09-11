@@ -44,6 +44,8 @@ interface Profile {
   governorate: string;
   district: string;
   town: string;
+  /** تاريخ ورقم قرار المجلس البلدي, if the council has issued one (§7 Q1). */
+  councilDecisionRef: string;
   /** A data: URI. See the note on `readLogo` for why it is not a URL. */
   logoDataUri: string;
 }
@@ -60,6 +62,7 @@ const EMPTY: Profile = {
   governorate: '',
   district: '',
   town: '',
+  councilDecisionRef: '',
   logoDataUri: '',
 };
 
@@ -79,6 +82,7 @@ function toProfile(settings: MunicipalitySettings): Profile {
     governorate: settings.governorate ?? '',
     district: settings.district ?? '',
     town: settings.town ?? '',
+    councilDecisionRef: settings.councilDecisionRef ?? '',
     logoDataUri: settings.logoDataUri ?? '',
   };
 }
@@ -335,6 +339,33 @@ export function ProfileSection({
                   value={draft.town}
                   onChange={(e) => setDraft({ ...draft, town: e.target.value })}
                 />
+              </SettingsField>
+            </AlignedFieldGrid>
+
+            {/*
+              Under the administrative location because that is what it is: the
+              authority the municipality's own numbering rests on. Optional, and
+              §7 Q1 is why — internal cadastral indexing is already within
+              municipal executive competence, so the codes are valid without a
+              decree. Where a council has passed one, a notice that cites it
+              carries more weight.
+            */}
+            <AlignedFieldGrid>
+              <SettingsField
+                label={copy.profile.councilDecisionRef}
+                htmlFor="council-decision-ref"
+              >
+                <Input
+                  id="council-decision-ref"
+                  placeholder="قرار رقم ١٢ تاريخ ٢٠٢٦/٠٣/١٤"
+                  value={draft.councilDecisionRef}
+                  onChange={(e) => setDraft({ ...draft, councilDecisionRef: e.target.value })}
+                />
+                {/* Spelled out under the input rather than passed as `hint`,
+                    which `SettingsField` accepts and does not render. */}
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  {copy.profile.councilDecisionHint}
+                </p>
               </SettingsField>
             </AlignedFieldGrid>
           </FieldGroup>

@@ -15,6 +15,15 @@ export interface SubmitRegistrationInput {
   status: 'PENDING' | 'REQUIRES_REVIEW';
   /** The «غير مؤكَّد» fields and their stated reasons, stored verbatim. */
   flaggedFields: ReadonlyArray<{ path: string; reason: string }>;
+  /**
+   * «سبب عام لنقص البيانات» — the one reason an officer gave for the whole
+   * visit, when they gave one. Redundant with the per-field reasons above by
+   * design: it is what says they came from a single statement rather than from
+   * the same sentence typed thirty times. See `autoFlags`.
+   */
+  blanketFlagReason?: string;
+  /** «ملاحظات» — free text, carrying no status consequence. */
+  notes?: string;
   /** The staff user / field inspector who registered this record. */
   createdById?: string;
   /** The browser's own id for this submission, when it was filed offline. */

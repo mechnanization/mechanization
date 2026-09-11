@@ -22,6 +22,73 @@ export const lebanesePhone = z
     return `+961${digits}`;
   });
 
+/**
+ * A mobile number from anywhere, with Lebanon as the unstated default.
+ *
+ * ## Why this is not just a looser `lebanesePhone`
+ *
+ * The register holds people the municipality has to be able to reach, and not
+ * all of them are on a Lebanese network: an owner in Abidjan or Sydney whose
+ * flat is let here, a landlord a شاغل بتسامح can name but whose only number is
+ * a foreign one, a returning family still carrying the number they lived on.
+ * `lebanesePhone` refused all of them, and a required field that refuses the
+ * true answer does not collect a better one — it collects an invented one, or
+ * an «غير مؤكَّد» flag on every such record until the flag stops meaning
+ * anything.
+ *
+ * ## Lebanon stays the default, and that is the whole ergonomic point
+ *
+ * A bare `71123456` is Lebanese, exactly as it has always been. Nobody typing
+ * an ordinary local number types a country code, and asking them to would slow
+ * down every registration in the municipality to accommodate the rare one.
+ * International is opt-in, marked by the `+` or `00` the person writing it
+ * already knows to use.
+ *
+ * ## What it stores
+ *
+ * E.164 with a leading `+`, the same as before, so `@@index([kind, phone])`,
+ * the `searchText` generated column and every existing row keep working
+ * untouched. A Lebanese number normalises to `+961…` exactly as it used to —
+ * this widens what is accepted, it does not change what is stored for anything
+ * that was already accepted.
+ *
+ * ## The limits are E.164's own
+ *
+ * 8 to 15 digits after the `+`. The upper bound is the standard's; the lower
+ * rejects a half-typed number without pretending to know how short a valid
+ * subscriber number is in a country this codebase has never heard of. There is
+ * deliberately no per-country validation table: one would be wrong within a
+ * year, and wrong in the direction of refusing a real person's real number.
+ */
+export const internationalPhone = z
+  .string({ required_error: 'رقم الهاتف مطلوب' })
+  .trim()
+  .transform((v) => normalizeDigits(v).replace(/[\s\-().]/g, ''))
+  .superRefine((v, ctx) => {
+    const invalid = () =>
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'رقم الهاتف غير صالح' });
+
+    // Explicitly international: the writer said so with a + or 00.
+    if (v.startsWith('+') || v.startsWith('00')) {
+      const digits = v.replace(/^(\+|00)/, '');
+      if (!/^\d{8,15}$/.test(digits)) invalid();
+      return;
+    }
+
+    /*
+      No country code, so it is local — and local means Lebanese, which is the
+      one country this register can validate properly. Same rule as
+      `lebanesePhone`, kept deliberately strict: a mistyped Lebanese number is
+      the commonest error on this form by a wide margin, and loosening the
+      local branch to "any 8-15 digits" would stop catching it.
+    */
+    if (!/^0?(3|7[0-9]|8[1])\d{6}$/.test(v)) invalid();
+  })
+  .transform((v) => {
+    if (v.startsWith('+') || v.startsWith('00')) return `+${v.replace(/^(\+|00)/, '')}`;
+    return `+961${v.replace(/^0/, '')}`;
+  });
+
 export const arabicOrLatinName = z
   .string({ required_error: 'الاسم مطلوب' })
   .trim()

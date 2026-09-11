@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { PaymentMethod } from '@mechanization/shared-schemas';
 import type { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 
 /** One movement of money, as the caller describes it. */
@@ -61,6 +62,18 @@ export class PaymentLedgerService {
 
   private get db() {
     return this.tenantContext.prisma;
+  }
+
+  /**
+   * The schema prefix every raw query in this class writes into its SQL.
+   *
+   * Raw SQL is sent to Postgres untouched, so an unqualified table name resolves
+   * through `search_path` — session state on a connection shared through a
+   * transaction pooler, which is not required to carry it. See
+   * `tenant-schema-ref.ts` for the 42P01 this prevents.
+   */
+  private get S() {
+    return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
   /**
@@ -218,7 +231,7 @@ export class PaymentLedgerService {
     >`
       SELECT "id", "amount"::text, "paidAmount"::text, "currency",
              "paymentStatus"::text, "citizenId"
-        FROM citizen_payments
+        FROM ${this.S}citizen_payments
        WHERE "id" = ${paymentId}::uuid
        FOR UPDATE
     `;
@@ -249,8 +262,23 @@ export class PaymentLedgerService {
     input: LedgerEntryInput,
     reversalOfId?: string,
   ): Promise<SettledTotals> {
+    /*
+      The sequence names its schema too — see `tenant-schema-ref.ts`.
+
+      `payment_receipt_seq` is created once per tenant schema (migration 0017),
+      so a bare `nextval('payment_receipt_seq')` resolves through the pooled
+      connection's `search_path` exactly as an unqualified table would. The
+      failure is worse than a missing table, though: this runs *inside* the
+      caller's transaction, behind the invoice's `FOR UPDATE`, so a drifted
+      connection either 42P01s a payment that is already half-written, or draws
+      from **another municipality's** sequence — and receipt numbers are printed
+      on paper handed to a resident.
+
+      `nextval` takes text cast to `regclass`, which accepts a quoted qualified
+      name, so the prefix goes inside the literal.
+    */
     const [{ nextval }] = await tx.$queryRaw<Array<{ nextval: bigint }>>`
-      SELECT nextval('payment_receipt_seq') AS nextval
+      SELECT nextval('${this.S}payment_receipt_seq') AS nextval
     `;
     const receiptNumber = `RCP-${String(nextval).padStart(6, '0')}`;
 

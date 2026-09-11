@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as turf from '@turf/turf';
 import type { Feature, MultiPolygon, Polygon } from 'geojson';
@@ -8,6 +8,7 @@ import type { ParcelRepository } from '../../../domain/interfaces/parcel-reposit
 import type { Zone, ZoneRepository } from '../../../domain/interfaces/zone-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { CadastreAssetsService } from '../../../infrastructure/cadastre/cadastre-assets.service';
+import { BuildingsService } from '../buildings/buildings.service';
 
 export interface ZoneSummary {
   id: string;
@@ -29,6 +30,8 @@ const MAX_NAMED_PARCELS = 5;
 
 @Injectable()
 export class ZonesService {
+  private readonly logger = new Logger(ZonesService.name);
+
   /**
    * Dissolved zone outlines, keyed by zone id and the `updatedAt` they were
    * built from. Unioning a zone's member parcels is the expensive part of
@@ -44,8 +47,42 @@ export class ZonesService {
     @Inject(ZONE_REPOSITORY) private readonly zones: ZoneRepository,
     @Inject(PARCEL_REPOSITORY) private readonly parcels: ParcelRepository,
     private readonly assets: CadastreAssetsService,
+    private readonly buildings: BuildingsService,
     private readonly events: EventEmitter2,
   ) {}
+
+  /**
+   * Rewrites the building codes a zone edit just invalidated.
+   *
+   * A building's code is `ZONE-PARCEL-SUFFIX`, and the zone half is resolved
+   * from `Zone.parcelNumbers` rather than stored as an FK (D13) — which is what
+   * keeps membership in one place, and what makes every stored `code` on these
+   * parcels stale the moment the sector changes. Renaming «SEC-A1» to «SEC-A»
+   * silently orphans every code printed on a notice under the old one.
+   *
+   * Called on the union of the parcels *before* and *after* the edit: a parcel
+   * moved out of a sector needs its code rebuilt just as much as one moved in,
+   * and it is no longer in the list to find it by.
+   *
+   * Failure is logged, not propagated. The zone edit itself has committed and
+   * is correct; a code that has not caught up yet is a display attribute that
+   * the next recompute fixes, and throwing here would report a successful save
+   * as a failure and invite the admin to make it twice.
+   */
+  private async refreshBuildingCodes(
+    parcelNumbers: readonly string[],
+    actor: { id: string; role: string },
+  ): Promise<void> {
+    try {
+      await this.buildings.recomputeCodesForParcels(parcelNumbers, actor);
+    } catch (error) {
+      this.logger.error(
+        `Zone saved, but building codes could not be recomputed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
 
   /**
    * Redrawing a sector decides which inspector is accountable for which
@@ -102,6 +139,8 @@ export class ZonesService {
       parcelNumbers: input.parcelNumbers,
     });
 
+    await this.refreshBuildingCodes(zone.parcelNumbers, actor);
+
     this.recordChange({
       tenantSlug,
       action: 'ZONE_CREATED',
@@ -134,6 +173,14 @@ export class ZonesService {
     const updated = await this.zones.update(id, input);
     this.outlineCache.delete(updated.id);
 
+    // The union of before and after: a parcel moved *out* of this sector needs
+    // its codes rebuilt just as much as one moved in, and it is no longer in
+    // the new list to be found by.
+    await this.refreshBuildingCodes(
+      [...new Set([...zone.parcelNumbers, ...updated.parcelNumbers])],
+      actor,
+    );
+
     // Membership counts on both sides: "who moved forty parcels out of this
     // sector" is the question this trail gets asked.
     this.recordChange({
@@ -164,6 +211,10 @@ export class ZonesService {
     // lives on the zone row, so the parcels are unassigned the moment it is gone.
     await this.zones.delete(id);
     this.outlineCache.delete(id);
+
+    // Its parcels are released, so their buildings fall back to the unzoned
+    // `X-…` form until somebody assigns them to a sector again.
+    await this.refreshBuildingCodes(zone.parcelNumbers, actor);
 
     // `before` is the whole record here — after this there is no row left to
     // describe what was deleted.

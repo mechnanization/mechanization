@@ -75,7 +75,10 @@ export class DomainExceptionFilter implements ExceptionFilter {
         body: {
           code: exception.code,
           message: exception.message,
-          ...(exception instanceof ValidationError && exception.details
+          // Both error types carry an optional payload the client has to act
+          // on — the fields that failed, or the buildings already on the parcel.
+          ...((exception instanceof ValidationError || exception instanceof ConflictError) &&
+          exception.details
             ? { details: exception.details }
             : {}),
           correlationId,

@@ -15,7 +15,24 @@ export interface Case {
   side: string | null;
   landType: string | null;
   tentLocation: string | null;
-  status: 'OPEN' | 'RESOLVED';
+  status: 'OPEN' | 'SCHEDULED' | 'RESOLVED';
+  /** Why the visit did not complete. `GENERAL_NOTE` for everything logged
+   *  before the column existed — see migration 0030. */
+  caseType: string;
+  /**
+   * The resolved form of `buildingName`/`floor` above, once the case can be
+   * attached to actual rows. Both stay: the free text is what the officer wrote
+   * at the door, and on a parcel with no surveyed buildings it is all there is.
+   */
+  buildingId: string | null;
+  buildingCode: string | null;
+  unitId: string | null;
+  unitCode: string | null;
+  /** The damage reading that prompted this case, if one did. A reference, not
+   *  ownership — resolving the case says nothing about the damage (D6). */
+  damageAssessmentId: string | null;
+  /** When someone has agreed to go back. Meaningful under `SCHEDULED`. */
+  scheduledRevisitAt: Date | null;
   /** The citizen whose registration resolved this case, if any — see the model comment. */
   resolvedCitizenId: string | null;
   resolvedCitizenName: string | null;
@@ -29,6 +46,18 @@ export interface Case {
 export interface CaseListFilter {
   propertyNumber?: string;
   status?: string;
+  caseType?: string;
+  buildingId?: string;
+  unitId?: string;
+}
+
+/** The columns a case may carry beyond what the doorstep form collects. */
+export interface CaseCensusLinks {
+  caseType?: string;
+  buildingId?: string | null;
+  unitId?: string | null;
+  damageAssessmentId?: string | null;
+  scheduledRevisitAt?: Date | null;
 }
 
 export interface CaseRepository {
@@ -47,7 +76,13 @@ export interface CaseRepository {
     landType?: string;
     tentLocation?: string;
     createdById?: string;
-  }): Promise<Case>;
+  } & CaseCensusLinks): Promise<Case>;
+
+  /**
+   * Closes every case still open against a unit, because somebody has just been
+   * recorded as living in it. Returns how many — see `CasesService.resolveForUnit`.
+   */
+  resolveOpenForUnit(unitId: string, citizenId: string): Promise<number>;
 
   update(
     id: string,
@@ -64,7 +99,7 @@ export interface CaseRepository {
       status?: string;
       resolvedCitizenId?: string | null;
       resolvedAt?: Date | null;
-    },
+    } & CaseCensusLinks,
   ): Promise<Case>;
 
   delete(id: string): Promise<void>;

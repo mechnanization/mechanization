@@ -1,17 +1,28 @@
 'use client';
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import { ApiRequestError, createCitizen, logApiError } from './api-client';
+import {
+  ApiRequestError,
+  createBuilding,
+  createCitizen,
+  generateUnits,
+  logApiError,
+} from './api-client';
 import { loadSession } from './session';
 import {
   dequeue,
+  dequeueBuilding,
   enqueue,
+  enqueueBuilding,
   getQueued,
   listQueued,
+  listQueuedBuildings,
   offlineStorageAvailable,
   recordAttempt,
   reviseQueued,
   retryLater,
+  updateQueuedBuilding,
+  type QueuedBuilding,
   type QueuedSubmission,
 } from './offline-db';
 
@@ -28,6 +39,17 @@ import {
 export interface QueueState {
   /** Everything still in the queue, oldest first. */
   items: QueuedSubmission[];
+  /** Buildings created offline, plus any whose code changed on delivery (P3-T8). */
+  buildings: QueuedBuilding[];
+  /** Buildings still waiting to be sent. */
+  buildingsPending: number;
+  /**
+   * Delivered buildings whose code is not the one the phone was showing.
+   *
+   * Counted separately from `pending` because it is not work — it is a message,
+   * and the officer clears it by reading it. See `drainBuildings`.
+   */
+  buildingsReconciled: number;
   /** Waiting for a connection — the count worth putting on a badge. */
   pending: number;
   /** Refused by the server and needing a person, not a retry. */
@@ -53,6 +75,9 @@ export interface QueueState {
 
 const EMPTY: QueueState = {
   items: [],
+  buildings: [],
+  buildingsPending: 0,
+  buildingsReconciled: 0,
   pending: 0,
   blocked: 0,
   syncing: false,
@@ -127,7 +152,16 @@ export async function refreshQueue(tenant: string): Promise<void> {
   const engine = engineFor(tenant);
 
   try {
-    publish(engine, summarise(await listQueued(tenant)));
+    const [submissions, buildings] = await Promise.all([
+      listQueued(tenant),
+      listQueuedBuildings(tenant),
+    ]);
+    publish(engine, {
+      ...summarise(submissions),
+      buildings,
+      buildingsPending: buildings.filter((item) => item.status === 'pending').length,
+      buildingsReconciled: buildings.filter((item) => item.status === 'reconciled').length,
+    });
   } catch (caught) {
     // A browser with IndexedDB disabled, or a store held open by another tab
     // mid-upgrade. Nothing is lost: the records are still there, and the next
@@ -224,12 +258,23 @@ export async function syncQueue(tenant: string): Promise<void> {
       */
       const session = loadSession(tenant);
       if (!session || session.user.kind !== 'STAFF') {
-        const waiting = (await listQueued(tenant)).some((item) => item.status === 'pending');
+        const [submissions, buildings] = await Promise.all([
+          listQueued(tenant),
+          listQueuedBuildings(tenant),
+        ]);
+        const waiting = [...submissions, ...buildings].some((item) => item.status === 'pending');
         publish(engine, { authRequired: waiting });
         return;
       }
 
       publish(engine, { authRequired: false });
+
+      /*
+        Buildings first — see `drainBuildings`. A queued registration may name a
+        building that is also still queued, and the id it names only becomes a
+        row when that building lands.
+      */
+      delivered += await drainBuildings(tenant, session.accessToken);
 
       for (const item of await listQueued(tenant)) {
         if (item.status !== 'pending') continue;
@@ -276,6 +321,156 @@ export async function syncQueue(tenant: string): Promise<void> {
   } finally {
     engine.draining = null;
   }
+}
+
+/**
+ * Delivers the buildings queued for this municipality, oldest first.
+ *
+ * Runs **before** the registrations, and that order is the whole of it: a
+ * queued registration may carry the `buildingId` of a building that is also
+ * still queued, and the server resolves that id against a row that has to exist
+ * by then. Draining them in the other order would fail the registration on a
+ * foreign key it was right about.
+ *
+ * §4.4's reconciliation lives here. The phone showed a provisional suffix
+ * computed from what it had cached; the server re-allocates under a row lock on
+ * the parcel and answers with the authoritative code. When the two differ the
+ * record is *kept*, marked `reconciled`, so the officer is told — a code they
+ * may already have written on a form in somebody's stairwell has changed, and
+ * silently swapping it is how a resident ends up looking for a building that no
+ * longer exists under that name.
+ */
+async function drainBuildings(tenant: string, accessToken: string): Promise<number> {
+  let delivered = 0;
+
+  for (const item of await listQueuedBuildings(tenant)) {
+    if (item.status !== 'pending') continue;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) break;
+
+    try {
+      const response = await createBuilding(tenant, accessToken, {
+        ...item.payload,
+        /*
+          Both widened to `never` on the way out, for the same reason.
+
+          IndexedDB stores plain strings — a record queued by yesterday's build
+          and replayed by today's may hold an enum value this build's union does
+          not know, and a stale queue must not become a type error that stops
+          the whole drain. The server validates both with Zod on arrival, which
+          is where an unrecognised value should be refused, one record at a time.
+        */
+        structureType: item.payload.structureType as never,
+        lifecycleStatus: item.payload.lifecycleStatus as never,
+        /*
+          The matrix a registration asked for, widened for the same reason.
+
+          These are the specific flats a card enumerated — distinct from
+          `blueprint` below, which describes a matrix by its shape and is
+          generated afterwards. They travel *inside* the create so the shell and
+          its units land in one transaction: a queued registration names these
+          unit ids, and a delivery that made the building but not the flats
+          would leave it pointing at nothing.
+        */
+        units: item.payload.units as never,
+        provisionalSuffix: item.provisionalSuffix,
+        // The id the phone minted *is* the row's id, which is what makes a
+        // re-delivered creation find the building it already made rather than
+        // putting a second structure on the parcel.
+        clientSubmissionId: item.id,
+      });
+
+      /*
+        The matrix, if one was asked for — sent on every delivery, replay or not.
+
+        This used to skip the blueprint when `deduplicated` was true, on the
+        reasoning that the creation had been seen before so the units had too.
+        The two are not the same delivery. `createBuilding` commits, the
+        connection drops before `generateUnits` runs or before its response
+        lands, and the item goes back to `pending`. The retry is then recognised
+        as a duplicate, the blueprint is skipped, and `dequeueBuilding` deletes
+        the only record that a matrix was ever asked for — leaving a building
+        with zero units and nothing anywhere to say twelve flats were expected.
+
+        The guard bought nothing to begin with: its own note concedes
+        `generateUnits` is additive and idempotent per floor. A floor that
+        already holds the requested count is topped up by zero.
+      */
+      if (item.blueprint) {
+        await generateUnits(
+          tenant,
+          accessToken,
+          response.building.id,
+          item.blueprint as Parameters<typeof generateUnits>[3],
+        );
+      }
+
+      if (response.reconciled) {
+        await updateQueuedBuilding(item.id, {
+          status: 'reconciled',
+          reconciledCode: response.building.code,
+          lastError: null,
+        });
+      } else {
+        // Nothing changed, so there is nothing to tell anyone.
+        await dequeueBuilding(item.id);
+      }
+
+      delivered += 1;
+    } catch (caught) {
+      logApiError(caught);
+      const retryable = isRetryable(caught);
+      const message = caught instanceof ApiRequestError ? caught.message : 'تعذّر إرسال المبنى';
+
+      await updateQueuedBuilding(item.id, {
+        status: retryable ? 'pending' : 'blocked',
+        lastError: message,
+        countAttempt: true,
+      });
+
+      if (caught instanceof ApiRequestError && (caught.status === 0 || caught.status === 401)) {
+        break;
+      }
+    }
+  }
+
+  return delivered;
+}
+
+/**
+ * Records a building created with no connection, and returns the id it was
+ * stored under — which is also the id the server will give the row.
+ */
+export async function queueBuilding(
+  building: Omit<
+    QueuedBuilding,
+    'id' | 'status' | 'savedAt' | 'attempts' | 'lastAttemptAt' | 'lastError'
+  > & { id?: string },
+): Promise<string> {
+  const id = building.id ?? newSubmissionId();
+
+  await enqueueBuilding({
+    ...building,
+    id,
+    status: 'pending',
+    savedAt: Date.now(),
+    attempts: 0,
+    lastAttemptAt: null,
+    lastError: null,
+  });
+
+  await refreshQueue(building.tenant);
+  return id;
+}
+
+/**
+ * Clears one reconciliation notice — the officer has read it.
+ *
+ * Not automatic: the whole point is that a person sees the new code, and a
+ * notice that dismissed itself on the next drain would be a notice nobody read.
+ */
+export async function acknowledgeBuilding(tenant: string, id: string): Promise<void> {
+  await dequeueBuilding(id);
+  await refreshQueue(tenant);
 }
 
 /** Hands a blocked record back to the queue, then tries it immediately. */

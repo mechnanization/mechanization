@@ -28,6 +28,10 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/dist/**',
       '**/.next/**',
+      // `pnpm build:check` output — the same compiled bundles as `.next`,
+      // in a directory that exists so a verification build cannot corrupt a
+      // running dev server. Linting either is linting webpack's work.
+      '**/.next-check/**',
       '**/generated/**',
       '**/coverage/**',
       '.agents/**',

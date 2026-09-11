@@ -833,6 +833,7 @@ export default function FeesPage({
         payment={receipt?.payment ?? null}
         municipalityName={municipalityName}
         governorate={settings?.governorate}
+        councilDecisionRef={settings?.councilDecisionRef}
         district={settings?.district}
         contactPhone={settings?.contactPhone}
         officeWhatsapp={settings?.whatsappNumber}

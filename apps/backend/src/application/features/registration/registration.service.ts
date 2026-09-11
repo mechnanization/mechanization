@@ -224,6 +224,8 @@ export class RegistrationService {
       properties,
       status: statusForFlags(flags),
       flaggedFields: flags,
+      blanketFlagReason: input.payload.blanketFlagReason,
+      notes: input.payload.notes,
       createdById: input.createdById,
       clientSubmissionId: input.payload.clientSubmissionId,
     });
