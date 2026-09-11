@@ -885,6 +885,9 @@ describeIfDb('BuildingsService', () => {
       // unexplained on a tile.
       unitsOutOfScope: 0,
       damaged: 1,
+      // No entrance pinned on this fixture, so the one building in the
+      // filtered set is also the one counted here.
+      withoutEntrance: 1,
     });
   });
 
@@ -1247,7 +1250,9 @@ describeIfDb('BuildingsService', () => {
 
   it('keeps a structure that cannot hold households out of the survey figures', async () => {
     const standing = await createBuilding(
-      { parcelNumber: 'LIFE-1', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      // Two storeys, because the blueprint below fills floors 0 and 1 and
+      // `generateUnits` now refuses a plan that reaches above عدد الطوابق.
+      { parcelNumber: 'LIFE-1', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 2 },
       actor(),
     );
     const shell = await createBuilding(
