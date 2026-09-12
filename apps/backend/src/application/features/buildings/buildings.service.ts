@@ -31,6 +31,7 @@ import type {
   BuildingMapPin,
   BuildingRow,
   CensusSummary,
+  FileLinkResult,
   OccupancyRow,
   UnitRow,
   VisitRow,
@@ -488,9 +489,16 @@ export class BuildingsService {
    *     has no units array to tick; the claim is `PropertyEntry.buildingId` and
    *     the unit is inferred. Applied only when the building really does have
    *     exactly one unit, which is the condition the inference itself is under.
+   *   • **a مبنى card that itemises nothing** — the shape `heldThroughOccupancy`
+   *     exists for. Such a card claims the structure and lets `attachOccupancies`
+   *     read *which* flats from `UnitOccupancy`, so its holder's occupancies
+   *     are billed and the card is the reason they are. This one was missing,
+   *     and its absence is what put the warning on every owner
+   *     `LandlordLinkService.declareOwnership` has ever declared — it mints
+   *     precisely this card, on purpose, and the matrix then called it unbacked.
    *
-   * Getting the second one wrong would be the visible failure: every منزل in
-   * the census would report its own occupant as unbacked, and the warning this
+   * Getting any of them wrong would be the visible failure: every منزل in the
+   * census would report its own occupant as unbacked, and the warning this
    * feeds would fire on the commonest correct record in the register.
    */
   private async claimsBackingOccupancies(
@@ -504,7 +512,7 @@ export class BuildingsService {
 
     const unitIds = units.map((unit) => unit.id);
 
-    const [ticked, wholeBuilding] = await Promise.all([
+    const [ticked, wholeBuilding, unitemised] = await Promise.all([
       this.db.buildingUnit.findMany({
         where: {
           unitId: { in: unitIds },
@@ -525,6 +533,25 @@ export class BuildingsService {
             select: { registration: { select: { citizenId: true } } },
           })
         : Promise.resolve([]),
+      /*
+        مبنى cards on this building that itemise no flats, and the other cards
+        the same citizen filed on it.
+
+        Both halves are needed because `attachOccupancies` suppresses the
+        occupancy list for a citizen who also holds a non-مبنى card on the same
+        structure — that card bills the single unit from its own columns, and
+        handing it the list too would bill the flat twice. A backing claim this
+        reports has to be one billing would actually consume, or the warning
+        goes quiet on exactly the records it exists to catch.
+      */
+      this.db.propertyEntry.findMany({
+        where: { buildingId, registration: { citizenId: { in: citizenIds } } },
+        select: {
+          propertyType: true,
+          registration: { select: { citizenId: true } },
+          _count: { select: { units: true } },
+        },
+      }),
     ]);
 
     const backed = new Set<string>();
@@ -534,6 +561,21 @@ export class BuildingsService {
     for (const entry of wholeBuilding) {
       backed.add(`${unitIds[0]}:${entry.registration.citizenId}`);
     }
+
+    const suppressed = new Set(
+      unitemised
+        .filter((entry) => entry.propertyType !== 'BUILDING')
+        .map((entry) => entry.registration.citizenId),
+    );
+    for (const entry of unitemised) {
+      const citizenId = entry.registration.citizenId;
+      if (entry.propertyType !== 'BUILDING' || entry._count.units > 0) continue;
+      if (suppressed.has(citizenId)) continue;
+      // The card names no flat, so it backs every flat this citizen is
+      // recorded in here — which is exactly the set billing will read off it.
+      for (const unitId of unitIds) backed.add(`${unitId}:${citizenId}`);
+    }
+
     return backed;
   }
 
@@ -724,6 +766,7 @@ export class BuildingsService {
           latitude: input.latitude ?? null,
           longitude: input.longitude ?? null,
           floorsCount: input.floorsCount,
+          basementsCount: input.basementsCount ?? 0,
           notes: input.notes?.trim() || null,
           createdById: actor.id,
         },
@@ -745,6 +788,10 @@ export class BuildingsService {
         already using.
       */
       if (input.units?.length) {
+        // Nothing exists yet on a building being created, so the inline list is
+        // the whole matrix.
+        this.assertUnitFits(building, 0, input.units.length);
+
         const usedByFloor = new Map<number, number>();
 
         await tx.unit.createMany({
@@ -757,6 +804,8 @@ export class BuildingsService {
               buildingId: building.id,
               floor: unit.floor,
               sequence: next,
+              startCol: unit.startCol ?? null,
+              endCol: unit.endCol ?? null,
               unitCode: formatUnitCode(unit.floor, next),
               unitType: unit.unitType as never,
               postedNumber: unit.postedNumber?.trim() || null,
@@ -773,12 +822,26 @@ export class BuildingsService {
           `floorsCount` only ever rises, matching `generateUnits`. A caller that
           sent one floor and three units on floor 2 meant the building is at
           least three storeys, whatever the field said.
+
+          `basementsCount` is reconciled the same way and in the same direction:
+          a unit on floor −2 means the building has at least two levels below
+          the pavement, whatever the depth field said.
         */
         const highest = Math.max(...input.units.map((unit) => unit.floor));
-        if (highest + 1 > building.floorsCount) {
+        const deepest = Math.min(...input.units.map((unit) => unit.floor));
+        const raisedFloors = highest + 1 > building.floorsCount ? highest + 1 : null;
+        const deepenedBasements =
+          deepest < 0 && -deepest > building.basementsCount ? -deepest : null;
+
+        if (raisedFloors !== null || deepenedBasements !== null) {
           return tx.building.update({
             where: { id: building.id },
-            data: { floorsCount: highest + 1 },
+            data: {
+              ...(raisedFloors !== null ? { floorsCount: raisedFloors } : {}),
+              ...(deepenedBasements !== null
+                ? { basementsCount: deepenedBasements }
+                : {}),
+            },
           });
         }
       }
@@ -822,6 +885,26 @@ export class BuildingsService {
     const before = await this.db.building.findUnique({ where: { id } });
     if (!before) throw new NotFoundError('المبنى غير موجود');
 
+    /*
+      The other direction of the same rule.
+
+      `assertUnitFits` stops a house being given a second unit; this stops a
+      block of eleven flats being *relabelled* a house, which arrives at the
+      identical dead end from the opposite side — a structure whose type says
+      one dwelling and whose matrix holds eleven, linkable from no card.
+
+      Checked against the type being moved *to*, using the units that actually
+      exist rather than the ones this request carries: an update never creates
+      any.
+    */
+    if (input.structureType !== undefined && input.structureType !== before.structureType) {
+      this.assertUnitFits(
+        { structureType: input.structureType, code: before.code },
+        await this.db.unit.count({ where: { buildingId: id } }),
+        0,
+      );
+    }
+
     const updated = await this.db.building.update({
       where: { id },
       data: {
@@ -838,6 +921,9 @@ export class BuildingsService {
         ...(input.latitude !== undefined ? { latitude: input.latitude } : {}),
         ...(input.longitude !== undefined ? { longitude: input.longitude } : {}),
         ...(input.floorsCount !== undefined ? { floorsCount: input.floorsCount } : {}),
+        ...(input.basementsCount !== undefined
+          ? { basementsCount: input.basementsCount }
+          : {}),
         ...(input.notes !== undefined ? { notes: input.notes?.trim() || null } : {}),
       },
     });
@@ -981,8 +1067,8 @@ export class BuildingsService {
       inline units on a registration card that never asks for it.
 
       Floors are 0-indexed — ground is 0 — so the top floor of an N-storey
-      building is N-1. Basements are negative and do not count toward
-      `floorsCount`, which is why only the top of the range is checked.
+      building is N-1. Basements are negative and counted separately, by
+      `basementsCount`, so the bottom of the range is checked against that.
     */
     const topFloor = plan.reduce((max, entry) => Math.max(max, entry.floor), 0);
     if (topFloor > building.floorsCount - 1) {
@@ -990,6 +1076,21 @@ export class BuildingsService {
         `الطابق الأعلى في المخطط (${topFloor}) يتجاوز عدد طوابق المبنى (${building.floorsCount}). عدّل عدد الطوابق أو اخفض نطاق الطوابق`,
       );
     }
+
+    /*
+      Downward the rule is the opposite, and deliberately so.
+
+      `floorsCount` is required and always stated in the same form as the
+      range, so a blueprint above it is two contradicting statements. Depth is
+      not: `basementsCount` is optional and defaults to zero, so a caller that
+      reached B1 without mentioning it has contradicted nothing — it has told
+      us something the register did not know. That is the `addUnit` case, and
+      it is reconciled the same way, downward only.
+
+      A قبو never has to be made room for before it can be recorded.
+    */
+    const bottomFloor = plan.reduce((min, entry) => Math.min(min, entry.floor), 0);
+    const deepened = bottomFloor < -building.basementsCount ? -bottomFloor : null;
 
     const existing = await this.db.unit.findMany({
       where: { buildingId },
@@ -1036,6 +1137,8 @@ export class BuildingsService {
       }
     }
 
+    this.assertUnitFits(building, existing.length, data.length);
+
     if (data.length > 0) {
       await this.db.unit.createMany({ data, skipDuplicates: true });
     }
@@ -1049,7 +1152,19 @@ export class BuildingsService {
       instead, so by this point the blueprint is known to fit inside the
       building the officer described. Raising it belongs on `addUnit`, where
       there is no second number to contradict.
+
+      `basementsCount` *is* touched, for exactly that reason: it is optional and
+      defaults to zero, so a blueprint reaching B1 in a building that never
+      declared a depth has contradicted nothing. Deepened only, never raised
+      back — a blueprint confined to the ground floor is not evidence that the
+      basement was filled in.
     */
+    if (deepened !== null) {
+      await this.db.building.update({
+        where: { id: buildingId },
+        data: { basementsCount: deepened },
+      });
+    }
 
     const units = await this.db.unit.findMany({
       where: { buildingId },
@@ -1066,6 +1181,47 @@ export class BuildingsService {
     return { created: data.length, skipped, units: units.map(toUnitRow) };
   }
 
+  /**
+   * Refuses to give a «منزل مستقل» a second unit.
+   *
+   * A house is one dwelling — that is what the type *means*, and the whole
+   * system is built on it: `STRUCTURE_TYPE_MAP` maps it to a `HOUSE` card,
+   * `PROPERTY_FIELD_MAP` gives a HOUSE card no `units` array because its one
+   * dwelling is described inline, and the creation wizard paints exactly one
+   * cell for it.
+   *
+   * Nothing enforced that. A house could be given eleven flats through the
+   * editor's matrix or a blueprint, and the result was a structure no card
+   * could ever link a unit to: the officer saw a matrix full of apartments, the
+   * picker correctly offered no unit list, and the registration saved naming
+   * the building and none of its flats. The census then held eleven units that
+   * nobody could ever be recorded in.
+   *
+   * Refused rather than silently retyped. «هذا مبنى، لا منزل» is a correction
+   * only the officer can make — the structure type decides which card shape
+   * describes it, and changing it under them would rewrite what they said.
+   */
+  private assertUnitFits(
+    building: { structureType: string; code: string },
+    existingUnits: number,
+    adding: number,
+  ): void {
+    if (building.structureType !== 'INDEPENDENT_HOUSE') return;
+
+    const total = existingUnits + adding;
+    if (total <= 1) return;
+
+    /*
+      Phrased as the contradiction rather than as the direction it was reached
+      from. This fires both on a house being given a second unit and on a block
+      of eleven being relabelled a house, and a message naming one of those
+      reads as a non-sequitur on the other.
+    */
+    throw new ValidationError(
+      `لا يمكن أن يكون المبنى ${building.code} «منزل مستقل» وفيه ${total} وحدة — المنزل مسكن واحد. اختر «بناية سكنية» لتسجيل عدة وحدات`,
+    );
+  }
+
   /** One unit added by hand, at the next free position on its floor. */
   async addUnit(
     buildingId: string,
@@ -1074,6 +1230,12 @@ export class BuildingsService {
   ): Promise<UnitRow> {
     const building = await this.db.building.findUnique({ where: { id: buildingId } });
     if (!building) throw new NotFoundError('المبنى غير موجود');
+
+    this.assertUnitFits(
+      building,
+      await this.db.unit.count({ where: { buildingId } }),
+      1,
+    );
 
     /*
       The same shape of hole D18 closed for buildings, one level down.
@@ -1190,6 +1352,8 @@ export class BuildingsService {
           buildingId,
           floor: input.floor,
           sequence,
+          startCol: input.startCol ?? null,
+          endCol: input.endCol ?? null,
           unitCode: formatUnitCode(input.floor, sequence),
           unitType: input.unitType as never,
           postedNumber: input.postedNumber?.trim() || null,
@@ -1213,13 +1377,29 @@ export class BuildingsService {
         can record what they are looking at.
 
         Only ever upward — recording a ground-floor محل in a six-storey block is
-        not evidence the block got shorter — and basements are negative, so they
-        never move it.
+        not evidence the block got shorter.
       */
       if (input.floor + 1 > building.floorsCount) {
         await tx.building.update({
           where: { id: buildingId },
           data: { floorsCount: input.floor + 1 },
+        });
+      }
+
+      /*
+        The same correction downward, since basements now have a column of
+        their own to be wrong in.
+
+        A unit filed on floor −2 in a building declaring one basement is an
+        officer standing in a second basement the register does not know about,
+        and it is the same event as finding a fourth floor on a three-storey
+        block. Only ever deeper, for the same reason the other only rises: a
+        محل on B1 is not evidence that B2 was filled in.
+      */
+      if (input.floor < 0 && -input.floor > building.basementsCount) {
+        await tx.building.update({
+          where: { id: buildingId },
+          data: { basementsCount: -input.floor },
         });
       }
 
@@ -1296,6 +1476,8 @@ export class BuildingsService {
       where: { id: unitId },
       data: {
         ...(moved ? { floor, sequence, unitCode: formatUnitCode(floor, sequence) } : {}),
+        ...(input.startCol !== undefined ? { startCol: input.startCol } : {}),
+        ...(input.endCol !== undefined ? { endCol: input.endCol } : {}),
         ...(input.unitType !== undefined ? { unitType: input.unitType as never } : {}),
         ...(input.postedNumber !== undefined
           ? { postedNumber: input.postedNumber?.trim() || null }
@@ -1435,11 +1617,28 @@ export class BuildingsService {
    * on actually happened. A حالة on a flat says "nobody answered"; an occupancy
    * on that flat says who lives there. Leaving the case open would send a second
    * officer to a door the municipality has already been through.
+   *
+   * ## And it now writes the citizen’s half of the record too
+   *
+   * `endOccupancy` has always released the census claim on the citizen’s file
+   * when a spell ends. Nothing established it when a spell *began*, so the two
+   * halves of one fact were maintained in one direction of travel only: an
+   * officer who tapped «تسجيل شاغل» got an occupancy on the matrix and a citizen
+   * file that went on saying nothing about the flat — «غير مرتبط بملفه» on the
+   * commonest correct action in the census, with nothing the officer could do
+   * about the warning but go and edit that person’s card by hand.
+   *
+   * It was a billing fault as much as a display one, and in the direction that
+   * costs the municipality: `assessCitizen` bills the cards a citizen filed, so
+   * an occupancy with no card behind it is a flat nobody is charged for.
+   *
+   * See `claimOnFile` for what is written and, more importantly, for the three
+   * things it deliberately refuses to do.
    */
   async recordOccupancy(
     input: UpsertOccupancyInput,
     actor: { id: string; role: string },
-  ): Promise<{ occupancy: OccupancyRow; casesResolved: number }> {
+  ): Promise<{ occupancy: OccupancyRow; casesResolved: number; fileLink: FileLinkResult }> {
     const unit = await this.db.unit.findUnique({
       where: { id: input.unitId },
       select: { id: true, buildingId: true, unitCode: true },
@@ -1522,8 +1721,31 @@ export class BuildingsService {
       contradiction for a person to look at, and the drawer now shows it rather
       than letting this quietly win.
     */
+    /*
+      An owner’s own answer, and it *replaces* rather than fills a gap.
+
+      This is the other half of the asymmetry above. `unitStatusForRole` is an
+      inference and is narrowed accordingly; `input.unitStatus` is a person standing
+      in the building saying what the flat is — the same kind of statement
+      `logVisit` makes, and treated the same way. It is only ever reachable for an
+      OWNER (the schema refuses it on anyone else, whose capacity already settles
+      the question), so it cannot be used to contradict a tenancy recorded in the
+      same breath.
+
+      It is what makes the four owner cases distinguishable at last. An owner
+      living there («مشغولة من المالك»), an owner who lets it («مؤجرة»), an owner
+      whose relative is in it («مشغولة بتسامح») and an owner of an empty or
+      unfinished flat («شاغرة» / «قيد الإنشاء») are four different bills, and
+      recording the owner used to state none of them — so `bearsFee` read the null
+      as «nobody was asked» and charged them the occupancy fee regardless.
+    */
     const impliedStatus = unitStatusForRole(input.role);
-    if (impliedStatus) {
+    if (input.unitStatus) {
+      await this.db.unit.update({
+        where: { id: input.unitId },
+        data: { unitStatus: input.unitStatus as never },
+      });
+    } else if (impliedStatus) {
       await this.db.unit.updateMany({
         where: { id: input.unitId, unitStatus: null },
         data: { unitStatus: impliedStatus as never },
@@ -1532,6 +1754,15 @@ export class BuildingsService {
 
     const casesResolved = await this.cases.resolveForUnit(input.unitId, input.citizenId, actor);
 
+    const fileLink = await this.claimOnFile({
+      unitId: input.unitId,
+      buildingId: unit.buildingId,
+      citizenId: input.citizenId,
+      role: input.role,
+      shares: input.shares ?? null,
+      unitStatus: input.unitStatus ?? impliedStatus ?? null,
+    });
+
     this.record({
       action: 'OCCUPANCY_RECORDED',
       buildingId: unit.buildingId,
@@ -1539,12 +1770,239 @@ export class BuildingsService {
         unitCode: unit.unitCode,
         citizenId: input.citizenId,
         role: input.role,
+        unitStatus: input.unitStatus ?? null,
         casesResolved,
+        /*
+          Named in the audit row for the reason `endOccupancy` names its release:
+          this is the part that edits somebody’s own file rather than the census,
+          and a resident disputing a bill is entitled to see when their card
+          started claiming the flat and who made it do so.
+        */
+        fileLink: fileLink.outcome,
       },
       actor,
     });
 
-    return { occupancy: toOccupancyRow(occupancy), casesResolved };
+    return { occupancy: toOccupancyRow(occupancy, fileLink.backed), casesResolved, fileLink };
+  }
+
+  /**
+   * Puts the flat on the citizen’s own file — the mirror of
+   * `releaseCensusClaim`, and the write that was never on this side.
+   *
+   * ## What "backed" has to mean
+   *
+   * Not "a row exists somewhere" but "billing would read this". `assessCitizen`
+   * charges the property cards a citizen filed, so the claim has to land in one
+   * of the three shapes `claimsBackingOccupancies` recognises — which are the
+   * three shapes `attachOccupancies` and `bearsFee` actually consume. A row that
+   * satisfied the warning without satisfying billing would be worse than the
+   * warning: it would hide the uncollected flat instead of flagging it.
+   *
+   * ## The three things it will not do
+   *
+   * **It never rewrites a card that already claims this building.** That card is
+   * the citizen’s own account of what they hold, and topping one up changes how
+   * it is billed — an itemised مبنى card stops consuming the occupancy list
+   * (`attachOccupancies`), so adding a flat to one can *reduce* what its holder
+   * is charged. An existing card is reported as the backing it already is and
+   * left exactly as filed. The one exception is a card that itemises flats and
+   * simply has not ticked this one: adding the tick is the same act the unit
+   * picker performs, in the same shape, and withholding it would leave the
+   * occupancy unbacked beside a card listing every other flat in the block.
+   *
+   * **It never mints a card on a structure a card cannot hold.** A خيمة drops
+   * `buildingId` on the next edit (`branchFieldsOnly`), so the claim would be a
+   * holding attached to nothing — the same refusal `declareOwnership` makes, for
+   * the same reason.
+   *
+   * **It never invents a file.** A citizen with no registration gets no card;
+   * the occupancy stands on its own and the matrix goes on saying so. That is
+   * the state the warning was written for, and it is now the only state that
+   * produces it.
+   */
+  private async claimOnFile(input: {
+    unitId: string;
+    buildingId: string;
+    citizenId: string;
+    role: string;
+    shares: number | null;
+    unitStatus: string | null;
+  }): Promise<FileLinkResult> {
+    const building = await this.db.building.findUnique({
+      where: { id: input.buildingId },
+      select: { id: true, parcelNumber: true, name: true, structureType: true },
+    });
+    if (!building) return { backed: false, outcome: 'NO_BUILDING' };
+
+    /*
+      The citizen’s current file *is* their latest registration — the convention
+      `CitizensService.update` and `declareOwnership` both follow. A citizen with
+      none cannot receive a card, which is barely reachable through the register
+      (a citizen exists because a registration created them) but is refused
+      rather than assumed.
+    */
+    const registration = await this.db.registration.findFirst({
+      where: { citizenId: input.citizenId },
+      orderBy: { submittedAt: 'desc' },
+      select: { id: true },
+    });
+    if (!registration) return { backed: false, outcome: 'NO_FILE' };
+
+    const unitsInBuilding = await this.db.unit.count({ where: { buildingId: building.id } });
+
+    /*
+      Any card of theirs on this structure, in any capacity — the same breadth
+      `declareOwnership` uses and for the same reason: a citizen who filed a
+      مستأجر card here and has now been recorded as owner of a *different* flat
+      in it is a real situation, and minting a second card under them is not
+      this path’s call to make.
+    */
+    const existing = await this.db.propertyEntry.findFirst({
+      where: { buildingId: building.id, registration: { citizenId: input.citizenId } },
+      select: {
+        id: true,
+        propertyType: true,
+        units: { select: { id: true, unitId: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (existing) {
+      // Already ticked, or already backed by one of the two whole-structure
+      // shapes. Nothing to write, and nothing to warn about either.
+      const claimed =
+        existing.units.some((row) => row.unitId === input.unitId) ||
+        (existing.propertyType === 'HOUSE' && unitsInBuilding === 1) ||
+        (existing.propertyType === 'BUILDING' && existing.units.length === 0);
+      if (claimed) return { backed: true, outcome: 'ALREADY_CLAIMED' };
+
+      /*
+        An itemised card that has not ticked this flat.
+
+        The tick is added rather than withheld — see the docblock. A card
+        already listing flats 1, 2 and 4 does not stop consuming the occupancy
+        list by gaining flat 3; it stopped the moment it listed anything, so a
+        row here is the only way this occupancy can be backed at all.
+
+        A منزل card on a multi-unit structure falls through to the same tick: it
+        itemises nothing and infers nothing (the inference is single-unit only),
+        so without a row here it claims no flat whatever.
+      */
+      const described = await this.unitDescription(input.unitId);
+      await this.db.buildingUnit.create({
+        data: {
+          propertyEntryId: existing.id,
+          unitId: input.unitId,
+          // Copied from the canonical unit, which is the register’s own answer
+          // and the only one available — the officer was not asked to describe a
+          // flat the matrix already describes.
+          unitType: described.unitType as never,
+          floor: described.floor,
+          side: described.side,
+          unitArea: described.unitArea,
+          unitStatus: (input.unitStatus ?? null) as never,
+        },
+      });
+
+      return { backed: true, outcome: 'UNIT_ADDED' };
+    }
+
+    const mapped = STRUCTURE_TYPE_MAP[building.structureType as StructureType];
+
+    /*
+      A خيمة cannot carry the link and must not be minted as a holding.
+
+      `branchFieldsOnly` drops `buildingId` from anything but مبنى and منزل, so the
+      card would silently lose its link the first time anyone edited it — a
+      holding attached to nothing. The occupancy still records who is there;
+      only the card is withheld. An unmapped structure type takes the same exit
+      rather than throwing, because the occupancy above is already written and
+      losing it to a card that could not be minted would be the worse failure.
+    */
+    if (mapped?.propertyType !== 'BUILDING' && mapped?.propertyType !== 'HOUSE') {
+      return { backed: false, outcome: 'UNLINKABLE_STRUCTURE' };
+    }
+
+    const described = await this.unitDescription(input.unitId);
+
+    /*
+      نوع الإشغال is the officer’s answer, carried straight across.
+
+      `OccupancyRole` and `OccupancyType` are the same three values by design —
+      مالك, مستأجر, شاغل بتسامح — because they are one question asked of the unit
+      and of the card. This is the half that decides whether the register tells
+      the truth about what it just recorded: a مستأجر named on the matrix now
+      files a tenant’s card, not an owner’s, and a شاغل بتسامح files neither a
+      tenancy that does not exist nor an ownership they do not have.
+    */
+    await this.db.propertyEntry.create({
+      data: {
+        registrationId: registration.id,
+        occupancyType: input.role as never,
+        propertyType: mapped.propertyType as never,
+        buildingId: building.id,
+        // The parcel is the building’s own. الحي is left null rather than
+        // guessed: the cadastre has no neighbourhood layer to ask, and this
+        // path has no second card to copy one from the way `declareOwnership`
+        // does.
+        propertyNumber: building.parcelNumber || null,
+        buildingName: building.name,
+        /*
+          A منزل bills its single unit from its own columns and has no units
+          array to tick, so the description and the حالة go on the card itself.
+
+          A مبنى carries a unit row instead — and carries one rather than none
+          deliberately. An empty مبنى card claims *every* flat this citizen
+          occupies in the block through `heldThroughOccupancy`, which is the right
+          claim for a landlord whose holding nobody has enumerated and the wrong
+          one for an officer who has just named a single flat.
+        */
+        ...(mapped.propertyType === 'HOUSE'
+          ? {
+              unitType: mapped.defaultUnitType as never,
+              unitStatus: (input.unitStatus ?? null) as never,
+              unitArea: described.unitArea,
+            }
+          : {
+              units: {
+                create: {
+                  unitId: input.unitId,
+                  unitType: described.unitType as never,
+                  floor: described.floor,
+                  side: described.side,
+                  unitArea: described.unitArea,
+                  unitStatus: (input.unitStatus ?? null) as never,
+                },
+              },
+            }),
+      },
+    });
+
+    return { backed: true, outcome: 'ENTRY_CREATED' };
+  }
+
+  /**
+   * The canonical unit’s own description, in the shape a property card stores.
+   *
+   * The one conversion worth naming is the floor. `Unit.floor` is a signed
+   * integer — the durable half of the unit code, basements negative — while
+   * `BuildingUnit.floor` is the free text a citizen wrote on a form, which is why
+   * `parseFloorLabel` exists to read «الطابق ٤» back out of it. The plain decimal
+   * string is the one label that survives that round trip exactly, so it is what
+   * a card minted from the register carries.
+   */
+  private async unitDescription(unitId: string) {
+    const unit = await this.db.unit.findUnique({
+      where: { id: unitId },
+      select: { unitType: true, floor: true, side: true, unitArea: true },
+    });
+    return {
+      unitType: unit?.unitType ?? null,
+      floor: unit == null ? null : String(unit.floor),
+      side: unit?.side ?? null,
+      unitArea: unit?.unitArea ?? null,
+    };
   }
 
   /**
@@ -2133,6 +2591,7 @@ function toBuildingRow(row: {
   latitude: number | null;
   longitude: number | null;
   floorsCount: number;
+  basementsCount: number;
   unitsTotal: number;
   unitsSurveyed: number;
   notes: string | null;
@@ -2152,6 +2611,7 @@ function toBuildingRow(row: {
     latitude: row.latitude,
     longitude: row.longitude,
     floorsCount: row.floorsCount,
+    basementsCount: row.basementsCount,
     unitsTotal: row.unitsTotal,
     unitsSurveyed: row.unitsSurveyed,
     notes: row.notes,
@@ -2166,6 +2626,8 @@ function toUnitRow(row: {
   buildingId: string;
   floor: number;
   sequence: number;
+  startCol: number | null;
+  endCol: number | null;
   unitCode: string;
   postedNumber: string | null;
   unitType: string;
@@ -2182,6 +2644,8 @@ function toUnitRow(row: {
     buildingId: row.buildingId,
     floor: row.floor,
     sequence: row.sequence,
+    startCol: row.startCol,
+    endCol: row.endCol,
     unitCode: row.unitCode,
     postedNumber: row.postedNumber,
     unitType: row.unitType,

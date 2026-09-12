@@ -32,6 +32,8 @@ export interface BuildingRow {
   latitude: number | null;
   longitude: number | null;
   floorsCount: number;
+  /** How far the structure goes down, as a depth: 2 means B1 and B2. */
+  basementsCount: number;
   /** Maintained by the trigger in migration 0030 — never written from here. */
   unitsTotal: number;
   unitsSurveyed: number;
@@ -46,6 +48,8 @@ export interface UnitRow {
   buildingId: string;
   floor: number;
   sequence: number;
+  startCol: number | null;
+  endCol: number | null;
   unitCode: string;
   postedNumber: string | null;
   unitType: string;
@@ -90,6 +94,35 @@ export interface OccupancyRow {
    * the register.
    */
   backedByFile: boolean;
+}
+
+/**
+ * What recording an occupant did to the citizen’s own file.
+ *
+ * Reported rather than assumed, because every outcome below is a different
+ * thing for the officer to be told and two of them are not failures. An
+ * occupancy is now backed by default — that is the point of `claimOnFile` — but
+ * "by default" is not "always", and the officer who tapped the button is the
+ * only person in a position to do anything about the cases where it is not.
+ *
+ *   • `ENTRY_CREATED` — a property card was minted on their file.
+ *   • `UNIT_ADDED` — their existing card gained this flat.
+ *   • `ALREADY_CLAIMED` — their file already claimed it; nothing was written.
+ *   • `NO_FILE` — the citizen has no registration to attach a card to. The one
+ *     state «غير مرتبط بملفه» is now meant to describe.
+ *   • `UNLINKABLE_STRUCTURE` — a خيمة, which no property card can point at.
+ *   • `NO_BUILDING` — the unit’s building vanished between the two reads.
+ */
+export interface FileLinkResult {
+  /** Whether billing would now read this flat off the citizen’s file. */
+  backed: boolean;
+  outcome:
+    | 'ENTRY_CREATED'
+    | 'UNIT_ADDED'
+    | 'ALREADY_CLAIMED'
+    | 'NO_FILE'
+    | 'UNLINKABLE_STRUCTURE'
+    | 'NO_BUILDING';
 }
 
 /** One logged attempt to survey a unit — P4-T1, D10. */

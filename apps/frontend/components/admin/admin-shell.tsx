@@ -83,7 +83,7 @@ export function AdminShell({
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') setDrawerOpen(false);
-      if (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {
+      if (event.key?.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {
         // The browser's own "search the page" is the shortcut being displaced,
         // and this is the search a clerk actually wants on a register of
         // twenty thousand people — the page holds one screen of them.

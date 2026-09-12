@@ -503,6 +503,23 @@ export const STRUCTURE_TYPE_MAP = {
 >;
 
 /**
+ * What a unit on this floor of this structure most likely is.
+ *
+ * `STRUCTURE_TYPE_MAP`'s `defaultUnitType` answers it for the building as a
+ * whole, and below ground that answer is wrong nearly every time: what is under
+ * a residential block is storage, parking and machine rooms, not flats. An
+ * officer adding a قبو unit was handed «شقة» and had to correct it on every
+ * single one — and a default nobody wants is a default that gets left in place.
+ *
+ * A suggestion, never a constraint: the select is still free, exactly as it is
+ * above ground.
+ */
+export function defaultUnitTypeFor(structureType: StructureType, floor: number): UnitType {
+  if (floor < 0) return 'WAREHOUSE';
+  return STRUCTURE_TYPE_MAP[structureType].defaultUnitType;
+}
+
+/**
  * The structure a legacy property card describes, or null when it describes no
  * structure at all.
  *

@@ -811,6 +811,22 @@ model Building {
 
   floorsCount Int @default(1)
 
+  /// How many storeys the building goes *down*, counted as a depth rather than
+  /// as a signed floor: 2 means it has B1 and B2. Zero for a building with no
+  /// basement, which is nearly all of them.
+  ///
+  /// Separate from `floorsCount` rather than folded into it because the two
+  /// answer different questions and every existing reader of `floorsCount`
+  /// — `addUnit`, `generateUnits`, the ledger, the census figures — already
+  /// means "storeys above ground" by it. Widening that to a signed span would
+  /// have changed what all of them counted.
+  ///
+  /// Recorded rather than derived from the units, for the same reason
+  /// `floorsCount` is: a basement nobody has surveyed yet is still a basement,
+  /// and deriving the depth from `min(unit.floor)` would make an empty one
+  /// invisible.
+  basementsCount Int @default(0)
+
   /// Maintained by the `sync_building_unit_counts` trigger in migration 0030,
   /// so the map can style off them without an N+1 count per pin. Never written
   /// by application code — the trigger is the only writer.
@@ -862,6 +878,15 @@ model Unit {
   /// Position within the floor, 1-based. `floor` and `sequence` are the durable
   /// pair; `unitCode` below is derived from them.
   sequence Int
+
+  /// 1-based, inclusive column span this unit occupies in the floor's paint
+  /// grid — see `unit-grid-picker.tsx`'s `GridUnitDraft`. Both null together
+  /// for a unit that never had a grid to be painted on (the blueprint
+  /// generator, or a single unit added by hand): it renders as one
+  /// default-width block rather than a stored span. Both set or both null —
+  /// never one alone.
+  startCol Int?
+  endCol   Int?
 
   /// Derived display code, floor-based: floor 3 unit 4 is "0304", basement 1
   /// unit 2 is "B102". Self-describing — a collector on foot reads the floor

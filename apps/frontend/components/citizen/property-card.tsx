@@ -422,21 +422,16 @@ export function PropertyCard({
           ) : null}
 
           <div className="grid gap-3.5 sm:grid-cols-2">
-            <Field
-              label={locale === 'en' ? 'Neighborhood' : 'الحي'}
-              htmlFor={`nb-${index}`}
+            {/*
+              «الحي» is not asked for.
 
-              path={flagPath(index, 'neighborhood')}
-              required
-              error={errors.neighborhood}
-            >
-              <Input
-                id={`nb-${index}`}
-                invalid={Boolean(errors.neighborhood)}
-                value={draft.neighborhood ?? ''}
-                onChange={(e) => set({ neighborhood: e.target.value })}
-              />
-            </Field>
+              It is the same fact the parcel's zone already carries — and
+              carries once, centrally, instead of being retyped per household
+              with a different spelling each time. The field stays on the draft
+              and on the wire so values already collected survive an edit
+              untouched; it will render again when it is fed by the zone rather
+              than by a keyboard. See `neighborhoodField`.
+            */}
 
             {/*
               Withdrawn from the grid once the strip above states it. Rendered
@@ -1111,7 +1106,9 @@ function summarise(draft: PropertyDraft, locale: string = 'ar'): string {
     draft.propertyType
       ? (labels.propertyType[draft.propertyType] ?? draft.propertyType)
       : (locale === 'en' ? 'Unspecified type' : 'لم يُحدَّد النوع'),
-    draft.neighborhood || null,
+    // «الحي» is deliberately absent — the form no longer asks for it, and a
+    // summary line naming a value nothing on the card can edit reads as a
+    // field somebody has lost.
     draft.propertyNumber ? (locale === 'en' ? `#${draft.propertyNumber}` : `رقم ${draft.propertyNumber}`) : null,
     draft.buildingName || null,
     draft.propertyType === 'BUILDING' && draft.units?.length

@@ -176,11 +176,21 @@ export class PropertyEntry {
     const required = (field: string, present: boolean) =>
       present || unestablished.has(field);
 
-    // Common to every type, checked once here rather than duplicated in each
-    // branch below.
-    if (!required('neighborhood', Boolean(props.neighborhood?.trim()))) {
-      throw fail('Every property requires a neighbourhood');
-    }
+    /*
+      الحي is no longer required, and is no longer asked for.
+
+      It duplicated by hand what a parcel's zone already knows: `Zone.
+      parcelNumbers` says which sector a عقار belongs to (D13), derived once and
+      centrally rather than retyped per household with a different spelling
+      every time. The field is still stored and still travels on the wire, so
+      the values already collected are untouched and the forms can render it
+      again the day it is fed by the zone instead of by a keyboard.
+
+      Removed here as well as from `propertyEntrySchema`, because this entity is
+      a second, independent gate: the schema stopped refusing a missing الحي and
+      this invariant went on refusing it, which is a 422 no form could clear —
+      the field it names is not on any form any more.
+    */
 
     // Only a building is divisible into units; anything else with a `units`
     // array is a caller that has confused the two shapes. Not waivable: this

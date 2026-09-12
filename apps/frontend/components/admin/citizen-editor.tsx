@@ -1208,13 +1208,13 @@ export function CitizenEditor({
         cost a trip back to the ledger, a search for the building, and a hunt
         through the matrix for the unit they had just been standing in.
 
-        Everything the census sync wrote is on the drawer they came from, which
+        Everything the census sync wrote is on the page they came from, which
         is also the screen that can *show* it — the citizen's own file cannot
-        say whether the unit left «غير ممسوحة». So the return is to the matrix,
-        with the drawer reopened on the same building.
+        say whether the unit left «غير ممسوحة». So the return is to that same
+        building's unit matrix.
       */
       const destination = lockedCensusTarget
-        ? `${base}/buildings?matrix=${encodeURIComponent(lockedCensusTarget.buildingId)}`
+        ? `${base}/buildings/${encodeURIComponent(lockedCensusTarget.buildingId)}/matrix`
         : null;
 
       const leave = (offers: LandlordLinkOffers | null, href: string) => {

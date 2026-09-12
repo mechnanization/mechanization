@@ -5,14 +5,11 @@ import Link from 'next/link';
 import {
   AlertTriangle,
   Building2,
-  CalendarClock,
   ClipboardList,
   DoorClosed,
   Footprints,
   Loader2,
-  MapPin,
   Pencil,
-  Search,
   ShieldAlert,
   Trash2,
   UserPlus,
@@ -20,19 +17,9 @@ import {
   UserRoundPlus,
 } from 'lucide-react';
 import {
-  CASE_TYPE,
-  DAMAGE_LEVEL,
-  DAMAGE_SOURCE,
   getLabels,
-  OCCUPANCY_ROLE,
-  isOccupiableLifecycle,
-  STRUCTURE_TYPE_MAP,
-  SURVEY_STATUS,
-  type CaseType,
+  defaultUnitTypeFor,
   type DamageLevel,
-  type DamageSource,
-  type OccupancyRole,
-  type SurveyStatus,
   type UpsertUnitInput,
 } from '@mechanization/shared-schemas';
 import {
@@ -45,24 +32,19 @@ import {
   endOccupancy,
   getBuilding,
   getBuildingDamage,
-  listCitizens,
   logApiError,
   logUnitVisit,
   recordDamage,
   recordOccupancy,
   updateUnit,
   type BuildingDetail,
-  type CitizenListItem,
   type DamageAssessmentRow,
   type UnitOccupant,
-  type UnitVisitRow,
   type UnitWithOccupants,
 } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Field } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -71,10 +53,21 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Sheet } from '@/components/ui/sheet';
-import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import {
+  BuildingSummaryBadges,
+  CaseForm,
+  cellBadge,
+  DamageForm,
+  floorLabel,
+  groupUnitsByFloor,
+  occupancyMessage,
+  OccupantForm,
+  VisitForm,
+  withDeclaredBasements,
+} from './building-unit-forms';
 
 /**
  * One building's units, floor by floor, with the four things an officer
@@ -95,16 +88,6 @@ import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
  * answered, why nobody did, that the flat is empty, that the ceiling is down.
  */
 
-const SEARCH_DEBOUNCE_MS = 350;
-
-/**
- * What an attempt can have produced.
- *
- * `SURVEY_STATUS` minus `NOT_SURVEYED`, which means nobody went — a visit
- * carrying it is a contradiction, and `logVisitSchema` refuses it server-side
- * for the same reason. Derived rather than retyped so a status added to the
- * enum shows up here without anyone remembering to add it.
- */
 /**
  * The three levels that mean a structure's use is impaired.
  *
@@ -119,92 +102,8 @@ const DAMAGED_LEVELS: readonly DamageLevel[] = [
   'TOTAL_COLLAPSE',
 ];
 
-const VISIT_OUTCOMES = SURVEY_STATUS.filter(
-  (status): status is Exclude<SurveyStatus, 'NOT_SURVEYED'> => status !== 'NOT_SURVEYED',
-);
-
 /** Which unit action is open, if any. `null` = just the matrix. */
 type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | null;
-
-/**
- * The badge a cell wears, in the officer's own vocabulary.
- *
- * Occupancy outranks survey status deliberately: a flat with somebody recorded
- * in it is answered, and the name is the most useful thing the cell can carry —
- * it is what makes «الطابق الثالث» resolve to a person rather than a number.
- * Below that the survey status speaks for itself, and «غير ممسوحة» is left
- * plain rather than tinted a warning colour, because on a freshly generated
- * matrix every cell is that and a wall of amber says nothing.
- */
-function cellBadge(
-  unit: UnitWithOccupants,
-  labels: ReturnType<typeof getLabels>,
-  en: boolean,
-): { text: string; variant: 'soft-success' | 'soft-warning' | 'soft-destructive' | 'soft-info' | 'soft-muted' } {
-  /*
-    Named after whoever is *inside*, not whoever registered most recently.
-
-    This took the first current spell the server happened to return, ordered by
-    `toDate` then `fromDate`. So a flat with an owner and a tenant on it was
-    labelled with whichever of the two filed last, and two identical situations
-    on one floor read as two different kinds of record — «مسجلة (المستأجر)»
-    beside «مسجلة (المالك)», with nothing to say why they differed.
-
-    A مستأجر or a شاغل بتسامح outranks a مالك because the cell answers «من في
-    هذه الوحدة؟», and an owner in the occupancy table has not said they live
-    there — the deed is not a statement of residence (D2). Where the only
-    current spell is an owner's, they are the answer.
-  */
-  const current = unit.occupants
-    .filter((occupant) => occupant.toDate === null)
-    .sort((a, b) => {
-      const rank = (role: string) => (role === 'OWNER' ? 1 : 0);
-      if (rank(a.role) !== rank(b.role)) return rank(a.role) - rank(b.role);
-      // Within one rank the newest spell wins — a flat re-let this month is
-      // described by its present tenant, not the one before them.
-      return a.fromDate < b.fromDate ? 1 : -1;
-    })[0];
-
-  if (current) {
-    const who = current.citizenName
-      ? `${labels.occupancyRole[current.role]}: ${current.citizenName}`
-      : labels.occupancyRole[current.role];
-    return {
-      text: en ? `Registered (${who})` : `مسجلة (${who})`,
-      variant: 'soft-success',
-    };
-  }
-
-  switch (unit.surveyStatus) {
-    case 'VACANT_CONFIRMED':
-      return { text: en ? 'Vacant' : 'شاغرة', variant: 'soft-info' };
-    case 'VISITED_NO_ANSWER':
-      return { text: en ? 'Revisit' : 'إعادة زيارة', variant: 'soft-warning' };
-    case 'REFUSED':
-    case 'INACCESSIBLE':
-      return { text: labels.surveyStatus[unit.surveyStatus], variant: 'soft-destructive' };
-    case 'DEMOLISHED':
-      return { text: labels.surveyStatus[unit.surveyStatus], variant: 'soft-destructive' };
-    case 'PARTIAL':
-      return { text: labels.surveyStatus[unit.surveyStatus], variant: 'soft-warning' };
-    case 'COMPLETE':
-      return { text: labels.surveyStatus[unit.surveyStatus], variant: 'soft-success' };
-    default:
-      return { text: en ? 'Not surveyed' : 'غير ممسوحة', variant: 'soft-muted' };
-  }
-}
-
-/** «الطابق الثالث» / «القبو ١» — the floor as it is spoken, not as it is stored. */
-function floorLabel(floor: number, en: boolean): string {
-  if (en) {
-    if (floor === 0) return 'Ground floor';
-    if (floor < 0) return `Basement ${Math.abs(floor)}`;
-    return `Floor ${floor}`;
-  }
-  if (floor === 0) return 'الطابق الأرضي';
-  if (floor < 0) return `القبو ${Math.abs(floor)}`;
-  return `الطابق ${floor}`;
-}
 
 export function BuildingUnitMatrixDrawer({
   open,
@@ -310,19 +209,16 @@ export function BuildingUnitMatrixDrawer({
     void load();
   }, [open, buildingId, load]);
 
-  /** Floors top-down, so the matrix stands the way the building does. */
-  const floors = useMemo(() => {
-    const grouped = new Map<number, UnitWithOccupants[]>();
-    for (const unit of building?.units ?? []) {
-      grouped.set(unit.floor, [...(grouped.get(unit.floor) ?? []), unit]);
-    }
-    return [...grouped.entries()]
-      .sort((a, b) => b[0] - a[0])
-      .map(([floor, units]) => ({
-        floor,
-        units: [...units].sort((a, b) => a.sequence - b.sequence),
-      }));
-  }, [building]);
+  /** Floors top-down, so the matrix stands the way the building does, with a
+   *  row for every basement the register declares even when it is still empty. */
+  const floors = useMemo(
+    () =>
+      withDeclaredBasements(
+        groupUnitsByFloor(building?.units ?? []),
+        building?.basementsCount,
+      ),
+    [building],
+  );
 
   const selectedUnit = useMemo(
     () => building?.units.find((unit) => unit.id === selectedUnitId) ?? null,
@@ -363,9 +259,6 @@ export function BuildingUnitMatrixDrawer({
     unitType: string;
     candidates: DuplicateUnitCandidate[];
   } | null>(null);
-
-  const surveyed = building?.unitsSurveyed ?? 0;
-  const total = building?.unitsTotal ?? 0;
 
   /** Every write funnels through here so the reload and the toast are never forgotten. */
   const run = useCallback(
@@ -543,67 +436,11 @@ export function BuildingUnitMatrixDrawer({
       ) : building ? (
         <div className="space-y-5">
           {/* ── What the structure is ─────────────────────────────── */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="soft-default">{labels.structureType[building.structureType]}</Badge>
-            {/*
-              Shown only when it is not «قائم ومستعمل».
-
-              The ordinary answer on nineteen buildings in twenty, and a badge
-              that appears on all of them stops being read. Here it earns its
-              place: this drawer is where an officer decides whether to walk the
-              stairwell, and «قيد الإنشاء» is the answer that means not yet.
-            */}
-            {building.lifecycleStatus !== 'IN_USE' ? (
-              <Badge variant="soft-warning">
-                {labels.buildingLifecycle[building.lifecycleStatus]}
-              </Badge>
-            ) : null}
-            <Badge variant="soft-muted">
-              {en
-                ? `${building.floorsCount} floors`
-                : `${building.floorsCount} طابق`}
-            </Badge>
-            <Badge
-              variant={
-                !isOccupiableLifecycle(building.lifecycleStatus)
-                  ? 'soft-muted'
-                  : total > 0 && surveyed === total
-                    ? 'soft-success'
-                    : 'soft-muted'
-              }
-            >
-              {/*
-                A matrix on a structure nobody can be inside is an inventory,
-                not outstanding work — and the ledger's figures leave it out.
-                Saying «٠ من ٦ ممسوحة» here beside a total the census does not
-                count would read as six doors somebody is failing to knock on.
-              */}
-              {!isOccupiableLifecycle(building.lifecycleStatus)
-                ? en
-                  ? `${total} units recorded — not counted as survey work`
-                  : `${total} وحدة مسجَّلة — غير محتسبة ضمن أعمال المسح`
-                : en
-                  ? `${surveyed} of ${total} units surveyed`
-                  : `${surveyed} من ${total} وحدة ممسوحة`}
-            </Badge>
-            {building.postedNumber ? (
-              <Badge variant="soft-info">
-                {en ? `Posted: ${building.postedNumber}` : `مكتوب: ${building.postedNumber}`}
-              </Badge>
-            ) : null}
-            {damage?.current ? (
-              <Badge variant="soft-destructive" className="gap-1">
-                <ShieldAlert className="size-3" aria-hidden />
-                {labels.damageLevel[damage.current]}
-              </Badge>
-            ) : null}
-            {building.latitude != null ? (
-              <Badge variant="soft-muted" className="gap-1">
-                <MapPin className="size-3" aria-hidden />
-                {en ? 'Located' : 'محدَّد الموقع'}
-              </Badge>
-            ) : null}
-          </div>
+          <BuildingSummaryBadges
+            building={building}
+            locale={locale}
+            damageLevel={damage?.current ?? null}
+          />
 
           {canWrite ? (
             <div className="flex flex-wrap gap-2">
@@ -629,7 +466,10 @@ export function BuildingUnitMatrixDrawer({
           ) : null}
 
           {/* ── The matrix ────────────────────────────────────────── */}
-          {floors.length === 0 ? (
+          {/* Keyed on the units rather than on `floors`, which now also carries
+              a row for each declared-but-empty basement — a building with no
+              matrix at all still needs the offer to generate one. */}
+          {building.units.length === 0 ? (
             <div className="space-y-3 rounded-lg border border-dashed p-6 text-center">
               <Building2 className="mx-auto size-8 text-muted-foreground" aria-hidden />
               <p className="text-sm font-medium">
@@ -670,12 +510,10 @@ export function BuildingUnitMatrixDrawer({
                           disabled={busy}
                           onClick={() => {
                             setAddingFloor(floor);
-                            // What this structure is made of, per
-                            // `STRUCTURE_TYPE_MAP` — the same default the
-                            // building editor's blueprint starts from.
-                            setAddingType(
-                              STRUCTURE_TYPE_MAP[building.structureType].defaultUnitType,
-                            );
+                            // What this structure is made of — and, below
+                            // ground, what is actually down there rather than
+                            // what the block is made of above it.
+                            setAddingType(defaultUnitTypeFor(building.structureType, floor));
                             setActionError(null);
                           }}
                           className="inline-flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
@@ -936,12 +774,18 @@ export function BuildingUnitMatrixDrawer({
                     const current = occupant.toDate === null;
                     /*
                       The census has them here; their own registration does not
-                      name the property. «تسجيل شاغل» records the first without
-                      the second, which is right at the doorstep and wrong left
-                      alone: billing reads the file, so an unbacked occupant is
-                      a household nobody charges, and their file still names
-                      whatever property it did name — possibly a different
-                      building entirely.
+                      name the property — so billing, which reads the file, has
+                      nothing to charge, and their card still names whatever it
+                      did name, possibly a different building entirely.
+
+                      This used to fire on every occupant «تسجيل شاغل» created,
+                      because that path wrote the matrix half of the record and
+                      not the file half. It now writes both (
+                      `BuildingsService.claimOnFile`), so what is left is the one
+                      case a write cannot fix: a person with no registration to
+                      hang a property card on. The copy says that, and says what
+                      to do about it, rather than describing a gap the officer
+                      has no way to close from here.
 
                       Only said of a *current* occupant. A former spell whose
                       link was released on the way out is not missing anything.
@@ -1005,12 +849,12 @@ export function BuildingUnitMatrixDrawer({
                             className="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-500"
                             title={
                               en
-                                ? "Recorded on the matrix only. Add this property to the citizen's file so it can be billed."
-                                : 'مسجَّل على المصفوفة فقط. أضف هذا العقار إلى ملف المواطن ليُحتسب في الرسوم.'
+                                ? 'This citizen has no registration, so nothing on their file claims this unit and it cannot be billed. Register them to link it.'
+                                : 'لا يوجد ملف لهذا المواطن، فلا شيء يربطه بالوحدة ولن تُحتسب الرسوم. سجّله ليُربط العقار.'
                             }
                           >
                             <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
-                            {en ? 'Not in their file' : 'غير مرتبط بملفه'}
+                            {en ? 'No file yet' : 'لا ملف له بعد'}
                           </span>
                         ) : null}
                         {canWrite && current ? (
@@ -1171,7 +1015,7 @@ export function BuildingUnitMatrixDrawer({
                   token={token}
                   busy={busy}
                   locale={locale}
-                  onSubmit={(citizen, role, shares) =>
+                  onSubmit={(citizen, role, shares, unitStatus) =>
                     void run(
                       async () => {
                         const result = await recordOccupancy(tenant, token, {
@@ -1179,17 +1023,14 @@ export function BuildingUnitMatrixDrawer({
                           citizenId: citizen.id,
                           role,
                           shares,
+                          unitStatus,
                         });
-                        // The count is surfaced, never swallowed: closing
-                        // somebody else's dispatch item silently is how a case
-                        // list stops being believed.
-                        return result.casesResolved > 0
-                          ? en
-                            ? `${citizen.fullName} recorded — ${result.casesResolved} case(s) resolved`
-                            : `تم تسجيل ${citizen.fullName} — أُغلقت ${result.casesResolved} حالة`
-                          : en
-                            ? `${citizen.fullName} recorded in unit ${selectedUnit.unitCode}`
-                            : `تم تسجيل ${citizen.fullName} في الوحدة ${selectedUnit.unitCode}`;
+                        return occupancyMessage(
+                          citizen.fullName,
+                          selectedUnit.unitCode,
+                          result,
+                          en,
+                        );
                       },
                       en ? 'Could not record the occupancy.' : 'تعذّر تسجيل الإشغال.',
                     )
@@ -1421,497 +1262,3 @@ export function BuildingUnitMatrixDrawer({
   );
 }
 
-/**
- * Who is in the flat — searched for, because the person at the door is very
- * often already on file from a different property.
- */
-function OccupantForm({
-  tenant,
-  token,
-  busy,
-  locale,
-  onSubmit,
-}: {
-  tenant: string;
-  token: string;
-  busy: boolean;
-  locale: string;
-  onSubmit: (citizen: CitizenListItem, role: OccupancyRole, shares?: number) => void;
-}) {
-  const en = locale === 'en';
-  const labels = getLabels(locale);
-
-  const [term, setTerm] = useState('');
-  const [results, setResults] = useState<CitizenListItem[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [chosen, setChosen] = useState<CitizenListItem | null>(null);
-  const [role, setRole] = useState<OccupancyRole>('OWNER');
-  const [shares, setShares] = useState('');
-
-  useEffect(() => {
-    if (!term.trim()) {
-      setResults([]);
-      return;
-    }
-    let cancelled = false;
-    setSearching(true);
-    const timer = setTimeout(() => {
-      listCitizens(tenant, token, { search: term.trim(), limit: 6 })
-        .then((result) => {
-          if (!cancelled) setResults(result.items);
-        })
-        .catch((caught) => {
-          logApiError(caught);
-          if (!cancelled) setResults([]);
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
-    }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [term, tenant, token]);
-
-  return (
-    <div className="space-y-3 rounded-md border bg-background p-3">
-      {chosen ? (
-        <div className="flex items-center gap-2 rounded-md bg-accent/40 px-2.5 py-2 text-sm">
-          <UserRound className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="font-medium">{chosen.fullName}</span>
-          {chosen.phone ? (
-            <span dir="ltr" className="text-xs text-muted-foreground">
-              {chosen.phone}
-            </span>
-          ) : null}
-          <button
-            type="button"
-            className="ms-auto text-xs text-muted-foreground underline-offset-2 hover:underline"
-            onClick={() => setChosen(null)}
-          >
-            {en ? 'Change' : 'تغيير'}
-          </button>
-        </div>
-      ) : (
-        <>
-          <Field label={en ? 'Find the citizen' : 'ابحث عن المواطن'} htmlFor="occupant-search" required>
-            <div className="relative">
-              <Search
-                className="pointer-events-none absolute inset-y-0 start-2.5 my-auto size-4 text-muted-foreground"
-                aria-hidden
-              />
-              <Input
-                id="occupant-search"
-                value={term}
-                onChange={(event) => setTerm(event.target.value)}
-                className="ps-9"
-                placeholder={en ? 'Name, phone or reference…' : 'الاسم أو الهاتف أو رقم القيد…'}
-              />
-            </div>
-          </Field>
-
-          {searching ? (
-            <p className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              {en ? 'Searching…' : 'جاري البحث…'}
-            </p>
-          ) : results.length > 0 ? (
-            <ul className="max-h-48 space-y-1 overflow-y-auto">
-              {results.map((citizen) => (
-                <li key={citizen.id}>
-                  <button
-                    type="button"
-                    onClick={() => setChosen(citizen)}
-                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-start text-sm transition-colors hover:bg-accent"
-                  >
-                    <span className="font-medium">{citizen.fullName}</span>
-                    {citizen.phone ? (
-                      <span dir="ltr" className="text-xs text-muted-foreground">
-                        {citizen.phone}
-                      </span>
-                    ) : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : term.trim() ? (
-            <p className="text-xs text-muted-foreground">
-              {en
-                ? 'No match. Register the citizen first, then come back to this unit.'
-                : 'لا نتيجة. سجّل المواطن أولاً ثم عد إلى هذه الوحدة.'}
-            </p>
-          ) : null}
-        </>
-      )}
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label={en ? 'Capacity' : 'صفة الإشغال'} htmlFor="occupant-role" required>
-          <Select value={role} onValueChange={(value) => setRole(value as OccupancyRole)}>
-            <SelectTrigger id="occupant-role">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {OCCUPANCY_ROLE.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {labels.occupancyRole[value]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-
-        {/* Shares are a fraction of ownership — the server refuses them on a
-            tenant, so the field is not offered to one. */}
-        {role === 'OWNER' ? (
-          <Field
-            label={en ? 'Shares (of 2400)' : 'الأسهم (من ٢٤٠٠)'}
-            htmlFor="occupant-shares"
-            hint={en ? 'Leave empty if not known' : 'اتركه فارغاً إن لم يكن معروفاً'}
-          >
-            <Input
-              id="occupant-shares"
-              type="number"
-              min={1}
-              max={2400}
-              value={shares}
-              onChange={(event) => setShares(event.target.value)}
-              dir="ltr"
-              className="text-start"
-            />
-          </Field>
-        ) : null}
-      </div>
-
-      <Button
-        size="sm"
-        disabled={busy || !chosen}
-        onClick={() => {
-          if (!chosen) return;
-          const parsed = Number(shares);
-          onSubmit(
-            chosen,
-            role,
-            role === 'OWNER' && shares.trim() && Number.isFinite(parsed) ? parsed : undefined,
-          );
-        }}
-      >
-        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-        {en ? 'Record occupancy' : 'تسجيل الإشغال'}
-      </Button>
-    </div>
-  );
-}
-
-/**
- * One attempt, logged from the door (P4-T1, D10).
- *
- * The outcome doubles as the unit's new survey status, and that is the point:
- * an officer who has just stood at a door knows both facts, and asking them to
- * state each separately is how a unit ends up reading «مكتملة» with no visit
- * behind it, or three visits under a status nobody moved.
- *
- * `NOT_SURVEYED` is absent from the choices because it means *nobody went* — a
- * visit carrying it is a contradiction, and the schema refuses it too.
- */
-function VisitForm({
-  busy,
-  locale,
-  attempts,
-  visits,
-  onSubmit,
-}: {
-  busy: boolean;
-  locale: string;
-  /** Every attempt ever made, uncapped — the number the cell shows. */
-  attempts: number;
-  /** The recent ones, newest first. */
-  visits: UnitVisitRow[];
-  onSubmit: (values: { outcome: SurveyStatus; visitedAt: string; notes: string }) => void;
-}) {
-  const en = locale === 'en';
-  const labels = getLabels(locale);
-
-  const [outcome, setOutcome] = useState<SurveyStatus>('VISITED_NO_ANSWER');
-  const [visitedAt, setVisitedAt] = useState('');
-  const [notes, setNotes] = useState('');
-
-  return (
-    <div className="space-y-3 rounded-md border bg-background p-3">
-      {attempts > 0 ? (
-        <div className="space-y-1.5">
-          <p className="text-xs font-semibold">
-            {en
-              ? `${attempts} attempt${attempts === 1 ? '' : 's'} on this unit`
-              : `${attempts} محاولة على هذه الوحدة`}
-          </p>
-          <ul className="space-y-1">
-            {visits.map((visit) => (
-              <li
-                key={visit.id}
-                className="flex flex-wrap items-center gap-2 rounded-md bg-muted/30 px-2 py-1 text-[11px]"
-              >
-                <span className="text-muted-foreground">{formatDate(visit.visitedAt)}</span>
-                <Badge variant="soft-muted">{labels.surveyStatus[visit.outcome]}</Badge>
-                {visit.officerName ? (
-                  <span className="text-muted-foreground">{visit.officerName}</span>
-                ) : null}
-                {visit.notes ? <span className="w-full text-muted-foreground">{visit.notes}</span> : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label={en ? 'What happened' : 'نتيجة الزيارة'} htmlFor="visit-outcome" required>
-          <Select value={outcome} onValueChange={(value) => setOutcome(value as SurveyStatus)}>
-            <SelectTrigger id="visit-outcome">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {VISIT_OUTCOMES.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {labels.surveyStatus[value]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-
-        <Field
-          label={en ? 'Visited on' : 'تاريخ الزيارة'}
-          htmlFor="visit-date"
-          hint={en ? 'Defaults to today' : 'الافتراضي اليوم'}
-        >
-          <Input
-            id="visit-date"
-            type="date"
-            max={new Date().toISOString().slice(0, 10)}
-            value={visitedAt}
-            onChange={(event) => setVisitedAt(event.target.value)}
-            dir="ltr"
-            className="text-start"
-          />
-        </Field>
-      </div>
-
-      <Field label={en ? 'Notes' : 'ملاحظات'} htmlFor="visit-notes">
-        <Textarea
-          id="visit-notes"
-          rows={2}
-          value={notes}
-          onChange={(event) => setNotes(event.target.value)}
-          placeholder={
-            en
-              ? 'A neighbour says they return in the evening'
-              : 'أفاد الجيران بأنهم يعودون مساءً'
-          }
-        />
-      </Field>
-
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        {en
-          ? 'The unit moves to this outcome — one visit, one status, recorded together.'
-          : 'تنتقل حالة الوحدة إلى هذه النتيجة — زيارة واحدة وحالة واحدة تُسجَّلان معاً.'}
-      </p>
-
-      <Button
-        size="sm"
-        disabled={busy}
-        onClick={() => onSubmit({ outcome, visitedAt, notes: notes.trim() })}
-      >
-        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Footprints className="size-4" aria-hidden />}
-        {en ? 'Log the visit' : 'تسجيل الزيارة'}
-      </Button>
-    </div>
-  );
-}
-
-/** Why this visit did not become a registration, pinned to this exact unit. */
-function CaseForm({
-  busy,
-  locale,
-  onSubmit,
-}: {
-  busy: boolean;
-  locale: string;
-  onSubmit: (values: { notes: string; caseType: CaseType; revisitAt: string }) => void;
-}) {
-  const en = locale === 'en';
-  const labels = getLabels(locale);
-
-  const [caseType, setCaseType] = useState<CaseType>('UNIT_UNREACHABLE');
-  const [notes, setNotes] = useState('');
-  const [revisitAt, setRevisitAt] = useState('');
-
-  return (
-    <div className="space-y-3 rounded-md border bg-background p-3">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label={en ? 'What happened' : 'نوع الحالة'} htmlFor="case-type" required>
-          <Select value={caseType} onValueChange={(value) => setCaseType(value as CaseType)}>
-            <SelectTrigger id="case-type">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CASE_TYPE.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {labels.caseType[value]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-
-        <Field
-          label={en ? 'Revisit on' : 'موعد إعادة الزيارة'}
-          htmlFor="case-revisit"
-          hint={
-            en
-              ? 'Optional — records the promise to come back'
-              : 'اختياري — يسجّل موعد العودة المتفق عليه'
-          }
-        >
-          <Input
-            id="case-revisit"
-            type="date"
-            value={revisitAt}
-            onChange={(event) => setRevisitAt(event.target.value)}
-            dir="ltr"
-            className="text-start"
-          />
-        </Field>
-      </div>
-
-      <Field label={en ? 'Notes' : 'الملاحظات'} htmlFor="case-notes" required>
-        <Textarea
-          id="case-notes"
-          rows={2}
-          value={notes}
-          onChange={(event) => setNotes(event.target.value)}
-          placeholder={
-            en
-              ? 'What the next officer needs to know'
-              : 'ما يحتاج الموظف القادم إلى معرفته'
-          }
-        />
-      </Field>
-
-      <Button
-        size="sm"
-        disabled={busy || !notes.trim()}
-        onClick={() => onSubmit({ notes: notes.trim(), caseType, revisitAt })}
-      >
-        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <CalendarClock className="size-4" aria-hidden />}
-        {en ? 'Log the case' : 'تسجيل الحالة'}
-      </Button>
-    </div>
-  );
-}
-
-/**
- * One observation, appended to the log. There is no edit and no delete: a
- * building that was unsafe in 2024 and repaired in 2026 is two facts (D3).
- */
-function DamageForm({
-  busy,
-  locale,
-  target,
-  onSubmit,
-}: {
-  busy: boolean;
-  locale: string;
-  /** What is being assessed, named in the button so the two cannot be confused. */
-  target: string;
-  onSubmit: (values: {
-    level: DamageLevel;
-    source: DamageSource;
-    observations: string;
-    assessedAt: string;
-  }) => void;
-}) {
-  const en = locale === 'en';
-  const labels = getLabels(locale);
-
-  const [level, setLevel] = useState<DamageLevel>('SAFE_MINOR_DAMAGE');
-  const [source, setSource] = useState<DamageSource>('FIELD_VISIT');
-  const [observations, setObservations] = useState('');
-  const [assessedAt, setAssessedAt] = useState('');
-
-  return (
-    <div className="space-y-3 rounded-md border bg-background p-3">
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Field label={en ? 'Damage level' : 'مستوى الضرر'} htmlFor="damage-level" required>
-          <Select value={level} onValueChange={(value) => setLevel(value as DamageLevel)}>
-            <SelectTrigger id="damage-level">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {DAMAGE_LEVEL.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {labels.damageLevel[value]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-
-        <Field label={en ? 'Source' : 'مصدر التقييم'} htmlFor="damage-source" required>
-          <Select value={source} onValueChange={(value) => setSource(value as DamageSource)}>
-            <SelectTrigger id="damage-source">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {DAMAGE_SOURCE.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {labels.damageSource[value]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-
-        {/* Back-dating is allowed and forward-dating is not: an assessment typed
-            up a week late describes the visit, not the paperwork. */}
-        <Field
-          label={en ? 'Inspected on' : 'تاريخ الكشف'}
-          htmlFor="damage-date"
-          hint={en ? 'Defaults to today' : 'الافتراضي اليوم'}
-        >
-          <Input
-            id="damage-date"
-            type="date"
-            max={new Date().toISOString().slice(0, 10)}
-            value={assessedAt}
-            onChange={(event) => setAssessedAt(event.target.value)}
-            dir="ltr"
-            className="text-start"
-          />
-        </Field>
-      </div>
-
-      <Field label={en ? 'What was seen' : 'ما شوهد'} htmlFor="damage-observations">
-        <Textarea
-          id="damage-observations"
-          rows={2}
-          value={observations}
-          onChange={(event) => setObservations(event.target.value)}
-          placeholder={
-            en
-              ? 'The fourth floor is down, the stairwell is impassable'
-              : 'الطابق الرابع مهدوم، الدرج غير سالك'
-          }
-        />
-      </Field>
-
-      <Button
-        size="sm"
-        disabled={busy}
-        onClick={() => onSubmit({ level, source, observations: observations.trim(), assessedAt })}
-      >
-        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-        {en ? `Record for ${target}` : `تسجيل الكشف على ${target}`}
-      </Button>
-    </div>
-  );
-}

@@ -352,6 +352,8 @@ export interface QueuedBuilding {
     latitude?: number;
     longitude?: number;
     floorsCount?: number;
+    /** Levels below ground, as a depth: 2 means B1 and B2. */
+    basementsCount?: number;
     notes?: string;
     /**
      * Carried because the officer was shown the parcel's existing structures
