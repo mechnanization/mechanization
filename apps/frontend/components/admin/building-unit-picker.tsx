@@ -35,7 +35,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import {
+  BUILDING_UNIT_TYPES,
+  type CensusUnitFacts,
+} from '@/components/citizen/unit-fields';
 
 /**
  * A client-minted id that will be the row's primary key.
@@ -86,6 +89,35 @@ export interface LockedCensusTarget {
   unitId?: string;
 }
 
+/**
+ * The structure a card is linked to, reported up so the card can state what the
+ * register already knows instead of asking for it again.
+ *
+ * The rule this type exists to serve, and the reason every field is nullable:
+ * **a field is locked if and only if the census holds a value for it.** That is
+ * the rule «اسم المبنى» has always followed — an unnamed building leaves the
+ * field open, because the officer in its stairwell is the person who learns the
+ * name and `CensusSyncService` promotes what they type upward. Generalising it
+ * is what stops a lock from making a fact unrecordable by the only person
+ * standing where it can be established.
+ */
+export interface LinkedBuildingFacts {
+  id: string;
+  code: string;
+  name: string | null;
+  /**
+   * The parcel this structure stands on — the register's own answer, which the
+   * card's رقم العقار is mirrored from and locked to.
+   *
+   * Without it the card could claim one عقار while `buildingId` pointed at a
+   * building standing on another, and nothing anywhere reconciled the two:
+   * `applyOccupancy` guards unit↔building, and nothing guarded card↔building.
+   */
+  parcelNumber: string;
+  /** The matrix, so the card can name a linked unit and state what it holds. */
+  units: CensusUnitFacts[];
+}
+
 export function BuildingUnitPicker({
   tenant,
   token,
@@ -132,15 +164,7 @@ export function BuildingUnitPicker({
    * than a question. The alternative was the card fetching the same building a
    * second time, which is how two components start disagreeing about it.
    */
-  onLinkedBuilding?: (
-    building: {
-      id: string;
-      code: string;
-      name: string | null;
-      /** The matrix, so the card can name a linked unit by its code. */
-      units: Array<{ id: string; unitCode: string }>;
-    } | null,
-  ) => void;
+  onLinkedBuilding?: (building: LinkedBuildingFacts | null) => void;
   /**
    * Launched from the matrix: the building — and possibly the unit — is not a
    * choice. Shown as a statement with the reason, rather than a disabled
@@ -233,6 +257,36 @@ export function BuildingUnitPicker({
     // stops applying the moment the parcel changes.
     setDeclined(false);
 
+    /*
+      A structure armed for the previous parcel follows the card to this one.
+
+      `pendingBuilding.parcelNumber` is what `dischargePending` actually sends
+      — the card's own رقم العقار is never consulted — so an officer who armed
+      «منشأة جديدة» on 1042 and then corrected the number to 998 created the
+      building on 1042 and filed the citizen on 998. Both rows valid, pointing
+      at different parcels, with nothing comparing them.
+
+      Re-pointed rather than cleared, so the structure type they chose survives
+      a typo correction. `acknowledgedDuplicates` does not survive it: that was
+      a person saying «تحقَّقت، وهذه منشأة مختلفة» about what stands on the
+      *old* parcel, and carrying it over would pre-answer the duplicate guard
+      for a parcel nobody has looked at. Cleared, the guard asks again.
+    */
+    if (parcelNumber) {
+      onChange((current) =>
+        current.pendingBuilding && current.pendingBuilding.parcelNumber !== parcelNumber
+          ? {
+              ...current,
+              pendingBuilding: {
+                ...current.pendingBuilding,
+                parcelNumber,
+                acknowledgedDuplicates: false,
+              },
+            }
+          : current,
+      );
+    }
+
     if (!parcelNumber) {
       setCandidates([]);
       setLookup('idle');
@@ -277,6 +331,10 @@ export function BuildingUnitPicker({
     return () => {
       cancelled = true;
     };
+    // `onChange` is a fresh closure each render, and this effect must fire on a
+    // *changed parcel* only — depending on it would re-run the lookup, and the
+    // pending re-point, on every keystroke elsewhere in the card.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenant, token, parcelNumber]);
 
   // ── The chosen structure's matrix ─────────────────────────────────
@@ -365,8 +423,19 @@ export function BuildingUnitPicker({
     a new object on every fetch, and depending on it would re-report — and
     re-render the card — on each one.
   */
+  /*
+    Widened beyond `unitCode` when the card started *locking* against these
+    values rather than merely labelling rows with them. A signature that only
+    covered the code would hold a stale area on screen — read-only, and
+    therefore uncorrectable — after somebody fixed it on the building itself.
+    Every field the card can lock has to be able to invalidate this.
+  */
   const unitSignature = (detail?.units ?? [])
-    .map((unit) => `${unit.id}:${unit.unitCode}`)
+    .map((unit) =>
+      [unit.id, unit.unitCode, unit.unitType, unit.floor, unit.side ?? '', unit.unitArea ?? ''].join(
+        ':',
+      ),
+    )
     .join(',');
 
   useEffect(() => {
@@ -377,12 +446,20 @@ export function BuildingUnitPicker({
             id: detail.id,
             code: detail.code,
             name: detail.name,
-            units: detail.units.map((unit) => ({ id: unit.id, unitCode: unit.unitCode })),
+            parcelNumber: detail.parcelNumber,
+            units: detail.units.map((unit) => ({
+              id: unit.id,
+              unitCode: unit.unitCode,
+              unitType: unit.unitType,
+              floor: floorText(unit.floor, en),
+              side: unit.side,
+              unitArea: unit.unitArea != null ? String(unit.unitArea) : null,
+            })),
           }
         : null,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail?.id, detail?.code, detail?.name, unitSignature]);
+  }, [detail?.id, detail?.code, detail?.name, detail?.parcelNumber, unitSignature, en]);
 
   useEffect(() => {
     const name = detail?.name?.trim();
@@ -390,6 +467,34 @@ export function BuildingUnitPicker({
     onChange((current) => ({ ...current, buildingName: name }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.name, draft.buildingName]);
+
+  /*
+    The same mirror for رقم العقار, and this one closes a silent corruption
+    rather than a spelling disagreement.
+
+    «اسم المبنى» was locked to the register and the parcel was not, so an
+    officer on a linked card could edit the عقار freely — and the card then
+    claimed parcel 1042 while `buildingId` pointed at a building standing on
+    998. Nothing anywhere reconciled the two: `applyOccupancy` checks that a
+    unit belongs to the building the card names, and no check at all compared
+    the card's parcel against that building's. The record was internally
+    inconsistent, validated cleanly, and billed.
+
+    Copied down unconditionally, unlike the name: a building always has a
+    parcel, so there is no "the register has no answer yet" case to leave open.
+    It converges — the write only fires while the two disagree — and it also
+    repairs a record that was saved mismatched before the field was locked,
+    the first time anybody opens it.
+
+    A *pending* structure is deliberately not mirrored. It has no parcel of its
+    own yet; it takes the card's. See the re-point in the parcel effect above.
+  */
+  useEffect(() => {
+    const parcel = detail?.parcelNumber?.trim();
+    if (!parcel || draft.propertyNumber?.trim() === parcel) return;
+    onChange((current) => ({ ...current, propertyNumber: parcel }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.parcelNumber, draft.propertyNumber]);
 
   const linkedUnitIds = useMemo(
     () => new Set((draft.units ?? []).map((unit) => unit.unitId).filter(Boolean) as string[]),
@@ -1097,7 +1202,21 @@ export function BuildingUnitPicker({
                 added on top — had no chip to tick. They typed it into «وحدات
                 المبنى» as an unlinked row, which bills the citizen but leaves
                 the census still saying the flat does not exist.
+
+                Withdrawn when the officer was sent to one specific door.
+                «تسجيل أسرة في هذه الوحدة» names a flat, every other chip on the
+                matrix is disabled behind it, and the flat itself is already
+                ticked — so the only thing this control can add from here is a
+                second row for the unit they are standing in. That is exactly
+                the duplicate `duplicateUnitsOf` exists to catch, arrived at by
+                the one path where the answer cannot be «نعم، وحدة أخرى».
+
+                Kept for a building-level lock. Arriving from the *structure*
+                rather than a door is the case the control was built for: the
+                officer is going through the block and may well find a flat the
+                survey missed.
               */}
+              {locked?.unitId ? null : (
               <AddUnitInline
                 en={en}
                 labels={labels}
@@ -1135,6 +1254,7 @@ export function BuildingUnitPicker({
                   setAdding(null);
                 }}
               />
+              )}
 
             </>
           )}

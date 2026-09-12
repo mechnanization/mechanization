@@ -6,6 +6,7 @@ import {
   KeyRound,
   LayoutDashboard,
   Layers,
+  Link2,
   Map as MapIcon,
   Receipt,
   Settings,
@@ -147,6 +148,38 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: UserPlus,
         roles: ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'],
         keywords: ['تسجيل', 'مواطن', 'جديد', 'إضافة', 'أسرة', 'نموذج', 'register', 'new', 'add'],
+      },
+      /*
+        Owner claims waiting to be recognised as one of the register's own
+        citizens.
+
+        Beside «المواطنون» rather than under the census, because what it
+        resolves is an *identity* — is the person this tenant named the same
+        person as this record — and the census tables are downstream of the
+        answer rather than the subject of it.
+
+        Every staff role, matching «المواطنون» directly above: the queue is a
+        view of the register and reading it discloses nothing the registry does
+        not. Acting on a row is narrower and enforced by the server — AUDITOR,
+        COLLECTOR and ACCOUNTANT see the work and do not answer it.
+      */
+      {
+        path: '/citizens/landlord-links',
+        label: 'روابط المالكين',
+        labelEn: 'Owner Links',
+        icon: Link2,
+        roles: EVERY_STAFF_ROLE,
+        keywords: [
+          'مالك',
+          'مستأجر',
+          'ربط',
+          'هاتف',
+          'إيجار',
+          'landlord',
+          'owner',
+          'link',
+          'tenant',
+        ],
       },
       // A visit that didn't produce a citizen — nobody home, gate locked —
       // sits next to the registry it feeds rather than under land/map, since

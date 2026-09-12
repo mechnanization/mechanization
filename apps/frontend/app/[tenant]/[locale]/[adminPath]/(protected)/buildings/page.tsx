@@ -1,7 +1,7 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef, PaginationState } from '@tanstack/react-table';
 import {
@@ -176,6 +176,7 @@ export default function BuildingsPage({
 }) {
   const { tenant, locale, adminPath } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const base = `/${tenant}/${locale}/${adminPath}`;
   const en = locale === 'en';
   const labels = getLabels(locale);
@@ -343,6 +344,34 @@ export default function BuildingsPage({
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<BuildingSummary | null>(null);
   const [matrixId, setMatrixId] = useState<string | null>(null);
+
+  /*
+    `?matrix=<buildingId>` reopens the drawer on arrival.
+
+    The drawer's state has always been local, which was fine while the only way
+    in was a click on this page. It stopped being fine once the drawer started
+    *sending people away*: «تسجيل أسرة في هذه الوحدة» leaves for the
+    registration form, and the officer's next step is invariably the flat they
+    just filled — so returning them to the ledger meant finding the building in
+    the table, opening it again, and hunting for the unit, once per household.
+
+    A URL param rather than a router state object because it has to survive the
+    full page load the registration form performs on save, and because it makes
+    the drawer linkable — the same property that lets the census sync's own
+    notifications point at a unit.
+
+    Read once, on mount. The param is deliberately *not* kept in sync
+    afterwards: closing the drawer should not push a history entry, and an
+    officer who navigates within the page is no longer "arriving".
+  */
+  const openedFromUrl = useRef(false);
+  useEffect(() => {
+    if (openedFromUrl.current) return;
+    const requested = searchParams.get('matrix');
+    if (!requested) return;
+    openedFromUrl.current = true;
+    setMatrixId(requested);
+  }, [searchParams]);
   const [pendingDelete, setPendingDelete] = useState<BuildingLedgerRow | null>(null);
   /**
    * Set when the editor was reached *from* a matrix, so saving returns there.

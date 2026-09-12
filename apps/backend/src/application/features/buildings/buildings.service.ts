@@ -171,35 +171,44 @@ export class BuildingsService {
       AND: [where, { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never } }],
     };
 
-    const [rows, total, totals, allTotals, damaged, withoutEntrance] = await withConnectionRetry(() =>
-      Promise.all([
-        this.db.building.findMany({
-          where,
-          orderBy: [{ parcelNumber: 'asc' }, { codeSuffix: 'asc' }],
-          take: filter.limit ?? 100,
-          skip: filter.offset ?? 0,
-        }),
-        this.db.building.count({ where }),
-        this.db.building.aggregate({
-          where: occupiableWhere,
-          _sum: { unitsTotal: true, unitsSurveyed: true },
-        }),
-        this.db.building.aggregate({ where, _sum: { unitsTotal: true } }),
-        this.countAtDamageLevels(where, DAMAGED_LEVELS),
-        /*
-          Counted over the filtered predicate, like every other tile — never
-          over the page. A tile that quietly described the first twenty-five
-          rows would read as a statement about the municipality.
-        */
-        this.db.building.count({ where: { AND: [where, { latitude: null }] } }),
-      ]),
+    /*
+      Sequential, not `Promise.all`. Against a pooler with `connection_limit=1`
+      (e.g. serverless instances or remote poolers), firing six queries
+      concurrently causes them to queue up and hit the pool timeout (P2024).
+      Running sequentially ensures each query completes and returns its
+      connection before the next begins.
+    */
+    const rows = await withConnectionRetry(() =>
+      this.db.building.findMany({
+        where,
+        orderBy: [{ parcelNumber: 'asc' }, { codeSuffix: 'asc' }],
+        take: filter.limit ?? 100,
+        skip: filter.offset ?? 0,
+      }),
+    );
+    const total = await withConnectionRetry(() => this.db.building.count({ where }));
+    const totals = await withConnectionRetry(() =>
+      this.db.building.aggregate({
+        where: occupiableWhere,
+        _sum: { unitsTotal: true, unitsSurveyed: true },
+      }),
+    );
+    const allTotals = await withConnectionRetry(() =>
+      this.db.building.aggregate({ where, _sum: { unitsTotal: true } }),
+    );
+    const damaged = await this.countAtDamageLevels(where, DAMAGED_LEVELS);
+    /*
+      Counted over the filtered predicate, like every other tile — never
+      over the page. A tile that quietly described the first twenty-five
+      rows would read as a statement about the municipality.
+    */
+    const withoutEntrance = await withConnectionRetry(() =>
+      this.db.building.count({ where: { AND: [where, { latitude: null }] } }),
     );
 
     const ids = rows.map((row) => row.id);
-    const [zoneOf, damageOf] = await Promise.all([
-      this.zonesOfParcels(rows.map((row) => row.parcelNumber)),
-      this.currentDamageLevels(ids),
-    ]);
+    const zoneOf = await this.zonesOfParcels(rows.map((row) => row.parcelNumber));
+    const damageOf = await this.currentDamageLevels(ids);
 
     const unitsTotal = totals._sum.unitsTotal ?? 0;
     const unitsSurveyed = totals._sum.unitsSurveyed ?? 0;
@@ -262,21 +271,19 @@ export class BuildingsService {
   private async buildingIdsAtCurrentLevel(levels: readonly string[]): Promise<string[]> {
     if (levels.length === 0) return [];
 
-    const [direct, viaUnit] = await Promise.all([
-      this.db.damageAssessment.findMany({
-        where: { buildingId: { not: null } },
-        select: { buildingId: true },
-        distinct: ['buildingId'],
-      }),
-      // A unit-level reading is an observation about the structure the unit is
-      // in — "top three floors gone, ground floor shop still trading" is two
-      // rows about one building — so those buildings are candidates too.
-      this.db.damageAssessment.findMany({
-        where: { unitId: { not: null } },
-        select: { unit: { select: { buildingId: true } } },
-        distinct: ['unitId'],
-      }),
-    ]);
+    const direct = await this.db.damageAssessment.findMany({
+      where: { buildingId: { not: null } },
+      select: { buildingId: true },
+      distinct: ['buildingId'],
+    });
+    // A unit-level reading is an observation about the structure the unit is
+    // in — "top three floors gone, ground floor shop still trading" is two
+    // rows about one building — so those buildings are candidates too.
+    const viaUnit = await this.db.damageAssessment.findMany({
+      where: { unitId: { not: null } },
+      select: { unit: { select: { buildingId: true } } },
+      distinct: ['unitId'],
+    });
 
     const candidates = [
       ...new Set([

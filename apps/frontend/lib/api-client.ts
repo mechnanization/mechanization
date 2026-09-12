@@ -1969,6 +1969,7 @@ export async function createCitizen(tenant: string, token: string, input: Citize
     status: CitizenRecordStatus;
     deduplicated: boolean;
     census: CensusSyncResult | null;
+    landlordLinks: LandlordLinkOffers | null;
   }>(tenant, '/citizens', { token, method: 'POST', body: JSON.stringify(input) });
   /*
     A registration is a census write too.
@@ -1999,6 +2000,7 @@ export async function updateCitizen(
     citizenId: string;
     status: CitizenRecordStatus;
     census: CensusSyncResult | null;
+    landlordLinks: LandlordLinkOffers | null;
   }>(tenant, `/citizens/${encodeURIComponent(citizenId)}`, {
     token,
     method: 'PATCH',
@@ -2008,6 +2010,137 @@ export async function updateCitizen(
   invalidateCensus(tenant);
   invalidateParcelChecks(tenant);
   return result;
+}
+
+// ──────────────────  Owner links (روابط المالكين)  ──────────────────
+//
+// Identifying the owner a مستأجر named among the register's own citizens. The
+// match is computed from `landlordPhone`, never stored, and nothing links
+// itself — see `LandlordLinkService` on the server for why both of those are
+// deliberate.
+
+/** A registered citizen a claimed landlord number could belong to. */
+export interface LandlordCandidate {
+  id: string;
+  name: string;
+  phone: string | null;
+  referenceNumber: string | null;
+}
+
+/** One unresolved claim, with whoever its number resolves to. */
+export interface LandlordProposal {
+  propertyEntryId: string;
+  occupancyType: string;
+  landlordName: string | null;
+  landlordPhone: string;
+  propertyNumber: string | null;
+  buildingName: string | null;
+  buildingId: string | null;
+  /** Flats on this card that name a canonical unit — what a link would claim. */
+  linkedUnitCount: number;
+  filedBy: {
+    registrationId: string;
+    referenceNumber: string;
+    citizenId: string;
+    name: string;
+  } | null;
+  /** Usually one. More than one is a shared household line. */
+  candidates: LandlordCandidate[];
+}
+
+/**
+ * What a save turned up, in both directions.
+ *
+ * `filed` — this household named an owner the register already holds.
+ * `naming` — this household *is* the owner other cards have been naming.
+ *
+ * Both are offers. Nothing has been linked, because a phone is not an identity
+ * and a link can bill.
+ */
+export interface LandlordLinkOffers {
+  filed: LandlordProposal[];
+  naming: LandlordProposal[];
+}
+
+/** The standing queue — every unresolved claim that matches a citizen. */
+export function getLandlordLinks(tenant: string, token: string) {
+  return apiFetch<LandlordProposal[]>(tenant, '/citizens/landlord-links', { token });
+}
+
+/** How much ownership the register knows about and does not bill. */
+export function getLandlordLinkSummary(tenant: string, token: string) {
+  return apiFetch<{ units: number; owners: number }>(
+    tenant,
+    '/citizens/landlord-links/summary',
+    { token },
+  );
+}
+
+/**
+ * Is this number one of ours? — the form's inline lookup.
+ *
+ * Answers `null` where several citizens share the number, which is the shared
+ * household case: the control says nothing rather than offering an arbitrary
+ * one of them as though it were the answer.
+ */
+export async function getLandlordCandidate(tenant: string, token: string, phone: string) {
+  const { candidate } = await apiFetch<{ candidate: LandlordCandidate | null }>(
+    tenant,
+    `/citizens/landlord-links/candidate?phone=${encodeURIComponent(phone)}`,
+    { token },
+  );
+  return candidate;
+}
+
+/**
+ * «نعم، هذا هو المالك».
+ *
+ * Invalidates the census: confirming records an `OWNER` occupancy on every flat
+ * the card names, so the matrix and the map pins this tab is holding describe
+ * the moment before it.
+ */
+export async function confirmLandlordLink(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  citizenId: string,
+) {
+  const result = await apiFetch<{
+    linked: boolean;
+    occupanciesRecorded: number;
+    unitsClaimed: number;
+    /**
+     * Whether the structure was added to the owner's own file by this link.
+     *
+     * False when they had already filed a card on it — the commoner case for an
+     * owner the municipality knows — and the link is no less complete for it.
+     */
+    ownerCardCreated: boolean;
+  }>(tenant, `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/confirm`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ citizenId }),
+  });
+  invalidateCensus(tenant);
+  return result;
+}
+
+/** «ليس هو» — what lets the queue shrink. */
+export function dismissLandlordLink(tenant: string, token: string, propertyEntryId: string) {
+  return apiFetch<{ dismissed: boolean }>(
+    tenant,
+    `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/dismiss`,
+    { token, method: 'POST' },
+  );
+}
+
+/** Undoes a confirmation, putting the claim back in the queue. */
+export function unlinkLandlord(tenant: string, token: string, propertyEntryId: string) {
+  return apiFetch<{ unlinked: boolean }>(
+    tenant,
+    `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}`,
+    { token, method: 'DELETE' },
+  );
 }
 
 /** Soft delete and its undo — a deactivated citizen is skipped by the biller. */

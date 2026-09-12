@@ -21,7 +21,7 @@ import type {
   CensusSyncResult,
   CreateBuildingInput,
 } from '@/lib/api-client';
-import type { PublicTenantConfig } from '@/lib/api-client';
+import type { LandlordLinkOffers, PublicTenantConfig } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatRelative } from '@/lib/dates';
 import {
@@ -34,6 +34,7 @@ import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import type { PropertyDraft, UnitDraft } from '@/components/citizen/property-card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { LandlordLinkPrompt } from '@/components/admin/landlord-link-prompt';
 import { LoadingState } from '@/components/ui/states';
 import { flagsFromArray, unverifiedFromArray } from '@/components/ui/field';
 import { ShellLink, shellNavigate } from './shell-nav';
@@ -612,6 +613,19 @@ export function CitizenEditor({
     values: CitizenFormValues;
     concerns: string[];
   } | null>(null);
+  /**
+   * Owner links the save turned up, and where the officer was going next.
+   *
+   * The route change is held rather than the save — the record is committed by
+   * the time this is set. Keeping the destination here rather than recomputing
+   * it on close means a create and an edit leave by exactly the path they
+   * already decided on, including the citizen id a create only learns from its
+   * own response.
+   */
+  const [linkOffers, setLinkOffers] = useState<{
+    offers: LandlordLinkOffers;
+    next: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   /**
    * When the restored draft was last written, or `null` if this is a fresh
@@ -1171,11 +1185,53 @@ export function CitizenEditor({
         }
       }
 
+      /*
+        Navigation, or the owner question first.
+
+        A save that turned up a possible owner link holds the route change and
+        puts the question while the officer is still here — see
+        `LandlordLinkPrompt` for why now is the only cheap moment to ask it.
+        The record is already committed either way; what is deferred is the
+        push, and the dialog performs it on close.
+
+        `setSubmitting(false)` deliberately does not run in the held case. The
+        form underneath is finished and about to be left, and re-enabling its
+        save button behind a modal is an invitation to file the household twice.
+      */
+      /*
+        Where the officer actually wanted to end up.
+
+        An officer who arrived through «تسجيل أسرة في هذه الوحدة» was sent here
+        *by a flat*, and their next move is invariably that same flat — check
+        the occupancy landed, register the neighbour, log the next visit. The
+        form dropped them on the new citizen's file instead, so every household
+        cost a trip back to the ledger, a search for the building, and a hunt
+        through the matrix for the unit they had just been standing in.
+
+        Everything the census sync wrote is on the drawer they came from, which
+        is also the screen that can *show* it — the citizen's own file cannot
+        say whether the unit left «غير ممسوحة». So the return is to the matrix,
+        with the drawer reopened on the same building.
+      */
+      const destination = lockedCensusTarget
+        ? `${base}/buildings?matrix=${encodeURIComponent(lockedCensusTarget.buildingId)}`
+        : null;
+
+      const leave = (offers: LandlordLinkOffers | null, href: string) => {
+        const next = destination ?? href;
+        const pending = (offers?.filed.length ?? 0) + (offers?.naming.length ?? 0);
+        if (pending > 0 && offers) {
+          setLinkOffers({ offers, next });
+          return;
+        }
+        router.push(next);
+      };
+
       try {
         if (citizenId) {
           const updated = await updateCitizen(tenant, token, citizenId, payload);
           announceCensus(updated.census, toast, locale);
-          router.push(`${base}/citizens/${citizenId}`);
+          leave(updated.landlordLinks, `${base}/citizens/${citizenId}`);
         } else {
           const created = await createCitizen(tenant, token, payload);
           announceCensus(created.census, toast, locale, created.deduplicated);
@@ -1224,7 +1280,7 @@ export function CitizenEditor({
             }
           }
 
-          router.push(`${base}/citizens/${created.citizenId}`);
+          leave(created.landlordLinks, `${base}/citizens/${created.citizenId}`);
         }
         router.refresh();
       } catch (caught) {
@@ -1276,6 +1332,7 @@ export function CitizenEditor({
       citizenId,
       queueId,
       fromCaseId,
+      lockedCensusTarget,
       base,
       router,
       locale,
@@ -1495,6 +1552,30 @@ export function CitizenEditor({
           if (held) await submit(held.values, true);
         }}
       />
+
+      {/*
+        The owner question, after a save that turned one up.
+
+        Rendered here rather than on the destination page because the officer
+        who typed the number is the person who can answer it — the file they
+        land on next belongs to the household, not to the claim. The push it is
+        holding runs on close, whichever way the question was answered or left.
+      */}
+      {linkOffers ? (
+        <LandlordLinkPrompt
+          tenant={tenant}
+          token={token}
+          offers={linkOffers.offers}
+          citizenHref={(id) => `${base}/citizens/${id}`}
+          onClose={() => {
+            const next = linkOffers.next;
+            setLinkOffers(null);
+            router.push(next);
+            router.refresh();
+          }}
+          locale={locale}
+        />
+      ) : null}
     </div>
   );
 }

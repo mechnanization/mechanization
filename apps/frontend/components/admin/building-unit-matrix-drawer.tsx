@@ -40,6 +40,8 @@ import {
   ApiRequestError,
   createCase,
   deleteUnit,
+  duplicateUnitsOf,
+  type DuplicateUnitCandidate,
   endOccupancy,
   getBuilding,
   getBuildingDamage,
@@ -348,6 +350,19 @@ export function BuildingUnitMatrixDrawer({
   /** Which floor's «إضافة وحدة» row is open, and the type chosen in it. */
   const [addingFloor, setAddingFloor] = useState<number | null>(null);
   const [addingType, setAddingType] = useState('');
+  /**
+   * The units the server held out when «إضافة وحدة» hit its duplicate guard.
+   *
+   * Carries the floor and type it was asked about, not just the candidates:
+   * the confirmation re-sends the *same* addition with the flag set, and the
+   * add row it came from may already have been closed or moved to another
+   * floor by the time the officer answers.
+   */
+  const [duplicateUnits, setDuplicateUnits] = useState<{
+    floor: number;
+    unitType: string;
+    candidates: DuplicateUnitCandidate[];
+  } | null>(null);
 
   const surveyed = building?.unitsSurveyed ?? 0;
   const total = building?.unitsTotal ?? 0;
@@ -390,20 +405,58 @@ export function BuildingUnitMatrixDrawer({
    * an advisory lock so two officers filling one matrix cannot both claim the
    * same position.
    */
-  const addOnFloor = (floor: number, unitType: string) => {
+  const addOnFloor = async (floor: number, unitType: string, acknowledged = false) => {
     if (!building || !unitType) return;
-    return run(
-      async () => {
-        const created = await addUnit(tenant, token, building.id, {
-          floor,
-          unitType: unitType as UpsertUnitInput['unitType'],
-        });
-        setAddingFloor(null);
-        setAddingType('');
-        return en ? `Unit ${created.unitCode} added` : `تمت إضافة الوحدة ${created.unitCode}`;
-      },
-      en ? 'Could not add the unit.' : 'تعذّرت إضافة الوحدة.',
-    );
+
+    setBusy(true);
+    setActionError(null);
+    try {
+      const created = await addUnit(tenant, token, building.id, {
+        floor,
+        unitType: unitType as UpsertUnitInput['unitType'],
+        ...(acknowledged ? { acknowledgedDuplicates: true } : {}),
+      });
+      await load();
+      onChanged?.();
+      setAddingFloor(null);
+      setAddingType('');
+      setDuplicateUnits(null);
+      toast.success(
+        en ? `Unit ${created.unitCode} added` : `تمت إضافة الوحدة ${created.unitCode}`,
+      );
+    } catch (caught) {
+      logApiError(caught);
+
+      /*
+        The floor already has a unit of this type, and the server is holding it
+        out rather than refusing outright.
+
+        This whole branch is why `addOnFloor` no longer goes through `run`.
+        `run` treats every rejection as final — it prints the server's message
+        and stops — so the one refusal that is *a question* arrived here as a
+        wall: «يوجد على هذا الطابق ٢ وحدات مسجَّلة من النوع نفسه… تأكَّد أن هذه
+        وحدة مختلفة قبل المتابعة» told the officer exactly what to confirm and
+        gave them nothing to confirm it with. A floor with four flats on it is
+        ordinary, so the commonest legitimate addition in the building was the
+        one this screen could not make.
+
+        The picker has had the acknowledgement since D18; the drawer never got
+        it, which is how the same guard became helpful in one place and a dead
+        end in the other. The answer is allowed to be yes.
+      */
+      const clashes = duplicateUnitsOf(caught);
+      if (clashes) {
+        setDuplicateUnits({ floor, unitType, candidates: clashes });
+        return;
+      }
+
+      const failure = en ? 'Could not add the unit.' : 'تعذّرت إضافة الوحدة.';
+      const message = caught instanceof ApiRequestError ? caught.payload.message : failure;
+      setActionError(message);
+      toast.error(failure, { description: message });
+    } finally {
+      setBusy(false);
+    }
   };
 
   /**
@@ -635,43 +688,153 @@ export function BuildingUnitMatrixDrawer({
                   </div>
 
                   {addingFloor === floor ? (
-                    <div className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
-                      <Select value={addingType} onValueChange={setAddingType}>
-                        <SelectTrigger className="h-8 w-44 text-xs">
-                          <SelectValue placeholder={en ? 'Unit type…' : 'نوع الوحدة…'} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {BUILDING_UNIT_TYPES.map((option) => (
-                            <SelectItem key={option} value={option}>
-                              {labels.unitType[option]}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        size="sm"
-                        disabled={busy || !addingType}
-                        onClick={() => void addOnFloor(floor, addingType)}
-                      >
-                        {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
-                        {en ? 'Add' : 'إضافة'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={busy}
-                        onClick={() => {
-                          setAddingFloor(null);
-                          setAddingType('');
-                        }}
-                      >
-                        {en ? 'Cancel' : 'إلغاء'}
-                      </Button>
-                      <span className="text-[11px] text-muted-foreground">
-                        {en
-                          ? 'The code is assigned from the floor.'
-                          : 'يُشتق رمز الوحدة من الطابق.'}
-                      </span>
+                    <div className="space-y-2 border-b bg-background px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Select value={addingType} onValueChange={setAddingType}>
+                          <SelectTrigger className="h-8 w-44 text-xs">
+                            <SelectValue placeholder={en ? 'Unit type…' : 'نوع الوحدة…'} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {BUILDING_UNIT_TYPES.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {labels.unitType[option]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          size="sm"
+                          disabled={busy || !addingType || duplicateUnits !== null}
+                          onClick={() => void addOnFloor(floor, addingType)}
+                        >
+                          {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
+                          {en ? 'Add' : 'إضافة'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy}
+                          onClick={() => {
+                            setAddingFloor(null);
+                            setAddingType('');
+                            setDuplicateUnits(null);
+                          }}
+                        >
+                          {en ? 'Cancel' : 'إلغاء'}
+                        </Button>
+                        <span className="text-[11px] text-muted-foreground">
+                          {en
+                            ? 'The code is assigned from the floor.'
+                            : 'يُشتق رمز الوحدة من الطابق.'}
+                        </span>
+                      </div>
+
+                      {/*
+                        The floor already has one of these — the moment of
+                        noticing, and the answer is allowed to be yes.
+
+                        `addUnit` takes the next free position on the floor, so
+                        no database constraint could ever refuse a second محل
+                        beside an existing محل. That is how one physical shop
+                        came to be in the register twice, and the guard exists
+                        to make somebody look. What it must not be is a wall:
+                        four flats a floor is ordinary, and the names below are
+                        the only thing that tells two identical-looking units
+                        apart.
+                      */}
+                      {duplicateUnits && duplicateUnits.floor === floor ? (
+                        <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2.5">
+                          <p className="flex items-start gap-1.5 text-[11px] font-medium leading-relaxed">
+                            <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+                            {en
+                              ? 'This floor already has a unit of the same type. Is the one you are adding different?'
+                              : 'يوجد على هذا الطابق وحدة من النوع نفسه. هل الوحدة التي تضيفها مختلفة عنها؟'}
+                          </p>
+
+                          <ul className="space-y-1">
+                            {duplicateUnits.candidates.map((row) => (
+                              <li
+                                key={row.id}
+                                className="rounded-md bg-background/70 px-2 py-1.5 text-[11px] leading-relaxed"
+                              >
+                                <span className="font-mono font-medium" dir="ltr">
+                                  {row.unitCode}
+                                </span>
+                                {row.postedNumber && row.postedNumber !== row.unitCode ? (
+                                  <span className="text-muted-foreground" dir="ltr">
+                                    {' '}
+                                    ({row.postedNumber})
+                                  </span>
+                                ) : null}
+                                <span className="text-muted-foreground">
+                                  {' — '}
+                                  {[
+                                    labels.unitType[row.unitType],
+                                    row.side,
+                                    row.unitArea != null
+                                      ? en
+                                        ? `${row.unitArea} m²`
+                                        : `${row.unitArea} م²`
+                                      : null,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </span>
+                                {/*
+                                  The fact that actually settles it. A floor
+                                  whose محل already has a named مستأجر is a
+                                  floor where «إضافة وحدة» is almost certainly
+                                  the wrong button, and no amount of code and
+                                  area says that as directly as a name does.
+                                */}
+                                {row.occupants.length > 0 ? (
+                                  <span className="block font-medium">
+                                    {row.occupants
+                                      .map(
+                                        (occupant) =>
+                                          `${labels.occupancyRole[occupant.role]}: ${
+                                            occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')
+                                          }`,
+                                      )
+                                      .join('، ')}
+                                  </span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button
+                              size="sm"
+                              disabled={busy}
+                              onClick={() =>
+                                void addOnFloor(
+                                  duplicateUnits.floor,
+                                  duplicateUnits.unitType,
+                                  true,
+                                )
+                              }
+                            >
+                              {busy ? (
+                                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                              ) : null}
+                              {en ? 'Yes, it is a different unit' : 'نعم، هذه وحدة مختلفة'}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={busy}
+                              onClick={() => {
+                                setDuplicateUnits(null);
+                                setAddingFloor(null);
+                                setAddingType('');
+                              }}
+                            >
+                              {en ? 'No, it is one of these' : 'لا، إنها إحداها'}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                   <ul className="grid grid-cols-1 gap-2 p-2 sm:grid-cols-2 lg:grid-cols-3">

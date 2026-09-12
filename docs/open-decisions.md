@@ -416,3 +416,104 @@ Needed from the municipality:
 is invisible, because the register is keyed to citizens and a property card
 only exists under one. This records the vacancies of people the municipality
 already knows about; it is not a vacancy census.
+
+---
+
+## 13. Whether a confirmed owner link may be billed
+
+**Status: decided 2026-09-11 — yes, a confirmed link puts the structure on the
+owner's file, and the file is what bills.** The reasoning and the remaining
+exposure are below; the council question that is *not* settled by it is the last
+bullet.
+
+`PropertyEntry.landlordPhone` has been collected since the first migration and
+compared against nothing. A tenant's file named their owner and gave a number
+for them, and the register could not tell you whether that number belonged to a
+citizen it had registered. الأرصفة and المجاري fall on the deed holder
+(`FeeNotice.bearer = 'OWNER'`), so an owner the register could not recognise was
+an owner nobody billed — with no row anywhere saying how much was going
+uncollected, or on how many units.
+
+**What is built:**
+
+- `landlordCitizenId` on `PropertyEntry` — the owner named here *is* this
+  registered citizen. Written only by `LandlordLinkService.confirm`, which is
+  only reachable from a screen where a person said yes.
+- `landlordLinkDismissedAt` — and this one was ruled out. The two are the only
+  stored state, because the *match* is derived (any card whose `landlordPhone`
+  equals some citizen's `phone` or `whatsapp`) and only a human's answers are
+  not.
+- The question asked twice: inline in the form while the officer is still with
+  the tenant, and from «روابط المالكين» for the ones nobody answered.
+- Confirming records an `OWNER` occupancy on every canonical unit the card
+  names, so the matrix shows them.
+
+**Why nothing links itself.** A phone is not an identity in this schema and says
+so in its own comment — `User` is unique on the identity document *because* «a
+household commonly shares one phone». A father and son on one line are one
+number and two people. `confirm` additionally re-checks that the number actually
+belongs to the citizen being named, so a request pairing an arbitrary citizen
+with an arbitrary card is refused rather than recorded as a confirmed match.
+
+**What a confirmed link does, as decided.** It mints a property card on the
+owner's own registration where they had filed none on that structure. This was
+initially withheld on the grounds that `PropertyEntry` is the citizen's record of
+what *they filed*, and minting one asserts something on their behalf. That
+restraint was overridden deliberately, because the alternative was strictly worse
+in the field: `assessCitizen` bills from property cards and `attachOccupancies`
+consults occupancies only to itemise a مبنى card naming no flats of its own — so
+without a card the register knew the person owned the flat, showed them on the
+matrix, and billed nobody. الأرصفة and المجاري went uncollected on a unit the
+municipality could name.
+
+Two restraints keep the minted card honest, and both are load-bearing:
+
+- **No unit rows.** The card claims the *structure*, not a list of flats nobody
+  enumerated on the owner's behalf. That is also what makes it self-maintaining:
+  an empty `units` array is exactly what `heldThroughOccupancy` answers for, so
+  the claim tracks every flat the owner is linked to — now and after the next
+  tenant — instead of freezing at whatever one tenancy happened to name.
+- **An existing card is never touched.** If the owner already filed for this
+  building, that is their own account of what they hold. Topping up an *itemised*
+  card would also silently change how it is billed: an itemised card stops
+  consuming the occupancy list, so adding the flats from a single tenancy could
+  *reduce* what the owner is charged.
+
+A منزل is the one shape that carries a حالة: it bills its single unit from its
+own columns, so the card states «مؤجرة» / «مشغولة بتسامح» — otherwise `bearsFee`
+reads the null as "nobody was asked" and charges the owner the occupancy fee
+their tenant is already paying. A `TENT_SHELTER` gets no card at all, because
+`branchFieldsOnly` would drop its link on the first edit and leave a holding
+attached to nothing.
+
+Needed from the municipality:
+
+- **Whether a third party's statement may raise a bill. This is the one still
+  open, and it is now live rather than hypothetical.** Confirming says a tenant
+  named this person and a clerk recognised them. It is not a deed. A notice for
+  الأرصفة now *can* rest on it, and that notice is a document somebody has to
+  defend at a counter against an owner who never declared the property — a
+  different conversation from one resting on a card they filed themselves. If the
+  council's answer is no, the remedy is not to unpick the link: it is to keep
+  owner-borne notices off these cards until the owner confirms, which the register
+  can express and nothing currently asks it to.
+- **What the owner is told, and when.** Nobody is currently notified that they
+  have been recorded as owning something on somebody else's say-so. If this
+  becomes billable, being told by the invoice is the wrong way to find out.
+- **Whether confirming should prompt a declaration instead.** The cleaner path
+  may be that a link opens a task — "ask this owner to file their holdings" —
+  rather than being treated as the filing. That keeps the invariant and gets
+  better data, at the cost of another visit.
+
+**Current behaviour:** a confirmed link writes the `landlordCitizenId`, an
+`OWNER` occupancy on each canonical unit the tenant's card names, and — where the
+owner had filed nothing on that structure — a property card on their file. No
+existing invoice changes, and recurring notices re-assess each period, so a link
+confirmed today is picked up at the next assessment rather than backdated.
+
+`unbilledOwnedUnits` still counts what remains recorded and unbilled: an owner
+whose only card on the building was filed as a مستأجر, a `TENT_SHELTER` that
+cannot carry the link, a citizen with no registration to hang a card on.
+«روابط المالكين» prints it above the queue. Revenue absent by design is still
+revenue absent, and it has to be a number somebody can take to the council rather
+than a difference nobody can see.

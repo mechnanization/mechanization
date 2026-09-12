@@ -168,6 +168,10 @@ model User {
   createdCases          Case[]               @relation("CaseCreatedBy")
   resolvedCases         Case[]               @relation("CaseResolvedCitizen")
   unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
+  /// Cards filed by *other* citizens that name this person as their landlord.
+  /// Not a holding: it is somebody else's statement about them, confirmed by a
+  /// clerk. See `PropertyEntry.landlordCitizenId`.
+  namedAsLandlordOn     PropertyEntry[]      @relation("NamedLandlord")
   damageAssessments     DamageAssessment[]   @relation("DamageAssessedBy")
   buildingsCreated      Building[]           @relation("BuildingCreatedBy")
   unitVisits            UnitVisit[]          @relation("UnitVisitOfficer")
@@ -393,6 +397,42 @@ model PropertyEntry {
   landlordName  String?
   landlordPhone String?
 
+  /// The registered citizen the landlord named above has been identified as.
+  ///
+  /// Until this column existed, `landlordPhone` was a dead end: written on a
+  /// tenant's card, read back in reports, redacted in the audit log, and
+  /// matched against nothing. So a مستأجر's file named their owner and the
+  /// register could not tell you whether that owner was one of its own
+  /// citizens — and the الأرصفة and المجاري owed on the flat went uncollected
+  /// with no row anywhere saying so.
+  ///
+  /// **Set only by a person.** A phone match is evidence, never proof: this
+  /// schema says so itself two tables up, where `@@unique` is on the identity
+  /// document *because* «a household commonly shares one phone». Writing this
+  /// column on a bare number match would attach a father's flat to his son and
+  /// then bill him for it. `LandlordLinkService.confirm` is the only writer,
+  /// and it is reached from a screen where somebody said yes.
+  ///
+  /// `SetNull`, never `Cascade`: deleting a citizen must not delete their
+  /// tenant's record of what they filed. The claim — the name and the number —
+  /// survives, and becomes matchable again.
+  landlordCitizenId String? @db.Uuid
+  landlordCitizen   User?   @relation("NamedLandlord", fields: [landlordCitizenId], references: [id], onDelete: SetNull)
+
+  /// When somebody looked at a phone match on this card and said it was not
+  /// the same person.
+  ///
+  /// A dismissal has to be storable or the queue cannot shrink: the match is
+  /// *derived* — any citizen whose phone equals this card's `landlordPhone` —
+  /// so there is no proposal row to delete, and a match rejected on Monday
+  /// would be proposed again every day after. This is the one bit of state
+  /// that derivation cannot reproduce, which is exactly why it is stored and
+  /// nothing else about the match is.
+  ///
+  /// Cleared whenever `landlordPhone` changes: a different number is a
+  /// different claim, and the answer to the old one says nothing about it.
+  landlordLinkDismissedAt DateTime?
+
   propertyType   PropertyType
   /// الحي — common to every property type. Free text: unlike رقم العقار there is
   /// no neighbourhood layer in the cadastre to check it against.
@@ -452,6 +492,11 @@ model PropertyEntry {
   @@index([propertyNumber])
   @@index([latitude, longitude])
   @@index([buildingId])
+  /// What makes the landlord match a lookup rather than a table scan. The
+  /// review queue asks "which unresolved claims name a number some citizen is
+  /// registered under", once per open screen, over every card ever filed.
+  @@index([landlordPhone])
+  @@index([landlordCitizenId])
   @@map("property_entries")
 }
 
