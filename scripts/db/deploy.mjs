@@ -390,8 +390,12 @@ async function main() {
     DIRECT_URL: target.env.DIRECT_URL,
   };
 
-  run('prisma:deploy:registry', env, 'Registry migration');
-  run('tenant:migrate-all', env, 'Tenant migration');
+  if (pending.registryPending.length > 0) {
+    run('prisma:deploy:registry', env, 'Registry migration');
+  }
+  if (pending.tenantPendingUnion.length > 0) {
+    run('tenant:migrate-all', env, 'Tenant migration');
+  }
 
   console.log('');
   await verifyApplied(target.env.DIRECT_URL, pending.registryPending);

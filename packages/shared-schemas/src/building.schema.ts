@@ -96,6 +96,24 @@ const floorsCount = z.coerce
   .max(100, 'عدد الطوابق كبير جداً');
 
 /**
+ * How far below the pavement a structure goes, as a depth: 2 means B1 and B2.
+ *
+ * A magnitude rather than the lowest floor (−2), because the two encode the
+ * same fact and only one of them can be written down wrong — a "lowest floor"
+ * field invites a positive number, and its `0` is ambiguous between "no
+ * basement" and "the ground floor is the lowest", which coincide only by
+ * accident.
+ *
+ * The ceiling is `floorField`'s own floor, so a declared depth can never name
+ * a basement no unit could be filed against.
+ */
+const basementsCount = z.coerce
+  .number({ invalid_type_error: 'عدد الطوابق تحت الأرض يجب أن يكون رقماً' })
+  .int('عدد الطوابق تحت الأرض يجب أن يكون رقماً صحيحاً')
+  .min(0, 'عدد الطوابق تحت الأرض لا يمكن أن يكون سالباً')
+  .max(10, 'عدد الطوابق تحت الأرض كبير جداً');
+
+/**
  * A signed floor: basement negative, ground 0. Matches `Unit.floor` and the
  * range `parseFloorLabel` clamps to, so the two cannot disagree about what a
  * storable floor is.
@@ -125,6 +143,25 @@ export const upsertUnitSchema = z.object({
     .int('الترتيب يجب أن يكون رقماً صحيحاً')
     .min(1, 'الترتيب يبدأ من 1')
     .max(99, 'الترتيب كبير جداً')
+    .optional(),
+  /**
+   * 1-based, inclusive column span on the grid this unit was painted on — see
+   * `Unit.startCol`/`endCol`. Sent together by the only real writer
+   * (`flattenGridUnits`, which always has `endCol >= startCol` by
+   * construction); not refined against each other here since a lone field is
+   * a harmless edge case rather than one worth hard-blocking.
+   */
+  startCol: z.coerce
+    .number({ invalid_type_error: 'العمود يجب أن يكون رقماً' })
+    .int('العمود يجب أن يكون رقماً صحيحاً')
+    .min(1)
+    .max(20)
+    .optional(),
+  endCol: z.coerce
+    .number({ invalid_type_error: 'العمود يجب أن يكون رقماً' })
+    .int('العمود يجب أن يكون رقماً صحيحاً')
+    .min(1)
+    .max(20)
     .optional(),
   unitType: unitTypeSchema,
   postedNumber: postedNumber.optional(),
@@ -162,13 +199,14 @@ export type UpsertUnitInput = z.infer<typeof upsertUnitSchema>;
 /**
  * How many units one `create` may carry inline.
  *
- * Smaller than `MAX_GENERATED_UNITS` on purpose: a blueprint says "twelve
- * floors of four" in four numbers, while this is a list somebody typed or a
- * card enumerated, and a registration form has no honest reason to describe
- * more flats than one household could hold. A genuine tower is created from the
- * editor and filled from the blueprint generator.
+ * Shared with `MAX_GENERATED_UNITS`: a registration form's inline list is
+ * still a handful of flats one household holds, but the building editor's
+ * unit-matrix grid also creates inline — an officer painting an N×N grid (N
+ * up to 20) can produce up to 400 units in one request. The cap is sized to
+ * that grid's own physical ceiling rather than to either caller alone, so it
+ * never rejects a legitimate grid save.
  */
-const MAX_INLINE_UNITS = 40;
+const MAX_INLINE_UNITS = 400;
 
 export const createBuildingSchema = z
   .object({
@@ -197,6 +235,15 @@ export const createBuildingSchema = z
     latitude: latitude.optional(),
     longitude: longitude.optional(),
     floorsCount: floorsCount.default(1),
+    /*
+      Optional rather than defaulted, unlike `floorsCount` beside it: a
+      building with no basement is the overwhelming majority, so omitting the
+      field is the ordinary case and `create` reads the absence as zero. A
+      `.default()` here would make the *parsed* type require it and force every
+      internal caller — the registration form's inline creation, the offline
+      queue, every fixture — to state a depth they have no opinion about.
+    */
+    basementsCount: basementsCount.optional(),
     notes: notes.optional(),
     /**
      * «نعم، هذه منشأة مختلفة» — the officer has seen what already stands on
@@ -302,6 +349,7 @@ export const updateBuildingSchema = z
     latitude: latitude.nullable().optional(),
     longitude: longitude.nullable().optional(),
     floorsCount: floorsCount.optional(),
+    basementsCount: basementsCount.optional(),
     notes: notes.nullable().optional(),
   })
   .superRefine((value, ctx) => {
@@ -457,6 +505,12 @@ export type CreateDamageAssessmentInput = z.infer<typeof createDamageAssessmentS
  * that flat 3 is rented and who owns it. The link is set by the registration
  * path when a file does exist, and the column stays null here rather than
  * inviting a client to assert a registration it does not own.
+ *
+ * The server still *backs* the spell onto that citizen's file if they have
+ * one — see `BuildingsService.claimOnFile`, the mirror of the release
+ * `endOccupancy` already performs. Recording an occupant and having their own
+ * card go on saying nothing about the flat is the asymmetry that produced the
+ * «غير مرتبط بملفه» warning on the commonest correct action in the census.
  */
 export const upsertOccupancySchema = z
   .object({
@@ -470,6 +524,24 @@ export const upsertOccupancySchema = z
       .min(1, 'يجب أن يكون سهماً واحداً على الأقل')
       .max(2400, 'الحد الأقصى 2400 سهم')
       .optional(),
+    /**
+     * حالة الوحدة, stated rather than inferred — and asked of an owner only.
+     *
+     * `unitStatusForRole` already settles the non-owner cases: a مستأجر makes
+     * the flat «مؤجرة» and a شاغل بتسامح makes it «مشغولة بتسامح», because
+     * those people *are* the شاغل of what they are being recorded in. An owner
+     * is the one capacity that says nothing on its own — the deed is not a
+     * statement of residence (D2) — so «تسجيل مالك» left the flat unanswered,
+     * and `bearsFee` reads an unanswered flat as one to charge the owner the
+     * occupancy fee for. An owner who lives there, an owner who lets it, an
+     * owner whose son is in it and an owner of an empty shell are four
+     * different bills, and this form could state none of them.
+     *
+     * Offering it to a non-owner would invite a contradiction the register
+     * cannot resolve — a مستأجر on a «شاغرة» flat — so the refinement below
+     * refuses it there rather than quietly preferring one of the two answers.
+     */
+    unitStatus: unitStatusSchema.optional(),
     fromDate: z.coerce.date({ invalid_type_error: 'تاريخ البدء غير صالح' }).optional(),
     toDate: z.coerce.date({ invalid_type_error: 'تاريخ الانتهاء غير صالح' }).optional(),
   })
@@ -481,6 +553,22 @@ export const upsertOccupancySchema = z
         code: z.ZodIssueCode.custom,
         path: ['shares'],
         message: 'الأسهم تُسجَّل للمالك فقط',
+      });
+    }
+
+    /*
+      A non-owner's حالة is their capacity, and the two cannot disagree.
+
+      `unitStatusForRole` derives it server-side; accepting a second answer
+      here would let a client record a مستأجر and declare the flat «شاغرة» in
+      one request, which is not a finding but a contradiction — and one the
+      register would then go on to bill against.
+    */
+    if (value.unitStatus !== undefined && value.role !== 'OWNER') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['unitStatus'],
+        message: 'حالة الوحدة تُسأل للمالك وحده — صفة الشاغل تحددها',
       });
     }
 

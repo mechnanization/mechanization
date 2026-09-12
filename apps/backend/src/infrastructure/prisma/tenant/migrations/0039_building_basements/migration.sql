@@ -1,0 +1,43 @@
+-- 0039_building_basements
+--
+-- «عدد الطوابق تحت الأرض» — how far down a building goes.
+--
+-- == What could not be recorded ===========================================
+--
+-- `Unit.floor` has been a signed integer since the table was created, and
+-- `formatUnitCode` has always printed a basement unit as `B102` — floor −1,
+-- unit 2. So the *units* of a basement were storable from the first day. What
+-- was not storable was the basement itself.
+--
+-- `floorsCount` counts storeys above ground and nothing else: `addUnit` raises
+-- it to `floor + 1` and skips negatives outright, `generateUnits` refuses a
+-- blueprint whose top floor exceeds it, and the census figures read it as the
+-- height of the building. There was no column anywhere that said a building
+-- has two levels below the pavement, so the only evidence of a basement was a
+-- unit already recorded in one — and a building surveyed from the street, with
+-- its basement not yet walked, had no way to say the basement was there.
+--
+-- That is the same gap `floorsCount` exists to close above ground, where a
+-- declared fifth floor with no units on it is still a fifth floor.
+--
+-- == Why a depth and not a signed floor ===================================
+--
+-- Stored as a magnitude — 2 means B1 and B2 — rather than as the lowest floor
+-- (−2). Both encode the same fact, and the magnitude is the one that cannot be
+-- written down wrong: a "lowest floor" column invites a positive number, and
+-- `0` would then be ambiguous between "no basement" and "the ground floor is
+-- the lowest floor", which are the same thing said two ways only by accident.
+--
+-- == Why the default is safe ==============================================
+--
+-- `0` for every building that already exists, which is the honest answer: the
+-- census had no way to record a basement, so nobody recorded one. Buildings
+-- whose basement units *were* entered (via the signed `floor` on a unit) keep
+-- those units untouched; the editor reconciles the declared depth upward from
+-- them on the next save, exactly as it does for `floorsCount`.
+--
+-- Written unqualified: the migrator sets `search_path` to the target tenant
+-- schema before running this.
+
+ALTER TABLE "buildings"
+  ADD COLUMN IF NOT EXISTS "basementsCount" INTEGER NOT NULL DEFAULT 0;

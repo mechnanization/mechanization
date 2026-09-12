@@ -179,10 +179,16 @@ describe('createBuildingSchema', () => {
       ).toBe(false);
     });
 
-    it('refuses a matrix too large to have been typed by a person', () => {
-      // A genuine tower is created from the editor and filled by the blueprint
-      // generator; this path describes the flats one household holds.
-      const units = Array.from({ length: 41 }, () => ({ floor: 1, unitType: 'APARTMENT' }));
+    it('accepts a matrix at the unit-grid ceiling (20x20)', () => {
+      // The building editor's unit-matrix grid creates inline too, up to its
+      // own 20x20 physical maximum — this cap is sized to that, not just to a
+      // registration form's handful of flats.
+      const units = Array.from({ length: 400 }, () => ({ floor: 1, unitType: 'APARTMENT' }));
+      expect(createBuildingSchema.safeParse({ ...valid, units }).success).toBe(true);
+    });
+
+    it('refuses a matrix larger than the unit-grid ceiling', () => {
+      const units = Array.from({ length: 401 }, () => ({ floor: 1, unitType: 'APARTMENT' }));
       expect(createBuildingSchema.safeParse({ ...valid, units }).success).toBe(false);
     });
 

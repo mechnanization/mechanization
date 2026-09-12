@@ -19,6 +19,7 @@ import type {
   CitizenImportRequest,
 } from '@mechanization/shared-schemas';
 import { CitizensService } from '../../application/features/citizens/citizens.service';
+import { LandlordLinkService } from '../../application/features/citizens/landlord-link.service';
 import { ReportingService } from '../../application/features/reporting/reporting.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { NotFoundError } from '../../application/common/exceptions';
@@ -66,6 +67,7 @@ export class CitizenController {
   constructor(
     private readonly citizens: CitizensService,
     private readonly reporting: ReportingService,
+    private readonly landlordLinkService: LandlordLinkService,
   ) {}
 
   /**
@@ -154,6 +156,116 @@ export class CitizenController {
       payments: citizen.payments,
       fees: citizen.fees,
     };
+  }
+
+  // ──────────────────  Owner links (روابط المالكين)  ──────────────────
+  //
+  // Declared above `:id` for the reason `parcel` is: Nest matches in
+  // declaration order, and `landlord-links` would otherwise be read as a
+  // citizen id.
+  //
+  // Everything here is about identifying the owner a مستأجر named, among the
+  // register's own citizens — see `LandlordLinkService` for why the match is
+  // computed rather than stored, and why nothing links itself.
+
+  /**
+   * The queue: every unresolved claim whose number matches a registered
+   * citizen.
+   *
+   * Readable by the roles that read the register, because it is a view of the
+   * register. Acting on one is a narrower list — see `confirmLandlordLink`.
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Get('landlord-links')
+  landlordLinks() {
+    return this.landlordLinkService.proposals();
+  }
+
+  /**
+   * How much ownership the register knows about and does not bill.
+   *
+   * Split out from the queue rather than folded into it because it answers a
+   * different person's question: the queue is a clerk's afternoon, this is the
+   * number somebody takes to the council. See `unbilledOwnedUnits`.
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Get('landlord-links/summary')
+  landlordLinkSummary() {
+    return this.landlordLinkService.unbilledOwnedUnits();
+  }
+
+  /**
+   * The form's inline lookup: is this number one of ours?
+   *
+   * Answers at most one citizen and deliberately says nothing where several
+   * share the number — the shared-household case, where picking would be
+   * guessing. The queue shows all of them to a person instead.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Get('landlord-links/candidate')
+  async landlordCandidate(@Query('phone') phone?: string) {
+    if (!phone?.trim()) return { candidate: null };
+    return { candidate: await this.landlordLinkService.candidateFor(phone) };
+  }
+
+  /**
+   * «نعم، هذا هو المالك» — the only writer of `landlordCitizenId`.
+   *
+   * Gated to the roles accountable for the register rather than to every
+   * reader, because this decides money: a confirmed link records ownership,
+   * shows the owner on the matrix, and can put units on a bill. AUDITOR sees
+   * the queue and does not answer it, which is the read-only remit its name
+   * implies.
+   *
+   * The service re-checks that the number actually matches the citizen before
+   * writing, so a request naming an arbitrary pair is refused rather than
+   * recorded as a confirmed match.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Post('landlord-links/:propertyEntryId/confirm')
+  confirmLandlordLink(
+    @Param('propertyEntryId') propertyEntryId: string,
+    @Body('citizenId') citizenId: string,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.landlordLinkService.confirm({
+      propertyEntryId,
+      citizenId,
+      actor: { id: user.sub, role: user.role ?? 'STAFF' },
+    });
+  }
+
+  /** «ليس هو» — what lets the queue shrink. See `landlordLinkDismissedAt`. */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Post('landlord-links/:propertyEntryId/dismiss')
+  dismissLandlordLink(
+    @Param('propertyEntryId') propertyEntryId: string,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.landlordLinkService.dismiss({
+      propertyEntryId,
+      actor: { id: user.sub, role: user.role ?? 'STAFF' },
+    });
+  }
+
+  /**
+   * Undoes a confirmation, putting the claim back in the queue.
+   *
+   * The correction path for the one mistake this feature can make — the wrong
+   * person confirmed off a shared household line. It does not withdraw the
+   * occupancies the link recorded; ending a spell is `endOccupancy`'s job on
+   * the matrix, which records who ended it and when.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Delete('landlord-links/:propertyEntryId')
+  unlinkLandlord(
+    @Param('propertyEntryId') propertyEntryId: string,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.landlordLinkService.unlink({
+      propertyEntryId,
+      actor: { id: user.sub, role: user.role ?? 'STAFF' },
+    });
   }
 
   /**

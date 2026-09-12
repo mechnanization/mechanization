@@ -124,6 +124,18 @@ export const propertyNumberField = z
  * الحي — common to every property type, unlike رقم العقار it is not checked
  * against anything (the cadastre has no neighbourhood layer), so this is a
  * plain free-text field rather than a lookup.
+ *
+ * **Optional, and no longer asked for.** A neighbourhood typed by hand on every
+ * card is the same fact a parcel's zone already carries — `Zone.parcelNumbers`
+ * says which sector a عقار belongs to (D13), derived once and centrally rather
+ * than re-entered per household with a different spelling each time. The field
+ * is kept on the wire and in the column so the values already collected survive
+ * a round-trip untouched, and so the forms can start rendering it again the day
+ * it is wired to the zone instead of to a keyboard.
+ *
+ * `.optional()` is applied at each branch rather than here: the constant is
+ * also what shapes an existing value, and a schema that accepted `undefined`
+ * everywhere would stop reporting a genuinely malformed one.
  */
 export const neighborhoodField = z
   .string({ required_error: 'الحي مطلوب' })
@@ -206,7 +218,7 @@ const propertyBranch = z.discriminatedUnion(
   [
     z.object({
       propertyType: z.literal('BUILDING'),
-      neighborhood: neighborhoodField,
+      neighborhood: neighborhoodField.optional(),
       propertyNumber: propertyNumberField,
       /**
        * The censused structure this card is about, when one was picked.
@@ -225,7 +237,7 @@ const propertyBranch = z.discriminatedUnion(
     }),
     z.object({
       propertyType: z.literal('HOUSE'),
-      neighborhood: neighborhoodField,
+      neighborhood: neighborhoodField.optional(),
       propertyNumber: propertyNumberField,
       buildingId: uuid.optional(),
       buildingName: z
@@ -240,7 +252,7 @@ const propertyBranch = z.discriminatedUnion(
     }),
     z.object({
       propertyType: z.literal('LAND'),
-      neighborhood: neighborhoodField,
+      neighborhood: neighborhoodField.optional(),
       propertyNumber: propertyNumberField,
       landType: landTypeSchema,
       unitArea: areaField,
@@ -248,7 +260,7 @@ const propertyBranch = z.discriminatedUnion(
     }),
     z.object({
       propertyType: z.literal('TENT'),
-      neighborhood: neighborhoodField,
+      neighborhood: neighborhoodField.optional(),
       propertyNumber: propertyNumberField,
       tentLocation: z
         .string({ required_error: 'موقع الخيمة مطلوب' })
@@ -304,7 +316,7 @@ export const partialPropertyEntrySchema = z
     landlordName: arabicOrLatinName,
     landlordPhone: internationalPhone,
     propertyType: propertyTypeSchema,
-    neighborhood: neighborhoodField,
+    neighborhood: neighborhoodField.optional(),
     propertyNumber: propertyNumberField,
     buildingId: uuid,
     buildingName: z.string().trim().min(1).max(120),

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   adminCreateCitizenSchema,
@@ -31,6 +31,7 @@ import type {
 } from '../../../domain/interfaces/parcel-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { CensusSyncService } from '../buildings/census-sync.service';
+import { LandlordLinkService, type LandlordProposal } from './landlord-link.service';
 import {
   RegistrationService,
   unestablishedOnCard,
@@ -203,12 +204,15 @@ interface CitizenListAggregate {
  */
 @Injectable()
 export class CitizensService {
+  private readonly logger = new Logger(CitizensService.name);
+
   constructor(
     private readonly tenantContext: TenantContextService,
     private readonly registrations: RegistrationService,
     private readonly tenants: TenantService,
     @Inject(PARCEL_REPOSITORY) private readonly parcels: ParcelRepository,
     private readonly census: CensusSyncService,
+    private readonly landlordLinks: LandlordLinkService,
     private readonly events: EventEmitter2,
   ) {}
 
@@ -648,6 +652,26 @@ export class CitizensService {
           actor: input.actor,
         });
 
+    /*
+      And the owner question, asked at the one moment it can be answered well.
+
+      Both directions land here, because a single save can be either: this
+      household may have *named* an owner the register already holds, or this
+      household may *be* the owner three other tenants have been naming for
+      months. The officer is at the desk with both files in front of them, and
+      one tap settles a link that would otherwise become somebody else's queue.
+
+      Nothing is linked by this call — it only reports what matches. A phone is
+      not an identity here (see `User`'s own comment on why uniqueness is on the
+      identity document) and a link can bill, so the confirmation is always a
+      person pressing a button. Quiet for the same reason the census sync is:
+      the registration is committed, and a lookup that failed must not be
+      reported as a registration that failed.
+    */
+    const landlordLinks = result.deduplicated
+      ? null
+      : await this.landlordClaimsQuietly(result.registrationId, result.citizenId);
+
     // A re-delivered offline submission created nothing, so it is not a change
     // to announce: the audit log already carries the entry the first delivery
     // wrote, and a second one would read as the citizen having been registered
@@ -692,7 +716,49 @@ export class CitizensService {
        * The record itself is safe in all three cases.
        */
       census,
+      /**
+       * Owner links this save could make, waiting on somebody to say yes.
+       *
+       * `filed` are cards *this* registration wrote that name a number the
+       * register already knows a citizen by; `naming` are cards other
+       * households filed that name *this* citizen. Both are offers, never
+       * facts — nothing here has been linked.
+       *
+       * `null` means the lookup failed, exactly as with `census` above, and the
+       * queue at «روابط المالكين» still holds every one of them.
+       */
+      landlordLinks,
     };
+  }
+
+  /**
+   * Both directions of the owner match, with their failure kept off the caller.
+   *
+   * Same contract as `CensusSyncService.syncQuietly`, and here for the same
+   * reason: the registration these run after is already committed, and
+   * answering a saved record with an error would send the officer back to
+   * re-enter a household the municipality already holds. Logged, reported as
+   * `null`, and surfaced rather than hidden.
+   */
+  private async landlordClaimsQuietly(
+    registrationId: string,
+    citizenId: string,
+  ): Promise<{ filed: LandlordProposal[]; naming: LandlordProposal[] } | null> {
+    try {
+      const [filed, naming] = await Promise.all([
+        this.landlordLinks.claimsFiledBy(registrationId),
+        this.landlordLinks.claimsNaming(citizenId),
+      ]);
+      return { filed, naming };
+    } catch (error) {
+      this.logger.error(
+        `landlord claim lookup failed for registration ${registrationId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      return null;
+    }
   }
 
   /**
@@ -844,7 +910,13 @@ export class CitizensService {
         registrations: {
           orderBy: { submittedAt: 'desc' },
           take: 1,
-          select: { id: true, properties: { select: { id: true } } },
+          select: {
+            id: true,
+            // `landlordPhone` comes back so this save can tell whether the
+            // number *changed* — which is what invalidates any answer somebody
+            // gave about it. See `landlordLinkReset` below.
+            properties: { select: { id: true, landlordPhone: true } },
+          },
         },
       },
     });
@@ -913,6 +985,23 @@ export class CitizensService {
 
     const keptIds = new Set(entries.map(({ id }) => id).filter(Boolean) as string[]);
     const removedIds = [...existingIds].filter((id) => !keptIds.has(id));
+
+    /**
+     * What each card said its landlord's number was before this save.
+     *
+     * A confirmed landlord link, and a dismissal of one, are both answers about
+     * a *specific number*. Change the number and neither answer describes
+     * anything any more: «نعم، هذا هو المالك» was said about `+96103123456`,
+     * and the card now says `+96171987654`. Left in place the link would carry
+     * over to a person the card no longer names — and, since a link can bill,
+     * go on charging them for a flat whose owner has just been corrected.
+     *
+     * Cleared rather than re-matched: the new number goes back into the queue
+     * as an open claim, which is the same state any newly typed number is in.
+     */
+    const previousLandlordPhone = new Map(
+      (existing?.properties ?? []).map((property) => [property.id, property.landlordPhone]),
+    );
 
     // Where the record stands *after* this save. A record whose last gap was
     // just filled in leaves «يتطلب مراجعة» by the same rule that put it there.
@@ -1053,10 +1142,25 @@ export class CitizensService {
         }));
 
         if (id) {
+          /*
+            A changed number invalidates whatever was decided about the old one.
+
+            Both columns go together: a confirmed link and a dismissal are the
+            two answers to the same question, and that question was asked about
+            a number this save has just replaced. Narrowed to an actual change,
+            so an ordinary edit that leaves the landlord alone does not throw
+            away a link a clerk confirmed last week.
+          */
+          const landlordLinkReset =
+            (previousLandlordPhone.get(id) ?? null) !== (p.landlordPhone ?? null)
+              ? { landlordCitizenId: null, landlordLinkDismissedAt: null }
+              : {};
+
           await tx.propertyEntry.update({
             where: { id },
             data: {
               ...data,
+              ...landlordLinkReset,
               // Units are replaced wholesale rather than reconciled one by one.
               // They carry no documents and no id anyone outside this record
               // holds, so identity buys nothing here — unlike the property row
@@ -1094,6 +1198,17 @@ export class CitizensService {
       actor: input.actor,
     });
 
+    /*
+      And the owner match is re-asked, because this save may have changed it.
+
+      An edit is the one path that can *create* an open claim on a card that had
+      none — an officer reaching the landlord for the first time and finally
+      having a number to write down — and the one that can invalidate a link, by
+      correcting the number it was made against (see `landlordLinkReset`). Both
+      leave a question this screen should put now rather than post to a queue.
+    */
+    const landlordLinks = await this.landlordClaimsQuietly(registrationId, citizen.id);
+
     this.events.emit('citizen.changed', {
       tenantSlug: input.tenantSlug,
       citizenId: citizen.id,
@@ -1108,7 +1223,7 @@ export class CitizensService {
       actorRole: input.actor.role,
     });
 
-    return { updated: true, citizenId: citizen.id, status: nextStatus, census };
+    return { updated: true, citizenId: citizen.id, status: nextStatus, census, landlordLinks };
   }
 
   /**

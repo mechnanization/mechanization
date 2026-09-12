@@ -164,7 +164,13 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
     hint: Object.values(ar.propertyType).join(' / '),
     always: true,
   },
-  { key: 'neighborhood', header: 'الحي', hint: 'إلزامي', always: true },
+  /*
+    The column stays in the template so sheets already built against it keep
+    importing their values, but it is no longer required — see
+    `neighborhoodField`. A hint still reading «إلزامي» would send people looking
+    for a value nothing asks for and nothing refuses.
+  */
+  { key: 'neighborhood', header: 'الحي', hint: 'اختياري', always: true },
   { key: 'propertyNumber', header: 'رقم العقار', hint: 'يُطابَق مع السجل العقاري', always: true },
   { key: 'buildingName', header: 'اسم المبنى', hint: 'إلزامي للمبنى والمنزل' },
   { key: 'side', header: 'الجهة', hint: 'اختياري — للمنزل والوحدة' },

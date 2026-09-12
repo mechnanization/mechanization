@@ -37,6 +37,35 @@ import type { UnitDraft } from '@/components/citizen/property-card';
 import { cn, scopeErrors } from '@/lib/utils';
 
 /**
+ * What the census holds about one canonical `Unit`, as a card needs to read it.
+ *
+ * Declared here rather than beside the picker that produces it, because this is
+ * the module that *consumes* it and the picker already depends on this one
+ * (`BUILDING_UNIT_TYPES`). Putting it the other way round would have the
+ * dependency pointing in both directions at runtime.
+ *
+ * Every field is nullable and the nulls are load-bearing: they are what tells a
+ * field whether the register has an answer for it or is still waiting for one.
+ * A surveyed flat routinely has a type and a floor and no area at all, because
+ * `Unit.unitArea` is nullable and the census records that a flat exists long
+ * before anybody measures it.
+ *
+ * `floor` crosses the same boundary `toggleUnit` crosses — `Unit.floor` is a
+ * signed integer and a card's is free text — so it is carried already rendered
+ * the way a person says it, and nothing downstream re-derives it.
+ */
+export interface CensusUnitFacts {
+  id: string;
+  unitCode: string;
+  unitType: string | null;
+  /** Already rendered — «الأرضي», not `0`. */
+  floor: string | null;
+  side: string | null;
+  /** Stringified, because that is what a card's `unitArea` is. */
+  unitArea: string | null;
+}
+
+/**
  * The «الوحدة» sub-form, and the pieces it is built from.
  *
  * Lifted out of `property-card` because it now has two homes rather than one.
@@ -237,6 +266,7 @@ export function UnitsEditor({
   index,
   units,
   unitCodes = {},
+  censusUnits = {},
   defaultUnitType,
   asksUnitStatus,
   errors,
@@ -245,6 +275,15 @@ export function UnitsEditor({
 }: {
   index: number;
   units: UnitDraft[];
+  /**
+   * What the census holds about each linked flat, keyed by canonical unit id.
+   *
+   * Only rows carrying a `unitId` have an entry, and a row's fields are locked
+   * one by one against it — a field with an answer in the register is stated,
+   * a field without one stays open. See `censusUnits` in `PropertyCard` for why
+   * the rule is per field rather than per row.
+   */
+  censusUnits?: Record<string, CensusUnitFacts>;
   /**
    * `unitId` → the code the census gave that flat (`0202`), for the rows
    * created by ticking the matrix.
@@ -459,9 +498,19 @@ export function UnitsEditor({
         const unitErrors = scopeErrors(errors, String(unitIndex));
 
         return (
+          /*
+            One hairline border and a tinted ground — no accent rail.
+
+            The 2px `border-s-primary` this used to carry was doing a job the
+            row does not need: these are siblings in a list, all of equal
+            weight, and a coloured edge on every one of them says "important"
+            about all of them and therefore about none. The chain icon in the
+            header already marks the distinction that matters — which rows the
+            census knows about — and it marks only the rows it applies to.
+          */
           <div
             key={unitIndex}
-            className="space-y-5 rounded-lg border border-s-2 border-s-primary/40 bg-muted/20 p-4"
+            className="space-y-5 rounded-lg border border-border/70 bg-muted/20 p-4"
           >
             <div className="flex items-center justify-between gap-2">
               <button
@@ -526,6 +575,7 @@ export function UnitsEditor({
               <UnitFields
                 idPrefix={`${index}-${unitIndex}`}
                 unit={unit}
+                census={unit.unitId ? censusUnits[unit.unitId] : undefined}
                 errors={unitErrors}
                 asksUnitStatus={asksUnitStatus}
                 onPatch={(patch) => setUnit(unitIndex, patch)}
@@ -563,6 +613,7 @@ export function UnitsEditor({
 export function UnitFields({
   idPrefix,
   unit,
+  census,
   errors,
   asksUnitStatus,
   onPatch,
@@ -571,6 +622,18 @@ export function UnitFields({
   /** Disambiguates every `id`/`htmlFor` on the page — a card index and a row. */
   idPrefix: string;
   unit: UnitDraft;
+  /**
+   * What the census records about this flat, when the row is linked to one.
+   *
+   * Each field is locked against its own value here, never against the
+   * presence of this object: a surveyed flat routinely has a type and a floor
+   * and no area at all, because `Unit.unitArea` is nullable and the census
+   * records that a flat exists long before anybody measures it. Locking the
+   * whole row on the strength of the two fields that *are* filled would leave
+   * «مساحة الوحدة» permanently blank and read-only — unrecordable by the
+   * officer standing inside it, which is the one place it can be established.
+   */
+  census?: CensusUnitFacts;
   /** Already scoped to this unit, so keys are bare field names. */
   errors: Record<string, string>;
   asksUnitStatus: boolean;
@@ -578,19 +641,66 @@ export function UnitFields({
   locale?: string;
 }) {
   const labels = getLabels(locale);
+  const en = locale === 'en';
+
+  /**
+   * «من سجل المباني» — said once, the same way, wherever a field is stated.
+   *
+   * It has to name *where* the correction is made. A read-only field with no
+   * explanation is indistinguishable from a broken one, and an officer who can
+   * see the area is wrong and cannot see how to fix it will unlink the card
+   * instead — which throws away the census link to correct a number.
+   */
+  const fromCensus = (value: string | null | undefined) =>
+    value != null && value !== ''
+      ? en
+        ? `From the census record for ${census?.unitCode}. Edit it on the unit itself.`
+        : `من سجل المباني (${census?.unitCode}). التعديل يتم على الوحدة نفسها.`
+      : undefined;
+
+  const lockedType = fromCensus(census?.unitType);
+  const lockedFloor = fromCensus(census?.floor);
+  const lockedArea = fromCensus(census?.unitArea);
+  const lockedSide = fromCensus(census?.side);
+
+  /*
+    A field the census has answered is not rendered here at all.
+
+    Every one of these values is already printed, per unit and by code, in the
+    «من سجل المباني» strip at the head of the card. Repeating it as a disabled
+    input is the same fact in two places, and the copy with a label and a box
+    around it is the one that looks like work: an officer opening a linked flat
+    to record حالة الوحدة was met with four boxes they could not type in and
+    one they could.
+
+    So a linked row shows what is still *askable* — the status, the shared
+    rights — and nothing else. A row the officer typed by hand has no `census`
+    entry and keeps every field, because there the questions are real.
+
+    Per field, never per row: `Unit.unitArea` is nullable and frequently null,
+    and a flat the census recorded without measuring must still be measurable
+    from here.
+  */
+  const showType = !lockedType;
+  const showFloor = !lockedFloor;
+  const showArea = !lockedArea;
+  const showSide = !lockedSide;
 
   return (
     <div className="space-y-5">
-                <div className="grid gap-3.5 sm:grid-cols-2">
+                <div className={cn('grid gap-3.5 sm:grid-cols-2', !showType && !showFloor && 'hidden')}>
                   <Field
                     label={locale === 'en' ? 'Unit Type' : 'نوع الوحدة'}
                     htmlFor={`ut-${idPrefix}`}
                     required
                     error={errors.unitType}
+                    hint={lockedType}
+                    className={cn(!showType && 'hidden')}
                   >
                     <Select
                       value={unit.unitType ?? ''}
                       onValueChange={(next) => onPatch({ unitType: next as UnitType })}
+                      disabled={Boolean(lockedType)}
                     >
                       <SelectTrigger id={`ut-${idPrefix}`}>
                         <SelectValue placeholder={locale === 'en' ? 'Select…' : 'اختر…'} />
@@ -619,22 +729,31 @@ export function UnitFields({
                     htmlFor={`fl-${idPrefix}`}
                     required
                     error={errors.floor}
+                    hint={lockedFloor}
+                    className={cn(!showFloor && 'hidden')}
                   >
                     <Input
                       id={`fl-${idPrefix}`}
                       invalid={Boolean(errors.floor)}
                       value={unit.floor ?? ''}
                       onChange={(e) => onPatch({ floor: e.target.value })}
+                      readOnly={Boolean(lockedFloor)}
+                      aria-readonly={Boolean(lockedFloor) || undefined}
+                      className={cn(lockedFloor && 'bg-muted text-muted-foreground')}
                     />
                   </Field>
                 </div>
 
-                <div className="grid gap-3.5 sm:grid-cols-2">
+                <div
+                  className={cn('grid gap-3.5 sm:grid-cols-2', !showArea && !showSide && 'hidden')}
+                >
                   <Field
                     label={locale === 'en' ? 'Unit Area (sq. meters)' : 'مساحة الوحدة (متر مربع)'}
                     htmlFor={`ua-${idPrefix}`}
                     required
                     error={errors.unitArea}
+                    hint={lockedArea}
+                    className={cn(!showArea && 'hidden')}
                   >
                     <Input
                       id={`ua-${idPrefix}`}
@@ -642,18 +761,26 @@ export function UnitFields({
                       invalid={Boolean(errors.unitArea)}
                       value={unit.unitArea ?? ''}
                       onChange={(e) => onPatch({ unitArea: e.target.value })}
+                      readOnly={Boolean(lockedArea)}
+                      aria-readonly={Boolean(lockedArea) || undefined}
+                      className={cn(lockedArea && 'bg-muted text-muted-foreground')}
                     />
                   </Field>
 
                   <Field
                     label={locale === 'en' ? 'Side / Orientation' : 'الجهة'}
                     htmlFor={`sd-${idPrefix}`}
+                    hint={lockedSide}
+                    className={cn(!showSide && 'hidden')}
                   >
                     <Input
                       id={`sd-${idPrefix}`}
                       placeholder={locale === 'en' ? 'e.g. North, South' : 'مثال: شمالي، جنوبي'}
                       value={unit.side ?? ''}
                       onChange={(e) => onPatch({ side: e.target.value })}
+                      readOnly={Boolean(lockedSide)}
+                      aria-readonly={Boolean(lockedSide) || undefined}
+                      className={cn(lockedSide && 'bg-muted text-muted-foreground')}
                     />
                   </Field>
                 </div>

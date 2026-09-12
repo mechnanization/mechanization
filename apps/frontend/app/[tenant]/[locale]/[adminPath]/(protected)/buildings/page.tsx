@@ -36,9 +36,7 @@ import {
   getBuildings,
   getZones,
   logApiError,
-  type BuildingDetail,
   type BuildingLedgerRow,
-  type BuildingSummary,
   type ZoneSummary,
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
@@ -59,11 +57,6 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { useToast } from '@/components/ui/toast';
-import {
-  BuildingEditorDialog,
-  type BuildingEditorResult,
-} from '@/components/admin/building-editor-dialog';
-import { BuildingUnitMatrixDrawer } from '@/components/admin/building-unit-matrix-drawer';
 import { BuildingQueueNotice } from '@/components/admin/building-queue-notice';
 import { buildCsv, downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/utils';
@@ -339,98 +332,8 @@ export default function BuildingsPage({
     [queryClient, tenant],
   );
 
-  // ── Dialogs ───────────────────────────────────────────────────────
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editing, setEditing] = useState<BuildingSummary | null>(null);
-  const [matrixId, setMatrixId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<BuildingLedgerRow | null>(null);
-  /**
-   * Set when the editor was reached *from* a matrix, so saving returns there.
-   *
-   * The drawer is what sends an officer to the editor for an empty shell, and
-   * dropping them back on the ledger afterwards makes them find the building
-   * again to see the flats they just generated.
-   */
-  const [returnToMatrix, setReturnToMatrix] = useState(false);
   const [exporting, setExporting] = useState(false);
-
-  const openEditor = (building: BuildingSummary | null, fromMatrix = false) => {
-    setEditing(building);
-    setReturnToMatrix(fromMatrix);
-    setEditorOpen(true);
-  };
-
-  const handleSaved = (result: BuildingEditorResult) => {
-    void reload();
-    /*
-      A reconciled suffix is announced, never absorbed. The officer has been
-      looking at a provisional code — and may already have written it on a
-      notice — so being handed a different one silently is how a code that names
-      nothing ends up quoted at a door.
-    */
-    if (result.queued) {
-      toast.info(
-        en ? 'Saved on this device' : 'تم الحفظ على هذا الجهاز',
-        {
-          description: en
-            ? `${result.building.code} is provisional until the queue syncs — the final letter is allocated by the server.`
-            : `الرمز ${result.building.code} مؤقت حتى تتم المزامنة — يُخصَّص الحرف النهائي من الخادم.`,
-        },
-      );
-      return;
-    }
-
-    if (result.reconciled) {
-      toast.warning(
-        en ? 'The building code changed on save' : 'تغيّر رمز المبنى عند الحفظ',
-        {
-          description: en
-            ? `Another building already held that suffix on this parcel. Use ${result.building.code}.`
-            : `الحرف المؤقت كان محجوزاً على هذا العقار. اعتمد الرمز ${result.building.code}.`,
-        },
-      );
-    } else {
-      toast.success(
-        editing
-          ? en
-            ? 'Building updated'
-            : 'تم تحديث المبنى'
-          : en
-            ? `Building ${result.building.code} created`
-            : `تم إنشاء المبنى ${result.building.code}`,
-        {
-          /*
-            A top-up that created nothing is not the same as a matrix that was
-            not touched.
-
-            `generateUnits` fills each floor *up to* the requested count, so
-            re-running a blueprint over a complete matrix legitimately writes
-            nothing — and «تم توليد ٠ وحدة» reads as a failure. Naming the
-            skipped positions turns it back into what happened.
-          */
-          description:
-            result.unitsCreated > 0
-              ? result.unitsSkipped > 0
-                ? en
-                  ? `${result.unitsCreated} units generated · ${result.unitsSkipped} already existed.`
-                  : `تم توليد ${result.unitsCreated} وحدة · ${result.unitsSkipped} كانت موجودة.`
-                : en
-                  ? `${result.unitsCreated} units generated at «not surveyed».`
-                  : `تم توليد ${result.unitsCreated} وحدة بحالة «غير ممسوحة».`
-              : result.unitsSkipped > 0
-                ? en
-                  ? `No units generated — all ${result.unitsSkipped} requested already existed.`
-                  : `لم تُنشأ وحدات — الوحدات الـ${result.unitsSkipped} المطلوبة موجودة أصلاً.`
-                : undefined,
-        },
-      );
-    }
-
-    // Straight into the matrix on a fresh create: the shell is not the work,
-    // the flats inside it are, and the officer is standing in front of them.
-    if (!editing || returnToMatrix) setMatrixId(result.building.id);
-    setReturnToMatrix(false);
-  };
 
   const removeBuilding = useCallback(
     async (row: BuildingLedgerRow) => {
@@ -736,7 +639,7 @@ export default function BuildingsPage({
                 variant="outline"
                 size="icon-sm"
                 aria-label={en ? 'Open the unit matrix' : 'فتح مصفوفة الوحدات'}
-                onClick={() => setMatrixId(row.original.id)}
+                onClick={() => router.push(`${base}/buildings/${row.original.id}/matrix`)}
               >
                 <Grid3x3 className="size-4" aria-hidden />
               </Button>
@@ -748,7 +651,7 @@ export default function BuildingsPage({
                   variant="secondary"
                   size="icon-sm"
                   aria-label={en ? 'Edit' : 'تعديل'}
-                  onClick={() => openEditor(row.original)}
+                  onClick={() => router.push(`${base}/buildings/${row.original.id}/edit`)}
                 >
                   <Pencil className="size-4" aria-hidden />
                 </Button>
@@ -772,7 +675,7 @@ export default function BuildingsPage({
         ),
       },
     ],
-    [en, labels, canWrite, canDelete],
+    [en, labels, canWrite, canDelete, base, router],
   );
 
   if (!token) return null;
@@ -807,7 +710,7 @@ export default function BuildingsPage({
               {en ? 'Export CSV' : 'تصدير CSV'}
             </Button>
             {canWrite ? (
-              <Button onClick={() => openEditor(null)}>
+              <Button onClick={() => router.push(`${base}/buildings/new`)}>
                 <Plus className="size-4" aria-hidden />
                 {en ? 'New Building' : 'مبنى جديد'}
               </Button>
@@ -1104,46 +1007,6 @@ export default function BuildingsPage({
             ? 'A survey filter shows every building with at least one unit in that state — one unsurveyed flat is enough.'
             : 'فلتر المسح يعرض كل مبنى فيه وحدة واحدة على الأقل بهذه الحالة — وحدة واحدة غير ممسوحة تكفي.'}
         </p>
-      ) : null}
-
-      {token ? (
-        <BuildingEditorDialog
-          open={editorOpen}
-          onOpenChange={setEditorOpen}
-          tenant={tenant}
-          token={token}
-          building={editing}
-          onSaved={handleSaved}
-          // The matrix is corrected in its own drawer, one unit at a time. The
-          // editor states what is already there and hands over rather than
-          // trying to be a second place units are edited.
-          onOpenMatrix={(buildingId) => {
-            setEditorOpen(false);
-            setMatrixId(buildingId);
-          }}
-          locale={locale}
-        />
-      ) : null}
-
-      {token ? (
-        <BuildingUnitMatrixDrawer
-          open={matrixId !== null}
-          onClose={() => setMatrixId(null)}
-          tenant={tenant}
-          token={token}
-          buildingId={matrixId}
-          canWrite={canWrite}
-          onChanged={() => void reload()}
-          onEditBuilding={(detail: BuildingDetail) => {
-            setMatrixId(null);
-            openEditor(detail, true);
-          }}
-          registerHref={(buildingId, unitId) =>
-            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}`
-          }
-          citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
-          locale={locale}
-        />
       ) : null}
 
       <ConfirmDialog

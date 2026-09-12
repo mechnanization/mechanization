@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, Check, Link2, Loader2, Lock, Plus, TriangleAlert, Unlink } from 'lucide-react';
+import { Building2, Check, DoorClosed, Link2, Loader2, Lock, Plus, TriangleAlert, Unlink } from 'lucide-react';
 import {
   getLabels,
   STRUCTURE_TYPE,
+  defaultUnitTypeFor,
   STRUCTURE_TYPE_MAP,
   structureTypeForProperty,
   type StructureType,
@@ -26,6 +27,13 @@ import {
   type UnitWithOccupants,
 } from '@/lib/api-client';
 import type { PropertyDraft, UnitDraft } from '@/components/citizen/property-card';
+import {
+  BuildingSummaryBadges,
+  cellBadge,
+  floorLabel,
+  groupUnitsByFloor,
+  withDeclaredBasements,
+} from '@/components/admin/building-unit-forms';
 import { Badge } from '@/components/ui/badge';
 import {
   Select,
@@ -35,7 +43,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import {
+  BUILDING_UNIT_TYPES,
+  type CensusUnitFacts,
+} from '@/components/citizen/unit-fields';
 
 /**
  * A client-minted id that will be the row's primary key.
@@ -86,6 +97,35 @@ export interface LockedCensusTarget {
   unitId?: string;
 }
 
+/**
+ * The structure a card is linked to, reported up so the card can state what the
+ * register already knows instead of asking for it again.
+ *
+ * The rule this type exists to serve, and the reason every field is nullable:
+ * **a field is locked if and only if the census holds a value for it.** That is
+ * the rule «اسم المبنى» has always followed — an unnamed building leaves the
+ * field open, because the officer in its stairwell is the person who learns the
+ * name and `CensusSyncService` promotes what they type upward. Generalising it
+ * is what stops a lock from making a fact unrecordable by the only person
+ * standing where it can be established.
+ */
+export interface LinkedBuildingFacts {
+  id: string;
+  code: string;
+  name: string | null;
+  /**
+   * The parcel this structure stands on — the register's own answer, which the
+   * card's رقم العقار is mirrored from and locked to.
+   *
+   * Without it the card could claim one عقار while `buildingId` pointed at a
+   * building standing on another, and nothing anywhere reconciled the two:
+   * `applyOccupancy` guards unit↔building, and nothing guarded card↔building.
+   */
+  parcelNumber: string;
+  /** The matrix, so the card can name a linked unit and state what it holds. */
+  units: CensusUnitFacts[];
+}
+
 export function BuildingUnitPicker({
   tenant,
   token,
@@ -132,15 +172,7 @@ export function BuildingUnitPicker({
    * than a question. The alternative was the card fetching the same building a
    * second time, which is how two components start disagreeing about it.
    */
-  onLinkedBuilding?: (
-    building: {
-      id: string;
-      code: string;
-      name: string | null;
-      /** The matrix, so the card can name a linked unit by its code. */
-      units: Array<{ id: string; unitCode: string }>;
-    } | null,
-  ) => void;
+  onLinkedBuilding?: (building: LinkedBuildingFacts | null) => void;
   /**
    * Launched from the matrix: the building — and possibly the unit — is not a
    * choice. Shown as a statement with the reason, rather than a disabled
@@ -214,6 +246,15 @@ export function BuildingUnitPicker({
   const [matrixVersion, setMatrixVersion] = useState(0);
   /** The «إضافة وحدة» sub-form: closed, or open and holding a floor and a type. */
   const [adding, setAdding] = useState<{ floor: string; unitType: string } | null>(null);
+  /**
+   * Where the open sub-form is drawn — a floor's own container, or under the
+   * matrix.
+   *
+   * Kept beside the floor it was opened *at* rather than derived from the floor
+   * it currently holds, so correcting the floor number in the form does not
+   * make the form itself jump between containers as it is typed into.
+   */
+  const [addingAnchor, setAddingAnchor] = useState<number | 'bottom' | null>(null);
   const [addingBusy, setAddingBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   /**
@@ -232,6 +273,36 @@ export function BuildingUnitPicker({
     // A different عقار is a different question, so any earlier «بدون ربط»
     // stops applying the moment the parcel changes.
     setDeclined(false);
+
+    /*
+      A structure armed for the previous parcel follows the card to this one.
+
+      `pendingBuilding.parcelNumber` is what `dischargePending` actually sends
+      — the card's own رقم العقار is never consulted — so an officer who armed
+      «منشأة جديدة» on 1042 and then corrected the number to 998 created the
+      building on 1042 and filed the citizen on 998. Both rows valid, pointing
+      at different parcels, with nothing comparing them.
+
+      Re-pointed rather than cleared, so the structure type they chose survives
+      a typo correction. `acknowledgedDuplicates` does not survive it: that was
+      a person saying «تحقَّقت، وهذه منشأة مختلفة» about what stands on the
+      *old* parcel, and carrying it over would pre-answer the duplicate guard
+      for a parcel nobody has looked at. Cleared, the guard asks again.
+    */
+    if (parcelNumber) {
+      onChange((current) =>
+        current.pendingBuilding && current.pendingBuilding.parcelNumber !== parcelNumber
+          ? {
+              ...current,
+              pendingBuilding: {
+                ...current.pendingBuilding,
+                parcelNumber,
+                acknowledgedDuplicates: false,
+              },
+            }
+          : current,
+      );
+    }
 
     if (!parcelNumber) {
       setCandidates([]);
@@ -277,6 +348,10 @@ export function BuildingUnitPicker({
     return () => {
       cancelled = true;
     };
+    // `onChange` is a fresh closure each render, and this effect must fire on a
+    // *changed parcel* only — depending on it would re-run the lookup, and the
+    // pending re-point, on every keystroke elsewhere in the card.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenant, token, parcelNumber]);
 
   // ── The chosen structure's matrix ─────────────────────────────────
@@ -365,8 +440,19 @@ export function BuildingUnitPicker({
     a new object on every fetch, and depending on it would re-report — and
     re-render the card — on each one.
   */
+  /*
+    Widened beyond `unitCode` when the card started *locking* against these
+    values rather than merely labelling rows with them. A signature that only
+    covered the code would hold a stale area on screen — read-only, and
+    therefore uncorrectable — after somebody fixed it on the building itself.
+    Every field the card can lock has to be able to invalidate this.
+  */
   const unitSignature = (detail?.units ?? [])
-    .map((unit) => `${unit.id}:${unit.unitCode}`)
+    .map((unit) =>
+      [unit.id, unit.unitCode, unit.unitType, unit.floor, unit.side ?? '', unit.unitArea ?? ''].join(
+        ':',
+      ),
+    )
     .join(',');
 
   useEffect(() => {
@@ -377,12 +463,20 @@ export function BuildingUnitPicker({
             id: detail.id,
             code: detail.code,
             name: detail.name,
-            units: detail.units.map((unit) => ({ id: unit.id, unitCode: unit.unitCode })),
+            parcelNumber: detail.parcelNumber,
+            units: detail.units.map((unit) => ({
+              id: unit.id,
+              unitCode: unit.unitCode,
+              unitType: unit.unitType,
+              floor: floorText(unit.floor, en),
+              side: unit.side,
+              unitArea: unit.unitArea != null ? String(unit.unitArea) : null,
+            })),
           }
         : null,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail?.id, detail?.code, detail?.name, unitSignature]);
+  }, [detail?.id, detail?.code, detail?.name, detail?.parcelNumber, unitSignature, en]);
 
   useEffect(() => {
     const name = detail?.name?.trim();
@@ -391,9 +485,55 @@ export function BuildingUnitPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.name, draft.buildingName]);
 
+  /*
+    The same mirror for رقم العقار, and this one closes a silent corruption
+    rather than a spelling disagreement.
+
+    «اسم المبنى» was locked to the register and the parcel was not, so an
+    officer on a linked card could edit the عقار freely — and the card then
+    claimed parcel 1042 while `buildingId` pointed at a building standing on
+    998. Nothing anywhere reconciled the two: `applyOccupancy` checks that a
+    unit belongs to the building the card names, and no check at all compared
+    the card's parcel against that building's. The record was internally
+    inconsistent, validated cleanly, and billed.
+
+    Copied down unconditionally, unlike the name: a building always has a
+    parcel, so there is no "the register has no answer yet" case to leave open.
+    It converges — the write only fires while the two disagree — and it also
+    repairs a record that was saved mismatched before the field was locked,
+    the first time anybody opens it.
+
+    A *pending* structure is deliberately not mirrored. It has no parcel of its
+    own yet; it takes the card's. See the re-point in the parcel effect above.
+  */
+  useEffect(() => {
+    const parcel = detail?.parcelNumber?.trim();
+    if (!parcel || draft.propertyNumber?.trim() === parcel) return;
+    onChange((current) => ({ ...current, propertyNumber: parcel }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.parcelNumber, draft.propertyNumber]);
+
   const linkedUnitIds = useMemo(
     () => new Set((draft.units ?? []).map((unit) => unit.unitId).filter(Boolean) as string[]),
     [draft.units],
+  );
+
+  /**
+   * The matrix drawn the way the building sheet draws it — floors top-down,
+   * each one's units in the order they run along it.
+   *
+   * A flat list was wrong on exactly the buildings this control matters on: a
+   * block with shops on the ground floor and flats above it wrapped into one
+   * run of chips, and «0001» beside «0301» said nothing about which of them was
+   * the shop the officer was standing in.
+   */
+  const floors = useMemo(
+    () =>
+      withDeclaredBasements(
+        groupUnitsByFloor(detail?.units ?? []),
+        detail?.basementsCount,
+      ),
+    [detail],
   );
 
 
@@ -492,6 +632,53 @@ export function BuildingUnitPicker({
    * two officers filling one matrix from colliding. So the row is built from
    * the response, never from what was typed here.
    */
+  /** Opens «إضافة وحدة» on a given floor, drawn where it was asked for. */
+  const openAdd = (floor: number, anchor: number | 'bottom') => {
+    if (!detail) return;
+    setAddError(null);
+    setDuplicateUnits(null);
+    setAdding({
+      floor: String(floor),
+      // What this structure is made of, exactly as the building editor seeds
+      // its own units — a مستودع's next unit is a مستودع until somebody says
+      // otherwise, and below ground it is storage whatever stands above it.
+      unitType: defaultUnitTypeFor(detail.structureType, floor),
+    });
+    setAddingAnchor(anchor);
+  };
+
+  /**
+   * Edits the open «إضافة وحدة» form, re-suggesting the unit type when the
+   * floor crosses the ground line.
+   *
+   * Only where the officer has not chosen a type themselves: an untouched
+   * «شقة» on a form whose floor has just been changed to −1 is the old floor's
+   * suggestion, not an answer, and leaving it there is how a قبو gets filed as
+   * a flat. A type they picked is left exactly as they picked it.
+   */
+  const changeAdding = (next: { floor: string; unitType: string }) => {
+    setDuplicateUnits(null);
+    setAdding((current) => {
+      if (!current || !detail || next.unitType !== current.unitType) return next;
+
+      const previous = Number(current.floor);
+      const untouched =
+        Number.isFinite(previous) &&
+        current.unitType === defaultUnitTypeFor(detail.structureType, previous);
+      const floor = Number(next.floor);
+      if (!untouched || !Number.isFinite(floor)) return next;
+
+      return { ...next, unitType: defaultUnitTypeFor(detail.structureType, floor) };
+    });
+  };
+
+  const closeAdd = () => {
+    setAdding(null);
+    setAddingAnchor(null);
+    setAddError(null);
+    setDuplicateUnits(null);
+  };
+
   const submitNewUnit = async (acknowledgedDuplicates = false) => {
     if (!adding || !buildingId || addingBusy) return;
 
@@ -532,6 +719,7 @@ export function BuildingUnitPicker({
       }));
 
       setAdding(null);
+      setAddingAnchor(null);
       setDuplicateUnits(null);
       setMatrixVersion((version) => version + 1);
     } catch (caught) {
@@ -711,6 +899,101 @@ export function BuildingUnitPicker({
     structureType: BuildingLedgerRow['structureType'];
   }> = candidates.length > 0 ? candidates : chosen ? [chosen] : [];
 
+  /*
+    When the card was launched from a specific unit in the matrix, the building
+    and unit are locked and autofilled. Since this data cannot be changed, the
+    user does not need to see the entire building structure or all other apartments;
+    we hide the building choice and the whole matrix, displaying only the selected
+    apartment.
+  */
+  if (locked?.unitId) {
+    const autofilledUnit = detail?.units.find((u) => u.id === locked.unitId);
+    const draftUnit = draft.units?.find((u) => u.unitId === locked.unitId);
+    const code = autofilledUnit?.unitCode;
+    const buildingCode = detail?.code ?? chosen?.code ?? '';
+    const buildingName = detail?.name ?? chosen?.name;
+    const structureType = (detail ?? chosen)?.structureType;
+    const badge = autofilledUnit ? cellBadge(autofilledUnit, labels, en) : null;
+
+    return (
+      <div className="space-y-2 rounded-lg border border-dashed bg-muted/10 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <Building2 className="size-3.5" aria-hidden />
+            <span>{en ? 'Censused structure' : 'المنشأة في سجل المباني'}</span>
+            <Badge variant="soft-muted" className="gap-1 text-[10px]">
+              <Lock className="size-2.5" aria-hidden />
+              {en ? 'From the matrix' : 'من مصفوفة الوحدات'}
+            </Badge>
+          </p>
+
+          <div className="flex items-center gap-1.5 text-xs">
+            <span dir="ltr" className="font-mono font-bold">
+              {buildingCode}
+            </span>
+            {buildingName ? (
+              <span className="text-muted-foreground">({buildingName})</span>
+            ) : null}
+            {structureType ? (
+              <Badge variant="soft-default" className="text-[10px]">
+                {labels.structureType[structureType]}
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2">
+          <div className="flex items-center gap-2.5">
+            <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <DoorClosed className="size-3.5" aria-hidden />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">
+                  {en ? 'Selected unit:' : 'الوحدة المحدَّدة:'}
+                </span>
+                <span dir="ltr" className="font-mono text-sm font-bold text-primary">
+                  {code || (draftUnit ? '…' : '')}
+                </span>
+                {autofilledUnit?.postedNumber && autofilledUnit.postedNumber !== code ? (
+                  <span dir="ltr" className="text-xs text-muted-foreground">
+                    ({autofilledUnit.postedNumber})
+                  </span>
+                ) : null}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {[
+                  autofilledUnit
+                    ? labels.unitType[autofilledUnit.unitType]
+                    : draftUnit?.unitType
+                      ? labels.unitType[draftUnit.unitType]
+                      : null,
+                  autofilledUnit ? floorLabel(autofilledUnit.floor, en) : draftUnit?.floor,
+                  autofilledUnit?.side ?? draftUnit?.side,
+                  (autofilledUnit?.unitArea ?? draftUnit?.unitArea) != null
+                    ? en
+                      ? `${autofilledUnit?.unitArea ?? draftUnit?.unitArea} m²`
+                      : `${autofilledUnit?.unitArea ?? draftUnit?.unitArea} م²`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+            </div>
+          </div>
+
+          {badge ? (
+            <Badge variant={badge.variant} className="text-[10px]">
+              {badge.text}
+            </Badge>
+          ) : detailLoading ? (
+            <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden />
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-2 rounded-lg border border-dashed p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -838,12 +1121,25 @@ export function BuildingUnitPicker({
             })}
           </ul>
 
+          {/*
+            No structure summary here, deliberately.
+
+            The building sheet leads with «٤ طوابق · ٣ من ٧ ممسوحة» because that
+            screen is *about* the structure. This one is about a household: the
+            officer has already picked the building above, and a row of census
+            statistics between that choice and the flats they came to tick is
+            answering a question nobody on this screen asked. The matrix below
+            carries what is actually needed per unit.
+          */}
           {chosen ? (
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              {en
-                ? `Linked to ${chosen.code}. Where a unit is linked below, the census record is authoritative for the fields it holds.`
-                : `مرتبطة بـ ${chosen.code}. حيث تُربط وحدة أدناه، يكون سجل المباني هو المرجع في الحقول التي يحملها.`}
-            </p>
+            <div className="space-y-2">
+              <BuildingSummaryBadges building={detail ?? chosen} locale={locale} />
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                {en
+                  ? `Linked to ${chosen.code}. Where a unit is linked below, the census record is authoritative for the fields it holds.`
+                  : `مرتبطة بـ ${chosen.code}. حيث تُربط وحدة أدناه، يكون سجل المباني هو المرجع في الحقول التي يحملها.`}
+              </p>
+            </div>
           ) : null}
 
           {/*
@@ -884,6 +1180,30 @@ export function BuildingUnitPicker({
         </>
       )}
 
+      {/*
+        The card says «منزل مستقل»; the structure it is linked to has a matrix.
+
+        Only a بناية card carries unit lines — a منزل is one dwelling, described
+        by the side/area/shared-rights fields on the card itself — so the picker
+        below correctly renders nothing here. Said out loud because the silence
+        was the bug: an officer linked a block, saw it had flats, and had no
+        unit list and no reason given. They ticked nothing, the card saved with
+        a `buildingId` and no `unitId`, and the matrix stayed empty with nobody
+        anywhere told why.
+      */}
+      {buildingId && !isBuilding && detail && detail.units.length > 1 ? (
+        <div className="space-y-1 border-t pt-2">
+          <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-[11px] leading-relaxed">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
+            <span>
+              {en
+                ? `${chosen?.code ?? 'This structure'} has ${detail.units.length} units on the census. A «house» card describes one dwelling, so no unit can be named on it — set نوع العقار above to «بناية» to record which of them this citizen holds.`
+                : `${chosen?.code ?? 'هذه المنشأة'} تحتوي ${detail.units.length} وحدة في سجل المباني. بطاقة «منزل مستقل» تصف مسكناً واحداً ولا يمكن ربط وحدة بها — اختر «بناية» في نوع العقار أعلاه لتحديد الوحدات التي يملكها هذا المواطن.`}
+            </span>
+          </p>
+        </div>
+      ) : null}
+
       {/* ── The flats this citizen actually holds ────────────────── */}
       {buildingId && isBuilding ? (
         <div className="space-y-1.5 border-t pt-2">
@@ -910,25 +1230,9 @@ export function BuildingUnitPicker({
                   state={adding}
                   busy={addingBusy}
                   error={addError}
-                  onOpen={() => {
-                    setAddError(null);
-                    setDuplicateUnits(null);
-                    setAdding({
-                      floor: '0',
-                      unitType: STRUCTURE_TYPE_MAP[detail.structureType].defaultUnitType,
-                    });
-                  }}
-                  onChange={(next) => {
-                    // A changed floor or type is a different question, so an
-                    // answer given about the old one stops applying.
-                    setDuplicateUnits(null);
-                    setAdding(next);
-                  }}
-                  onCancel={() => {
-                    setAdding(null);
-                    setAddError(null);
-                    setDuplicateUnits(null);
-                  }}
+                  onOpen={() => openAdd(0, 'bottom')}
+                  onChange={changeAdding}
+                  onCancel={closeAdd}
                   onSubmit={() => void submitNewUnit()}
                   duplicates={duplicateUnits}
                   onConfirmDuplicates={() => void submitNewUnit(true)}
@@ -941,145 +1245,215 @@ export function BuildingUnitPicker({
             </>
           ) : (
             <>
-              <ul className="flex flex-wrap gap-1.5">
-                {detail.units.map((unit) => {
-                  const active = linkedUnitIds.has(unit.id);
-                  const occupants = currentOccupants(unit);
-                  /*
-                    Whose occupancy, not merely whether there is one.
-
-                    This used to be `occupants.some(current)` under the name
-                    `takenBySomeoneElse` — a variable that did not check *whose*,
-                    because the control was never told which citizen it was
-                    editing. So an owner already recorded in flat 3 was warned
-                    about himself, and an owner ticking a genuinely let flat got
-                    the identical amber dot. One of those is nothing and the
-                    other decides who pays the رسم نظافة; they cannot look the
-                    same.
-                  */
-                  const mine = citizenId
-                    ? occupants.filter((occupant) => occupant.citizenId === citizenId)
-                    : [];
-                  const others = citizenId
-                    ? occupants.filter((occupant) => occupant.citizenId !== citizenId)
-                    : occupants;
-                  /*
-                    Only a *non-owner* spell is a fee-bearing collision. Two
-                    owners on one flat are co-heirs, which Lebanese inheritance
-                    makes the normal case (D2) and which costs nobody anything.
-                  */
-                  const heldByOccupant = others.some((occupant) => occupant.role !== 'OWNER');
-
-                  return (
-                    <li key={unit.id}>
-                      <button
-                        type="button"
-                        disabled={Boolean(locked?.unitId) && locked?.unitId !== unit.id}
-                        onClick={() => toggleUnit(unit)}
-                        aria-pressed={active}
-                        className={cn(
-                          'flex flex-col items-stretch gap-0.5 rounded-md border px-2 py-1.5 text-start text-xs transition-colors',
-                          active
-                            ? 'border-primary bg-primary/10 text-primary'
-                            : 'hover:bg-accent disabled:opacity-40',
-                        )}
-                      >
+              {/*
+                Floor by floor, the way the building sheet draws it — because
+                the floor is what the officer is standing on. A wrapped run of
+                chips put «0001», a ground-floor محل, beside «0301» with nothing
+                between them, and «the shop downstairs» was unfindable in it.
+              */}
+              <div className="space-y-2">
+                {floors.map(({ floor, units }) => (
+                  <div key={floor} className="rounded-lg border">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-2.5 py-1.5">
+                      <p className="text-[11px] font-semibold">{floorLabel(floor, en)}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-[11px] text-muted-foreground">
+                          {en ? `${units.length} units` : `${units.length} وحدة`}
+                        </p>
                         {/*
-                          What the officer needs to recognise the flat from the
-                          doorway, which a bare code never gave them.
-
-                          The chip rendered `unitCode` and a dot, so an officer
-                          registering the owner of «the shop on the ground
-                          floor» saw «0001» and had no way to tell whether that
-                          *was* their shop. Pressing «إضافة وحدة» is the
-                          rational next move from that screen, and it mints a
-                          second row for one physical unit. Every value below
-                          was already in the payload and simply was not drawn.
+                          Per floor, because the floor is the thing being
+                          looked at — and because an officer sent to one
+                          specific door has nothing to add but a duplicate of
+                          the flat they are standing in.
                         */}
-                        <span className="flex items-center gap-1 font-mono">
-                          {active ? <Link2 className="size-3 shrink-0" aria-hidden /> : null}
-                          <span dir="ltr">{unit.unitCode}</span>
-                          {unit.postedNumber && unit.postedNumber !== unit.unitCode ? (
-                            <span className="text-muted-foreground" dir="ltr">
-                              ({unit.postedNumber})
-                            </span>
-                          ) : null}
-                        </span>
-
-                        <span className="font-sans text-[11px] text-muted-foreground">
-                          {[
-                            labels.unitType[unit.unitType],
-                            floorText(unit.floor, en),
-                            unit.side,
-                            unit.unitArea != null
-                              ? en
-                                ? `${unit.unitArea} m²`
-                                : `${unit.unitArea} م²`
-                              : null,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </span>
-
-                        {/*
-                          Who is in it, by name and capacity.
-
-                          «مستأجر: فلان» is a fact an officer can act on;
-                          «يوجد شاغل مسجَّل» — the old tooltip — is one they
-                          cannot. The owner's own spell is named separately so
-                          the commonest reason the chip lights up, that this is
-                          the very person being edited, stops reading as a
-                          clash.
-                        */}
-                        {mine.length > 0 ? (
-                          <span className="font-sans text-[11px] font-medium text-primary">
-                            {en ? 'Already linked to this citizen' : 'مسجَّل لهذا المواطن'}
-                            {' · '}
-                            {mine.map((row) => labels.occupancyRole[row.role]).join('، ')}
-                          </span>
-                        ) : null}
-
-                        {others.map((occupant) => (
-                          <span
-                            key={occupant.id}
-                            className={cn(
-                              'font-sans text-[11px]',
-                              occupant.role === 'OWNER'
-                                ? 'text-muted-foreground'
-                                : 'font-medium text-amber-700 dark:text-amber-500',
-                            )}
+                        {locked?.unitId || addingAnchor === floor ? null : (
+                          <button
+                            type="button"
+                            disabled={addingBusy}
+                            onClick={() => openAdd(floor, floor)}
+                            className="inline-flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
                           >
-                            {labels.occupancyRole[occupant.role]}
-                            {': '}
-                            {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
-                          </span>
-                        ))}
+                            <Plus className="size-3" aria-hidden />
+                            {en ? 'Add unit' : 'إضافة وحدة'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
 
-                        {/*
-                          Said once, plainly, where it changes the bill.
+                    {adding && addingAnchor === floor ? (
+                      <div className="border-b bg-background px-2.5 py-2">
+                        <AddUnitInline
+                          en={en}
+                          labels={labels}
+                          state={adding}
+                          busy={addingBusy}
+                          error={addError}
+                          onOpen={() => openAdd(floor, floor)}
+                          onChange={changeAdding}
+                          onCancel={closeAdd}
+                          onSubmit={() => void submitNewUnit()}
+                          duplicates={duplicateUnits}
+                          onConfirmDuplicates={() => void submitNewUnit(true)}
+                          onDeclineDuplicates={closeAdd}
+                        />
+                      </div>
+                    ) : null}
 
-                          A flat somebody else occupies is «مؤجرة» or «مشغولة
-                          بتسامح» on this card whether or not anyone types it,
-                          and `toggleUnit` writes exactly that. Announcing it
-                          here is what stops the owner's card asserting
-                          «مشغولة من المالك» over a tenant the register is
-                          already holding — the state in which both of them get
-                          charged the occupancy fee for one flat.
-                        */}
-                        {heldByOccupant ? (
-                          <span className="font-sans text-[11px] text-amber-700 dark:text-amber-500">
-                            {en
-                              ? 'Occupied by someone else — this card will record it as such'
-                              : `تُسجَّل على هذه البطاقة «${
-                                  labels.unitStatus[occupancyStatusOf(unit) ?? 'RENTED']
-                                }»`}
-                          </span>
-                        ) : null}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+                    {units.length === 0 ? (
+                      <p className="px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                        {en
+                          ? 'The register says this level exists but no unit has been recorded on it yet.'
+                          : 'سجل المباني يذكر هذا الطابق لكن لم تُسجَّل عليه أي وحدة بعد.'}
+                      </p>
+                    ) : null}
+
+                    <ul className="grid grid-cols-1 gap-2 p-2 sm:grid-cols-2 xl:grid-cols-3 empty:p-0">
+                      {units.map((unit) => {
+                        const active = linkedUnitIds.has(unit.id);
+                        const occupants = currentOccupants(unit);
+                        const badge = cellBadge(unit, labels, en);
+                        /*
+                          Whose occupancy, not merely whether there is one.
+
+                          This used to be `occupants.some(current)` under the
+                          name `takenBySomeoneElse` — a variable that did not
+                          check *whose*, because the control was never told which
+                          citizen it was editing. So an owner already recorded in
+                          flat 3 was warned about himself, and an owner ticking a
+                          genuinely let flat got the identical amber dot. One of
+                          those is nothing and the other decides who pays the
+                          رسم نظافة; they cannot look the same.
+                        */
+                        const mine = citizenId
+                          ? occupants.filter((occupant) => occupant.citizenId === citizenId)
+                          : [];
+                        const others = citizenId
+                          ? occupants.filter((occupant) => occupant.citizenId !== citizenId)
+                          : occupants;
+                        /*
+                          Only a *non-owner* spell is a fee-bearing collision.
+                          Two owners on one flat are co-heirs, which Lebanese
+                          inheritance makes the normal case (D2) and which costs
+                          nobody anything.
+                        */
+                        const heldByOccupant = others.some(
+                          (occupant) => occupant.role !== 'OWNER',
+                        );
+
+                        return (
+                          <li key={unit.id}>
+                            <button
+                              type="button"
+                              disabled={Boolean(locked?.unitId) && locked?.unitId !== unit.id}
+                              onClick={() => toggleUnit(unit)}
+                              aria-pressed={active}
+                              className={cn(
+                                'w-full space-y-1 rounded-md border p-2.5 text-start transition-colors',
+                                active
+                                  ? 'border-primary bg-primary/10 ring-1 ring-primary'
+                                  : 'hover:bg-accent/50 disabled:opacity-40',
+                              )}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="flex items-center gap-1 font-mono text-sm font-bold">
+                                  {active ? (
+                                    <Link2 className="size-3 shrink-0" aria-hidden />
+                                  ) : null}
+                                  <span dir="ltr">{unit.unitCode}</span>
+                                </span>
+                                <span className="text-[11px] text-muted-foreground">
+                                  {labels.unitType[unit.unitType]}
+                                </span>
+                              </div>
+
+                              {/* The same classification the building sheet
+                                  colours its cells by — «شاغرة», «غير ممسوحة»,
+                                  «مسجلة (المستأجر: فلان)». */}
+                              <Badge variant={badge.variant} className="max-w-full truncate">
+                                {badge.text}
+                              </Badge>
+
+                              {/*
+                                What the officer needs to recognise the flat
+                                from the doorway, which a bare code never gave
+                                them: an officer registering the owner of «the
+                                shop on the ground floor» saw «0001» and had no
+                                way to tell whether that *was* their shop.
+                              */}
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                                {unit.postedNumber && unit.postedNumber !== unit.unitCode ? (
+                                  <span>
+                                    {en ? 'Door: ' : 'الباب: '}
+                                    <span dir="ltr">{unit.postedNumber}</span>
+                                  </span>
+                                ) : null}
+                                {unit.side ? <span>{unit.side}</span> : null}
+                                {unit.unitArea != null ? (
+                                  <span dir="ltr">
+                                    {unit.unitArea} {en ? 'm²' : 'م²'}
+                                  </span>
+                                ) : null}
+                              </div>
+
+                              {/*
+                                Who is in it, by name and capacity. The owner's
+                                own spell is named separately so the commonest
+                                reason a card lights up — that this is the very
+                                person being edited — stops reading as a clash.
+                              */}
+                              {mine.length > 0 ? (
+                                <p className="text-[11px] font-medium text-primary">
+                                  {en ? 'Already linked to this citizen' : 'مسجَّل لهذا المواطن'}
+                                  {' · '}
+                                  {mine.map((row) => labels.occupancyRole[row.role]).join('، ')}
+                                </p>
+                              ) : null}
+
+                              {others.map((occupant) => (
+                                <p
+                                  key={occupant.id}
+                                  className={cn(
+                                    'text-[11px]',
+                                    occupant.role === 'OWNER'
+                                      ? 'text-muted-foreground'
+                                      : 'font-medium text-amber-700 dark:text-amber-500',
+                                  )}
+                                >
+                                  {labels.occupancyRole[occupant.role]}
+                                  {': '}
+                                  {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
+                                </p>
+                              ))}
+
+                              {/*
+                                Said once, plainly, where it changes the bill.
+
+                                A flat somebody else occupies is «مؤجرة» or
+                                «مشغولة بتسامح» on this card whether or not
+                                anyone types it, and `toggleUnit` writes exactly
+                                that. Announcing it here is what stops the
+                                owner's card asserting «مشغولة من المالك» over a
+                                tenant the register is already holding — the
+                                state in which both of them get charged the
+                                occupancy fee for one flat.
+                              */}
+                              {heldByOccupant ? (
+                                <p className="text-[11px] text-amber-700 dark:text-amber-500">
+                                  {en
+                                    ? 'Occupied by someone else — this card will record it as such'
+                                    : `تُسجَّل على هذه البطاقة «${
+                                        labels.unitStatus[occupancyStatusOf(unit) ?? 'RENTED']
+                                      }»`}
+                                </p>
+                              ) : null}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ))}
+              </div>
 
               <p className="text-[11px] leading-relaxed text-muted-foreground">
                 {en
@@ -1097,44 +1471,45 @@ export function BuildingUnitPicker({
                 added on top — had no chip to tick. They typed it into «وحدات
                 المبنى» as an unlinked row, which bills the citizen but leaves
                 the census still saying the flat does not exist.
+
+                Withdrawn when the officer was sent to one specific door.
+                «تسجيل أسرة في هذه الوحدة» names a flat, every other chip on the
+                matrix is disabled behind it, and the flat itself is already
+                ticked — so the only thing this control can add from here is a
+                second row for the unit they are standing in. That is exactly
+                the duplicate `duplicateUnitsOf` exists to catch, arrived at by
+                the one path where the answer cannot be «نعم، وحدة أخرى».
+
+                Kept for a building-level lock. Arriving from the *structure*
+                rather than a door is the case the control was built for: the
+                officer is going through the block and may well find a flat the
+                survey missed.
+
+                Beside the per-floor buttons rather than instead of them: this
+                is the one that adds a floor the matrix does not have yet, so it
+                seeds a floor *above* the top of the building.
               */}
-              <AddUnitInline
-                en={en}
-                labels={labels}
-                state={adding}
-                busy={addingBusy}
-                error={addError}
-                onOpen={() => {
-                  setAddError(null);
-                  setDuplicateUnits(null);
-                  // Seeded from the top floor already in the matrix: units are
-                  // added upward far more often than a basement is discovered.
-                  const highest = Math.max(...detail.units.map((unit) => unit.floor));
-                  // Seeded from what this structure is made of, exactly as the
-                  // building editor seeds its blueprint — a مستودع's next unit
-                  // is a مستودع until somebody says otherwise.
-                  setAdding({
-                    floor: String(highest),
-                    unitType: STRUCTURE_TYPE_MAP[detail.structureType].defaultUnitType,
-                  });
-                }}
-                onChange={(next) => {
-                  setDuplicateUnits(null);
-                  setAdding(next);
-                }}
-                onCancel={() => {
-                  setAdding(null);
-                  setAddError(null);
-                  setDuplicateUnits(null);
-                }}
-                onSubmit={() => void submitNewUnit()}
-                duplicates={duplicateUnits}
-                onConfirmDuplicates={() => void submitNewUnit(true)}
-                onDeclineDuplicates={() => {
-                  setDuplicateUnits(null);
-                  setAdding(null);
-                }}
-              />
+              {locked?.unitId || (adding !== null && addingAnchor !== 'bottom') ? null : (
+                <AddUnitInline
+                  en={en}
+                  labels={labels}
+                  state={addingAnchor === 'bottom' ? adding : null}
+                  busy={addingBusy}
+                  error={addError}
+                  // Seeded one above the top floor already in the matrix: every
+                  // floor the building has has its own button now, so what is
+                  // left for this one is the floor that was just built.
+                  onOpen={() =>
+                    openAdd(Math.max(...detail.units.map((unit) => unit.floor)) + 1, 'bottom')
+                  }
+                  onChange={changeAdding}
+                  onCancel={closeAdd}
+                  onSubmit={() => void submitNewUnit()}
+                  duplicates={duplicateUnits}
+                  onConfirmDuplicates={() => void submitNewUnit(true)}
+                  onDeclineDuplicates={closeAdd}
+                />
+              )}
 
             </>
           )}
@@ -1326,8 +1701,17 @@ function NewStructureBranch({
  * than «0» because that is what the register has always held.
  */
 function floorText(floor: number, en: boolean): string {
+  /*
+    `B1`, not «قبو ١» — and this is the one place where the choice is load-
+    bearing rather than cosmetic. What this returns is written into
+    `BuildingUnit.floor`, a free-text column, and `parseFloorLabel` is the door
+    back to a signed integer. Its basement pattern accepts `b1` precisely
+    because that is what `formatUnitCode` prints, so a card line written here
+    reads back as −1 by the same rule a collector's transcription of the code
+    does.
+  */
+  if (floor < 0) return `B${Math.abs(floor)}`;
   if (floor === 0) return en ? 'Ground' : 'الأرضي';
-  if (floor < 0) return en ? `Basement ${Math.abs(floor)}` : `قبو ${Math.abs(floor)}`;
   return String(floor);
 }
 
@@ -1456,11 +1840,18 @@ function AddUnitInline({
           <input
             type="number"
             inputMode="numeric"
+            min={-10}
+            max={100}
             dir="ltr"
             value={state.floor}
             onChange={(event) => onChange({ ...state, floor: event.target.value })}
             className="h-8 w-20 rounded-md border bg-background px-2 text-start text-xs"
           />
+          {/* The one place the signed floor is typed rather than clicked, so
+              the mapping between it and the B-prefixed label is stated. */}
+          <span className="block text-[10px] leading-snug text-muted-foreground">
+            {en ? '0 = ground · -1 = B1' : '0 = الأرضي · ‎-1 = B1'}
+          </span>
         </label>
 
         <label className="min-w-40 flex-1 space-y-1">

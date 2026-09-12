@@ -829,6 +829,14 @@ export interface BuildingSummary {
   latitude: number | null;
   longitude: number | null;
   floorsCount: number;
+  /**
+   * How far the structure goes down, as a depth: 2 means B1 and B2.
+   *
+   * Optional on the wire so a response cached from a build before the column
+   * existed reads as "no basement" rather than `undefined` leaking into a
+   * floor count.
+   */
+  basementsCount?: number;
   /** Maintained by a database trigger — never written from the client. */
   unitsTotal: number;
   unitsSurveyed: number;
@@ -881,6 +889,11 @@ export interface UnitRow {
   /** Signed: basement negative, ground 0. `unitCode` is derived from it (D8). */
   floor: number;
   sequence: number;
+  /** 1-based inclusive column span this unit was painted on, or both null if
+   *  it was never painted on a grid (the blueprint generator, a hand-added
+   *  single unit) — see `unit-grid-picker.tsx`'s `GridUnitDraft`. */
+  startCol: number | null;
+  endCol: number | null;
   unitCode: string;
   postedNumber: string | null;
   unitType: UnitType;
@@ -1003,6 +1016,8 @@ export interface CreateBuildingInput {
   latitude?: number;
   longitude?: number;
   floorsCount?: number;
+  /** Levels below ground, as a depth: 2 means B1 and B2. Omitted means none. */
+  basementsCount?: number;
   notes?: string;
   /**
    * The suffix a phone showed while offline. Never trusted — the server
@@ -1038,6 +1053,8 @@ export interface CreateBuildingInput {
     id?: string;
     floor: number;
     sequence?: number;
+    startCol?: number;
+    endCol?: number;
     unitType: UnitType;
     postedNumber?: string;
     side?: string;
@@ -1056,6 +1073,7 @@ export type UpdateBuildingInput = Partial<{
   latitude: number | null;
   longitude: number | null;
   floorsCount: number;
+  basementsCount: number;
   notes: string | null;
 }>;
 
@@ -1081,6 +1099,8 @@ export interface UpsertUnitInput {
   floor: number;
   /** Omitted on create: the server takes the next free spot on the floor. */
   sequence?: number;
+  startCol?: number;
+  endCol?: number;
   unitType: UnitType;
   postedNumber?: string;
   side?: string;
@@ -1088,6 +1108,12 @@ export interface UpsertUnitInput {
   unitStatus?: UnitStatus;
   surveyStatus?: SurveyStatus;
   notes?: string;
+  /**
+   * «نعم، هذه وحدة مختلفة» — the officer has seen what is already on this
+   * floor and is asserting the unit they are adding is not one of them. The
+   * server refuses a same-type addition without it; see `upsertUnitSchema`.
+   */
+  acknowledgedDuplicates?: boolean;
 }
 
 export interface RecordOccupancyInput {
@@ -1096,8 +1122,35 @@ export interface RecordOccupancyInput {
   role: OccupancyRole;
   /** Owners only — the server refuses shares on a tenant. */
   shares?: number;
+  /**
+   * حالة الوحدة — owners only, for the same reason shares are.
+   *
+   * A tenant or a شاغل بتسامح *is* the occupant of what is being recorded,
+   * so their capacity settles the unit’s state and the server derives it. An
+   * owner’s does not: they may live there, let it, lend it, or hold it empty,
+   * and those are four different bills.
+   */
+  unitStatus?: UnitStatus;
   fromDate?: string;
   toDate?: string;
+}
+
+/**
+ * What recording the occupant did to that citizen’s own file.
+ *
+ * The server now links the two halves by default, so `backed` is true for
+ * every citizen who has a file at all. `outcome` is what the officer is told
+ * when it is not — and `'NO_FILE'` is the only ordinary way that happens.
+ */
+export interface OccupancyFileLink {
+  backed: boolean;
+  outcome:
+    | 'ENTRY_CREATED'
+    | 'UNIT_ADDED'
+    | 'ALREADY_CLAIMED'
+    | 'NO_FILE'
+    | 'UNLINKABLE_STRUCTURE'
+    | 'NO_BUILDING';
 }
 
 export interface RecordDamageInput {
@@ -1370,7 +1423,11 @@ export async function recordOccupancy(
   token: string,
   input: RecordOccupancyInput,
 ) {
-  const result = await apiFetch<{ occupancy: UnitOccupant; casesResolved: number }>(
+  const result = await apiFetch<{
+    occupancy: UnitOccupant;
+    casesResolved: number;
+    fileLink: OccupancyFileLink;
+  }>(
     tenant,
     '/buildings/occupancies',
     { token, method: 'POST', body: JSON.stringify(input) },
@@ -1969,6 +2026,7 @@ export async function createCitizen(tenant: string, token: string, input: Citize
     status: CitizenRecordStatus;
     deduplicated: boolean;
     census: CensusSyncResult | null;
+    landlordLinks: LandlordLinkOffers | null;
   }>(tenant, '/citizens', { token, method: 'POST', body: JSON.stringify(input) });
   /*
     A registration is a census write too.
@@ -1999,6 +2057,7 @@ export async function updateCitizen(
     citizenId: string;
     status: CitizenRecordStatus;
     census: CensusSyncResult | null;
+    landlordLinks: LandlordLinkOffers | null;
   }>(tenant, `/citizens/${encodeURIComponent(citizenId)}`, {
     token,
     method: 'PATCH',
@@ -2008,6 +2067,137 @@ export async function updateCitizen(
   invalidateCensus(tenant);
   invalidateParcelChecks(tenant);
   return result;
+}
+
+// ──────────────────  Owner links (روابط المالكين)  ──────────────────
+//
+// Identifying the owner a مستأجر named among the register's own citizens. The
+// match is computed from `landlordPhone`, never stored, and nothing links
+// itself — see `LandlordLinkService` on the server for why both of those are
+// deliberate.
+
+/** A registered citizen a claimed landlord number could belong to. */
+export interface LandlordCandidate {
+  id: string;
+  name: string;
+  phone: string | null;
+  referenceNumber: string | null;
+}
+
+/** One unresolved claim, with whoever its number resolves to. */
+export interface LandlordProposal {
+  propertyEntryId: string;
+  occupancyType: string;
+  landlordName: string | null;
+  landlordPhone: string;
+  propertyNumber: string | null;
+  buildingName: string | null;
+  buildingId: string | null;
+  /** Flats on this card that name a canonical unit — what a link would claim. */
+  linkedUnitCount: number;
+  filedBy: {
+    registrationId: string;
+    referenceNumber: string;
+    citizenId: string;
+    name: string;
+  } | null;
+  /** Usually one. More than one is a shared household line. */
+  candidates: LandlordCandidate[];
+}
+
+/**
+ * What a save turned up, in both directions.
+ *
+ * `filed` — this household named an owner the register already holds.
+ * `naming` — this household *is* the owner other cards have been naming.
+ *
+ * Both are offers. Nothing has been linked, because a phone is not an identity
+ * and a link can bill.
+ */
+export interface LandlordLinkOffers {
+  filed: LandlordProposal[];
+  naming: LandlordProposal[];
+}
+
+/** The standing queue — every unresolved claim that matches a citizen. */
+export function getLandlordLinks(tenant: string, token: string) {
+  return apiFetch<LandlordProposal[]>(tenant, '/citizens/landlord-links', { token });
+}
+
+/** How much ownership the register knows about and does not bill. */
+export function getLandlordLinkSummary(tenant: string, token: string) {
+  return apiFetch<{ units: number; owners: number }>(
+    tenant,
+    '/citizens/landlord-links/summary',
+    { token },
+  );
+}
+
+/**
+ * Is this number one of ours? — the form's inline lookup.
+ *
+ * Answers `null` where several citizens share the number, which is the shared
+ * household case: the control says nothing rather than offering an arbitrary
+ * one of them as though it were the answer.
+ */
+export async function getLandlordCandidate(tenant: string, token: string, phone: string) {
+  const { candidate } = await apiFetch<{ candidate: LandlordCandidate | null }>(
+    tenant,
+    `/citizens/landlord-links/candidate?phone=${encodeURIComponent(phone)}`,
+    { token },
+  );
+  return candidate;
+}
+
+/**
+ * «نعم، هذا هو المالك».
+ *
+ * Invalidates the census: confirming records an `OWNER` occupancy on every flat
+ * the card names, so the matrix and the map pins this tab is holding describe
+ * the moment before it.
+ */
+export async function confirmLandlordLink(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  citizenId: string,
+) {
+  const result = await apiFetch<{
+    linked: boolean;
+    occupanciesRecorded: number;
+    unitsClaimed: number;
+    /**
+     * Whether the structure was added to the owner's own file by this link.
+     *
+     * False when they had already filed a card on it — the commoner case for an
+     * owner the municipality knows — and the link is no less complete for it.
+     */
+    ownerCardCreated: boolean;
+  }>(tenant, `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/confirm`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ citizenId }),
+  });
+  invalidateCensus(tenant);
+  return result;
+}
+
+/** «ليس هو» — what lets the queue shrink. */
+export function dismissLandlordLink(tenant: string, token: string, propertyEntryId: string) {
+  return apiFetch<{ dismissed: boolean }>(
+    tenant,
+    `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/dismiss`,
+    { token, method: 'POST' },
+  );
+}
+
+/** Undoes a confirmation, putting the claim back in the queue. */
+export function unlinkLandlord(tenant: string, token: string, propertyEntryId: string) {
+  return apiFetch<{ unlinked: boolean }>(
+    tenant,
+    `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}`,
+    { token, method: 'DELETE' },
+  );
 }
 
 /** Soft delete and its undo — a deactivated citizen is skipped by the biller. */

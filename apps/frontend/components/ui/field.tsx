@@ -122,6 +122,7 @@ export function Field({
   required,
   htmlFor,
   path,
+  className,
   children,
 }: {
   label: string;
@@ -131,6 +132,17 @@ export function Field({
   htmlFor: string;
   /** This field's dot-path — `personal.civilRecordNumber`, `properties.0.unitArea`. */
   path?: string;
+  /**
+   * Applied to the field's own wrapper, so a caller can place or withdraw it
+   * without introducing a wrapping element.
+   *
+   * That distinction matters here and is not cosmetic: these fields sit
+   * directly in CSS grids, so a `<div>` wrapped around one to hide it becomes
+   * the grid item instead, and the field inside it stops participating in the
+   * column track it was placed in. Hiding one field would silently re-flow the
+   * rest of the row.
+   */
+  className?: string;
   children: React.ReactNode;
 }) {
   const flagging = useContext(FieldFlagContext);
@@ -152,7 +164,7 @@ export function Field({
   const locale = flagging?.locale ?? 'ar';
 
   return (
-    <div className="space-y-1.5">
+    <div className={cn('space-y-1.5', className)}>
       <div className="flex items-baseline justify-between gap-2">
         <Label
           htmlFor={htmlFor}

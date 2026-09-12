@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Building2,
   CheckCircle2,
   ChevronDown,
   Loader2,
@@ -46,10 +47,13 @@ import {
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import {
   BuildingUnitPicker,
+  type LinkedBuildingFacts,
   type LockedCensusTarget,
 } from '@/components/admin/building-unit-picker';
+import { LandlordMatchHint } from '@/components/admin/landlord-match-hint';
 import { cn, scopeErrors } from '@/lib/utils';
 import {
+  type CensusUnitFacts,
   flagPath,
   SharedRightsField,
   UnitsEditor,
@@ -217,6 +221,15 @@ export function PropertyCard({
     onChange((current) => ({ ...current, ...patch }));
 
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  /**
+   * Whether the census-known fields are shown as fields rather than as facts.
+   *
+   * Closed by default, because the whole point is that an officer filling a
+   * linked card should not have to scan six read-only boxes to find the one
+   * question they came to ask. Opened when they want to check a value against
+   * the flat in front of them — which is a deliberate act, and rare.
+   */
+  const [showCensusDetails, setShowCensusDetails] = useState(false);
 
   /**
    * The censused structure this card is linked to, reported up by the picker.
@@ -226,12 +239,7 @@ export function PropertyCard({
    * disagreeing about the answer. It is what «اسم المبنى» reads from when the
    * register has a name for the block.
    */
-  const [linkedBuilding, setLinkedBuilding] = useState<{
-    id: string;
-    code: string;
-    name: string | null;
-    units: Array<{ id: string; unitCode: string }>;
-  } | null>(null);
+  const [linkedBuilding, setLinkedBuilding] = useState<LinkedBuildingFacts | null>(null);
 
   /**
    * `unitId` → `0202`, so «وحدات المبنى» can head a linked row by the code the
@@ -265,8 +273,47 @@ export function PropertyCard({
     return codes;
   }, [linkedBuilding]);
 
+  /**
+   * What the census holds about each linked flat, keyed by canonical unit id.
+   *
+   * The rule every lock on this card follows: **a field is stated rather than
+   * asked if, and only if, the register has an answer for it.** A `Unit` with
+   * no recorded area leaves «مساحة الوحدة» open, because the officer standing
+   * in the flat with a tape measure is the person who can establish it — and
+   * locking an empty field would make the value unrecordable by the only person
+   * in a position to record it. That is the rule «اسم المبنى» has always
+   * followed; this is the same rule, applied per field.
+   */
+  const censusUnits = useMemo(() => {
+    const facts: Record<string, CensusUnitFacts> = {};
+    for (const unit of linkedBuilding?.units ?? []) facts[unit.id] = unit;
+    return facts;
+  }, [linkedBuilding]);
+
   /** The register has an answer, so the field states it instead of asking. */
   const namedByCensus = Boolean(draft.buildingId && linkedBuilding?.name);
+
+  /**
+   * رقم العقار belongs to the structure once the card is linked to one.
+   *
+   * Locked whenever a *censused* building is loaded — never for a pending one,
+   * which has no parcel of its own and takes the card's. `BuildingUnitPicker`
+   * mirrors the register's value down, so by the time this is true the field
+   * already shows it; the lock is what stops the two drifting apart again.
+   */
+  const parcelFromCensus =
+    draft.buildingId && linkedBuilding && draft.buildingId === linkedBuilding.id
+      ? linkedBuilding.parcelNumber
+      : null;
+
+  /**
+   * Whether نوع العقار is the census's answer rather than this form's question.
+   *
+   * The same condition as `parcelFromCensus` and deliberately derived from it:
+   * both facts belong to the structure, so they become statements at exactly
+   * the same moment — when a card is linked to a building that actually exists.
+   */
+  const typeFromCensus = Boolean(parcelFromCensus);
 
   const isBuilding = draft.propertyType === 'BUILDING';
   const units = draft.units ?? [];
@@ -347,31 +394,65 @@ export function PropertyCard({
       */}
       <div className={cn(collapsed && 'hidden')}>
         <CardContent className="space-y-4 pt-4">
-          <div className="grid gap-3.5 sm:grid-cols-2">
-            <Field
-              label={locale === 'en' ? 'Neighborhood' : 'الحي'}
-              htmlFor={`nb-${index}`}
+          {/*
+            What the register already knows, said once, as a statement.
 
-              path={flagPath(index, 'neighborhood')}
-              required
-              error={errors.neighborhood}
-            >
-              <Input
-                id={`nb-${index}`}
-                invalid={Boolean(errors.neighborhood)}
-                value={draft.neighborhood ?? ''}
-                onChange={(e) => set({ neighborhood: e.target.value })}
-              />
-            </Field>
+            These values were read-only inputs a moment ago and that was the
+            wrong shape for them. A disabled field still costs a label, a box,
+            a row of the grid and a beat of the officer's attention — six of
+            them on a linked card, every one of which they must scan past to
+            reach «نوع الإشغال», the single question they are at the door to
+            ask. Facts do not need input boxes; they need to be legible and out
+            of the way.
 
-            <PropertyNumberField
-              tenant={tenant}
-              index={index}
-              value={draft.propertyNumber ?? ''}
-              onChange={(propertyNumber) => set({ propertyNumber })}
-              onViewParcel={onViewParcel}
+            Nothing is hidden in the sense of unavailable. «عرض التفاصيل»
+            reveals the same fields, still read-only and still carrying the
+            hint that names where each is corrected, for the officer who wants
+            to check a value against the flat in front of them.
+          */}
+          {parcelFromCensus && linkedBuilding ? (
+            <CensusFacts
+              building={linkedBuilding}
+              draft={draft}
+              censusUnits={censusUnits}
+              expanded={showCensusDetails}
+              onToggle={() => setShowCensusDetails((open) => !open)}
               locale={locale}
             />
+          ) : null}
+
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            {/*
+              «الحي» is not asked for.
+
+              It is the same fact the parcel's zone already carries — and
+              carries once, centrally, instead of being retyped per household
+              with a different spelling each time. The field stays on the draft
+              and on the wire so values already collected survive an edit
+              untouched; it will render again when it is fed by the zone rather
+              than by a keyboard. See `neighborhoodField`.
+            */}
+
+            {/*
+              Withdrawn from the grid once the strip above states it. Rendered
+              again, unchanged and still read-only, when «عرض التفاصيل» is open
+              — the field is the detail view of the fact, not a second copy of
+              it, so there is exactly one place a parcel can be read from at any
+              moment.
+            */}
+            {parcelFromCensus && !showCensusDetails ? null : (
+              <PropertyNumberField
+                tenant={tenant}
+                index={index}
+                value={draft.propertyNumber ?? ''}
+                onChange={(propertyNumber) => set({ propertyNumber })}
+                onViewParcel={onViewParcel}
+                lockedToBuilding={
+                  parcelFromCensus && linkedBuilding ? linkedBuilding.code : null
+                }
+                locale={locale}
+              />
+            )}
           </div>
 
           {/*
@@ -437,10 +518,39 @@ export function PropertyCard({
               htmlFor={`pt-${index}`}
               required
               error={errors.propertyType}
+              // Stated by the strip while it is collapsed — see `CensusFacts`.
+              className={cn(typeFromCensus && !showCensusDetails && 'hidden')}
+              /*
+                What stands on the parcel is the census's answer, not this
+                form's, once the card is linked to a structure.
+
+                `STRUCTURE_TYPE_MAP` is the single statement of the
+                correspondence (D15) and `censusDraft` seeds the card through
+                it — a مجمع تجاري becomes a مبنى card, a منزل مستقل a منزل. The
+                control stayed switchable anyway, so an officer could flip a
+                flat they had been sent to into أرض or خيمة while `buildingId`
+                went on pointing at a residential block. `branchFieldsOnly`
+                then silently drops the link on anything but مبنى/منزل, so the
+                card saved unlinked with no complaint anywhere — the exact
+                failure `census-link.spec.ts` exists about, reachable by one
+                tap.
+
+                A *pending* structure is left switchable: nothing stands there
+                yet, the officer chose the structure type moments ago, and
+                changing their mind is a correction rather than a contradiction.
+              */
+              hint={
+                typeFromCensus
+                  ? locale === 'en'
+                    ? `Determined by what stands on the parcel (${linkedBuilding!.code}). Unlink to change it.`
+                    : `يحدّده ما هو قائم على العقار (${linkedBuilding!.code}). لتغييره، ألغِ الربط.`
+                  : undefined
+              }
             >
               <SegmentedControl
                 value={draft.propertyType ?? ''}
                 invalid={Boolean(errors.propertyType)}
+                disabled={typeFromCensus}
                 onChange={(v) =>
                   onChange((current) => changePropertyType(current, v as PropertyType))
                 }
@@ -508,6 +618,24 @@ export function PropertyCard({
                   value={draft.landlordPhone ?? ''}
                   onChange={(e) => set({ landlordPhone: e.target.value })}
                 />
+
+                {/*
+                  Whether the owner being named is already on the register.
+
+                  Staff-only for the same reason the census picker is: it reads
+                  the municipality's own citizen list, and a resident filling in
+                  the public wizard has no business being told which of their
+                  neighbours the register holds. Gated on the identical pair, so
+                  the two controls can never disagree about who is looking.
+                */}
+                {token && censusPicker && draft.landlordPhone ? (
+                  <LandlordMatchHint
+                    tenant={tenant}
+                    token={token}
+                    phone={draft.landlordPhone}
+                    locale={locale}
+                  />
+                ) : null}
               </Field>
             </div>
           ) : null}
@@ -550,6 +678,12 @@ export function PropertyCard({
                       : `من سجل المباني (${linkedBuilding!.code}). التعديل يتم على المبنى نفسه.`
                     : undefined
                 }
+                // Stated by the strip while it is collapsed. An *unnamed*
+                // building keeps its field visible whatever the strip says:
+                // the officer in the stairwell is the person who learns the
+                // name, and a fact the register does not hold cannot be
+                // summarised into one.
+                className={cn(namedByCensus && !showCensusDetails && 'hidden')}
               >
                 <Input
                   id={`bn-${index}`}
@@ -697,6 +831,7 @@ export function PropertyCard({
               index={index}
               units={units}
               unitCodes={unitCodes}
+              censusUnits={censusUnits}
               defaultUnitType={defaultUnitType}
               asksUnitStatus={asksUnitStatus}
               errors={scopeErrors(errors, 'units')}
@@ -735,6 +870,155 @@ export function PropertyCard({
         }}
       />
     </Card>
+  );
+}
+
+/**
+ * What the register already knows about this card, as a statement rather than
+ * as six disabled inputs.
+ *
+ * ## The problem it solves
+ *
+ * A card reached from «تسجيل أسرة في هذه الوحدة» arrives with the parcel, the
+ * structure type, the building's name and the flat's type, floor, side and area
+ * already answered — by the municipality's own survey, which is more
+ * authoritative than anything the officer could retype. Rendering those as
+ * read-only fields was honest and unreadable: each one still costs a label, a
+ * box, a grid cell and a beat of attention, and the officer has to scan past
+ * all of them to reach «نوع الإشغال» — the one question they are standing at
+ * the door to ask.
+ *
+ * Facts read as facts. Two lines, one border, no inputs.
+ *
+ * ## Why it is not a card
+ *
+ * A card inside a card is the lazy container twice over, and this is a passage
+ * of *information inside* a form, not a sibling object to it. One hairline
+ * border and a tinted ground place it without pretending it is a separate
+ * thing — and the card it sits in keeps the only elevation on screen.
+ *
+ * ## Why nothing is truly hidden
+ *
+ * «عرض التفاصيل» renders the same fields, still read-only, still carrying the
+ * hint that names where each one is corrected. An officer checking the area
+ * against the flat in front of them needs the label beside the number; an
+ * officer filling in the household does not. The toggle is the difference
+ * between those two jobs, and it costs one tap.
+ */
+function CensusFacts({
+  building,
+  draft,
+  censusUnits,
+  expanded,
+  onToggle,
+  locale,
+}: {
+  building: LinkedBuildingFacts;
+  draft: PropertyDraft;
+  censusUnits: Record<string, CensusUnitFacts>;
+  expanded: boolean;
+  onToggle: () => void;
+  locale: string;
+}) {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+
+  /*
+    The flats this card names that the census also knows, in card order.
+
+    Rendered per unit rather than summarised into a count, because the count is
+    not the fact an officer checks — «0001 · شقة · الأرضي · ٩٠ م²» is. A card
+    naming more than a couple of flats is a landlord's, and there the list is
+    the content; it wraps rather than truncating.
+  */
+  const units = (draft.units ?? [])
+    .map((row) => (row.unitId ? censusUnits[row.unitId] : undefined))
+    .filter((unit): unit is CensusUnitFacts => Boolean(unit));
+
+  const structureLine = [
+    draft.propertyType ? labels.propertyType[draft.propertyType] : null,
+    draft.propertyNumber
+      ? en
+        ? `Parcel ${draft.propertyNumber}`
+        : `العقار ${draft.propertyNumber}`
+      : null,
+    building.name,
+  ].filter(Boolean);
+
+  return (
+    <section
+      aria-label={en ? 'From the census record' : 'من سجل المباني'}
+      className="rounded-lg border border-primary/25 bg-primary/[0.04] px-3 py-2.5 sm:px-3.5"
+    >
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary">
+          <Building2 className="size-3.5 shrink-0" aria-hidden />
+          {en ? 'From the census record' : 'من سجل المباني'}
+        </span>
+
+        {/*
+          The building's code, in the one typeface that makes `A-3-A-0001`
+          legible — and `dir="ltr"`, because a Latin-and-digit code inside an
+          RTL line is reordered by the bidi algorithm into something that is
+          not the code.
+        */}
+        <span
+          dir="ltr"
+          className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-primary"
+        >
+          {building.code}
+        </span>
+
+        {/*
+          `ms-auto` rather than `justify-between` on the row: the row has two
+          children at narrow widths and three at wide ones, and only the toggle
+          should ever be flung to the end.
+        */}
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          className="ms-auto inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+        >
+          {expanded
+            ? en
+              ? 'Hide details'
+              : 'إخفاء التفاصيل'
+            : en
+              ? 'Show details'
+              : 'عرض التفاصيل'}
+          <ChevronDown
+            className={cn('size-3.5 shrink-0 transition-transform duration-200', expanded && 'rotate-180')}
+            aria-hidden
+          />
+        </button>
+      </div>
+
+      <p className="mt-1.5 text-sm leading-relaxed text-foreground">
+        {structureLine.join(' · ')}
+      </p>
+
+      {units.length > 0 ? (
+        <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+          {units.map((unit) => (
+            <li key={unit.id} className="text-xs leading-relaxed text-muted-foreground">
+              <span className="font-mono font-medium text-foreground/80" dir="ltr">
+                {unit.unitCode}
+              </span>
+              {' · '}
+              {[
+                unit.unitType ? labels.unitType[unit.unitType as UnitType] : null,
+                unit.floor,
+                unit.side,
+                unit.unitArea ? (en ? `${unit.unitArea} m²` : `${unit.unitArea} م²`) : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
   );
 }
 
@@ -822,7 +1106,9 @@ function summarise(draft: PropertyDraft, locale: string = 'ar'): string {
     draft.propertyType
       ? (labels.propertyType[draft.propertyType] ?? draft.propertyType)
       : (locale === 'en' ? 'Unspecified type' : 'لم يُحدَّد النوع'),
-    draft.neighborhood || null,
+    // «الحي» is deliberately absent — the form no longer asks for it, and a
+    // summary line naming a value nothing on the card can edit reads as a
+    // field somebody has lost.
     draft.propertyNumber ? (locale === 'en' ? `#${draft.propertyNumber}` : `رقم ${draft.propertyNumber}`) : null,
     draft.buildingName || null,
     draft.propertyType === 'BUILDING' && draft.units?.length
@@ -861,6 +1147,7 @@ function PropertyNumberField({
   value,
   onChange,
   onViewParcel,
+  lockedToBuilding = null,
   locale = 'ar',
 }: {
   tenant: string;
@@ -868,6 +1155,20 @@ function PropertyNumberField({
   value: string;
   onChange: (value: string) => void;
   onViewParcel?: (propertyNumber: string) => void;
+  /**
+   * The code of the censused structure this card is linked to, when it is.
+   *
+   * Non-null means the parcel is the *building's* and not this form's to
+   * change: the card is linked, the register holds the answer, and the picker
+   * has already mirrored it into `value`. Editing it here produced a record
+   * claiming one عقار while `buildingId` pointed at a building standing on
+   * another — internally inconsistent, validated cleanly, and billed.
+   *
+   * The escape is the link, not the field. An officer who is on the wrong
+   * structure presses «إلغاء الربط» directly below and the parcel is theirs
+   * again, which is the correction they actually meant to make.
+   */
+  lockedToBuilding?: string | null;
   locale?: string;
 }) {
   /*
@@ -942,15 +1243,24 @@ function PropertyNumberField({
       htmlFor={`pn-${index}`}
       path={flagPath(index, 'propertyNumber')}
       required
+      hint={
+        lockedToBuilding
+          ? locale === 'en'
+            ? `The parcel ${lockedToBuilding} stands on. Unlink to change it.`
+            : `العقار الذي تقوم عليه المنشأة ${lockedToBuilding}. لتغييره، ألغِ الربط.`
+          : undefined
+      }
     >
       <Input
         id={`pn-${index}`}
         inputMode="numeric"
         dir="ltr"
         placeholder={locale === 'en' ? 'e.g. 1024' : 'مثال: ١٠٢٤'}
-        className="text-start"
+        className={cn('text-start', lockedToBuilding && 'bg-muted text-muted-foreground')}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        readOnly={Boolean(lockedToBuilding)}
+        aria-readonly={Boolean(lockedToBuilding) || undefined}
       />
 
       {checking ? (
