@@ -868,7 +868,7 @@ export function BuildingUnitPicker({
     Nothing to offer, and nothing to say.
 
     `locked` is the exception, and it used to be the bug: an officer arriving
-    from «تسجيل أسرة في هذه الوحدة» hit this line with an empty card, the whole
+    from a unit panel's «ملف جديد» link hit this line with an empty card, the whole
     control vanished, and the only sign the flat had been chosen was a hidden
     `buildingId` the form never mentioned again. The card is seeded now, so a
     locked target normally has a parcel — but the seed can fail (the editor
@@ -1473,7 +1473,7 @@ export function BuildingUnitPicker({
                 the census still saying the flat does not exist.
 
                 Withdrawn when the officer was sent to one specific door.
-                «تسجيل أسرة في هذه الوحدة» names a flat, every other chip on the
+                A unit panel's «ملف جديد» link names a flat, every other chip on the
                 matrix is disabled behind it, and the flat itself is already
                 ticked — so the only thing this control can add from here is a
                 second row for the unit they are standing in. That is exactly

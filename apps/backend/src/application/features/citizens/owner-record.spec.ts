@@ -10,9 +10,10 @@ import { citizenColumnsForEdit } from './citizens.service';
  *     non-Lebanese person's passport and residency numbers are «إلزامي إن وجد» —
  *     both may be empty. A required number is what produced invented numbers,
  *     and invented numbers are what merged citizens.
- *  2. **«مالك غير مقيم».** An owner who lives elsewhere is a short record —
+ *  2. **«غير مقيم في البلدة».** Somebody who lives elsewhere is a short record —
  *     name, how to reach them, where they live — not a household file with
- *     every gap flagged.
+ *     every gap flagged. They may own anything here, and rent or occupy only
+ *     what nobody lives in: a shop, office, clinic, warehouse or plot of land.
  */
 
 const household = () => ({
@@ -57,6 +58,18 @@ const owner = () => ({
   flags: [],
 });
 
+/** A مبنى card with one unit per type, in the capacity given. */
+function shopCard(occupancyType: string, unitTypes: string[]): Record<string, unknown> {
+  return {
+    occupancyType,
+    ...(occupancyType === 'OWNER' ? {} : { landlordName: 'حسن جفال', landlordPhone: '03 123456' }),
+    propertyType: 'BUILDING',
+    propertyNumber: '6',
+    buildingName: 'بناية جفال',
+    units: unitTypes.map((unitType) => ({ unitType, floor: '0', unitArea: '40' })),
+  };
+}
+
 const failures = (input: unknown): string[] => {
   const result = adminCreateCitizenSubmissionSchema.safeParse(input);
   return result.success ? [] : result.error.issues.map((issue) => issue.path.join('.'));
@@ -85,7 +98,7 @@ describe('identity document — no longer asked', () => {
   });
 });
 
-describe('«مالك غير مقيم»', () => {
+describe('«غير مقيم في البلدة»', () => {
   it('is a complete record with a name, a number and where they live', () => {
     const result = adminCreateCitizenSubmissionSchema.safeParse(owner());
     expect(result.success).toBe(true);
@@ -105,10 +118,121 @@ describe('«مالك غير مقيم»', () => {
     expect(failures(input)).toEqual(['personal.residencePlace']);
   });
 
-  it('refuses a tenancy on an owner record — whoever lives there has their own file', () => {
+  it('may rent agricultural land — and is not asked for أسهم it does not hold', () => {
     const input = owner();
-    input.properties[0]!.occupancyType = 'TENANT';
+    Object.assign(input.properties[0]!, {
+      occupancyType: 'TENANT',
+      landlordName: 'حسن جفال',
+      landlordPhone: '03 123456',
+    });
+    delete input.properties[0]!.shares;
+
+    const result = adminCreateCitizenSubmissionSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.properties[0]!.shares).toBeUndefined();
+  });
+
+  it('drops a share count left on a card changed from مالك to مستأجر', () => {
+    const input = owner();
+    Object.assign(input.properties[0]!, {
+      occupancyType: 'FREE_OCCUPANT',
+      landlordName: 'حسن جفال',
+    });
+
+    const result = adminCreateCitizenSubmissionSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.properties[0]!.shares).toBeUndefined();
+  });
+
+  it('may rent a shop, an office, a clinic or a warehouse', () => {
+    const input = owner();
+    input.properties = [shopCard('TENANT', ['SHOP', 'OFFICE', 'CLINIC', 'WAREHOUSE'])];
+    expect(failures(input)).toEqual([]);
+  });
+
+  it('may not rent a flat — somebody who rents a home and lives in it lives in the town', () => {
+    const input = owner();
+    input.properties = [shopCard('TENANT', ['SHOP', 'APARTMENT'])];
+    expect(failures(input)).toEqual(['properties.0.units.1.unitType']);
+  });
+
+  it('may not occupy a منزل or a خيمة', () => {
+    const input = owner();
+    input.properties = [
+      {
+        occupancyType: 'FREE_OCCUPANT',
+        landlordName: 'حسن جفال',
+        propertyType: 'HOUSE',
+        propertyNumber: '6',
+        buildingName: 'منزل آل جفال',
+        unitArea: '120',
+      },
+    ];
     expect(failures(input)).toContain('properties.0.occupancyType');
+  });
+
+  it('may own a dwelling but not say they live in it', () => {
+    const input = owner();
+    input.properties = [
+      {
+        occupancyType: 'OWNER',
+        propertyType: 'HOUSE',
+        propertyNumber: '6',
+        buildingName: 'منزل آل جفال',
+        unitArea: '120',
+        unitStatus: 'OWNER_OCCUPIED',
+      },
+    ];
+    expect(failures(input)).toEqual(['properties.0.unitStatus']);
+
+    input.properties[0]!.unitStatus = 'SEASONAL';
+    expect(failures(input)).toEqual([]);
+  });
+
+  it('may run their own shop — owner-occupied is true of a shop', () => {
+    const input = owner();
+    const card = shopCard('OWNER', ['SHOP', 'APARTMENT']);
+    (card.units as Array<Record<string, unknown>>)[0]!.unitStatus = 'OWNER_OCCUPIED';
+    (card.units as Array<Record<string, unknown>>)[1]!.unitStatus = 'OWNER_OCCUPIED';
+    input.properties = [card];
+    // The shop is theirs to run; the flat is not theirs to live in.
+    expect(failures(input)).toEqual(['properties.0.units.1.unitStatus']);
+  });
+
+  it('cannot hide a tenancy behind a unit list flagged «غير مؤكَّد»', () => {
+    const input = owner();
+    const card = shopCard('TENANT', []);
+    delete card.units;
+    input.properties = [card];
+    (input.flags as unknown[]).push({ path: 'properties.0.units', reason: 'لم يُتح الدخول' });
+    expect(failures(input)).toContain('properties.0.occupancyType');
+  });
+
+  it('leaves a household file free to rent a flat, and asks no أسهم of its land tenancy', () => {
+    const input = household();
+    input.properties = [
+      shopCard('TENANT', ['APARTMENT']),
+      {
+        occupancyType: 'TENANT',
+        landlordName: 'حسن جفال',
+        landlordPhone: '03 123456',
+        propertyType: 'LAND',
+        propertyNumber: '7',
+        landType: 'AGRICULTURAL',
+        unitArea: '900',
+      },
+    ];
+    expect(failures(input)).toEqual([]);
+  });
+
+  it('still asks an owner of land for their أسهم', () => {
+    const input = household();
+    input.properties = [
+      { occupancyType: 'OWNER', propertyType: 'LAND', propertyNumber: '7', landType: 'AGRICULTURAL', unitArea: '900' },
+    ];
+    expect(failures(input)).toEqual(['properties.0.shares']);
   });
 
   it('defaults an old submission with no نوع الملف to a household file', () => {

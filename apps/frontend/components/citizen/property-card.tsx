@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import {
   getLabels,
+  isDwellingUnitType,
   isUnoccupied,
   LAND_TYPE,
   OCCUPANCY_TYPE,
@@ -56,6 +57,7 @@ import {
   type CensusUnitFacts,
   flagPath,
   SharedRightsField,
+  BUILDING_UNIT_TYPES,
   UnitsEditor,
   UnitStatusChoice,
 } from '@/components/citizen/unit-fields';
@@ -149,7 +151,7 @@ export function PropertyCard({
   citizenId,
   censusPicker = false,
   lockedCensusTarget,
-  ownerOnly = false,
+  nonResident = false,
 }: {
   tenant: string;
   index: number;
@@ -200,11 +202,14 @@ export function PropertyCard({
   /** Set when the form was launched from a building's unit matrix. */
   lockedCensusTarget?: LockedCensusTarget | null;
   /**
-   * An owner record («مالك غير مقيم») holds only what the owner owns. Whoever
-   * lives in the property is a household with a file of their own, so the
-   * occupancy choice is «مالك» and nothing else — the schema refuses the rest.
+   * The card belongs to somebody who lives outside the town («غير مقيم في
+   * البلدة»). They may own anything, and may rent or occupy only what nobody
+   * lives in — so a tenant's or free occupant's card offers مبنى and أرض only,
+   * and a مبنى's units only محل، مكتب، عيادة، مستودع; and an owner's dwelling is
+   * not offered «مشغولة من المالك». The schema enforces the same rule
+   * (`nonResidentCardIssues`); this is the half that stops it being offered.
    */
-  ownerOnly?: boolean;
+  nonResident?: boolean;
 }) {
   const labels = getLabels(locale);
   const visible: readonly string[] = draft.propertyType
@@ -337,6 +342,9 @@ export function PropertyCard({
     this is the half that stops it being asked in the first place.
   */
   const asksUnitStatus = draft.occupancyType === 'OWNER';
+
+  /** A tenant or free occupant who lives outside the town — see `nonResident`. */
+  const nonResidentOccupant = nonResident && isNonOwner;
 
   return (
     <Card>
@@ -513,7 +521,7 @@ export function PropertyCard({
                 value={draft.occupancyType ?? ''}
                 invalid={Boolean(errors.occupancyType)}
                 onChange={(v) => set({ occupancyType: v as OccupancyType })}
-                options={OCCUPANCY_TYPE.filter((option) => !ownerOnly || option === 'OWNER').map((option) => ({
+                options={OCCUPANCY_TYPE.map((option) => ({
                   value: option,
                   label: labels.occupancyType[option] ?? option,
                 }))}
@@ -561,12 +569,28 @@ export function PropertyCard({
                 onChange={(v) =>
                   onChange((current) => changePropertyType(current, v as PropertyType))
                 }
-                options={allowedTypes.map((option) => ({
-                  value: option,
-                  label: labels.propertyType[option] ?? option,
-                }))}
+                options={allowedTypes
+                  .filter(
+                    (option) =>
+                      !nonResidentOccupant ||
+                      option === 'BUILDING' ||
+                      option === 'LAND' ||
+                      option === draft.propertyType,
+                  )
+                  .map((option) => ({
+                    value: option,
+                    label: labels.propertyType[option] ?? option,
+                  }))}
               />
             </Field>
+
+            {nonResidentOccupant ? (
+              <p className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                {locale === 'en'
+                  ? 'Someone who lives outside the town is recorded as a tenant or occupant of a shop, office, clinic, warehouse or land only. A person who rents a home here and lives in it belongs on a household file.'
+                  : 'غير المقيم يُسجَّل مستأجراً أو شاغلاً لمحل أو مكتب أو عيادة أو مستودع أو أرض فقط. من يستأجر مسكناً في البلدة ويسكنه يُسجَّل بملف أسرة.'}
+              </p>
+            ) : null}
           </div>
 
           {/*
@@ -785,7 +809,9 @@ export function PropertyCard({
               </Field>
             ) : null}
 
-            {visible.includes('shares') ? (
+            {/* أسهم are a share of ownership: a tenant or free occupant of a
+                plot holds none, and is not asked for them. */}
+            {visible.includes('shares') && !isNonOwner ? (
               <Field
                 label={locale === 'en' ? 'Shares (out of 2400)' : 'الأسهم (من أصل 2400)'}
                 htmlFor={`sh-${index}`}
@@ -819,6 +845,26 @@ export function PropertyCard({
               idPrefix={`us-${index}`}
               value={draft.unitStatus}
               onChange={(unitStatus) => set({ unitStatus })}
+              // A منزل is a dwelling; its owner lives elsewhere, so not in it.
+              omit={nonResident ? ['OWNER_OCCUPIED'] : []}
+              locale={locale}
+            />
+          ) : null}
+
+          {/*
+            حالة الأرض — whether somebody else works the owner's plot. Without
+            it a rented plot was billed to its owner *and* its tenant under an
+            occupant-borne notice. «مسكن موسمي» and «قيد الإنجاز» describe
+            buildings, so a plot is not offered them; «مشغولة من المالك» is the
+            owner working it themselves, which is true of a non-resident too.
+          */}
+          {asksUnitStatus && draft.propertyType === 'LAND' ? (
+            <UnitStatusChoice
+              idPrefix={`us-${index}`}
+              value={draft.unitStatus}
+              onChange={(unitStatus) => set({ unitStatus })}
+              omit={['SEASONAL', 'UNDER_CONSTRUCTION']}
+              label={locale === 'en' ? 'Land status' : 'حالة الأرض'}
               locale={locale}
             />
           ) : null}
@@ -841,6 +887,12 @@ export function PropertyCard({
               censusUnits={censusUnits}
               defaultUnitType={defaultUnitType}
               asksUnitStatus={asksUnitStatus}
+              unitTypes={
+                nonResidentOccupant
+                  ? BUILDING_UNIT_TYPES.filter((type) => !isDwellingUnitType(type))
+                  : undefined
+              }
+              nonResident={nonResident}
               errors={scopeErrors(errors, 'units')}
               onChange={(update) =>
                 onChange((current) => ({ ...current, units: update(current.units ?? []) }))
@@ -886,7 +938,7 @@ export function PropertyCard({
  *
  * ## The problem it solves
  *
- * A card reached from «تسجيل أسرة في هذه الوحدة» arrives with the parcel, the
+ * A card reached from a unit panel's «ملف جديد» link arrives with the parcel, the
  * structure type, the building's name and the flat's type, floor, side and area
  * already answered — by the municipality's own survey, which is more
  * authoritative than anything the officer could retype. Rendering those as

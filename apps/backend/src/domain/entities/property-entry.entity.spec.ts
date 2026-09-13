@@ -201,21 +201,41 @@ describe('PropertyEntry — unit status', () => {
     expect(entry.props.unitStatus).toBeNull();
   });
 
-  it('never puts one on land or a tent', () => {
-    // Nothing asks the question there, so a value arriving on such a card came
-    // from a card that used to be something else.
-    const land = PropertyEntry.create({
-      occupancyType: 'OWNER',
-      propertyType: 'LAND',
+  it('keeps an owner’s حالة الأرض, and never puts one on a tenant’s plot or a tent', () => {
+    // A plot says whether somebody else works it — without that, a rented plot
+    // was billed to its owner and its tenant alike (2026-09-13).
+    const plot = {
+      propertyType: 'LAND' as const,
       neighborhood: 'الزهراء',
       propertyNumber: 'L-1',
-      landType: 'AGRICULTURAL',
+      landType: 'AGRICULTURAL' as const,
       unitArea: 800,
-      shares: 400,
+      unitStatus: 'RENTED' as const,
+    };
+
+    expect(PropertyEntry.create({ ...plot, occupancyType: 'OWNER', shares: 400 }).props.unitStatus).toBe(
+      'RENTED',
+    );
+    expect(
+      PropertyEntry.create({
+        ...plot,
+        occupancyType: 'TENANT',
+        landlordName: 'حسن جفال',
+        landlordPhone: '+9613123456',
+      }).props.unitStatus,
+    ).toBeNull();
+
+    // Nothing asks it of a tent, so a value there came from a card that used to
+    // be something else.
+    const tent = PropertyEntry.create({
+      occupancyType: 'OWNER',
+      propertyType: 'TENT',
+      neighborhood: 'الزهراء',
+      propertyNumber: 'T-1',
+      tentLocation: 'مخيم الشمال — قطاع ب',
       unitStatus: 'VACANT',
     });
-
-    expect(land.props.unitStatus).toBeNull();
+    expect(tent.props.unitStatus).toBeNull();
   });
 
   it('keeps each building unit its own status, and only for an owner', () => {
@@ -337,6 +357,27 @@ describe('PropertyEntry — taxonomy rules', () => {
         buildingName: 'should not be here',
       }),
     ).toThrow(/cannot carry building details/);
+  });
+
+  it('asks أسهم of an owner of land only — a farmer renting the plot holds none', () => {
+    const plot = {
+      propertyType: 'LAND' as const,
+      propertyNumber: 'L-405',
+      landType: 'AGRICULTURAL' as const,
+      unitArea: 900,
+    };
+
+    expect(() => PropertyEntry.create({ ...plot, occupancyType: 'OWNER' })).toThrow(/share count/);
+
+    const rented = PropertyEntry.create({
+      ...plot,
+      occupancyType: 'TENANT',
+      landlordName: 'حسن جفال',
+      landlordPhone: '+9613123456',
+      // Left over from when the card said مالك — stripped, not stored.
+      shares: 400,
+    });
+    expect(rented.props.shares).toBeNull();
   });
 
   it('requires a location for a tent and clears its area', () => {

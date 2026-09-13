@@ -346,7 +346,7 @@ export interface CitizenProfile {
   maritalStatus: string | null;
   bloodType: string | null;
   referenceNumber: string | null;
-  /** نوع الملف — a household, or «مالك غير مقيم». */
+  /** نوع الملف — a household, or «غير مقيم في البلدة» (stored as NON_RESIDENT_OWNER). */
   residence: string;
   residencePlace: string | null;
   localContactName: string | null;
@@ -519,9 +519,9 @@ export class ReportingService {
            WHERE pe.id NOT IN (SELECT id FROM excluded_entries)
         )
         SELECT
-          -- Households only. An owner record («مالك غير مقيم», migration 0040)
+          -- Households only. A non-resident record («غير مقيم في البلدة», migration 0040)
           -- is somebody who lives elsewhere: counting them — or whatever
-          -- household size a file converted to an owner record still carries —
+          -- household size a file converted to a non-resident record still carries —
           -- would put people in the town's population who are not in the town.
           -- The residence column is NOT NULL, so this comparison drops no existing row.
           (SELECT count(*)::int FROM ${this.S}users WHERE kind = 'CITIZEN' AND residence = 'RESIDENT')

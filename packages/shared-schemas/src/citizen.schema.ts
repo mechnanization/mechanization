@@ -215,10 +215,12 @@ export const partialContactDetailsSchema = contactDetailsObject
 
 export type PartialContactDetails = z.infer<typeof partialContactDetailsSchema>;
 
-// ─────────────────────  «مالك غير مقيم» — an owner record  ─────────────────────
+// ─────────────  «غير مقيم في البلدة» — a non-resident record  ─────────────
 
 /**
- * What the register keeps about an owner who lives outside the town.
+ * What the register keeps about a person who lives outside the town and owns,
+ * rents or runs something in it — «غير مقيم في البلدة». The names still say
+ * «owner» because the record began as an owner record; see `CITIZEN_RESIDENCE`.
  *
  * A short record, not a household file with its gaps flagged. The rental-value
  * fee falls on whoever occupies the unit (Law 60/1988, Art. 3–4); what the law
@@ -241,7 +243,7 @@ export const nonResidentOwnerPersonalSchema = z.object({
   lastName: arabicOrLatinName,
   /** Town or country — «بيروت»، «ساحل العاج». Free text: there is no list to pick from. */
   residencePlace: z
-    .string({ required_error: 'مكان إقامة المالك مطلوب' })
+    .string({ required_error: 'مكان الإقامة مطلوب' })
     .trim()
     .min(2, 'مكان الإقامة قصير جداً')
     .max(80, 'مكان الإقامة طويل جداً'),

@@ -17,7 +17,6 @@ import {
   ShieldAlert,
   Trash2,
   UserPlus,
-  UserRoundPlus,
 } from 'lucide-react';
 import {
   getLabels,
@@ -36,7 +35,6 @@ import {
   getBuilding,
   getBuildingDamage,
   logApiError,
-  logUnitVisit,
   recordDamage,
   recordOccupancy,
   updateUnit,
@@ -61,6 +59,7 @@ import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import {
+  AddPersonForm,
   BuildingSummaryBadges,
   CaseForm,
   cellBadge,
@@ -68,12 +67,12 @@ import {
   effectiveUnitStatus,
   floorLabel,
   groupUnitsByFloor,
-  livingOccupants,
+  logVisitWithFollowUp,
   occupancyMessage,
-  OccupantForm,
   OccupantList,
   SeasonalHomePanel,
   UnitStateLegend,
+  vacancyBlocker,
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
@@ -235,12 +234,13 @@ export function BuildingUnitMatrixView({
   );
 
   /*
-    The people who make a unit «not vacant» — a مستأجر or شاغل بتسامح, never the
-    owner. See `livingOccupants`; the server applies the same rule.
+    Why «تأكيد الشغور» cannot be pressed here — a مستأجر or شاغل بتسامح living
+    in the unit, or a seasonal home. Never the owner. See `vacancyBlocker`; the
+    server applies the same rules.
   */
-  const livingInUnit = useMemo(
-    () => (selectedUnit ? livingOccupants(selectedUnit) : []),
-    [selectedUnit],
+  const vacancyBlocked = useMemo(
+    () => (selectedUnit ? vacancyBlocker(selectedUnit, en) : null),
+    [selectedUnit, en],
   );
 
   const [addingFloor, setAddingFloor] = useState<number | null>(null);
@@ -688,7 +688,7 @@ export function BuildingUnitMatrixView({
             </div>
           ) : null}
 
-          {/* ── The selected unit, and the four things to do with it ─ */}
+          {/* ── The selected unit, and what can be done with it ─ */}
           {selectedUnit ? (
             <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/[0.03] p-4">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -736,19 +736,19 @@ export function BuildingUnitMatrixView({
                     }}
                   >
                     <UserPlus className="size-4" aria-hidden />
-                    {en ? 'Register occupant' : 'تسجيل شاغل'}
+                    {en ? 'Add a person to this unit' : 'إضافة شخص إلى الوحدة'}
                   </Button>
                   <Button
                     size="sm"
-                    variant={action === 'case' ? 'default' : 'outline'}
+                    variant={action === 'visit' ? 'default' : 'outline'}
                     disabled={busy}
                     onClick={() => {
                       setActionError(null);
-                      setAction(action === 'case' ? null : 'case');
+                      setAction(action === 'visit' ? null : 'visit');
                     }}
                   >
-                    <ClipboardList className="size-4" aria-hidden />
-                    {en ? 'Log a case' : 'تسجيل حالة'}
+                    <Footprints className="size-4" aria-hidden />
+                    {en ? 'Log a visit' : 'تسجيل زيارة'}
                   </Button>
                   <Button
                     size="sm"
@@ -756,15 +756,9 @@ export function BuildingUnitMatrixView({
                     disabled={
                       busy ||
                       selectedUnit.surveyStatus === 'VACANT_CONFIRMED' ||
-                      livingInUnit.length > 0
+                      vacancyBlocked !== null
                     }
-                    title={
-                      livingInUnit.length > 0
-                        ? en
-                          ? 'A tenant or occupant is recorded here — end their occupancy first. An owner does not block this.'
-                          : 'يسكن الوحدة مستأجر أو شاغل مسجَّل — أنهِ إشغاله أولاً. وجود المالك لا يمنع تأكيد الشغور.'
-                        : undefined
-                    }
+                    title={vacancyBlocked ?? undefined}
                     onClick={() => void markVacant(selectedUnit)}
                   >
                     <DoorClosed className="size-4" aria-hidden />
@@ -780,27 +774,20 @@ export function BuildingUnitMatrixView({
                     }}
                   >
                     <ShieldAlert className="size-4" aria-hidden />
-                    {en ? 'Assess damage' : 'كشف ضرر'}
+                    {en ? 'Assess this unit' : 'كشف ضرر على الوحدة'}
                   </Button>
                   <Button
                     size="sm"
-                    variant={action === 'visit' ? 'default' : 'outline'}
+                    variant={action === 'case' ? 'default' : 'outline'}
                     disabled={busy}
                     onClick={() => {
                       setActionError(null);
-                      setAction(action === 'visit' ? null : 'visit');
+                      setAction(action === 'case' ? null : 'case');
                     }}
                   >
-                    <Footprints className="size-4" aria-hidden />
-                    {en ? 'Log a visit' : 'تسجيل زيارة'}
+                    <ClipboardList className="size-4" aria-hidden />
+                    {en ? 'Open a follow-up case' : 'فتح حالة متابعة'}
                   </Button>
-                  <Link
-                    href={`${base}/citizens/new?buildingId=${encodeURIComponent(building.id)}&unitId=${encodeURIComponent(selectedUnit.id)}`}
-                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
-                  >
-                    <UserRoundPlus className="size-4" aria-hidden />
-                    {en ? 'Register a household here' : 'تسجيل أسرة في هذه الوحدة'}
-                  </Link>
                   {canWrite &&
                   selectedUnit.occupants.length === 0 &&
                   selectedUnit.visitCount === 0 ? (
@@ -819,11 +806,14 @@ export function BuildingUnitMatrixView({
               ) : null}
 
               {action === 'occupant' && token ? (
-                <OccupantForm
+                <AddPersonForm
                   tenant={tenant}
                   token={token}
                   busy={busy}
                   locale={locale}
+                  newFileHref={(residence) =>
+                    `${base}/citizens/new?buildingId=${encodeURIComponent(building.id)}&unitId=${encodeURIComponent(selectedUnit.id)}&residence=${residence}`
+                  }
                   onSubmit={(citizen, occRole, shares, unitStatus) =>
                     void run(
                       async () => {
@@ -865,17 +855,9 @@ export function BuildingUnitMatrixView({
                           buildingName: building.name ?? undefined,
                           scheduledRevisitAt: values.revisitAt || undefined,
                         });
-                        if (
-                          selectedUnit.surveyStatus === 'NOT_SURVEYED' &&
-                          values.caseType === 'UNIT_UNREACHABLE'
-                        ) {
-                          await updateUnit(tenant, token, selectedUnit.id, {
-                            surveyStatus: 'VISITED_NO_ANSWER',
-                          });
-                        }
-                        return en ? 'Case logged' : 'تم تسجيل الحالة';
+                        return en ? 'Follow-up case opened' : 'تم فتح حالة المتابعة';
                       },
-                      en ? 'Could not log the case.' : 'تعذّر تسجيل الحالة.',
+                      en ? 'Could not open the case.' : 'تعذّر فتح الحالة.',
                     )
                   }
                 />
@@ -891,15 +873,18 @@ export function BuildingUnitMatrixView({
                     void run(
                       async () => {
                         if (!token) throw new Error('unauthenticated');
-                        const result = await logUnitVisit(tenant, token, {
-                          unitId: selectedUnit.id,
-                          outcome: values.outcome,
-                          visitedAt: values.visitedAt || undefined,
-                          notes: values.notes || undefined,
-                        });
-                        return en
-                          ? `Visit logged — ${result.visitCount} attempt(s) on this unit`
-                          : `تم تسجيل الزيارة — ${result.visitCount} محاولة على هذه الوحدة`;
+                        return logVisitWithFollowUp(
+                          tenant,
+                          token,
+                          {
+                            unitId: selectedUnit.id,
+                            buildingId: building.id,
+                            parcelNumber: building.parcelNumber,
+                            buildingName: building.name,
+                          },
+                          values,
+                          en,
+                        );
                       },
                       en ? 'Could not log the visit.' : 'تعذّر تسجيل الزيارة.',
                     )

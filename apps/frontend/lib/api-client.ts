@@ -878,7 +878,7 @@ export interface UnitOccupant {
    * Whether the citizen's own file claims this flat.
    *
    * `false` means the census records them here but their registration does
-   * not name the property — the half-finished state «تسجيل شاغل» produces,
+   * not name the property — the half-finished state «ربط شخص بالوحدة» can produce,
    * which is legitimate at the doorstep and needs finishing afterwards.
    * Billing reads the file, not this row, so an unbacked occupancy is a flat
    * nobody is charged for.
@@ -1849,7 +1849,7 @@ export interface CitizenListItem {
   identityDocType: string | null;
   identityDocNumber: string | null;
   residentStatus: string | null;
-  /** نوع الملف — a household file, or «مالك غير مقيم». */
+  /** نوع الملف — a household file, or «غير مقيم في البلدة» (stored as NON_RESIDENT_OWNER). */
   residence?: CitizenResidence;
   isActive: boolean;
   registeredAt: string;

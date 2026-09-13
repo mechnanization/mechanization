@@ -25,7 +25,12 @@ import {
   type FieldFlag,
 } from './field-flag.schema';
 import { uuid } from './primitives';
-import { citizenResidenceSchema, NON_OWNER_OCCUPANCY, type CitizenResidence } from './enums';
+import {
+  citizenResidenceSchema,
+  isDwellingUnitType,
+  NON_OWNER_OCCUPANCY,
+  type CitizenResidence,
+} from './enums';
 
 /**
  * Staff-entered registrations — the same submission a citizen used to file
@@ -153,7 +158,8 @@ function branchFieldsOnly(card: Record<string, unknown>): Record<string, unknown
   const keep = new Set<string>([
     'occupancyType',
     'propertyType',
-    ...branch,
+    // أسهم are a share of ownership; a tenant's or free occupant's plot has none.
+    ...branch.filter((field) => field !== 'shares' || card.occupancyType === 'OWNER'),
     /*
       Two fields gated on the *occupancy* axis, which `PROPERTY_FIELD_MAP` —
       keyed by property type — has no way to describe. Both are listed here for
@@ -232,7 +238,7 @@ function isAbsent(value: unknown): boolean {
 /**
  * The strict and the shaping schema for each section, by نوع الملف.
  *
- * One switch, read by every pass below, so a household file and an owner record
+ * One switch, read by every pass below, so a household file and a non-resident record
  * can never be validated by one rulebook and shaped by the other — that mismatch
  * would store fields a strict pass never looked at.
  */
@@ -335,6 +341,88 @@ function allFlags(input: SubmissionInput): FieldFlag[] {
   return [...input.flags, ...autoFlags(input, explicit)];
 }
 
+/**
+ * What a non-resident's card may say — «غير مقيم في البلدة».
+ *
+ * A person who lives outside the town may **own** anything here, and may
+ * **rent or occupy only what nobody lives in**: a محل، مكتب، عيادة، مستودع, or a
+ * plot of أرض. Both halves follow from one fact — they do not live here:
+ *
+ *  - a مستأجر or شاغل بتسامح of a شقة or منزل *lives in it*, so they are a
+ *    household in the town and belong on a household file (and in the
+ *    population it counts). If they rent it and do not live in it, the unit is
+ *    being used as an office or a store, and its type is what is wrong — which
+ *    also changes the rental-value rate (Law 60/1988, Art. 12);
+ *  - an owner of a dwelling cannot answer «مشغولة من المالك» for the same
+ *    reason. The true answers for a home its owner visits are «مسكن موسمي»,
+ *    «شاغرة», or who else is in it.
+ *
+ * A خيمة is refused elsewhere (it is for a لاجئ, and this record asks no صفة
+ * الإقامة). Returned as issues rather than reported directly so each lands on
+ * the field that has to change: نوع الإشغال (not flaggable), a unit's نوع الوحدة,
+ * or حالة الوحدة.
+ *
+ * A unit whose type is unknown — its row flagged, or the whole unit list
+ * flagged — cannot be shown to be something nobody lives in, so a non-owner
+ * card needs at least one unit and every unit's type. That is not a dead end:
+ * the officer at a shop can see it is a shop.
+ */
+function nonResidentCardIssues(
+  card: Record<string, unknown>,
+  flagged: ReadonlySet<string>,
+  prefix: string,
+): Array<{ path: Array<string | number>; message: string }> {
+  const issues: Array<{ path: Array<string | number>; message: string }> = [];
+  const owner = card.occupancyType === 'OWNER';
+  const units = Array.isArray(card.units) ? (card.units as Array<Record<string, unknown>>) : [];
+
+  if (owner) {
+    if (card.propertyType === 'HOUSE' && card.unitStatus === 'OWNER_OCCUPIED') {
+      issues.push({ path: ['unitStatus'], message: OWNER_NOT_LIVING_THERE });
+    }
+    if (card.propertyType === 'BUILDING') {
+      units.forEach((unit, unitIndex) => {
+        if (isDwellingUnitType(unit.unitType as string) && unit.unitStatus === 'OWNER_OCCUPIED') {
+          issues.push({ path: ['units', unitIndex, 'unitStatus'], message: OWNER_NOT_LIVING_THERE });
+        }
+      });
+    }
+    return issues;
+  }
+
+  if (card.occupancyType === undefined) return issues;
+
+  switch (card.propertyType) {
+    case 'LAND':
+      return issues;
+    case 'BUILDING': {
+      if (units.length === 0 || flagged.has(`${prefix}.units`)) {
+        issues.push({ path: ['occupancyType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE });
+        return issues;
+      }
+      units.forEach((unit, unitIndex) => {
+        if (unit.unitType === undefined || unit.unitType === null || unit.unitType === '') {
+          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE });
+        } else if (isDwellingUnitType(unit.unitType as string)) {
+          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_DWELLING });
+        }
+      });
+      return issues;
+    }
+    default:
+      // A منزل is a dwelling, and a خيمة is somewhere somebody lives.
+      issues.push({ path: ['occupancyType'], message: NON_RESIDENT_DWELLING });
+      return issues;
+  }
+}
+
+const NON_RESIDENT_DWELLING =
+  'غير المقيم يستأجر أو يشغل ما لا يُسكن فقط (محل، مكتب، عيادة، مستودع، أرض). من يستأجر مسكناً ويسكنه يُسجَّل بملف أسرة، ومن يستعمله لغير السكن تُصحَّح نوع وحدته';
+const NON_RESIDENT_NEEDS_UNIT_TYPE =
+  'حدِّد نوع الوحدة — غير المقيم يُسجَّل مستأجراً أو شاغلاً لوحدة غير سكنية فقط';
+const OWNER_NOT_LIVING_THERE =
+  'غير المقيم لا يسكن هذه الوحدة — اختر «مسكن موسمي» إن كان يحضر في مواسم، أو «شاغرة»، أو حالة من يشغلها';
+
 /** Every issue the strict schemas raise that no flag accounts for. */
 function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
   const flags = allFlags(input);
@@ -374,21 +462,13 @@ function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
     report(prefix, propertyEntrySchema.safeParse(withoutFlagged(card, prefix, paths)));
   });
 
-  /*
-    An owner record holds what the owner owns — and nothing else.
-
-    Somebody living in the town is a household with a file of their own, and a
-    tenancy or a شاغل بتسامح recorded on an absent owner's record would put that
-    household's occupancy on a person who is not there, where billing would find
-    it. `occupancyType` is not flaggable, so this cannot be excused either.
-  */
   if (input.residence === 'NON_RESIDENT_OWNER') {
     input.properties.forEach((card, index) => {
-      if (card.occupancyType !== undefined && card.occupancyType !== 'OWNER') {
+      for (const issue of nonResidentCardIssues(card, paths, `properties.${index}`)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['properties', index, 'occupancyType'],
-          message: 'ملف المالك غير المقيم يحمل ما يملكه فقط — من يسكن في العقار يُسجَّل بملف أسرة',
+          path: ['properties', index, ...issue.path],
+          message: issue.message,
         });
       }
     });

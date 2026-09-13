@@ -7,7 +7,8 @@ import { BuildingsService } from './buildings.service';
  * «تأكيد الشغور» refused any unit with an owner on it and told them to end the
  * owner first, which erased the ownership. These pin the three rules that
  * replaced that: a reason is stored, an ended spell is not ended twice, and an
- * owner does not stand in the way of recording a vacancy.
+ * owner does not stand in the way of recording a vacancy — though a seasonal
+ * home does, because its owners being away is what the state means.
  */
 
 const actor = { id: 'staff-1', role: 'FIELD_INSPECTOR' };
@@ -110,7 +111,10 @@ describe('endOccupancy', () => {
 });
 
 describe('updateUnit — marking a unit vacant', () => {
-  function unitDb(liveNonOwners: number) {
+  function unitDb(
+    liveNonOwners: number,
+    state: { unitStatus?: string | null; ownerCardStatus?: string | null } = {},
+  ) {
     const count = jest.fn().mockResolvedValue(liveNonOwners);
     const update = jest.fn().mockResolvedValue({
       id: 'unit-1',
@@ -145,11 +149,24 @@ describe('updateUnit — marking a unit vacant', () => {
             sequence: 2,
             unitCode: '0102',
             surveyStatus: 'COMPLETE',
-            unitStatus: null,
+            unitStatus: state.unitStatus ?? null,
           }),
+          // A two-flat block, so the منزل-card inference never applies.
+          findMany: jest.fn().mockResolvedValue([
+            { id: 'unit-1', unitStatus: state.unitStatus ?? null },
+            { id: 'unit-2', unitStatus: null },
+          ]),
           update,
         },
         unitOccupancy: { count },
+        buildingUnit: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue(
+              state.ownerCardStatus ? [{ unitId: 'unit-1', unitStatus: state.ownerCardStatus }] : [],
+            ),
+        },
+        propertyEntry: { findMany: jest.fn().mockResolvedValue([]) },
       },
     };
   }
@@ -176,5 +193,45 @@ describe('updateUnit — marking a unit vacant', () => {
       service(db).updateUnit('unit-1', { unitStatus: 'VACANT' }, actor),
     ).rejects.toThrow('كشاغرة');
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a seasonal home — its owners being away is not a vacancy', async () => {
+    const { db, update } = unitDb(0, { unitStatus: 'SEASONAL' });
+
+    await expect(
+      service(db).updateUnit(
+        'unit-1',
+        { unitStatus: 'VACANT', surveyStatus: 'VACANT_CONFIRMED' },
+        actor,
+      ),
+    ).rejects.toThrow('مسكن موسمي');
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses where only the owner’s card says seasonal, because billing reads the card', async () => {
+    const { db, update } = unitDb(0, { unitStatus: null, ownerCardStatus: 'SEASONAL' });
+
+    await expect(
+      service(db).updateUnit('unit-1', { surveyStatus: 'VACANT_CONFIRMED' }, actor),
+    ).rejects.toThrow('مسكن موسمي');
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('still lets an owner-occupied card be overridden by a confirmed vacancy', async () => {
+    const { db, update } = unitDb(0, { unitStatus: null, ownerCardStatus: 'OWNER_OCCUPIED' });
+
+    await service(db).updateUnit(
+      'unit-1',
+      { unitStatus: 'VACANT', surveyStatus: 'VACANT_CONFIRMED' },
+      actor,
+    );
+    expect(update).toHaveBeenCalled();
+  });
+
+  it('leaves edits that do not call the unit empty alone', async () => {
+    const { db, update } = unitDb(0, { unitStatus: 'SEASONAL' });
+
+    await service(db).updateUnit('unit-1', { presenceMonths: [7, 8] }, actor);
+    expect(update).toHaveBeenCalled();
   });
 });

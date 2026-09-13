@@ -188,7 +188,8 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
     header: 'نوع الأرض',
     hint: `${Object.values(ar.landType).join(' / ')} — للأرض فقط`,
   },
-  { key: 'shares', header: 'الأسهم', hint: 'من أصل 2400 — إلزامي للأرض فقط' },
+  // Header unchanged (it is the column's identity); a tenant of land holds no shares.
+  { key: 'shares', header: 'الأسهم', hint: 'من أصل 2400 — إلزامي لمالك الأرض فقط' },
   { key: 'tentLocation', header: 'موقع الخيمة', hint: 'إلزامي للخيمة فقط' },
   { key: 'sharedRights', header: 'الحقوق المشتركة', hint: 'اختياري — افصل بينها بفاصلة منقوطة ؛' },
   {

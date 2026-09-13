@@ -503,10 +503,13 @@ export function ContactStep({
  * (رقم السجل only for a Lebanese citizen, صفة الإقامة gating خيمة) identical
  * to what the wizard enforced.
  */
-// ─────────────────────  «مالك غير مقيم» — an owner record  ─────────────────────
+// ─────────────  «غير مقيم في البلدة» — a non-resident record  ─────────────
 
 /**
- * Who an absent owner is, and where they live.
+ * Who a non-resident is, and where they live — an owner who lives elsewhere, or
+ * somebody who runs a shop, an office or a clinic here, or farms a plot, and
+ * goes home to another town. The component names still say «Owner» because the
+ * record began as an owner record; see `CITIZEN_RESIDENCE`.
  *
  * Everything a household file asks and this does not — identity document,
  * رقم السجل, blood type, nationality, صفة الإقامة — is left out on purpose, not
@@ -576,7 +579,7 @@ export function OwnerPersonalStep({
       </div>
 
       <Field
-        label={en ? 'Where the owner lives' : 'مكان إقامة المالك'}
+        label={en ? 'Where they live' : 'مكان الإقامة'}
         htmlFor="owner-residencePlace"
         path="personal.residencePlace"
         required
@@ -600,8 +603,9 @@ export function OwnerPersonalStep({
 }
 
 /**
- * How to reach an owner who is not here — their own number, and optionally
- * the relative or caretaker who holds the keys.
+ * How to reach a non-resident — their own number, and optionally somebody local:
+ * the relative or caretaker with an owner's keys, or whoever runs a shop day to
+ * day for a tenant who is rarely in it.
  */
 export function OwnerContactStep({
   value,
@@ -622,7 +626,7 @@ export function OwnerContactStep({
     <div className="space-y-4 sm:space-y-5">
       <div className="space-y-3 rounded-lg border border-border/70 bg-card p-3 sm:p-4">
         <Field
-          label={en ? "Owner's phone" : 'هاتف المالك'}
+          label={en ? 'Phone' : 'رقم الهاتف'}
           htmlFor="owner-phone"
           path="contact.phone"
           required
@@ -682,7 +686,7 @@ export function OwnerContactStep({
 
       <div className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-3 sm:grid-cols-2 sm:p-4">
         <Field
-          label={en ? 'Local contact (relative or caretaker)' : 'جهة اتصال محلية (قريب أو ناطور)'}
+          label={en ? 'Local contact (relative, caretaker or staff)' : 'جهة اتصال محلية (قريب أو ناطور أو موظف)'}
           htmlFor="owner-localContactName"
           error={errors['contact.localContactName']}
         >

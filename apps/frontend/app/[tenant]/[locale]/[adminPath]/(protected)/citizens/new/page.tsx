@@ -2,6 +2,7 @@
 
 import { use } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { CITIZEN_RESIDENCE } from '@mechanization/shared-schemas';
 import { CitizenEditor } from '@/components/admin/citizen-editor';
 
 /**
@@ -34,6 +35,15 @@ export default function NewCitizenPage({
   const lockedCensusTarget = buildingId
     ? { buildingId, unitId: searchParams.get('unitId') ?? undefined }
     : null;
+
+  /*
+    `?residence=` arrives with the unit link when the officer has already said
+    «مالك غير مقيم» on the unit panel. Anything other than a known value is
+    ignored, and the form opens on its ordinary household default.
+  */
+  const residence = searchParams.get('residence');
+  const initialResidence = CITIZEN_RESIDENCE.find((value) => value === residence);
+
   return (
     <CitizenEditor
       tenant={tenant}
@@ -41,6 +51,7 @@ export default function NewCitizenPage({
       adminPath={adminPath}
       fromCaseId={fromCaseId}
       lockedCensusTarget={lockedCensusTarget}
+      initialResidence={initialResidence}
     />
   );
 }

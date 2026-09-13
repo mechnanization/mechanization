@@ -110,7 +110,7 @@ export interface CitizenListItem {
   identityDocType: string | null;
   identityDocNumber: string | null;
   residentStatus: string | null;
-  /** نوع الملف — a household file, or «مالك غير مقيم». */
+  /** نوع الملف — a household file, or «غير مقيم في البلدة» (stored as NON_RESIDENT_OWNER). */
   residence: string;
   isActive: boolean;
   registeredAt: string;
@@ -1501,8 +1501,8 @@ export class CitizensService {
  *    this form cannot be the thing that erases the real numbers already on
  *    file. A non-Lebanese person's passport number is written only when one is
  *    given; a blank field keeps what is stored.
- *  - An owner record's household columns. A person converted to «مالك غير
- *    مقيم» keeps whatever was filed for them as a household; the form stops
+ *  - A non-resident record's household columns. A person converted to «غير
+ *    مقيم في البلدة» keeps whatever was filed for them as a household; the form stops
  *    asking and stops showing, and nothing is erased by the conversion. The
  *    reverse conversion keeps `residencePlace` and the local contact for the
  *    same reason.

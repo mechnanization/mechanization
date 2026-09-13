@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import {
   getLabels,
+  isDwellingUnitType,
   isFlaggablePath,
   isUnoccupied,
   UNIT_STATUS,
@@ -125,11 +126,22 @@ export function UnitStatusChoice({
   idPrefix,
   value,
   onChange,
+  omit = [],
+  label,
   locale = 'ar',
 }: {
   idPrefix: string;
+  /** «حالة الأرض» on a plot; «حالة الوحدة» everywhere else. */
+  label?: string;
   value: UnitStatus | undefined;
   onChange: (next: UnitStatus | undefined) => void;
+  /**
+   * Answers that are not true of this card, and so are not offered — today only
+   * «مشغولة من المالك» on a dwelling whose owner lives outside the town, who by
+   * definition does not live in it. A value already set is still shown, so the
+   * officer sees what the server is refusing and can change it.
+   */
+  omit?: readonly UnitStatus[];
   locale?: string;
 }) {
   const labels = getLabels(locale);
@@ -137,7 +149,7 @@ export function UnitStatusChoice({
 
   return (
     <Field
-      label={isEnglish ? 'Unit Status' : 'حالة الوحدة'}
+      label={label ?? (isEnglish ? 'Unit Status' : 'حالة الوحدة')}
       htmlFor={idPrefix}
       hint={
         isEnglish
@@ -146,7 +158,7 @@ export function UnitStatusChoice({
       }
     >
       <div id={idPrefix} className="flex flex-wrap gap-2 pt-1">
-        {UNIT_STATUS.map((option) => {
+        {UNIT_STATUS.filter((option) => option === value || !omit.includes(option)).map((option) => {
           const Icon = UNIT_STATUS_ICON[option];
           const selected = value === option;
           // The two states that can exempt a unit from a fee are tinted apart
@@ -272,12 +284,25 @@ export function UnitsEditor({
   censusUnits = {},
   defaultUnitType,
   asksUnitStatus,
+  unitTypes = BUILDING_UNIT_TYPES,
+  nonResident = false,
   errors,
   onChange,
   locale = 'ar',
 }: {
   index: number;
   units: UnitDraft[];
+  /**
+   * The unit types this card may itemise. Every building unit type by default;
+   * only what nobody lives in on the card of a tenant or free occupant who lives
+   * outside the town (`nonResidentCardIssues`).
+   */
+  unitTypes?: readonly UnitType[];
+  /**
+   * The card belongs to somebody who lives outside the town, so an owner's
+   * dwelling is not offered «مشغولة من المالك».
+   */
+  nonResident?: boolean;
   /**
    * What the census holds about each linked flat, keyed by canonical unit id.
    *
@@ -361,7 +386,12 @@ export function UnitsEditor({
         // The previous row first — a floor of eight identical flats is the
         // ordinary case — then the structure's own default, so the first row
         // on a مجمع تجاري starts as محل rather than as nothing.
-        { unitType: previous?.unitType ?? defaultUnitType, unitStatus: previous?.unitStatus },
+        {
+          unitType:
+            previous?.unitType ??
+            (defaultUnitType && unitTypes.includes(defaultUnitType) ? defaultUnitType : undefined),
+          unitStatus: previous?.unitStatus,
+        },
       ];
     });
     setCollapsed(new Set(units.map((_, i) => i)));
@@ -465,7 +495,7 @@ export function UnitsEditor({
               ? `Set all ${units.length} units to:`
               : `تعيين حالة الوحدات الـ${units.length} جميعاً:`}
           </span>
-          {UNIT_STATUS.map((option) => {
+          {UNIT_STATUS.filter((option) => !nonResident || option !== 'OWNER_OCCUPIED').map((option) => {
             const Icon = UNIT_STATUS_ICON[option];
             return (
               <button
@@ -581,6 +611,8 @@ export function UnitsEditor({
                 census={unit.unitId ? censusUnits[unit.unitId] : undefined}
                 errors={unitErrors}
                 asksUnitStatus={asksUnitStatus}
+                unitTypes={unitTypes}
+                nonResident={nonResident}
                 onPatch={(patch) => setUnit(unitIndex, patch)}
                 locale={locale}
               />
@@ -619,6 +651,8 @@ export function UnitFields({
   census,
   errors,
   asksUnitStatus,
+  unitTypes = BUILDING_UNIT_TYPES,
+  nonResident = false,
   onPatch,
   locale = 'ar',
 }: {
@@ -640,6 +674,10 @@ export function UnitFields({
   /** Already scoped to this unit, so keys are bare field names. */
   errors: Record<string, string>;
   asksUnitStatus: boolean;
+  /** See `UnitsEditor.unitTypes`. */
+  unitTypes?: readonly UnitType[];
+  /** See `UnitsEditor.nonResident`. */
+  nonResident?: boolean;
   onPatch: (patch: Partial<UnitDraft>) => void;
   locale?: string;
 }) {
@@ -718,7 +756,11 @@ export function UnitFields({
                         charge twice over.
                       */}
                       <SelectContent>
-                        {BUILDING_UNIT_TYPES.map((o) => (
+                        {/* A value already on the row stays visible, so an officer
+                            can see what the rule is refusing and change it. */}
+                        {BUILDING_UNIT_TYPES.filter(
+                          (o) => unitTypes.includes(o) || o === unit.unitType,
+                        ).map((o) => (
                           <SelectItem key={o} value={o}>
                             {labels.unitType[o]}
                           </SelectItem>
@@ -800,6 +842,7 @@ export function UnitFields({
                     idPrefix={`us-${idPrefix}`}
                     value={unit.unitStatus}
                     onChange={(unitStatus) => onPatch({ unitStatus })}
+                    omit={nonResident && isDwellingUnitType(unit.unitType) ? ['OWNER_OCCUPIED'] : []}
                     locale={locale}
                   />
                 ) : null}

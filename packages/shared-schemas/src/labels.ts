@@ -292,12 +292,14 @@ export const ar = {
   } satisfies Record<OccupancyEndReason, string>,
 
   /**
-   * نوع الملف — a household that lives in the town, or an owner who does not.
-   * Asked as a question about *where the person lives*, never about محل القيد.
+   * نوع الملف — a household that lives in the town, or somebody who lives
+   * elsewhere and owns, rents or runs something here. Asked as a question about
+   * *where the person lives*, never about محل القيد. The stored value still says
+   * OWNER; see `CITIZEN_RESIDENCE` for why the label, not the value, changed.
    */
   citizenResidence: {
     RESIDENT: 'أسرة مقيمة في البلدة',
-    NON_RESIDENT_OWNER: 'مالك غير مقيم',
+    NON_RESIDENT_OWNER: 'غير مقيم في البلدة',
   } satisfies Record<CitizenResidence, string>,
 
   documentType: {
@@ -584,7 +586,7 @@ export const en = {
 
   citizenResidence: {
     RESIDENT: 'Household living in the town',
-    NON_RESIDENT_OWNER: 'Owner living elsewhere',
+    NON_RESIDENT_OWNER: 'Lives outside the town',
   } satisfies Record<CitizenResidence, string>,
 
   documentType: {

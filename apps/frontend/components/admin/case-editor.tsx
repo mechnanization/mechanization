@@ -245,7 +245,7 @@ export function CaseEditor({
           <h1 className="truncate text-base sm:text-2xl font-bold tracking-tight text-foreground">
             {editing
               ? (locale === 'en' ? 'Edit Case' : 'تعديل الحالة')
-              : (locale === 'en' ? 'Log a Case' : 'تسجيل حالة')}
+              : (locale === 'en' ? 'Open a follow-up case' : 'فتح حالة متابعة')}
           </h1>
           <p className="text-[11px] sm:text-xs text-muted-foreground hidden sm:block">
             {locale === 'en'

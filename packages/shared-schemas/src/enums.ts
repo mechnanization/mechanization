@@ -24,14 +24,28 @@ function arabicEnum<T extends readonly [string, ...string[]]>(values: T, message
  * asks about them.
  *
  * `RESIDENT` is a household file: identity, household, blood type, the lot.
- * `NON_RESIDENT_OWNER` is somebody who owns property here and lives elsewhere —
- * Beirut, Abidjan, Dearborn — and is recorded so the register can say who owns
- * a flat and how to reach them, nothing more. The rental-value fee falls on the
- * occupant (Law 60/1988, Art. 3–4) and the municipality's register is organised
- * around occupants (Art. 15); what the law needs about an owner is a name on the
- * assessment roll (Art. 17) and where they live (Art. 14). Asking such an owner
- * for their blood type is collection the purpose does not justify (Law 81/2018,
+ *
+ * `NON_RESIDENT_OWNER` — «غير مقيم في البلدة» — is somebody who lives elsewhere
+ * (Tyre, Beirut, Abidjan) and holds something here: they **own** property, or
+ * they **rent or occupy something nobody lives in** — a shop they run, an
+ * office, a clinic, a warehouse, a plot they farm. Such a person is recorded so
+ * the register can say who owns or runs the property and how to reach them,
+ * nothing more. The rental-value fee falls on the occupant whether owner or
+ * tenant (Law 60/1988, Art. 3–4), and the occupancy notice names the occupant
+ * *and where they live* (Art. 14); nothing in the law needs their household,
+ * and asking for it is collection the purpose does not justify (Law 81/2018,
  * Art. 87).
+ *
+ * **The stored value still says OWNER, and that is a known misnomer.** It was
+ * named when the record held owners only (migration 0040), and 0040 was applied
+ * before the record was widened to tenants of non-dwelling units on 2026-09-13.
+ * Renaming an enum value is a one-way change the deploy rules keep out of a
+ * routine release, so the value stays and the label says what it means. Read it
+ * as «not resident».
+ *
+ * The one rule that keeps the record honest: a tenancy or free occupancy on it
+ * must be of a unit nobody lives in — see `DWELLING_UNIT_TYPE`. Somebody who
+ * rents a flat and lives in it lives in the town.
  *
  * Decided by where the person *lives most of the year*, never by محل القيد:
  * plenty of people registered in the town live in Beirut, and the reverse.
@@ -276,6 +290,23 @@ export const UNIT_TYPE = [
 ] as const;
 export const unitTypeSchema = arabicEnum(UNIT_TYPE, 'نوع الوحدة مطلوب');
 export type UnitType = z.infer<typeof unitTypeSchema>;
+
+/**
+ * The unit types somebody *lives* in — شقة and منزل مستقل.
+ *
+ * The line a non-resident record turns on (see `CITIZEN_RESIDENCE`). A person
+ * who lives outside the town may own anything here, and may rent or occupy
+ * what nobody lives in — a محل، مكتب، عيادة، مستودع or a plot of land. Renting a
+ * dwelling and living in it makes them a household in the town, with a file of
+ * their own; renting one and *not* living in it means the unit is being used as
+ * something else, and its type is what should be corrected — the rental-value
+ * rate itself differs by use (Law 60/1988, Art. 12: 5% residential, 7% other).
+ */
+export const DWELLING_UNIT_TYPE = ['APARTMENT', 'INDEPENDENT_HOUSE'] as const;
+
+export function isDwellingUnitType(type: string | null | undefined): boolean {
+  return type != null && (DWELLING_UNIT_TYPE as readonly string[]).includes(type);
+}
 
 export const LAND_TYPE = ['AGRICULTURAL', 'INDUSTRIAL'] as const;
 export const landTypeSchema = arabicEnum(LAND_TYPE, 'نوع الأرض مطلوب');

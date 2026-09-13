@@ -34,7 +34,7 @@ import {
   type RegisteredParcel,
   type ZoneSummary,
 } from '@/lib/api-client';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, type CitizenResidence } from '@mechanization/shared-schemas';
 import {
   BUILDING_LAYER,
   BUILDING_SOURCE,
@@ -308,12 +308,13 @@ export function FullscreenMap({
   focusLat?: number;
   focusLng?: number;
   /**
-   * Where «تسجيل أسرة في هذه الوحدة» goes from the census drawer.
+   * Where the census drawer's «ملف جديد» choices go — see the drawer's own
+   * `registerHref`.
    *
    * Built by the page, like `citizenHref` beside it: this component is handed
    * links rather than reconstructing `/{tenant}/{locale}/{adminPath}` itself.
    */
-  registerHref?: (buildingId: string, unitId: string) => string;
+  registerHref?: (buildingId: string, unitId: string, residence: CitizenResidence) => string;
   locale?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -2319,11 +2320,7 @@ export function FullscreenMap({
           token={token}
           buildingId={openBuildingId}
           canWrite
-          registerHref={
-            registerHref
-              ? (buildingId, unitId) => registerHref(buildingId, unitId)
-              : undefined
-          }
+          registerHref={registerHref}
           // The same builder the parcel popups already use, so an occupant's
           // name leads to the same record from either layer.
           citizenHref={citizenHref}

@@ -53,9 +53,14 @@ import {
   CitizenForm,
   emptyCitizen,
   toSubmission,
+  withResidence,
   type CitizenFormValues,
 } from './citizen-form';
-import { parseFloorLabel, STRUCTURE_TYPE_MAP } from '@mechanization/shared-schemas';
+import {
+  parseFloorLabel,
+  STRUCTURE_TYPE_MAP,
+  type CitizenResidence,
+} from '@mechanization/shared-schemas';
 import { mintId, type LockedCensusTarget } from './building-unit-picker';
 
 /** `null`/`undefined` → absent; a number → the string an `<input>` holds. */
@@ -352,7 +357,7 @@ function unitsForNewStructure(
 /**
  * What the census already knows about the flat the officer just tapped.
  *
- * The «تسجيل أسرة في هذه الوحدة» button used to carry two UUIDs in a
+ * The unit panel's «ملف جديد» link (once «تسجيل أسرة في هذه الوحدة») used to carry two UUIDs in a
  * querystring and nothing else. The form opened blank, `BuildingUnitPicker`
  * rendered nothing at all — it returns null without a رقم العقار — and an
  * officer standing in a stairwell they had already surveyed retyped the parcel
@@ -588,6 +593,7 @@ export function CitizenEditor({
    */
   fromCaseId,
   lockedCensusTarget,
+  initialResidence,
 }: {
   tenant: string;
   locale: string;
@@ -595,6 +601,12 @@ export function CitizenEditor({
   citizenId?: string;
   queueId?: string;
   fromCaseId?: string;
+  /**
+   * نوع الملف already answered by the link that opened this form — the unit
+   * panel's «مالك غير مقيم» choice. Applied to a new record only; a saved or
+   * queued one keeps what it was saved as.
+   */
+  initialResidence?: CitizenResidence;
   /**
    * Arrived from a building's unit matrix — the structure, and possibly the
    * flat, is already decided.
@@ -798,7 +810,7 @@ export function CitizenEditor({
 
             A draft is what this officer was typing *last* time. A census
             target or a حالة is what they asked for *this* time, in the URL
-            they just followed — «تسجيل أسرة في هذه الوحدة» names a specific
+            they just followed — the unit panel's «ملف جديد» link names a specific
             flat, and restoring yesterday's half-finished household over it
             would answer a deliberate request with a stale one, in a form
             already carrying a locked building the draft knows nothing about.
@@ -808,7 +820,7 @@ export function CitizenEditor({
             other cases — nothing here writes — so following a unit link and
             then coming back to «تسجيل مواطن جديد» still finds it.
           */
-          if (!seeded) {
+          if (!seeded && !initialResidence) {
             const draft = loadCitizenDraft(tenant);
             if (draft) {
               setInitial(draft.values);
@@ -817,7 +829,8 @@ export function CitizenEditor({
             }
           }
 
-          setInitial(seeded ? { ...empty, properties: seeded } : empty);
+          const fresh = seeded ? { ...empty, properties: seeded } : empty;
+          setInitial(initialResidence ? withResidence(fresh, initialResidence) : fresh);
           return;
         }
 
@@ -917,7 +930,7 @@ export function CitizenEditor({
       this component, so the effect already re-runs exactly when it should.
     */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenant, token, citizenId, queueId, fromCaseId, base, router, locale]);
+  }, [tenant, token, citizenId, queueId, fromCaseId, initialResidence, base, router, locale]);
 
   /**
    * Creates every «منشأة جديدة» the officer chose, and rewrites the cards.
@@ -1241,7 +1254,7 @@ export function CitizenEditor({
       /*
         Where the officer actually wanted to end up.
 
-        An officer who arrived through «تسجيل أسرة في هذه الوحدة» was sent here
+        An officer who arrived through a unit panel's «ملف جديد» link was sent here
         *by a flat*, and their next move is invariably that same flat — check
         the occupancy landed, register the neighbour, log the next visit. The
         form dropped them on the new citizen's file instead, so every household

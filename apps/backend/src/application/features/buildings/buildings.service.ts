@@ -7,6 +7,7 @@ import {
   nextBuildingSuffix,
   OCCUPIABLE_LIFECYCLE,
   STRUCTURE_TYPE_MAP,
+  isDwellingUnitType,
   isUnoccupied,
   SURVEYED_STATUS,
   unitStatusForRole,
@@ -542,6 +543,29 @@ export class BuildingsService {
       declared.set(only.id, house.unitStatus);
     }
     return declared;
+  }
+
+  /**
+   * Whether a unit is a seasonal home as billing sees it — its own حالة, or
+   * its owner's card where it has none.
+   *
+   * The siblings are read because `ownerDeclaredStatuses` needs the building's
+   * real unit count: a منزل card speaks for a structure only when it has
+   * exactly one unit, and handing it this unit alone would make every flat
+   * look like the only one.
+   */
+  private async isSeasonal(unit: {
+    id: string;
+    buildingId: string;
+    unitStatus: string | null;
+  }): Promise<boolean> {
+    if (unit.unitStatus) return unit.unitStatus === 'SEASONAL';
+    const siblings = await this.db.unit.findMany({
+      where: { buildingId: unit.buildingId },
+      select: { id: true, unitStatus: true },
+    });
+    const declared = await this.ownerDeclaredStatuses(unit.buildingId, siblings);
+    return declared.get(unit.id) === 'SEASONAL';
   }
 
   /**
@@ -1555,6 +1579,28 @@ export class BuildingsService {
           `لا يمكن تسجيل الوحدة ${before.unitCode} كشاغرة: يسكنها ${live} مستأجر أو شاغل مسجَّل. أنهِ إشغاله أولاً`,
         );
       }
+
+      /*
+        …and a seasonal home is not empty because its owners are away.
+
+        Away is what «مسكن موسمي» means. An officer surveying a summer house in
+        January found nobody and pressed «تأكيد الشغور», which wrote «شاغرة»
+        over it — and a seasonal home is billed to its owner
+        (`OWNER_BILLED_WHILE_ABSENT`) while a vacant one is exempt, so the winter
+        survey cancelled the summer's fees. The months without the owners are
+        the تصريح بالشغور's to settle (`vacancyDeclaredAt`), and an owner who has
+        stopped coming is re-recorded with «شاغرة» by `recordOccupancy`, which
+        does not come through here.
+
+        Read the way billing reads it: the unit's own value, or the owner's
+        card where the unit has none — a card saying «موسمي» is overridden by
+        the unit's «شاغرة» just the same.
+      */
+      if (await this.isSeasonal(before)) {
+        throw new ConflictError(
+          `لا يمكن تسجيل الوحدة ${before.unitCode} كشاغرة: هي مسكن موسمي، وغياب أصحابه لا يجعلها شاغرة. سجّل تصريح الشغور في بيانات السكن الموسمي، أو أعد ربط المالك بحالة «شاغرة» إن لم يعودوا يأتون`,
+        );
+      }
     }
 
     const updated = await this.db.unit.update({
@@ -1739,7 +1785,7 @@ export class BuildingsService {
   ): Promise<{ occupancy: OccupancyRow; casesResolved: number; fileLink: FileLinkResult }> {
     const unit = await this.db.unit.findUnique({
       where: { id: input.unitId },
-      select: { id: true, buildingId: true, unitCode: true },
+      select: { id: true, buildingId: true, unitCode: true, unitType: true },
     });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
 
@@ -1747,6 +1793,14 @@ export class BuildingsService {
     if (!citizen || citizen.kind !== 'CITIZEN') {
       throw new ValidationError('المواطن غير موجود', { citizenId: input.citizenId });
     }
+
+    assertNonResidentOccupancy({
+      residence: citizen.residence,
+      role: input.role,
+      unitType: unit.unitType,
+      unitStatus: input.unitStatus,
+      unitCode: unit.unitCode,
+    });
 
     /*
       A person is in a unit once, in one capacity, at a time.
@@ -2758,6 +2812,46 @@ function toBuildingRow(row: {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/**
+ * The matrix's half of the rule the registration schema applies to a
+ * non-resident's cards («غير مقيم في البلدة» — see `nonResidentCardIssues`).
+ *
+ * Both doors must refuse the same thing or the matrix becomes the way round
+ * the form: an officer who could not file a non-resident as the tenant of a
+ * شقة on the registration form could record exactly that from the unit panel,
+ * and `claimOnFile` would then mint the very card the form refused.
+ *
+ *  - a مستأجر or شاغل بتسامح of a dwelling lives in it — a household, not a
+ *    non-resident;
+ *  - an owner who lives elsewhere cannot answer «مشغولة من المالك» for a
+ *    dwelling — «مسكن موسمي» or «شاغرة» is the true answer.
+ *
+ * A محل، مكتب، عيادة or مستودع is open to either capacity. Exported for its spec.
+ */
+export function assertNonResidentOccupancy(input: {
+  residence: string | null | undefined;
+  role: string;
+  unitType: string;
+  unitStatus?: string | null;
+  unitCode: string;
+}): void {
+  if (input.residence !== 'NON_RESIDENT_OWNER' || !isDwellingUnitType(input.unitType)) return;
+
+  if (input.role !== 'OWNER') {
+    throw new ValidationError(
+      `الوحدة ${input.unitCode} مسكن، وغير المقيم لا يُسجَّل مستأجراً أو شاغلاً لمسكن. من يستأجر مسكناً ويسكنه يُسجَّل بملف أسرة، وإن كانت الوحدة تُستعمل لغير السكن فصحّح نوعها`,
+      { role: input.role, unitType: input.unitType },
+    );
+  }
+
+  if (input.unitStatus === 'OWNER_OCCUPIED') {
+    throw new ValidationError(
+      `غير المقيم لا يسكن الوحدة ${input.unitCode} — اختر «مسكن موسمي» إن كان يحضر في مواسم، أو «شاغرة»`,
+      { unitStatus: input.unitStatus },
+    );
+  }
 }
 
 function toUnitRow(row: {

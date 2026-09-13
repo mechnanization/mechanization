@@ -550,6 +550,54 @@ describeIfDb('CensusSyncService', () => {
     expect(byId.get(units[1]!.id)?.ownerDeclaredStatus).toBeNull();
   });
 
+  /*
+    «غير مقيم في البلدة» on the matrix: someone who lives in another town and
+    runs a shop here. Recorded as the shop's tenant, their file gains the card
+    billing reads; recorded as the tenant of a flat in the same building, they
+    are refused — the same line the registration schema draws, from the other
+    door.
+  */
+  it('records a non-resident as tenant of a shop, and refuses them as tenant of a flat', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9D', 1);
+    const shop = await buildings.addUnit(building.id, { floor: 0, unitType: 'SHOP' }, actor());
+
+    const tenantId = randomUUID();
+    await db.user.create({
+      data: {
+        id: tenantId,
+        kind: 'CITIZEN',
+        tenantSlug: 'census',
+        firstName: 'سامر',
+        lastName: 'حيدر',
+        residence: 'NON_RESIDENT_OWNER',
+        residencePlace: 'صور',
+      },
+    });
+    await db.registration.create({
+      data: { citizenId: tenantId, referenceNumber: `REG-${randomUUID().slice(0, 8)}` },
+    });
+
+    const recorded = await buildings.recordOccupancy(
+      { unitId: shop.id, citizenId: tenantId, role: 'TENANT' },
+      actor(),
+    );
+    expect(recorded.fileLink.outcome).toBe('ENTRY_CREATED');
+
+    const card = await db.propertyEntry.findFirstOrThrow({
+      where: { registration: { citizenId: tenantId } },
+      include: { units: true },
+    });
+    expect(card.occupancyType).toBe('TENANT');
+    expect(card.units.map((unit) => unit.unitType)).toEqual(['SHOP']);
+
+    await expect(
+      buildings.recordOccupancy({ unitId: units[0]!.id, citizenId: tenantId, role: 'TENANT' }, actor()),
+    ).rejects.toThrow('مسكن');
+    expect(
+      await db.unitOccupancy.count({ where: { unitId: units[0]!.id, citizenId: tenantId } }),
+    ).toBe(0);
+  });
+
   it('never touches an occupancy somebody recorded from the matrix', async () => {
     const { building, units } = await surveyedBlock('SYNC-10');
     const matrixCitizen = await citizen('سلمى');

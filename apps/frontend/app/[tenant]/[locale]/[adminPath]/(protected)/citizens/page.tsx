@@ -340,14 +340,13 @@ export default function CitizensPage({
                 <p className="flex items-center gap-2 font-medium">
                   <span className="truncate">{citizen.fullName}</span>
                   {/*
-                    «مالك غير مقيم» on the name, like «معطّل»: an owner record
-                    is short by design, and the badge is what stops a clerk
-                    reading its empty household fields as a record left
-                    unfinished.
+                    «غير مقيم في البلدة» on the name, like «معطّل»: the record is
+                    short by design, and the badge is what stops a clerk reading
+                    its empty household fields as a record left unfinished.
                   */}
                   {citizen.residence === 'NON_RESIDENT_OWNER' ? (
                     <Badge variant="soft-info" className="shrink-0 py-0">
-                      {locale === 'en' ? 'Owner, lives elsewhere' : 'مالك غير مقيم'}
+                      {getLabels(locale).citizenResidence.NON_RESIDENT_OWNER}
                     </Badge>
                   ) : null}
                   {!citizen.isActive ? (

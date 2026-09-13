@@ -256,7 +256,28 @@ const propertyBranch = z.discriminatedUnion(
       propertyNumber: propertyNumberField,
       landType: landTypeSchema,
       unitArea: areaField,
-      shares: sharesField,
+      /*
+        Optional here, required of an owner below.
+
+        أسهم are a fraction of *ownership* out of the cadastre's 2400. A farmer
+        renting an orchard, or a relative working a plot without بدل, holds none,
+        and demanding the number of them produced exactly what a required field
+        with no true answer produces: an invented one. The requirement is
+        occupancy-dependent, which this branch — keyed on نوع العقار alone —
+        cannot express; see `ownerLandShares`.
+      */
+      shares: sharesField.optional(),
+      /*
+        حالة الأرض, asked of its owner — for the same reason a منزل's is.
+
+        A plot is one billable unit and its card had nowhere to say that
+        somebody else works it. So under an occupant-borne notice reaching أرض,
+        the owner of a rented plot was billed (an unanswered unit is billed) and
+        the farmer renting it was billed again on their own card. «مؤجرة» or
+        «مشغولة بتسامح» here is what exempts the owner, exactly as it does for a
+        منزل. Stripped from a non-owner's card by `PropertyEntry.normalise`.
+      */
+      unitStatus: unitStatusField,
     }),
     z.object({
       propertyType: z.literal('TENT'),
@@ -272,7 +293,27 @@ const propertyBranch = z.discriminatedUnion(
   { errorMap: () => ({ message: 'نوع العقار مطلوب' }) },
 );
 
-export const propertyEntrySchema = z.intersection(occupancyBranch, propertyBranch);
+/**
+ * أسهم on a plot of land, asked of its owner and of nobody else.
+ *
+ * Checked across both branches because it depends on both: an owner of أرض
+ * states their share of it, a tenant or a شاغل بتسامح of the same أرض holds no
+ * share at all. A share count left on a non-owner's card is stripped on the way
+ * in (`PropertyEntry.normalise`), not refused — it is what a card edited from
+ * مالك to مستأجر looks like.
+ */
+function ownerLandShares(
+  card: { occupancyType: string; propertyType: string; shares?: number },
+  ctx: z.RefinementCtx,
+): void {
+  if (card.propertyType === 'LAND' && card.occupancyType === 'OWNER' && card.shares === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['shares'], message: 'عدد الأسهم مطلوب' });
+  }
+}
+
+export const propertyEntrySchema = z
+  .intersection(occupancyBranch, propertyBranch)
+  .superRefine(ownerLandShares);
 export type PropertyEntry = z.infer<typeof propertyEntrySchema>;
 
 /**

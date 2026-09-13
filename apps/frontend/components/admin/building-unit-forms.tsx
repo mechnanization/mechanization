@@ -13,6 +13,7 @@ import {
   Search,
   ShieldAlert,
   UserRound,
+  UsersRound,
 } from 'lucide-react';
 import {
   CASE_TYPE,
@@ -27,6 +28,7 @@ import {
   unitStatusForRole,
   type BuildingLifecycle,
   type CaseType,
+  type CitizenResidence,
   type DamageLevel,
   type DamageSource,
   type OccupancyEndReason,
@@ -36,8 +38,10 @@ import {
   type UnitStatus,
 } from '@mechanization/shared-schemas';
 import {
+  createCase,
   listCitizens,
   logApiError,
+  logUnitVisit,
   type CitizenListItem,
   type OccupancyFileLink,
   type UnitOccupant,
@@ -47,7 +51,7 @@ import {
 import { formatDate } from '@/lib/dates';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -78,7 +82,7 @@ import { Textarea } from '@/components/ui/textarea';
  * `building-unit-matrix-drawer.tsx` (the map/cases slide-over) and
  * `building-unit-matrix-view.tsx` (the ledger's full-page spatial matrix).
  * Extracted rather than duplicated so the two surfaces can never quietly
- * diverge on what "register an occupant" or "log a case" means.
+ * diverge on what "add a person to a unit" or "open a follow-up case" means.
  */
 
 export const SEARCH_DEBOUNCE_MS = 350;
@@ -542,8 +546,29 @@ export function occupancyMessage(
   return parts.join(' — ');
 }
 /**
- * Who is in the flat — searched for, because the person at the door is very
- * often already on file from a different property.
+ * «إضافة شخص إلى الوحدة» — the one way a person reaches a flat from the matrix.
+ *
+ * ## Search first, always
+ *
+ * This used to be two buttons: «تسجيل شاغل», which linked somebody already on
+ * file, and «تسجيل أسرة في هذه الوحدة», which opened a blank registration. The
+ * labels said neither thing — the first was mostly used for owners, who are
+ * by definition not a شاغل (D2), and the second also created owner records,
+ * which have no household — and nothing made the officer look before creating.
+ *
+ * So there is one entry, and it searches. Creating a new file is offered only
+ * once a search has been run, and it is offered either way — «لا نتيجة» or
+ * «ليس بينهم». That order matters most for «غير مقيم في البلدة»: that record
+ * carries a name, a phone and a town, no document number, so it is the record
+ * least able to be matched after the fact and the one most likely to already
+ * exist from another parcel. A button that went straight to «create» would mint
+ * duplicates nobody could merge.
+ *
+ * Both new-file choices carry the unit and preset نوع الملف, named with the
+ * same labels the form's own chooser uses. Neither answers «ومن يشغلها؟» — an
+ * owner living elsewhere may have let the flat, lent it, left it empty or come
+ * back for the summer, and the card still asks. What a non-resident may be on
+ * a dwelling is the server's to refuse (`assertNonResidentOccupancy`).
  *
  * ## Why the capacity is the whole form
  *
@@ -564,18 +589,29 @@ export function occupancyMessage(
  *
  * The server refuses the second field on a non-owner, so the two surfaces
  * cannot drift into disagreeing about which question applies to whom.
+ *
+ * The capacity itself starts unanswered, for the reason «ومن يشغلها؟» does: it
+ * used to open on «مالك», and a pre-filled select is indistinguishable from an
+ * answered one.
  */
-export function OccupantForm({
+export function AddPersonForm({
   tenant,
   token,
   busy,
   locale,
+  newFileHref,
   onSubmit,
 }: {
   tenant: string;
   token: string;
   busy: boolean;
   locale: string;
+  /**
+   * The registration form, pointed at this unit, with نوع الملف preset. Absent
+   * where the caller cannot build an admin URL; the search still works and the
+   * no-match line says to register the person first.
+   */
+  newFileHref?: (residence: CitizenResidence) => string;
   onSubmit: (
     citizen: CitizenListItem,
     role: OccupancyRole,
@@ -590,7 +626,9 @@ export function OccupantForm({
   const [results, setResults] = useState<CitizenListItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [chosen, setChosen] = useState<CitizenListItem | null>(null);
-  const [role, setRole] = useState<OccupancyRole>('OWNER');
+  /** The term the shown results answer — set when a search comes back. */
+  const [searched, setSearched] = useState('');
+  const [role, setRole] = useState<OccupancyRole | ''>('');
   const [shares, setShares] = useState('');
   /**
    * Deliberately unset rather than pre-filled with «مشغولة من المالك».
@@ -606,6 +644,7 @@ export function OccupantForm({
   useEffect(() => {
     if (!term.trim()) {
       setResults([]);
+      setSearched('');
       return;
     }
     let cancelled = false;
@@ -613,11 +652,18 @@ export function OccupantForm({
     const timer = setTimeout(() => {
       listCitizens(tenant, token, { search: term.trim(), limit: 6 })
         .then((result) => {
-          if (!cancelled) setResults(result.items);
+          if (cancelled) return;
+          setResults(result.items);
+          setSearched(term.trim());
         })
         .catch((caught) => {
           logApiError(caught);
-          if (!cancelled) setResults([]);
+          // A failed search is not a search that found nobody: offering «ملف
+          // جديد» here would invite exactly the duplicate this order prevents.
+          if (!cancelled) {
+            setResults([]);
+            setSearched('');
+          }
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -690,21 +736,53 @@ export function OccupantForm({
                 </li>
               ))}
             </ul>
-          ) : term.trim() ? (
-            <p className="text-xs text-muted-foreground">
-              {en
-                ? 'No match. Register the citizen first, then come back to this unit.'
-                : 'لا نتيجة. سجّل المواطن أولاً ثم عد إلى هذه الوحدة.'}
-            </p>
+          ) : null}
+
+          {!searching && searched && searched === term.trim() ? (
+            newFileHref ? (
+              <div className="space-y-2 rounded-md border border-dashed p-2.5">
+                <p className="text-xs text-muted-foreground">
+                  {results.length > 0
+                    ? en
+                      ? 'Not one of these? Open a new file for this unit:'
+                      : 'ليس بينهم؟ افتح ملفاً جديداً لهذه الوحدة:'
+                    : en
+                      ? 'No match. Open a new file for this unit:'
+                      : 'لا نتيجة. افتح ملفاً جديداً لهذه الوحدة:'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    href={newFileHref('RESIDENT')}
+                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                  >
+                    <UsersRound className="size-4" aria-hidden />
+                    {labels.citizenResidence.RESIDENT}
+                  </Link>
+                  <Link
+                    href={newFileHref('NON_RESIDENT_OWNER')}
+                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                  >
+                    <MapPin className="size-4" aria-hidden />
+                    {labels.citizenResidence.NON_RESIDENT_OWNER}
+                  </Link>
+                </div>
+              </div>
+            ) : results.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                {en
+                  ? 'No match. Register the citizen first, then come back to this unit.'
+                  : 'لا نتيجة. سجّل المواطن أولاً ثم عد إلى هذه الوحدة.'}
+              </p>
+            ) : null
           ) : null}
         </>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label={en ? 'Capacity' : 'صفة الإشغال'} htmlFor="occupant-role" required>
+        <Field label={en ? 'Their relation to the unit' : 'صفته في الوحدة'} htmlFor="occupant-role" required>
           <Select value={role} onValueChange={(value) => setRole(value as OccupancyRole)}>
             <SelectTrigger id="occupant-role">
-              <SelectValue />
+              <SelectValue placeholder={en ? 'Choose…' : 'اختر…'} />
             </SelectTrigger>
             <SelectContent>
               {OCCUPANCY_ROLE.map((value) => (
@@ -774,19 +852,19 @@ export function OccupantForm({
             </SelectContent>
           </Select>
         </Field>
-      ) : (
+      ) : role ? (
         <p className="text-xs text-muted-foreground">
           {en
             ? `The unit will be recorded as ${labels.unitStatus[unitStatusForRole(role) as UnitStatus]}.`
             : `ستُسجَّل الوحدة «${labels.unitStatus[unitStatusForRole(role) as UnitStatus]}».`}
         </p>
-      )}
+      ) : null}
 
       <Button
         size="sm"
-        disabled={busy || !chosen}
+        disabled={busy || !chosen || !role}
         onClick={() => {
-          if (!chosen) return;
+          if (!chosen || !role) return;
           const parsed = Number(shares);
           onSubmit(
             chosen,
@@ -800,7 +878,7 @@ export function OccupantForm({
         }}
       >
         {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-        {en ? 'Record occupancy' : 'تسجيل الإشغال'}
+        {en ? 'Add to the unit' : 'ربط بالوحدة'}
       </Button>
     </div>
   );
@@ -816,6 +894,9 @@ export function OccupantForm({
  *
  * `NOT_SURVEYED` is absent from the choices because it means *nobody went* — a
  * visit carrying it is a contradiction, and the schema refuses it too.
+ *
+ * A door that did not open can also carry a return date, which opens the
+ * follow-up حالة in the same step — see `FOLLOW_UP_CASE`.
  */
 export function VisitForm({
   busy,
@@ -830,7 +911,7 @@ export function VisitForm({
   attempts: number;
   /** The recent ones, newest first. */
   visits: UnitVisitRow[];
-  onSubmit: (values: { outcome: SurveyStatus; visitedAt: string; notes: string }) => void;
+  onSubmit: (values: VisitValues) => void;
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
@@ -838,6 +919,8 @@ export function VisitForm({
   const [outcome, setOutcome] = useState<SurveyStatus>('VISITED_NO_ANSWER');
   const [visitedAt, setVisitedAt] = useState('');
   const [notes, setNotes] = useState('');
+  const [revisitAt, setRevisitAt] = useState('');
+  const followUp = FOLLOW_UP_CASE[outcome];
 
   return (
     <div className="space-y-3 rounded-md border bg-background p-3">
@@ -913,6 +996,28 @@ export function VisitForm({
         />
       </Field>
 
+      {followUp ? (
+        <Field
+          label={en ? 'Come back on' : 'موعد إعادة الزيارة'}
+          htmlFor="visit-revisit"
+          hint={
+            en
+              ? `Optional — opens a follow-up case («${labels.caseType[followUp]}») with this date`
+              : `اختياري — يفتح حالة متابعة «${labels.caseType[followUp]}» بهذا الموعد`
+          }
+        >
+          <Input
+            id="visit-revisit"
+            type="date"
+            min={today()}
+            value={revisitAt}
+            onChange={(event) => setRevisitAt(event.target.value)}
+            dir="ltr"
+            className="text-start"
+          />
+        </Field>
+      ) : null}
+
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         {en
           ? 'The unit moves to this outcome — one visit, one status, recorded together.'
@@ -922,7 +1027,17 @@ export function VisitForm({
       <Button
         size="sm"
         disabled={busy}
-        onClick={() => onSubmit({ outcome, visitedAt, notes: notes.trim() })}
+        onClick={() =>
+          onSubmit({
+            outcome,
+            visitedAt,
+            notes: notes.trim(),
+            // Only an outcome that has a follow-up carries its date: a date typed
+            // under «لم يتم الرد» and then left behind by switching to «مكتملة»
+            // must not open a case on a door that was answered.
+            revisitAt: followUp ? revisitAt : '',
+          })
+        }
       >
         {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Footprints className="size-4" aria-hidden />}
         {en ? 'Log the visit' : 'تسجيل الزيارة'}
@@ -931,7 +1046,121 @@ export function VisitForm({
   );
 }
 
-/** Why this visit did not become a registration, pinned to this exact unit. */
+export interface VisitValues {
+  outcome: SurveyStatus;
+  visitedAt: string;
+  notes: string;
+  /** Empty unless the outcome has a follow-up and a date was given. */
+  revisitAt: string;
+}
+
+/**
+ * The follow-up حالة a door that did not open becomes, when a return is dated.
+ *
+ * These two case types used to be opened from «تسجيل حالة» on the unit panel
+ * as well, and that was two records for one knock: the case form moved the unit
+ * to «زيارة بلا رد» without logging a visit, so the attempt count — the number
+ * D10 escalates on — missed every door recorded that way, and an officer who
+ * used both buttons counted it twice. From the unit panel they are opened here
+ * only, after the visit, so one knock is always exactly one attempt.
+ */
+export const FOLLOW_UP_CASE: Partial<Record<SurveyStatus, CaseType>> = {
+  VISITED_NO_ANSWER: 'UNIT_UNREACHABLE',
+  REFUSED: 'ACCESS_REFUSED',
+};
+
+/** The case types «فتح حالة متابعة» offers on a unit — the ones no visit outcome opens. */
+const UNIT_CASE_TYPES = CASE_TYPE.filter(
+  (type) => !Object.values(FOLLOW_UP_CASE).includes(type),
+);
+
+/**
+ * Logs a visit and, where it was given a return date, opens its follow-up.
+ *
+ * Shared by the drawer and the full-page matrix so the two cannot disagree
+ * about what one knock writes. The visit goes first: if the case then fails,
+ * the attempt is still counted and the message says the follow-up was not
+ * opened, rather than the whole step reporting a failure the officer would
+ * retry — and log a second visit for.
+ */
+export async function logVisitWithFollowUp(
+  tenant: string,
+  token: string,
+  target: { unitId: string; buildingId: string; parcelNumber: string; buildingName: string | null },
+  values: VisitValues,
+  en: boolean,
+): Promise<string> {
+  const result = await logUnitVisit(tenant, token, {
+    unitId: target.unitId,
+    outcome: values.outcome,
+    visitedAt: values.visitedAt || undefined,
+    notes: values.notes || undefined,
+  });
+  const logged = en
+    ? `Visit logged — ${result.visitCount} attempt(s) on this unit`
+    : `تم تسجيل الزيارة — ${result.visitCount} محاولة على هذه الوحدة`;
+
+  const caseType = FOLLOW_UP_CASE[values.outcome];
+  if (!caseType || !values.revisitAt) return logged;
+
+  const labels = getLabels(en ? 'en' : 'ar');
+  try {
+    await createCase(tenant, token, {
+      // A case needs a description; a visit does not. The outcome's own name is
+      // the honest one when the officer wrote nothing.
+      notes: values.notes || labels.surveyStatus[values.outcome],
+      caseType,
+      buildingId: target.buildingId,
+      unitId: target.unitId,
+      propertyNumber: target.parcelNumber,
+      buildingName: target.buildingName ?? undefined,
+      scheduledRevisitAt: values.revisitAt,
+    });
+  } catch (caught) {
+    logApiError(caught);
+    return en
+      ? `${logged} — but the follow-up case could not be opened`
+      : `${logged} — لكن تعذّر فتح حالة المتابعة`;
+  }
+  return en ? `${logged}, follow-up case opened` : `${logged}، وفُتحت حالة متابعة`;
+}
+
+/**
+ * Why «تأكيد الشغور» cannot be pressed on this unit, or null when it can.
+ *
+ * Shared so the drawer and the full-page matrix give the same refusal; the
+ * server applies both rules as well (`BuildingsService.updateUnit`).
+ *
+ * A seasonal home is refused because its owners being away is what the state
+ * *means*. Pressing it on a summer house visited in January wrote «شاغرة» over
+ * «مسكن موسمي» — and a seasonal home is billed to its owner
+ * (`OWNER_BILLED_WHILE_ABSENT`) while a vacant one is exempt, so a routine
+ * winter survey quietly cancelled the summer's fees. The months without the
+ * owners are settled by a تصريح بالشغور in the seasonal panel above.
+ */
+export function vacancyBlocker(unit: UnitWithOccupants, en: boolean): string | null {
+  if (livingOccupants(unit).length > 0) {
+    return en
+      ? 'A tenant or occupant is recorded here — end their occupancy first. An owner does not block this.'
+      : 'يسكن الوحدة مستأجر أو شاغل مسجَّل — أنهِ إشغاله أولاً. وجود المالك لا يمنع تأكيد الشغور.';
+  }
+  if (effectiveUnitStatus(unit) === 'SEASONAL') {
+    return en
+      ? 'A seasonal home is not vacant while its owners are away. Record a vacancy declaration in the seasonal details, or re-add the owner with «Vacant» if they no longer come.'
+      : 'غياب أصحاب المسكن الموسمي لا يجعله شاغراً. سجّل تصريح الشغور في بيانات السكن الموسمي، أو أعد ربط المالك بحالة «شاغرة» إن لم يعودوا يأتون.';
+  }
+  return null;
+}
+
+/**
+ * «فتح حالة متابعة» — something a later visit or a reviewer has to act on,
+ * pinned to this exact unit.
+ *
+ * Named for what it opens, not «تسجيل حالة»: on a panel whose header already
+ * shows the survey state and whose forms ask «حالة الوحدة», "record a status"
+ * read as setting مؤجرة or شاغرة. «متابعة» is the word the cases page is
+ * searched by; «حالة» keeps it recognisably the thing listed there.
+ */
 export function CaseForm({
   busy,
   locale,
@@ -944,20 +1173,26 @@ export function CaseForm({
   const en = locale === 'en';
   const labels = getLabels(locale);
 
-  const [caseType, setCaseType] = useState<CaseType>('UNIT_UNREACHABLE');
+  // No default, for the reason the capacity above has none.
+  const [caseType, setCaseType] = useState<CaseType | ''>('');
   const [notes, setNotes] = useState('');
   const [revisitAt, setRevisitAt] = useState('');
 
   return (
     <div className="space-y-3 rounded-md border bg-background p-3">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {en
+          ? 'Nobody answered, or they refused? Use «Log a visit» — it counts the attempt and can set the return date.'
+          : 'لم يُرَدّ على الباب أو رُفض إعطاء البيانات؟ استخدم «تسجيل زيارة» — تُحتسب المحاولة ويمكن تحديد موعد العودة.'}
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label={en ? 'What happened' : 'نوع الحالة'} htmlFor="case-type" required>
+        <Field label={en ? 'What needs following up' : 'نوع الحالة'} htmlFor="case-type" required>
           <Select value={caseType} onValueChange={(value) => setCaseType(value as CaseType)}>
             <SelectTrigger id="case-type">
-              <SelectValue />
+              <SelectValue placeholder={en ? 'Choose…' : 'اختر…'} />
             </SelectTrigger>
             <SelectContent>
-              {CASE_TYPE.map((value) => (
+              {UNIT_CASE_TYPES.map((value) => (
                 <SelectItem key={value} value={value}>
                   {labels.caseType[value]}
                 </SelectItem>
@@ -1002,11 +1237,14 @@ export function CaseForm({
 
       <Button
         size="sm"
-        disabled={busy || !notes.trim()}
-        onClick={() => onSubmit({ notes: notes.trim(), caseType, revisitAt })}
+        disabled={busy || !notes.trim() || !caseType}
+        onClick={() => {
+          if (!caseType) return;
+          onSubmit({ notes: notes.trim(), caseType, revisitAt });
+        }}
       >
         {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <CalendarClock className="size-4" aria-hidden />}
-        {en ? 'Log the case' : 'تسجيل الحالة'}
+        {en ? 'Open the case' : 'فتح الحالة'}
       </Button>
     </div>
   );

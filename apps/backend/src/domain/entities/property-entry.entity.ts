@@ -253,7 +253,12 @@ export class PropertyEntry {
         if (!required('unitArea', Boolean(props.unitArea && props.unitArea > 0))) {
           throw fail('Land requires an area');
         }
-        if (!required('shares', Boolean(props.shares && props.shares > 0))) {
+        // أسهم are a share of ownership: asked of the owner, never of a tenant
+        // or a شاغل بتسامح farming the plot (see `ownerLandShares`).
+        if (
+          props.occupancyType === 'OWNER' &&
+          !required('shares', Boolean(props.shares && props.shares > 0))
+        ) {
           throw fail('Land requires a share count');
         }
         if (props.floor || props.unitType || props.buildingName) {
@@ -346,12 +351,16 @@ export class PropertyEntry {
       tentLocation: props.propertyType === 'TENT' ? (props.tentLocation?.trim() ?? null) : null,
       unitArea:
         props.propertyType === 'TENT' || isBuilding ? null : (props.unitArea ?? null),
-      shares: props.propertyType === 'LAND' ? (props.shares ?? null) : null,
+      shares: props.propertyType === 'LAND' && isOwner ? (props.shares ?? null) : null,
       sharedRights: props.propertyType === 'HOUSE' ? (props.sharedRights ?? []) : [],
-      // A منزل is the only card that describes its own single unit; a مبنى
-      // states this per unit below, and أرض and خيمة are never asked.
+      // A منزل and an أرض describe their own single unit; a مبنى states this
+      // per unit below, and a خيمة is never asked. An owner's plot says whether
+      // somebody else works it — without that, a rented plot was billed to its
+      // owner and to its tenant under an occupant-borne notice.
       unitStatus:
-        isOwner && props.propertyType === 'HOUSE' ? (props.unitStatus ?? null) : null,
+        isOwner && (props.propertyType === 'HOUSE' || props.propertyType === 'LAND')
+          ? (props.unitStatus ?? null)
+          : null,
       // A link to a structure, on the two types that can stand on one.
       buildingId:
         props.propertyType === 'BUILDING' || props.propertyType === 'HOUSE'

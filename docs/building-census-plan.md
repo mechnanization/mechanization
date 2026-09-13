@@ -2093,7 +2093,7 @@ recorded. `UnitStateLegend` sits under both matrices.
 wherever the unit has none. That is the same order billing reads them in, so
 the tile can't disagree with the bill.
 
-### 13.4 «مالك غير مقيم» and «مسكن موسمي»
+### 13.4 «غير مقيم في البلدة» (stored NON_RESIDENT_OWNER) and «مسكن موسمي»
 
 - **Owner record.** `User.residence` (`CitizenResidence`, NOT NULL DEFAULT
   `RESIDENT`), plus `residencePlace` and a local contact. The record asks for
@@ -2137,3 +2137,66 @@ parallel, they share one database and fail each other.
 matrix labels, owner form and duplicate hint are verified by `tsc`, lint and a
 production build only. The UI hasn't been exercised in a browser, because
 staging lacks migration 0040.
+
+### 13.7 The non-resident record is widened to tenants, and land tenancies are fixed (2026-09-13)
+
+The trigger was a shop in town rented by someone who lives in another town.
+They are the occupant, so the rental-value fee and the annual sewer/pavement
+maintenance fee fall on them (Law 60/1988, Art. 4, 12 and 79). The occupancy
+notice names the occupant and where they live (Art. 14). Neither record type
+could hold this person: a household file demands a household, and the owner
+record refused anyone who wasn't an owner.
+
+**The record now means «غير مقيم في البلدة».** The stored value stays
+`NON_RESIDENT_OWNER`. Migration 0040 was already applied on staging, and
+renaming an enum value is a one-way change, so only the label and the rules
+changed. The misnomer is documented on `CITIZEN_RESIDENCE`.
+
+| Card on a non-resident record | Allowed |
+|---|---|
+| OWNER of anything | Yes. An OWNER of a dwelling (شقة، منزل) may not say «مشغولة من المالك»; the true answers are «مسكن موسمي» or «شاغرة» |
+| TENANT / FREE_OCCUPANT of محل، مكتب، عيادة، مستودع, or أرض | Yes |
+| TENANT / FREE_OCCUPANT of شقة، منزل، خيمة | No. Someone who rents a home and lives in it is a household. If it's used for something else, its unit type is wrong |
+
+The rule is enforced in three places. They must stay in step:
+
+- **`nonResidentCardIssues`** (the shared submission schema): the form and
+  `POST/PUT /citizens`.
+- **`assertNonResidentOccupancy`** (`BuildingsService.recordOccupancy`): the
+  matrix. Without it the unit panel is a way around the form, and `claimOnFile`
+  would create the card the form refuses.
+- **`PropertyCard` / `UnitsEditor` / `UnitStatusChoice`**: stop offering the
+  refused options. Each keeps showing a value that's already set, so the
+  officer can see what's wrong.
+
+Dwellings are `DWELLING_UNIT_TYPE` = شقة and منزل مستقل.
+
+**Two land defects came to light.**
+
+1. **أسهم were required on every land card.** Shares are ownership, so a farmer
+   renting a plot had to invent a number. Now `ownerLandShares` requires them of
+   the owner only, and `PropertyEntry.normalise` strips them from anyone else.
+2. **A rented plot was billed twice** under an occupant-borne notice that
+   reaches أرض. The owner's plot had no status (so it was billed) and the
+   tenant's card was billed too. An owner's land card now carries حالة الأرض,
+   stored in the existing `property_entries.unitStatus` column, with no
+   migration. «مؤجرة» or «مشغولة بتسامح» exempts the owner, exactly as it does
+   for a منزل. The form doesn't offer «مسكن موسمي» or «قيد الإنجاز» for land.
+
+**`withResidence` no longer turns every card into «مالك».**
+
+**Verified:** 702 unit tests (34 suites) and 96 integration tests (5 suites,
+`--runInBand`, Postgres 16 with migrations through 0040). New tests:
+`owner-record.spec.ts` (non-resident and land cases),
+`non-resident-occupancy.spec.ts`, the entity's land tests,
+`assessment.spec.ts` «a rented plot is billed once», and an integration test
+recording a non-resident as a shop tenant and refusing them as a flat tenant.
+Typecheck, lint (0 errors) and `pnpm build:check` are clean.
+
+**Known gaps:**
+
+- **Companies.** A bank branch or a chain pharmacy is recorded as a person, so
+  record the person responsible.
+- **Summer tenants of a flat** (a Beirut family renting for July–August) are
+  refused as non-residents. Revisit if it comes up.
+- **Month-by-month billing** for a seasonally closed shop (Art. 11) is not modelled.
