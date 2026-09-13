@@ -21,6 +21,7 @@ const household = () => ({
     firstName: 'علي',
     middleName: 'حسن',
     lastName: 'نصرالله',
+    motherName: 'فاطمة خليل',
     gender: 'MALE',
     bloodType: 'O_POSITIVE',
     civilRecordNumber: '7',

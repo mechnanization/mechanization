@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Loader2,
+  Lock,
   MapPin,
   Plus,
   TriangleAlert,
@@ -114,6 +115,20 @@ export interface PropertyDraft {
   occupancyType?: OccupancyType;
   landlordName?: string;
   landlordPhone?: string;
+  /**
+   * «نعم، هو المالك» — the registered citizen the officer agreed this card names.
+   *
+   * Set by `LandlordMatchHint` when a lookup on `landlordPhone` turns up exactly
+   * one citizen and the officer confirms it; cleared whenever the number
+   * changes, because the agreement was about that number. It rides with the
+   * submission so the link is made by the save — a browser doing it afterwards
+   * never runs on the offline queue this form files most of its records through.
+   *
+   * The server does not believe it: `LandlordLinkService.confirm` re-derives the
+   * match from the committed card and refuses any citizen whose numbers differ
+   * from it. See `landlordCitizenIdField` in the property schema.
+   */
+  landlordCitizenId?: string;
   propertyType?: PropertyType;
   neighborhood?: string;
   propertyNumber?: string;
@@ -327,11 +342,93 @@ export function PropertyCard({
    */
   const typeFromCensus = Boolean(parcelFromCensus);
 
+  /**
+   * The flat this card is about, when the officer arrived by tapping one.
+   *
+   * A matrix launch withholds both the census strip and the picker, and that is
+   * right: each of them is a control for a choice that was already made one
+   * screen ago. What went with them was the *statement* of what had been
+   * chosen, and nothing took its place — «العقار ١» over a form already filled
+   * from a door the officer could no longer see named anywhere on it. A منزل
+   * card is the bare case: it keeps its single unit in its own columns, so it
+   * has no «وحدات المبنى» list at the foot either, and the tapped flat is
+   * named nowhere at all.
+   *
+   * This is not the old read-only summary returning. That restated the
+   * question — a headed panel of locked values above «نوع الإشغال». This is the
+   * card's own identity, in the line the header already reserves for it, and it
+   * answers the one thing a locked card has to be able to answer: which door.
+   *
+   * Assembled from the card's seed first and the register second. `censusDraft`
+   * writes the type, floor, side and building name before this ever renders, so
+   * the line is right on the first frame; `unitCode` is the only part that has
+   * to wait for the matrix, and it is *appended* rather than replacing
+   * anything — a line that rewrites itself once the network answers is worse
+   * than one that grows.
+   */
+  const lockedUnitId = lockedCensusTarget?.unitId;
+  const lockedUnitIdentity = (() => {
+    if (!lockedUnitId) return null;
+
+    const census = censusUnits[lockedUnitId];
+    /*
+      A مبنى seeds one card line per tapped flat; a منزل seeds none, because its
+      single unit's detail lives in the card's own columns (see `censusDraft`).
+      Reading both is what lets one line serve شقة, محل and منزل alike.
+    */
+    const seeded = draft.units?.find((row) => row.unitId === lockedUnitId);
+    const unitType = census?.unitType ?? seeded?.unitType;
+
+    const buildingName = draft.buildingName || linkedBuilding?.name || null;
+
+    const label = [
+      unitType
+        ? labels.unitType[unitType as UnitType]
+        : draft.propertyType
+          ? labels.propertyType[draft.propertyType]
+          : null,
+      census?.floor ?? seeded?.floor ?? null,
+      census?.side ?? seeded?.side ?? draft.side ?? null,
+      buildingName,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+
+    /*
+      An unnamed block falls back to its code, and the code joins the *chip*
+      rather than the sentence.
+
+      Both halves are Latin-and-digit, so both have to sit inside the one
+      `dir="ltr"` run; `A-3-A-0001` spliced into the Arabic line would be
+      reordered by the bidi algorithm into a string that is not the code. An
+      unnamed building is the ordinary case rather than the exception — the name
+      is what the officer in the stairwell is there to learn — so «شقة · الثاني»
+      with nothing to say which block it is in would have been the common
+      reading, not the rare one.
+    */
+    const code = [buildingName ? null : linkedBuilding?.code, census?.unitCode]
+      .filter(Boolean)
+      .join(' · ');
+
+    return label ? { label, code: code || null } : null;
+  })();
+
   const isBuilding = draft.propertyType === 'BUILDING';
   const units = draft.units ?? [];
 
   const isTenant = draft.occupancyType === 'TENANT';
   const isNonOwner = isTenant || draft.occupancyType === 'FREE_OCCUPANT';
+  /**
+   * The officer agreed this card's owner is a citizen the register holds, so
+   * the register's spelling of the name is the one shown — and locked.
+   *
+   * Read off the agreement rather than off the lookup, which is the whole
+   * safety of it: a match is a query result and a household shares a phone, so
+   * a name frozen by the query alone would let the father's file overwrite what
+   * the tenant said about the son. `LandlordMatchHint` asks; this reflects the
+   * answer. The unlock beside the field withdraws both at once.
+   */
+  const landlordFromRegister = Boolean(draft.landlordCitizenId);
   /*
     Only an owner is asked whether a unit is empty.
 
@@ -366,6 +463,52 @@ export function PropertyCard({
             <CardTitle className="text-xl">
               {title ?? (locale === 'en' ? `Property ${index + 1}` : `العقار ${index + 1}`)}
             </CardTitle>
+
+            {/*
+              «أنت هنا» — stated whether the card is open or folded, because it
+              is what the card *is* rather than a preview of what is inside it.
+
+              Wraps rather than truncating. The building's name is the half an
+              officer recognises the block by, and it is the half that falls off
+              the end of a phone-width line; a name clipped to «مبنى الي…» is
+              worse than a two-line heading.
+            */}
+            {lockedUnitIdentity ? (
+              <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="inline-flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground">
+                  <Building2 className="size-3.5 shrink-0 text-primary" aria-hidden />
+                  <span className="min-w-0 break-words">{lockedUnitIdentity.label}</span>
+                </span>
+
+                {/*
+                  `dir="ltr"` and monospaced, the same as every other unit code
+                  on this screen: a Latin-and-digit code sitting in an RTL line
+                  is reordered by the bidi algorithm into something that is not
+                  the code.
+                */}
+                {lockedUnitIdentity.code ? (
+                  <span
+                    dir="ltr"
+                    className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-primary"
+                  >
+                    {lockedUnitIdentity.code}
+                  </span>
+                ) : null}
+
+                {/*
+                  Where the value came from, in the picker's own words — the
+                  officer needs to know this was filled *for* them, or they will
+                  hunt for the control that sets it. `Lock` says the same thing
+                  the picker's badge said: chosen already, not up for changing
+                  here.
+                */}
+                <span className="inline-flex items-center gap-1 text-[11px] font-normal text-muted-foreground">
+                  <Lock className="size-3 shrink-0" aria-hidden />
+                  {locale === 'en' ? 'From the unit matrix' : 'من مصفوفة الوحدات'}
+                </span>
+              </span>
+            ) : null}
+
             {collapsed ? (
               <span className="mt-1 block truncate text-sm font-normal text-muted-foreground">
                 {summarise(draft, locale)}
@@ -616,24 +759,17 @@ export function PropertyCard({
             typically a relative abroad or deceased, and a required phone there
             yields an invented number rather than a real one, so the field is
             offered and not demanded. See `occupancyBranch`.
+
+            The phone is asked first, because it is what answers the name. The
+            lookup runs off the number — a match offers the register's own
+            spelling and locks the name field to it — so a form that asked for
+            the name first had the officer type one out, then watch it be
+            replaced by the register a moment later. Asked in the order the
+            answer arrives, the name box is either already filled in by the
+            match or still waiting for a landlord the register does not hold.
           */}
           {isNonOwner ? (
             <div className="grid gap-3.5 sm:grid-cols-2">
-              <Field
-                label={locale === 'en' ? 'Landlord Name' : 'اسم المالك'}
-                htmlFor={`ln-${index}`}
-
-                path={flagPath(index, 'landlordName')}
-                required
-                error={errors.landlordName}
-              >
-                <Input
-                  id={`ln-${index}`}
-                  invalid={Boolean(errors.landlordName)}
-                  value={draft.landlordName ?? ''}
-                  onChange={(e) => set({ landlordName: e.target.value })}
-                />
-              </Field>
               <Field
                 label={locale === 'en' ? 'Landlord Phone' : 'رقم هاتف المالك'}
                 htmlFor={`lp-${index}`}
@@ -662,7 +798,20 @@ export function PropertyCard({
                   className="text-start"
                   invalid={Boolean(errors.landlordPhone)}
                   value={draft.landlordPhone ?? ''}
-                  onChange={(e) => set({ landlordPhone: e.target.value })}
+                  /*
+                    A changed number withdraws the agreement made about the old
+                    one, and mirrors the server doing exactly this
+                    (`landlordLinkReset`): a confirmed link and its number are
+                    one fact, and keeping the link across an edit of the number
+                    would leave the card asserting that a citizen it can no
+                    longer reach is the owner.
+                  */
+                  onChange={(e) =>
+                    set({
+                      landlordPhone: e.target.value,
+                      ...(draft.landlordCitizenId ? { landlordCitizenId: undefined } : {}),
+                    })
+                  }
                 />
 
                 {/*
@@ -680,7 +829,77 @@ export function PropertyCard({
                     token={token}
                     phone={draft.landlordPhone}
                     locale={locale}
+                    agreedCitizenId={draft.landlordCitizenId}
+                    /*
+                      Agreeing writes both halves at once: the id that makes the
+                      link on save, and the register's own spelling of the name
+                      the field then locks to. Writing the name here rather than
+                      leaving the officer to retype it is the point — the two
+                      would otherwise disagree on the very card that links them.
+                    */
+                    onAgree={(match) =>
+                      set({ landlordCitizenId: match.id, landlordName: match.name })
+                    }
+                    onWithdraw={() => set({ landlordCitizenId: undefined })}
                   />
+                ) : null}
+              </Field>
+              <Field
+                label={locale === 'en' ? 'Landlord Name' : 'اسم المالك'}
+                htmlFor={`ln-${index}`}
+
+                path={flagPath(index, 'landlordName')}
+                required
+                error={errors.landlordName}
+                /*
+                  Where the register already holds the answer, this field states
+                  it rather than asking for it — the same one-directional lock
+                  `buildingName` gets below when a card is linked to a censused
+                  structure, and for the same reason: two spellings of one
+                  person are two rows nothing can recognise as the same owner.
+
+                  It locks on the officer's agreement, never on the lookup
+                  alone. A phone is not an identity here — a household shares a
+                  line — so a name filled in by a query and frozen would let a
+                  match overwrite what the tenant actually said. «فتح للتعديل»
+                  unlocks the field and withdraws the agreement together,
+                  because a name the officer may retype is not a name the
+                  register vouched for.
+                */
+                hint={
+                  landlordFromRegister
+                    ? locale === 'en'
+                      ? 'From the citizen register, by the phone number above.'
+                      : 'من سجل المواطنين، حسب رقم الهاتف أعلاه.'
+                    : undefined
+                }
+              >
+                <Input
+                  id={`ln-${index}`}
+                  invalid={Boolean(errors.landlordName)}
+                  value={draft.landlordName ?? ''}
+                  onChange={(e) => set({ landlordName: e.target.value })}
+                  readOnly={landlordFromRegister}
+                  aria-readonly={landlordFromRegister || undefined}
+                  className={cn(landlordFromRegister && 'bg-muted text-muted-foreground')}
+                />
+
+                {/*
+                  The way back out, beside the thing it undoes.
+
+                  Placed in the field rather than as a second control elsewhere
+                  because the officer meets the lock here, and a lock whose
+                  release lives on another part of the form reads as a field
+                  that simply cannot be corrected.
+                */}
+                {landlordFromRegister ? (
+                  <button
+                    type="button"
+                    className="mt-1.5 text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    onClick={() => set({ landlordCitizenId: undefined })}
+                  >
+                    {locale === 'en' ? 'Unlock to edit' : 'فتح للتعديل'}
+                  </button>
                 ) : null}
               </Field>
             </div>

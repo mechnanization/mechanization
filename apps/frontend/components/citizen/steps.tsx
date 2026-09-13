@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, type ReactNode } from 'react';
 import {
   BLOOD_TYPE,
   GENDER,
@@ -129,6 +129,55 @@ export function PersonalStep({
           />
         </Field>
       </div>
+
+      {/*
+        1b. اسم الأم وشهرتها — what tells two people with the same three names apart.
+
+        Asked because the identity document is not. Officers were told the
+        document was optional and filled it with shared or invented numbers, and
+        since citizens were matched on it every repeated number merged distinct
+        people; it was removed on 2026-09-13 and left the register with three
+        name parts, a phone a household shares, and a رقم سجل shared by everyone
+        on the same قيد. This is what the ID card and the قيد carry for exactly
+        this job, and the one identifying answer at a counter that nobody has a
+        reason to invent.
+
+        One field, not «اسم الأم» plus «شهرة الأم». The question is asked and
+        answered as one phrase — and a married Lebanese woman is recorded in the
+        قيد under her father's family name while being addressed by her
+        husband's, so a second box would make a clerk who was told «فاطمة» guess
+        at which surname is meant. That guess is the invention this whole change
+        was about.
+
+        Full width, below the name row rather than in it: a four-column name
+        grid on a phone is four cramped boxes, and this one holds two words.
+
+        Required, and flaggable — which is the half that makes requiring it
+        safe. An officer who does not know marks it «غير مؤكَّد» with a reason
+        instead of typing something. It also renders blank on households filed
+        before migration 0044, so editing an old record is where those gaps
+        surface and get answered honestly.
+      */}
+      <Field
+        label={locale === 'en' ? "Mother's Full Name" : 'اسم الأم وشهرتها'}
+        htmlFor="motherName"
+        path="personal.motherName"
+        required
+        error={errors['personal.motherName']}
+        hint={
+          locale === 'en'
+            ? 'Her name and family name together, as it appears on the record.'
+            : 'اسمها وشهرتها معاً، كما وردا في السجل.'
+        }
+      >
+        <Input
+          id="motherName"
+          placeholder={locale === 'en' ? 'e.g. Fatima Khalil' : 'مثال: فاطمة خليل'}
+          invalid={Boolean(errors['personal.motherName'])}
+          value={str(value.motherName)}
+          onChange={(e) => set({ motherName: e.target.value })}
+        />
+      </Field>
 
       {/* 2. Nationality & Gender - Instant 1-tap segment on mobile */}
       <div className="grid gap-3.5 sm:grid-cols-2">
@@ -288,13 +337,25 @@ export function PersonalStep({
         </div>
       )}
 
-      {/* 5. Blood Type */}
+      {/*
+        5. Blood Type — asked of everyone, demanded of nobody.
+
+        A required box in front of a clerk who was told «ما بعرف» gets a
+        plausible answer rather than an empty one, and a guessed «O+» on a
+        household card is worse than a blank: the blank is the only one of the
+        two a later visit can read as a question still open. See
+        `personalDetailsObject.bloodType` for the rule this mirrors.
+      */}
       <Field
         label={locale === 'en' ? 'Blood Type' : 'فئة الدم'}
         htmlFor="bloodType"
         path="personal.bloodType"
-        required
         error={errors['personal.bloodType']}
+        hint={
+          locale === 'en'
+            ? 'Leave it empty when nobody present knows it — do not guess.'
+            : 'اتركها فارغة إن لم يكن أحد يعرفها — لا تُخمّن.'
+        }
       >
         <Select
           value={str(value.bloodType)}
@@ -322,11 +383,26 @@ export function ContactStep({
   errors,
   onChange,
   locale = 'ar',
+  afterPhone,
 }: {
   value: Values;
   errors: Errors;
   onChange: (next: Values) => void;
   locale?: string;
+  /**
+   * Rendered inside the phone card, directly under the numbers.
+   *
+   * A slot rather than a fixed element because what goes here is the admin
+   * form's «قد يكون مسجَّلاً مسبقاً» panel, which reads the municipality's own
+   * citizen list — the public wizard has no business showing a resident which
+   * of their neighbours the register holds, and passes nothing.
+   *
+   * It belongs *here* and nowhere else: the panel's strongest signal is the
+   * phone number, and it used to sit at the foot of the personal step — above
+   * the field that produces most of its matches, in a different section of the
+   * form. An officer met a warning about a number they had not typed yet.
+   */
+  afterPhone?: ReactNode;
 }) {
   const labels = getLabels(locale);
   const set = (patch: Values) => onChange({ ...value, ...patch });
@@ -411,6 +487,8 @@ export function ContactStep({
             </p>
           ) : null}
         </div>
+
+        {afterPhone}
       </div>
 
       {/* 2. Marital Status & Family size */}
@@ -612,11 +690,14 @@ export function OwnerContactStep({
   errors,
   onChange,
   locale = 'ar',
+  afterPhone,
 }: {
   value: Values;
   errors: Errors;
   onChange: (next: Values) => void;
   locale?: string;
+  /** Under the numbers, as in `ContactStep` — see the note there. */
+  afterPhone?: ReactNode;
 }) {
   const en = locale === 'en';
   const set = (patch: Values) => onChange({ ...value, ...patch });
@@ -682,6 +763,8 @@ export function OwnerContactStep({
             />
           </Field>
         ) : null}
+
+        {afterPhone}
       </div>
 
       <div className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-3 sm:grid-cols-2 sm:p-4">

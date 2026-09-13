@@ -314,7 +314,13 @@ export function FullscreenMap({
    * Built by the page, like `citizenHref` beside it: this component is handed
    * links rather than reconstructing `/{tenant}/{locale}/{adminPath}` itself.
    */
-  registerHref?: (buildingId: string, unitId: string, residence: CitizenResidence) => string;
+  registerHref?: (
+    buildingId: string,
+    unitId: string,
+    residence: CitizenResidence,
+    /** Whatever the officer typed into the occupant search — seeds the name. */
+    name: string,
+  ) => string;
   locale?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);

@@ -352,6 +352,7 @@ export const ar = {
     firstName: 'الاسم الأول',
     middleName: 'اسم الأب',
     lastName: 'الشهرة',
+    motherName: 'اسم الأم وشهرتها',
     gender: 'الجنس',
     bloodType: 'فئة الدم',
     identityDocType: 'نوع وثيقة الإثبات',
@@ -386,6 +387,13 @@ export const ar = {
     shares: 'الأسهم',
     sharedRights: 'حقوق مشتركة',
     units: 'وحدات المبنى',
+    /*
+      Per-unit flags name these two (`properties.0.units.2.unitType`), and
+      without an entry here a flag list fell back to printing the raw path
+      segment — «unitType» in the middle of an Arabic sentence.
+    */
+    unitType: 'نوع الوحدة',
+    floor: 'الطابق',
   } as Record<string, string>,
 } as const;
 
@@ -640,6 +648,7 @@ export const en = {
     firstName: 'First Name',
     middleName: "Father's Name",
     lastName: 'Last Name',
+    motherName: "Mother's Full Name",
     gender: 'Gender',
     bloodType: 'Blood Type',
     identityDocType: 'ID Document Type',
@@ -674,6 +683,8 @@ export const en = {
     shares: 'Shares',
     sharedRights: 'Shared Rights',
     units: 'Building Units',
+    unitType: 'Unit Type',
+    floor: 'Floor',
   } as Record<string, string>,
 } as const;
 

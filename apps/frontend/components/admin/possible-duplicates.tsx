@@ -27,6 +27,18 @@ const MAX_SHOWN = 5;
  * shared by a household and a name by cousins, so the officer opens the match
  * (in a new tab, so the form in progress survives) and decides. Registering the
  * same person again is recoverable; merging two people is not.
+ *
+ * ## What makes a row decidable
+ *
+ * اسم الأم وشهرتها, since migration 0044. Two «محمد خليل»s with a shared
+ * household line were, until then, two rows this panel could show and nobody
+ * could choose between — which is the failure mode of a warning that cannot be
+ * acted on: it gets dismissed on the tenth record, including the one where it
+ * was right.
+ *
+ * Printed only where the register holds it. A «والدته: —» beside a row that
+ * names a mother reads as a difference between two people, when all it records
+ * is that one file was opened before the field existed.
  */
 export function PossibleDuplicates({
   tenant,
@@ -123,6 +135,11 @@ export function PossibleDuplicates({
               className="flex flex-wrap items-center gap-2 rounded-md bg-background/70 px-2.5 py-1.5 hover:bg-background"
             >
               <span className="font-medium">{match.fullName}</span>
+              {match.motherName ? (
+                <span className="text-muted-foreground">
+                  {en ? `mother: ${match.motherName}` : `والدته: ${match.motherName}`}
+                </span>
+              ) : null}
               {match.phone ? (
                 <span dir="ltr" className="text-muted-foreground">
                   {match.phone}

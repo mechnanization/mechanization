@@ -44,6 +44,18 @@ export default function NewCitizenPage({
   const residence = searchParams.get('residence');
   const initialResidence = CITIZEN_RESIDENCE.find((value) => value === residence);
 
+  /*
+    `?name=` is whatever the officer had typed into the occupant search on the
+    unit panel before deciding nobody there was the person.
+
+    Carried so the search is not retyped, and — more to the point — so the
+    duplicate check in the form has something to check on the first render.
+    The panel used to withhold its «ملف جديد» links until a search had come
+    back, which taught officers to type «asdfgh» to reveal them; the links are
+    now always offered and the looking happens here, against the name.
+  */
+  const initialName = searchParams.get('name')?.trim() || undefined;
+
   return (
     <CitizenEditor
       tenant={tenant}
@@ -52,6 +64,7 @@ export default function NewCitizenPage({
       fromCaseId={fromCaseId}
       lockedCensusTarget={lockedCensusTarget}
       initialResidence={initialResidence}
+      initialName={initialName}
     />
   );
 }

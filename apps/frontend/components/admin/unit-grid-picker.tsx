@@ -261,22 +261,27 @@ export function UnitGridPicker({
   );
 
   /**
-   * The type a freshly painted block opens with.
+   * The type a freshly painted block opens with — the structure's own, always.
    *
-   * `defaultUnitTypeFor` answers "what does a unit of this *structure* usually
-   * hold", which is the right question for the second block onward and the
-   * wrong one for the first. The first block on an empty grid has no building
-   * around it yet — it is the whole structure so far — and the type that
-   * describes that is «منزل مستقل».
+   * The first block on an empty grid used to open as «منزل مستقل» regardless,
+   * on the reasoning that one block with no building around it *is* the whole
+   * structure. That reasoning ignores the answer already given: نوع المنشأة is
+   * chosen on step 1 of this wizard, and an officer who picked «مبنى سكني»
+   * there and painted their first flat was handed «منزل مستقل» — and, if they
+   * confirmed it without noticing, watched `reconcileStructureType` reclassify
+   * the building they had just described back into a house.
    *
-   * Above ground only. A lone block painted on B1 is a basement of something,
-   * never a house, and `defaultUnitTypeFor` already returns مستودع for any
-   * negative floor.
+   * A default may restate what the officer said; it may not contradict it. The
+   * type is still offered — `panelUnitTypes` keeps «منزل مستقل» on the list
+   * while the block is the matrix's only one — so the person who really is
+   * drawing a house inside a mis-typed structure picks it and the
+   * reclassification does its job, deliberately rather than by default.
+   *
+   * Below ground `defaultUnitTypeFor` already overrides with مستودع: whatever
+   * stands on the parcel, what is under it is storage.
    */
   const firstUnitTypeFor = (floor: number): UnitType =>
-    units.length === 0 && floor >= 0
-      ? 'INDEPENDENT_HOUSE'
-      : defaultUnitTypeFor(structureType, floor);
+    defaultUnitTypeFor(structureType, floor);
 
   // ── Drag-to-select, via Pointer Events so mouse/touch/pen share one path ──
   useEffect(() => {

@@ -190,6 +190,7 @@ export class RegistrationService {
         firstName: input.payload.personal.firstName,
         middleName: input.payload.personal.middleName || undefined,
         lastName: input.payload.personal.lastName,
+        motherName: input.payload.personal.motherName || undefined,
         gender: input.payload.personal.gender,
         nationality: input.payload.personal.nationality,
         isLebanese: input.payload.personal.isLebanese,

@@ -1738,19 +1738,64 @@ export function getZoneParcelIndex(tenant: string, token: string) {
 }
 
 /** One unit inside a BUILDING — شقة, عيادة or محل. */
+/**
+ * One «تأكيد الشغور» still standing on a unit — that the municipality found
+ * this flat empty, when, and on what basis.
+ *
+ * Shown because it is the reason an owner is not being billed for the unit,
+ * and therefore the row a person disputing that — in either direction — is
+ * entitled to read. Optional on the wire so a response cached from before
+ * migration 0043 reads as "none".
+ */
+export interface CitizenProfileVacancy {
+  id: string;
+  /** Null only on a row 0043 backfilled — the question did not exist then. */
+  basis: VacancyBasis | null;
+  observedAt: string;
+}
+
 export interface CitizenProfileUnit {
   id: string;
   /** The canonical `Unit` this line was linked to, if any. */
   unitId?: string | null;
   unitCode?: string | null;
   unitPostedNumber?: string | null;
-  unitType: string;
-  floor: string;
+  /**
+   * Nullable since migration 0031: a per-unit «غير مؤكَّد» flag blanks the
+   * field it excuses, so a flat the officer could not fully describe arrives
+   * with no type, no floor and no area. Every reader has to render that as an
+   * absence — «الطابق » with nothing after it is what the previous types,
+   * which promised a value here, produced on screen.
+   */
+  unitType: string | null;
+  floor: string | null;
   side: string | null;
-  unitArea: number;
+  unitArea: number | null;
   sharedRights: string[];
-  /** حالة الوحدة. Null means nobody was asked — not that it is occupied. */
+  /** حالة الوحدة as the owner's card states it. Null means nobody was asked. */
   unitStatus: string | null;
+  /**
+   * حالة الوحدة as سجل المباني holds it — which billing reads *first*.
+   *
+   * Reported alongside the card's own so a disagreement between them can be
+   * seen rather than silently resolved: «مشغولة من المالك» on a card over
+   * «شاغرة» in the census is either a vacancy to lift or a card to correct.
+   * Null when this line was never linked to a censused unit.
+   */
+  censusUnitStatus?: string | null;
+  /**
+   * «مسكن موسمي» facts — the months (1–12) the owners are usually present,
+   * when they last stayed, and when a تصريح بالشغور was filed.
+   *
+   * The owner bears the occupancy fee on a seasonal home anyway
+   * (`OWNER_BILLED_WHILE_ABSENT`); these are the facts the council weighs when
+   * deciding to shorten it. Empty and null on every other unit.
+   */
+  presenceMonths?: number[];
+  ownerLastStayAt?: string | null;
+  vacancyDeclaredAt?: string | null;
+  /** The «تأكيد الشغور» standing on the censused unit, if one is. */
+  vacancy?: CitizenProfileVacancy | null;
 }
 
 export interface CitizenProfileProperty {
@@ -1763,6 +1808,14 @@ export interface CitizenProfileProperty {
   /** Non-owner occupancies. The phone is required of a tenant only. */
   landlordName: string | null;
   landlordPhone: string | null;
+  /**
+   * The registered citizen this card's owner was confirmed to be, if anyone.
+   *
+   * Read back so an edit opens with the standing link showing — otherwise the
+   * form asks «هل هو المالك؟» about a question somebody already answered, over
+   * a name field it has left unlocked and editable.
+   */
+  landlordCitizenId?: string | null;
   /** HOUSE only, owner only. A BUILDING keeps this per unit. */
   unitStatus: string | null;
   buildingName: string | null;
@@ -1789,6 +1842,14 @@ export interface CitizenProfileProperty {
   buildingId: string | null;
   buildingCode: string | null;
   buildingPostedNumber: string | null;
+  /**
+   * حالة المبنى, and the value this is here for is `WAR_DAMAGED_UNINHABITED`:
+   * a structure still standing, war-damaged and established as empty. Its units
+   * are recorded like any building's, so without this nothing on the card tells
+   * a flat in it from a flat somebody lives in. Optional on the wire; null on a
+   * card never linked to a censused building.
+   */
+  buildingLifecycleStatus?: string | null;
   unitCount: number;
   units: CitizenProfileUnit[];
 }
@@ -1876,6 +1937,14 @@ export interface CitizenFeeTotals {
 export interface CitizenProfile {
   id: string;
   fullName: string;
+  /**
+   * اسم الأم وشهرتها.
+   *
+   * Optional on the wire and null on households filed before migration 0044 —
+   * both mean «لم يُسأل», which every reader must render as such rather than as
+   * a difference between two people.
+   */
+  motherName?: string | null;
   phone: string | null;
   whatsapp: string | null;
   gender: string | null;
@@ -1946,6 +2015,23 @@ export interface MyCitizenSummary {
   identityDocNumberMasked: string | null;
   civilRecordNumberMasked: string | null;
 
+  /**
+   * اسم الأم وشهرتها — theirs to check, since it is now the register's only
+   * identifying answer for a Lebanese household. Null means «لم يُسأل».
+   */
+  motherName?: string | null;
+  /** نوع الملف, and what a «غير مقيم في البلدة» record holds instead of a household. */
+  residence?: CitizenResidence;
+  residencePlace?: string | null;
+  localContactName?: string | null;
+  localContactPhone?: string | null;
+  /**
+   * Field paths the register could not establish — «رقم الهاتف»,
+   * «properties.0.propertyNumber». Paths only: the officer's reason for each
+   * stays staff-side. Absent on a response from before this was sent.
+   */
+  unestablishedFields?: string[];
+
   properties: CitizenProfileProperty[];
   payments: CitizenProfilePayment[];
   fees: CitizenFeeTotals;
@@ -1961,6 +2047,14 @@ export function getMySummary(tenant: string, token: string) {
 export interface CitizenListItem {
   id: string;
   fullName: string;
+  /**
+   * اسم الأم وشهرتها — the one thing on this row that tells two «محمد خليل»s
+   * apart, which is why it travels with every list the UI offers people from.
+   *
+   * Optional and nullable on the wire: absent means «لم يُسأل» (a record filed
+   * before migration 0044), never «a different mother».
+   */
+  motherName?: string | null;
   phone: string | null;
   whatsapp: string | null;
   gender: string | null;
@@ -2941,6 +3035,15 @@ export interface CitizenPaymentItem {
   paidAt: string | null;
   reviewNote: string | null;
   frequency: string | null;
+  /**
+   * How this amount was arrived at — «6 محل تجاري × 100,000 ل.ل».
+   *
+   * The server has sent it on this route since per-unit billing existed
+   * (`FeesService.listForCitizen`); the portal simply never read it, so the
+   * person actually holding the bill was the one party shown the total with no
+   * way to check it. Null on a flat charge, which explains itself.
+   */
+  assessment?: FeeAssessment | null;
 }
 
 /** The signed-in citizen's own bills. */

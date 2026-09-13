@@ -668,6 +668,103 @@ export class LandlordLinkService {
   }
 
   /**
+   * Applies the «نعم، هو المالك» answers that travelled with a submission.
+   *
+   * ## Why the answer arrives with the save and not after it
+   *
+   * The question is cheapest at the doorstep — the officer typed the number
+   * seconds ago and the tenant can still correct a digit — and dearest in the
+   * queue, where somebody with no memory of either household reconstructs from
+   * two records what one person could have settled in a second. But there is
+   * no `PropertyEntry` to link until the save has run, so the form cannot make
+   * the link itself; it can only state what the officer said.
+   *
+   * A browser confirming *after* the save would do for a clerk at a desk and
+   * fail exactly where this matters. Registrations are filed offline, queued,
+   * and delivered hours later by whoever regains signal; a follow-up call the
+   * tab was going to make simply never happens, in the settlement nobody is
+   * going back to. Carried inside the payload, the intent survives the queue
+   * and is applied here by whoever delivers it.
+   *
+   * ## Why a client may state it
+   *
+   * Because `confirm` does not believe it. Every agreement goes through the
+   * same method the queue calls, which re-derives the match from the committed
+   * card and refuses any citizen whose `phone` and `whatsapp` both differ from
+   * its `landlordPhone` — as well as a self-link and an OWNER card. A forged
+   * or stale id is a validation error, never a link. What the client supplies
+   * is the one thing no query can: a person's answer.
+   *
+   * ## Matched by number, not by position
+   *
+   * An agreement names a phone and a citizen; the proposals name a
+   * `propertyEntryId` the client never saw. Pairing them on the phone the two
+   * already agree about — rather than on the card's index in the submission —
+   * means a save that reordered, merged or dropped a card cannot attach an
+   * answer to the wrong one. An agreement matching nothing is simply not
+   * applied: the number was edited after the officer answered, and the claim
+   * stays in the queue where it can be asked about again.
+   *
+   * ## A failure leaves the question open
+   *
+   * A link that throws keeps its proposal in `remaining`, so the dialog still
+   * asks and the queue still holds it. The registration is committed either
+   * way — same contract as `syncQuietly` — and an officer is never told a save
+   * failed because a link did.
+   */
+  async applyAgreements(input: {
+    filed: LandlordProposal[];
+    agreements: Array<{ phone: string; citizenId: string }>;
+    actor: { id: string; role: string };
+  }): Promise<{ remaining: LandlordProposal[]; linked: number }> {
+    if (input.agreements.length === 0) return { remaining: input.filed, linked: 0 };
+
+    const remaining: LandlordProposal[] = [];
+    let linked = 0;
+
+    for (const proposal of input.filed) {
+      /*
+        The agreement has to name both halves of this proposal.
+
+        The phone alone would be enough to find the card, and is not enough to
+        decide it: a shared household line answers for several people, and the
+        candidate list is what says which of them this proposal is about. An
+        answer naming somebody who is not a candidate is stale — the numbers
+        moved after the officer chose — and is left to the queue.
+      */
+      const agreed = input.agreements.find(
+        (agreement) =>
+          agreement.phone === proposal.landlordPhone &&
+          proposal.candidates.some((candidate) => candidate.id === agreement.citizenId),
+      );
+
+      if (!agreed) {
+        remaining.push(proposal);
+        continue;
+      }
+
+      try {
+        const result = await this.confirm({
+          propertyEntryId: proposal.propertyEntryId,
+          citizenId: agreed.citizenId,
+          actor: input.actor,
+        });
+        if (result.linked) linked += 1;
+      } catch (error) {
+        this.logger.error(
+          `landlord agreement failed for entry ${proposal.propertyEntryId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        remaining.push(proposal);
+      }
+    }
+
+    return { remaining, linked };
+  }
+
+  /**
    * Records that the match on this card was looked at and rejected.
    *
    * The one piece of state the derived match cannot reproduce. Without it a

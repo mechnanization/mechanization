@@ -27,6 +27,37 @@ import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
  */
 
 /**
+ * «نعم، هو المالك» — the registered citizen the officer agreed this card names.
+ *
+ * An answer, not a lookup. `LandlordMatchHint` finds at most one citizen on a
+ * given `landlordPhone` and *asks*; this carries what the officer said, so the
+ * link is made with the save instead of waiting for somebody to reach the same
+ * card from «روابط المالكين» weeks later, with neither household in front of
+ * them.
+ *
+ * ## Why the client may state this at all
+ *
+ * It asserts nothing the server takes on trust. `LandlordLinkService.confirm`
+ * re-derives the match from the committed card — it refuses any citizen whose
+ * `phone` and `whatsapp` both differ from the card's `landlordPhone`, refuses
+ * a card naming its own filer, and refuses an OWNER card outright. A forged id
+ * is a validation error, not a link. What the client contributes is the one
+ * thing a query cannot: a person's answer.
+ *
+ * ## Why it rides with the submission
+ *
+ * Because the officer is frequently offline. The save is queued, delivered
+ * hours later, and a confirmation the browser was going to make afterwards
+ * simply never happens — in exactly the settlement where a return trip is most
+ * expensive. Travelling inside the payload, the intent survives the queue and
+ * is applied by whoever delivers it.
+ *
+ * Optional everywhere, and absent is the common case: most landlords are not
+ * registered, and an officer who is not sure leaves the question to the queue.
+ */
+export const landlordCitizenIdField = uuid.optional();
+
+/**
  * `errorMap` on both discriminated unions below because Zod's own message for
  * a missing or unrecognised discriminator — "Invalid discriminator value.
  * Expected 'OWNER' | 'TENANT'" — is English and names the wire value, not the
@@ -42,6 +73,7 @@ const occupancyBranch = z.discriminatedUnion(
       occupancyType: z.literal('TENANT'),
       landlordName: arabicOrLatinName,
       landlordPhone: internationalPhone,
+      landlordCitizenId: landlordCitizenIdField,
     }),
     /**
      * شاغل بتسامح — occupying without paying بدل.
@@ -60,6 +92,7 @@ const occupancyBranch = z.discriminatedUnion(
       occupancyType: z.literal('FREE_OCCUPANT'),
       landlordName: arabicOrLatinName,
       landlordPhone: internationalPhone.optional(),
+      landlordCitizenId: landlordCitizenIdField,
     }),
   ],
   { errorMap: () => ({ message: 'نوع الإشغال مطلوب' }) },
@@ -356,6 +389,7 @@ export const partialPropertyEntrySchema = z
     occupancyType: occupancyTypeSchema,
     landlordName: arabicOrLatinName,
     landlordPhone: internationalPhone,
+    landlordCitizenId: landlordCitizenIdField,
     propertyType: propertyTypeSchema,
     neighborhood: neighborhoodField.optional(),
     propertyNumber: propertyNumberField,
@@ -388,6 +422,7 @@ type CardField =
   | 'propertyType'
   | 'landlordName'
   | 'landlordPhone'
+  | 'landlordCitizenId'
   // Gated on occupancy as well as property type, so — like the landlord pair
   // above it — it is not something `PROPERTY_FIELD_MAP` can express.
   | 'unitStatus';

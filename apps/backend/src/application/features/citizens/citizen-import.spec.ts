@@ -23,6 +23,7 @@ const BASE: ImportRow = {
   firstName: 'علي',
   middleName: 'حسين',
   lastName: 'خليل',
+  motherName: 'فاطمة سرور',
   gender: 'ذكر',
   bloodType: 'A+',
   isLebanese: 'نعم',
@@ -182,6 +183,16 @@ describe('buildCitizenPayload — how a register is actually typed', () => {
     const data = expectAccepted({ ...BASE, ...house, whatsapp: '70999888' });
     expect(data.contact.whatsapp).not.toBe(data.contact.phone);
   });
+
+  /**
+   * فئة الدم is optional on the form, so a spreadsheet column nobody filled in
+   * is not a reason to refuse the row — and the blank must arrive as an absence
+   * rather than as an empty string, which the enum column could not store.
+   */
+  it('accepts a row with no blood type', () => {
+    const data = expectAccepted({ ...BASE, ...house, bloodType: '' });
+    expect(data.personal.bloodType).toBeUndefined();
+  });
 });
 
 describe('buildCitizenPayload — rows the form would reject', () => {
@@ -202,7 +213,6 @@ describe('buildCitizenPayload — rows the form would reject', () => {
     ['an unrecognised property type', { ...BASE, propertyType: 'قصر', unitArea: '180' }],
     ['a missing name', { ...BASE, ...house, firstName: '' }],
     ['a missing father name', { ...BASE, ...house, middleName: '' }],
-    ['a missing blood type', { ...BASE, ...house, bloodType: '' }],
     ['a total registered members of zero', { ...BASE, ...house, totalRegisteredMembers: '0' }],
     [
       'actual household members exceeding total registered',

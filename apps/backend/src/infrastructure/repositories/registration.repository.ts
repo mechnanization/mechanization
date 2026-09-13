@@ -92,6 +92,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
       firstName: input.citizen.firstName,
       middleName: input.citizen.middleName ?? null,
       lastName: input.citizen.lastName,
+      motherName: input.citizen.motherName ?? null,
       gender: (input.citizen.gender ?? null) as never,
       nationality: input.citizen.nationality ?? null,
       isLebanese: input.citizen.isLebanese ?? null,

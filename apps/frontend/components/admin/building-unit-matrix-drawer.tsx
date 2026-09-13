@@ -149,7 +149,13 @@ export function BuildingUnitMatrixDrawer({
    * drawer is opened from two different routes (the ledger and the map) whose
    * admin base paths it has no business reconstructing.
    */
-  registerHref?: (buildingId: string, unitId: string, residence: CitizenResidence) => string;
+  registerHref?: (
+    buildingId: string,
+    unitId: string,
+    residence: CitizenResidence,
+    /** Whatever the officer typed into the occupant search — seeds the name. */
+    name: string,
+  ) => string;
   /**
    * Where an occupant's name goes — their own record.
    *
@@ -1044,7 +1050,8 @@ export function BuildingUnitMatrixDrawer({
                   locale={locale}
                   newFileHref={
                     registerHref
-                      ? (residence) => registerHref(building.id, selectedUnit.id, residence)
+                      ? (residence, name) =>
+                          registerHref(building.id, selectedUnit.id, residence, name)
                       : undefined
                   }
                   vacancy={activeVacancy(selectedUnit)}

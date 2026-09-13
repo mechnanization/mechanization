@@ -126,6 +126,16 @@ export class CitizenController {
       //    just a balance. All of it is theirs; none of it is anyone else's.
       phone: citizen.phone,
       whatsapp: citizen.whatsapp,
+      /**
+       * اسم الأم وشهرتها — sent for the same reason every other field here is.
+       *
+       * It is the one identifying answer the register now holds for a Lebanese
+       * household (migration 0044), so it is also the one a person should be
+       * able to check is *theirs*: a wrong mother's name on a file is how two
+       * namesakes get read as one at a counter, and the person who can see the
+       * error is the only one who knows it is one. Null means «لم يُسأل».
+       */
+      motherName: citizen.motherName,
       gender: citizen.gender,
       nationality: citizen.nationality,
       isLebanese: citizen.isLebanese,
@@ -136,6 +146,38 @@ export class CitizenController {
       actualHouseholdMembers: citizen.actualHouseholdMembers,
       marriedChildrenCount: citizen.marriedChildrenCount,
       identityDocType: citizen.identityDocType,
+
+      /**
+       * نوع الملف, and what goes with it for somebody who lives elsewhere.
+       *
+       * A «غير مقيم في البلدة» record holds a name, a phone, a town and
+       * possibly a local contact — and ملفّي rendered none of those, so the one
+       * person who could tell the municipality that the number for the cousin
+       * holding their keys had changed was shown a page that did not mention
+       * them. Null on a household file, where `Detail` drops the row.
+       */
+      residence: citizen.residence,
+      residencePlace: citizen.residencePlace,
+      localContactName: citizen.localContactName,
+      localContactPhone: citizen.localContactPhone,
+
+      /**
+       * Which of their own fields the register could not establish — the paths
+       * only, never the officer's reason for each.
+       *
+       * A citizen who can see «رقم الهاتف» on this list is a citizen who can
+       * bring it to the counter, which is the only way most of these get
+       * filled. The reason stays behind: it is a note one officer wrote to the
+       * next about a household («الجيران قالوا إنهم سافروا»), and it is neither
+       * addressed to the household nor always something to read back to them.
+       */
+      unestablishedFields: [
+        ...new Set(
+          citizen.registrations.flatMap((registration) =>
+            registration.flags.map((flag) => flag.path),
+          ),
+        ),
+      ],
 
       /**
        * Masked to its last three characters, and deliberately not sent whole.

@@ -431,6 +431,29 @@ export default function CitizensPage({
           );
         },
       },
+      /*
+        اسم الأم وشهرتها — the column a clerk turns on to tell two namesakes apart.
+
+        Off by default like the other four: this table already shows eleven
+        columns and the question it answers is asked on a specific row, not on
+        every page. On when somebody is looking at «محمد خليل» twice and has to
+        decide which one the visitor is.
+
+        «—» on a household filed before migration 0044. Nobody was asked, and a
+        dash is the only honest thing to print for that.
+      */
+      {
+        accessorKey: 'motherName',
+        header: locale === 'en' ? "Mother's Name" : 'اسم الأم',
+        meta: { label: locale === 'en' ? "Mother's Name" : 'اسم الأم وشهرتها', mobile: 'hide' },
+        enableSorting: false,
+        cell: ({ row }) =>
+          row.original.motherName ? (
+            <span className="text-sm">{row.original.motherName}</span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      },
       {
         accessorKey: 'identityDocNumber',
         header: locale === 'en' ? 'ID Document' : 'وثيقة الهوية',
@@ -825,14 +848,17 @@ export default function CitizensPage({
             columnStorageKey="citizens"
             /*
               Off by default. Eleven columns at once is a table nobody can read;
-              these four are the ones a clerk turns on for a specific job — the
+              these five are the ones a clerk turns on for a specific job — the
               identity document when verifying papers, صفة الإقامة when
-              reporting, تاريخ التسجيل when auditing intake. واتساب starts
-              hidden because it usually repeats the landline, and the pair is
-              only worth two columns when a municipality actually works over it.
+              reporting, تاريخ التسجيل when auditing intake, اسم الأم when two
+              rows carry the same three names and one of them is the visitor.
+              واتساب starts hidden because it usually repeats the landline, and
+              the pair is only worth two columns when a municipality actually
+              works over it.
             */
             initialHiddenColumns={[
               'whatsapp',
+              'motherName',
               'identityDocNumber',
               'residentStatus',
               'registeredAt',

@@ -56,7 +56,7 @@ import {
   type UnitVisitRow,
   type UnitWithOccupants,
 } from '@/lib/api-client';
-import { formatDate } from '@/lib/dates';
+import { formatDate, monthNames } from '@/lib/dates';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -579,7 +579,7 @@ export function occupancyMessage(
 /**
  * «إضافة شخص إلى الوحدة» — the one way a person reaches a flat from the matrix.
  *
- * ## Search first, always
+ * ## Both ways out, always offered
  *
  * This used to be two buttons: «تسجيل شاغل», which linked somebody already on
  * file, and «تسجيل أسرة في هذه الوحدة», which opened a blank registration. The
@@ -587,13 +587,29 @@ export function occupancyMessage(
  * by definition not a شاغل (D2), and the second also created owner records,
  * which have no household — and nothing made the officer look before creating.
  *
- * So there is one entry, and it searches. Creating a new file is offered only
- * once a search has been run, and it is offered either way — «لا نتيجة» or
- * «ليس بينهم». That order matters most for «غير مقيم في البلدة»: that record
- * carries a name, a phone and a town, no document number, so it is the record
- * least able to be matched after the fact and the one most likely to already
- * exist from another parcel. A button that went straight to «create» would mint
- * duplicates nobody could merge.
+ * So there is one entry and it searches. For a while it *also* withheld «ملف
+ * جديد» until a search had come back, on the theory that this made officers
+ * look before creating. It did not, and it cost more than it is worth stating
+ * plainly:
+ *
+ *  - It gated on a search having *run*, not on the right one having run.
+ *    «asdfgh» satisfied it, and that is what officers typed — so the guarantee
+ *    was nil and the ritual was daily. A control that is noise is one people
+ *    route around, including on the tenth card where it mattered.
+ *  - A failed lookup cleared the term it was waiting on, so an officer with no
+ *    signal could not reach «ملف جديد» at all. This form is used in the field,
+ *    offline, in settlements nobody is going back to; a dead end there is a
+ *    household that goes unregistered.
+ *
+ * Both choices are therefore offered from the start, and the duplicate check
+ * moved to where it can actually work: `CitizenEditor` matches on the *name*
+ * as it is typed and shows whoever it finds. That is a check «asdfgh» cannot
+ * pass, and it is the one that matters for «غير مقيم في البلدة» — a record
+ * carrying a name, a phone and a town, no document number, so the one least
+ * able to be merged after the fact.
+ *
+ * What the search term still does is travel: whatever the officer typed seeds
+ * the new file's name, so a search that found nobody is not retyped.
  *
  * Both new-file choices carry the unit and preset نوع الملف, named with the
  * same labels the form's own chooser uses. Neither answers «ومن يشغلها؟» — an
@@ -639,11 +655,13 @@ export function AddPersonForm({
   busy: boolean;
   locale: string;
   /**
-   * The registration form, pointed at this unit, with نوع الملف preset. Absent
-   * where the caller cannot build an admin URL; the search still works and the
-   * no-match line says to register the person first.
+   * The registration form, pointed at this unit, with نوع الملف preset and the
+   * officer's search term carried across as the name to start from.
+   *
+   * Absent where the caller cannot build an admin URL; the search still works
+   * and the no-match line says to register the person first.
    */
-  newFileHref?: (residence: CitizenResidence) => string;
+  newFileHref?: (residence: CitizenResidence, name: string) => string;
   /**
    * The «تأكيد الشغور» standing on this unit, when there is one.
    *
@@ -672,6 +690,14 @@ export function AddPersonForm({
   const [chosen, setChosen] = useState<CitizenListItem | null>(null);
   /** The term the shown results answer — set when a search comes back. */
   const [searched, setSearched] = useState('');
+  /**
+   * The last lookup could not reach the register.
+   *
+   * Kept apart from «no results», which it is not: the officer is told the
+   * register is unreachable rather than that nobody matched, because those two
+   * lead to different decisions about whether to open a new file.
+   */
+  const [failed, setFailed] = useState(false);
   const [role, setRole] = useState<OccupancyRole | ''>('');
   const [shares, setShares] = useState('');
   /**
@@ -701,10 +727,12 @@ export function AddPersonForm({
     if (!term.trim()) {
       setResults([]);
       setSearched('');
+      setFailed(false);
       return;
     }
     let cancelled = false;
     setSearching(true);
+    setFailed(false);
     const timer = setTimeout(() => {
       listCitizens(tenant, token, { search: term.trim(), limit: 6 })
         .then((result) => {
@@ -714,11 +742,21 @@ export function AddPersonForm({
         })
         .catch((caught) => {
           logApiError(caught);
-          // A failed search is not a search that found nobody: offering «ملف
-          // جديد» here would invite exactly the duplicate this order prevents.
+          /*
+            A failed search is not a search that found nobody, and the two are
+            told apart by `failed` rather than by withholding the way forward.
+
+            This used to clear the term as well, which left an officer with no
+            signal unable to reach «ملف جديد» at all — on a form used in the
+            field, offline, in settlements nobody is going back to. The honest
+            answer is to say the register could not be reached and let them
+            file the household anyway; an unregistered household is worse than
+            a duplicate, and a duplicate here is still detectable by name.
+          */
           if (!cancelled) {
             setResults([]);
-            setSearched('');
+            setSearched(term.trim());
+            setFailed(true);
           }
         })
         .finally(() => {
@@ -780,12 +818,28 @@ export function AddPersonForm({
                   <button
                     type="button"
                     onClick={() => setChosen(citizen)}
-                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-start text-sm transition-colors hover:bg-accent"
+                    className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2.5 py-1.5 text-start text-sm transition-colors hover:bg-accent"
                   >
                     <span className="font-medium">{citizen.fullName}</span>
                     {citizen.phone ? (
                       <span dir="ltr" className="text-xs text-muted-foreground">
                         {citizen.phone}
+                      </span>
+                    ) : null}
+                    {/*
+                      The line that makes this list decidable.
+
+                      Two «محمد خليل»s on one parcel are a real afternoon, and
+                      until migration 0044 nothing on a result told them apart:
+                      no identity document is asked any more, and a household
+                      shares its phone. Shown only where the register holds it —
+                      a row reading «والدته: —» beside one that names a mother
+                      invites the reader to treat an unasked question as a
+                      difference between two people.
+                    */}
+                    {citizen.motherName ? (
+                      <span className="basis-full text-xs text-muted-foreground">
+                        {en ? `Mother: ${citizen.motherName}` : `والدته: ${citizen.motherName}`}
                       </span>
                     ) : null}
                   </button>
@@ -794,43 +848,68 @@ export function AddPersonForm({
             </ul>
           ) : null}
 
-          {!searching && searched && searched === term.trim() ? (
-            newFileHref ? (
-              <div className="space-y-2 rounded-md border border-dashed p-2.5">
-                <p className="text-xs text-muted-foreground">
-                  {results.length > 0
-                    ? en
-                      ? 'Not one of these? Open a new file for this unit:'
-                      : 'ليس بينهم؟ افتح ملفاً جديداً لهذه الوحدة:'
-                    : en
-                      ? 'No match. Open a new file for this unit:'
-                      : 'لا نتيجة. افتح ملفاً جديداً لهذه الوحدة:'}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <Link
-                    href={newFileHref('RESIDENT')}
-                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
-                  >
-                    <UsersRound className="size-4" aria-hidden />
-                    {labels.citizenResidence.RESIDENT}
-                  </Link>
-                  <Link
-                    href={newFileHref('NON_RESIDENT_OWNER')}
-                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
-                  >
-                    <MapPin className="size-4" aria-hidden />
-                    {labels.citizenResidence.NON_RESIDENT_OWNER}
-                  </Link>
-                </div>
-              </div>
-            ) : results.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                {en
-                  ? 'No match. Register the citizen first, then come back to this unit.'
-                  : 'لا نتيجة. سجّل المواطن أولاً ثم عد إلى هذه الوحدة.'}
-              </p>
-            ) : null
+          {/*
+            «The register could not be reached» is said plainly, and never as
+            «لا نتيجة». The two lead to different decisions, and an officer who
+            reads an unreachable register as an empty one files the duplicate
+            they had every means to avoid.
+          */}
+          {failed ? (
+            <p className="rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs leading-relaxed">
+              {en
+                ? 'The register could not be reached, so this is not a “no match”. If you open a new file, check the name against the register once you are back online.'
+                : 'تعذّر الوصول إلى السجل، وهذا ليس «لا نتيجة». إن فتحت ملفاً جديداً فراجع الاسم في السجل عند عودة الاتصال.'}
+            </p>
+          ) : !searching && searched && searched === term.trim() && results.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              {en ? 'No match in the register.' : 'لا نتيجة في السجل.'}
+            </p>
           ) : null}
+
+          {/*
+            Offered from the start, rather than held back until a search has run.
+
+            Withholding these taught officers to type «asdfgh» to reveal them,
+            which gated nothing and cost a ritual on every record — see the
+            docblock. The look-before-you-create check lives in the form these
+            links open, where it matches on the name actually being typed and
+            «asdfgh» cannot satisfy it.
+          */}
+          {newFileHref ? (
+            <div className="space-y-2 rounded-md border border-dashed p-2.5">
+              <p className="text-xs text-muted-foreground">
+                {results.length > 0
+                  ? en
+                    ? 'Not one of these? Open a new file for this unit:'
+                    : 'ليس بينهم؟ افتح ملفاً جديداً لهذه الوحدة:'
+                  : en
+                    ? 'Not on file yet? Open a new file for this unit:'
+                    : 'ليس مسجَّلاً بعد؟ افتح ملفاً جديداً لهذه الوحدة:'}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href={newFileHref('RESIDENT', term.trim())}
+                  className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                >
+                  <UsersRound className="size-4" aria-hidden />
+                  {labels.citizenResidence.RESIDENT}
+                </Link>
+                <Link
+                  href={newFileHref('NON_RESIDENT_OWNER', term.trim())}
+                  className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                >
+                  <MapPin className="size-4" aria-hidden />
+                  {labels.citizenResidence.NON_RESIDENT_OWNER}
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {en
+                ? 'Not on file? Register the citizen first, then come back to this unit.'
+                : 'ليس مسجَّلاً؟ سجّل المواطن أولاً ثم عد إلى هذه الوحدة.'}
+            </p>
+          )}
         </>
       )}
 
@@ -2368,14 +2447,6 @@ export function VacancyPanel({
 
 // ─────────────────────────────  «مسكن موسمي»  ─────────────────────────────
 
-const MONTHS: Record<'ar' | 'en', string[]> = {
-  ar: [
-    'كانون الثاني', 'شباط', 'آذار', 'نيسان', 'أيار', 'حزيران',
-    'تموز', 'آب', 'أيلول', 'تشرين الأول', 'تشرين الثاني', 'كانون الأول',
-  ],
-  en: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-};
-
 /**
  * The facts a council needs to decide how a seasonal home is billed — recorded,
  * not decided.
@@ -2434,7 +2505,7 @@ export function SeasonalHomePanel({
           {en ? 'Months the owners are usually here' : 'الأشهر التي يحضر فيها أصحابه عادةً'}
         </legend>
         <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6">
-          {MONTHS[en ? 'en' : 'ar'].map((label, index) => {
+          {monthNames(locale).map((label, index) => {
             const month = index + 1;
             const on = months.includes(month);
             return (

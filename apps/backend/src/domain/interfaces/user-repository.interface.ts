@@ -21,6 +21,15 @@ export interface CitizenIdentityInput {
   firstName: string;
   middleName?: string;
   lastName: string;
+  /**
+   * اسم الأم وشهرتها — one phrase, as it is asked and as it is answered.
+   *
+   * Optional here for the reason every field below is: an officer may have
+   * recorded in writing that they could not establish it. `personalDetailsSchema`
+   * still demands it of an unflagged household file, and records filed before
+   * migration 0044 simply hold nothing. Never a lookup key — siblings share it.
+   */
+  motherName?: string;
   gender?: string;
   nationality?: string;
   isLebanese?: boolean;

@@ -171,7 +171,19 @@ function branchFieldsOnly(card: Record<string, unknown>): Record<string, unknown
       which is the quieter and worse failure.
     */
     ...((NON_OWNER_OCCUPANCY as readonly string[]).includes(card.occupancyType as string)
-      ? ['landlordName', 'landlordPhone']
+      ? [
+          'landlordName',
+          'landlordPhone',
+          /*
+            «نعم، هو المالك» — the officer's answer, riding with the card.
+
+            Kept on the same axis as the two fields above it, and dropped on an
+            OWNER card for a reason stronger than tidiness: `confirm` refuses an
+            OWNER card outright, so an answer surviving here could only ever
+            produce a logged failure on a card that has no landlord to identify.
+          */
+          'landlordCitizenId',
+        ]
       : []),
     ...(card.occupancyType === 'OWNER' ? ['unitStatus'] : []),
     /*

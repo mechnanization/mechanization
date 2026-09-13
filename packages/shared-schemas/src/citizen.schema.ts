@@ -25,8 +25,58 @@ export const personalDetailsObject = z.object({
   firstName: arabicOrLatinName,
   middleName: arabicOrLatinName,
   lastName: arabicOrLatinName,
+  /*
+    «اسم الأم وشهرتها» — what tells two people with the same three names apart.
+
+    Asked because the identity document is not. Three name parts, a phone a
+    household shares and a رقم سجل shared by everyone on the same قيد left the
+    register unable to distinguish two «محمد أحمد خليل»s at all; this is the
+    fact the ID card and the قيد carry for exactly that, and the one
+    identifying answer at a counter that nobody has a reason to invent.
+
+    One field rather than a given/family pair, because the question is asked as
+    one phrase and answered as one. Two boxes would have a clerk who was told
+    «فاطمة» guess at the second, which is the invention the whole redesign was
+    about. `arabicOrLatinName` already admits the space between the two words.
+
+    Required — and flaggable, which is the half that makes requiring it safe.
+    An officer who does not know marks it «غير مؤكَّد» with a reason, so the
+    pressure that produced invented document numbers has a truthful outlet.
+    Optional here only in the type sense that every field is: a record filed
+    before migration 0044 holds nothing, and an edit that reaches this form is
+    asked for it like any other unanswered question.
+
+    Never matched on. Siblings share a mother — see the column's own note in
+    the schema for why treating it as an identifier would rebuild the merge bug
+    that removed the document number.
+  */
+  motherName: arabicOrLatinName,
   gender: genderSchema,
-  bloodType: bloodTypeSchema,
+  /*
+    Asked of everyone, demanded of nobody.
+
+    The municipality wants it — a فصيلة الدم on file is what a first responder
+    reads off a household card — but it is not a fact a clerk at a counter can
+    establish, and it is the one field on this step whose true answer is
+    routinely «لا أعرف». Required, it produced the same failure the identity
+    document did: a required box in front of somebody who does not know the
+    answer gets a plausible one, and «O+» guessed on a card is worse than a
+    blank, because the blank is the only one of the two that can be read as
+    "nobody asked yet".
+
+    Optional here rather than flaggable-and-required. «غير مؤكَّد» exists to
+    excuse an answer the register *needs* and the officer could not get, and
+    routing an unknowable field through it sent whole records to «يتطلب
+    مراجعة» over a question no reviewer can answer either — so it is off the
+    askable list too (`askableFields`).
+
+    An empty string is normalised away rather than rejected: a select that was
+    opened and closed sends one, and the column is nullable.
+  */
+  bloodType: z.preprocess(
+    (value) => (value === '' || value === null ? undefined : value),
+    bloodTypeSchema.optional(),
+  ),
   /*
     No longer asked. The form stopped collecting an identity document on
     2026-09-13: officers had been told it was not required and filled it with

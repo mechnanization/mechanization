@@ -43,6 +43,7 @@ import {
 import { Field, FieldFlagProvider, flagsToArray } from '@/components/ui/field';
 import { UnverifiedFieldsDialog } from './unverified-fields-dialog';
 import { QuickSaveDialog } from './quick-save-dialog';
+import { CitizenReviewDialog } from './citizen-review-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
@@ -171,6 +172,57 @@ export function withResidence(
 }
 
 /**
+ * Seeds the name block from whatever the officer had typed into the search
+ * that sent them here.
+ *
+ * The unit panel's «ملف جديد» links carry their search term across, so a
+ * search that found nobody is not retyped into the form immediately after. It
+ * also gives the duplicate check something to check on the first render, which
+ * is the half that matters: the panel used to withhold those links until a
+ * search had run, and officers learned to type «asdfgh» to reveal them.
+ *
+ * ## What it refuses to seed
+ *
+ * A term holding a digit. The same box searches by phone and by رقم القيد, and
+ * «03 123456» split across الاسم الأول and الشهرة is worse than an empty form —
+ * it is a name nobody will read closely before saving, and `arabicOrLatinName`
+ * would reject it at the point where the officer has stopped looking at it.
+ *
+ * ## How it splits
+ *
+ * A single word is a first name. Two are الاسم الأول and الشهرة, because that
+ * is how a person is addressed and therefore how they are searched for. Three
+ * or more fill اسم الأب with everything in between, which is the one reading
+ * that never loses a word the officer typed. None of it is authoritative — it
+ * is a first draft of three fields the officer is looking straight at.
+ */
+export function withSeededName(
+  values: CitizenFormValues,
+  term: string,
+): CitizenFormValues {
+  const trimmed = term.trim();
+  // Arabic-Indic and Extended digits alongside the Latin ones: an Arabic
+  // keyboard produces «٠٣» by default, and a phone typed that way is no more a
+  // name than «03» is.
+  if (!trimmed || /[\d٠-٩۰-۹]/u.test(trimmed)) return values;
+
+  const parts = trimmed.split(/\s+/);
+  const [firstName, ...rest] = parts;
+  const lastName = rest.length > 0 ? rest[rest.length - 1] : undefined;
+  const middleName = rest.length > 1 ? rest.slice(0, -1).join(' ') : undefined;
+
+  return {
+    ...values,
+    personal: {
+      ...values.personal,
+      firstName,
+      ...(middleName ? { middleName } : {}),
+      ...(lastName ? { lastName } : {}),
+    },
+  };
+}
+
+/**
  * One field this form is currently asking about, in the order it is asked.
  *
  * The section and the leaf are carried alongside the path because both of this
@@ -233,8 +285,15 @@ export function askableFields(values: CitizenFormValues): AskableField[] {
     { path: 'personal.firstName', field: 'firstName', section: 'personal' },
     { path: 'personal.middleName', field: 'middleName', section: 'personal' },
     { path: 'personal.lastName', field: 'lastName', section: 'personal' },
+    { path: 'personal.motherName', field: 'motherName', section: 'personal' },
     { path: 'personal.gender', field: 'gender', section: 'personal' },
-    { path: 'personal.bloodType', field: 'bloodType', section: 'personal' },
+    /*
+      No «فئة الدم» here, deliberately. It is optional on the form now
+      (`personalDetailsObject.bloodType`), and a flag is an excuse for an
+      answer the register needs — offering one for a field that may simply be
+      left blank sent records to «يتطلب مراجعة» over a question a reviewer
+      cannot answer either.
+    */
     { path: 'personal.residentStatus', field: 'residentStatus', section: 'personal' },
   ];
 
@@ -632,6 +691,14 @@ export function CitizenForm({
   const [showErrors, setShowErrors] = useState(false);
   const [unverifiedDialogOpen, setUnverifiedDialogOpen] = useState(false);
   const [quickSaveOpen, setQuickSaveOpen] = useState(false);
+  /**
+   * «مراجعة قبل الحفظ» — the record read back before it is filed.
+   *
+   * Opened only by a save that has already passed validation, so the panel
+   * shows a record that can actually be stored rather than one the server is
+   * about to refuse. See `CitizenReviewDialog`.
+   */
+  const [reviewOpen, setReviewOpen] = useState(false);
   /** Which رقم العقار's roster is open, if any. */
   const [rosterParcel, setRosterParcel] = useState<string | null>(null);
   /** Which property cards are folded shut. */
@@ -1069,6 +1136,31 @@ export function CitizenForm({
     setValues((current) => withResidence(current, residence));
   }, []);
 
+  /**
+   * «قد يكون مسجَّلاً مسبقاً», built once and handed to whichever contact step
+   * is on screen — the mobile view and the desktop view each render one.
+   *
+   * It lives under the phone number rather than at the foot of the personal
+   * step, where it used to sit. The panel matches on the name *and* the phone,
+   * and the phone is by far the stronger of the two — so the old placement put
+   * an orange warning about a number one section above the field that asks for
+   * it, reading as a complaint about the name the officer had just typed.
+   *
+   * Creates only. On an edit the record being looked at is itself on the
+   * register, so every match is a match with the open file or its household.
+   */
+  const duplicatesPanel =
+    mode === 'create' ? (
+      <PossibleDuplicates
+        tenant={tenant}
+        token={token}
+        firstName={values.personal.firstName}
+        lastName={values.personal.lastName}
+        phone={values.contact.phone}
+        locale={locale}
+      />
+    ) : null;
+
   const sections = useMemo(
     () => [
       {
@@ -1167,8 +1259,14 @@ export function CitizenForm({
         a value that was entered and is wrong. The dialog closes so the officer
         can see which field the complaint landed on, because leaving it open
         over a form they cannot read is the one outcome that helps nobody.
+
+        The review panel closes for the same reason and one more: it has no
+        errors on it. It renders the record, not the complaints about it, so
+        leaving it open over a failed save would show a record that looks
+        finished while the page behind it says otherwise.
       */
       if (withBlanketReason) setQuickSaveOpen(false);
+      setReviewOpen(false);
 
       const firstInvalidSection = sections.find((s) => sectionInvalid(s.id));
       if (firstInvalidSection) {
@@ -1184,6 +1282,97 @@ export function CitizenForm({
 
     setQuickSaveOpen(false);
     onSubmit(candidate);
+  }
+
+  /**
+   * «حفظ» — validate, then show the officer what they are about to file.
+   *
+   * The check runs *before* the panel rather than after it, so a record that
+   * cannot be saved never reaches a screen whose whole message is "this is
+   * what will be saved". A failure lands exactly where it landed before: on
+   * the field, with the first offending section scrolled into view.
+   *
+   * Quick save does not come through here. It is the path for a visit that
+   * produced almost nothing, it confirms with a reason of its own, and a
+   * review panel listing what could not be collected is not a review.
+   */
+  function requestSave() {
+    const errors = validate(values);
+    setFieldErrors(errors);
+    setShowErrors(true);
+
+    if (Object.keys(errors).length === 0) {
+      setReviewOpen(true);
+      return;
+    }
+
+    const firstInvalidSection = sections.find((s) => sectionInvalid(s.id));
+    if (firstInvalidSection) {
+      setMobileStep(firstInvalidSection.id as SectionId);
+    }
+    setTimeout(() => {
+      document
+        .querySelector('[data-section-invalid="true"]')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  }
+
+  /**
+   * «تعديل» on a section of the review — close the panel and put the officer
+   * in front of that section, on whichever layout they are using.
+   *
+   * `jumpTo` drives the desktop page's scroll; `setMobileStep` decides which
+   * of the three the phone is showing. Both are set because the panel does not
+   * know which one is on screen, and setting the wrong one strands the officer
+   * back at البيانات الشخصية after asking for العقارات.
+   */
+  function editSection(section: 'personal' | 'contact' | 'properties' | 'notes') {
+    setReviewOpen(false);
+    // ملاحظات is not a step: on a phone it sits under whichever one is open,
+    // so asking to edit it must not move the officer off the step they were on.
+    if (section !== 'notes') setMobileStep(section);
+
+    // Deferred: the dialog is still holding focus and scroll-locking the page
+    // as this runs, and a `scrollIntoView` under that lock does nothing.
+    setTimeout(() => {
+      /*
+        Both layouts are mounted at once and only one has a layout box, so
+        which element to scroll to is a question about the viewport, not about
+        the section. Scrolling to the other layout's copy is a silent no-op —
+        `display:none` has nothing to scroll into view — which is exactly how
+        this fails if it is got wrong: nothing happens and nothing says so.
+      */
+      const desktop = window.matchMedia('(min-width: 640px)').matches;
+
+      if (!desktop) {
+        /*
+          The phone has no jump anchors — the step *is* the navigation, and it
+          has already been switched above. All that is left is to return to the
+          top of the form the way «التالي» does, except for ملاحظات, which is at
+          the bottom of the step and is therefore scrolled to directly.
+        */
+        if (section === 'notes') {
+          document
+            .getElementById('notes-mobile')
+            ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+        scrollElementToTop(formRootRef.current);
+        return;
+      }
+
+      /*
+        ملاحظات is scrolled to directly rather than through `jumpTo`, which also
+        sets the jump bar's highlight — and `notes` is not one of the bar's
+        three sections, so it would leave every pill unlit until the next scroll
+        moved the observer.
+      */
+      if (section === 'notes') {
+        document.getElementById('notes')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      jumpTo(section);
+    }, 60);
   }
 
   /**
@@ -1328,10 +1517,24 @@ export function CitizenForm({
       </div>
 
       {/* ── Mobile View: Active Step Only ── */}
-      <div className="block sm:hidden">
+      <div className="block space-y-4 sm:hidden">
         {mobileStep === 'personal' && (
           <FormSection
-            id="personal"
+            /*
+              `-step`, so this copy and the desktop one below do not both
+              answer to `personal`.
+
+              Both layouts are in the DOM at once — `sm:hidden` and
+              `hidden sm:block` are CSS, not removal — and this block comes
+              first, so `document.getElementById('personal')` was returning
+              *this* element on a desktop screen, where it has no layout box.
+              That is why the jump bar's first pill never highlighted and never
+              scrolled: the observer was watching, and `jumpTo` was scrolling
+              to, an element that is `display:none` on the only layout that has
+              a jump bar. The canonical ids now belong to the desktop column,
+              which is the column that uses them.
+            */
+            id="personal-step"
             step={locale === 'en' ? '1' : '١'}
             icon={IdCard}
             title={sections[0].title}
@@ -1344,22 +1547,13 @@ export function CitizenForm({
             ) : (
               <PersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
             )}
-            {mode === 'create' ? (
-              <PossibleDuplicates
-                tenant={tenant}
-                token={token}
-                firstName={values.personal.firstName}
-                lastName={values.personal.lastName}
-                phone={values.contact.phone}
-                locale={locale}
-              />
-            ) : null}
           </FormSection>
         )}
 
         {mobileStep === 'contact' && (
           <FormSection
-            id="contact"
+            // `-step` — see the personal section above.
+            id="contact-step"
             step={locale === 'en' ? '2' : '٢'}
             icon={UsersRound}
             title={sections[1].title}
@@ -1367,16 +1561,17 @@ export function CitizenForm({
             invalid={sectionInvalid('contact')}
           >
             {isNonResident ? (
-              <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} />
+              <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
             ) : (
-              <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} />
+              <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
             )}
           </FormSection>
         )}
 
         {mobileStep === 'properties' && (
           <FormSection
-            id="properties"
+            // `-step` — see the personal section above.
+            id="properties-step"
             step={locale === 'en' ? '3' : '٣'}
             icon={Building2}
             title={
@@ -1428,6 +1623,20 @@ export function CitizenForm({
             </div>
           </FormSection>
         )}
+
+        {/*
+          Outside the step switch on purpose — this is what puts «ملاحظات»
+          under all three steps rather than only after the last one. One
+          instance, so the three steps share a single box and a note typed in
+          العقارات is still there when the officer steps back to البيانات
+          الشخصية to fix a surname.
+        */}
+        <StepNotesField
+          value={values.notes ?? ''}
+          error={shown['notes']}
+          onChange={(notes) => update({ notes })}
+          locale={locale}
+        />
       </div>
 
       {/* ── Desktop View: All Sections Sequentially ── */}
@@ -1446,16 +1655,6 @@ export function CitizenForm({
           ) : (
             <PersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
           )}
-          {mode === 'create' ? (
-            <PossibleDuplicates
-              tenant={tenant}
-              token={token}
-              firstName={values.personal.firstName}
-              lastName={values.personal.lastName}
-              phone={values.contact.phone}
-              locale={locale}
-            />
-          ) : null}
         </FormSection>
 
         <FormSection
@@ -1467,9 +1666,9 @@ export function CitizenForm({
           invalid={sectionInvalid('contact')}
         >
           {isNonResident ? (
-            <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} />
+            <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
           ) : (
-            <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} />
+            <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
           )}
         </FormSection>
 
@@ -1556,7 +1755,13 @@ export function CitizenForm({
         >
           <Field
             label={locale === 'en' ? 'Notes' : 'ملاحظات'}
-            htmlFor="notes"
+            /*
+              `notes-input`, not `notes`. The `FormSection` card above already
+              carries `id="notes"` as the page's scroll anchor, so the textarea
+              was a second element with the same id and `htmlFor="notes"`
+              resolved to the card — meaning tapping the label focused nothing.
+            */
+            htmlFor="notes-input"
             error={shown['notes']}
             hint={
               locale === 'en'
@@ -1565,7 +1770,7 @@ export function CitizenForm({
             }
           >
             <Textarea
-              id="notes"
+              id="notes-input"
               rows={3}
               maxLength={2000}
               placeholder={
@@ -1660,7 +1865,7 @@ export function CitizenForm({
             <Button
               type="button"
               size="sm"
-              onClick={() => handleSubmit()}
+              onClick={requestSave}
               disabled={submitting}
               className="h-10 px-4 text-xs font-semibold gap-1.5 bg-primary text-primary-foreground shadow-sm shrink-0"
             >
@@ -1791,7 +1996,7 @@ export function CitizenForm({
             <Button
               type="button"
               size="sm"
-              onClick={() => handleSubmit()}
+              onClick={requestSave}
               disabled={submitting}
               className="h-8 px-4 text-xs font-medium rounded-lg shadow-2xs gap-1.5"
             >
@@ -1812,6 +2017,28 @@ export function CitizenForm({
         </div>
       </div>
     </div>
+
+    {/*
+      «مراجعة قبل الحفظ». Mounted only while it is open: it walks every field
+      of the record to build its tiles, and that is work worth doing once at the
+      moment «حفظ» is pressed rather than on every keystroke of the form behind
+      it. It also means the panel is rebuilt from current values each time it
+      opens, so a correction made through «تعديل» is on it when it comes back.
+    */}
+    {reviewOpen ? (
+      <CitizenReviewDialog
+        open
+        onOpenChange={setReviewOpen}
+        values={values}
+        mode={mode}
+        submitting={submitting}
+        error={error}
+        offline={offline}
+        onConfirm={() => handleSubmit()}
+        onEditSection={editSection}
+        locale={locale}
+      />
+    ) : null}
 
     <QuickSaveDialog
       open={quickSaveOpen}
@@ -1919,6 +2146,96 @@ function ResidenceChooser({
             ? 'A household file. Choose «Lives outside the town» for an owner who only visits, or someone who only works or farms here.'
             : 'ملف أسرة كامل. اختر «غير مقيم في البلدة» لمالك لا يأتي إلا زائراً، أو لمن يعمل أو يزرع في البلدة ويسكن خارجها.'}
       </p>
+    </div>
+  );
+}
+
+/**
+ * «ملاحظات» on a phone — under every step, not parked after the last one.
+ *
+ * The desktop layout can afford to put this at the bottom of a long page: the
+ * whole record is on one scroll, so "after العقارات" is somewhere an officer
+ * passes anyway. A phone shows one step at a time, and the notes card lived
+ * inside the `hidden sm:block` column — so on the device this form is actually
+ * used on, in a stairwell, there was **no way to write a note at all**.
+ *
+ * What makes that expensive is *when* the note occurs to someone. It is never
+ * at the end: it is «الدرج مكسور» while they are standing on the stairs, and
+ * «الأسرة تنتقل نهاية الشهر» while the person is saying it, halfway through
+ * البيانات الشخصية. A box reachable only from the last step asks them to hold
+ * the sentence in their head across two «التالي» presses, and what actually
+ * happened instead is that officers typed it into «سبب عام لنقص البيانات» —
+ * the one free-text box that *was* reachable — which flags a clean record for
+ * review and attaches the sentence to fields it does not describe.
+ *
+ * So it is rendered once, outside the step switch, and every step has it.
+ *
+ * ## Why it is not collapsed behind a tap
+ *
+ * A fold would buy back about 100px on a screen that already scrolls, and it
+ * would cost the one property that makes this worth doing: that the box is
+ * *there*, needing nothing, at the moment the sentence occurs. It is also the
+ * last thing in the step, so the height it takes displaces nothing — an
+ * officer reaches it after the step's own fields, on the way to «التالي».
+ *
+ * It stays visually quiet while empty — dashed, on the page's own tone — so
+ * that being present on all three steps does not make it loud on all three.
+ */
+function StepNotesField({
+  value,
+  error,
+  onChange,
+  locale,
+}: {
+  value: string;
+  error?: string;
+  onChange: (notes: string) => void;
+  locale: string;
+}) {
+  const en = locale === 'en';
+  const written = value.trim().length > 0;
+
+  return (
+    <div
+      /*
+        Not `id="notes"`. The desktop card owns that, it comes *second* in the
+        document, and `getElementById` returns the first match — so sharing the
+        id would point the review panel's «تعديل» at this element on desktop,
+        where it is `display:none` and `scrollIntoView` is a silent no-op.
+      */
+      id="notes-mobile"
+      className={cn(
+        'scroll-mt-28 rounded-xl border p-3 transition-colors',
+        error
+          ? 'border-destructive/50 bg-destructive/5'
+          : written
+            ? 'border-border/80 bg-card shadow-2xs'
+            : 'border-dashed border-border/70 bg-muted/10',
+      )}
+    >
+      <Field
+        label={en ? 'Notes' : 'ملاحظات'}
+        htmlFor="notes-mobile-input"
+        error={error}
+        hint={
+          en
+            ? 'Anything this visit showed that no field above asks for. Does not flag the record.'
+            : 'أي ما أظهرته هذه الزيارة ولا يسأل عنه أي حقل. لا يضع علامة على السجل.'
+        }
+      >
+        <Textarea
+          id="notes-mobile-input"
+          rows={2}
+          maxLength={2000}
+          placeholder={
+            en
+              ? 'e.g. the stairs are broken — use the back entrance next time.'
+              : 'مثال: الدرج مكسور، الزيارة القادمة من الخلف.'
+          }
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </Field>
     </div>
   );
 }

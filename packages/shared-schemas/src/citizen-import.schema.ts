@@ -42,6 +42,7 @@ export const IMPORT_COLUMN_KEYS = [
   'firstName',
   'middleName',
   'lastName',
+  'motherName',
   'gender',
   'bloodType',
   'isLebanese',
@@ -97,6 +98,24 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
   { key: 'firstName', header: 'الاسم الأول', hint: 'إلزامي', always: true },
   { key: 'middleName', header: 'اسم الأب', hint: 'إلزامي', always: true },
   { key: 'lastName', header: 'الشهرة', hint: 'إلزامي', always: true },
+  /*
+    اسم الأم وشهرتها — required like the three names above it, and for a
+    sharper reason than any of them.
+
+    An import is a municipality's whole paper register arriving at once, which
+    is precisely where two «محمد أحمد خليل»s land as two rows nothing can tell
+    apart: no identity document is collected any more, and a household shares
+    its phone. A row lacking it fails and is reported for the clerk to fix, the
+    same as any other incomplete row — a spreadsheet carries no «غير مؤكَّد»
+    flags and nobody stands behind an individual gap in it.
+
+    A sheet built against the older template has no such column and every row
+    will say so. That is the intended outcome: importing thousands of
+    households with the one disambiguating field blank is the state this field
+    exists to prevent, and it is far cheaper to add a column now than to chase
+    the answer household by household afterwards.
+  */
+  { key: 'motherName', header: 'اسم الأم وشهرتها', hint: 'إلزامي — اسمها وشهرتها معاً', always: true },
   {
     key: 'gender',
     header: 'الجنس',
@@ -358,6 +377,7 @@ export function buildCitizenPayload(row: ImportRow): unknown {
       firstName: text(row.firstName),
       middleName: text(row.middleName),
       lastName: text(row.lastName),
+      motherName: text(row.motherName),
       gender: toEnum(GENDER, ar.gender, row.gender ?? ''),
       bloodType:
         toEnum(BLOOD_TYPE, ar.bloodType, row.bloodType ?? '') ??

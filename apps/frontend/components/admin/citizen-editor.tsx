@@ -54,6 +54,7 @@ import {
   emptyCitizen,
   toSubmission,
   withResidence,
+  withSeededName,
   type CitizenFormValues,
 } from './citizen-form';
 import {
@@ -543,6 +544,7 @@ function toDraft(property: Record<string, unknown>): PropertyDraft {
     occupancyType: property.occupancyType as PropertyDraft['occupancyType'],
     landlordName: text(property.landlordName),
     landlordPhone: text(property.landlordPhone),
+    landlordCitizenId: text(property.landlordCitizenId),
     propertyType: property.propertyType as PropertyDraft['propertyType'],
     neighborhood: text(property.neighborhood),
     propertyNumber: text(property.propertyNumber),
@@ -613,6 +615,7 @@ export function CitizenEditor({
   fromCaseId,
   lockedCensusTarget,
   initialResidence,
+  initialName,
 }: {
   tenant: string;
   locale: string;
@@ -626,6 +629,15 @@ export function CitizenEditor({
    * queued one keeps what it was saved as.
    */
   initialResidence?: CitizenResidence;
+  /**
+   * The search term that sent the officer here — the occupant panel's own box,
+   * carried across so a search that found nobody is not retyped.
+   *
+   * Applied to a new record only, and only when it looks like a name rather
+   * than a number (`withSeededName`). Its real job is to give the duplicate
+   * check something to check on the very first render.
+   */
+  initialName?: string;
   /**
    * Arrived from a building's unit matrix — the structure, and possibly the
    * flat, is already decided.
@@ -839,7 +851,7 @@ export function CitizenEditor({
             other cases — nothing here writes — so following a unit link and
             then coming back to «تسجيل مواطن جديد» still finds it.
           */
-          if (!seeded && !initialResidence) {
+          if (!seeded && !initialResidence && !initialName) {
             const draft = loadCitizenDraft(tenant);
             if (draft) {
               setInitial(draft.values);
@@ -849,7 +861,8 @@ export function CitizenEditor({
           }
 
           const fresh = seeded ? { ...empty, properties: seeded } : empty;
-          setInitial(initialResidence ? withResidence(fresh, initialResidence) : fresh);
+          const withFile = initialResidence ? withResidence(fresh, initialResidence) : fresh;
+          setInitial(initialName ? withSeededName(withFile, initialName) : withFile);
           return;
         }
 
@@ -949,7 +962,18 @@ export function CitizenEditor({
       this component, so the effect already re-runs exactly when it should.
     */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenant, token, citizenId, queueId, fromCaseId, initialResidence, base, router, locale]);
+  }, [
+    tenant,
+    token,
+    citizenId,
+    queueId,
+    fromCaseId,
+    initialResidence,
+    initialName,
+    base,
+    router,
+    locale,
+  ]);
 
   /**
    * Creates every «منشأة جديدة» the officer chose, and rewrites the cards.

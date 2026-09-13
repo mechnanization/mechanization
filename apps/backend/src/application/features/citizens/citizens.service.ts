@@ -155,6 +155,7 @@ interface CitizenListRow {
   firstName: string;
   middleName: string | null;
   lastName: string;
+  motherName: string | null;
   phone: string | null;
   whatsapp: string | null;
   gender: string | null;
@@ -333,6 +334,7 @@ export class CitizensService {
           u."firstName",
           u."middleName",
           u."lastName",
+          u."motherName",
           u.phone,
           u.whatsapp,
           u.gender::text AS gender,
@@ -444,6 +446,14 @@ export class CitizensService {
       items: rows.map((row) => ({
         id: row.id,
         fullName: [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' '),
+        /*
+          Carried on the list row because this is what tells two «محمد خليل»s
+          apart wherever people are offered for picking — the occupant search on
+          a unit, the duplicate check on a new file. Null on records filed before
+          migration 0044, and every reader must render that as «لم يُسأل» rather
+          than as a difference between two people.
+        */
+        motherName: row.motherName,
         phone: row.phone,
         whatsapp: row.whatsapp,
         gender: row.gender,
@@ -494,6 +504,7 @@ export class CitizensService {
           firstName: true,
           middleName: true,
           lastName: true,
+          motherName: true,
           gender: true,
           nationality: true,
           isLebanese: true,
@@ -560,6 +571,14 @@ export class CitizensService {
         firstName: citizen.firstName,
         middleName: citizen.middleName ?? '',
         lastName: citizen.lastName,
+        /*
+          Empty for a record filed before migration 0044, which is exactly what
+          the form needs: the field renders blank and required, so an officer
+          editing an old household either learns the answer or marks it «غير
+          مؤكَّد» with a reason. Nothing is invented to fill the gap, and the
+          gap stops being invisible.
+        */
+        motherName: citizen.motherName ?? '',
         gender: citizen.gender,
         bloodType: citizen.bloodType ?? '',
         nationality: citizen.nationality,
@@ -588,6 +607,21 @@ export class CitizensService {
         occupancyType: property.occupancyType,
         landlordName: property.landlordName,
         landlordPhone: property.landlordPhone,
+        /*
+          A standing owner link travels back, so the form opens saying so.
+
+          Without it an already-linked card renders «هل هو المالك؟» over a
+          question a clerk answered last week — and the name renders unlocked
+          and editable, inviting a second spelling of a person the register has
+          already identified. Re-answering it is harmless (`claimsFiledBy`
+          offers only unresolved claims, so the agreement matches nothing and is
+          dropped), which is exactly why it would go unnoticed.
+
+          It is not what re-writes the column on save: the link is the server's
+          to make through `confirm`, and an edit that leaves the number alone
+          leaves the link alone (`landlordLinkReset`).
+        */
+        landlordCitizenId: property.landlordCitizenId,
         propertyType: property.propertyType,
         neighborhood: property.neighborhood,
         propertyNumber: property.propertyNumber,
@@ -695,7 +729,12 @@ export class CitizensService {
     */
     const landlordLinks = result.deduplicated
       ? null
-      : await this.landlordClaimsQuietly(result.registrationId, result.citizenId);
+      : await this.landlordClaimsQuietly(
+          result.registrationId,
+          result.citizenId,
+          input.payload,
+          input.actor,
+        );
 
     // A re-delivered offline submission created nothing, so it is not a change
     // to announce: the audit log already carries the entry the first delivery
@@ -780,13 +819,37 @@ export class CitizensService {
   private async landlordClaimsQuietly(
     registrationId: string,
     citizenId: string,
+    payload: { properties: ReadonlyArray<{ landlordPhone?: string; landlordCitizenId?: string }> },
+    actor: { id: string; role: string },
   ): Promise<{ filed: LandlordProposal[]; naming: LandlordProposal[] } | null> {
     try {
       const [filed, naming] = await Promise.all([
         this.landlordLinks.claimsFiledBy(registrationId),
         this.landlordLinks.claimsNaming(citizenId),
       ]);
-      return { filed, naming };
+
+      /*
+        The officer already answered this on the form, so it is not asked again.
+
+        «نعم، هو المالك» is pressed while the tenant is still at the door and the
+        number is still correctable; the only thing that could not happen then
+        was the write, because the card did not exist yet. Applying it here is
+        what makes the button mean something on a submission that was filed
+        offline and delivered by a queue hours later.
+
+        Nothing is taken on trust: every answer goes through `confirm`, which
+        re-derives the match from the committed card. What comes back is the
+        claims *still* open, so the dialog and the queue ask about exactly what
+        remains unanswered — an answer that failed among them.
+      */
+      const agreements = payload.properties.flatMap((card) =>
+        card.landlordCitizenId && card.landlordPhone
+          ? [{ phone: card.landlordPhone, citizenId: card.landlordCitizenId }]
+          : [],
+      );
+      const applied = await this.landlordLinks.applyAgreements({ filed, agreements, actor });
+
+      return { filed: applied.remaining, naming };
     } catch (error) {
       this.logger.error(
         `landlord claim lookup failed for registration ${registrationId}: ${
@@ -1208,7 +1271,12 @@ export class CitizensService {
       correcting the number it was made against (see `landlordLinkReset`). Both
       leave a question this screen should put now rather than post to a queue.
     */
-    const landlordLinks = await this.landlordClaimsQuietly(registrationId, citizen.id);
+    const landlordLinks = await this.landlordClaimsQuietly(
+      registrationId,
+      citizen.id,
+      input.payload,
+      input.actor,
+    );
 
     this.events.emit('citizen.changed', {
       tenantSlug: input.tenantSlug,
@@ -1534,6 +1602,12 @@ export function citizenColumnsForEdit(
   return {
     ...shared,
     residence: 'RESIDENT',
+    /*
+      Written on the household branch alone, so converting a file to «غير مقيم
+      في البلدة» keeps whatever was filed rather than erasing it — the same
+      no-data-loss rule the household counts above follow.
+    */
+    motherName: personal.motherName || null,
     gender: (personal.gender ?? null) as never,
     nationality: personal.nationality ?? null,
     isLebanese: personal.isLebanese ?? null,

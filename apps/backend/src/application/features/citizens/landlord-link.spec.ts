@@ -629,3 +629,135 @@ describe('dismiss — narrowed so it cannot overwrite an answer', () => {
     expect(await service.dismiss({ propertyEntryId: ENTRY, actor })).toEqual({ dismissed: false });
   });
 });
+
+/**
+ * «نعم، هو المالك» answered on the form and applied by the save.
+ *
+ * The officer can answer this at the door, where the tenant is still there to
+ * correct a digit, but there is no `PropertyEntry` to link until the save has
+ * run. So the answer rides with the submission and lands here — which is also
+ * what makes it survive the offline queue most of these records are filed
+ * through. A browser confirming after its own save would simply never run.
+ *
+ * Every test below is about the seam between an answer and the proposals it is
+ * matched against, because that seam is where an answer can be attached to the
+ * wrong card. The confirmation it delegates to is guarded by the suite above.
+ */
+describe('applyAgreements — an answer given before the card existed', () => {
+  const proposal = (over: Record<string, unknown> = {}) => ({
+    propertyEntryId: ENTRY,
+    occupancyType: 'TENANT',
+    landlordName: 'سعيد حرب',
+    landlordPhone: LANDLORD_PHONE,
+    propertyNumber: '1042',
+    buildingName: 'بناية النور',
+    buildingId: 'building-1',
+    linkedUnitCount: 2,
+    filedBy: null,
+    candidates: [{ id: OWNER, name: 'سعيد حرب', phone: LANDLORD_PHONE, referenceNumber: null }],
+    ...over,
+  });
+
+  it('does nothing at all when the officer answered nothing', async () => {
+    // The overwhelmingly common case: most landlords are not registered, and
+    // an officer who is unsure leaves the question to the queue.
+    const { service, propertyEntryUpdate } = harness();
+    const filed = [proposal()];
+
+    const result = await service.applyAgreements({ filed, agreements: [], actor });
+
+    expect(result).toEqual({ remaining: filed, linked: 0 });
+    expect(propertyEntryUpdate).not.toHaveBeenCalled();
+  });
+
+  it('links the card the answer names and stops asking about it', async () => {
+    const { service, propertyEntryUpdate, recordOccupancy } = harness();
+
+    const result = await service.applyAgreements({
+      filed: [proposal()],
+      agreements: [{ phone: LANDLORD_PHONE, citizenId: OWNER }],
+      actor,
+    });
+
+    expect(result.linked).toBe(1);
+    // Gone from what the dialog and the queue will ask about — the whole point
+    // of answering at the door is not being asked again at a desk.
+    expect(result.remaining).toEqual([]);
+    expect(propertyEntryUpdate).toHaveBeenCalled();
+    expect(recordOccupancy).toHaveBeenCalled();
+  });
+
+  it('ignores an answer whose number no longer matches the card', async () => {
+    /*
+      The officer agreed about «03 123456» and then corrected the number before
+      saving. The agreement was about the old one, so it is not applied to the
+      new one — which is the same reasoning the server uses when an *edit*
+      changes the number and `landlordLinkReset` drops the confirmed link.
+    */
+    const { service, propertyEntryUpdate } = harness();
+    const filed = [proposal({ landlordPhone: '+96171999888' })];
+
+    const result = await service.applyAgreements({
+      filed,
+      agreements: [{ phone: LANDLORD_PHONE, citizenId: OWNER }],
+      actor,
+    });
+
+    expect(result).toEqual({ remaining: filed, linked: 0 });
+    expect(propertyEntryUpdate).not.toHaveBeenCalled();
+  });
+
+  it('ignores an answer naming somebody who is not a candidate on the card', async () => {
+    /*
+      A shared household line. The number matches, and the person the officer
+      chose is not among the citizens it resolves to — so the answer is stale,
+      and guessing between the remaining candidates is exactly what this whole
+      feature refuses to do. It goes back to the queue, which can show a person
+      all of them at once.
+    */
+    const { service, propertyEntryUpdate } = harness();
+    const filed = [proposal()];
+
+    const result = await service.applyAgreements({
+      filed,
+      agreements: [{ phone: LANDLORD_PHONE, citizenId: 'somebody-else' }],
+      actor,
+    });
+
+    expect(result).toEqual({ remaining: filed, linked: 0 });
+    expect(propertyEntryUpdate).not.toHaveBeenCalled();
+  });
+
+  it('leaves a claim open when its link failed, rather than swallowing it', async () => {
+    /*
+      The registration is committed by the time this runs, so a failed link may
+      not fail the save — but it must not be reported as settled either. Kept
+      in `remaining`, the dialog still asks and the queue still holds it.
+    */
+    const { service, propertyEntryUpdate } = harness();
+    propertyEntryUpdate.mockRejectedValue(new Error('connection reset'));
+    const filed = [proposal()];
+
+    const result = await service.applyAgreements({
+      filed,
+      agreements: [{ phone: LANDLORD_PHONE, citizenId: OWNER }],
+      actor,
+    });
+
+    expect(result).toEqual({ remaining: filed, linked: 0 });
+  });
+
+  it('applies one answer without disturbing the claims it says nothing about', async () => {
+    const { service } = harness();
+    const other = proposal({ propertyEntryId: 'entry-2', landlordPhone: '+96171999888' });
+
+    const result = await service.applyAgreements({
+      filed: [proposal(), other],
+      agreements: [{ phone: LANDLORD_PHONE, citizenId: OWNER }],
+      actor,
+    });
+
+    expect(result.linked).toBe(1);
+    expect(result.remaining).toEqual([other]);
+  });
+});

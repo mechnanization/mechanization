@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
+import type { FeeAssessment } from '@mechanization/shared-schemas';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
@@ -186,6 +187,23 @@ export interface RegisteredParcel {
   structureCount: number;
 }
 
+/**
+ * One «تأكيد الشغور» still standing on a unit, as a citizen's file reports it.
+ *
+ * A summary of `UnitVacancyConfirmation`, not the row: what a reader of this
+ * file needs is that the municipality has called this flat empty, since when,
+ * and on what — which is precisely what a resident or owner disputing the
+ * absence of an occupancy fee is entitled to read (see the model's own note).
+ * The officer's free-text `notes` stay out, because this shape is also what
+ * the citizen's own portal renders.
+ */
+export interface CitizenProfileVacancy {
+  id: string;
+  /** Null only on a row migration 0043 backfilled — the question did not exist. */
+  basis: string | null;
+  observedAt: string;
+}
+
 /** One unit inside a BUILDING — شقة, عيادة or محل. */
 export interface CitizenProfileUnit {
   id: string;
@@ -202,6 +220,35 @@ export interface CitizenProfileUnit {
   sharedRights: string[];
   /** حالة الوحدة — set by the building's owner. Null on a tenant's own card. */
   unitStatus: string | null;
+
+  /** The censused `Unit` this line was linked to, when one was. */
+  unitId: string | null;
+  unitCode: string | null;
+  unitPostedNumber: string | null;
+  /**
+   * حالة الوحدة as **سجل المباني** holds it, which is not always what the
+   * owner's card says.
+   *
+   * Both are reported because billing reads the census first and the card
+   * second, so where the two disagree the disagreement *is* the finding: a
+   * card saying «مشغولة من المالك» over a census row saying «شاغرة» is either a
+   * vacancy to lift or a card to correct, and a page showing one number cannot
+   * say which. Null when the line was never linked to a censused unit.
+   */
+  censusUnitStatus: string | null;
+  /**
+   * «مسكن موسمي» — the months (1–12) its owners are usually present, when they
+   * last stayed, and when a تصريح بالشغور was filed (migration 0040).
+   *
+   * Reported because the owner still bears the occupancy fee on a seasonal home
+   * (`OWNER_BILLED_WHILE_ABSENT`) and these are the facts the council's decision
+   * to shorten that rests on. Empty and null on every other unit.
+   */
+  presenceMonths: number[];
+  ownerLastStayAt: string | null;
+  vacancyDeclaredAt: string | null;
+  /** The «تأكيد الشغور» standing on the censused unit, if one is. */
+  vacancy: CitizenProfileVacancy | null;
 }
 
 /**
@@ -232,6 +279,15 @@ export interface CitizenProfileProperty {
    */
   landlordName: string | null;
   landlordPhone: string | null;
+  /**
+   * The registered citizen this card's owner was confirmed to be, if anyone.
+   *
+   * Reported so the profile can link to that person's own file instead of
+   * printing their name as loose text — «هذا المالك مسجّل عندنا» is a fact the
+   * register already established (`confirmLandlordLink`) and the only page that
+   * could show it was the queue where it was decided.
+   */
+  landlordCitizenId: string | null;
   /** HOUSE only, owner only, and null wherever nobody was asked. */
   unitStatus: string | null;
   buildingName: string | null;
@@ -242,9 +298,42 @@ export interface CitizenProfileProperty {
   side: string | null;
   tentLocation: string | null;
   unitArea: number | null;
+  /**
+   * أسهم out of the cadastre's standard 2400 — a share of *ownership*, so it
+   * is carried on an owner's card and is null on a tenant's or a free
+   * occupant's (`branchFieldsOnly`).
+   *
+   * Selected here since it was stored: the column has been written by the form
+   * since the LAND branch existed and never read back, so «الأسهم» was a row
+   * the profile drew from a value that never arrived and therefore never drew
+   * at all.
+   */
+  shares: number | null;
   sharedRights: string[];
   latitude: number | null;
   longitude: number | null;
+  /**
+   * The censused structure behind this card, when one was linked.
+   *
+   * Two codes, and they are not interchangeable (D14): `buildingCode` is the
+   * municipality's own `ZONE-PARCEL-SUFFIX`, `buildingPostedNumber` is what is
+   * painted on the wall. Where they disagree the collector in the street
+   * trusts the paint, so a page that shows only one of them is showing the
+   * wrong one half the time.
+   */
+  buildingId: string | null;
+  buildingCode: string | null;
+  buildingPostedNumber: string | null;
+  /**
+   * حالة المبنى — and the value this exists for is `WAR_DAMAGED_UNINHABITED`.
+   *
+   * A structure still standing, war-damaged, and established as empty. Its
+   * units are recorded exactly as any building's are, so nothing else on this
+   * card distinguishes a flat in it from a flat anybody lives in — which is a
+   * gap on the page where a household's file and its invoices are read side by
+   * side. Null on a card never linked to a censused building.
+   */
+  buildingLifecycleStatus: string | null;
   unitCount: number;
   units: CitizenProfileUnit[];
 }
@@ -265,6 +354,8 @@ export interface CitizenProfileRegistration {
   /** `REQUIRES_REVIEW` when `flags` is non-empty; `PENDING` otherwise. */
   status: string;
   flags: Array<{ path: string; reason: string }>;
+  /** «ملاحظات» — what the last officer learned by standing there, or null. */
+  notes: string | null;
   properties: CitizenProfileProperty[];
   documents: CitizenProfileDocument[];
 }
@@ -307,6 +398,20 @@ export interface CitizenProfilePayment {
   paidAt: string | null;
   reviewNote: string | null;
   frequency: string | null;
+  /**
+   * How this amount was arrived at, when it was not simply the notice's own.
+   *
+   * The answer to «ليش عليّ هالمبلغ؟», and the reason the breakdown is stored
+   * on the payment at all. `FeesService.listForCitizen` has carried it to the
+   * portal's bill list since per-unit billing existed; this response — the one
+   * behind both the staff profile and ملفّي — did not, so the single page that
+   * shows a citizen's bills beside the properties they were assessed from was
+   * the one page that could not explain them.
+   *
+   * Null on a flat charge, which explains itself, and on every invoice raised
+   * before per-unit billing existed.
+   */
+  assessment: FeeAssessment | null;
 }
 
 /**
@@ -330,6 +435,8 @@ export interface CitizenFeeTotals {
 export interface CitizenProfile {
   id: string;
   fullName: string;
+  /** اسم الأم وشهرتها. Null on records filed before migration 0044 — «لم يُسأل». */
+  motherName: string | null;
   phone: string | null;
   whatsapp: string | null;
   gender: string | null;
@@ -728,6 +835,7 @@ export class ReportingService {
         firstName: true,
         middleName: true,
         lastName: true,
+        motherName: true,
         phone: true,
         whatsapp: true,
         gender: true,
@@ -769,6 +877,8 @@ export class ReportingService {
             whishTransactionRef: true,
             paidAt: true,
             reviewNote: true,
+            // «ليش عليّ هالمبلغ؟» — see `CitizenProfilePayment.assessment`.
+            assessment: true,
             feeNotice: { select: { frequency: true } },
           },
         },
@@ -790,6 +900,9 @@ export class ReportingService {
                 occupancyType: true,
                 landlordName: true,
                 landlordPhone: true,
+                // The registered citizen an officer confirmed this owner to be,
+                // so the card can link to their file instead of naming them.
+                landlordCitizenId: true,
                 unitStatus: true,
                 buildingName: true,
                 unitType: true,
@@ -798,6 +911,8 @@ export class ReportingService {
                 side: true,
                 tentLocation: true,
                 unitArea: true,
+                // أسهم — stored since the LAND branch existed, never read back.
+                shares: true,
                 sharedRights: true,
                 latitude: true,
                 longitude: true,
@@ -811,7 +926,18 @@ export class ReportingService {
                   collector standing in the street trusts the paint.
                 */
                 buildingId: true,
-                building: { select: { code: true, postedNumber: true } },
+                /*
+                  `lifecycleStatus` alongside the two codes, because it can now
+                  say «متضررة من الحرب وغير مسكونة» — a structure still standing
+                  and established as empty (migration 0041). That is a fact
+                  about every card attached to it: somebody reading a household
+                  file, or an invoice raised against a flat in it, is reading
+                  about a building nobody is living in, and no other field on
+                  this response says so.
+                */
+                building: {
+                  select: { code: true, postedNumber: true, lifecycleStatus: true },
+                },
                 // The units themselves, not just how many: a landlord's claim
                 // over a building *is* the unit list, and a bare count told a
                 // reviewer nothing about which floors were being claimed.
@@ -826,7 +952,41 @@ export class ReportingService {
                     sharedRights: true,
                     unitStatus: true,
                     unitId: true,
-                    unit: { select: { unitCode: true, postedNumber: true } },
+                    /*
+                      The censused unit behind the line, not just its code.
+
+                      Three things on it change what this flat is billed, and
+                      none of them is knowable from the owner's card: سجل
+                      المباني's own حالة الوحدة (which billing reads first), a
+                      «تأكيد الشغور» standing on it (which exempts the owner),
+                      and the مسكن موسمي facts (which are why an owner who is
+                      away all year is billed anyway). A file that shows the
+                      bill and not these cannot answer the one question asked
+                      about it.
+                    */
+                    unit: {
+                      select: {
+                        unitCode: true,
+                        postedNumber: true,
+                        unitStatus: true,
+                        presenceMonths: true,
+                        ownerLastStayAt: true,
+                        vacancyDeclaredAt: true,
+                        /*
+                          At most one row comes back: a partial unique index
+                          (migration 0041) allows a single confirmation with a
+                          null `endedAt` per unit. `take: 1` states that here
+                          too, so a future index change degrades to "the newest
+                          one" rather than to an unbounded list on a page.
+                        */
+                        vacancies: {
+                          where: { endedAt: null },
+                          orderBy: { observedAt: 'desc' },
+                          take: 1,
+                          select: { id: true, basis: true, observedAt: true },
+                        },
+                      },
+                    },
                   },
                 },
               },
@@ -874,6 +1034,7 @@ export class ReportingService {
       paidAt: payment.paidAt?.toISOString() ?? null,
       reviewNote: payment.reviewNote,
       frequency: payment.feeNotice?.frequency ?? null,
+      assessment: (payment.assessment as FeeAssessment | null) ?? null,
     }));
 
     // Summed from the rows just mapped rather than by a second set of
@@ -892,6 +1053,7 @@ export class ReportingService {
       fullName: [citizen.firstName, citizen.middleName, citizen.lastName]
         .filter(Boolean)
         .join(' '),
+      motherName: citizen.motherName,
       phone: citizen.phone,
       whatsapp: citizen.whatsapp,
       gender: citizen.gender,
@@ -968,6 +1130,7 @@ export class ReportingService {
           occupancyType: property.occupancyType,
           landlordName: property.landlordName,
           landlordPhone: property.landlordPhone,
+          landlordCitizenId: property.landlordCitizenId,
           unitStatus: property.unitStatus,
           buildingName: property.buildingName,
           unitType: property.unitType,
@@ -978,25 +1141,42 @@ export class ReportingService {
           // Decimal → number at the edge; `Decimal` serialises as an object,
           // which the client would render as "[object Object]".
           unitArea: property.unitArea == null ? null : Number(property.unitArea),
+          shares: property.shares,
           sharedRights: property.sharedRights,
           latitude: property.latitude,
           longitude: property.longitude,
           buildingId: property.buildingId,
           buildingCode: property.building?.code ?? null,
           buildingPostedNumber: property.building?.postedNumber ?? null,
+          buildingLifecycleStatus: property.building?.lifecycleStatus ?? null,
           unitCount: property.units.length,
-          units: property.units.map((unit) => ({
-            id: unit.id,
-            unitType: unit.unitType,
-            floor: unit.floor,
-            side: unit.side,
-            unitArea: unit.unitArea == null ? null : Number(unit.unitArea),
-            sharedRights: unit.sharedRights,
-            unitStatus: unit.unitStatus,
-            unitId: unit.unitId,
-            unitCode: unit.unit?.unitCode ?? null,
-            unitPostedNumber: unit.unit?.postedNumber ?? null,
-          })),
+          units: property.units.map((unit) => {
+            // At most one by the partial unique index; see the select above.
+            const vacancy = unit.unit?.vacancies[0];
+            return {
+              id: unit.id,
+              unitType: unit.unitType,
+              floor: unit.floor,
+              side: unit.side,
+              unitArea: unit.unitArea == null ? null : Number(unit.unitArea),
+              sharedRights: unit.sharedRights,
+              unitStatus: unit.unitStatus,
+              unitId: unit.unitId,
+              unitCode: unit.unit?.unitCode ?? null,
+              unitPostedNumber: unit.unit?.postedNumber ?? null,
+              censusUnitStatus: unit.unit?.unitStatus ?? null,
+              presenceMonths: unit.unit?.presenceMonths ?? [],
+              ownerLastStayAt: unit.unit?.ownerLastStayAt?.toISOString() ?? null,
+              vacancyDeclaredAt: unit.unit?.vacancyDeclaredAt?.toISOString() ?? null,
+              vacancy: vacancy
+                ? {
+                    id: vacancy.id,
+                    basis: vacancy.basis,
+                    observedAt: vacancy.observedAt.toISOString(),
+                  }
+                : null,
+            };
+          }),
         })),
         documents: registration.documents.map((document) => ({
           id: document.id,

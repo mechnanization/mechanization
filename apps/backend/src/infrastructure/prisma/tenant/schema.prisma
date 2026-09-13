@@ -118,6 +118,28 @@ model User {
   lastName   String
   gender     Gender?
 
+  /// اسم الأم وشهرتها — what tells two people with the same three names apart.
+  ///
+  /// The register stopped asking a Lebanese citizen for an identity document
+  /// on 2026-09-13 (see `identityDocNumber`), which was right and left nothing
+  /// behind it: three name parts, a phone a household shares, and a رقم سجل
+  /// shared by everyone on the same قيد. This is the fact a Lebanese ID card
+  /// and the قيد carry for precisely that job, and the one identifying answer
+  /// at a counter nobody has a reason to invent.
+  ///
+  /// **Never a key.** Siblings share a mother, so it disambiguates people and
+  /// identifies none. Nothing matches or upserts on it; it is a signal a human
+  /// reads when deciding whether two records are one person. Treating it as an
+  /// identifier would rebuild the merge bug that removed the document number,
+  /// on a value that collides *by design* within a family.
+  ///
+  /// Nullable with no backfill. Records filed before migration 0044 hold NULL,
+  /// which means «لم يُسأل» and not «answered blank» — the edit form asks for
+  /// it on any household file that lacks it, and an officer who does not know
+  /// marks it «غير مؤكَّد» rather than inventing one. Asked of household files
+  /// only: a NON_RESIDENT_OWNER record holds a name, a phone and a town.
+  motherName String?
+
   nationality       String?
   isLebanese        Boolean?
   residencyNumber   String?
@@ -160,13 +182,18 @@ model User {
   /// a space — plus a second, space-free copy of each identifier so a
   /// reference number typed without its dashes still matches.
   ///
+  /// `motherName` is in it (migration 0044) and deliberately only in the
+  /// spaced half: it is matched as name tokens, and a compacted copy would let
+  /// a query match across the seam into the reference number beside it.
+  ///
   /// **Never write to it.** The database computes it and rejects any INSERT or
   /// UPDATE that supplies a value. It is optional here only because Prisma
   /// omits an absent optional field from the statement it builds, which is the
   /// one way to model a generated column in a schema language that has no
   /// word for one. Declared so it can be *filtered* on; see
   /// `searchTokens` in application/common/search-terms.ts for the matching
-  /// query side, and migration 0018 for the definition.
+  /// query side, migration 0018 for the definition and 0044 for the one
+  /// amendment to it.
   searchText String?
 
   createdAt DateTime @default(now())

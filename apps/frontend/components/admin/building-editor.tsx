@@ -1864,91 +1864,106 @@ export function BuildingEditor({
           </Card>
         ) : null}
 
-        {/* ── Structure Summary (ملخص المنشأة) at the bottom ── */}
-        <Card className="shadow-xs border-border/80 bg-muted/15">
-          <CardHeader className="pb-3 border-b bg-muted/30">
-            <div className="flex items-center justify-between gap-2">
-              <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <ClipboardCheck className="size-4 text-primary" />
-                <span>{en ? 'Structure Summary' : 'ملخص المنشأة'}</span>
-              </CardTitle>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground hidden sm:inline">
-                  {en
-                    ? `Step ${step + 1} of ${visibleSteps.length}`
-                    : `الخطوة ${step + 1} من ${visibleSteps.length}`}
-                </span>
-                <Badge variant="outline" className="text-xs font-mono border-primary/40 bg-primary/5 text-primary">
-                  {codePreview ?? '—'}
-                </Badge>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Parcel Number' : 'رقم العقار'}</p>
-                <p dir="ltr" className="font-mono font-bold text-sm sm:text-base text-foreground truncate">
-                  {trimmedParcel || '—'}
-                </p>
-              </div>
+        {/*
+          ── Structure Summary (ملخص المنشأة) ──
 
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Building Code' : 'رمز المبنى'}</p>
-                <p dir="ltr" className="font-mono font-bold text-sm sm:text-base text-primary truncate">
-                  {codePreview || '—'}
-                </p>
-              </div>
+          The last step only. This is a read-back of what is about to be saved
+          — «راجع قبل الحفظ» — and on step 1 there is nothing to read back yet:
+          it sat under a half-filled form reciting «رقم العقار —», «القطاع —»,
+          «٠ وحدة», which says nothing the fields six inches above it were not
+          already saying, and says it in the tone of a result. Worse, it stood
+          between the form and «التالي», so every officer scrolled past a table
+          of dashes to reach the button.
 
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Sector' : 'القطاع'}</p>
-                <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
-                  {zoneCode ? `${zoneCode} · ${zoneName ?? ''}` : trimmedParcel ? UNZONED_CODE : '—'}
-                </p>
-              </div>
-
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Structure Type' : 'نوع المنشأة'}</p>
-                <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
-                  {labels.structureType[structureType]}
-                </p>
-              </div>
-
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Floors & Units' : 'الطوابق والوحدات'}</p>
-                <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
-                  {houseShortcut
-                    ? `1 ${en ? 'floor' : 'طابق'}`
-                    : `${floorsCount} ${en ? 'floors' : 'طوابق'}`}
-                  {!houseShortcut && Number(basementsCount) > 0
-                    ? ` + B${Number(basementsCount)}`
-                    : ''}{' '}
-                  · {gridUnits.length + hiddenUnits.length} {en ? 'units' : 'وحدة'}
-                </p>
-              </div>
-
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1 col-span-2 sm:col-span-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Entrance Location' : 'موقع المدخل'}</p>
-                <div className="pt-0.5 flex items-center gap-1.5 flex-wrap">
-                  {pin ? (
-                    <Badge variant="soft-success" className="text-[11px] px-2">
-                      {en ? 'Pinned' : 'مُثبت'}
-                    </Badge>
-                  ) : (
-                    <Badge variant="soft-muted" className="text-[11px] px-2">
-                      {en ? 'Desk entry' : 'غير مُثبت'}
-                    </Badge>
-                  )}
-                  {name ? (
-                    <span className="text-[11px] text-muted-foreground truncate hidden lg:inline">
-                      · {name}
-                    </span>
-                  ) : null}
+          On the final step it is doing its actual job: the floors and units
+          come from a matrix on another screen, the sector is derived from the
+          parcel rather than typed, and the entrance is a pin on a map — none
+          of which is visible from here without it.
+        */}
+        {step === lastStep ? (
+          <Card className="shadow-xs border-border/80 bg-muted/15">
+            <CardHeader className="pb-3 border-b bg-muted/30">
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <ClipboardCheck className="size-4 text-primary" />
+                  <span>{en ? 'Structure Summary' : 'ملخص المنشأة'}</span>
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground hidden sm:inline">
+                    {en ? 'Review before saving' : 'راجع قبل الحفظ'}
+                  </span>
+                  <Badge variant="outline" className="text-xs font-mono border-primary/40 bg-primary/5 text-primary">
+                    {codePreview ?? '—'}
+                  </Badge>
                 </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Parcel Number' : 'رقم العقار'}</p>
+                  <p dir="ltr" className="font-mono font-bold text-sm sm:text-base text-foreground truncate">
+                    {trimmedParcel || '—'}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Building Code' : 'رمز المبنى'}</p>
+                  <p dir="ltr" className="font-mono font-bold text-sm sm:text-base text-primary truncate">
+                    {codePreview || '—'}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Sector' : 'القطاع'}</p>
+                  <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
+                    {zoneCode ? `${zoneCode} · ${zoneName ?? ''}` : trimmedParcel ? UNZONED_CODE : '—'}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Structure Type' : 'نوع المنشأة'}</p>
+                  <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
+                    {labels.structureType[structureType]}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Floors & Units' : 'الطوابق والوحدات'}</p>
+                  <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
+                    {houseShortcut
+                      ? `1 ${en ? 'floor' : 'طابق'}`
+                      : `${floorsCount} ${en ? 'floors' : 'طوابق'}`}
+                    {!houseShortcut && Number(basementsCount) > 0
+                      ? ` + B${Number(basementsCount)}`
+                      : ''}{' '}
+                    · {gridUnits.length + hiddenUnits.length} {en ? 'units' : 'وحدة'}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1 col-span-2 sm:col-span-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Entrance Location' : 'موقع المدخل'}</p>
+                  <div className="pt-0.5 flex items-center gap-1.5 flex-wrap">
+                    {pin ? (
+                      <Badge variant="soft-success" className="text-[11px] px-2">
+                        {en ? 'Pinned' : 'مُثبت'}
+                      </Badge>
+                    ) : (
+                      <Badge variant="soft-muted" className="text-[11px] px-2">
+                        {en ? 'Desk entry' : 'غير مُثبت'}
+                      </Badge>
+                    )}
+                    {name ? (
+                      <span className="text-[11px] text-muted-foreground truncate hidden lg:inline">
+                        · {name}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* Desktop Bottom Step Navigation */}
         <div className="hidden sm:flex items-center justify-between pt-2">

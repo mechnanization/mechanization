@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Building2,
+  FileText,
   Home,
   Layers,
   MapPin,
@@ -216,11 +217,28 @@ export default function MyAccount({
                           <Icon className="size-5" />
                         </span>
                         <div className="min-w-0 flex-1 space-y-1.5">
+                          {/*
+                            A card whose رقم العقار was never established says
+                            so. Printed unconditionally it produced «العقار رقم »
+                            trailing into nothing, which reads as a broken page
+                            rather than as the gap it is — and the reader is the
+                            one person who can close it.
+                          */}
                           <p className="font-semibold">
-                            {locale === 'en' ? 'Parcel #' : 'العقار رقم '}
-                            <span dir="ltr" className="font-mono">
-                              {property.propertyNumber}
-                            </span>
+                            {property.propertyNumber ? (
+                              <>
+                                {locale === 'en' ? 'Parcel #' : 'العقار رقم '}
+                                <span dir="ltr" className="font-mono">
+                                  {property.propertyNumber}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-warning">
+                                {locale === 'en'
+                                  ? 'Parcel number not recorded'
+                                  : 'رقم العقار غير مسجَّل'}
+                              </span>
+                            )}
                           </p>
                           <div className="flex flex-wrap items-center gap-1.5">
                             <Badge variant="secondary">
@@ -237,10 +255,12 @@ export default function MyAccount({
                             </Badge>
                           </div>
                           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                            <span className="inline-flex items-center gap-1.5">
-                              <MapPin className="size-3.5 shrink-0" aria-hidden />
-                              {property.neighborhood}
-                            </span>
+                            {property.neighborhood ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <MapPin className="size-3.5 shrink-0" aria-hidden />
+                                {property.neighborhood}
+                              </span>
+                            ) : null}
                             {property.unitArea != null ? (
                               <span className="inline-flex items-center gap-1.5">
                                 <Ruler className="size-3.5 shrink-0" aria-hidden />
@@ -261,6 +281,25 @@ export default function MyAccount({
                 })}
               </div>
             )}
+
+            {/*
+              The way to «ملفّي», which until now nothing linked to.
+
+              Signing in lands a citizen here, and this page is a summary by
+              design: a parcel number, an area, a unit count. The whole record —
+              اسم الأم, every unit with the status it is billed on, any vacancy
+              the municipality has confirmed, and the breakdown behind each
+              amount — lives one route away at `/my-file`, and there was no way
+              to reach it except by typing the URL. "Check your file and tell us
+              what is wrong" is the paragraph below; this is the door it means.
+            */}
+            <Link
+              href={`/${tenant}/${locale}/my-file`}
+              className={buttonVariants({ variant: 'outline', className: 'w-full' })}
+            >
+              <FileText className="size-4" aria-hidden />
+              {locale === 'en' ? 'View my full file' : 'عرض ملفّي الكامل'}
+            </Link>
 
             <p className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
               {locale === 'en'

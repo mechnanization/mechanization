@@ -4,11 +4,13 @@ import { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
+  Archive,
   ArrowRight,
   Banknote,
   Building2,
   Calendar,
   Clock3,
+  DoorClosed,
   DoorOpen,
   Droplet,
   ExternalLink,
@@ -29,7 +31,9 @@ import {
   Phone,
   Receipt as ReceiptIcon,
   Ruler,
+  Signpost,
   StickyNote,
+  Sun,
   Tent,
   Trees,
   User,
@@ -37,7 +41,11 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import { getLabels, isUnoccupied } from '@mechanization/shared-schemas';
+import {
+  getLabels,
+  isUnoccupied,
+  OWNER_BILLED_WHILE_ABSENT,
+} from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   getCitizenProfile,
@@ -52,10 +60,13 @@ import type {
   CitizenProfile,
   CitizenProfilePayment,
   CitizenProfileProperty,
+  CitizenProfileUnit,
   MunicipalitySettings,
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { useToast } from '@/components/ui/toast';
+import { describeAssessment } from '@/lib/fee-assessment';
+import { flagFieldLabel } from '@/lib/field-flags';
 import { findLocatedProperty, mapHref } from '@/lib/map-link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -69,7 +80,7 @@ import {
   type SettleValues,
 } from '@/components/admin/settle-payment-dialog';
 import { cn } from '@/lib/utils';
-import { formatDate } from '@/lib/dates';
+import { formatDate, formatMonthList } from '@/lib/dates';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
 
 /** One glyph per property branch, so a card's kind is readable before its text. */
@@ -80,12 +91,263 @@ const PROPERTY_ICON: Record<string, React.ComponentType<{ className?: string }>>
   TENT: Tent,
 };
 
+/**
+ * Three tones, because حالة الوحدة answers three different money questions.
+ *
+ * `warning` for the statuses that stop the occupancy fee — شاغرة, قيد الإنجاز.
+ * That is the only group `isUnoccupied` names, and it was the whole vocabulary
+ * this page had.
+ *
+ * `soft-info` for «مسكن موسمي», which is deliberately in neither the unoccupied
+ * list nor the occupied-by-others one (`OWNER_BILLED_WHILE_ABSENT`): nobody
+ * lives there most of the year *and the owner is still billed*. Drawn as an
+ * ordinary outline badge it read as "occupied, nothing to see", which is the
+ * one reading that makes the bill look like a mistake.
+ */
+function unitStatusTone(
+  status: string | null | undefined,
+): 'warning' | 'soft-info' | 'outline' {
+  if ((OWNER_BILLED_WHILE_ABSENT as readonly string[]).includes(status ?? '')) return 'soft-info';
+  return isUnoccupied(status) ? 'warning' : 'outline';
+}
+
+/**
+ * Why a home nobody lives in is still charged to its owner.
+ *
+ * The single most-asked question a «مسكن موسمي» produces at the counter, and
+ * the answer is not in the status label. A building is presumed occupied until
+ * a تصريح بالشغور is filed (هيئة التشريع والاستشارات 725/2003) and the fee is
+ * owed on actual occupancy (Law 60/1988, Art. 11) — so until a declaration
+ * exists the year is owed, and shortening it is the council's decision, taken
+ * on the facts recorded against the unit.
+ */
+function ownerBilledHint(status: string | null | undefined, locale: string): string | undefined {
+  if (!(OWNER_BILLED_WHILE_ABSENT as readonly string[]).includes(status ?? '')) return undefined;
+  return locale === 'en'
+    ? 'Nobody lives here most of the year, and the occupancy fee stays with the owner unless a vacancy declaration is filed'
+    : 'لا يسكنها أحد معظم السنة، ويبقى رسم الإشغال على المالك ما لم يُقدَّم تصريح بالشغور';
+}
+
 interface FactItem {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value?: React.ReactNode;
   /** Latin-script content (numbers, phones) that must not mirror in RTL. */
   ltr?: boolean;
+  /**
+   * A line under the value saying how much weight it still carries.
+   *
+   * There are now two kinds of value on this page that look identical and are
+   * not: one the register keeps asking about, and one it stored once and no
+   * longer maintains — a Lebanese citizen's identity document, a household's
+   * details after the file was converted to «غير مقيم في البلدة». A number
+   * nobody has been asked to confirm for a year should not be read the same way
+   * as this morning's phone call, and the only place to say so is next to it.
+   */
+  hint?: string;
+}
+
+/**
+ * «لم يُسأل» — the value nobody was asked for, said out loud.
+ *
+ * Distinct from a fact that is simply absent (`present` drops those): there are
+ * fields where the *absence itself* is the finding and hiding the row hides it.
+ * اسم الأم is the one this exists for — null on every household filed before
+ * migration 0044, and reading that as "this person's file differs from their
+ * namesake's" is exactly the confusion the field was added to end.
+ */
+function NotAsked({ locale }: { locale: string }) {
+  return (
+    <span className="font-normal text-muted-foreground">
+      {locale === 'en' ? 'Not asked' : 'لم يُسأل'}
+    </span>
+  );
+}
+
+/**
+ * «محفوظ من تسجيل سابق — لم يعد يُطلب»: an identity document still on file.
+ *
+ * The register stopped asking a Lebanese citizen for one (see
+ * `personalDetailsObject.identityDocType`), and deliberately did not erase the
+ * real numbers already stored — an edit that no longer sends the field leaves
+ * the stored value alone. So a number shown here is a number *nobody has been
+ * asked to confirm since*, which is a different thing from the phone an officer
+ * verified last week, and the difference matters most to whoever is about to
+ * rely on it to tell two people apart. اسم الأم is what does that job now.
+ *
+ * Silent for a non-Lebanese person: their passport number is still asked for,
+ * «إلزامي إن وجد», so it is maintained like any other field. Silent too when
+ * `isLebanese` is itself unknown — this line is an assertion about the record's
+ * upkeep, and there is no making one without knowing which rule it fell under.
+ */
+function legacyDocumentHint(citizen: CitizenProfile, locale: string): string | undefined {
+  if (citizen.isLebanese !== true) return undefined;
+  if (!citizen.identityDocType && !citizen.identityDocNumber) return undefined;
+  return locale === 'en'
+    ? 'On file from an earlier registration — no longer collected'
+    : 'محفوظ من تسجيل سابق — لم يعد يُطلب';
+}
+
+/**
+ * «الأسرة» — the household counts, as one list both readers share.
+ *
+ * Shared because the same values are shown in two places with two different
+ * meanings: current, on a household file, and retained-but-unmaintained on a
+ * record converted to «غير مقيم في البلدة». Building the list twice would let
+ * the two drift, and it is the converted record — the rarer one — whose copy
+ * nobody would notice going stale.
+ */
+function householdFacts(citizen: CitizenProfile, locale: string): FactItem[] {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+
+  /*
+    إجمالي المسجلين في القيد is worth a row only when it differs from the
+    household actually living in the house — otherwise it repeats the number
+    directly above it. What used to sit here alongside it was a *second* copy
+    of عدد الأبناء المتزوجين under a longer label, so a split household showed
+    the same figure twice and invited the reading that they were two counts.
+  */
+  const splitHousehold =
+    citizen.totalRegisteredMembers != null &&
+    citizen.actualHouseholdMembers != null &&
+    citizen.totalRegisteredMembers > citizen.actualHouseholdMembers;
+
+  return [
+    {
+      icon: Heart,
+      label: en ? 'Marital Status' : 'الحالة الاجتماعية',
+      value: citizen.maritalStatus
+        ? (labels.maritalStatus?.[citizen.maritalStatus as never] ?? citizen.maritalStatus)
+        : undefined,
+    },
+    {
+      icon: Users,
+      label: en
+        ? 'Family Members (Living in House)'
+        : 'عدد أفراد الأسرة (المقيمين في المنزل)',
+      value: (citizen.actualHouseholdMembers ?? citizen.totalRegisteredMembers)?.toString(),
+    },
+    {
+      icon: Users,
+      label: en ? 'Married Children (Independent)' : 'الأبناء المتزوجون المستقلون',
+      value: citizen.marriedChildrenCount?.toString(),
+    },
+    ...(splitHousehold
+      ? [
+          {
+            icon: Users,
+            label: en ? 'Total Registered (Civil Record)' : 'إجمالي المسجلين في القيد',
+            value: citizen.totalRegisteredMembers!.toString(),
+          },
+        ]
+      : []),
+  ];
+}
+
+/**
+ * What a «غير مقيم في البلدة» record still holds from when it was a household.
+ *
+ * Nothing is erased by the conversion — the edit form stops asking and the
+ * server stops writing these columns, and the values filed before it stay
+ * (`citizenColumnsForEdit`). That is the right call for data and the wrong one
+ * for a page that renders them among the maintained fields, because a صفة
+ * الإقامة that has not been asked about since the record became an owner's
+ * record is not this person's صفة الإقامة — it is a fact about a household file
+ * that no longer exists, and «صفة الإقامة» offers no true answer for someone
+ * living in Abidjan anyway.
+ *
+ * So: kept, shown, closed by default, and labelled for what it is. Absent
+ * entirely on a record that was never a household, which is most of them.
+ */
+function RetainedHouseholdSection({
+  citizen,
+  locale,
+}: {
+  citizen: CitizenProfile;
+  locale: string;
+}) {
+  if (citizen.residence !== 'NON_RESIDENT_OWNER') return null;
+
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+
+  const identity = present([
+    {
+      icon: User,
+      label: en ? "Mother's Full Name" : 'اسم الأم وشهرتها',
+      value: citizen.motherName ?? undefined,
+    },
+    {
+      icon: User,
+      label: en ? 'Gender' : 'الجنس',
+      value: labels.gender[citizen.gender as never] ?? citizen.gender,
+    },
+    {
+      icon: Droplet,
+      label: en ? 'Blood Type' : 'فئة الدم',
+      value: citizen.bloodType
+        ? (labels.bloodType?.[citizen.bloodType as never] ?? citizen.bloodType)
+        : undefined,
+    },
+    {
+      icon: Flag,
+      label: en ? 'Nationality' : 'الجنسية',
+      value: citizen.nationality,
+    },
+    {
+      icon: Home,
+      label: en ? 'Residency Status' : 'صفة الإقامة',
+      value: labels.residentStatus[citizen.residentStatus as never] ?? citizen.residentStatus,
+    },
+    {
+      icon: IdCard,
+      label: en ? 'ID Document' : 'وثيقة الإثبات',
+      value: citizen.identityDocNumber,
+      ltr: true,
+    },
+    {
+      icon: FileDigit,
+      label: en ? 'Civil Record (Sijil) No.' : 'رقم السجل',
+      value: citizen.civilRecordNumber,
+      ltr: true,
+    },
+    {
+      icon: FileDigit,
+      label: en ? 'Residency Permit No.' : 'رقم الإقامة',
+      value: citizen.residencyNumber,
+      ltr: true,
+    },
+  ]);
+
+  const household = present(householdFacts(citizen, locale));
+  if (identity.length === 0 && household.length === 0) return null;
+
+  return (
+    <CollapsibleSection
+      id="retained"
+      title={en ? 'Kept from an Earlier Household File' : 'بيانات محفوظة من ملف أسرة سابق'}
+      icon={Archive}
+      defaultOpen={false}
+      summary={
+        <span className="text-muted-foreground">
+          {identity.length + household.length} {en ? 'fields' : 'حقلاً'}
+        </span>
+      }
+    >
+      <div className="space-y-4">
+        <p className="rounded-lg border bg-muted/20 p-3 text-sm leading-relaxed text-muted-foreground">
+          {en
+            ? 'This record was filed as a household before it became a non-resident record. These values are kept as history — the form no longer asks for them and nothing updates them, so do not rely on them as current.'
+            : 'سُجِّل هذا الملف كملف أسرة قبل أن يصبح ملف «غير مقيم في البلدة». هذه القيم محفوظة كتاريخ — لم تعد تُطلب في النموذج ولا يحدّثها شيء، فلا يُعتمد عليها كبيانات حالية.'}
+        </p>
+        <div className="grid gap-x-6 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
+          <FactSection stack title={en ? 'Identity' : 'الهوية'} facts={identity} />
+          <FactSection stack title={en ? 'Household' : 'الأسرة'} facts={household} />
+        </div>
+      </div>
+    </CollapsibleSection>
+  );
 }
 
 /**
@@ -99,24 +361,6 @@ interface FactItem {
  */
 function present(facts: FactItem[]): FactItem[] {
   return facts.filter((fact) => fact.value != null && fact.value !== '');
-}
-
-/**
- * `properties.1.propertyNumber` → «رقم العقار — العقار ٢».
- *
- * A stored flag names a path, which is the right thing to store and the wrong
- * thing to read: nobody reviewing a household's file thinks in dot-paths. The
- * card number is 1-based here because that is how the cards are labelled on
- * the form the officer filled in.
- */
-function flagFieldLabel(path: string, locale: string): string {
-  const labels = getLabels(locale);
-  const segments = path.split('.');
-  const field = labels.citizenField[segments.at(-1) ?? ''] ?? segments.at(-1) ?? path;
-
-  if (segments[0] !== 'properties') return field;
-  const card = Number(segments[1]) + 1;
-  return locale === 'en' ? `${field} — property ${card}` : `${field} — العقار ${card}`;
 }
 
 /**
@@ -222,6 +466,22 @@ export default function CitizenProfilePage({
   }
 
   const labels = getLabels(locale);
+  const en = locale === 'en';
+
+  /*
+    «غير مقيم في البلدة» — a short record, not a household file.
+
+    It decides what this page is allowed to present as current, and that is a
+    stronger statement than "which fields are filled". A record converted from a
+    household keeps every household column it was filed with — the edit form
+    stops asking and the server stops writing them (`citizenColumnsForEdit`),
+    and nothing is erased. So the values are still there to render, and
+    rendering them beside the maintained ones would put a blood type nobody has
+    confirmed since the conversion on the same footing as the phone number an
+    officer verified this week. They go into «بيانات محفوظة» below instead,
+    which says what they are.
+  */
+  const isNonResident = citizen.residence === 'NON_RESIDENT_OWNER';
 
   const propertyCount = citizen.registrations.reduce(
     (total, registration) => total + registration.properties.length,
@@ -293,22 +553,40 @@ export default function CitizenProfilePage({
                 <Building2 className="size-3.5" aria-hidden />
                 {propertyCount} {locale === 'en' ? 'properties' : 'عقار'}
               </span>
-              {citizen.residence === 'NON_RESIDENT_OWNER' ? (
+              {isNonResident ? (
                 <Badge variant="soft-info">
                   {labels.citizenResidence.NON_RESIDENT_OWNER}
                   {citizen.residencePlace ? ` — ${citizen.residencePlace}` : ''}
                 </Badge>
               ) : null}
-              {citizen.gender ? (
+              {/*
+                A deactivated record reads exactly like a live one otherwise —
+                same name, same properties, same outstanding balance — and it is
+                the one thing about it that changes what a clerk should do with
+                what follows. ملفّي has said this to the citizen since it was
+                built; the staff page that decides things never did.
+              */}
+              {!citizen.isActive ? (
+                <Badge variant="soft-warning">
+                  {en ? 'Deactivated record' : 'سجل معطّل'}
+                </Badge>
+              ) : null}
+              {/*
+                Household badges, and only on a household file. On a
+                non-resident record these are retained values the form no longer
+                asks for — they belong under «بيانات محفوظة», labelled, not in
+                the headline where they read as this person's current standing.
+              */}
+              {!isNonResident && citizen.gender ? (
                 <Badge variant="outline">{labels.gender[citizen.gender as never] ?? citizen.gender}</Badge>
               ) : null}
-              {citizen.bloodType ? (
+              {!isNonResident && citizen.bloodType ? (
                 <Badge variant="outline" className="border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-400">
                   <Droplet className="me-1 size-3" />
                   {labels.bloodType?.[citizen.bloodType as never] ?? citizen.bloodType}
                 </Badge>
               ) : null}
-              {citizen.residentStatus ? (
+              {!isNonResident && citizen.residentStatus ? (
                 <Badge variant="outline">
                   {labels.residentStatus[citizen.residentStatus as never] ?? citizen.residentStatus}
                 </Badge>
@@ -368,104 +646,151 @@ export default function CitizenProfilePage({
         icon={IdCard}
         className="[&_summary]:pb-4"
         summary={
-          <span className="text-muted-foreground">
-            {citizen.identityDocNumber ? (
-              <bdi dir="ltr">{citizen.identityDocNumber}</bdi>
-            ) : null}
+          /*
+            What a closed section still tells you — and it can no longer be the
+            document number, which a Lebanese household is no longer asked for
+            at all. The most identifying thing the record now holds takes its
+            place: اسم الأم on a household, مكان الإقامة on a non-resident.
+          */
+          <span className="inline-block max-w-[12rem] truncate align-bottom text-muted-foreground">
+            {isNonResident
+              ? citizen.residencePlace
+              : (citizen.motherName ?? citizen.identityDocNumber ?? null)}
           </span>
         }
       >
         <div className="-m-5 divide-y">
           <FactSection
-            title={locale === 'en' ? 'Identity' : 'الهوية'}
-            facts={[
-              {
-                icon: User,
-                label: locale === 'en' ? 'Name' : 'الاسم',
-                value: citizen.fullName,
-              },
-              {
-                icon: User,
-                label: locale === 'en' ? 'Gender' : 'الجنس',
-                value: labels.gender[citizen.gender as never] ?? citizen.gender,
-              },
-              {
-                icon: Droplet,
-                label: locale === 'en' ? 'Blood Type' : 'فئة الدم',
-                value: citizen.bloodType
-                  ? (labels.bloodType?.[citizen.bloodType as never] ?? citizen.bloodType)
-                  : undefined,
-              },
-              {
-                icon: Flag,
-                label: locale === 'en' ? 'Nationality' : 'الجنسية',
-                value: citizen.nationality,
-              },
-              {
-                icon: Home,
-                label: locale === 'en' ? 'Residency Status' : 'صفة الإقامة',
-                value: labels.residentStatus[citizen.residentStatus as never] ?? citizen.residentStatus,
-              },
-              {
-                icon: IdCard,
-                label: locale === 'en' ? 'ID Document Type' : 'نوع وثيقة الإثبات',
-                value: labels.identityDocType[citizen.identityDocType as never] ?? citizen.identityDocType,
-              },
-              {
-                icon: FileDigit,
-                label: locale === 'en' ? 'Document Number' : 'رقم الوثيقة',
-                value: citizen.identityDocNumber,
-                ltr: true,
-              },
-              citizen.isLebanese
-                ? {
-                    icon: FileDigit,
-                    label: locale === 'en' ? 'Civil Record (Sijil) No.' : 'رقم السجل',
-                    value: citizen.civilRecordNumber,
-                    ltr: true,
-                  }
-                : {
-                    icon: FileDigit,
-                    label: locale === 'en' ? 'Residency Permit No.' : 'رقم الإقامة',
-                    value: citizen.residencyNumber,
-                    ltr: true,
-                  },
-            ]}
+            title={en ? 'Identity' : 'الهوية'}
+            facts={
+              isNonResident
+                ? [
+                    {
+                      icon: User,
+                      label: en ? 'Name' : 'الاسم',
+                      value: citizen.fullName,
+                    },
+                    /*
+                      Where they live, in the identity block rather than under
+                      «التواصل» — on this kind of record it is not a way to
+                      reach them, it is the fact that defines the record. Law
+                      60/1988 Art. 14 wants the occupancy notice to name the
+                      occupant *and where they live*, and this is that.
+                    */
+                    {
+                      icon: Home,
+                      label: en ? 'Lives in' : 'مكان الإقامة',
+                      value: citizen.residencePlace ?? undefined,
+                    },
+                  ]
+                : [
+                    {
+                      icon: User,
+                      label: en ? 'Name' : 'الاسم',
+                      value: citizen.fullName,
+                    },
+                    /*
+                      Beside the name, because it is part of how this person is
+                      named — and because it is the only thing on this card that
+                      separates them from a namesake now that no identity
+                      document is asked.
+
+                      Rendered as «لم يُسأل» rather than dropped when null,
+                      which is what a household filed before migration 0044
+                      holds. A row that vanishes is indistinguishable from a
+                      field this page forgot; the visible «لم يُسأل» is the
+                      difference between "we did not ask" and "she has no name",
+                      and it is the prompt to ask next time the door opens.
+                    */
+                    {
+                      icon: User,
+                      label: en ? "Mother's Full Name" : 'اسم الأم وشهرتها',
+                      value: citizen.motherName ?? <NotAsked locale={locale} />,
+                    },
+                    {
+                      icon: User,
+                      label: en ? 'Gender' : 'الجنس',
+                      value: labels.gender[citizen.gender as never] ?? citizen.gender,
+                    },
+                    {
+                      icon: Droplet,
+                      label: en ? 'Blood Type' : 'فئة الدم',
+                      value: citizen.bloodType
+                        ? (labels.bloodType?.[citizen.bloodType as never] ?? citizen.bloodType)
+                        : undefined,
+                    },
+                    {
+                      icon: Flag,
+                      label: en ? 'Nationality' : 'الجنسية',
+                      value: citizen.nationality,
+                    },
+                    {
+                      icon: Home,
+                      label: en ? 'Residency Status' : 'صفة الإقامة',
+                      value:
+                        labels.residentStatus[citizen.residentStatus as never] ??
+                        citizen.residentStatus,
+                    },
+                    {
+                      icon: IdCard,
+                      label: en ? 'ID Document Type' : 'نوع وثيقة الإثبات',
+                      value:
+                        labels.identityDocType[citizen.identityDocType as never] ??
+                        citizen.identityDocType,
+                      hint: legacyDocumentHint(citizen, locale),
+                    },
+                    {
+                      icon: FileDigit,
+                      label: en ? 'Document Number' : 'رقم الوثيقة',
+                      value: citizen.identityDocNumber,
+                      ltr: true,
+                      hint: legacyDocumentHint(citizen, locale),
+                    },
+                    citizen.isLebanese
+                      ? {
+                          icon: FileDigit,
+                          label: en ? 'Civil Record (Sijil) No.' : 'رقم السجل',
+                          value: citizen.civilRecordNumber,
+                          ltr: true,
+                        }
+                      : {
+                          icon: FileDigit,
+                          label: en ? 'Residency Permit No.' : 'رقم الإقامة',
+                          value: citizen.residencyNumber,
+                          ltr: true,
+                        },
+                  ]
+            }
           />
 
           <div className="grid gap-x-6 gap-y-6 p-6 sm:grid-cols-2 lg:grid-cols-3">
             <FactSection
               stack
-              title={locale === 'en' ? 'Contact' : 'التواصل'}
+              title={en ? 'Contact' : 'التواصل'}
               facts={[
                 {
                   icon: Phone,
-                  label: locale === 'en' ? 'Phone' : 'الهاتف',
+                  label: en ? 'Phone' : 'الهاتف',
                   value: citizen.phone ? <PhoneLink phone={citizen.phone} /> : null,
                 },
                 {
                   icon: MessageCircle,
-                  label: locale === 'en' ? 'WhatsApp' : 'واتساب',
+                  label: en ? 'WhatsApp' : 'واتساب',
                   value: citizen.whatsapp ? (
                     <WhatsAppPhoneLink phone={citizen.whatsapp} message={waMessage} />
                   ) : null,
                 },
-                // An owner who lives elsewhere: where, and who holds the keys here.
-                ...(citizen.residence === 'NON_RESIDENT_OWNER'
+                // Who holds the keys here, for an owner who is not here.
+                ...(isNonResident
                   ? [
                       {
-                        icon: Home,
-                        label: locale === 'en' ? 'Lives in' : 'مكان الإقامة',
-                        value: citizen.residencePlace ?? undefined,
-                      },
-                      {
                         icon: User,
-                        label: locale === 'en' ? 'Local contact' : 'جهة الاتصال المحلية',
+                        label: en ? 'Local contact' : 'جهة الاتصال المحلية',
                         value: citizen.localContactName ?? undefined,
                       },
                       {
                         icon: Phone,
-                        label: locale === 'en' ? 'Local contact phone' : 'هاتف جهة الاتصال',
+                        label: en ? 'Local contact phone' : 'هاتف جهة الاتصال',
                         value: citizen.localContactPhone ? (
                           <PhoneLink phone={citizen.localContactPhone} />
                         ) : null,
@@ -475,67 +800,47 @@ export default function CitizenProfilePage({
               ]}
             />
 
-            <FactSection
-              stack
-              title={locale === 'en' ? 'Household' : 'الأسرة'}
-              facts={[
-                {
-                  icon: Heart,
-                  label: locale === 'en' ? 'Marital Status' : 'الحالة الاجتماعية',
-                  value: citizen.maritalStatus
-                    ? (labels.maritalStatus?.[citizen.maritalStatus as never] ?? citizen.maritalStatus)
-                    : undefined,
-                },
-                {
-                  icon: Users,
-                  label:
-                    locale === 'en'
-                      ? 'Family Members (Living in House)'
-                      : 'عدد أفراد الأسرة (المقيمين في المنزل)',
-                  value: (citizen.actualHouseholdMembers ?? citizen.totalRegisteredMembers)?.toString(),
-                },
-                {
-                  icon: Users,
-                  label:
-                    locale === 'en' ? 'Married Children Count' : 'عدد الأبناء المتزوجين',
-                  value: citizen.marriedChildrenCount?.toString(),
-                },
-                ...(citizen.totalRegisteredMembers != null &&
-                citizen.actualHouseholdMembers != null &&
-                citizen.totalRegisteredMembers > citizen.actualHouseholdMembers
-                  ? [
-                      {
-                        icon: Users,
-                        label:
-                          locale === 'en'
-                            ? 'Total Registered (Civil Record)'
-                            : 'إجمالي المسجلين في القيد',
-                        value: citizen.totalRegisteredMembers.toString(),
-                      },
-                      {
-                        icon: Users,
-                        label:
-                          locale === 'en' ? 'Married Children (Independent)' : 'الأبناء المتزوجون المستقلون',
-                        value: citizen.marriedChildrenCount?.toString(),
-                      },
-                    ]
-                  : []),
-              ]}
-            />
+            {/*
+              «الأسرة» belongs to a household file. A non-resident record is
+              asked for none of it (`nonResidentOwnerPersonalSchema`), so
+              whatever a converted record still holds is shown below under
+              «بيانات محفوظة», where it is labelled as kept rather than current.
+            */}
+            {isNonResident ? null : (
+              <FactSection
+                stack
+                title={en ? 'Household' : 'الأسرة'}
+                facts={householdFacts(citizen, locale)}
+              />
+            )}
 
             <FactSection
               stack
-              title={locale === 'en' ? 'Registration Information' : 'بيانات التسجيل'}
+              title={en ? 'Registration Information' : 'بيانات التسجيل'}
               facts={[
                 {
                   icon: Hash,
-                  label: locale === 'en' ? 'Reference Number' : 'الرقم المرجعي',
+                  label: en ? 'Reference Number' : 'الرقم المرجعي',
                   value: citizen.referenceNumber,
                   ltr: true,
                 },
+                /*
+                  نوع الملف, stated rather than left to be inferred from the
+                  badge beside the name. It decides which fields this record is
+                  ever asked for, so a reviewer wondering why there is no blood
+                  type should find the answer written down, not have to know it.
+                */
+                {
+                  icon: Signpost,
+                  label: en ? 'Record Type' : 'نوع الملف',
+                  value:
+                    labels.citizenResidence[
+                      (citizen.residence ?? 'RESIDENT') as keyof typeof labels.citizenResidence
+                    ],
+                },
                 {
                   icon: Calendar,
-                  label: locale === 'en' ? 'First Registered' : 'تاريخ أول تسجيل',
+                  label: en ? 'First Registered' : 'تاريخ أول تسجيل',
                   value: formatDate(citizen.registeredAt),
                 },
               ]}
@@ -543,6 +848,8 @@ export default function CitizenProfilePage({
           </div>
         </div>
       </CollapsibleSection>
+
+      <RetainedHouseholdSection citizen={citizen} locale={locale} />
 
       <FeesPanel
         citizen={citizen}
@@ -854,6 +1161,7 @@ function FeesPanel({
               {payments.map((payment) => {
                 const settled = payment.paymentStatus === 'PAID';
                 const partly = !settled && payment.paidAmount > 0;
+                const breakdown = describeAssessment(payment.assessment, locale);
                 return (
                   <li key={payment.id} className="space-y-2 p-4">
                     <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
@@ -892,6 +1200,23 @@ function FeesPanel({
                             </span>
                           ) : null}
                         </p>
+                        {/*
+                          «ليش عليّ هالمبلغ؟» — answered on the page where it is
+                          asked.
+
+                          The breakdown has been stored on the payment since
+                          per-unit billing existed and the fees ledger has shown
+                          it; this page, the one a collector opens with the
+                          citizen standing in front of them, showed the total
+                          alone. «6 محل تجاري × 100,000» is a number they can
+                          check against the property cards below it — which is
+                          exactly where a wrong one gets corrected.
+                        */}
+                        {breakdown ? (
+                          <p className="text-xs text-muted-foreground">
+                            <bdi>{breakdown}</bdi>
+                          </p>
+                        ) : null}
                         {payment.reviewNote ? (
                           <p className="text-xs text-muted-foreground">
                             {locale === 'en' ? 'Staff note: ' : 'ملاحظة الموظف: '}
@@ -1061,6 +1386,21 @@ function PropertyCard({
       value: property.buildingCode,
       ltr: true,
     },
+    /*
+      What is painted on the wall, beside what the register calls it.
+
+      The two are not interchangeable (D14), and a notice prints both precisely
+      because they disagree often enough to matter: a collector standing in the
+      street trusts the paint. Showing only `buildingCode` sent whoever was
+      about to knock out with the half of the pair that is not written on the
+      building.
+    */
+    {
+      icon: Signpost,
+      label: locale === 'en' ? 'Posted Number' : 'الرقم المدهون',
+      value: property.buildingPostedNumber,
+      ltr: true,
+    },
     {
       icon: Trees,
       label: locale === 'en' ? 'Land Type' : 'نوع الأرض',
@@ -1082,10 +1422,22 @@ function PropertyCard({
       label: locale === 'en' ? 'Area' : 'المساحة',
       value: property.unitArea != null ? `${property.unitArea} ${locale === 'en' ? 'm²' : 'م²'}` : null,
     },
+    /*
+      أسهم — a share of *ownership*, so only an owner's card has any.
+
+      Gated on the occupancy rather than on the value alone because the value is
+      what a legacy row can be wrong about: `branchFieldsOnly` now strips shares
+      from a tenant's or free occupant's card, but rows filed before it did are
+      still stored with a number on them, and rendering «١٢٠٠/٢٤٠٠» under a
+      مستأجر says the register believes they own half the plot.
+    */
     {
       icon: Ruler,
       label: locale === 'en' ? 'Shares' : 'الأسهم',
-      value: property.shares != null ? `${property.shares}/2400` : null,
+      value:
+        property.occupancyType === 'OWNER' && property.shares != null
+          ? `${property.shares}/2400`
+          : null,
     },
     {
       icon: Tent,
@@ -1105,6 +1457,7 @@ function PropertyCard({
       value: property.unitStatus
         ? (labels.unitStatus[property.unitStatus as never] ?? property.unitStatus)
         : null,
+      hint: ownerBilledHint(property.unitStatus, locale),
     },
   ]);
 
@@ -1112,7 +1465,36 @@ function PropertyCard({
     {
       icon: User,
       label: locale === 'en' ? 'Landlord Name' : 'اسم المالك',
-      value: property.landlordName,
+      /*
+        A confirmed owner is a *person in the register*, not a string.
+
+        `landlordCitizenId` is set only by «نعم، هذا هو المالك» — a decision
+        somebody made, on the landlord-links queue, and then had no way to see
+        again: this card printed the typed name either way. Linking it means the
+        answer to «من هو المالك؟» is one click rather than a second search on a
+        name that may be spelled differently on the other record.
+      */
+      value:
+        /*
+          Both halves required, not just the id. A confirmed link survives the
+          name being flagged «غير مؤكَّد» afterwards, which blanks the name —
+          and a link with no text inside it is an invisible target that `present`
+          would keep, because a React element is never null.
+        */
+        property.landlordCitizenId && property.landlordName ? (
+          <Link
+            href={`${base}/citizens/${property.landlordCitizenId}`}
+            className="font-medium text-primary underline-offset-4 hover:underline"
+          >
+            {property.landlordName}
+          </Link>
+        ) : (
+          property.landlordName
+        ),
+      hint:
+        property.landlordCitizenId && property.landlordName
+          ? (locale === 'en' ? 'Confirmed as a registered citizen' : 'مالك مسجَّل — تم تأكيد الرابط')
+          : undefined,
     },
     {
       icon: Phone,
@@ -1158,6 +1540,20 @@ function PropertyCard({
               <Badge variant={isTenant ? 'warning' : 'outline'}>
                 {labels.occupancyType[property.occupancyType as never] ?? property.occupancyType}
               </Badge>
+              {/*
+                «متضررة من الحرب وغير مسكونة» — beside the card's own badges,
+                because it is a fact about the structure that changes how
+                everything on the card reads. The flats are recorded exactly as
+                any building's are, deliberately: a damaged block's unit count
+                is what a reconstruction programme is costed on. So nothing else
+                here distinguishes this card from one in a building full of
+                people, and an invoice raised against it would look ordinary.
+              */}
+              {property.buildingLifecycleStatus === 'WAR_DAMAGED_UNINHABITED' ? (
+                <Badge variant="soft-destructive">
+                  {labels.buildingLifecycle.WAR_DAMAGED_UNINHABITED}
+                </Badge>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1199,44 +1595,177 @@ function PropertyCard({
           </SubHeading>
           <ul className="divide-y rounded-lg border bg-background">
             {property.units.map((unit) => (
-              <li key={unit.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5 text-sm">
-                <Badge variant="secondary" className="shrink-0">
-                  {labels.unitType[unit.unitType as never] ?? unit.unitType}
-                </Badge>
-                <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                  <Layers className="size-3.5 shrink-0" aria-hidden />
-                  {locale === 'en' ? `Floor ${unit.floor}` : `الطابق ${unit.floor}`}
-                </span>
-                <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                  <Ruler className="size-3.5 shrink-0" aria-hidden />
-                  {unit.unitArea} {locale === 'en' ? 'm²' : 'م²'}
-                </span>
-                {unit.side ? (
-                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                    <MapPin className="size-3.5 shrink-0" aria-hidden />
-                    {unit.side}
-                  </span>
-                ) : null}
-                {unit.sharedRights.length > 0 ? (
-                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                    <Key className="size-3.5 shrink-0" aria-hidden />
-                    {unit.sharedRights.join(', ')}
-                  </span>
-                ) : null}
-                {unit.unitStatus ? (
-                  <Badge
-                    variant={isUnoccupied(unit.unitStatus) ? 'warning' : 'outline'}
-                    className="shrink-0"
-                  >
-                    {labels.unitStatus[unit.unitStatus as never] ?? unit.unitStatus}
-                  </Badge>
-                ) : null}
-              </li>
+              <UnitRow key={unit.id} unit={unit} locale={locale} />
             ))}
           </ul>
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * «الوحدة» on a citizen's card — what they filed, and what the census says back.
+ *
+ * Two sources meet on this row and they are not the same claim. The card is the
+ * owner's own description of the flat; the linked `Unit` is سجل المباني's, and
+ * billing reads the census first (`unitStatus ?? ownerDeclaredStatus`). A row
+ * that showed only the card's version was showing the one that loses.
+ *
+ * Every field here is nullable and every one of them means «لم يُسأل» when it
+ * is null — a per-unit «غير مؤكَّد» flag blanks the field it excuses (migration
+ * 0031), so a flat an officer could only half describe arrives with no type, no
+ * floor and no area. This row rendered those unconditionally, which produced
+ * «الطابق » followed by nothing and a bare «م²».
+ */
+function UnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string }) {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+
+  /*
+    Shown only when the two disagree. Where the census simply repeats the card,
+    a second badge saying the same word twice is noise on a row that already
+    carries five things.
+  */
+  const censusDiffers =
+    unit.censusUnitStatus != null && unit.censusUnitStatus !== unit.unitStatus;
+
+  const seasonalMonths = unit.presenceMonths?.length
+    ? formatMonthList(unit.presenceMonths, locale)
+    : null;
+
+  return (
+    <li className="space-y-1.5 px-3 py-2.5 text-sm">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        {unit.unitType ? (
+          <Badge variant="secondary" className="shrink-0">
+            {labels.unitType[unit.unitType as never] ?? unit.unitType}
+          </Badge>
+        ) : (
+          <Badge variant="soft-warning" className="shrink-0">
+            {en ? 'Unit type unverified' : 'نوع الوحدة غير مؤكَّد'}
+          </Badge>
+        )}
+
+        {/* The census's own name for the flat — what is written on its door. */}
+        {unit.unitCode ? (
+          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+            <Hash className="size-3.5 shrink-0" aria-hidden />
+            <bdi dir="ltr" className="font-mono text-xs">
+              {unit.unitPostedNumber ?? unit.unitCode}
+            </bdi>
+          </span>
+        ) : null}
+
+        {unit.floor ? (
+          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+            <Layers className="size-3.5 shrink-0" aria-hidden />
+            {en ? `Floor ${unit.floor}` : `الطابق ${unit.floor}`}
+          </span>
+        ) : null}
+
+        {unit.unitArea != null ? (
+          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+            <Ruler className="size-3.5 shrink-0" aria-hidden />
+            {unit.unitArea} {en ? 'm²' : 'م²'}
+          </span>
+        ) : null}
+
+        {unit.side ? (
+          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+            <MapPin className="size-3.5 shrink-0" aria-hidden />
+            {unit.side}
+          </span>
+        ) : null}
+
+        {unit.sharedRights.length > 0 ? (
+          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+            <Key className="size-3.5 shrink-0" aria-hidden />
+            {unit.sharedRights.join(', ')}
+          </span>
+        ) : null}
+
+        {unit.unitStatus ? (
+          <Badge variant={unitStatusTone(unit.unitStatus)} className="shrink-0">
+            {labels.unitStatus[unit.unitStatus as never] ?? unit.unitStatus}
+          </Badge>
+        ) : null}
+
+        {censusDiffers ? (
+          <Badge variant={unitStatusTone(unit.censusUnitStatus)} className="shrink-0">
+            {en ? 'Census: ' : 'سجل المباني: '}
+            {labels.unitStatus[unit.censusUnitStatus as never] ?? unit.censusUnitStatus}
+          </Badge>
+        ) : null}
+      </div>
+
+      {/*
+        «تأكيد الشغور» — the reason nobody is being billed for this flat.
+
+        A finding with a consequence, so it is stated with what it rests on and
+        when it was made rather than reduced to the word «شاغرة» in a badge: the
+        owner disputing a bill and the resident disputing its absence are both
+        entitled to read which of the four bases an officer actually had (Shura
+        518/2007 — failing to file a declaration does not make an occupied flat
+        vacant, and a neighbour's word is not the same evidence as a تصريح).
+      */}
+      {unit.vacancy ? (
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md bg-warning/5 px-2 py-1 text-xs text-warning">
+          <DoorClosed className="size-3.5 shrink-0" aria-hidden />
+          <span className="font-medium">
+            {en ? 'Confirmed vacant' : 'شغور مؤكَّد'} — {formatDate(unit.vacancy.observedAt)}
+          </span>
+          {unit.vacancy.basis ? (
+            <span className="text-muted-foreground">
+              {labels.vacancyBasis[unit.vacancy.basis as never] ?? unit.vacancy.basis}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">
+              {en ? 'Basis not recorded (backfilled)' : 'دون مستند مسجَّل (سجل مُرحَّل)'}
+            </span>
+          )}
+        </p>
+      ) : null}
+
+      {/*
+        «مسكن موسمي» — why an owner who is away all year is billed all year.
+
+        The status label says the flat is seasonal; these three say what the
+        council's decision to shorten the fee would rest on. Recorded for
+        exactly that and read by nothing else, so this page is where they are
+        readable at all.
+      */}
+      {unit.unitStatus === 'SEASONAL' || unit.censusUnitStatus === 'SEASONAL' ? (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2 text-xs text-muted-foreground">
+          <Sun className="size-3.5 shrink-0" aria-hidden />
+          {seasonalMonths ? (
+            <span>
+              {en ? 'Present: ' : 'أشهر الحضور: '}
+              {seasonalMonths}
+            </span>
+          ) : null}
+          {unit.ownerLastStayAt ? (
+            <span>
+              {en ? 'Last stay ' : 'آخر إقامة '}
+              {formatDate(unit.ownerLastStayAt)}
+            </span>
+          ) : null}
+          {unit.vacancyDeclaredAt ? (
+            <span>
+              {en ? 'Vacancy declared ' : 'تصريح بالشغور '}
+              {formatDate(unit.vacancyDeclaredAt)}
+            </span>
+          ) : null}
+          {!seasonalMonths && !unit.ownerLastStayAt && !unit.vacancyDeclaredAt ? (
+            <span>
+              {en
+                ? 'No presence months, last stay or vacancy declaration recorded'
+                : 'لم تُسجَّل أشهر الحضور ولا آخر إقامة ولا تصريح بالشغور'}
+            </span>
+          ) : null}
+        </p>
+      ) : null}
+    </li>
   );
 }
 
@@ -1315,7 +1844,7 @@ function WhatsAppPhoneLink({ phone, message }: { phone: string; message?: string
 
 /** One labelled value: caption above, value below, so long Arabic labels and
  *  Latin numbers never have to share a baseline. */
-function Fact({ icon: Icon, label, value, ltr }: FactItem) {
+function Fact({ icon: Icon, label, value, ltr, hint }: FactItem) {
   return (
     <div className="min-w-0">
       <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1333,6 +1862,16 @@ function Fact({ icon: Icon, label, value, ltr }: FactItem) {
           alignment and stays under its own label.
         */}
         {ltr ? <bdi dir="ltr">{value}</bdi> : value}
+        {/*
+          Inside the `<dd>`, not after it: the caveat is part of the value, and
+          a `<dl>` that puts loose text between a definition and the next term
+          is both invalid and read out as an orphan by a screen reader.
+        */}
+        {hint ? (
+          <span className="mt-0.5 block text-[11px] font-normal leading-snug text-muted-foreground">
+            {hint}
+          </span>
+        ) : null}
       </dd>
     </div>
   );

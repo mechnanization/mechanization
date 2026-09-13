@@ -935,8 +935,10 @@ export function BuildingUnitMatrixView({
                   token={token}
                   busy={busy}
                   locale={locale}
-                  newFileHref={(residence) =>
-                    `${base}/citizens/new?buildingId=${encodeURIComponent(building.id)}&unitId=${encodeURIComponent(selectedUnit.id)}&residence=${residence}`
+                  newFileHref={(residence, name) =>
+                    `${base}/citizens/new?buildingId=${encodeURIComponent(building.id)}&unitId=${encodeURIComponent(selectedUnit.id)}&residence=${residence}${
+                      name ? `&name=${encodeURIComponent(name)}` : ''
+                    }`
                   }
                   vacancy={activeVacancy(selectedUnit)}
                   onSubmit={(citizen, occRole, shares, unitStatus, endsVacancy) =>

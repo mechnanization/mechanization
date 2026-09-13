@@ -825,8 +825,10 @@ export default function CasesPage({
           // A visit or an occupancy logged from here can auto-resolve the very
           // case the drawer was opened from, so the list is re-read on close.
           onChanged={() => void load()}
-          registerHref={(buildingId, unitId, residence) =>
-            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}`
+          registerHref={(buildingId, unitId, residence, name) =>
+            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}${
+              name ? `&name=${encodeURIComponent(name)}` : ''
+            }`
           }
           citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
           locale={locale}
