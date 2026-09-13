@@ -403,6 +403,11 @@ enum UnitType {
   OFFICE
   SHOP
   WAREHOUSE
+  /// كراج — the lock-up attached to a dwelling, not a commercial garage.
+  /// Its own type because a مستودع is business premises rated as such, and
+  /// filing a household's garage as one puts it on the assessment roll as
+  /// commercial floor space. Never a dwelling.
+  GARAGE
 }
 
 enum LandType {
@@ -894,6 +899,12 @@ model Building {
   @@index([parcelNumber])
   @@index([latitude, longitude])
   @@index([lifecycleStatus])
+  /// What «سجل المباني» is ordered by. The log lists newest first so an
+  /// officer sees the building they just filed at the top rather than
+  /// somewhere in the middle of a list sorted by parcel — and a paged
+  /// `ORDER BY … DESC` with no index behind it sorts the whole table on every
+  /// page turn.
+  @@index([createdAt])
   @@map("buildings")
 }
 

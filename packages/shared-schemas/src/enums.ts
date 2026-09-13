@@ -287,6 +287,19 @@ export const UNIT_TYPE = [
   'OFFICE',
   'SHOP',
   'WAREHOUSE',
+  /**
+   * كراج — the accessory beside a house, not a commercial garage.
+   *
+   * Its own type rather than a `WAREHOUSE` with a note, because the two are
+   * rated differently and a rate is not a note: a مستودع is a business
+   * premises, a كراج is the lock-up attached to a dwelling. Filing one as the
+   * other puts a household's garage on the assessment roll as commercial
+   * floor space.
+   *
+   * Never a dwelling — absent from `DWELLING_UNIT_TYPE` below, so a
+   * non-resident may hold one without it making them a household in the town.
+   */
+  'GARAGE',
 ] as const;
 export const unitTypeSchema = arabicEnum(UNIT_TYPE, 'نوع الوحدة مطلوب');
 export type UnitType = z.infer<typeof unitTypeSchema>;

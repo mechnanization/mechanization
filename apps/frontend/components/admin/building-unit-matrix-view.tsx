@@ -12,6 +12,7 @@ import {
   DoorClosed,
   Footprints,
   Loader2,
+  Grid2X2,
   Pencil,
   Plus,
   ShieldAlert,
@@ -447,13 +448,36 @@ export function BuildingUnitMatrixView({
                   <ShieldAlert className="size-4" aria-hidden />
                   {en ? 'Assess the building' : 'كشف ضرر على المبنى'}
                 </Button>
+                {/*
+                  Two buttons where there was one, because they were two jobs
+                  behind a single label. «تعديل معلومات المبنى» corrects the
+                  shell and never opens the matrix; «تعديل مصفوفة الوحدات»
+                  lands directly on the grid, which is what someone reading
+                  this screen usually came to change.
+                */}
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => router.push(`${base}/buildings/${encodeURIComponent(building.id)}/edit`)}
+                  onClick={() =>
+                    router.push(
+                      `${base}/buildings/${encodeURIComponent(building.id)}/edit?step=units`,
+                    )
+                  }
+                >
+                  <Grid2X2 className="size-4" aria-hidden />
+                  {en ? 'Edit unit matrix' : 'تعديل مصفوفة الوحدات'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    router.push(
+                      `${base}/buildings/${encodeURIComponent(building.id)}/edit?scope=info`,
+                    )
+                  }
                 >
                   <Pencil className="size-4" aria-hidden />
-                  {en ? 'Edit building' : 'تعديل المبنى'}
+                  {en ? 'Edit building details' : 'تعديل معلومات المبنى'}
                 </Button>
               </div>
             ) : null}

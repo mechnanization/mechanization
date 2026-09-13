@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, Check, DoorClosed, Link2, Loader2, Lock, Plus, TriangleAlert, Unlink } from 'lucide-react';
+import { Building2, Check, Link2, Loader2, Lock, Plus, TriangleAlert, Unlink } from 'lucide-react';
 import {
   getLabels,
   STRUCTURE_TYPE,
@@ -901,98 +901,22 @@ export function BuildingUnitPicker({
 
   /*
     When the card was launched from a specific unit in the matrix, the building
-    and unit are locked and autofilled. Since this data cannot be changed, the
-    user does not need to see the entire building structure or all other apartments;
-    we hide the building choice and the whole matrix, displaying only the selected
-    apartment.
+    and unit are locked and autofilled — so this control has nothing to offer.
+
+    It used to render a compact read-only summary of what had been autofilled:
+    «المنشأة في سجل المباني», the building code, the selected unit. That was a
+    half-step toward the right answer. Every value in it is locked, none of it
+    can be acted on, and the officer arrived here by tapping that exact flat on
+    the matrix one screen ago — so it restated their own last action, directly
+    above «نوع الإشغال», which is the question they opened the form to answer.
+
+    Now it renders nothing at all. The link is still made (the effect above
+    writes `buildingId` onto the card) and still saved; it simply stops taking
+    up the top of the screen to say so. The building strip in `PropertyCard` is
+    withheld on the same condition, for the same reason.
   */
-  if (locked?.unitId) {
-    const autofilledUnit = detail?.units.find((u) => u.id === locked.unitId);
-    const draftUnit = draft.units?.find((u) => u.unitId === locked.unitId);
-    const code = autofilledUnit?.unitCode;
-    const buildingCode = detail?.code ?? chosen?.code ?? '';
-    const buildingName = detail?.name ?? chosen?.name;
-    const structureType = (detail ?? chosen)?.structureType;
-    const badge = autofilledUnit ? cellBadge(autofilledUnit, labels, en) : null;
+  if (locked?.unitId) return null;
 
-    return (
-      <div className="space-y-2 rounded-lg border border-dashed bg-muted/10 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            <Building2 className="size-3.5" aria-hidden />
-            <span>{en ? 'Censused structure' : 'المنشأة في سجل المباني'}</span>
-            <Badge variant="soft-muted" className="gap-1 text-[10px]">
-              <Lock className="size-2.5" aria-hidden />
-              {en ? 'From the matrix' : 'من مصفوفة الوحدات'}
-            </Badge>
-          </p>
-
-          <div className="flex items-center gap-1.5 text-xs">
-            <span dir="ltr" className="font-mono font-bold">
-              {buildingCode}
-            </span>
-            {buildingName ? (
-              <span className="text-muted-foreground">({buildingName})</span>
-            ) : null}
-            {structureType ? (
-              <Badge variant="soft-default" className="text-[10px]">
-                {labels.structureType[structureType]}
-              </Badge>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2">
-          <div className="flex items-center gap-2.5">
-            <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-              <DoorClosed className="size-3.5" aria-hidden />
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-medium text-muted-foreground">
-                  {en ? 'Selected unit:' : 'الوحدة المحدَّدة:'}
-                </span>
-                <span dir="ltr" className="font-mono text-sm font-bold text-primary">
-                  {code || (draftUnit ? '…' : '')}
-                </span>
-                {autofilledUnit?.postedNumber && autofilledUnit.postedNumber !== code ? (
-                  <span dir="ltr" className="text-xs text-muted-foreground">
-                    ({autofilledUnit.postedNumber})
-                  </span>
-                ) : null}
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                {[
-                  autofilledUnit
-                    ? labels.unitType[autofilledUnit.unitType]
-                    : draftUnit?.unitType
-                      ? labels.unitType[draftUnit.unitType]
-                      : null,
-                  autofilledUnit ? floorLabel(autofilledUnit.floor, en) : draftUnit?.floor,
-                  autofilledUnit?.side ?? draftUnit?.side,
-                  (autofilledUnit?.unitArea ?? draftUnit?.unitArea) != null
-                    ? en
-                      ? `${autofilledUnit?.unitArea ?? draftUnit?.unitArea} m²`
-                      : `${autofilledUnit?.unitArea ?? draftUnit?.unitArea} م²`
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </p>
-            </div>
-          </div>
-
-          {badge ? (
-            <Badge variant={badge.variant} className="text-[10px]">
-              {badge.text}
-            </Badge>
-          ) : detailLoading ? (
-            <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden />
-          ) : null}
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-2 rounded-lg border border-dashed p-3">

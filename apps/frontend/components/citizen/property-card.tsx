@@ -425,7 +425,22 @@ export function PropertyCard({
             hint that names where each is corrected, for the officer who wants
             to check a value against the flat in front of them.
           */}
-          {parcelFromCensus && linkedBuilding ? (
+          {/*
+            Withheld on «تسجيل أسرة في هذه الوحدة».
+
+            Arriving from a unit in the matrix, the officer has just come from
+            the screen this strip summarises: they tapped a specific flat in a
+            specific building and asked to file the household in it. Repeating
+            the building's code and structure back to them — and offering «عرض
+            التفاصيل» onto the record they were looking at a tap ago — is a
+            paragraph of confirmation above the one question they opened the
+            form to answer.
+
+            It stays for every other route in, where the link is something the
+            card asserts rather than something the officer just chose, and the
+            strip is the only place that says what it was linked to.
+          */}
+          {parcelFromCensus && linkedBuilding && !lockedCensusTarget?.unitId ? (
             <CensusFacts
               building={linkedBuilding}
               draft={draft}

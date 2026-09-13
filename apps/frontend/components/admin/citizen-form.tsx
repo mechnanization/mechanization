@@ -45,6 +45,7 @@ import { UnverifiedFieldsDialog } from './unverified-fields-dialog';
 import { QuickSaveDialog } from './quick-save-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
+import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
 import { useSectionNav } from '@/lib/use-section-nav';
 
@@ -1124,6 +1125,11 @@ export function CitizenForm({
 
   const [mobileStep, setMobileStep] = useState<SectionId>('personal');
 
+  /** The form's outermost element — what a mobile step change scrolls back
+   *  to. `window.scrollTo` was used here and did nothing: inside the admin
+   *  shell the scroller is an inner `<main>`, not the document. */
+  const formRootRef = useRef<HTMLDivElement | null>(null);
+
   const stepIndex = useMemo(
     () => sections.findIndex((s) => s.id === mobileStep),
     [sections, mobileStep],
@@ -1133,7 +1139,7 @@ export function CitizenForm({
     const nextIdx = stepIndex + 1;
     if (nextIdx < sections.length) {
       setMobileStep(sections[nextIdx].id as SectionId);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      scrollElementToTop(formRootRef.current);
     }
   }, [stepIndex, sections]);
 
@@ -1141,7 +1147,7 @@ export function CitizenForm({
     const prevIdx = stepIndex - 1;
     if (prevIdx >= 0) {
       setMobileStep(sections[prevIdx].id as SectionId);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      scrollElementToTop(formRootRef.current);
     }
   }, [stepIndex, sections]);
 
@@ -1198,7 +1204,7 @@ export function CitizenForm({
 
   return (
     <FieldFlagProvider value={flagging}>
-    <div className="space-y-4 pb-20 sm:space-y-5 sm:pb-0">
+    <div ref={formRootRef} className="space-y-4 pb-20 sm:space-y-5 sm:pb-0">
       {/* ── Desktop Section Nav (hidden on mobile) ── */}
       <nav
         aria-label={locale === 'en' ? 'Form sections' : 'أقسام النموذج'}

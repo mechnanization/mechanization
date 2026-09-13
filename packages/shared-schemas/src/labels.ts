@@ -66,6 +66,7 @@ export const ar = {
     OFFICE: 'مكاتب',
     SHOP: 'محلات تجارية',
     WAREHOUSE: 'مستودعات',
+    GARAGE: 'كراجات',
   } satisfies Record<FeeTargetCategory, string>,
 
   /** What the notice's amount is multiplied by. See `FEE_BASIS`. */
@@ -185,6 +186,7 @@ export const ar = {
     OFFICE: 'مكتب',
     SHOP: 'محل تجاري',
     WAREHOUSE: 'مستودع',
+    GARAGE: 'كراج',
   } satisfies Record<UnitType, string>,
 
   landType: {
@@ -409,6 +411,7 @@ export const en = {
     OFFICE: 'Offices',
     SHOP: 'Commercial Shops',
     WAREHOUSE: 'Warehouses',
+    GARAGE: 'Garages',
   } satisfies Record<FeeTargetCategory, string>,
 
   feeBasis: {
@@ -507,6 +510,7 @@ export const en = {
     OFFICE: 'Office',
     SHOP: 'Commercial Shop',
     WAREHOUSE: 'Warehouse',
+    GARAGE: 'Garage',
   } satisfies Record<UnitType, string>,
 
   landType: {
