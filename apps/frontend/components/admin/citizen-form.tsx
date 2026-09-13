@@ -364,8 +364,16 @@ function propertyAskableFields(values: CitizenFormValues): AskableField[] {
       حالة الوحدة is absent here for the same reason and more strongly: it is
       optional on every card that shows it, so it can never hold a record up.
     */
-    const nonOwnerFields =
-      property.occupancyType === 'TENANT'
+    /*
+      Neither is asked of a card whose owner is a confirmed or agreed link: the
+      register established both, the fields are locked, and a «غير مؤكَّد» on
+      them would say the opposite of what the card shows. The server drops such
+      a flag anyway; not offering it keeps quick-save from raising one.
+    */
+    const linked = Boolean(property.landlordLink || property.landlordCitizenId);
+    const nonOwnerFields = linked
+      ? []
+      : property.occupancyType === 'TENANT'
         ? (['landlordName', 'landlordPhone'] as const)
         : property.occupancyType === 'FREE_OCCUPANT'
           ? (['landlordName'] as const)
@@ -429,7 +437,33 @@ export function toPayloadProperty(property: PropertyDraft): Record<string, unkno
     rather than left to `branchFieldsOnly`, which would discard it silently and
     give the next reader no reason to think it was deliberate.
   */
-  const { unitArea, shares, units, id, buildingId, pendingBuilding: _pending, ...rest } = property;
+  const {
+    unitArea,
+    shares,
+    units,
+    id,
+    buildingId,
+    pendingBuilding: _pending,
+    landlordLink,
+    landlordAgreedName,
+    ...rest
+  } = property;
+
+  /*
+    The owner's name, as the tenant gave it.
+
+    `landlordLink` and `landlordAgreedName` are what the locked field *shows*
+    and never travel: the server keeps a linked card's own name as it was, and
+    resolves the owner's registered name on every read. The registered name is
+    sent only where the tenant's own is empty — a card whose name was flagged
+    unknown before the owner was identified — because the schema requires one
+    of a مستأجر and the field cannot be typed into while locked.
+  */
+  const isNonOwner = property.occupancyType === 'TENANT' || property.occupancyType === 'FREE_OCCUPANT';
+  const landlordName =
+    isNonOwner && !rest.landlordName?.trim()
+      ? (landlordLink?.name ?? landlordAgreedName ?? rest.landlordName)
+      : rest.landlordName;
 
   return {
     // Present only when this card is editing a stored row; the create endpoint
@@ -440,6 +474,7 @@ export function toPayloadProperty(property: PropertyDraft): Record<string, unkno
     // as a value it has no rule for.
     ...(buildingId ? { buildingId } : {}),
     ...rest,
+    ...(landlordName !== undefined ? { landlordName } : {}),
     ...(unitArea !== undefined && unitArea !== '' ? { unitArea: Number(unitArea) } : {}),
     // أسهم are a share of ownership — never sent on a tenant's or free occupant's card.
     ...(shares !== undefined && shares !== '' && property.occupancyType === 'OWNER'

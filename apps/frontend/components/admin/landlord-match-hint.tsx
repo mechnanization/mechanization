@@ -1,62 +1,46 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Check, Loader2, UserCheck, X } from 'lucide-react';
-import { getLandlordCandidate, logApiError, type LandlordCandidate } from '@/lib/api-client';
+import { getLandlordCandidates, logApiError, type LandlordCandidate } from '@/lib/api-client';
+import { compareNames } from '@/lib/landlord-display';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 const LOOKUP_DEBOUNCE_MS = 500;
 
 /**
- * Asks, while the officer is still typing, whether the owner they are naming is
- * somebody the register already holds — and takes the answer.
+ * Asks, while the officer is still with the tenant, whether the owner being
+ * named is somebody the register already holds — and takes the answer.
  *
- * ## Why this asks rather than merely says
+ * ## Why it asks here, before the card exists
  *
- * It used to be a read-only line ending «يمكن ربطه كمالك بعد حفظ هذا السجل»,
- * on the reasoning that the card has not been saved yet, so there is no
- * `PropertyEntry` for a link to attach to — and that offering the link here
- * would mean the browser asserting one the server had to take on trust.
+ * This is the cheapest moment the question will ever have: the tenant can
+ * still say «لا، أبوه» or correct a digit. There is no `PropertyEntry` yet, so
+ * the answer is recorded on the card as `landlordCitizenId`, travels with the
+ * submission (and so survives the offline queue), and the server confirms it
+ * against the committed card through the same checks the queue uses. The
+ * browser supplies a person's answer and nothing else.
  *
- * The first half is true and the second was never true. `LandlordLinkService`
- * `confirm` re-derives the match from the committed card: it refuses any
- * citizen whose `phone` and `whatsapp` both differ from the card's
- * `landlordPhone`, refuses a card naming its own filer, and refuses an OWNER
- * card. Nothing a browser sends can invent a link. What only a browser has is
- * the officer standing at the door with the tenant in front of them, which is
- * the one moment this question is cheap to answer.
+ * ## A shared household line is shown, not hidden
  *
- * So the ordering problem is solved by ordering: the answer is recorded on the
- * card as `landlordCitizenId`, travels with the submission, and the server
- * makes the link against the row it has just written. That also survives the
- * offline queue, which a post-save confirmation from the tab would not — and
- * offline is how most of these records are filed.
+ * It used to say nothing where several citizens share the number, on the
+ * reasoning that picking would be guessing. Guessing is exactly what the
+ * officer at the door does *not* have to do — the tenant is right there — so
+ * every person on the number is listed, each marked with how their name
+ * compares with the one typed, and the officer chooses.
  *
- * ## What agreeing changes on the form
+ * ## Silent is still the common case
  *
- * `landlordName` is filled from the register and locked, the same way
- * `buildingName` locks to `Building.name` when a card is linked to a censused
- * structure: where the register already holds the answer, the field states it
- * rather than inviting a second spelling of it. «فتح للتعديل» unlocks and
- * withdraws the agreement together, because they are one decision — a name the
- * officer is free to retype is not a name the register vouched for.
- *
- * ## Silent is the common case, and silence is not «no»
- *
- * Nothing renders for a number that matches nobody. Most landlords genuinely
- * are unregistered — that is the whole gap this feature exists in — and a line
- * reading «غير مسجَّل» on nine cards out of ten is a line people stop seeing,
- * on the tenth too.
- *
- * The server also answers `null` where *several* citizens share the number, and
- * that silence carries a different meaning the UI deliberately does not try to
- * express. A shared household line is exactly where guessing is worst, and the
- * queue shows all the candidates to somebody who can choose between them.
+ * A number matching nobody renders nothing. Most landlords are not registered,
+ * and a «غير مسجَّل» line on nine cards out of ten is one people stop reading.
  */
 export function LandlordMatchHint({
   tenant,
   token,
   phone,
+  typedName,
   locale = 'ar',
   agreedCitizenId,
   onAgree,
@@ -65,165 +49,200 @@ export function LandlordMatchHint({
   tenant: string;
   token: string;
   phone: string;
+  /** What the officer typed as the owner's name, to compare against. */
+  typedName?: string;
   locale?: string;
   /** The card's standing answer, so the control re-opens showing it. */
   agreedCitizenId?: string;
   /** «نعم، هو المالك» — the officer took the register's answer for this number. */
   onAgree: (candidate: LandlordCandidate) => void;
-  /** «ليس هو» here, and «فتح للتعديل» on the locked name — one decision. */
+  /** «لا أحد منهم» here, and «تغيير» on the locked name — one decision. */
   onWithdraw: () => void;
 }) {
   const en = locale === 'en';
-  const [candidate, setCandidate] = useState<LandlordCandidate | null>(null);
+  const group = useId();
+  const [candidates, setCandidates] = useState<LandlordCandidate[]>([]);
   const [looking, setLooking] = useState(false);
   /**
-   * «ليس هو», held on the control and not on the card.
-   *
-   * Rejecting here settles nothing in the register — there is no claim yet to
-   * dismiss — so it is not sent anywhere and does not survive the form. All it
-   * does is stop this card re-asking a question the officer has answered, which
-   * is the whole of what «ليس هو» can honestly mean before a save.
+   * «لا أحد منهم», held on the control and not on the card. There is no claim
+   * yet to dismiss, so it is not sent anywhere; it only stops this card
+   * re-asking a question the officer has answered.
    */
   const [rejected, setRejected] = useState(false);
+  const [chosen, setChosen] = useState<string | null>(null);
 
   useEffect(() => {
     const trimmed = phone.trim();
 
-    /*
-      Not asked until there is plausibly a number to ask about.
-
-      The field is typed digit by digit, and every prefix of a real number is a
-      request. Eight digits is the shortest thing `internationalPhone` accepts,
-      so below that there is nothing the server could match even in principle.
-    */
+    // Eight digits is the shortest thing `internationalPhone` accepts, so
+    // below that there is nothing the server could match even in principle.
     if (trimmed.replace(/\D/g, '').length < 8) {
-      setCandidate(null);
+      setCandidates([]);
       setLooking(false);
       return;
     }
 
-    let cancelled = false;
+    const controller = new AbortController();
     setLooking(true);
 
     const timer = setTimeout(() => {
-      getLandlordCandidate(tenant, token, trimmed)
+      getLandlordCandidates(tenant, token, trimmed, controller.signal)
         .then((found) => {
-          if (!cancelled) setCandidate(found);
+          if (!controller.signal.aborted) setCandidates(found);
         })
         .catch((caught) => {
           /*
-            A lookup the officer cannot make must not obstruct the card.
-
-            This is an enrichment on a form that is mostly used in the field,
-            frequently offline, and the registration is completely valid without
-            it. Logged, and the control simply says nothing — the same thing it
-            says for a number that matches nobody. The claim is still written to
-            the card and still reaches the queue, so nothing is lost but the
-            chance to confirm it early.
+            A lookup the officer cannot make must not obstruct the card — this
+            form is mostly used in the field, frequently offline, and the
+            registration is valid without it. The claim still reaches the queue.
           */
+          if (controller.signal.aborted) return;
           logApiError(caught);
-          if (!cancelled) setCandidate(null);
+          setCandidates([]);
         })
         .finally(() => {
-          if (!cancelled) setLooking(false);
+          if (!controller.signal.aborted) setLooking(false);
         });
     }, LOOKUP_DEBOUNCE_MS);
 
     return () => {
-      cancelled = true;
+      controller.abort();
       clearTimeout(timer);
     };
   }, [tenant, token, phone]);
 
-  /*
-    A new number is a new question.
-
-    The agreement itself is dropped by the field that owns it — changing the
-    phone clears `landlordCitizenId` on the card, mirroring the server's own
-    `landlordLinkReset` — and this drops the local refusal beside it, so a
-    corrected digit does not stay silently answered «ليس هو».
-  */
+  // A new number is a new question.
   useEffect(() => {
     setRejected(false);
+    setChosen(null);
   }, [phone]);
 
   if (looking) {
     return (
-      <p className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+      <p className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
+        <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
         {en ? 'Checking the register…' : 'جارٍ البحث في السجل…'}
       </p>
     );
   }
 
-  if (!candidate) return null;
+  if (candidates.length === 0) return null;
 
-  const agreed = agreedCitizenId === candidate.id;
+  const agreed = candidates.find((candidate) => candidate.id === agreedCitizenId) ?? null;
+  // The locked name field beside this says who was agreed; nothing to repeat.
+  if (agreed) return null;
+  if (rejected) return null;
 
-  /*
-    Answered «ليس هو», and nothing more is said about it.
-
-    Not a standing «غير مطابق» banner: the officer has dealt with it, the claim
-    goes to the queue as it always did, and a line that keeps restating a
-    settled question is the kind people learn to scroll past.
-  */
-  if (rejected && !agreed) return null;
+  const single = candidates.length === 1;
+  const selectedId = single ? candidates[0]!.id : chosen;
+  const selected = candidates.find((candidate) => candidate.id === selectedId) ?? null;
 
   return (
-    <div
-      className={`mt-1.5 rounded-md border px-2.5 py-2 text-xs leading-relaxed ${
-        agreed ? 'border-success/40 bg-success/10' : 'border-success/30 bg-success/5'
-      }`}
-    >
-      <p className="flex items-start gap-2">
-        <UserCheck className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
-        <span>
-          <span className="font-medium">
-            {en ? 'This number belongs to a registered citizen: ' : 'هذا الرقم يعود لمواطن مسجَّل: '}
-            {candidate.name}
-          </span>
-          {candidate.referenceNumber ? (
-            <span className="text-muted-foreground" dir="ltr">
-              {' '}
-              ({candidate.referenceNumber})
-            </span>
-          ) : null}
-        </span>
+    <div className="mt-2 space-y-2.5 rounded-lg border border-primary/30 bg-primary/10 p-3 text-sm">
+      <p className="flex items-start gap-2 font-medium">
+        <UserCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+        {single
+          ? en
+            ? 'This number belongs to a registered citizen. Is this the owner?'
+            : 'هذا الرقم يعود لمواطن مسجَّل. هل هو المالك؟'
+          : en
+            ? `${candidates.length} registered citizens share this number. Which one is the owner?`
+            : `${candidates.length} مواطنين مسجَّلين على هذا الرقم. أيّهم المالك؟`}
       </p>
 
-      {agreed ? (
-        <p className="mt-1 ps-5.5 text-muted-foreground">
-          {en
-            ? 'Recorded as the owner. The link is made when this record is saved.'
-            : 'سيُسجَّل مالكاً لهذه البطاقة عند حفظ السجل.'}
-        </p>
-      ) : (
-        <>
-          <p className="mt-1 ps-5.5 text-muted-foreground">
-            {en
-              ? 'Is this the owner? Saying yes records the link with this registration.'
-              : 'هل هو المالك؟ الموافقة تربطه بالبطاقة عند الحفظ.'}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2 ps-5.5">
-            <Button type="button" size="sm" onClick={() => onAgree(candidate)}>
-              <Check className="size-4" aria-hidden />
-              {en ? 'Yes, this is the owner' : 'نعم، هو المالك'}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setRejected(true);
-                onWithdraw();
-              }}
+      <div role="radiogroup" className="space-y-1.5">
+        {candidates.map((candidate) => {
+          const match = compareNames(typedName, candidate.name);
+          const isSelected = selectedId === candidate.id;
+          return (
+            <label
+              key={candidate.id}
+              className={cn(
+                'flex min-h-11 cursor-pointer items-center gap-2.5 rounded-md border bg-card px-2.5 py-2 transition-colors duration-150',
+                isSelected ? 'border-primary ring-1 ring-primary' : 'hover:border-primary/50',
+              )}
             >
-              <X className="size-4" aria-hidden />
-              {en ? 'No, someone else' : 'لا، شخص آخر'}
-            </Button>
-          </div>
-        </>
-      )}
+              <input
+                type="radio"
+                name={group}
+                checked={isSelected}
+                onChange={() => setChosen(candidate.id)}
+                className={cn('size-4 shrink-0 accent-[hsl(var(--primary))]', single && 'sr-only')}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span className="font-semibold">{candidate.name}</span>
+                  {match === 'SAME' ? (
+                    <Badge variant="soft-success">{en ? 'Same name' : 'الاسم مطابق'}</Badge>
+                  ) : match === 'SIMILAR' ? (
+                    <Badge variant="soft-info">{en ? 'Similar name' : 'اسم مشابه'}</Badge>
+                  ) : match === 'DIFFERENT' ? (
+                    <Badge variant="soft-warning">{en ? 'Different name' : 'اسم مختلف'}</Badge>
+                  ) : null}
+                </span>
+                <span className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                  {candidate.referenceNumber ? (
+                    <bdi dir="ltr" className="font-mono">
+                      {candidate.referenceNumber}
+                    </bdi>
+                  ) : null}
+                  {candidate.fatherName ? (
+                    <span>
+                      {en ? 'Father' : 'الأب'}: {candidate.fatherName}
+                    </span>
+                  ) : null}
+                  {candidate.motherName ? (
+                    <span>
+                      {en ? 'Mother' : 'الأم'}: {candidate.motherName}
+                    </span>
+                  ) : null}
+                </span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          disabled={!selected}
+          onClick={() => selected && onAgree(selected)}
+          className="h-10 transition-transform duration-150 ease-out active:scale-[0.97] motion-reduce:transform-none"
+        >
+          <Check className="size-4" aria-hidden />
+          {selected
+            ? single
+              ? en
+                ? 'Yes, this is the owner'
+                : 'نعم، هو المالك'
+              : en
+                ? `${selected.name} is the owner`
+                : `${selected.name} هو المالك`
+            : en
+              ? 'Choose the owner'
+              : 'اختر المالك'}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setRejected(true);
+            onWithdraw();
+          }}
+          className="h-10"
+        >
+          <X className="size-4" aria-hidden />
+          {single ? (en ? 'No, someone else' : 'لا، شخص آخر') : en ? 'None of them' : 'لا أحد منهم'}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {en
+          ? 'Saying yes links the owner when this record is saved, and adds the property to their file.'
+          : 'الموافقة تربط المالك عند حفظ السجل، ويُضاف العقار إلى ملفه.'}
+      </p>
     </div>
   );
 }

@@ -44,8 +44,16 @@ interface HarnessOptions {
   existingEntry?: {
     id: string;
     propertyType: string;
+    occupancyType?: string;
     units: Array<{ id: string; unitId: string | null }>;
   } | null;
+  /** Every card of theirs on this building, oldest first, when there are several. */
+  existingCards?: Array<{
+    id: string;
+    propertyType: string;
+    occupancyType: string;
+    units: Array<{ id: string; unitId: string | null }>;
+  }>;
   structureType?: string;
   /** What the unit's حالة already is, for the narrowing assertions. */
   role?: string;
@@ -56,6 +64,7 @@ function harness(options: HarnessOptions = {}) {
     unitsInBuilding = 6,
     registration = { id: REGISTRATION },
     existingEntry = null,
+    existingCards,
     structureType = 'RESIDENTIAL_BUILDING',
   } = options;
 
@@ -107,7 +116,9 @@ function harness(options: HarnessOptions = {}) {
     },
     registration: { findFirst: jest.fn().mockResolvedValue(registration) },
     propertyEntry: {
-      findFirst: jest.fn().mockResolvedValue(existingEntry),
+      findMany: jest
+        .fn()
+        .mockResolvedValue(existingCards ?? (existingEntry ? [existingEntry] : [])),
       create: propertyEntryCreate,
     },
     buildingUnit: { create: buildingUnitCreate },
@@ -142,7 +153,11 @@ describe('recordOccupancy — establishing the census claim', () => {
     expect(data.registrationId).toBe(REGISTRATION);
     expect(data.buildingId).toBe(BUILDING);
     expect(data.units.create.unitId).toBe(UNIT);
-    expect(result.fileLink).toEqual({ backed: true, outcome: 'ENTRY_CREATED' });
+    expect(result.fileLink).toEqual({
+      backed: true,
+      outcome: 'ENTRY_CREATED',
+      propertyEntryId: 'entry-new',
+    });
   });
 
   it('reports the occupancy as backed, so the warning never fires on it', async () => {
@@ -231,7 +246,45 @@ describe('recordOccupancy — establishing the census claim', () => {
 
     expect(propertyEntryCreate).not.toHaveBeenCalled();
     expect(buildingUnitCreate).not.toHaveBeenCalled();
-    expect(result.fileLink).toEqual({ backed: true, outcome: 'ALREADY_CLAIMED' });
+    expect(result.fileLink).toEqual({
+      backed: true,
+      outcome: 'ALREADY_CLAIMED',
+      propertyEntryId: 'entry-1',
+    });
+  });
+
+  it('ticks an owner’s flat onto their مالك card, not the older مستأجر card beside it', async () => {
+    /*
+      Somebody renting flat 1 and owning flat 3 in one block holds two cards
+      there. Oldest-first put the owned flat on the tenancy card, and
+      `billableUnits` takes the role from the card — so every owner-borne fee
+      on flat 3 went to them as a tenant, on a row that looked correct.
+    */
+    const { service, buildingUnitCreate } = harness({
+      existingCards: [
+        {
+          id: 'tenancy-card',
+          propertyType: 'BUILDING',
+          occupancyType: 'TENANT',
+          units: [{ id: 'bu-1', unitId: 'unit-rented' }],
+        },
+        {
+          id: 'owner-card',
+          propertyType: 'BUILDING',
+          occupancyType: 'OWNER',
+          units: [{ id: 'bu-2', unitId: 'unit-owned-before' }],
+        },
+      ],
+    });
+
+    const result = await record(service, { role: 'OWNER' });
+
+    expect(buildingUnitCreate.mock.calls[0][0].data.propertyEntryId).toBe('owner-card');
+    expect(result.fileLink).toEqual({
+      backed: true,
+      outcome: 'UNIT_ADDED',
+      propertyEntryId: 'owner-card',
+    });
   });
 
   it('leaves an un-itemised مبنى card alone — it already claims every flat they hold', async () => {
@@ -249,7 +302,11 @@ describe('recordOccupancy — establishing the census claim', () => {
 
     expect(propertyEntryCreate).not.toHaveBeenCalled();
     expect(buildingUnitCreate).not.toHaveBeenCalled();
-    expect(result.fileLink).toEqual({ backed: true, outcome: 'ALREADY_CLAIMED' });
+    expect(result.fileLink).toEqual({
+      backed: true,
+      outcome: 'ALREADY_CLAIMED',
+      propertyEntryId: 'entry-1',
+    });
   });
 
   it('invents no file for a citizen who has none, and says so', async () => {

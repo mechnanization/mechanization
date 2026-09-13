@@ -135,6 +135,16 @@ export interface FileLinkResult {
     | 'NO_FILE'
     | 'UNLINKABLE_STRUCTURE'
     | 'NO_BUILDING';
+  /**
+   * The card that backs the flat, when one does — the card minted, the card
+   * that gained the row, or the card that already claimed it.
+   *
+   * An owner link records which rows it created so «إلغاء الربط» can revert
+   * exactly those (`LinkFootprint`), and an outcome with no id would leave it
+   * to infer the card afterwards from a building and a citizen — which picks
+   * the wrong one the moment somebody holds two cards on one structure.
+   */
+  propertyEntryId?: string | null;
 }
 
 /** One logged attempt to survey a unit — P4-T1, D10. */

@@ -277,7 +277,17 @@ export interface CitizenProfileProperty {
    * Non-owner occupancies only. The name is required of both a مستأجر and a
    * شاغل بتسامح; the phone only of the first — see `occupancyBranch`.
    */
+  /**
+   * The owner's name as every screen should show it: the registered citizen's
+   * own name while a link stands, what the tenant said otherwise.
+   *
+   * Resolved here, once, so the receipt, ملفّي and the review dialog — which all
+   * print this field — show the confirmed owner without each learning about
+   * links. What the tenant actually typed is kept in `landlordNameAsTyped`.
+   */
   landlordName: string | null;
+  /** The name as the tenant gave it, whatever the link says. */
+  landlordNameAsTyped: string | null;
   landlordPhone: string | null;
   /**
    * The registered citizen this card's owner was confirmed to be, if anyone.
@@ -288,6 +298,8 @@ export interface CitizenProfileProperty {
    * could show it was the queue where it was decided.
    */
   landlordCitizenId: string | null;
+  /** That citizen's reference number, beside the name the card now shows. */
+  landlordReferenceNumber: string | null;
   /** HOUSE only, owner only, and null wherever nobody was asked. */
   unitStatus: string | null;
   buildingName: string | null;
@@ -432,6 +444,19 @@ export interface CitizenFeeTotals {
 }
 
 /** The staff-facing view of one citizen and everything they have filed. */
+/** One card naming this citizen as its confirmed landlord. */
+export interface CitizenProfileLandlordOf {
+  propertyEntryId: string;
+  occupancyType: string;
+  tenant: { id: string; name: string; referenceNumber: string | null };
+  buildingName: string | null;
+  buildingCode: string | null;
+  propertyNumber: string | null;
+  unitCodes: string[];
+  /** Null on a link confirmed before migration 0045 recorded when. */
+  linkedAt: string | null;
+}
+
 export interface CitizenProfile {
   id: string;
   fullName: string;
@@ -462,6 +487,15 @@ export interface CitizenProfile {
   /** False for a deactivated record — kept for its history, refused a session. */
   isActive: boolean;
   registrations: CitizenProfileRegistration[];
+  /**
+   * Tenancy cards other households filed that were confirmed as naming this
+   * citizen as their landlord.
+   *
+   * The owner's half of the link. Until it was listed here the only place a
+   * confirmed link could be seen, or undone, was the tenant's file — so the
+   * person billed because of it had no way to see why from their own page.
+   */
+  landlordOf: CitizenProfileLandlordOf[];
   payments: CitizenProfilePayment[];
   fees: CitizenFeeTotals;
 }
@@ -855,6 +889,32 @@ export class ReportingService {
         residencePlace: true,
         localContactName: true,
         localContactPhone: true,
+        // The owner's side of every confirmed link — see `landlordOf`.
+        namedAsLandlordOn: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            occupancyType: true,
+            buildingName: true,
+            propertyNumber: true,
+            landlordLinkFootprint: true,
+            building: { select: { code: true } },
+            units: { select: { unit: { select: { unitCode: true } } } },
+            registration: {
+              select: {
+                citizen: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    middleName: true,
+                    lastName: true,
+                    referenceNumber: true,
+                  },
+                },
+              },
+            },
+          },
+        },
         isActive: true,
         createdAt: true,
         /**
@@ -903,6 +963,9 @@ export class ReportingService {
                 // The registered citizen an officer confirmed this owner to be,
                 // so the card can link to their file instead of naming them.
                 landlordCitizenId: true,
+                landlordCitizen: {
+                  select: { firstName: true, middleName: true, lastName: true, referenceNumber: true },
+                },
                 unitStatus: true,
                 buildingName: true,
                 unitType: true,
@@ -1097,6 +1160,25 @@ export class ReportingService {
           (payment) => payment.paymentStatus === 'PENDING_REVIEW',
         ).length,
       },
+      landlordOf: citizen.namedAsLandlordOn.map((card) => {
+        const footprint = card.landlordLinkFootprint as { linkedAt?: unknown } | null;
+        return {
+          propertyEntryId: card.id,
+          occupancyType: card.occupancyType,
+          tenant: {
+            id: card.registration.citizen.id,
+            name: personName(card.registration.citizen),
+            referenceNumber: card.registration.citizen.referenceNumber,
+          },
+          buildingName: card.buildingName,
+          buildingCode: card.building?.code ?? null,
+          propertyNumber: card.propertyNumber,
+          unitCodes: card.units
+            .map((row) => row.unit?.unitCode)
+            .filter((code): code is string => Boolean(code)),
+          linkedAt: typeof footprint?.linkedAt === 'string' ? footprint.linkedAt : null,
+        };
+      }),
       registrations: citizen.registrations.map((registration) => ({
         id: registration.id,
         referenceNumber: registration.referenceNumber,
@@ -1128,9 +1210,13 @@ export class ReportingService {
           propertyNumber: property.propertyNumber,
           propertyType: property.propertyType,
           occupancyType: property.occupancyType,
-          landlordName: property.landlordName,
+          landlordName: property.landlordCitizen
+            ? personName(property.landlordCitizen)
+            : property.landlordName,
+          landlordNameAsTyped: property.landlordName,
           landlordPhone: property.landlordPhone,
           landlordCitizenId: property.landlordCitizenId,
+          landlordReferenceNumber: property.landlordCitizen?.referenceNumber ?? null,
           unitStatus: property.unitStatus,
           buildingName: property.buildingName,
           unitType: property.unitType,
@@ -1631,6 +1717,15 @@ export class ReportingService {
   async onDashboardDataChanged(): Promise<void> {
     await this.cache.invalidatePrefix(`dashboard:${this.tenantContext.tenantSlug}:`);
   }
+}
+
+/** «الاسم الأول اسم الأب الشهرة», skipping whichever part is missing. */
+function personName(person: {
+  firstName: string;
+  middleName: string | null;
+  lastName: string;
+}): string {
+  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ');
 }
 
 /**

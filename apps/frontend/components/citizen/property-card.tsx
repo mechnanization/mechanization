@@ -53,6 +53,7 @@ import {
   type LockedCensusTarget,
 } from '@/components/admin/building-unit-picker';
 import { LandlordMatchHint } from '@/components/admin/landlord-match-hint';
+import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { cn, scopeErrors } from '@/lib/utils';
 import {
   type CensusUnitFacts,
@@ -129,6 +130,22 @@ export interface PropertyDraft {
    * from it. See `landlordCitizenIdField` in the property schema.
    */
   landlordCitizenId?: string;
+  /**
+   * The owner link the server already holds for this card, as loaded for edit.
+   *
+   * Different from `landlordCitizenId`, which is an answer this form is about to
+   * send. A standing link locks the owner's number *and* name — the number is
+   * what it was confirmed about, and the name shown is the owner's registered
+   * one — and «إلغاء الربط» is the only way out, because undoing it also
+   * removes what it added to the owner's file. Never sent (`toPayloadProperty`).
+   */
+  landlordLink?: { citizenId: string; name: string; referenceNumber: string | null };
+  /**
+   * The registered name of the citizen agreed to on this form, shown in the
+   * locked name field. The tenant's own words stay in `landlordName`, so
+   * withdrawing the agreement gives them back. Never sent.
+   */
+  landlordAgreedName?: string;
   propertyType?: PropertyType;
   neighborhood?: string;
   propertyNumber?: string;
@@ -428,7 +445,21 @@ export function PropertyCard({
    * the tenant said about the son. `LandlordMatchHint` asks; this reflects the
    * answer. The unlock beside the field withdraws both at once.
    */
-  const landlordFromRegister = Boolean(draft.landlordCitizenId);
+  const landlordLinked = Boolean(draft.landlordLink);
+  const landlordFromRegister = landlordLinked || Boolean(draft.landlordCitizenId);
+  const [unlinkOpen, setUnlinkOpen] = useState(false);
+  /*
+    An agreement the server will not be able to act on yet.
+
+    The link needs the flat the tenant lives in, on a surveyed building — without
+    it the property cannot reach the owner's file and the link is refused. Said
+    here, beside the answer, rather than discovered in the dialog after saving.
+  */
+  const agreementBlocked =
+    !landlordLinked &&
+    Boolean(draft.landlordCitizenId) &&
+    (!draft.buildingId ||
+      (draft.propertyType === 'BUILDING' && !(draft.units ?? []).some((unit) => unit.unitId)));
   /*
     Only an owner is asked whether a unit is empty.
 
@@ -678,7 +709,17 @@ export function PropertyCard({
               <SegmentedControl
                 value={draft.occupancyType ?? ''}
                 invalid={Boolean(errors.occupancyType)}
-                onChange={(v) => set({ occupancyType: v as OccupancyType })}
+                /*
+                  An owner card names no landlord, so turning a linked card into
+                  one would undo the link on save — and the owner's file with
+                  it — as a side effect of a segmented control. The undo is
+                  offered instead, with what it changes stated first.
+                */
+                onChange={(v) =>
+                  landlordLinked && v === 'OWNER'
+                    ? setUnlinkOpen(true)
+                    : set({ occupancyType: v as OccupancyType })
+                }
                 options={OCCUPANCY_TYPE.map((option) => ({
                   value: option,
                   label: labels.occupancyType[option] ?? option,
@@ -769,139 +810,206 @@ export function PropertyCard({
             match or still waiting for a landlord the register does not hold.
           */}
           {isNonOwner ? (
-            <div className="grid gap-3.5 sm:grid-cols-2">
-              <Field
-                label={locale === 'en' ? 'Landlord Phone' : 'رقم هاتف المالك'}
-                htmlFor={`lp-${index}`}
+            <div className="space-y-3">
+              {/*
+                A standing owner link, stated above the two fields it locks.
 
-                path={isTenant ? flagPath(index, 'landlordPhone') : undefined}
-                required={isTenant}
-                error={errors.landlordPhone}
-                /*
-                  The field most likely to hold a foreign number of any on this
-                  form. A شاغل بتسامح's landlord is typically a relative abroad
-                  — which is exactly why `occupancyBranch` makes this optional
-                  for them — and a مستأجر's owner is often no nearer.
-                */
-                hint={
-                  locale === 'en'
-                    ? 'Lebanese numbers need no country code; for another country start with +.'
-                    : 'الرقم اللبناني لا يحتاج رمز الدولة؛ لرقم من دولة أخرى ابدأ بـ +.'
-                }
-              >
-                <Input
-                  id={`lp-${index}`}
-                  type="tel"
-                  inputMode="tel"
-                  dir="ltr"
-                  placeholder="03 123456 / +33 6 12 34 56 78"
-                  className="text-start"
-                  invalid={Boolean(errors.landlordPhone)}
-                  value={draft.landlordPhone ?? ''}
+                The number is what the link was confirmed about and the name is
+                the owner's registered one, so neither is typed into while it
+                stands. «إلغاء الربط» is the one way out, and it is a server
+                action rather than a field edit: undoing the link also removes
+                what it added to the owner's file, and the dialog says exactly
+                what before anything happens.
+              */}
+              {landlordLinked && draft.landlordLink ? (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2.5 text-sm">
+                  <Lock className="size-4 shrink-0 text-success" aria-hidden />
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium">
+                      {locale === 'en' ? 'Linked to a registered citizen: ' : 'مرتبط بمواطن مسجَّل: '}
+                    </span>
+                    <span className="font-semibold">{draft.landlordLink.name}</span>
+                    {draft.landlordLink.referenceNumber ? (
+                      <bdi dir="ltr" className="ms-2 font-mono text-xs text-muted-foreground">
+                        {draft.landlordLink.referenceNumber}
+                      </bdi>
+                    ) : null}
+                  </span>
+                  {token && draft.id ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9"
+                      onClick={() => setUnlinkOpen(true)}
+                    >
+                      {locale === 'en' ? 'Undo link' : 'إلغاء الربط'}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="grid gap-3.5 sm:grid-cols-2">
+                <Field
+                  label={locale === 'en' ? 'Landlord Phone' : 'رقم هاتف المالك'}
+                  htmlFor={`lp-${index}`}
+                  path={isTenant && !landlordFromRegister ? flagPath(index, 'landlordPhone') : undefined}
+                  required={isTenant}
+                  error={errors.landlordPhone}
                   /*
-                    A changed number withdraws the agreement made about the old
-                    one, and mirrors the server doing exactly this
-                    (`landlordLinkReset`): a confirmed link and its number are
-                    one fact, and keeping the link across an edit of the number
-                    would leave the card asserting that a citizen it can no
-                    longer reach is the owner.
+                    The field most likely to hold a foreign number of any on this
+                    form. A شاغل بتسامح's landlord is typically a relative abroad
+                    — which is exactly why `occupancyBranch` makes this optional
+                    for them — and a مستأجر's owner is often no nearer.
                   */
-                  onChange={(e) =>
+                  hint={
+                    landlordLinked
+                      ? locale === 'en'
+                        ? 'The number the link was confirmed on. Undo the link to change it.'
+                        : 'الرقم الذي تم تأكيد الربط عليه. ألغِ الربط لتغييره.'
+                      : locale === 'en'
+                        ? 'Lebanese numbers need no country code; for another country start with +.'
+                        : 'الرقم اللبناني لا يحتاج رمز الدولة؛ لرقم من دولة أخرى ابدأ بـ +.'
+                  }
+                >
+                  <Input
+                    id={`lp-${index}`}
+                    type="tel"
+                    inputMode="tel"
+                    dir="ltr"
+                    placeholder="03 123456 / +33 6 12 34 56 78"
+                    className={cn('text-start', landlordLinked && 'bg-muted text-muted-foreground')}
+                    invalid={Boolean(errors.landlordPhone)}
+                    value={draft.landlordPhone ?? ''}
+                    readOnly={landlordLinked}
+                    aria-readonly={landlordLinked || undefined}
+                    /*
+                      A changed number withdraws the agreement made about the old
+                      one: the answer was about that number, and keeping it would
+                      link a citizen the card no longer names.
+                    */
+                    onChange={(e) =>
+                      set({
+                        landlordPhone: e.target.value,
+                        ...(draft.landlordCitizenId
+                          ? { landlordCitizenId: undefined, landlordAgreedName: undefined }
+                          : {}),
+                      })
+                    }
+                  />
+
+                  {/*
+                    Whether the owner being named is already on the register.
+
+                    Staff-only for the same reason the census picker is: it reads
+                    the municipality's own citizen list. Not shown over a
+                    standing link — that question has been answered.
+                  */}
+                  {token && censusPicker && draft.landlordPhone && !landlordLinked ? (
+                    <LandlordMatchHint
+                      tenant={tenant}
+                      token={token}
+                      phone={draft.landlordPhone}
+                      typedName={draft.landlordName}
+                      locale={locale}
+                      agreedCitizenId={draft.landlordCitizenId}
+                      /*
+                        The id makes the link on save; the registered name is what
+                        the locked field shows. The tenant's own words stay in
+                        `landlordName`, so withdrawing gives them back.
+                      */
+                      onAgree={(match) =>
+                        set({ landlordCitizenId: match.id, landlordAgreedName: match.name })
+                      }
+                      onWithdraw={() =>
+                        set({ landlordCitizenId: undefined, landlordAgreedName: undefined })
+                      }
+                    />
+                  ) : null}
+                </Field>
+                <Field
+                  label={locale === 'en' ? 'Landlord Name' : 'اسم المالك'}
+                  htmlFor={`ln-${index}`}
+                  path={landlordFromRegister ? undefined : flagPath(index, 'landlordName')}
+                  required
+                  error={landlordFromRegister ? undefined : errors.landlordName}
+                  /*
+                    Where the register holds the answer, this field states it
+                    rather than asking for it — the same one-directional lock
+                    `buildingName` gets when a card is linked to a censused
+                    structure. It locks on a person's answer, never on the lookup
+                    alone: a household shares a line.
+                  */
+                  hint={
+                    landlordLinked
+                      ? locale === 'en'
+                        ? 'The owner’s registered name. It stays locked while the link stands.'
+                        : 'الاسم المسجَّل للمالك. يبقى مقفلاً ما دام الربط قائماً.'
+                      : draft.landlordCitizenId
+                        ? locale === 'en'
+                          ? 'From the citizen register. The link is made when this record is saved.'
+                          : 'من سجل المواطنين. يتم الربط عند حفظ السجل.'
+                        : undefined
+                  }
+                >
+                  <Input
+                    id={`ln-${index}`}
+                    invalid={!landlordFromRegister && Boolean(errors.landlordName)}
+                    value={
+                      draft.landlordLink?.name ??
+                      (draft.landlordCitizenId ? draft.landlordAgreedName : undefined) ??
+                      draft.landlordName ??
+                      ''
+                    }
+                    onChange={(e) => set({ landlordName: e.target.value })}
+                    readOnly={landlordFromRegister}
+                    aria-readonly={landlordFromRegister || undefined}
+                    className={cn(landlordFromRegister && 'bg-muted text-muted-foreground')}
+                  />
+
+                  {/*
+                    The way back out of an answer given on this form, beside the
+                    field it locked. A standing link is released from the notice
+                    above instead, because releasing it changes the owner's file.
+                  */}
+                  {!landlordLinked && draft.landlordCitizenId ? (
+                    <button
+                      type="button"
+                      className="mt-1.5 inline-flex min-h-9 items-center text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      onClick={() => set({ landlordCitizenId: undefined, landlordAgreedName: undefined })}
+                    >
+                      {locale === 'en' ? 'Not the owner — change' : 'ليس المالك — تغيير'}
+                    </button>
+                  ) : null}
+                </Field>
+              </div>
+
+              {agreementBlocked ? (
+                <p className="flex items-start gap-2 rounded-md bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
+                  <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+                  {locale === 'en'
+                    ? 'The owner can only be linked once this card is on its building and names the tenant’s unit. Choose them below, or the answer waits on «Owner links».'
+                    : 'لا يمكن ربط المالك قبل ربط هذه البطاقة بمبناها وتحديد وحدة المستأجر. اخترهما أدناه، وإلا تبقى الإجابة بانتظارها في «روابط المالكين».'}
+                </p>
+              ) : null}
+
+              {token && draft.id && draft.landlordLink ? (
+                <LandlordUnlinkDialog
+                  tenant={tenant}
+                  token={token}
+                  propertyEntryId={draft.id}
+                  open={unlinkOpen}
+                  onOpenChange={setUnlinkOpen}
+                  onUnlinked={() =>
                     set({
-                      landlordPhone: e.target.value,
-                      ...(draft.landlordCitizenId ? { landlordCitizenId: undefined } : {}),
+                      landlordLink: undefined,
+                      landlordCitizenId: undefined,
+                      landlordAgreedName: undefined,
                     })
                   }
+                  locale={locale}
                 />
-
-                {/*
-                  Whether the owner being named is already on the register.
-
-                  Staff-only for the same reason the census picker is: it reads
-                  the municipality's own citizen list, and a resident filling in
-                  the public wizard has no business being told which of their
-                  neighbours the register holds. Gated on the identical pair, so
-                  the two controls can never disagree about who is looking.
-                */}
-                {token && censusPicker && draft.landlordPhone ? (
-                  <LandlordMatchHint
-                    tenant={tenant}
-                    token={token}
-                    phone={draft.landlordPhone}
-                    locale={locale}
-                    agreedCitizenId={draft.landlordCitizenId}
-                    /*
-                      Agreeing writes both halves at once: the id that makes the
-                      link on save, and the register's own spelling of the name
-                      the field then locks to. Writing the name here rather than
-                      leaving the officer to retype it is the point — the two
-                      would otherwise disagree on the very card that links them.
-                    */
-                    onAgree={(match) =>
-                      set({ landlordCitizenId: match.id, landlordName: match.name })
-                    }
-                    onWithdraw={() => set({ landlordCitizenId: undefined })}
-                  />
-                ) : null}
-              </Field>
-              <Field
-                label={locale === 'en' ? 'Landlord Name' : 'اسم المالك'}
-                htmlFor={`ln-${index}`}
-
-                path={flagPath(index, 'landlordName')}
-                required
-                error={errors.landlordName}
-                /*
-                  Where the register already holds the answer, this field states
-                  it rather than asking for it — the same one-directional lock
-                  `buildingName` gets below when a card is linked to a censused
-                  structure, and for the same reason: two spellings of one
-                  person are two rows nothing can recognise as the same owner.
-
-                  It locks on the officer's agreement, never on the lookup
-                  alone. A phone is not an identity here — a household shares a
-                  line — so a name filled in by a query and frozen would let a
-                  match overwrite what the tenant actually said. «فتح للتعديل»
-                  unlocks the field and withdraws the agreement together,
-                  because a name the officer may retype is not a name the
-                  register vouched for.
-                */
-                hint={
-                  landlordFromRegister
-                    ? locale === 'en'
-                      ? 'From the citizen register, by the phone number above.'
-                      : 'من سجل المواطنين، حسب رقم الهاتف أعلاه.'
-                    : undefined
-                }
-              >
-                <Input
-                  id={`ln-${index}`}
-                  invalid={Boolean(errors.landlordName)}
-                  value={draft.landlordName ?? ''}
-                  onChange={(e) => set({ landlordName: e.target.value })}
-                  readOnly={landlordFromRegister}
-                  aria-readonly={landlordFromRegister || undefined}
-                  className={cn(landlordFromRegister && 'bg-muted text-muted-foreground')}
-                />
-
-                {/*
-                  The way back out, beside the thing it undoes.
-
-                  Placed in the field rather than as a second control elsewhere
-                  because the officer meets the lock here, and a lock whose
-                  release lives on another part of the form reads as a field
-                  that simply cannot be corrected.
-                */}
-                {landlordFromRegister ? (
-                  <button
-                    type="button"
-                    className="mt-1.5 text-xs text-muted-foreground underline-offset-2 hover:underline"
-                    onClick={() => set({ landlordCitizenId: undefined })}
-                  >
-                    {locale === 'en' ? 'Unlock to edit' : 'فتح للتعديل'}
-                  </button>
-                ) : null}
-              </Field>
+              ) : null}
             </div>
           ) : null}
 
@@ -1321,6 +1429,14 @@ function changePropertyType(draft: PropertyDraft, propertyType: PropertyType): P
     occupancyType: draft.occupancyType,
     landlordName: draft.landlordName,
     landlordPhone: draft.landlordPhone,
+    /*
+      The owner is the same person whether the structure is described as a
+      مبنى or a منزل, so the answer and a standing link survive the switch. The
+      server follows the card's new flats on save (`reconcileRegistration`).
+    */
+    landlordCitizenId: draft.landlordCitizenId,
+    landlordLink: draft.landlordLink,
+    landlordAgreedName: draft.landlordAgreedName,
     neighborhood: draft.neighborhood,
     propertyNumber: draft.propertyNumber,
     propertyType,

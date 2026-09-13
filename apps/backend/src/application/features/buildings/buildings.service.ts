@@ -2391,6 +2391,26 @@ export class BuildingsService {
    * the state the warning was written for, and it is now the only state that
    * produces it.
    */
+  /**
+   * `claimOnFile` for a spell that already exists.
+   *
+   * The owner-link path's door onto the same rules. When the owner is already
+   * recorded on a flat — the matrix put them there, or an earlier link did —
+   * re-running `recordOccupancy` would rewrite that spell (its أسهم are reset
+   * from the input), so the link records nothing on the census and asks only
+   * that the file back what the census already says.
+   */
+  ensureOnFile(input: {
+    unitId: string;
+    buildingId: string;
+    citizenId: string;
+    role: string;
+    shares: number | null;
+    unitStatus: string | null;
+  }): Promise<FileLinkResult> {
+    return this.claimOnFile(input);
+  }
+
   private async claimOnFile(input: {
     unitId: string;
     buildingId: string;
@@ -2428,15 +2448,30 @@ export class BuildingsService {
       in it is a real situation, and minting a second card under them is not
       this path’s call to make.
     */
-    const existing = await this.db.propertyEntry.findFirst({
+    const cards = await this.db.propertyEntry.findMany({
       where: { buildingId: building.id, registration: { citizenId: input.citizenId } },
       select: {
         id: true,
         propertyType: true,
+        occupancyType: true,
         units: { select: { id: true, unitId: true } },
       },
       orderBy: { createdAt: 'asc' },
     });
+
+    /*
+      The card in the same capacity first, and the oldest card only after that.
+
+      Oldest-first alone ticked an owner's flat onto whichever card was filed
+      first — and for somebody who rents flat 1 and owns flat 3 in one block,
+      that is the مستأجر card. `billableUnits` takes the role from the card, so
+      the flat they own was billed to them as a tenancy: the wrong bearer on
+      every owner-borne fee, on a row that looks correct. Preferring the card
+      whose نوع الإشغال matches the role changes nothing for anyone holding a
+      single card, and stops the mixed case landing on the wrong one whenever a
+      right one exists.
+    */
+    const existing = cards.find((card) => card.occupancyType === input.role) ?? cards[0];
 
     if (existing) {
       // Already ticked, or already backed by one of the two whole-structure
@@ -2445,7 +2480,9 @@ export class BuildingsService {
         existing.units.some((row) => row.unitId === input.unitId) ||
         (existing.propertyType === 'HOUSE' && unitsInBuilding === 1) ||
         (existing.propertyType === 'BUILDING' && existing.units.length === 0);
-      if (claimed) return { backed: true, outcome: 'ALREADY_CLAIMED' };
+      if (claimed) {
+        return { backed: true, outcome: 'ALREADY_CLAIMED', propertyEntryId: existing.id };
+      }
 
       /*
         An itemised card that has not ticked this flat.
@@ -2475,7 +2512,7 @@ export class BuildingsService {
         },
       });
 
-      return { backed: true, outcome: 'UNIT_ADDED' };
+      return { backed: true, outcome: 'UNIT_ADDED', propertyEntryId: existing.id };
     }
 
     const mapped = STRUCTURE_TYPE_MAP[building.structureType as StructureType];
@@ -2506,7 +2543,8 @@ export class BuildingsService {
       files a tenant’s card, not an owner’s, and a شاغل بتسامح files neither a
       tenancy that does not exist nor an ownership they do not have.
     */
-    await this.db.propertyEntry.create({
+    const minted = await this.db.propertyEntry.create({
+      select: { id: true },
       data: {
         registrationId: registration.id,
         occupancyType: input.role as never,
@@ -2549,7 +2587,7 @@ export class BuildingsService {
       },
     });
 
-    return { backed: true, outcome: 'ENTRY_CREATED' };
+    return { backed: true, outcome: 'ENTRY_CREATED', propertyEntryId: minted.id };
   }
 
   /**

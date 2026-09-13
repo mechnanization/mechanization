@@ -1805,8 +1805,15 @@ export interface CitizenProfileProperty {
   propertyNumber: string | null;
   propertyType: string;
   occupancyType: string;
-  /** Non-owner occupancies. The phone is required of a tenant only. */
+  /**
+   * Non-owner occupancies. The phone is required of a tenant only.
+   *
+   * The confirmed owner's registered name while a link stands — resolved on the
+   * server so every screen printing it shows the same person — and what the
+   * tenant said otherwise. `landlordNameAsTyped` is always the tenant's words.
+   */
   landlordName: string | null;
+  landlordNameAsTyped?: string | null;
   landlordPhone: string | null;
   /**
    * The registered citizen this card's owner was confirmed to be, if anyone.
@@ -1816,6 +1823,7 @@ export interface CitizenProfileProperty {
    * a name field it has left unlocked and editable.
    */
   landlordCitizenId?: string | null;
+  landlordReferenceNumber?: string | null;
   /** HOUSE only, owner only. A BUILDING keeps this per unit. */
   unitStatus: string | null;
   buildingName: string | null;
@@ -1970,8 +1978,26 @@ export interface CitizenProfile {
   /** False for a deactivated record — kept for its history, refused a session. */
   isActive: boolean;
   registrations: CitizenProfileRegistration[];
+  /**
+   * Tenancy cards other households filed that were confirmed as naming this
+   * citizen as their landlord — the owner's side of every link. Optional on the
+   * wire for a profile cached before it existed.
+   */
+  landlordOf?: CitizenProfileLandlordOf[];
   payments: CitizenProfilePayment[];
   fees: CitizenFeeTotals;
+}
+
+/** One card naming this citizen as its confirmed landlord. */
+export interface CitizenProfileLandlordOf {
+  propertyEntryId: string;
+  occupancyType: string;
+  tenant: { id: string; name: string; referenceNumber: string | null };
+  buildingName: string | null;
+  buildingCode: string | null;
+  propertyNumber: string | null;
+  unitCodes: string[];
+  linkedAt: string | null;
 }
 
 /**
@@ -2320,6 +2346,8 @@ export async function updateCitizen(
     status: CitizenRecordStatus;
     census: CensusSyncResult | null;
     landlordLinks: LandlordLinkOffers | null;
+    /** Links the save undid or brought into line with the card — see the server. */
+    landlordLinkChanges?: LandlordLinkChanges;
   }>(tenant, `/citizens/${encodeURIComponent(citizenId)}`, {
     token,
     method: 'PATCH',
@@ -2338,33 +2366,112 @@ export async function updateCitizen(
 // itself — see `LandlordLinkService` on the server for why both of those are
 // deliberate.
 
-/** A registered citizen a claimed landlord number could belong to. */
+/** A registered citizen a claimed landlord number belongs to. */
 export interface LandlordCandidate {
   id: string;
   name: string;
+  /** The middle name — the father's, which is what tells brothers apart. */
+  fatherName: string | null;
+  /** Read by a person comparing two records, never a key. */
+  motherName: string | null;
   phone: string | null;
   referenceNumber: string | null;
+  residence: string;
+  registeredAt: string | null;
+}
+
+/**
+ * Why a link cannot be made yet. Each code names the step that unblocks it,
+ * and `message` is the server's Arabic sentence saying so.
+ */
+export type LinkBlockCode =
+  | 'NOT_ON_SURVEY'
+  | 'NO_UNITS'
+  | 'UNIT_VACANT'
+  | 'OWNER_NO_FILE'
+  | 'OWNER_CARD_UNLINKED'
+  | 'OWNER_OTHER_CAPACITY'
+  | 'OWNER_OCCUPIES_UNIT'
+  | 'RECONCILE_FAILED';
+
+export interface LinkBlock {
+  code: LinkBlockCode;
+  message: string;
+  unitCode: string | null;
+}
+
+/** What a link would do on the owner's file, stated before it is pressed. */
+export type LinkOutcome = 'NEW_CARD' | 'ADDED_TO_CARD' | 'ALREADY_ON_FILE' | 'OCCUPANCY_ONLY';
+
+export interface LandlordProposalCandidate extends LandlordCandidate {
+  outcome: LinkOutcome | null;
+  blocked: LinkBlock | null;
 }
 
 /** One unresolved claim, with whoever its number resolves to. */
 export interface LandlordProposal {
   propertyEntryId: string;
   occupancyType: string;
+  propertyType: string;
+  /** What the tenant said, as typed. */
   landlordName: string | null;
   landlordPhone: string;
   propertyNumber: string | null;
   buildingName: string | null;
   buildingId: string | null;
-  /** Flats on this card that name a canonical unit — what a link would claim. */
+  buildingCode: string | null;
+  /** The flats a link would put the owner on. Empty when the card is blocked. */
+  units: Array<{ unitId: string; unitCode: string | null }>;
   linkedUnitCount: number;
+  filedAt: string;
   filedBy: {
     registrationId: string;
     referenceNumber: string;
     citizenId: string;
     name: string;
   } | null;
-  /** Usually one. More than one is a shared household line. */
-  candidates: LandlordCandidate[];
+  /** Why no link can be made from this card yet, whoever the owner is. */
+  blocked: LinkBlock | null;
+  /** Oldest registration first. More than one is a shared household line. */
+  candidates: LandlordProposalCandidate[];
+}
+
+/** What undoing a link reverted, and what it deliberately kept. */
+export interface UnlinkResult {
+  unlinked: boolean;
+  /** Confirmed before links recorded what they wrote — nothing could be reverted precisely. */
+  legacy: boolean;
+  occupanciesEnded: number;
+  rowsRemoved: number;
+  cardsRemoved: number;
+  casesReopened: number;
+  kept: Array<{
+    unitCode: string | null;
+    reason: 'EDITED' | 'SHARED' | 'OWNER_FILE_CLAIMS' | 'HAS_DOCUMENTS' | 'FLAGGED';
+    propertyEntryId?: string;
+  }>;
+  reviewUnits: Array<{ unitId: string; unitCode: string; buildingId: string }>;
+}
+
+/** What «إلغاء الربط» would do, read when its confirmation opens. */
+export interface UnlinkPreview {
+  linked: boolean;
+  ownerId: string | null;
+  ownerName: string | null;
+  legacy: boolean;
+  linkedAt: string | null;
+  unitCodes: string[];
+  cardsCreated: number;
+  invoicesSinceLink: number;
+}
+
+/** Links a save of a household file changed. */
+export interface LandlordLinkChanges {
+  unlinked: Array<{ propertyEntryId: string; report: Omit<UnlinkResult, 'unlinked' | 'reviewUnits'> }>;
+  reconciled: {
+    updated: number;
+    blocked: Array<{ propertyEntryId: string; block: LinkBlock }>;
+  } | null;
 }
 
 /**
@@ -2381,9 +2488,18 @@ export interface LandlordLinkOffers {
   naming: LandlordProposal[];
 }
 
-/** The standing queue — every unresolved claim that matches a citizen. */
-export function getLandlordLinks(tenant: string, token: string) {
-  return apiFetch<LandlordProposal[]>(tenant, '/citizens/landlord-links', { token });
+/** The standing queue — unresolved claims that match a citizen, a page at a time. */
+export function getLandlordLinks(
+  tenant: string,
+  token: string,
+  page: { limit: number; offset: number },
+  signal?: AbortSignal,
+) {
+  return apiFetch<{ items: LandlordProposal[]; total: number }>(
+    tenant,
+    `/citizens/landlord-links?limit=${page.limit}&offset=${page.offset}`,
+    { token, signal },
+  );
 }
 
 /** How much ownership the register knows about and does not bill. */
@@ -2396,19 +2512,23 @@ export function getLandlordLinkSummary(tenant: string, token: string) {
 }
 
 /**
- * Is this number one of ours? — the form's inline lookup.
+ * Who is registered on this number? — the form's inline lookup.
  *
- * Answers `null` where several citizens share the number, which is the shared
- * household case: the control says nothing rather than offering an arbitrary
- * one of them as though it were the answer.
+ * Everybody on it: a shared household line is where the officer standing with
+ * the tenant is best placed to say which person was meant.
  */
-export async function getLandlordCandidate(tenant: string, token: string, phone: string) {
-  const { candidate } = await apiFetch<{ candidate: LandlordCandidate | null }>(
+export async function getLandlordCandidates(
+  tenant: string,
+  token: string,
+  phone: string,
+  signal?: AbortSignal,
+) {
+  const { candidates } = await apiFetch<{ candidates: LandlordCandidate[] }>(
     tenant,
     `/citizens/landlord-links/candidate?phone=${encodeURIComponent(phone)}`,
-    { token },
+    { token, signal },
   );
-  return candidate;
+  return candidates ?? [];
 }
 
 /**
@@ -2435,6 +2555,8 @@ export async function confirmLandlordLink(
      * owner the municipality knows — and the link is no less complete for it.
      */
     ownerCardCreated: boolean;
+    rowsAdded?: number;
+    outcome?: LinkOutcome | null;
   }>(tenant, `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/confirm`, {
     token,
     method: 'POST',
@@ -2444,22 +2566,56 @@ export async function confirmLandlordLink(
   return result;
 }
 
-/** «ليس هو» — what lets the queue shrink. */
-export function dismissLandlordLink(tenant: string, token: string, propertyEntryId: string) {
+/** «لا أحد منهم» — these citizens are not the card's owner. */
+export function dismissLandlordLink(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  candidateIds: readonly string[],
+) {
   return apiFetch<{ dismissed: boolean }>(
     tenant,
     `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/dismiss`,
-    { token, method: 'POST' },
+    { token, method: 'POST', body: JSON.stringify({ candidateIds }) },
   );
 }
 
-/** Undoes a confirmation, putting the claim back in the queue. */
-export function unlinkLandlord(tenant: string, token: string, propertyEntryId: string) {
-  return apiFetch<{ unlinked: boolean }>(
+/** The «تراجع» on a dismissal. */
+export function restoreLandlordLink(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  candidateIds: readonly string[],
+) {
+  return apiFetch<{ restored: boolean }>(
+    tenant,
+    `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/restore`,
+    { token, method: 'POST', body: JSON.stringify({ candidateIds }) },
+  );
+}
+
+/** What undoing this card's link would revert — for the confirmation to state. */
+export function getLandlordUnlinkPreview(tenant: string, token: string, propertyEntryId: string) {
+  return apiFetch<UnlinkPreview>(
+    tenant,
+    `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/unlink-preview`,
+    { token },
+  );
+}
+
+/**
+ * Undoes a confirmation: the claim goes back to the queue and what the link
+ * wrote into the owner's records is reverted. Invalidates the census, because
+ * the owner's spells and cards just changed.
+ */
+export async function unlinkLandlord(tenant: string, token: string, propertyEntryId: string) {
+  const result = await apiFetch<UnlinkResult>(
     tenant,
     `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}`,
     { token, method: 'DELETE' },
   );
+  invalidateCensus(tenant);
+  return result;
 }
 
 /** Soft delete and its undo — a deactivated citizen is skipped by the biller. */

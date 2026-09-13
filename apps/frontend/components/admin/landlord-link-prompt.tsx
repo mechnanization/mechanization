@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { Link2 } from 'lucide-react';
 import type { LandlordLinkOffers } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -15,6 +14,7 @@ import {
 import {
   LandlordProposalCard,
   LandlordProposalResolved,
+  useLandlordResolutions,
 } from '@/components/admin/landlord-proposal-card';
 
 /**
@@ -25,30 +25,18 @@ import {
  *  - **`filed`** — this household just named an owner the register already
  *    holds. The officer typed the number seconds ago and the tenant is still in
  *    front of them.
- *  - **`naming`** — this household *is* the owner three other cards have been
- *    naming for months. The officer has the new file open and the claims beside
- *    it.
+ *  - **`naming`** — this household *is* the owner other cards have been naming
+ *    for months. This is how the register learns an owner has arrived after
+ *    their tenants: their save asks, by the numbers they answer on.
  *
- * Both are the same question with the arrow pointing different ways, and both
- * are cheapest to settle now. Left alone they go to «روابط المالكين», where
- * somebody with no memory of either household has to reconstruct from two
- * records what one person could have confirmed in a second.
+ * Both are the same card as «روابط المالكين», so the question reads the same
+ * wherever it is met. Left unanswered they stay on that queue.
  *
- * ## Why a dialog and not a toast
+ * ## Dismissable, and that is not the same as «no»
  *
- * Because it asks for a decision rather than reporting one. `announceCensus`
- * next door is a toast precisely because nothing is being asked — it says what
- * already happened and disappears. A confirmation that decides ownership, moves
- * the matrix and can put units on a bill should not be something an officer can
- * miss by looking away for four seconds.
- *
- * ## Dismissable, and that is not the same as "no"
- *
- * «لاحقاً» closes the dialog and settles nothing. The claims stay open and stay
- * in the queue, which is the honest outcome for an officer who does not know
- * the answer — unlike «ليس الشخص نفسه» on a card, which is a decision and is
- * recorded as one. Conflating the two would have a tired clerk's dismissal read
- * as a considered rejection forever after.
+ * «لاحقاً» closes the dialog and settles nothing. «لا أحد منهم» on a card is a
+ * decision and is recorded as one. Conflating the two would have a tired
+ * clerk's dismissal read as a considered rejection forever after.
  */
 export function LandlordLinkPrompt({
   tenant,
@@ -67,16 +55,11 @@ export function LandlordLinkPrompt({
   locale?: string;
 }) {
   const en = locale === 'en';
-  const [resolved, setResolved] = useState<Record<string, 'linked' | 'dismissed'>>({});
+  const { resolved, resolve, undo, undoing } = useLandlordResolutions({ tenant, token, locale });
 
   /*
-    Both directions in one list, deduplicated.
-
-    A household can appear on both sides of a single save — they named a
-    landlord *and* are named as one — and a card filed by a tenant whose owner
-    is the person being edited satisfies `naming` and `filed` simultaneously
-    when the two share a registration. Keyed by `propertyEntryId`, which is the
-    claim's identity, so one claim is one card however many ways it was found.
+    Both directions in one list, deduplicated by the claim's own id — a card
+    filed by a tenant whose owner is the person being edited satisfies both.
   */
   const proposals = [...(offers?.filed ?? []), ...(offers?.naming ?? [])].filter(
     (proposal, index, all) =>
@@ -85,27 +68,32 @@ export function LandlordLinkPrompt({
 
   if (proposals.length === 0) return null;
 
+  const open = proposals.filter((proposal) => !resolved[proposal.propertyEntryId]).length;
+
   return (
     <Dialog open onOpenChange={(next) => (next ? undefined : onClose())}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Link2 className="size-5 text-primary" aria-hidden />
-            {en ? 'Owner links found' : 'روابط مالكين محتملة'}
+            {en ? 'Is this the owner?' : 'هل هذا هو المالك؟'}
           </DialogTitle>
           <DialogDescription>
             {en
-              ? 'A phone number on these records matches a registered citizen. A number is not an identity, so nothing has been linked — confirm only what you recognise.'
-              : 'رقم هاتف في هذه السجلات يطابق مواطناً مسجَّلاً. الرقم ليس هوية، لذلك لم يُربط شيء تلقائياً — أكِّد ما تعرفه فقط.'}
+              ? 'A number on this record belongs to a registered citizen. A phone is not an identity, so nothing was linked — choose only a person you recognise.'
+              : 'رقم في هذا السجل يعود لمواطن مسجَّل. الرقم ليس هوية، لذلك لم يُربط شيء — اختر فقط شخصاً تعرفه.'}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[55vh] space-y-3 overflow-y-auto">
-          {proposals.map((proposal) =>
-            resolved[proposal.propertyEntryId] ? (
+        <div className="-mx-1 max-h-[60vh] space-y-3 overflow-y-auto px-1">
+          {proposals.map((proposal) => {
+            const resolution = resolved[proposal.propertyEntryId];
+            return resolution ? (
               <LandlordProposalResolved
                 key={proposal.propertyEntryId}
-                outcome={resolved[proposal.propertyEntryId]!}
+                resolution={resolution}
+                onUndo={() => void undo(resolution)}
+                undoing={undoing === proposal.propertyEntryId}
                 locale={locale}
               />
             ) : (
@@ -115,23 +103,20 @@ export function LandlordLinkPrompt({
                 token={token}
                 proposal={proposal}
                 citizenHref={citizenHref}
-                onResolved={(id, outcome) =>
-                  setResolved((current) => ({ ...current, [id]: outcome }))
-                }
+                onResolved={resolve}
                 locale={locale}
               />
-            ),
-          )}
+            );
+          })}
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant={open === 0 ? 'default' : 'outline'} onClick={onClose} className="h-11 sm:h-10">
             {/*
               Not «إلغاء». Nothing is being cancelled — the record is saved and
-              the claims are untouched — and a button that says otherwise makes
-              an officer hesitate over an action that costs nothing.
+              any unanswered claim stays on the queue.
             */}
-            {en ? 'Later' : 'لاحقاً'}
+            {open === 0 ? (en ? 'Done' : 'تم') : en ? 'Later' : 'لاحقاً'}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -375,8 +375,8 @@ export default function CitizensPage({
                   ) : null}
                 </p>
                 {citizen.referenceNumber ? (
-                  <p className="font-mono text-xs text-muted-foreground" dir="ltr">
-                    {citizen.referenceNumber}
+                  <p className="font-mono text-xs text-muted-foreground text-start">
+                    <bdi dir="ltr">{citizen.referenceNumber}</bdi>
                   </p>
                 ) : null}
               </div>

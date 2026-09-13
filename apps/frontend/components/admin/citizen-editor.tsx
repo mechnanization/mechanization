@@ -21,7 +21,11 @@ import type {
   CensusSyncResult,
   CreateBuildingInput,
 } from '@/lib/api-client';
-import type { LandlordLinkOffers, PublicTenantConfig } from '@/lib/api-client';
+import type {
+  LandlordLinkChanges,
+  LandlordLinkOffers,
+  PublicTenantConfig,
+} from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatRelative } from '@/lib/dates';
 import {
@@ -67,6 +71,68 @@ import { mintId, type LockedCensusTarget } from './building-unit-picker';
 /** `null`/`undefined` → absent; a number → the string an `<input>` holds. */
 function text(value: unknown): string | undefined {
   return value === null || value === undefined || value === '' ? undefined : String(value);
+}
+
+/** The server's `landlordLink` for a card, or nothing when there is none. */
+function readLandlordLink(value: unknown): PropertyDraft['landlordLink'] {
+  if (!value || typeof value !== 'object') return undefined;
+  const link = value as { citizenId?: unknown; name?: unknown; referenceNumber?: unknown };
+  if (typeof link.citizenId !== 'string' || typeof link.name !== 'string') return undefined;
+  return {
+    citizenId: link.citizenId,
+    name: link.name,
+    referenceNumber: typeof link.referenceNumber === 'string' ? link.referenceNumber : null,
+  };
+}
+
+/**
+ * Tells the officer what the save did to owner links on this file.
+ *
+ * Each of these moved somebody else's bill — the owner's — as a consequence of
+ * an edit to the tenant's record, so none of them is allowed to happen
+ * silently: a card removed or a number corrected undoes its link, a corrected
+ * flat moves the owner with it, and a link the card can no longer carry is
+ * named with the step that fixes it.
+ */
+function announceLandlordLinkChanges(
+  changes: LandlordLinkChanges | undefined,
+  toast: ReturnType<typeof useToast>,
+  locale: string,
+): void {
+  if (!changes) return;
+  const en = locale === 'en';
+
+  const unlinked = changes.unlinked.length;
+  if (unlinked > 0) {
+    const kept = changes.unlinked.some(
+      (entry) => entry.report.legacy || entry.report.kept.length > 0,
+    );
+    toast.warning(en ? 'Owner link undone' : 'أُلغي ربط المالك', {
+      description: kept
+        ? en
+          ? 'A card was removed or its owner’s number changed, so its link was undone. Some records on the owner’s file were kept — review them.'
+          : 'حُذفت بطاقة أو تغيّر رقم مالكها فأُلغي ربطها. بقيت بعض السجلات في ملف المالك — راجعها.'
+        : en
+          ? 'A card was removed or its owner’s number changed, so its link was undone and what it added to the owner’s file was removed.'
+          : 'حُذفت بطاقة أو تغيّر رقم مالكها فأُلغي ربطها، وأُزيل ما أضافه إلى ملف المالك.',
+      duration: 10000,
+    });
+  }
+
+  if (changes.reconciled && changes.reconciled.updated > 0) {
+    toast.info(en ? 'Owner’s property updated' : 'تم تحديث عقار المالك', {
+      description: en
+        ? 'The linked owner now follows the units this card names.'
+        : 'المالك المرتبط أصبح مسجَّلاً على الوحدات التي تحددها هذه البطاقة.',
+    });
+  }
+
+  for (const { block } of changes.reconciled?.blocked ?? []) {
+    toast.warning(en ? 'The owner link needs attention' : 'ربط المالك يحتاج مراجعة', {
+      description: block.message,
+      duration: 12000,
+    });
+  }
 }
 
 /**
@@ -545,6 +611,12 @@ function toDraft(property: Record<string, unknown>): PropertyDraft {
     landlordName: text(property.landlordName),
     landlordPhone: text(property.landlordPhone),
     landlordCitizenId: text(property.landlordCitizenId),
+    /*
+      The standing link, so the card opens locked to it — number and name — with
+      «إلغاء الربط» as the way out. Without it an edit showed the tenant's typed
+      name in an unlocked box over a link the server was still holding.
+    */
+    landlordLink: readLandlordLink(property.landlordLink),
     propertyType: property.propertyType as PropertyDraft['propertyType'],
     neighborhood: text(property.neighborhood),
     propertyNumber: text(property.propertyNumber),
@@ -1327,6 +1399,7 @@ export function CitizenEditor({
         if (citizenId) {
           const updated = await updateCitizen(tenant, token, citizenId, payload);
           announceCensus(updated.census, toast, locale);
+          announceLandlordLinkChanges(updated.landlordLinkChanges, toast, locale);
           leave(updated.landlordLinks, `${base}/citizens/${citizenId}`);
         } else {
           const created = await createCitizen(tenant, token, payload);

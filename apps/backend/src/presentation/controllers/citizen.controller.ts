@@ -194,7 +194,15 @@ export class CitizenController {
       // Flattened: a citizen has no reason to care that their four properties
       // arrived in two separate filings — that grouping was an artefact of the
       // submission workflow, which no longer exists.
-      properties: citizen.registrations.flatMap((registration) => registration.properties),
+      /*
+        Without the link's identifiers. The owner's *name* is the tenant's to
+        see — it is who they pay — but the owner's register id and رقم مرجعي
+        are somebody else's, and the reference number alone opens that person's
+        own portal.
+      */
+      properties: citizen.registrations
+        .flatMap((registration) => registration.properties)
+        .map(({ landlordCitizenId: _id, landlordReferenceNumber: _reference, ...property }) => property),
       payments: citizen.payments,
       fees: citizen.fees,
     };
@@ -219,8 +227,16 @@ export class CitizenController {
    */
   @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
   @Get('landlord-links')
-  landlordLinks() {
-    return this.landlordLinkService.proposals();
+  landlordLinks(@Query('limit') limit?: string, @Query('offset') offset?: string) {
+    /*
+      Paged, because the match is: one statement finds only the claims that
+      resolve to somebody, and the page is hydrated from those. The whole queue
+      in one response was the read this screen used to make on every visit.
+    */
+    return this.landlordLinkService.proposals({
+      limit: Number(limit ?? 20),
+      offset: Number(offset ?? 0),
+    });
   }
 
   /**
@@ -237,17 +253,31 @@ export class CitizenController {
   }
 
   /**
-   * The form's inline lookup: is this number one of ours?
+   * The form's inline lookup: who is registered on this number?
    *
-   * Answers at most one citizen and deliberately says nothing where several
-   * share the number — the shared-household case, where picking would be
-   * guessing. The queue shows all of them to a person instead.
+   * Every active citizen on it. A shared household line is where the officer
+   * standing with the tenant is best placed to say which person was meant, so
+   * the form lists them to choose from rather than falling silent. `candidate`
+   * is kept for a client from before the list existed: the one person, or null
+   * where there are several.
    */
   @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
   @Get('landlord-links/candidate')
   async landlordCandidate(@Query('phone') phone?: string) {
-    if (!phone?.trim()) return { candidate: null };
-    return { candidate: await this.landlordLinkService.candidateFor(phone) };
+    if (!phone?.trim()) return { candidate: null, candidates: [] };
+    const candidates = await this.landlordLinkService.candidatesFor(phone);
+    return { candidate: candidates.length === 1 ? candidates[0] : null, candidates };
+  }
+
+  /**
+   * What «إلغاء الربط» would do, read when its confirmation opens — so the
+   * clerk is told which flats leave the owner's file, and whether bills have
+   * been raised since, before deciding.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Get('landlord-links/:propertyEntryId/unlink-preview')
+  landlordUnlinkPreview(@Param('propertyEntryId') propertyEntryId: string) {
+    return this.landlordLinkService.unlinkPreview(propertyEntryId);
   }
 
   /**
@@ -277,26 +307,50 @@ export class CitizenController {
     });
   }
 
-  /** «ليس هو» — what lets the queue shrink. See `landlordLinkDismissedAt`. */
+  /**
+   * «لا أحد منهم» — these citizens are not this card's owner.
+   *
+   * Names the citizens the clerk was shown, so somebody registering on the
+   * number later is still offered. See `landlordLinkDismissedIds`.
+   */
   @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
   @Post('landlord-links/:propertyEntryId/dismiss')
   dismissLandlordLink(
     @Param('propertyEntryId') propertyEntryId: string,
+    @Body('candidateIds') candidateIds: unknown,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.landlordLinkService.dismiss({
       propertyEntryId,
+      candidateIds: Array.isArray(candidateIds)
+        ? candidateIds.filter((id): id is string => typeof id === 'string')
+        : [],
+      actor: { id: user.sub, role: user.role ?? 'STAFF' },
+    });
+  }
+
+  /** The «تراجع» on a dismissal — offers those citizens on the card again. */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Post('landlord-links/:propertyEntryId/restore')
+  restoreLandlordLink(
+    @Param('propertyEntryId') propertyEntryId: string,
+    @Body('candidateIds') candidateIds: unknown,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.landlordLinkService.undismiss({
+      propertyEntryId,
+      candidateIds: Array.isArray(candidateIds)
+        ? candidateIds.filter((id): id is string => typeof id === 'string')
+        : [],
       actor: { id: user.sub, role: user.role ?? 'STAFF' },
     });
   }
 
   /**
-   * Undoes a confirmation, putting the claim back in the queue.
-   *
-   * The correction path for the one mistake this feature can make — the wrong
-   * person confirmed off a shared household line. It does not withdraw the
-   * occupancies the link recorded; ending a spell is `endOccupancy`'s job on
-   * the matrix, which records who ended it and when.
+   * Undoes a confirmation: the claim goes back to the queue, and what the link
+   * wrote into the owner's records — occupancies, unit rows, a card it created
+   * — is reverted, exactly that and only while unedited. See
+   * `LandlordLinkService.unlink` for what is kept and why.
    */
   @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
   @Delete('landlord-links/:propertyEntryId')

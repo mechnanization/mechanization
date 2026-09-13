@@ -231,6 +231,9 @@ model User {
   /// docs/open-decisions.md about tolerating near-duplicate name spellings.
   @@unique([identityDocType, identityDocNumber])
   @@index([kind, phone])
+  /// The other half of the owner match — a landlord's number is as often the
+  /// one they answer on WhatsApp as the one they registered with (0045).
+  @@index([kind, whatsapp])
   @@index([kind, role])
   @@map("users")
 }
@@ -489,6 +492,29 @@ model PropertyEntry {
   /// Cleared whenever `landlordPhone` changes: a different number is a
   /// different claim, and the answer to the old one says nothing about it.
   landlordLinkDismissedAt DateTime?
+
+  /// Who «لا أحد منهم» rejected on this card (migration 0045).
+  ///
+  /// A dismissal is an answer about the citizens the clerk was shown, not about
+  /// the number: the real owner registering a month later on the same line was
+  /// never offered while `landlordLinkDismissedAt` alone stood for everyone.
+  /// Empty beside a timestamp means a dismissal from before 0045, read as
+  /// rejecting the citizens registered at that moment.
+  landlordLinkDismissedIds String[] @default([]) @db.Uuid
+
+  /// What confirming the owner link wrote into the owner's records (0045).
+  ///
+  /// The occupancies, unit rows and cards `LandlordLinkService.confirm` created,
+  /// each with the values it wrote — so «إلغاء الربط» reverts exactly those and
+  /// keeps anything a person has since edited. Null on an unlinked card and on
+  /// a link confirmed before 0045. See `LinkFootprint`.
+  landlordLinkFootprint Json?
+
+  /// Present only on an owner card an owner link created, with the values it
+  /// was created with (0045). The edit path never writes it, so the card stays
+  /// recognisable as the link's own however many saves of the owner's file
+  /// happen in between. See `LinkMint`.
+  landlordLinkMint Json?
 
   propertyType   PropertyType
   /// الحي — common to every property type. Free text: unlike رقم العقار there is

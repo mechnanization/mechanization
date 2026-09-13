@@ -36,6 +36,7 @@ import {
   Sun,
   Tent,
   Trees,
+  Unlink,
   User,
   UserCheck,
   Users,
@@ -58,6 +59,7 @@ import {
 import type {
   CitizenFeeTotals,
   CitizenProfile,
+  CitizenProfileLandlordOf,
   CitizenProfilePayment,
   CitizenProfileProperty,
   CitizenProfileUnit,
@@ -74,6 +76,7 @@ import { CollapsibleSection } from '@/components/ui/collapsible-section';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Money } from '@/components/ui/money';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
+import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { LoadingState } from '@/components/ui/states';
 import {
   SettlePaymentDialog,
@@ -956,7 +959,16 @@ export default function CitizenProfilePage({
               ) : null}
 
               {registration.properties.map((property) => (
-                <PropertyCard key={property.id} property={property} base={base} locale={locale} />
+                <PropertyCard
+                  key={property.id}
+                  property={property}
+                  base={base}
+                  locale={locale}
+                  tenant={tenant}
+                  token={token}
+                  canEdit={canEdit}
+                  onChanged={() => void reload()}
+                />
               ))}
 
               {registration.properties.length === 0 ? (
@@ -1014,7 +1026,140 @@ export default function CitizenProfilePage({
         ) : null}
         </div>
       </CollapsibleSection>
+
+      {citizen.landlordOf && citizen.landlordOf.length > 0 ? (
+        <LandlordOfSection
+          cards={citizen.landlordOf}
+          base={base}
+          tenant={tenant}
+          token={token}
+          canEdit={canEdit}
+          onChanged={() => void reload()}
+          locale={locale}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * «مالك لدى مستأجرين» — the tenancies confirmed as naming this citizen.
+ *
+ * The owner's half of every link, on the file of the person it bills. Before
+ * this a confirmed link could only be seen, or undone, from the tenant's page,
+ * so an owner at the counter asking «ليش هالعقار على اسمي؟» had nothing on their
+ * own file to point at.
+ */
+function LandlordOfSection({
+  cards,
+  base,
+  tenant,
+  token,
+  canEdit,
+  onChanged,
+  locale,
+}: {
+  cards: CitizenProfileLandlordOf[];
+  base: string;
+  tenant: string;
+  token: string | null;
+  canEdit: boolean;
+  onChanged: () => void;
+  locale: string;
+}) {
+  const en = locale === 'en';
+  const [unlinking, setUnlinking] = useState<string | null>(null);
+
+  return (
+    <CollapsibleSection
+      id="landlord-of"
+      title={en ? 'Owner to tenants' : 'مالك لدى مستأجرين'}
+      icon={UserCheck}
+      defaultOpen={false}
+      summary={
+        <span className="text-muted-foreground">
+          {cards.length} {en ? 'linked tenancy card(s)' : 'بطاقة مستأجر مرتبطة'}
+        </span>
+      }
+    >
+      <ul className="divide-y rounded-lg border">
+        {cards.map((card) => (
+          <li key={card.propertyEntryId} className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="flex flex-wrap items-center gap-2 text-sm">
+                <Badge variant="soft-muted">
+                  {card.occupancyType === 'FREE_OCCUPANT'
+                    ? en
+                      ? 'Free occupant'
+                      : 'شاغل بتسامح'
+                    : en
+                      ? 'Tenant'
+                      : 'مستأجر'}
+                </Badge>
+                <Link
+                  href={`${base}/citizens/${card.tenant.id}`}
+                  className="font-semibold text-primary underline-offset-4 hover:underline"
+                >
+                  {card.tenant.name}
+                </Link>
+                {card.tenant.referenceNumber ? (
+                  <bdi dir="ltr" className="font-mono text-xs text-muted-foreground">
+                    {card.tenant.referenceNumber}
+                  </bdi>
+                ) : null}
+              </p>
+              <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span>
+                  {[
+                    card.buildingName,
+                    card.propertyNumber ? (en ? `Parcel ${card.propertyNumber}` : `العقار ${card.propertyNumber}`) : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || (en ? 'No building named' : 'لا اسم للمبنى')}
+                </span>
+                {card.unitCodes.length > 0 ? (
+                  <bdi dir="ltr" className="font-mono">
+                    {card.unitCodes.join(', ')}
+                  </bdi>
+                ) : null}
+                {card.linkedAt ? (
+                  <span>
+                    {en ? 'Linked ' : 'رُبط في '}
+                    {formatDate(card.linkedAt)}
+                  </span>
+                ) : null}
+              </p>
+            </div>
+            {canEdit && token ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9"
+                onClick={() => setUnlinking(card.propertyEntryId)}
+              >
+                <Unlink className="size-4" aria-hidden />
+                {en ? 'Undo link' : 'إلغاء الربط'}
+              </Button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+
+      {canEdit && token && unlinking ? (
+        <LandlordUnlinkDialog
+          tenant={tenant}
+          token={token}
+          propertyEntryId={unlinking}
+          open={Boolean(unlinking)}
+          onOpenChange={(open) => (open ? undefined : setUnlinking(null))}
+          onUnlinked={() => {
+            setUnlinking(null);
+            onChanged();
+          }}
+          locale={locale}
+        />
+      ) : null}
+    </CollapsibleSection>
   );
 }
 
@@ -1335,11 +1480,20 @@ function PropertyCard({
   property,
   base,
   locale = 'ar',
+  tenant,
+  token,
+  canEdit,
+  onChanged,
 }: {
   property: CitizenProfileProperty;
   base: string;
   locale?: string;
+  tenant: string;
+  token: string | null;
+  canEdit: boolean;
+  onChanged: () => void;
 }) {
+  const [unlinkOpen, setUnlinkOpen] = useState(false);
   const Icon = PROPERTY_ICON[property.propertyType] ?? Building2;
   const isTenant = property.occupancyType === 'TENANT';
   /*
@@ -1493,8 +1647,26 @@ function PropertyCard({
         ),
       hint:
         property.landlordCitizenId && property.landlordName
-          ? (locale === 'en' ? 'Confirmed as a registered citizen' : 'مالك مسجَّل — تم تأكيد الرابط')
+          ? (locale === 'en' ? 'Registered citizen — link confirmed' : 'مواطن مسجَّل — تم تأكيد الربط')
           : undefined,
+    },
+    /*
+      What the tenant actually said, when it is not what the card now shows.
+
+      The name above is the owner's registered one while the link stands. The
+      tenant's own words are kept rather than overwritten, and shown here, so
+      whoever is checking whether the link was right can see what it was made
+      from.
+    */
+    {
+      icon: StickyNote,
+      label: locale === 'en' ? 'As the tenant gave it' : 'كما ذكره المستأجر',
+      value:
+        property.landlordCitizenId &&
+        property.landlordNameAsTyped &&
+        property.landlordNameAsTyped !== property.landlordName
+          ? property.landlordNameAsTyped
+          : null,
     },
     {
       icon: Phone,
@@ -1579,12 +1751,31 @@ function PropertyCard({
 
       {isNonOwner && landlord.length > 0 ? (
         <div className="space-y-3 p-4">
-          <SubHeading icon={UserCheck}>{locale === 'en' ? 'Landlord' : 'المالك'}</SubHeading>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <SubHeading icon={UserCheck}>{locale === 'en' ? 'Landlord' : 'المالك'}</SubHeading>
+            {property.landlordCitizenId && canEdit && token ? (
+              <Button variant="outline" size="sm" className="h-9" onClick={() => setUnlinkOpen(true)}>
+                <Unlink className="size-4" aria-hidden />
+                {locale === 'en' ? 'Undo link' : 'إلغاء الربط'}
+              </Button>
+            ) : null}
+          </div>
           <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
             {landlord.map((fact) => (
               <Fact key={fact.label} {...fact} />
             ))}
           </dl>
+          {property.landlordCitizenId && canEdit && token ? (
+            <LandlordUnlinkDialog
+              tenant={tenant}
+              token={token}
+              propertyEntryId={property.id}
+              open={unlinkOpen}
+              onOpenChange={setUnlinkOpen}
+              onUnlinked={onChanged}
+              locale={locale}
+            />
+          ) : null}
         </div>
       ) : null}
 
