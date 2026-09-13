@@ -90,6 +90,10 @@ export const FEE_TARGET_CATEGORY = [
   'OFFICE',
   'SHOP',
   'WAREHOUSE',
+  /* Mirrors `UNIT_TYPE.GARAGE`. The two lists have to move together:
+     `matchesCategory` compares a category to `unit.unitType` directly, so a
+     unit type with no category here is one no per-category fee can reach. */
+  'GARAGE',
 ] as const;
 export const feeTargetCategorySchema = z.enum(FEE_TARGET_CATEGORY);
 export type FeeTargetCategory = (typeof FEE_TARGET_CATEGORY)[number];

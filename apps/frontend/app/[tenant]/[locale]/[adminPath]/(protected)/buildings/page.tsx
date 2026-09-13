@@ -862,8 +862,8 @@ export default function BuildingsPage({
               The whole census can run to thousands of rows, so the page, the
               search and every filter belong to the server. Sorting stays off
               rather than re-ordering the twenty-five rows in hand and calling it
-              sorted; the server returns them by parcel, then by suffix — which
-              is the order a surveyor walks them in.
+              sorted; the server returns them newest first, so the building an
+              officer has just filed is the first one they see.
             */
             manualPagination
             manualFiltering

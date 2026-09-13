@@ -575,7 +575,11 @@ export function BuildingUnitMatrixDrawer({
               {onEditBuilding ? (
                 <Button variant="outline" size="sm" onClick={() => onEditBuilding(building)}>
                   <Pencil className="size-4" aria-hidden />
-                  {en ? 'Edit building' : 'تعديل المبنى'}
+                  {/* Matches the page view's wording. The drawer's host decides
+                      where this goes, so it does not promise info-only here —
+                      it promises the building rather than its units, which is
+                      what every current caller opens. */}
+                  {en ? 'Edit building details' : 'تعديل معلومات المبنى'}
                 </Button>
               ) : null}
             </div>

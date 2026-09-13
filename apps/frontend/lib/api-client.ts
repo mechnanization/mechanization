@@ -935,7 +935,7 @@ export interface UnitRow {
  *
  * `previousUnitStatus` / `previousSurveyStatus` are what the flat said before,
  * carried so the undo can state what it will restore *before* it is pressed.
- * Both null on a row migration 0041 backfilled, where nobody recorded either.
+ * Both null on a row migration 0043 backfilled, where nobody recorded either.
  */
 export interface UnitVacancyConfirmation {
   id: string;
@@ -973,7 +973,7 @@ export interface UnitWithOccupants extends UnitRow {
    * «تأكيد الشغور» on this unit, newest first and capped server-side at five.
    *
    * Optional on the wire so a cached response from a build before migration
-   * 0041 reads as "none" rather than throwing — a unit with no confirmations is
+   * 0043 reads as "none" rather than throwing — a unit with no confirmations is
    * the ordinary case anyway.
    */
   vacancies?: UnitVacancyConfirmation[];
@@ -1053,7 +1053,7 @@ export interface CensusSyncResult {
   /**
    * Units whose confirmed vacancy this registration lifted, because it recorded
    * a household in a flat the municipality had called empty. Optional on the
-   * wire for responses from before migration 0041.
+   * wire for responses from before migration 0043.
    */
   vacanciesEnded?: number;
   /** Structures that had no name until this card supplied one. */

@@ -46,7 +46,7 @@ export async function activeVacancy(db: VacancyDb, unitId: string) {
  *
  * `RECORDED_IN_ERROR` — the flat was never empty, so the unit returns to what
  * it said before: the snapshot the confirmation stored. Null there means either
- * "nothing was set" or "this row was backfilled by 0041 and nobody knows", and
+ * "nothing was set" or "this row was backfilled by 0043 and nobody knows", and
  * both land on the same honest answer — «غير محدد», a unit billed to its owner
  * because the question is open again.
  *

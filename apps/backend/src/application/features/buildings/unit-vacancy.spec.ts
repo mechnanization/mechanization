@@ -72,7 +72,7 @@ describe('vacancyReversal', () => {
   });
 
   /*
-    A row migration 0041 backfilled has no snapshot — nobody recorded one — and
+    A row migration 0043 backfilled has no snapshot — nobody recorded one — and
     `NOT_SURVEYED` would be a lie on a flat officers have stood at: it means
     nobody went. The last real visit is the honest answer.
   */

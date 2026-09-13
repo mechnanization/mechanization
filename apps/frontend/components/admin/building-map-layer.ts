@@ -190,6 +190,7 @@ export function buildingLegend(
 const MUTED_LIFECYCLE: readonly string[] = [
   'PERMITTED',
   'UNDER_CONSTRUCTION',
+  'WAR_DAMAGED_UNINHABITED',
   'DEMOLISHED',
   'NOT_REALISED',
 ];

@@ -230,7 +230,21 @@ export class BuildingsService {
     const rows = await withConnectionRetry(() =>
       this.db.building.findMany({
         where,
-        orderBy: [{ parcelNumber: 'asc' }, { codeSuffix: 'asc' }],
+        /*
+          Newest first, and the tiebreaker matters as much as the key.
+
+          «سجل المباني» is read by the officer who has just filed something, and
+          the old `(parcelNumber, codeSuffix)` order put their new record
+          wherever its parcel number happened to sort — the middle of the list,
+          in practice — so they went looking for work they had just done.
+
+          `id` breaks ties because `createdAt` is a timestamp, not a sequence:
+          a matrix save writes a building and its units in one transaction and
+          two buildings can land on the same millisecond. Without a second key
+          their relative order is undefined, and an undefined order under
+          `LIMIT`/`OFFSET` is how a row appears on two pages or on neither.
+        */
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: filter.limit ?? 100,
         skip: filter.offset ?? 0,
       }),
@@ -1754,7 +1768,7 @@ export class BuildingsService {
    * ## What it refuses
    *
    * The two in `assertMayBeCalledEmpty`, plus a vacancy already standing — the
-   * partial unique index in migration 0041 is the backstop for two officers
+   * partial unique index in migration 0043 is the backstop for two officers
    * confirming the same flat at once, and this is the message for the ordinary
    * case of one officer pressing twice.
    *

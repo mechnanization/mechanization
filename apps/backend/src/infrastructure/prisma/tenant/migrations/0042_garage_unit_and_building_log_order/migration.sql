@@ -1,0 +1,50 @@
+-- 0042_garage_unit_and_building_log_order
+--
+-- Two additive changes the building wizard's rework needs.
+--
+-- == 1. «كراج» as a unit type ============================================
+--
+-- The matrix can now paint an accessory block beside a house, and the thing
+-- an officer paints there is almost always a garage. Until now the nearest
+-- available answer was `WAREHOUSE`.
+--
+-- That is not a cosmetic mismatch, because the type decides money. A مستودع is
+-- business premises and is rated as such — Law 60/1988, Art. 12 charges
+-- non-residential use at 7% against 5% — so filing a household's lock-up as a
+-- warehouse puts it on the assessment roll as commercial floor space and bills
+-- the household accordingly. A note in the unit's description cannot correct a
+-- rate; only the type can.
+--
+-- Appended rather than positioned: unlike `BuildingLifecycle` in 0041 there is
+-- no ladder here for the enum's order to express — unit types are a set, and
+-- every list of them in the UI is ordered by its own labels.
+--
+-- `FEE_TARGET_CATEGORY` in `fee.schema.ts` gains the same value in the same
+-- change. `matchesCategory` compares a fee's category against `unit.unitType`
+-- directly, so a unit type absent from that list is one no per-category fee
+-- can ever reach — a garage nobody could bill, which is the opposite of the
+-- point.
+--
+-- == 2. An index for «سجل المباني» ======================================
+--
+-- The log used to be ordered `(parcelNumber, codeSuffix)`, which is a sensible
+-- order for reading a parcel and a poor one for the thing staff actually do:
+-- file a building and look for it. A new record landed wherever its parcel
+-- number happened to sort, which on a register of any size means "somewhere in
+-- the middle", and the officer who just created it went looking.
+--
+-- Newest first answers that, and this index is what keeps it cheap. `ORDER BY
+-- "createdAt" DESC` with `LIMIT`/`OFFSET` and no index sorts the entire
+-- buildings table on every page turn; with one, Postgres walks the btree
+-- backwards and stops at the page boundary.
+--
+-- `ADD VALUE` runs inside the migrator's transaction (allowed since Postgres
+-- 12); nothing here uses the new value in the same transaction, and no row is
+-- rewritten by either statement.
+--
+-- Written unqualified: the migrator sets `search_path` to the target tenant
+-- schema before running this.
+
+ALTER TYPE "UnitType" ADD VALUE IF NOT EXISTS 'GARAGE';
+
+CREATE INDEX IF NOT EXISTS "buildings_createdAt_idx" ON "buildings" ("createdAt");

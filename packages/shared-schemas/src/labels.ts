@@ -68,6 +68,7 @@ export const ar = {
     OFFICE: 'مكاتب',
     SHOP: 'محلات تجارية',
     WAREHOUSE: 'مستودعات',
+    GARAGE: 'كراجات',
   } satisfies Record<FeeTargetCategory, string>,
 
   /** What the notice's amount is multiplied by. See `FEE_BASIS`. */
@@ -187,6 +188,7 @@ export const ar = {
     OFFICE: 'مكتب',
     SHOP: 'محل تجاري',
     WAREHOUSE: 'مستودع',
+    GARAGE: 'كراج',
   } satisfies Record<UnitType, string>,
 
   landType: {
@@ -216,6 +218,7 @@ export const ar = {
     UNDER_CONSTRUCTION: 'قيد الإنشاء',
     IN_USE: 'قائم ومستعمل',
     DERELICT: 'قائم ومهجور',
+    WAR_DAMAGED_UNINHABITED: 'متضررة من الحرب وغير مسكونة',
     DEMOLISHED: 'مهدوم',
     NOT_REALISED: 'لم يُنفَّذ',
   } satisfies Record<BuildingLifecycle, string>,
@@ -424,6 +427,7 @@ export const en = {
     OFFICE: 'Offices',
     SHOP: 'Commercial Shops',
     WAREHOUSE: 'Warehouses',
+    GARAGE: 'Garages',
   } satisfies Record<FeeTargetCategory, string>,
 
   feeBasis: {
@@ -522,6 +526,7 @@ export const en = {
     OFFICE: 'Office',
     SHOP: 'Commercial Shop',
     WAREHOUSE: 'Warehouse',
+    GARAGE: 'Garage',
   } satisfies Record<UnitType, string>,
 
   landType: {
@@ -543,6 +548,7 @@ export const en = {
     UNDER_CONSTRUCTION: 'Under Construction',
     IN_USE: 'Standing — In Use',
     DERELICT: 'Standing — Abandoned',
+    WAR_DAMAGED_UNINHABITED: 'War-Damaged — Uninhabited',
     DEMOLISHED: 'Demolished',
     NOT_REALISED: 'Never Built',
   } satisfies Record<BuildingLifecycle, string>,

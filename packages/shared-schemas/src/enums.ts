@@ -287,6 +287,19 @@ export const UNIT_TYPE = [
   'OFFICE',
   'SHOP',
   'WAREHOUSE',
+  /**
+   * كراج — the accessory beside a house, not a commercial garage.
+   *
+   * Its own type rather than a `WAREHOUSE` with a note, because the two are
+   * rated differently and a rate is not a note: a مستودع is a business
+   * premises, a كراج is the lock-up attached to a dwelling. Filing one as the
+   * other puts a household's garage on the assessment roll as commercial
+   * floor space.
+   *
+   * Never a dwelling — absent from `DWELLING_UNIT_TYPE` below, so a
+   * non-resident may hold one without it making them a household in the town.
+   */
+  'GARAGE',
 ] as const;
 export const unitTypeSchema = arabicEnum(UNIT_TYPE, 'نوع الوحدة مطلوب');
 export type UnitType = z.infer<typeof unitTypeSchema>;
@@ -394,6 +407,24 @@ export const BUILDING_LIFECYCLE = [
    * would hide those households from every coverage figure.
    */
   'DERELICT',
+  /**
+   * متضررة من الحرب وغير مسكونة — still standing, damaged badly enough that
+   * nobody is in it.
+   *
+   * **Standing is the operative word.** The structure is visible, its storeys
+   * are countable from the street, and its flats are recorded exactly as any
+   * other building's are — a damaged block's unit count is the figure a
+   * reconstruction programme is costed on, and it is only knowable while the
+   * building is still there to be counted. That is what separates it from
+   * `DEMOLISHED`, where there is nothing left to measure.
+   *
+   * What separates it from `DERELICT` is the *«غير مسكونة»* half, and that is
+   * a claim about occupancy, not about the shell: a derelict block may hold a
+   * displaced family, so it stays in the census denominator and somebody goes
+   * and knocks. This one has been established as empty, so its units are on
+   * file without being counted as households waiting to be surveyed.
+   */
+  'WAR_DAMAGED_UNINHABITED',
   /** مهدوم — taken down. Distinct from `TOTAL_COLLAPSE`, which is damage. */
   'DEMOLISHED',
   /** لم يُنفَّذ — permitted, then abandoned or revoked. BAG's `niet gerealiseerd`. */
@@ -427,6 +458,40 @@ export const OCCUPIABLE_LIFECYCLE = ['IN_USE', 'DERELICT'] as const;
  */
 export function isOccupiableLifecycle(status: string | null | undefined): boolean {
   return status == null || (OCCUPIABLE_LIFECYCLE as readonly string[]).includes(status);
+}
+
+/**
+ * Structures with no storeys left to count, so the wizard stops asking.
+ *
+ * One value, and the narrowness is the point. Three other states are also
+ * outside the census denominator and none of them belongs here:
+ *
+ * - `PERMITTED` / `UNDER_CONSTRUCTION` — an officer in front of a half-built
+ *   block can count its storeys and lay out the flats it will have. Ordinary
+ *   desk work before handover.
+ * - `WAR_DAMAGED_UNINHABITED` — **the structure is still standing.** Its
+ *   storeys are visible from the pavement and countable, and how many flats a
+ *   damaged block holds is precisely the figure a reconstruction programme is
+ *   built on. Uninhabited is a statement about who is inside it, not about
+ *   whether it can be measured.
+ *
+ * Only «مهدوم» is different, and only because there is nothing there: the
+ * storeys are gone, not unsafe. Asking «كم طابقاً؟» of a cleared plot invites
+ * a guess, and a guessed floor count is worse than a recorded absence, because
+ * everything downstream reads it as an observation.
+ */
+export const UNSURVEYABLE_SHELL_LIFECYCLE = ['DEMOLISHED'] as const;
+
+/**
+ * Whether this structure's interior is beyond surveying — no floor count to
+ * ask for, no unit matrix to paint.
+ *
+ * Null reads as surveyable, matching `isOccupiableLifecycle` above: an absent
+ * status is a building nobody has classified, and the ordinary building is the
+ * safe assumption for one.
+ */
+export function isUnsurveyableShell(status: string | null | undefined): boolean {
+  return status != null && (UNSURVEYABLE_SHELL_LIFECYCLE as readonly string[]).includes(status);
 }
 
 /**

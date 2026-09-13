@@ -1,0 +1,58 @@
+-- 0041_war_damaged_uninhabited
+--
+-- «متضررة من الحرب و غير مسكونة» — a building left standing, badly damaged,
+-- and established as empty.
+--
+-- == The state that had nowhere to go ======================================
+--
+-- A surveyor in front of a shelled block had six lifecycle values and none of
+-- them was true. `DERELICT` says «قائم ومهجور» and is *deliberately* inside
+-- `OCCUPIABLE_LIFECYCLE` — the value's own comment explains why: an abandoned
+-- building with a displaced family in it is exactly what a war-damage census
+-- exists to find, so its units stay in the denominator and somebody goes and
+-- knocks. Filing a war-damaged empty shell there parks unreachable work on
+-- the dispatch list for ever and holds coverage below 100 permanently.
+--
+-- `DEMOLISHED` is not true either, and the error runs the other way: the
+-- structure is *there*. It may be repaired and repopulated, and the
+-- reconstruction figures need to count it as a building that exists. Recording
+-- it as taken down loses it.
+--
+-- So the two available answers were "somebody might live here, go and check"
+-- and "this building is gone", and the truth — standing, damaged, empty, and
+-- unsafe to walk — was neither.
+--
+-- == Why it sorts between them ============================================
+--
+-- `BEFORE 'DEMOLISHED'`, which puts it directly after `DERELICT`, because
+-- that is the order of the ladder these values describe: in use, abandoned,
+-- damaged-and-empty, taken down, never built. Postgres enum order is what
+-- `ORDER BY lifecycleStatus` uses, and a value appended at the end would sort
+-- a damaged building after a building that was never built.
+--
+-- `ADD VALUE` runs inside the migrator's transaction — allowed since Postgres
+-- 12. What is not allowed is *using* the new value in the same transaction,
+-- and nothing in this file does: no backfill, no default change, no row
+-- touched. Every existing building keeps the status it has, which is correct,
+-- because until now nobody could have chosen this one.
+--
+-- == What it changes downstream ===========================================
+--
+-- Nothing here, and that is on purpose. The value is absent from
+-- `OCCUPIABLE_LIFECYCLE`, so `isOccupiableLifecycle` excludes it and the
+-- census denominator, the survey rollup and the map's muted styling all
+-- follow from that single list without a line of their own.
+--
+-- It is deliberately *not* in `UNSURVEYABLE_SHELL_LIFECYCLE`, which holds
+-- `DEMOLISHED` alone. The building is standing: its storeys are countable from
+-- the street and its flats are recorded like any other building's, because the
+-- number of flats in a damaged block is what reconstruction is costed on and it
+-- can only be counted while the structure is still there. Excluding it from
+-- the denominator says nobody lives in it; it does not say nothing can be
+-- measured.
+--
+-- Written unqualified: the migrator sets `search_path` to the target tenant
+-- schema before running this.
+
+ALTER TYPE "BuildingLifecycle"
+  ADD VALUE IF NOT EXISTS 'WAR_DAMAGED_UNINHABITED' BEFORE 'DEMOLISHED';

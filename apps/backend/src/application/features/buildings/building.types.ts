@@ -160,7 +160,7 @@ export interface VisitRow {
 export interface VacancyRow {
   id: string;
   unitId: string;
-  /** A `VacancyBasis`, or null on a row backfilled by migration 0041. */
+  /** A `VacancyBasis`, or null on a row backfilled by migration 0043. */
   basis: string | null;
   observedAt: Date;
   notes: string | null;
