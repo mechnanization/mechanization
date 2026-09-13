@@ -3,6 +3,7 @@ import {
   buildingLifecycleSchema,
   damageLevelSchema,
   damageSourceSchema,
+  occupancyEndReasonSchema,
   occupancyRoleSchema,
   structureTypeSchema,
   surveyStatusSchema,
@@ -448,6 +449,30 @@ export const updateUnitSchema = upsertUnitSchema
     flag would pass the "at least one field" guard and then save nothing.
   */
   .omit({ acknowledgedDuplicates: true })
+  .extend({
+    /**
+     * «مسكن موسمي» — the facts a council needs to decide how a seasonal home is
+     * billed, recorded rather than decided here (see `UNIT_STATUS.SEASONAL`).
+     *
+     * `presenceMonths` are the months the owners are usually present, 1–12.
+     * `ownerLastStayAt` is when they were last here. `vacancyDeclaredAt` is the
+     * date a تصريح بالشغور was filed, which is what lets the months without them
+     * be treated as vacant. The two dates take `null` to clear a value typed in
+     * error; neither may be in the future.
+     */
+    presenceMonths: z
+      .array(z.coerce.number().int().min(1, 'شهر غير صالح').max(12, 'شهر غير صالح'))
+      .max(12)
+      .transform((months) => [...new Set(months)].sort((a, b) => a - b)),
+    ownerLastStayAt: z.coerce
+      .date({ invalid_type_error: 'تاريخ آخر إقامة غير صالح' })
+      .max(new Date(Date.now() + 60_000), 'تاريخ آخر إقامة في المستقبل')
+      .nullable(),
+    vacancyDeclaredAt: z.coerce
+      .date({ invalid_type_error: 'تاريخ تصريح الشغور غير صالح' })
+      .max(new Date(Date.now() + 60_000), 'تاريخ تصريح الشغور في المستقبل')
+      .nullable(),
+  })
   .partial()
   .superRefine((value, ctx) => {
     if (Object.values(value).some((v) => v !== undefined)) return;
@@ -583,9 +608,21 @@ export const upsertOccupancySchema = z
 
 export type UpsertOccupancyInput = z.infer<typeof upsertOccupancySchema>;
 
-/** Ends a tenancy without deleting it — the history is the point (D2). */
+/**
+ * Ends a tenancy without deleting it — the history is the point (D2).
+ *
+ * `reason` is required. The action used to take no answer at all and was
+ * pressed by mistake in the field; the reason is what the confirmation asks
+ * for, and what tells a sale from a move from a spell that never existed.
+ * `toDate` cannot be in the future: a spell ends when somebody leaves, not when
+ * an officer expects them to.
+ */
 export const endOccupancySchema = z.object({
-  toDate: z.coerce.date({ invalid_type_error: 'تاريخ الانتهاء غير صالح' }).optional(),
+  toDate: z.coerce
+    .date({ invalid_type_error: 'تاريخ الانتهاء غير صالح' })
+    .max(new Date(Date.now() + 60_000), 'تاريخ الانتهاء في المستقبل')
+    .optional(),
+  reason: occupancyEndReasonSchema,
 });
 
 export type EndOccupancyInput = z.infer<typeof endOccupancySchema>;

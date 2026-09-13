@@ -21,12 +21,20 @@ import {
   allowedPropertyTypesFor,
   getLabels,
   PROPERTY_FIELD_MAP,
+  type CitizenResidence,
 } from '@mechanization/shared-schemas';
 import type { PublicTenantConfig } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { ContactStep, PersonalStep } from '@/components/citizen/steps';
+import {
+  ContactStep,
+  OwnerContactStep,
+  OwnerPersonalStep,
+  PersonalStep,
+} from '@/components/citizen/steps';
+import { SegmentedControl } from '@/components/ui/segmented-control';
+import { PossibleDuplicates } from './possible-duplicates';
 import {
   PropertyCard,
   type PropertyDraft,
@@ -41,6 +49,12 @@ import { cn, scopeErrors } from '@/lib/utils';
 import { useSectionNav } from '@/lib/use-section-nav';
 
 export interface CitizenFormValues {
+  /**
+   * نوع الملف — a household living in the town, or «مالك غير مقيم». Decides
+   * which questions the first two sections ask. Absent reads as a household,
+   * which is what every draft and queued record from before it meant.
+   */
+  residence?: CitizenResidence;
   personal: Record<string, unknown>;
   contact: Record<string, unknown>;
   properties: PropertyDraft[];
@@ -118,6 +132,7 @@ const SECTION_IDS = SECTIONS.map((section) => section.id) as readonly SectionId[
  */
 export function emptyCitizen(): CitizenFormValues {
   return {
+    residence: 'RESIDENT',
     personal: { isLebanese: true },
     contact: { whatsappSameAsPhone: true },
     // Empty, not one blank card — a citizen who owns nothing and only rents
@@ -168,6 +183,32 @@ export interface AskableField {
  * ticked six boxes and came back to five. One list, read by both.
  */
 export function askableFields(values: CitizenFormValues): AskableField[] {
+  /*
+    An owner record asks five things and nothing a household file asks — so a
+    flag left on a household field by an officer who then switched the record
+    to «مالك غير مقيم» is pruned rather than holding it at «يتطلب مراجعة» over
+    a question the form no longer puts.
+  */
+  if (values.residence === 'NON_RESIDENT_OWNER') {
+    const owner: AskableField[] = [
+      { path: 'personal.firstName', field: 'firstName', section: 'personal' },
+      { path: 'personal.middleName', field: 'middleName', section: 'personal' },
+      { path: 'personal.lastName', field: 'lastName', section: 'personal' },
+      { path: 'personal.residencePlace', field: 'residencePlace', section: 'personal' },
+      { path: 'contact.phone', field: 'phone', section: 'contact' },
+    ];
+    if (values.contact.whatsappSameAsPhone === false) {
+      owner.push({ path: 'contact.whatsapp', field: 'whatsapp', section: 'contact' });
+    }
+    values.properties.forEach((property, propertyIndex) => {
+      const branch = PROPERTY_FIELD_MAP[property.propertyType as keyof typeof PROPERTY_FIELD_MAP];
+      for (const field of branch ?? []) {
+        owner.push({ path: `properties.${propertyIndex}.${field}`, field, section: 'properties', propertyIndex });
+      }
+    });
+    return owner;
+  }
+
   const fields: AskableField[] = [
     { path: 'personal.firstName', field: 'firstName', section: 'personal' },
     { path: 'personal.middleName', field: 'middleName', section: 'personal' },
@@ -177,10 +218,9 @@ export function askableFields(values: CitizenFormValues): AskableField[] {
     { path: 'personal.residentStatus', field: 'residentStatus', section: 'personal' },
   ];
 
+  // No identity document is asked of a Lebanese citizen — see `PersonalStep`.
   if (values.personal.isLebanese !== false) {
     fields.push(
-      { path: 'personal.identityDocType', field: 'identityDocType', section: 'personal' },
-      { path: 'personal.identityDocNumber', field: 'identityDocNumber', section: 'personal' },
       { path: 'personal.civilRecordNumber', field: 'civilRecordNumber', section: 'personal' },
     );
   } else {
@@ -323,8 +363,9 @@ function toPayloadUnit(unit: UnitDraft): Record<string, unknown> {
 /** The submission exactly as the server will receive it. */
 export function toSubmission(values: CitizenFormValues) {
   return {
-    personal: values.personal,
-    contact: values.contact,
+    residence: values.residence ?? 'RESIDENT',
+    personal: submittedPersonal(values),
+    contact: submittedContact(values),
     properties: values.properties.map(toPayloadProperty),
     flags: flagsToArray(values.flags),
     // Absent unless quick-save was used. `undefined` rather than `''`: the
@@ -340,6 +381,38 @@ export function toSubmission(values: CitizenFormValues) {
     */
     ...(values.notes?.trim() ? { notes: values.notes.trim() } : {}),
   };
+}
+
+/**
+ * The personal section as it goes on the wire — only what this kind of file asks.
+ *
+ * Two things are left behind, and neither is erased on the server by being
+ * left behind (an edit never writes what it is not sent):
+ *
+ *  - a Lebanese citizen's identity document. The edit form still *loads* the
+ *    real number stored on an older record; sending it back would put a field
+ *    nobody can see through validation, and a legacy value that no longer fits
+ *    the rules would fail a save with no box to correct it in;
+ *  - a household file's fields, on an owner record.
+ */
+function submittedPersonal(values: CitizenFormValues): Record<string, unknown> {
+  const personal = values.personal;
+  if (values.residence === 'NON_RESIDENT_OWNER') {
+    const { firstName, middleName, lastName, residencePlace } = personal;
+    return { firstName, middleName, lastName, residencePlace };
+  }
+  if (personal.isLebanese !== false) {
+    const { identityDocType: _type, identityDocNumber: _number, residencyNumber: _residency, ...rest } =
+      personal;
+    return rest;
+  }
+  return personal;
+}
+
+function submittedContact(values: CitizenFormValues): Record<string, unknown> {
+  if (values.residence !== 'NON_RESIDENT_OWNER') return values.contact;
+  const { phone, whatsapp, whatsappSameAsPhone, localContactName, localContactPhone } = values.contact;
+  return { phone, whatsapp, whatsappSameAsPhone, localContactName, localContactPhone };
 }
 
 /**
@@ -682,7 +755,10 @@ export function CitizenForm({
         {
           // A clerk entering several properties for one household fills the same
           // shape repeatedly, so a new card inherits the last one's occupancy.
-          occupancyType: (source ?? current.properties.at(-1))?.occupancyType,
+          occupancyType:
+            current.residence === 'NON_RESIDENT_OWNER'
+              ? 'OWNER'
+              : (source ?? current.properties.at(-1))?.occupancyType,
           ...(source
             ? { propertyNumber: source.propertyNumber, neighborhood: source.neighborhood }
             : {}),
@@ -755,6 +831,7 @@ export function CitizenForm({
             locale={locale}
             token={token}
             censusPicker
+            ownerOnly={isOwnerRecord}
             // Only the first card inherits a matrix launch: the officer opened
             // one flat, and pinning every card they go on to add to it would
             // link properties they never said were in that building.
@@ -797,6 +874,7 @@ export function CitizenForm({
                 locale={locale}
                 token={token}
                 censusPicker
+                ownerOnly={isOwnerRecord}
                 lockedCensusTarget={index === 0 ? (lockedCensusTarget ?? null) : null}
                 title={locale === 'en' ? `Unit ${unitPosition + 1}` : `الملكية ${unitPosition + 1}`}
               />
@@ -946,13 +1024,43 @@ export function CitizenForm({
     });
   }, [values.flags, locale]);
 
+  const isOwnerRecord = values.residence === 'NON_RESIDENT_OWNER';
+
+  /**
+   * Switching نوع الملف.
+   *
+   * Nothing typed is thrown away — a clerk who picks the wrong kind and back
+   * again gets their answers back. The one change made is to the cards: an
+   * owner record holds only what the owner owns, so every card becomes «مالك»
+   * and loses the landlord block that only a tenant's card carries.
+   */
+  const setResidence = useCallback((residence: CitizenResidence) => {
+    setValues((current) => ({
+      ...current,
+      residence,
+      properties:
+        residence === 'NON_RESIDENT_OWNER'
+          ? current.properties.map((property) => {
+              const { landlordName: _name, landlordPhone: _phone, ...rest } = property;
+              return { ...rest, occupancyType: 'OWNER' };
+            })
+          : current.properties,
+    }));
+  }, []);
+
   const sections = useMemo(
     () => [
       {
         id: 'personal',
         step: locale === 'en' ? '1' : '١',
         icon: IdCard,
-        title: locale === 'en' ? 'Personal Info' : 'البيانات الشخصية',
+        title: isOwnerRecord
+          ? locale === 'en'
+            ? 'Owner'
+            : 'بيانات المالك'
+          : locale === 'en'
+            ? 'Personal Info'
+            : 'البيانات الشخصية',
         description:
           locale === 'en'
             ? 'Name as written on ID document, nationality, and residency status'
@@ -962,7 +1070,13 @@ export function CitizenForm({
         id: 'contact',
         step: locale === 'en' ? '2' : '٢',
         icon: UsersRound,
-        title: locale === 'en' ? 'Contact & Family' : 'التواصل والأسرة',
+        title: isOwnerRecord
+          ? locale === 'en'
+            ? 'Contact'
+            : 'التواصل'
+          : locale === 'en'
+            ? 'Contact & Family'
+            : 'التواصل والأسرة',
         description:
           locale === 'en'
             ? 'Phone number used by citizen for login and tracking submissions'
@@ -979,7 +1093,7 @@ export function CitizenForm({
             : 'رقم العقار يُطابَق مع السجل العقاري للبلدية أثناء الكتابة',
       },
     ],
-    [locale],
+    [locale, isOwnerRecord],
   );
 
   const [mobileStep, setMobileStep] = useState<SectionId>('personal');
@@ -1196,12 +1310,22 @@ export function CitizenForm({
             }
             invalid={sectionInvalid('personal')}
           >
-            <PersonalStep
-              value={values.personal}
-              errors={shown}
-              onChange={(personal) => update({ personal })}
-              locale={locale}
-            />
+            <ResidenceChooser value={values.residence ?? 'RESIDENT'} onChange={setResidence} locale={locale} />
+            {isOwnerRecord ? (
+              <OwnerPersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
+            ) : (
+              <PersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
+            )}
+            {mode === 'create' ? (
+              <PossibleDuplicates
+                tenant={tenant}
+                token={token}
+                firstName={values.personal.firstName}
+                lastName={values.personal.lastName}
+                phone={values.contact.phone}
+                locale={locale}
+              />
+            ) : null}
           </FormSection>
         )}
 
@@ -1218,12 +1342,11 @@ export function CitizenForm({
             }
             invalid={sectionInvalid('contact')}
           >
-            <ContactStep
-              value={values.contact}
-              errors={shown}
-              onChange={(contact) => update({ contact })}
-              locale={locale}
-            />
+            {isOwnerRecord ? (
+              <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} />
+            ) : (
+              <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} />
+            )}
           </FormSection>
         )}
 
@@ -1297,12 +1420,22 @@ export function CitizenForm({
           }
           invalid={sectionInvalid('personal')}
         >
-          <PersonalStep
-            value={values.personal}
-            errors={shown}
-            onChange={(personal) => update({ personal })}
-            locale={locale}
-          />
+          <ResidenceChooser value={values.residence ?? 'RESIDENT'} onChange={setResidence} locale={locale} />
+          {isOwnerRecord ? (
+            <OwnerPersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
+          ) : (
+            <PersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
+          )}
+          {mode === 'create' ? (
+            <PossibleDuplicates
+              tenant={tenant}
+              token={token}
+              firstName={values.personal.firstName}
+              lastName={values.personal.lastName}
+              phone={values.contact.phone}
+              locale={locale}
+            />
+          ) : null}
         </FormSection>
 
         <FormSection
@@ -1317,12 +1450,11 @@ export function CitizenForm({
           }
           invalid={sectionInvalid('contact')}
         >
-          <ContactStep
-            value={values.contact}
-            errors={shown}
-            onChange={(contact) => update({ contact })}
-            locale={locale}
-          />
+          {isOwnerRecord ? (
+            <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} />
+          ) : (
+            <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} />
+          )}
         </FormSection>
 
         <FormSection
@@ -1722,6 +1854,55 @@ export function CitizenForm({
       locale={locale}
     />
     </FieldFlagProvider>
+  );
+}
+
+/**
+ * «من يُسجَّل؟» — a household that lives in the town, or an owner who does not.
+ *
+ * Asked as a question about **where the person lives most of the year**, never
+ * about محل القيد: plenty of people registered in the town live in Beirut, and
+ * an expatriate whose family is on the civil register here still lives abroad.
+ * Somebody who lives in someone else's property is always a household — the
+ * owner record holds only what an absent owner owns.
+ */
+function ResidenceChooser({
+  value,
+  onChange,
+  locale,
+}: {
+  value: CitizenResidence;
+  onChange: (next: CitizenResidence) => void;
+  locale: string;
+}) {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+  return (
+    <div className="mb-4 space-y-2 rounded-lg border border-border/70 bg-muted/10 p-3">
+      <Field
+        label={en ? 'Does this person live in the town most of the year?' : 'هل يقيم هذا الشخص في البلدة معظم السنة؟'}
+        htmlFor="residence"
+        required
+      >
+        <SegmentedControl
+          value={value}
+          onChange={(next) => onChange(next as CitizenResidence)}
+          options={[
+            { value: 'RESIDENT', label: labels.citizenResidence.RESIDENT },
+            { value: 'NON_RESIDENT_OWNER', label: labels.citizenResidence.NON_RESIDENT_OWNER },
+          ]}
+        />
+      </Field>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {value === 'NON_RESIDENT_OWNER'
+          ? en
+            ? 'An owner who lives elsewhere: their name, how to reach them and where they live — no ID, household or blood type. Whoever lives in their property is registered with their own household file.'
+            : 'مالك يقيم خارج البلدة: اسمه ووسيلة التواصل معه ومكان إقامته فقط — دون وثيقة أو بيانات أسرة أو فئة دم. من يسكن في عقاره يُسجَّل بملف أسرة خاص به.'
+          : en
+            ? 'A household file. Choose «Owner living elsewhere» for an owner who only visits.'
+            : 'ملف أسرة كامل. اختر «مالك غير مقيم» لمالك لا يأتي إلا زائراً.'}
+      </p>
+    </div>
   );
 }
 

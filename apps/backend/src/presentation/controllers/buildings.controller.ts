@@ -212,7 +212,11 @@ export class BuildingsController {
     @Body(new ZodValidationPipe(endOccupancySchema)) body: EndOccupancyInput,
     @CurrentUser() user: SessionClaims,
   ) {
-    return this.buildings.endOccupancy(occupancyId, body.toDate, this.actor(user));
+    return this.buildings.endOccupancy(
+      occupancyId,
+      { toDate: body.toDate, reason: body.reason },
+      this.actor(user),
+    );
   }
 
   // ──────────────────────────────  Visits  ──────────────────────────────

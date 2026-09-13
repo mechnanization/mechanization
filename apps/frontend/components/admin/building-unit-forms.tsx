@@ -1,13 +1,26 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CalendarClock, Footprints, Loader2, MapPin, Search, ShieldAlert, UserRound } from 'lucide-react';
+import Link from 'next/link';
+import {
+  AlertTriangle,
+  CalendarClock,
+  CalendarDays,
+  EllipsisVertical,
+  Footprints,
+  Loader2,
+  MapPin,
+  Search,
+  ShieldAlert,
+  UserRound,
+} from 'lucide-react';
 import {
   CASE_TYPE,
   DAMAGE_LEVEL,
   DAMAGE_SOURCE,
   getLabels,
   isOccupiableLifecycle,
+  isUnoccupied,
   OCCUPANCY_ROLE,
   SURVEY_STATUS,
   UNIT_STATUS,
@@ -16,6 +29,7 @@ import {
   type CaseType,
   type DamageLevel,
   type DamageSource,
+  type OccupancyEndReason,
   type OccupancyRole,
   type StructureType,
   type SurveyStatus,
@@ -26,12 +40,28 @@ import {
   logApiError,
   type CitizenListItem,
   type OccupancyFileLink,
+  type UnitOccupant,
   type UnitVisitRow,
   type UnitWithOccupants,
 } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -65,72 +95,221 @@ export const VISIT_OUTCOMES = SURVEY_STATUS.filter(
   (status): status is Exclude<SurveyStatus, 'NOT_SURVEYED'> => status !== 'NOT_SURVEYED',
 );
 
+/** The five tints a unit can wear. See `cellBadge` and `UnitStateLegend`. */
+export type CellVariant =
+  | 'soft-success'
+  | 'soft-warning'
+  | 'soft-destructive'
+  | 'soft-info'
+  | 'soft-muted';
+
+export interface CellBadge {
+  /** The whole sentence — the tooltip, and the one-line badge in the picker. */
+  text: string;
+  /** The unit's state alone, short enough for a matrix tile. */
+  short: string;
+  /** Who, when there is somebody to name — the tile's second line. */
+  detail?: string;
+  variant: CellVariant;
+}
+
+/** Tile-length names for حالة الوحدة. The full labels are for forms. */
+const SHORT_UNIT_STATUS: Record<'ar' | 'en', Record<UnitStatus, string>> = {
+  ar: {
+    OWNER_OCCUPIED: 'مشغولة من المالك',
+    RENTED: 'مؤجرة',
+    FREE_OCCUPIED: 'مشغولة بتسامح',
+    SEASONAL: 'مسكن موسمي',
+    VACANT: 'شاغرة',
+    UNDER_CONSTRUCTION: 'قيد الإنجاز',
+  },
+  en: {
+    OWNER_OCCUPIED: 'Owner-occupied',
+    RENTED: 'Rented',
+    FREE_OCCUPIED: 'Rent-free',
+    SEASONAL: 'Seasonal home',
+    VACANT: 'Vacant',
+    UNDER_CONSTRUCTION: 'Under construction',
+  },
+};
+
+/** The spells running now, newest first. */
+function liveSpells(unit: UnitWithOccupants) {
+  return unit.occupants
+    .filter((occupant) => occupant.toDate === null)
+    .sort((a, b) => (a.fromDate < b.fromDate ? 1 : -1));
+}
+
 /**
- * The badge a cell wears, in the officer's own vocabulary.
+ * The people actually *living* in a unit — a مستأجر or a شاغل بتسامح.
  *
- * Occupancy outranks survey status deliberately: a flat with somebody recorded
- * in it is answered, and the name is the most useful thing the cell can carry —
- * it is what makes «الطابق الثالث» resolve to a person rather than a number.
- * Below that the survey status speaks for itself, and «غير ممسوحة» is left
- * plain rather than tinted a warning colour, because on a freshly generated
- * matrix every cell is that and a wall of amber says nothing.
+ * An owner is deliberately not one of them: the deed is not a statement of
+ * residence (D2). This is the set «تأكيد الشغور» is refused over, on the screen
+ * and on the server alike — it used to be refused over the owner too, which is
+ * what taught inspectors to end an owner's ownership to record an empty flat.
+ */
+export function livingOccupants(unit: UnitWithOccupants) {
+  return liveSpells(unit).filter((occupant) => occupant.role !== 'OWNER');
+}
+
+/**
+ * حالة الوحدة as the register bills it: the unit's own value, or — where
+ * nobody set one — what the owner's card says. The same order billing reads
+ * them in (P2-T8), so a tile can never describe a unit differently from how it
+ * is charged.
+ */
+export function effectiveUnitStatus(unit: UnitWithOccupants): UnitStatus | null {
+  return unit.unitStatus ?? unit.ownerDeclaredStatus ?? null;
+}
+
+/**
+ * The badge a cell wears — two questions answered separately.
+ *
+ * ## Why this changed
+ *
+ * It used to lead with *who is recorded*: any current spell, owner included,
+ * turned the cell green «مسجلة (مالك: فلان)». So an owner recorded on a flat
+ * they had just called «شاغرة» looked exactly like an owner living in it — the
+ * one fact the owner had stated was the one the matrix could not show — and on a
+ * phone the state was only in a tooltip nobody can hover.
+ *
+ * Now the colour and the short label say **what state the unit is in**, and
+ * the second line says **who** is recorded against it. The colours keep one
+ * meaning each, shown in `UnitStateLegend`:
+ *
+ *   • green — answered and billed (somebody lives there);
+ *   • blue — answered and not billed as lived in (شاغرة، قيد الإنجاز، موسمي);
+ *   • amber — something is missing that decides a bill;
+ *   • red — the record contradicts itself, or the survey was refused.
+ *
+ * ## The cases, in order
+ *
+ * 1. A مستأجر or شاغل بتسامح is recorded. If the unit also says it is empty,
+ *    that is a contradiction (red «تعارض»); otherwise their capacity is the
+ *    state, named after them.
+ * 2. The unit has a state. Empty/unfinished/seasonal is blue with the owner on
+ *    the second line. «مؤجرة» or «مشغولة بتسامح» with nobody recorded is amber:
+ *    the owner is exempt because someone else lives there, and that someone is
+ *    billed nowhere — revenue to go and find. Owner-occupied is green.
+ * 3. Only an owner is recorded and nobody asked whether anyone lives there —
+ *    amber, because an unanswered unit bills the owner by default.
+ * 4. Nobody at all — the survey status speaks, as it always did. «غير ممسوحة»
+ *    stays untinted: on a freshly generated matrix every cell is that, and a
+ *    wall of amber says nothing.
  */
 export function cellBadge(
   unit: UnitWithOccupants,
   labels: ReturnType<typeof getLabels>,
   en: boolean,
-): { text: string; variant: 'soft-success' | 'soft-warning' | 'soft-destructive' | 'soft-info' | 'soft-muted' } {
-  /*
-    Named after whoever is *inside*, not whoever registered most recently.
+): CellBadge {
+  const short = SHORT_UNIT_STATUS[en ? 'en' : 'ar'];
+  const living = livingOccupants(unit)[0];
+  const owner = liveSpells(unit).find((occupant) => occupant.role === 'OWNER');
+  const status = effectiveUnitStatus(unit);
+  const named = (occupant: { citizenName: string | null } | undefined) =>
+    occupant?.citizenName ?? (en ? 'Unnamed' : 'بلا اسم');
+  const ownerLine = owner ? (en ? `Owner: ${named(owner)}` : `المالك: ${named(owner)}`) : undefined;
+  const badge = (text: string, variant: CellVariant, detail?: string): CellBadge => ({
+    short: text,
+    detail,
+    text: detail ? `${text} — ${detail}` : text,
+    variant,
+  });
 
-    This took the first current spell the server happened to return, ordered by
-    `toDate` then `fromDate`. So a flat with an owner and a tenant on it was
-    labelled with whichever of the two filed last, and two identical situations
-    on one floor read as two different kinds of record — «مسجلة (المستأجر)»
-    beside «مسجلة (المالك)», with nothing to say why they differed.
+  if (living) {
+    const who = `${labels.occupancyRole[living.role]}: ${named(living)}`;
+    if (isUnoccupied(status)) {
+      return badge(en ? 'Conflict' : 'تعارض', 'soft-destructive', `${who} — ${short[status!]}`);
+    }
+    const lived = (unitStatusForRole(living.role) ?? 'RENTED') as UnitStatus;
+    return badge(short[lived], 'soft-success', named(living));
+  }
 
-    A مستأجر or a شاغل بتسامح outranks a مالك because the cell answers «من في
-    هذه الوحدة؟», and an owner in the occupancy table has not said they live
-    there — the deed is not a statement of residence (D2). Where the only
-    current spell is an owner's, they are the answer.
-  */
-  const current = unit.occupants
-    .filter((occupant) => occupant.toDate === null)
-    .sort((a, b) => {
-      const rank = (role: string) => (role === 'OWNER' ? 1 : 0);
-      if (rank(a.role) !== rank(b.role)) return rank(a.role) - rank(b.role);
-      // Within one rank the newest spell wins — a flat re-let this month is
-      // described by its present tenant, not the one before them.
-      return a.fromDate < b.fromDate ? 1 : -1;
-    })[0];
+  if (status) {
+    switch (status) {
+      case 'VACANT':
+      case 'UNDER_CONSTRUCTION':
+      case 'SEASONAL':
+        return badge(short[status], 'soft-info', ownerLine);
+      case 'RENTED':
+        return badge(
+          en ? 'Rented — tenant not recorded' : 'مؤجرة — المستأجر غير مسجَّل',
+          'soft-warning',
+          ownerLine,
+        );
+      case 'FREE_OCCUPIED':
+        return badge(
+          en ? 'Rent-free — occupant not recorded' : 'بتسامح — الشاغل غير مسجَّل',
+          'soft-warning',
+          ownerLine,
+        );
+      case 'OWNER_OCCUPIED':
+        return badge(short.OWNER_OCCUPIED, 'soft-success', owner ? named(owner) : undefined);
+    }
+  }
 
-  if (current) {
-    const who = current.citizenName
-      ? `${labels.occupancyRole[current.role]}: ${current.citizenName}`
-      : labels.occupancyRole[current.role];
-    return {
-      text: en ? `Registered (${who})` : `مسجلة (${who})`,
-      variant: 'soft-success',
-    };
+  if (owner) {
+    return badge(
+      en ? 'Owner recorded — occupancy not established' : 'مالك مسجَّل — الإشغال غير محدد',
+      'soft-warning',
+      named(owner),
+    );
   }
 
   switch (unit.surveyStatus) {
     case 'VACANT_CONFIRMED':
-      return { text: en ? 'Vacant' : 'شاغرة', variant: 'soft-info' };
+      return badge(short.VACANT, 'soft-info');
     case 'VISITED_NO_ANSWER':
-      return { text: en ? 'Revisit' : 'إعادة زيارة', variant: 'soft-warning' };
+      return badge(en ? 'Revisit' : 'إعادة زيارة', 'soft-warning');
     case 'REFUSED':
     case 'INACCESSIBLE':
-      return { text: labels.surveyStatus[unit.surveyStatus], variant: 'soft-destructive' };
     case 'DEMOLISHED':
-      return { text: labels.surveyStatus[unit.surveyStatus], variant: 'soft-destructive' };
+      return badge(labels.surveyStatus[unit.surveyStatus], 'soft-destructive');
     case 'PARTIAL':
-      return { text: labels.surveyStatus[unit.surveyStatus], variant: 'soft-warning' };
+      return badge(labels.surveyStatus[unit.surveyStatus], 'soft-warning');
     case 'COMPLETE':
-      return { text: labels.surveyStatus[unit.surveyStatus], variant: 'soft-success' };
+      return badge(labels.surveyStatus[unit.surveyStatus], 'soft-success');
     default:
-      return { text: en ? 'Not surveyed' : 'غير ممسوحة', variant: 'soft-muted' };
+      return badge(en ? 'Not surveyed' : 'غير ممسوحة', 'soft-muted');
   }
+}
+
+/**
+ * What the four colours mean, said once under every matrix.
+ *
+ * A colour code nobody explains is a colour code people guess at — and the
+ * guess that matters here is amber, which is not "in progress" but "a bill
+ * depends on something nobody has recorded".
+ */
+export function UnitStateLegend({ locale, className }: { locale: string; className?: string }) {
+  const en = locale === 'en';
+  const entries: Array<{ variant: CellVariant; text: string }> = [
+    { variant: 'soft-success', text: en ? 'Lived in — billed' : 'مسكونة — تُحتسب الرسوم' },
+    {
+      variant: 'soft-info',
+      text: en ? 'Vacant, unfinished or seasonal' : 'شاغرة أو قيد الإنجاز أو موسمية',
+    },
+    {
+      variant: 'soft-warning',
+      text: en ? 'Missing what decides the bill' : 'ينقصها ما يحدد الرسوم',
+    },
+    { variant: 'soft-destructive', text: en ? 'Contradiction or refused' : 'تعارض أو رفض' },
+    { variant: 'soft-muted', text: en ? 'Not surveyed' : 'غير ممسوحة' },
+  ];
+  return (
+    <ul
+      className={cn('flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-foreground', className)}
+      aria-label={en ? 'What the colours mean' : 'دلالة الألوان'}
+    >
+      {entries.map((entry) => (
+        <li key={entry.variant} className="flex items-center gap-1.5">
+          <Badge variant={entry.variant} className="size-3 rounded-sm p-0" aria-hidden />
+
+          {entry.text}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /**
@@ -936,6 +1115,497 @@ export function DamageForm({
         {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
         {en ? `Record for ${target}` : `تسجيل الكشف على ${target}`}
       </Button>
+    </div>
+  );
+}
+
+// ─────────────────────────  Who is, and was, in a unit  ─────────────────────────
+
+/** «إنهاء الملكية» / «إنهاء الإيجار» / «خروج الشاغل» — the action named for what it ends. */
+function endActionLabel(role: OccupancyRole, en: boolean): string {
+  if (role === 'OWNER') return en ? 'End ownership' : 'إنهاء الملكية';
+  if (role === 'TENANT') return en ? 'End tenancy' : 'إنهاء الإيجار';
+  return en ? 'Occupant left' : 'خروج الشاغل';
+}
+
+/**
+ * The reasons that fit a capacity — mirrored by the server, which refuses the
+ * rest. An owner does not «move out» (the deed is not a residence) and a tenant
+ * does not sell; «سُجِّل بالخطأ» fits everyone.
+ */
+function reasonsFor(role: OccupancyRole): OccupancyEndReason[] {
+  return role === 'OWNER'
+    ? ['OWNERSHIP_TRANSFERRED', 'RECORDED_IN_ERROR']
+    : ['MOVED_OUT', 'RECORDED_IN_ERROR'];
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * The confirmation «إنهاء الإشغال» never had.
+ *
+ * Field inspectors pressed the old text link by mistake — it sat on the same
+ * row as the person's name, on a phone — and the spell ended on the spot,
+ * releasing the flat from the citizen's own file and stopping its bill. So this
+ * asks three things before anything is written: that this is the person meant
+ * (the name and unit are in the title), when they left, and **why** — a choice
+ * with no default, because a pre-selected answer is exactly what muscle memory
+ * confirms. It does not ask the person to type a name: this is a correction an
+ * inspector makes standing in a stairwell, not the deletion of a record.
+ */
+export function EndOccupancyDialog({
+  occupant,
+  unitCode,
+  locale,
+  onOpenChange,
+  onConfirm,
+}: {
+  /** The spell being ended; the dialog is open while this is set. */
+  occupant: UnitOccupant | null;
+  unitCode: string;
+  locale: string;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (input: { reason: OccupancyEndReason; toDate?: string }) => Promise<void>;
+}) {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+  const [reason, setReason] = useState<OccupancyEndReason | null>(null);
+  const [toDate, setToDate] = useState(today());
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  // A fresh question every time it opens — never the previous person's answer.
+  useEffect(() => {
+    if (occupant) {
+      setReason(null);
+      setToDate(today());
+      setFailure(null);
+      setBusy(false);
+    }
+  }, [occupant]);
+
+  if (!occupant) return null;
+
+  const name = occupant.citizenName ?? (en ? 'this person' : 'هذا الشخص');
+  const action = endActionLabel(occupant.role, en);
+
+  const confirm = async () => {
+    if (!reason || busy) return;
+    setBusy(true);
+    setFailure(null);
+    try {
+      // Today is the server's default; only a back-dated end is sent.
+      await onConfirm({ reason, ...(toDate && toDate !== today() ? { toDate } : {}) });
+      onOpenChange(false);
+    } catch (caught) {
+      setFailure(
+        caught instanceof Error && caught.message
+          ? caught.message
+          : en
+            ? 'Could not end the occupancy.'
+            : 'تعذّر إنهاء الإشغال.',
+      );
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={busy ? undefined : onOpenChange}>
+      <DialogContent className="max-w-md" closeLabel={en ? 'Cancel' : 'إلغاء'}>
+        <DialogHeader>
+          <div className="flex items-start gap-3">
+            <span
+              aria-hidden
+              className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive"
+            >
+              <AlertTriangle className="size-5" />
+            </span>
+            <div className="min-w-0 space-y-1.5 text-start">
+              <DialogTitle>
+                {en ? `${action}: ${name} in unit ` : `${action}: ${name} في الوحدة `}
+                <span dir="ltr" className="font-mono">
+                  {unitCode}
+                </span>
+                {en ? '?' : '؟'}
+              </DialogTitle>
+              <DialogDescription>
+                {en
+                  ? 'They move to «Former» on this unit, the unit is released from their file, and fees for it stop being charged to them.'
+                  : 'ينتقل إلى «سابق» على هذه الوحدة، وتُفصل الوحدة عن ملفه، وتتوقف الرسوم عليه عنها.'}
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <fieldset className="space-y-1.5">
+            <legend className="text-xs font-medium">
+              {en ? 'Why?' : 'السبب'} <span className="text-destructive">*</span>
+            </legend>
+            <div className="grid gap-2" role="radiogroup">
+              {reasonsFor(occupant.role).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={reason === option}
+                  onClick={() => setReason(option)}
+                  className={cn(
+                    'min-h-11 rounded-md border px-3 py-2 text-start text-sm transition-colors',
+                    reason === option
+                      ? 'border-primary bg-primary/10 font-medium text-primary'
+                      : 'hover:bg-accent',
+                  )}
+                >
+                  {labels.occupancyEndReason[option]}
+                </button>
+              ))}
+            </div>
+            {reason === 'RECORDED_IN_ERROR' ? (
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                {en
+                  ? 'Kept on record as what was entered, and hidden from the unit’s history.'
+                  : 'يبقى محفوظاً كسجل لما أُدخل، ولا يظهر في تاريخ الوحدة.'}
+              </p>
+            ) : null}
+          </fieldset>
+
+          {reason !== 'RECORDED_IN_ERROR' ? (
+            <Field label={en ? 'Left on' : 'تاريخ الانتهاء'} htmlFor="end-occupancy-date">
+              <Input
+                id="end-occupancy-date"
+                type="date"
+                min={occupant.fromDate.slice(0, 10)}
+                max={today()}
+                value={toDate}
+                onChange={(event) => setToDate(event.target.value)}
+                dir="ltr"
+                className="text-start"
+              />
+            </Field>
+          ) : null}
+
+          {failure ? (
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
+            >
+              {failure}
+            </p>
+          ) : null}
+        </div>
+
+        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={busy}
+            className="w-full sm:w-auto"
+          >
+            {en ? 'Cancel' : 'إلغاء'}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => void confirm()}
+            disabled={busy || !reason}
+            className="w-full sm:w-auto"
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+            {action}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Everyone recorded against a unit, current first — shared by the drawer and
+ * the full-page matrix so the two cannot disagree about what ending a spell
+ * asks, or which history rows are shown.
+ *
+ * The end action lives behind a ⋯ menu with a finger-sized target, away from
+ * the name link it used to sit beside, and opens `EndOccupancyDialog` rather
+ * than acting. Spells ended «سُجِّل بالخطأ» are left out of the list — they are
+ * not history — and counted underneath so nothing disappears silently.
+ */
+export function OccupantList({
+  unit,
+  locale,
+  canWrite,
+  busy,
+  citizenHref,
+  onEnd,
+}: {
+  unit: UnitWithOccupants;
+  locale: string;
+  canWrite: boolean;
+  busy: boolean;
+  /** Where a name links to; plain text when absent. */
+  citizenHref?: (citizenId: string) => string;
+  onEnd: (occupant: UnitOccupant, input: { reason: OccupancyEndReason; toDate?: string }) => Promise<void>;
+}) {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+  const [ending, setEnding] = useState<UnitOccupant | null>(null);
+
+  const shown = unit.occupants.filter((occupant) => occupant.endReason !== 'RECORDED_IN_ERROR');
+  const hidden = unit.occupants.length - shown.length;
+
+  if (unit.occupants.length === 0) return null;
+
+  return (
+    <>
+      {shown.length > 0 ? (
+        <ul className="space-y-1.5">
+          {shown.map((occupant) => {
+            const current = occupant.toDate === null;
+            /*
+              No card on their file claims this flat — so billing, which reads
+              the file, has nothing to charge for it. Only said of a current
+              spell: a former one released on the way out is missing nothing.
+            */
+            const unbacked = current && occupant.backedByFile === false;
+            const name = occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم');
+            const nameClass = cn(current ? 'font-medium' : 'font-normal line-through');
+
+            return (
+              <li
+                key={occupant.id}
+                className={cn(
+                  'flex flex-wrap items-center gap-2 rounded-md px-2.5 py-1.5 text-xs',
+                  current ? 'bg-background' : 'bg-muted/40 text-muted-foreground',
+                )}
+              >
+                <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                {citizenHref ? (
+                  <Link
+                    href={citizenHref(occupant.citizenId)}
+                    className={cn('underline-offset-2 hover:underline', nameClass)}
+                  >
+                    {name}
+                  </Link>
+                ) : (
+                  <span className={nameClass}>{name}</span>
+                )}
+                <Badge variant="soft-muted">{labels.occupancyRole[occupant.role]}</Badge>
+                {!current ? <Badge variant="outline">{en ? 'Former' : 'سابق'}</Badge> : null}
+                {!current && occupant.endReason ? (
+                  <span className="text-[11px]">{labels.occupancyEndReason[occupant.endReason]}</span>
+                ) : null}
+                {occupant.shares ? (
+                  <span className="text-muted-foreground">
+                    {en ? `${occupant.shares}/2400 shares` : `${occupant.shares}/٢٤٠٠ سهم`}
+                  </span>
+                ) : null}
+                <span className="text-muted-foreground">
+                  {occupant.toDate
+                    ? `${formatDate(occupant.fromDate)} — ${formatDate(occupant.toDate)}`
+                    : `${en ? 'since' : 'منذ'} ${formatDate(occupant.fromDate)}`}
+                </span>
+                {unbacked ? (
+                  <span
+                    className="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-500"
+                    title={
+                      en
+                        ? 'This citizen has no registration, so nothing on their file claims this unit and it cannot be billed. Register them to link it.'
+                        : 'لا يوجد ملف لهذا المواطن، فلا شيء يربطه بالوحدة ولن تُحتسب الرسوم. سجّله ليُربط العقار.'
+                    }
+                  >
+                    <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+                    {en ? 'No file yet' : 'لا ملف له بعد'}
+                  </span>
+                ) : null}
+                {canWrite && current ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        aria-label={en ? `Actions for ${name}` : `إجراءات ${name}`}
+                        className="ms-auto flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                      >
+                        <EllipsisVertical className="size-4" aria-hidden />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        className="min-h-10 text-destructive focus:text-destructive"
+                        onSelect={() => setEnding(occupant)}
+                      >
+                        {endActionLabel(occupant.role, en)}…
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+
+      {hidden > 0 ? (
+        <p className="text-[11px] text-muted-foreground">
+          {en
+            ? `${hidden} entr${hidden === 1 ? 'y' : 'ies'} recorded in error — kept, not shown.`
+            : `${hidden} إشغال سُجِّل بالخطأ — محفوظ ولا يُعرض.`}
+        </p>
+      ) : null}
+
+      <EndOccupancyDialog
+        occupant={ending}
+        unitCode={unit.unitCode}
+        locale={locale}
+        onOpenChange={(open) => {
+          if (!open) setEnding(null);
+        }}
+        onConfirm={(input) => onEnd(ending!, input)}
+      />
+    </>
+  );
+}
+
+// ─────────────────────────────  «مسكن موسمي»  ─────────────────────────────
+
+const MONTHS: Record<'ar' | 'en', string[]> = {
+  ar: [
+    'كانون الثاني', 'شباط', 'آذار', 'نيسان', 'أيار', 'حزيران',
+    'تموز', 'آب', 'أيلول', 'تشرين الأول', 'تشرين الثاني', 'كانون الأول',
+  ],
+  en: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+};
+
+/**
+ * The facts a council needs to decide how a seasonal home is billed — recorded,
+ * not decided.
+ *
+ * Shown for a unit whose state is «مسكن موسمي». The owner still bears the
+ * occupancy fee by default: a building is presumed occupied until a تصريح
+ * بالشغور is filed (هيئة التشريع والاستشارات 725/2003), and the fee is owed for
+ * months actually occupied (Law 60/1988, Art. 11). So this asks which months
+ * the owners are usually here, when they last were, and whether a declaration
+ * has been filed — the three things that decision turns on.
+ */
+export function SeasonalHomePanel({
+  unit,
+  locale,
+  busy,
+  canWrite,
+  onSave,
+}: {
+  unit: UnitWithOccupants;
+  locale: string;
+  busy: boolean;
+  canWrite: boolean;
+  onSave: (values: {
+    presenceMonths: number[];
+    ownerLastStayAt: string | null;
+    vacancyDeclaredAt: string | null;
+  }) => void;
+}) {
+  const en = locale === 'en';
+  const [months, setMonths] = useState<number[]>(unit.presenceMonths ?? []);
+  const [lastStay, setLastStay] = useState(unit.ownerLastStayAt?.slice(0, 10) ?? '');
+  const [declared, setDeclared] = useState(unit.vacancyDeclaredAt?.slice(0, 10) ?? '');
+
+  useEffect(() => {
+    setMonths(unit.presenceMonths ?? []);
+    setLastStay(unit.ownerLastStayAt?.slice(0, 10) ?? '');
+    setDeclared(unit.vacancyDeclaredAt?.slice(0, 10) ?? '');
+  }, [unit.id, unit.presenceMonths, unit.ownerLastStayAt, unit.vacancyDeclaredAt]);
+
+  const toggle = (month: number) =>
+    setMonths((current) =>
+      current.includes(month)
+        ? current.filter((m) => m !== month)
+        : [...current, month].sort((a, b) => a - b),
+    );
+
+  return (
+    <div className="space-y-3 rounded-md border border-sky-500/30 bg-sky-500/5 p-3">
+      <p className="flex items-center gap-1.5 text-xs font-semibold">
+        <CalendarDays className="size-3.5 text-sky-700 dark:text-sky-400" aria-hidden />
+        {en ? 'Seasonal home — owners live elsewhere' : 'مسكن موسمي — أصحابه مقيمون خارج البلدة'}
+      </p>
+
+      <fieldset className="space-y-1.5" disabled={!canWrite}>
+        <legend className="text-xs text-muted-foreground">
+          {en ? 'Months the owners are usually here' : 'الأشهر التي يحضر فيها أصحابه عادةً'}
+        </legend>
+        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6">
+          {MONTHS[en ? 'en' : 'ar'].map((label, index) => {
+            const month = index + 1;
+            const on = months.includes(month);
+            return (
+              <button
+                key={month}
+                type="button"
+                aria-pressed={on}
+                onClick={() => toggle(month)}
+                className={cn(
+                  'min-h-9 rounded-md border px-1.5 text-[11px] transition-colors',
+                  on ? 'border-sky-500/60 bg-sky-500/15 font-medium' : 'hover:bg-accent',
+                )}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label={en ? 'Last stayed' : 'آخر إقامة لأصحابه'} htmlFor="seasonal-last-stay">
+          <Input
+            id="seasonal-last-stay"
+            type="date"
+            max={today()}
+            disabled={!canWrite}
+            value={lastStay}
+            onChange={(event) => setLastStay(event.target.value)}
+            dir="ltr"
+            className="text-start"
+          />
+        </Field>
+        <Field
+          label={en ? 'Vacancy declaration filed on' : 'تاريخ تقديم تصريح بالشغور'}
+          htmlFor="seasonal-declared"
+          hint={
+            en
+              ? 'Leave empty if none — the full year is then owed.'
+              : 'اتركه فارغاً إن لم يُقدَّم — تُستحق عندها رسوم السنة كاملة.'
+          }
+        >
+          <Input
+            id="seasonal-declared"
+            type="date"
+            max={today()}
+            disabled={!canWrite}
+            value={declared}
+            onChange={(event) => setDeclared(event.target.value)}
+            dir="ltr"
+            className="text-start"
+          />
+        </Field>
+      </div>
+
+      {canWrite ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() =>
+            onSave({
+              presenceMonths: months,
+              ownerLastStayAt: lastStay || null,
+              vacancyDeclaredAt: declared || null,
+            })
+          }
+        >
+          {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+          {en ? 'Save seasonal details' : 'حفظ بيانات السكن الموسمي'}
+        </Button>
+      ) : null}
     </div>
   );
 }

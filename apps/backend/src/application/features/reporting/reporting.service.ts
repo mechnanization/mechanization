@@ -346,6 +346,11 @@ export interface CitizenProfile {
   maritalStatus: string | null;
   bloodType: string | null;
   referenceNumber: string | null;
+  /** نوع الملف — a household, or «مالك غير مقيم». */
+  residence: string;
+  residencePlace: string | null;
+  localContactName: string | null;
+  localContactPhone: string | null;
   registeredAt: string;
   /** False for a deactivated record — kept for its history, refused a session. */
   isActive: boolean;
@@ -446,7 +451,7 @@ export class ReportingService {
           (SELECT COALESCE(json_object_agg("residentStatus", cnt), '{}'::json)
              FROM (
                SELECT "residentStatus", count(*)::int AS cnt FROM ${this.S}users
-               WHERE kind = 'CITIZEN' AND "residentStatus" IS NOT NULL
+               WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND "residentStatus" IS NOT NULL
                GROUP BY "residentStatus"
              ) u
           ) AS "byResidentStatus"
@@ -514,26 +519,35 @@ export class ReportingService {
            WHERE pe.id NOT IN (SELECT id FROM excluded_entries)
         )
         SELECT
-          (SELECT count(*)::int FROM ${this.S}users WHERE kind = 'CITIZEN')
+          -- Households only. An owner record («مالك غير مقيم», migration 0040)
+          -- is somebody who lives elsewhere: counting them — or whatever
+          -- household size a file converted to an owner record still carries —
+          -- would put people in the town's population who are not in the town.
+          -- The residence column is NOT NULL, so this comparison drops no existing row.
+          (SELECT count(*)::int FROM ${this.S}users WHERE kind = 'CITIZEN' AND residence = 'RESIDENT')
             AS "citizenRecords",
-          (SELECT COALESCE(sum("actualHouseholdMembers"), 0)::int FROM ${this.S}users WHERE kind = 'CITIZEN')
+          (SELECT COALESCE(sum("actualHouseholdMembers"), 0)::int FROM ${this.S}users
+            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT')
             AS "populationTotal",
-          (SELECT COALESCE(sum("totalRegisteredMembers"), 0)::int FROM ${this.S}users WHERE kind = 'CITIZEN')
+          (SELECT COALESCE(sum("totalRegisteredMembers"), 0)::int FROM ${this.S}users
+            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT')
             AS "grossRegisteredTotal",
           (SELECT COALESCE(sum("totalRegisteredMembers" - "actualHouseholdMembers"), 0)::int
              FROM ${this.S}users
             WHERE kind = 'CITIZEN'
+              AND residence = 'RESIDENT'
               AND "totalRegisteredMembers" IS NOT NULL
               AND "actualHouseholdMembers" IS NOT NULL)
             AS "marriedOffspringTotal",
-          (SELECT count(*)::int FROM ${this.S}users WHERE kind = 'CITIZEN' AND "actualHouseholdMembers" IS NULL)
+          (SELECT count(*)::int FROM ${this.S}users
+            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND "actualHouseholdMembers" IS NULL)
             AS "householdsWithoutSize",
           (SELECT COALESCE(
                     json_agg(json_build_object('size', size, 'households', c) ORDER BY size),
                     '[]'::json)
              FROM (SELECT "actualHouseholdMembers" AS size, count(*)::int AS c
                      FROM ${this.S}users
-                    WHERE kind = 'CITIZEN' AND "actualHouseholdMembers" IS NOT NULL
+                    WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND "actualHouseholdMembers" IS NOT NULL
                     GROUP BY 1) f)
             AS "familySizes",
           (SELECT COALESCE(json_object_agg("propertyType", cnt), '{}'::json)
@@ -729,6 +743,10 @@ export class ReportingService {
         maritalStatus: true,
         bloodType: true,
         referenceNumber: true,
+        residence: true,
+        residencePlace: true,
+        localContactName: true,
+        localContactPhone: true,
         isActive: true,
         createdAt: true,
         /**
@@ -893,6 +911,10 @@ export class ReportingService {
       maritalStatus: citizen.maritalStatus,
       bloodType: citizen.bloodType,
       referenceNumber: citizen.referenceNumber,
+      residence: citizen.residence,
+      residencePlace: citizen.residencePlace,
+      localContactName: citizen.localContactName,
+      localContactPhone: citizen.localContactPhone,
       registeredAt: citizen.createdAt.toISOString(),
       isActive: citizen.isActive,
       payments,

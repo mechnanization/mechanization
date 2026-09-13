@@ -5,7 +5,6 @@ import {
   BLOOD_TYPE,
   GENDER,
   getLabels,
-  IDENTITY_DOC_TYPE,
   MARITAL_STATUS,
   RESIDENT_STATUS,
 } from '@mechanization/shared-schemas';
@@ -61,13 +60,19 @@ export function PersonalStep({
       if (value.residentStatus === 'REFUGEE') patch.residentStatus = undefined;
       if (Object.keys(patch).length > 0) set(patch);
     } else if (value.identityDocType !== 'PASSPORT') {
-      set({ identityDocType: 'PASSPORT' });
+      /*
+        The one document still asked for is a non-Lebanese passport. A number
+        filed under any other type — a Lebanese national ID on a record whose
+        nationality is being corrected — is not a passport number, so it is not
+        shown in the passport box. It is not erased either: the edit never sends
+        what this form does not ask (`citizenColumnsForEdit`).
+      */
+      set({ identityDocType: 'PASSPORT', identityDocNumber: '' });
     }
   }, [isLebanese, value.nationality, value.residentStatus, value.identityDocType, locale, set]);
 
-  const identityDocNumberLabel =
-    labels.identityDocNumberLabel?.[value.identityDocType as never] ??
-    (locale === 'en' ? 'Document Number' : 'رقم الوثيقة');
+  /** «إلزامي إن وجد» — see `Field.optionalLabel`. */
+  const ifHeld = locale === 'en' ? '(required if held)' : '(إلزامي إن وجد)';
 
   return (
     <div className="space-y-4 sm:space-y-5">
@@ -209,79 +214,50 @@ export function PersonalStep({
         </Field>
       ) : null}
 
-      {/* 4. ID Proof & Civil Record */}
+      {/*
+        4. رقم السجل, and for a non-Lebanese person their passport and residency.
+
+        No identity document is asked of a Lebanese citizen any more. Officers
+        were told it was not required and filled it with shared or invented
+        numbers, and because citizens were matched on it, a repeated number
+        merged different people into one record. رقم السجل stays: it is what the
+        civil registry knows the household by.
+
+        A non-Lebanese person's two numbers are «إلزامي إن وجد»: both may be
+        empty together, and neither may be made up.
+      */}
       {isLebanese ? (
-        <div className="space-y-3.5 rounded-lg border border-border/70 bg-muted/10 p-3 sm:p-4">
+        <div className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-3 sm:grid-cols-2 sm:p-4">
           <Field
-            label={locale === 'en' ? 'ID Document Type' : 'نوع وثيقة الإثبات'}
-            htmlFor="identityDocType"
-            path="personal.identityDocType"
+            label={locale === 'en' ? 'Civil Record (Sijil) No.' : 'رقم السجل (القيد)'}
+            htmlFor="civilRecordNumber"
+            path="personal.civilRecordNumber"
             required
-            error={errors['personal.identityDocType']}
+            error={errors['personal.civilRecordNumber']}
           >
-            <SegmentedControl
-              size="sm"
-              value={str(value.identityDocType)}
-              invalid={Boolean(errors['personal.identityDocType'])}
-              onChange={(next) => set({ identityDocType: next })}
-              options={IDENTITY_DOC_TYPE.map((o) => ({
-                value: o,
-                label: labels.identityDocType[o] ?? o,
-              }))}
+            <Input
+              id="civilRecordNumber"
+              inputMode="numeric"
+              dir="ltr"
+              placeholder={locale === 'en' ? 'e.g. 42' : 'مثال: ٤٢'}
+              className="text-start"
+              invalid={Boolean(errors['personal.civilRecordNumber'])}
+              value={str(value.civilRecordNumber)}
+              onChange={(e) => set({ civilRecordNumber: e.target.value })}
             />
           </Field>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field
-              label={identityDocNumberLabel}
-              htmlFor="identityDocNumber"
-              path="personal.identityDocNumber"
-              required
-              error={errors['personal.identityDocNumber']}
-            >
-              <Input
-                id="identityDocNumber"
-                inputMode="numeric"
-                dir="ltr"
-                placeholder="12345678"
-                className="text-start"
-                invalid={Boolean(errors['personal.identityDocNumber'])}
-                value={str(value.identityDocNumber)}
-                onChange={(e) => set({ identityDocNumber: e.target.value })}
-              />
-            </Field>
-
-            <Field
-              label={locale === 'en' ? 'Civil Record (Sijil) No.' : 'رقم السجل (القيد)'}
-              htmlFor="civilRecordNumber"
-              path="personal.civilRecordNumber"
-              required
-              error={errors['personal.civilRecordNumber']}
-            >
-              <Input
-                id="civilRecordNumber"
-                inputMode="numeric"
-                dir="ltr"
-                placeholder={locale === 'en' ? 'e.g. 42' : 'مثال: ٤٢'}
-                className="text-start"
-                invalid={Boolean(errors['personal.civilRecordNumber'])}
-                value={str(value.civilRecordNumber)}
-                onChange={(e) => set({ civilRecordNumber: e.target.value })}
-              />
-            </Field>
-          </div>
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 rounded-lg border border-border/70 bg-muted/10 p-3 sm:p-4">
           <Field
-            label={identityDocNumberLabel}
+            label={locale === 'en' ? 'Passport No.' : 'رقم جواز السفر'}
+            optionalLabel={ifHeld}
             htmlFor="identityDocNumber"
             path="personal.identityDocNumber"
             error={errors['personal.identityDocNumber']}
           >
             <Input
               id="identityDocNumber"
-              inputMode="numeric"
               dir="ltr"
               placeholder="Passport number"
               className="text-start"
@@ -293,6 +269,7 @@ export function PersonalStep({
 
           <Field
             label={locale === 'en' ? 'Residency Permit No.' : 'رقم الإقامة'}
+            optionalLabel={ifHeld}
             htmlFor="residencyNumber"
             path="personal.residencyNumber"
             error={errors['personal.residencyNumber']}
@@ -526,3 +503,214 @@ export function ContactStep({
  * (رقم السجل only for a Lebanese citizen, صفة الإقامة gating خيمة) identical
  * to what the wizard enforced.
  */
+// ─────────────────────  «مالك غير مقيم» — an owner record  ─────────────────────
+
+/**
+ * Who an absent owner is, and where they live.
+ *
+ * Everything a household file asks and this does not — identity document,
+ * رقم السجل, blood type, nationality, صفة الإقامة — is left out on purpose, not
+ * flagged as missing: the rental-value fee falls on whoever occupies the unit
+ * (Law 60/1988, Art. 3–4), and what the law wants about an owner is a name on
+ * the roll and where they live (Art. 14, 17). See
+ * `nonResidentOwnerPersonalSchema`.
+ */
+export function OwnerPersonalStep({
+  value,
+  errors,
+  onChange,
+  locale = 'ar',
+}: {
+  value: Values;
+  errors: Errors;
+  onChange: (next: Values) => void;
+  locale?: string;
+}) {
+  const en = locale === 'en';
+  const set = (patch: Values) => onChange({ ...value, ...patch });
+
+  return (
+    <div className="space-y-4 sm:space-y-5">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Field
+          label={en ? 'First Name' : 'الاسم الأول'}
+          htmlFor="owner-firstName"
+          path="personal.firstName"
+          required
+          error={errors['personal.firstName']}
+        >
+          <Input
+            id="owner-firstName"
+            invalid={Boolean(errors['personal.firstName'])}
+            value={str(value.firstName)}
+            onChange={(e) => set({ firstName: e.target.value })}
+          />
+        </Field>
+        <Field
+          label={en ? "Father's Name" : 'اسم الأب'}
+          htmlFor="owner-middleName"
+          path="personal.middleName"
+          error={errors['personal.middleName']}
+        >
+          <Input
+            id="owner-middleName"
+            invalid={Boolean(errors['personal.middleName'])}
+            value={str(value.middleName)}
+            onChange={(e) => set({ middleName: e.target.value })}
+          />
+        </Field>
+        <Field
+          label={en ? 'Last Name' : 'الشهرة'}
+          htmlFor="owner-lastName"
+          path="personal.lastName"
+          required
+          error={errors['personal.lastName']}
+        >
+          <Input
+            id="owner-lastName"
+            invalid={Boolean(errors['personal.lastName'])}
+            value={str(value.lastName)}
+            onChange={(e) => set({ lastName: e.target.value })}
+          />
+        </Field>
+      </div>
+
+      <Field
+        label={en ? 'Where the owner lives' : 'مكان إقامة المالك'}
+        htmlFor="owner-residencePlace"
+        path="personal.residencePlace"
+        required
+        error={errors['personal.residencePlace']}
+        hint={
+          en
+            ? 'A town or a country — where they live most of the year.'
+            : 'بلدة أو دولة — حيث يقيم معظم السنة.'
+        }
+      >
+        <Input
+          id="owner-residencePlace"
+          placeholder={en ? 'e.g. Beirut, Ivory Coast' : 'مثال: بيروت، ساحل العاج'}
+          invalid={Boolean(errors['personal.residencePlace'])}
+          value={str(value.residencePlace)}
+          onChange={(e) => set({ residencePlace: e.target.value })}
+        />
+      </Field>
+    </div>
+  );
+}
+
+/**
+ * How to reach an owner who is not here — their own number, and optionally
+ * the relative or caretaker who holds the keys.
+ */
+export function OwnerContactStep({
+  value,
+  errors,
+  onChange,
+  locale = 'ar',
+}: {
+  value: Values;
+  errors: Errors;
+  onChange: (next: Values) => void;
+  locale?: string;
+}) {
+  const en = locale === 'en';
+  const set = (patch: Values) => onChange({ ...value, ...patch });
+  const sameAsPhone = value.whatsappSameAsPhone !== false;
+
+  return (
+    <div className="space-y-4 sm:space-y-5">
+      <div className="space-y-3 rounded-lg border border-border/70 bg-card p-3 sm:p-4">
+        <Field
+          label={en ? "Owner's phone" : 'هاتف المالك'}
+          htmlFor="owner-phone"
+          path="contact.phone"
+          required
+          error={errors['contact.phone']}
+          hint={
+            en
+              ? 'Usually a foreign number — start with + and the country code.'
+              : 'غالباً رقم خارج لبنان — ابدأ بـ + ثم رمز الدولة.'
+          }
+        >
+          <Input
+            id="owner-phone"
+            type="tel"
+            inputMode="tel"
+            dir="ltr"
+            placeholder="+225 07 12 34 56 78"
+            className="text-start"
+            invalid={Boolean(errors['contact.phone'])}
+            value={str(value.phone)}
+            onChange={(e) => set({ phone: e.target.value })}
+          />
+        </Field>
+
+        <label
+          htmlFor="owner-whatsappSameAsPhone"
+          className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted-foreground"
+        >
+          <Checkbox
+            id="owner-whatsappSameAsPhone"
+            checked={sameAsPhone}
+            onCheckedChange={(checked) => set({ whatsappSameAsPhone: checked === true })}
+          />
+          <span className="font-medium">{en ? 'WhatsApp on the same number' : 'واتساب على الرقم نفسه'}</span>
+        </label>
+
+        {!sameAsPhone ? (
+          <Field
+            label={en ? 'WhatsApp Number' : 'رقم الواتساب'}
+            htmlFor="owner-whatsapp"
+            path="contact.whatsapp"
+            required
+            error={errors['contact.whatsapp']}
+          >
+            <Input
+              id="owner-whatsapp"
+              type="tel"
+              inputMode="tel"
+              dir="ltr"
+              className="text-start"
+              invalid={Boolean(errors['contact.whatsapp'])}
+              value={str(value.whatsapp)}
+              onChange={(e) => set({ whatsapp: e.target.value })}
+            />
+          </Field>
+        ) : null}
+      </div>
+
+      <div className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-3 sm:grid-cols-2 sm:p-4">
+        <Field
+          label={en ? 'Local contact (relative or caretaker)' : 'جهة اتصال محلية (قريب أو ناطور)'}
+          htmlFor="owner-localContactName"
+          error={errors['contact.localContactName']}
+        >
+          <Input
+            id="owner-localContactName"
+            invalid={Boolean(errors['contact.localContactName'])}
+            value={str(value.localContactName)}
+            onChange={(e) => set({ localContactName: e.target.value })}
+          />
+        </Field>
+        <Field
+          label={en ? "Local contact's phone" : 'هاتف جهة الاتصال'}
+          htmlFor="owner-localContactPhone"
+          error={errors['contact.localContactPhone']}
+        >
+          <Input
+            id="owner-localContactPhone"
+            type="tel"
+            inputMode="tel"
+            dir="ltr"
+            placeholder="03 123456"
+            className="text-start"
+            invalid={Boolean(errors['contact.localContactPhone'])}
+            value={str(value.localContactPhone)}
+            onChange={(e) => set({ localContactPhone: e.target.value })}
+          />
+        </Field>
+      </div>
+    </div>
+  );
+}

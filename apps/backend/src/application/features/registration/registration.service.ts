@@ -56,6 +56,8 @@ export interface SubmitResult {
   status: CitizenRecordStatus;
   /** True when this submission had already been delivered — see `clientSubmissionId`. */
   deduplicated: boolean;
+  /** What a passport number did to this filing, when one was given. See the repository. */
+  identity?: 'NEW' | 'ATTACHED' | 'CONFLICT';
 }
 
 /**
@@ -193,24 +195,18 @@ export class RegistrationService {
         isLebanese: input.payload.personal.isLebanese,
         residencyNumber: input.payload.personal.residencyNumber || undefined,
         residentStatus: input.payload.personal.residentStatus,
-        identityDocType: input.payload.personal.identityDocType,
         /**
-         * A Lebanese citizen always has this. A non-Lebanese one is only
-         * required to supply *one* of a passport number or a رقم إقامة
-         * (`personalDetailsSchema`'s refine enforces that), so this falls
-         * back to whichever the person actually gave — the identity lookup
-         * key needs one real value either way, and the fallback never
-         * triggers for a payload that passed validation.
+         * A passport number, for a non-Lebanese person who has one — and
+         * nothing else, ever.
          *
-         * `undefined` is now a third outcome, and only reachable when the
-         * officer flagged the document itself: the person is registered
-         * without an identity key, which the repository handles by inserting
-         * rather than upserting. See the note there.
+         * A Lebanese citizen is no longer asked for an identity document, so
+         * whatever a stale draft or an old queued submission still carries is
+         * not stored as one. The رقم إقامة used to be copied in here when the
+         * passport was blank so the upsert had a key; there is no upsert any
+         * more (see the repository), and a residency number filed under
+         * «جواز سفر» only ever produced a document type that was untrue.
          */
-        identityDocNumber:
-          input.payload.personal.identityDocNumber ||
-          input.payload.personal.residencyNumber ||
-          undefined,
+        ...identityDocumentOf(input.payload),
         civilRecordNumber: input.payload.personal.civilRecordNumber || undefined,
         totalRegisteredMembers:
           input.payload.contact.totalRegisteredMembers ??
@@ -218,6 +214,10 @@ export class RegistrationService {
         actualHouseholdMembers: input.payload.contact.actualHouseholdMembers,
         maritalStatus: input.payload.contact.maritalStatus,
         bloodType: input.payload.personal.bloodType,
+        residence: input.payload.residence,
+        residencePlace: input.payload.personal.residencePlace,
+        localContactName: input.payload.contact.localContactName,
+        localContactPhone: input.payload.contact.localContactPhone,
       },
       citizenReference,
       registrationReference,
@@ -250,8 +250,11 @@ export class RegistrationService {
       referenceNumber: result.referenceNumber,
       propertyCount: properties.length,
       propertyIds: result.propertyIds,
-      status: statusForFlags(flags),
+      // A number held by somebody else lands the record at «يتطلب مراجعة»
+      // even when the officer flagged nothing — the repository added the flag.
+      status: result.identity === 'CONFLICT' ? 'REQUIRES_REVIEW' : statusForFlags(flags),
       deduplicated: result.deduplicated,
+      identity: result.identity,
     };
   }
 
@@ -322,4 +325,23 @@ export class RegistrationService {
     };
   }
 
+}
+
+/**
+ * The identity document a filing may carry: a non-Lebanese person's passport
+ * number, when one was written down. Everything else yields nothing — a
+ * Lebanese citizen is not asked for a document, and an owner record carries
+ * none.
+ */
+export function identityDocumentOf(payload: {
+  residence?: string;
+  personal: { isLebanese?: boolean; identityDocNumber?: string };
+}): {
+  identityDocType?: string;
+  identityDocNumber?: string;
+} {
+  if (payload.residence === 'NON_RESIDENT_OWNER') return {};
+  if (payload.personal.isLebanese !== false) return {};
+  const number = payload.personal.identityDocNumber?.trim();
+  return number ? { identityDocType: 'PASSPORT', identityDocNumber: number } : {};
 }

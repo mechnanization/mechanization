@@ -172,8 +172,8 @@ export default function LandlordLinksPage({
             </p>
             <p className="text-xs leading-relaxed text-muted-foreground">
               {en
-                ? 'Their owner filed no property card naming that building — an owner-borne fee (الأرصفة, المجاري) charges from the cards a citizen filed. Confirming a link here adds the property to the owner’s file, which is what puts it on a bill.'
-                : 'مالكوها لم يقدّموا بطاقة عقار تذكر ذلك المبنى — والرسوم التي يتحمّلها المالك (الأرصفة، المجاري) تُحتسب من البطاقات المقدَّمة. تأكيد الربط هنا يضيف العقار إلى ملف المالك، وهو ما يُدخله في الفاتورة.'}
+                ? 'Their owner filed no property card naming that building — an owner-borne fee (such as the pavement and sewer construction fee) charges from the cards a citizen filed. Confirming a link here adds the property to the owner’s file, which is what puts it on a bill.'
+                : 'مالكوها لم يقدّموا بطاقة عقار تذكر ذلك المبنى — والرسوم التي يتحمّلها المالك (كرسم إنشاء الأرصفة والمجاري) تُحتسب من البطاقات المقدَّمة. تأكيد الربط هنا يضيف العقار إلى ملف المالك، وهو ما يُدخله في الفاتورة.'}
             </p>
           </div>
         </div>

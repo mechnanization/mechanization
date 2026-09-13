@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import {
   contactDetailsSchema,
+  nonResidentOwnerContactSchema,
+  nonResidentOwnerPersonalSchema,
   partialContactDetailsSchema,
+  partialNonResidentOwnerContactSchema,
+  partialNonResidentOwnerPersonalSchema,
   partialPersonalDetailsSchema,
   personalDetailsSchema,
 } from './citizen.schema';
@@ -21,7 +25,7 @@ import {
   type FieldFlag,
 } from './field-flag.schema';
 import { uuid } from './primitives';
-import { NON_OWNER_OCCUPANCY } from './enums';
+import { citizenResidenceSchema, NON_OWNER_OCCUPANCY, type CitizenResidence } from './enums';
 
 /**
  * Staff-entered registrations — the same submission a citizen used to file
@@ -183,6 +187,7 @@ function branchFieldsOnly(card: Record<string, unknown>): Record<string, unknown
 }
 
 interface SubmissionInput {
+  residence: CitizenResidence;
   personal: Record<string, unknown>;
   contact: Record<string, unknown>;
   properties: Array<Record<string, unknown>>;
@@ -224,9 +229,33 @@ function isAbsent(value: unknown): boolean {
   return value === undefined || value === null || (typeof value === 'string' && !value.trim());
 }
 
+/**
+ * The strict and the shaping schema for each section, by نوع الملف.
+ *
+ * One switch, read by every pass below, so a household file and an owner record
+ * can never be validated by one rulebook and shaped by the other — that mismatch
+ * would store fields a strict pass never looked at.
+ */
+function sectionSchemas(residence: CitizenResidence) {
+  return residence === 'NON_RESIDENT_OWNER'
+    ? {
+        personal: nonResidentOwnerPersonalSchema,
+        contact: nonResidentOwnerContactSchema,
+        partialPersonal: partialNonResidentOwnerPersonalSchema,
+        partialContact: partialNonResidentOwnerContactSchema,
+      }
+    : {
+        personal: personalDetailsSchema,
+        contact: contactDetailsSchema,
+        partialPersonal: partialPersonalDetailsSchema,
+        partialContact: partialContactDetailsSchema,
+      };
+}
+
 /** Every path the strict schemas complain about, given what is already excused. */
 function strictIssuePaths(input: SubmissionInput, excused: ReadonlySet<string>): string[] {
   const paths: string[] = [];
+  const schemas = sectionSchemas(input.residence);
 
   const collect = (prefix: string, result: z.SafeParseReturnType<unknown, unknown>) => {
     if (result.success) return;
@@ -235,11 +264,11 @@ function strictIssuePaths(input: SubmissionInput, excused: ReadonlySet<string>):
 
   collect(
     'personal',
-    personalDetailsSchema.safeParse(withoutFlagged(input.personal, 'personal', excused)),
+    schemas.personal.safeParse(withoutFlagged(input.personal, 'personal', excused)),
   );
   collect(
     'contact',
-    contactDetailsSchema.safeParse(withoutFlagged(input.contact, 'contact', excused)),
+    schemas.contact.safeParse(withoutFlagged(input.contact, 'contact', excused)),
   );
   input.properties.forEach((card, index) => {
     const prefix = `properties.${index}`;
@@ -332,16 +361,38 @@ function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
     }
   };
 
+  const schemas = sectionSchemas(input.residence);
+
   report(
     'personal',
-    personalDetailsSchema.safeParse(withoutFlagged(input.personal, 'personal', paths)),
+    schemas.personal.safeParse(withoutFlagged(input.personal, 'personal', paths)),
   );
-  report('contact', contactDetailsSchema.safeParse(withoutFlagged(input.contact, 'contact', paths)));
+  report('contact', schemas.contact.safeParse(withoutFlagged(input.contact, 'contact', paths)));
 
   input.properties.forEach((card, index) => {
     const prefix = `properties.${index}`;
     report(prefix, propertyEntrySchema.safeParse(withoutFlagged(card, prefix, paths)));
   });
+
+  /*
+    An owner record holds what the owner owns — and nothing else.
+
+    Somebody living in the town is a household with a file of their own, and a
+    tenancy or a شاغل بتسامح recorded on an absent owner's record would put that
+    household's occupancy on a person who is not there, where billing would find
+    it. `occupancyType` is not flaggable, so this cannot be excused either.
+  */
+  if (input.residence === 'NON_RESIDENT_OWNER') {
+    input.properties.forEach((card, index) => {
+      if (card.occupancyType !== undefined && card.occupancyType !== 'OWNER') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['properties', index, 'occupancyType'],
+          message: 'ملف المالك غير المقيم يحمل ما يملكه فقط — من يسكن في العقار يُسجَّل بملف أسرة',
+        });
+      }
+    });
+  }
 
   /*
     خيمة is only for a لاجئ — but only answerable while صفة الإقامة is known.
@@ -387,10 +438,26 @@ function shapeSubmission(input: SubmissionInput) {
   */
   const flags = allFlags(input);
   const paths = flaggedPaths(flags);
+  const schemas = sectionSchemas(input.residence);
 
   return {
-    personal: partialPersonalDetailsSchema.parse(withoutFlagged(input.personal, 'personal', paths)),
-    contact: partialContactDetailsSchema.parse(withoutFlagged(input.contact, 'contact', paths)),
+    residence: input.residence,
+    /*
+      Cast to the household shape because every consumer reads the sections by
+      field name and treats each one as possibly absent — which, for an owner
+      record, every household field is. Typing the union out would push a
+      `'residencePlace' in personal` check into every reader for no safety the
+      optional fields do not already give.
+    */
+    personal: schemas.partialPersonal.parse(
+      withoutFlagged(input.personal, 'personal', paths),
+    ) as z.infer<typeof partialPersonalDetailsSchema> & { residencePlace?: string },
+    contact: schemas.partialContact.parse(
+      withoutFlagged(input.contact, 'contact', paths),
+    ) as z.infer<typeof partialContactDetailsSchema> & {
+      localContactName?: string;
+      localContactPhone?: string;
+    },
     properties: input.properties.map((card, index) => {
       const id = typeof card.id === 'string' ? card.id : undefined;
       return {
@@ -442,6 +509,12 @@ function shapeSubmission(input: SubmissionInput) {
  * rather than registering the person a second time.
  */
 const submissionEnvelope = {
+  /**
+   * نوع الملف — a household living in the town, or an owner who lives
+   * elsewhere. Defaulted so every submission already queued on a phone, and
+   * every client that predates the field, keeps meaning what it meant.
+   */
+  residence: citizenResidenceSchema.default('RESIDENT'),
   personal: rawSection,
   contact: rawSection,
   flags: fieldFlagsSchema,

@@ -143,6 +143,37 @@ export class AuditService {
     });
   }
 
+  /**
+   * Census writes — a building, a unit, an occupancy begun or ended, a visit.
+   *
+   * `BuildingsService` and `CensusSyncService` have emitted `building.changed`
+   * for every one of these since Phase 2, and their comments said the audit row
+   * was what a resident disputing a bill could read. Nothing subscribed except
+   * the dashboard cache, so none of it was ever written: when «إنهاء الإشغال»
+   * was pressed by mistake in the field there was no row saying who pressed it,
+   * on which flat, or when. This is that row.
+   */
+  @OnEvent('building.changed')
+  async onBuildingChanged(payload: {
+    action: string;
+    buildingId: string;
+    before?: Record<string, unknown>;
+    after?: Record<string, unknown>;
+    actorId: string;
+    actorRole: string;
+  }): Promise<void> {
+    await this.record({
+      actorId: payload.actorId,
+      actorType: 'STAFF',
+      actorRole: payload.actorRole as never,
+      action: payload.action,
+      entityType: 'Building',
+      entityId: payload.buildingId,
+      before: payload.before,
+      after: payload.after,
+    });
+  }
+
   @OnEvent('user.logged-in')
   async onLogin(payload: {
     userId: string;

@@ -40,6 +40,9 @@ function harness(unitsInBuilding: number) {
         id: 'occ-1',
         unitId: UNIT,
         citizenId: CITIZEN,
+        role: 'OWNER',
+        fromDate: new Date('2026-01-01'),
+        toDate: null,
         unit: { buildingId: BUILDING, unitCode: '0001' },
       }),
       update: jest.fn().mockResolvedValue({
@@ -74,7 +77,7 @@ describe('endOccupancy — releasing the census claim', () => {
   it('drops the tick that pointed a مبنى card at this flat', async () => {
     const { service, buildingUnitUpdateMany } = harness(6);
 
-    await service.endOccupancy('occ-1', undefined, actor);
+    await service.endOccupancy('occ-1', { reason: 'OWNERSHIP_TRANSFERRED' }, actor);
 
     expect(buildingUnitUpdateMany).toHaveBeenCalledWith({
       where: {
@@ -93,7 +96,7 @@ describe('endOccupancy — releasing the census claim', () => {
     */
     const { service, buildingUnitUpdateMany } = harness(6);
 
-    await service.endOccupancy('occ-1', undefined, actor);
+    await service.endOccupancy('occ-1', { reason: 'OWNERSHIP_TRANSFERRED' }, actor);
 
     const [call] = buildingUnitUpdateMany.mock.calls;
     expect(call[0].data).toEqual({ unitId: null });
@@ -108,7 +111,7 @@ describe('endOccupancy — releasing the census claim', () => {
     */
     const { service, propertyEntryUpdateMany } = harness(1);
 
-    await service.endOccupancy('occ-1', undefined, actor);
+    await service.endOccupancy('occ-1', { reason: 'OWNERSHIP_TRANSFERRED' }, actor);
 
     expect(propertyEntryUpdateMany).toHaveBeenCalledWith({
       where: {
@@ -129,7 +132,7 @@ describe('endOccupancy — releasing the census claim', () => {
     */
     const { service, propertyEntryUpdateMany } = harness(6);
 
-    await service.endOccupancy('occ-1', undefined, actor);
+    await service.endOccupancy('occ-1', { reason: 'OWNERSHIP_TRANSFERRED' }, actor);
 
     expect(propertyEntryUpdateMany).not.toHaveBeenCalled();
   });
@@ -143,7 +146,7 @@ describe('endOccupancy — releasing the census claim', () => {
     */
     const { service, buildingUnitUpdateMany, propertyEntryUpdateMany } = harness(1);
 
-    await service.endOccupancy('occ-1', undefined, actor);
+    await service.endOccupancy('occ-1', { reason: 'OWNERSHIP_TRANSFERRED' }, actor);
 
     for (const mock of [buildingUnitUpdateMany, propertyEntryUpdateMany]) {
       const where = mock.mock.calls[0][0].where;
@@ -167,7 +170,7 @@ describe('endOccupancy — releasing the census claim', () => {
       { emit } as never,
     );
 
-    await service.endOccupancy('occ-1', undefined, actor);
+    await service.endOccupancy('occ-1', { reason: 'OWNERSHIP_TRANSFERRED' }, actor);
 
     const [, payload] = emit.mock.calls.find(([event]) => event === 'building.changed') ?? [];
     expect(payload.action).toBe('OCCUPANCY_ENDED');

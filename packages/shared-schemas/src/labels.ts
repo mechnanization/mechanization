@@ -2,6 +2,7 @@ import type {
   BloodType,
   BuildingLifecycle,
   CaseType,
+  CitizenResidence,
   DamageLevel,
   DamageSource,
   DocumentType,
@@ -9,6 +10,7 @@ import type {
   IdentityDocType,
   LandType,
   MaritalStatus,
+  OccupancyEndReason,
   OccupancyRole,
   OccupancyType,
   PropertyType,
@@ -88,9 +90,9 @@ export const ar = {
    */
   feeBearerHint: {
     OCCUPANT:
-      'يُحتسب على من يشغل الوحدة فعلياً — المالك عن سكنه، والمستأجر عن مأجوره. لا تُحتسب الوحدات المؤجَّرة على مالكها لأن مستأجرها مكلَّف بها، ولا الوحدات الشاغرة أو قيد الإنجاز. مناسب لرسم النظافة والقيمة التأجيرية.',
+      'يُحتسب على من يشغل الوحدة فعلياً — المالك عن سكنه، والمستأجر عن مأجوره. لا تُحتسب الوحدات المؤجَّرة على مالكها لأن مستأجرها مكلَّف بها، ولا الوحدات الشاغرة أو قيد الإنجاز. مناسب لرسم النظافة والقيمة التأجيرية ورسم صيانة الأرصفة والمجاري السنوي (المادتان ٤ و٧٩ من القانون ٨٨/٦٠).',
     OWNER:
-      'يُحتسب على صاحب العقار عن كل ما يملكه — مشغولاً كان أو مؤجَّراً أو شاغراً أو قيد الإنجاز — ولا يُحتسب على المستأجرين. مناسب للرسوم التأسيسية كالأرصفة والمجاري.',
+      'يُحتسب على صاحب العقار عن كل ما يملكه — مشغولاً كان أو مؤجَّراً أو شاغراً أو قيد الإنجاز — ولا يُحتسب على المستأجرين. مناسب للرسوم التأسيسية كرسم إنشاء الأرصفة والمجاري (المادة ٧٨) — لا لرسم صيانتها السنوي، فذاك على الشاغل.',
   } satisfies Record<FeeBearer, string>,
 
   /** Where a payment stands. `PENDING_REVIEW` is a claim, not a receipt. */
@@ -164,6 +166,7 @@ export const ar = {
     OWNER_OCCUPIED: 'مشغولة من المالك',
     RENTED: 'مؤجرة',
     FREE_OCCUPIED: 'مشغولة بتسامح (بدون بدل)',
+    SEASONAL: 'مسكن موسمي — أصحابه مقيمون خارج البلدة',
     VACANT: 'شاغرة (غير مأهولة)',
     UNDER_CONSTRUCTION: 'قيد الإنجاز',
   } satisfies Record<UnitStatus, string>,
@@ -281,6 +284,22 @@ export const ar = {
     FREE_OCCUPANT: 'شاغل بتسامح (بدون بدل)',
   } satisfies Record<OccupancyRole, string>,
 
+  /** Why a spell ended — the three answers «إنهاء الإشغال» asks for. */
+  occupancyEndReason: {
+    MOVED_OUT: 'خرج من الوحدة',
+    OWNERSHIP_TRANSFERRED: 'بيع أو نقل ملكية',
+    RECORDED_IN_ERROR: 'سُجِّل بالخطأ',
+  } satisfies Record<OccupancyEndReason, string>,
+
+  /**
+   * نوع الملف — a household that lives in the town, or an owner who does not.
+   * Asked as a question about *where the person lives*, never about محل القيد.
+   */
+  citizenResidence: {
+    RESIDENT: 'أسرة مقيمة في البلدة',
+    NON_RESIDENT_OWNER: 'مالك غير مقيم',
+  } satisfies Record<CitizenResidence, string>,
+
   documentType: {
     IDENTITY: 'وثيقة الإثبات',
     OWNERSHIP_PROOF: 'سند الملكية',
@@ -324,6 +343,9 @@ export const ar = {
     maritalStatus: 'الحالة الاجتماعية',
     phone: 'رقم الهاتف',
     whatsapp: 'رقم الواتساب',
+    residencePlace: 'مكان الإقامة',
+    localContactName: 'اسم جهة الاتصال المحلية',
+    localContactPhone: 'هاتف جهة الاتصال المحلية',
     whatsappSameAsPhone: 'واتساب نفس رقم الهاتف',
     totalRegisteredMembers: 'إجمالي المسجلين في القيد',
     actualHouseholdMembers: 'عدد أفراد الأسرة المقيمين في المنزل (دون المتزوجين)',
@@ -399,9 +421,9 @@ export const en = {
 
   feeBearerHint: {
     OCCUPANT:
-      'Charged to whoever actually occupies the unit — an owner for what they live in, a tenant for what they rent. A landlord is not charged for units they have let, because the tenant is billed for them; vacant and under-construction units are charged to nobody. Suits waste and rental-value fees.',
+      'Charged to whoever actually occupies the unit — an owner for what they live in, a tenant for what they rent. A landlord is not charged for units they have let, because the tenant is billed for them; vacant and under-construction units are charged to nobody. Suits waste, rental-value and the annual pavement and sewer maintenance fee (Law 60/1988, Art. 4 and 79).',
     OWNER:
-      'Charged to the deed holder for everything they own — occupied, let, vacant or still being built — and not to tenants at all. Suits foundational fees such as pavements and sewerage.',
+      'Charged to the deed holder for everything they own — occupied, let, vacant or still being built — and not to tenants at all. Suits foundational fees such as the pavement and sewer construction fee (Art. 78) — not the annual maintenance fee, which falls on the occupant.',
   } satisfies Record<FeeBearer, string>,
 
   paymentStatus: {
@@ -463,6 +485,7 @@ export const en = {
     OWNER_OCCUPIED: 'Owner-occupied',
     RENTED: 'Rented out',
     FREE_OCCUPIED: 'Occupied rent-free',
+    SEASONAL: 'Seasonal home — owners live elsewhere',
     VACANT: 'Vacant',
     UNDER_CONSTRUCTION: 'Under construction',
   } satisfies Record<UnitStatus, string>,
@@ -553,6 +576,17 @@ export const en = {
     FREE_OCCUPANT: 'Free occupant (no rent)',
   } satisfies Record<OccupancyRole, string>,
 
+  occupancyEndReason: {
+    MOVED_OUT: 'Moved out',
+    OWNERSHIP_TRANSFERRED: 'Sold or ownership transferred',
+    RECORDED_IN_ERROR: 'Recorded in error',
+  } satisfies Record<OccupancyEndReason, string>,
+
+  citizenResidence: {
+    RESIDENT: 'Household living in the town',
+    NON_RESIDENT_OWNER: 'Owner living elsewhere',
+  } satisfies Record<CitizenResidence, string>,
+
   documentType: {
     IDENTITY: 'Identity Document',
     OWNERSHIP_PROOF: 'Proof of Ownership',
@@ -582,6 +616,9 @@ export const en = {
     maritalStatus: 'Marital Status',
     phone: 'Phone Number',
     whatsapp: 'WhatsApp Number',
+    residencePlace: 'Place of Residence',
+    localContactName: 'Local Contact Name',
+    localContactPhone: 'Local Contact Phone',
     whatsappSameAsPhone: 'WhatsApp Same As Phone',
     totalRegisteredMembers: 'Total Registered (Civil Record)',
     actualHouseholdMembers: 'Family Members Living in House (excl. married)',

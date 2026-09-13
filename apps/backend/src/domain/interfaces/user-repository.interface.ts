@@ -34,6 +34,12 @@ export interface CitizenIdentityInput {
   actualHouseholdMembers?: number;
   maritalStatus?: string;
   bloodType?: string;
+  /** نوع الملف. Absent means `RESIDENT` — a household file. */
+  residence?: 'RESIDENT' | 'NON_RESIDENT_OWNER';
+  /** Where a non-resident owner lives. */
+  residencePlace?: string;
+  localContactName?: string;
+  localContactPhone?: string;
 }
 
 /**

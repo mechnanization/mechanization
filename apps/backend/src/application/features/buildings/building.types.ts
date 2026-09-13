@@ -57,6 +57,12 @@ export interface UnitRow {
   unitArea: number | null;
   unitStatus: string | null;
   surveyStatus: string;
+  /** «مسكن موسمي» — months (1–12) its owners are usually present. Empty otherwise. */
+  presenceMonths: number[];
+  /** When the owners last stayed. */
+  ownerLastStayAt: Date | null;
+  /** When a تصريح بالشغور was filed for the months they are away. */
+  vacancyDeclaredAt: Date | null;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -71,6 +77,12 @@ export interface OccupancyRow {
   shares: number | null;
   fromDate: Date;
   toDate: Date | null;
+  /**
+   * Why the spell ended, when an officer said so — see `OCCUPANCY_END_REASON`.
+   * Null on a current spell and on every spell ended before the question was
+   * asked.
+   */
+  endReason: string | null;
   registrationId: string | null;
   /**
    * Whether the citizen's own file claims this flat — i.e. whether the other

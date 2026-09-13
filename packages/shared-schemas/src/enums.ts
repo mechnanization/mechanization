@@ -19,6 +19,27 @@ function arabicEnum<T extends readonly [string, ...string[]]>(values: T, message
   });
 }
 
+/**
+ * Whether this person lives in the town — which decides how much the register
+ * asks about them.
+ *
+ * `RESIDENT` is a household file: identity, household, blood type, the lot.
+ * `NON_RESIDENT_OWNER` is somebody who owns property here and lives elsewhere —
+ * Beirut, Abidjan, Dearborn — and is recorded so the register can say who owns
+ * a flat and how to reach them, nothing more. The rental-value fee falls on the
+ * occupant (Law 60/1988, Art. 3–4) and the municipality's register is organised
+ * around occupants (Art. 15); what the law needs about an owner is a name on the
+ * assessment roll (Art. 17) and where they live (Art. 14). Asking such an owner
+ * for their blood type is collection the purpose does not justify (Law 81/2018,
+ * Art. 87).
+ *
+ * Decided by where the person *lives most of the year*, never by محل القيد:
+ * plenty of people registered in the town live in Beirut, and the reverse.
+ */
+export const CITIZEN_RESIDENCE = ['RESIDENT', 'NON_RESIDENT_OWNER'] as const;
+export const citizenResidenceSchema = arabicEnum(CITIZEN_RESIDENCE, 'نوع الملف غير صالح');
+export type CitizenResidence = z.infer<typeof citizenResidenceSchema>;
+
 export const GENDER = ['MALE', 'FEMALE'] as const;
 export const genderSchema = arabicEnum(GENDER, 'الجنس مطلوب');
 export type Gender = z.infer<typeof genderSchema>;
@@ -112,6 +133,25 @@ export const UNIT_STATUS = [
   'OWNER_OCCUPIED',
   'RENTED',
   'FREE_OCCUPIED',
+  /**
+   * «مسكن موسمي» — kept for owners who live outside the town and use it on
+   * visits: an expatriate family's flat opened for July and August.
+   *
+   * Not `VACANT`: it is furnished and at the owner's disposal, so it cannot be
+   * offered to let or to shelter a displaced household, which is what vacancy
+   * lists get used for. Not `OWNER_OCCUPIED`: nobody lives in it most of the
+   * year, and counting it as a resident household inflates the population.
+   *
+   * Deliberately in **neither** `UNOCCUPIED_UNIT_STATUS` nor
+   * `OCCUPIED_BY_OTHERS`, so the owner still bears the occupancy fee. Law
+   * 60/1988 levies the fee on actual occupancy (Art. 11), but هيئة التشريع
+   * والاستشارات 725/2003 presumes a building occupied until a تصريح بالشغور is
+   * filed — so without one the full year is owed, and how a declaration
+   * shortens it is the council's decision, not this enum's. The unit records
+   * the facts that decision needs: `presenceMonths`, `ownerLastStayAt` and
+   * `vacancyDeclaredAt`.
+   */
+  'SEASONAL',
   'VACANT',
   'UNDER_CONSTRUCTION',
 ] as const;
@@ -150,6 +190,17 @@ export const UNOCCUPIED_UNIT_STATUS = ['VACANT', 'UNDER_CONSTRUCTION'] as const;
  * occupied — which is most of what the census is for.
  */
 export const OCCUPIED_BY_OTHERS = ['RENTED', 'FREE_OCCUPIED'] as const;
+
+/**
+ * Statuses in which the **owner** is still the one billed for occupancy, even
+ * though nobody lives there all year.
+ *
+ * Named so the third way a status can land in `bearsFee` is a decision on the
+ * page rather than a value that fell through two lists — the memory of how
+ * `FREE_OCCUPIED` once did exactly that is why every status must be classified
+ * somewhere. See `SEASONAL` for why the owner bears it.
+ */
+export const OWNER_BILLED_WHILE_ABSENT = ['SEASONAL'] as const;
 
 /**
  * Whether this unit's شاغل is somebody other than its owner — **false for
@@ -470,6 +521,33 @@ export type CaseType = z.infer<typeof caseTypeSchema>;
 export const OCCUPANCY_ROLE = ['OWNER', 'TENANT', 'FREE_OCCUPANT'] as const;
 export const occupancyRoleSchema = arabicEnum(OCCUPANCY_ROLE, 'صفة الإشغال مطلوبة');
 export type OccupancyRole = z.infer<typeof occupancyRoleSchema>;
+
+/**
+ * Why a spell on a unit ended — asked every time «إنهاء الإشغال» is pressed.
+ *
+ * The button used to end a spell with no question at all, and field inspectors
+ * pressed it by mistake: a small link on the same row as the person's name, on
+ * a phone. Worse, it was also pressed on purpose for the wrong reason, because
+ * «تأكيد الشغور» told them to end the owner first. A reason is what separates
+ * the three things an ended spell can mean, and they are not interchangeable:
+ *
+ *  - `MOVED_OUT` — the household left. History the municipality keeps.
+ *  - `OWNERSHIP_TRANSFERRED` — an owner sold or passed the unit on. Ending an
+ *    owner never means «moved out»; the deed is not a statement of residence.
+ *  - `RECORDED_IN_ERROR` — the spell should never have existed. Kept, because
+ *    the row is still evidence of what was entered and by whom, and hidden from
+ *    the unit's history, because it is not history.
+ */
+export const OCCUPANCY_END_REASON = [
+  'MOVED_OUT',
+  'OWNERSHIP_TRANSFERRED',
+  'RECORDED_IN_ERROR',
+] as const;
+export const occupancyEndReasonSchema = arabicEnum(
+  OCCUPANCY_END_REASON,
+  'يرجى تحديد سبب إنهاء الإشغال',
+);
+export type OccupancyEndReason = z.infer<typeof occupancyEndReasonSchema>;
 
 /**
  * The one place the three taxonomies are allowed to meet.

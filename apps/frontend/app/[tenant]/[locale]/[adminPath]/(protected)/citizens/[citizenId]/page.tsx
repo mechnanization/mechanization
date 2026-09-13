@@ -293,6 +293,12 @@ export default function CitizenProfilePage({
                 <Building2 className="size-3.5" aria-hidden />
                 {propertyCount} {locale === 'en' ? 'properties' : 'عقار'}
               </span>
+              {citizen.residence === 'NON_RESIDENT_OWNER' ? (
+                <Badge variant="soft-info">
+                  {labels.citizenResidence.NON_RESIDENT_OWNER}
+                  {citizen.residencePlace ? ` — ${citizen.residencePlace}` : ''}
+                </Badge>
+              ) : null}
               {citizen.gender ? (
                 <Badge variant="outline">{labels.gender[citizen.gender as never] ?? citizen.gender}</Badge>
               ) : null}
@@ -444,6 +450,28 @@ export default function CitizenProfilePage({
                     <WhatsAppPhoneLink phone={citizen.whatsapp} message={waMessage} />
                   ) : null,
                 },
+                // An owner who lives elsewhere: where, and who holds the keys here.
+                ...(citizen.residence === 'NON_RESIDENT_OWNER'
+                  ? [
+                      {
+                        icon: Home,
+                        label: locale === 'en' ? 'Lives in' : 'مكان الإقامة',
+                        value: citizen.residencePlace ?? undefined,
+                      },
+                      {
+                        icon: User,
+                        label: locale === 'en' ? 'Local contact' : 'جهة الاتصال المحلية',
+                        value: citizen.localContactName ?? undefined,
+                      },
+                      {
+                        icon: Phone,
+                        label: locale === 'en' ? 'Local contact phone' : 'هاتف جهة الاتصال',
+                        value: citizen.localContactPhone ? (
+                          <PhoneLink phone={citizen.localContactPhone} />
+                        ) : null,
+                      },
+                    ]
+                  : []),
               ]}
             />
 

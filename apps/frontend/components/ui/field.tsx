@@ -120,6 +120,7 @@ export function Field({
   hint,
   error,
   required,
+  optionalLabel,
   htmlFor,
   path,
   className,
@@ -129,6 +130,15 @@ export function Field({
   hint?: string;
   error?: string;
   required?: boolean;
+  /**
+   * What a non-required field says instead of «(اختياري)».
+   *
+   * For the fields that are not optional in the ordinary sense: a passport or
+   * residency number must be written when the person has one and must never be
+   * invented when they do not — «(إلزامي إن وجد)». Calling that «اختياري» is
+   * what lets a number be skipped that was sitting in the person's hand.
+   */
+  optionalLabel?: string;
   htmlFor: string;
   /** This field's dot-path — `personal.civilRecordNumber`, `properties.0.unitArea`. */
   path?: string;
@@ -177,7 +187,7 @@ export function Field({
             </span>
           ) : (
             <span className="text-xs font-normal text-muted-foreground">
-              {locale === 'en' ? '(optional)' : '(اختياري)'}
+              {optionalLabel ?? (locale === 'en' ? '(optional)' : '(اختياري)')}
             </span>
           )}
         </Label>

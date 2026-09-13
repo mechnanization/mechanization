@@ -505,7 +505,7 @@ describeIfDb('BuildingsService', () => {
       { unitId, citizenId: await citizen('سمير'), role: 'TENANT' },
       actor(),
     );
-    await buildings.endOccupancy(first.occupancy.id, undefined, actor());
+    await buildings.endOccupancy(first.occupancy.id, { reason: 'MOVED_OUT' }, actor());
     await buildings.recordOccupancy(
       { unitId, citizenId: await citizen('مريم'), role: 'TENANT' },
       actor(),

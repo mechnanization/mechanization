@@ -9,6 +9,32 @@ import {
   SubmitRegistrationResult,
 } from '../../domain/interfaces/registration-repository.interface';
 import { TenantContextService } from '../context/tenant-context.service';
+import { normalizeSearchText } from '../../application/common/search-terms';
+
+/** Where an identity-document clash is recorded on the new citizen's file. */
+const IDENTITY_DOC_PATH = 'personal.identityDocNumber';
+
+/**
+ * Whether the holder of a document number is the person now being filed.
+ *
+ * Names folded the way search folds them (أ/ا, ة/ه, digits, spacing), so a
+ * spelling difference at a doorstep does not split one person into two. First
+ * and last name must agree; اسم الأب is compared only when both sides have one,
+ * because it is the field most often left empty. Anything short of that is a
+ * different person as far as this path is concerned — a missed attach costs a
+ * duplicate a person can merge; a wrong attach costs a person.
+ */
+export function isSamePerson(
+  holder: { firstName: string; middleName: string | null; lastName: string },
+  filed: { firstName: string; middleName?: string | null; lastName: string },
+): boolean {
+  const fold = (value: string | null | undefined) => normalizeSearchText(value ?? '');
+  if (fold(holder.firstName) !== fold(filed.firstName)) return false;
+  if (fold(holder.lastName) !== fold(filed.lastName)) return false;
+  const holderMiddle = fold(holder.middleName);
+  const filedMiddle = fold(filed.middleName);
+  return !holderMiddle || !filedMiddle || holderMiddle === filedMiddle;
+}
 
 @Injectable()
 export class PrismaRegistrationRepository implements RegistrationRepository {
@@ -58,7 +84,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
       instead of one conflict.
     */
     const identityDocNumber = input.citizen.identityDocNumber?.trim() || null;
-    const identityDocType = input.citizen.identityDocType ?? null;
+    const identityDocType = identityDocNumber ? (input.citizen.identityDocType ?? null) : null;
 
     const shared = {
       phone: input.citizen.phone ?? null,
@@ -76,41 +102,90 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
       actualHouseholdMembers: input.citizen.actualHouseholdMembers ?? null,
       maritalStatus: (input.citizen.maritalStatus ?? null) as never,
       bloodType: (input.citizen.bloodType ?? null) as never,
+      residence: (input.citizen.residence ?? 'RESIDENT') as never,
+      residencePlace: input.citizen.residencePlace ?? null,
+      localContactName: input.citizen.localContactName ?? null,
+      localContactPhone: input.citizen.localContactPhone ?? null,
     };
 
     try {
       return await this.db.$transaction(async (tx) => {
-        const citizen =
-          identityDocType && identityDocNumber
-            ? await tx.user.upsert({
-                where: {
-                  identityDocType_identityDocNumber: {
-                    identityDocType: identityDocType as never,
-                    identityDocNumber,
-                  },
+        /*
+          A filing never overwrites a person who is already on file.
+
+          This used to be an `upsert` on (نوع الوثيقة, رقم الوثيقة) whose update
+          branch wrote the new filing's name, phone and household over the
+          existing row. On the first day of field work in production officers
+          had been told the document was no longer required and typed shared or
+          invented numbers — so every repeated number renamed the citizen who
+          used it first and hung the new registration off that row. Three
+          brothers became one person carrying the last brother's name, and no
+          audit row kept the other names. A merge cannot be undone; a duplicate
+          can be merged later by a person with both files in front of them.
+
+          So the number is now a *question*, asked before anything is written:
+
+            • nobody holds it → a new citizen carries it (`NEW`);
+            • a citizen with the same name holds it → this registration is added
+              to their file and nothing on that file changes (`ATTACHED`);
+            • somebody with a different name holds it → a new citizen is created
+              *without* it, and the number goes into a «غير مؤكَّد» flag with
+              the reason, so a person resolves it (`CONFLICT`).
+
+          Only a non-Lebanese person's passport number reaches here now — the
+          form no longer asks a Lebanese citizen for a document — but the rule
+          is the same for any number, including those already in the register.
+        */
+        let identity: SubmitRegistrationResult['identity'];
+        let attachedTo: string | null = null;
+
+        if (identityDocType && identityDocNumber) {
+          const holder = await tx.user.findUnique({
+            where: {
+              identityDocType_identityDocNumber: {
+                identityDocType: identityDocType as never,
+                identityDocNumber,
+              },
+            },
+            select: { id: true, kind: true, firstName: true, middleName: true, lastName: true },
+          });
+
+          if (!holder) {
+            identity = 'NEW';
+          } else if (holder.kind === 'CITIZEN' && isSamePerson(holder, input.citizen)) {
+            identity = 'ATTACHED';
+            attachedTo = holder.id;
+          } else {
+            identity = 'CONFLICT';
+          }
+        }
+
+        const flaggedFields =
+          identity === 'CONFLICT'
+            ? [
+                ...input.flaggedFields.filter((flag) => flag.path !== IDENTITY_DOC_PATH),
+                {
+                  path: IDENTITY_DOC_PATH,
+                  kind: 'UNESTABLISHED',
+                  reason: `رقم الوثيقة المُدخل (${identityDocNumber}) مسجَّل لمواطن آخر باسم مختلف، فلم يُحفظ على هذا الملف — يلزم التحقق من الوثيقة`,
                 },
-                update: shared,
-                create: {
-                  kind: 'CITIZEN',
-                  tenantSlug,
-                  ...shared,
-                  identityDocType: identityDocType as never,
-                  identityDocNumber,
-                  referenceNumber: input.citizenReference,
-                },
-                select: { id: true },
-              })
-            : await tx.user.create({
-                data: {
-                  kind: 'CITIZEN',
-                  tenantSlug,
-                  ...shared,
-                  identityDocType: (identityDocType ?? null) as never,
-                  identityDocNumber: null,
-                  referenceNumber: input.citizenReference,
-                },
-                select: { id: true },
-              });
+              ]
+            : input.flaggedFields;
+        const status = flaggedFields.length > 0 ? 'REQUIRES_REVIEW' : input.status;
+
+        const citizen = attachedTo
+          ? { id: attachedTo }
+          : await tx.user.create({
+              data: {
+                kind: 'CITIZEN',
+                tenantSlug,
+                ...shared,
+                identityDocType: (identity === 'NEW' ? identityDocType : null) as never,
+                identityDocNumber: identity === 'NEW' ? identityDocNumber : null,
+                referenceNumber: input.citizenReference,
+              },
+              select: { id: true },
+            });
 
         const registration = await tx.registration.create({
           data: {
@@ -126,8 +201,8 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
               from `flaggedFields` so the registry can filter on an indexed
               column instead of unpacking a json array per row.
             */
-            status: input.status,
-            flaggedFields: input.flaggedFields as never,
+            status,
+            flaggedFields: flaggedFields as never,
             blanketFlagReason: input.blanketFlagReason ?? null,
             notes: input.notes ?? null,
             createdById: input.createdById ?? null,
@@ -188,6 +263,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
           referenceNumber: registration.referenceNumber,
           propertyIds,
           deduplicated: false,
+          identity,
         };
       });
     } catch (error) {

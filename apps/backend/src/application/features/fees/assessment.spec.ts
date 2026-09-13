@@ -566,6 +566,22 @@ describe('assessment', () => {
         owner: true,
         why: 'let out — the tenant is billed on their own card',
       },
+      /*
+        «مسكن موسمي» — an expatriate family's flat used in summer.
+
+        Pinned to the owner on purpose: a building is presumed occupied until a
+        تصريح بالشغور is filed (هيئة التشريع والاستشارات 725/2003), so without
+        one the full year is owed and the owner is the شاغل who owes it. If a
+        later change moves SEASONAL into an exemption list, this fails — which
+        is the point, because that would be a council decision, not a refactor.
+      */
+      {
+        occupancyType: 'OWNER',
+        unitStatus: 'SEASONAL',
+        occupant: true,
+        owner: true,
+        why: 'a seasonal home is still the owner’s to pay for until vacancy is declared',
+      },
     ];
 
     for (const entry of cases) {

@@ -2034,3 +2034,106 @@ acceptance criterion always claimed and the field never did.
   against a database.
 - **No merge for duplicate structures.** Still the missing tool the duplicate
   guard stands in for, and the reason it has to be strict.
+
+---
+
+## 13. Phase 8 — the first days in production (2026-09-13)
+
+Field work started on production on 2026-09-12. Within a day it produced six
+findings. Five are fixed here. The sixth, repairing citizens merged on that day,
+is **deliberately not included**; it is being handled separately.
+
+### 13.1 Registration merged different people on a document number
+
+`RegistrationRepository.submit` upserted citizens on (نوع الوثيقة, رقم الوثيقة),
+and the update branch wrote the new filing's name and household over the
+existing row. Officers had been told the document was optional, so they typed
+shared or invented numbers. On parcel 6, several brothers became one citizen
+carrying the last brother's name.
+
+- **No overwrites on create.** A number is looked up first. If nobody holds it
+  (`NEW`), a new citizen gets the number. If a citizen with the same folded name
+  holds it (`ATTACHED`), the registration joins that file and nothing on it
+  changes. If the holder's name differs (`CONFLICT`), a separate citizen is
+  created without the number, and the number goes into a «غير مؤكَّد» flag
+  (`registration-identity.spec.ts`).
+- **The identity document is no longer collected** for a Lebanese citizen.
+  رقم السجل stays required. A non-Lebanese person's passport and residency
+  numbers are «إلزامي إن وجد» (`Field.optionalLabel`), and both may be empty.
+  An edit never writes identity columns it wasn't sent
+  (`citizenColumnsForEdit`), so the real numbers already stored survive.
+- **New filings release only what they claimed.**
+  `CensusSyncService.syncRegistration` has a `scope`. Create passes
+  `REGISTRATION`; edit keeps `CITIZEN`. Before this, the second filing on a
+  citizen closed the first filing's flat.
+
+### 13.2 «إنهاء الإشغال»
+
+- **Confirmation first.** `EndOccupancyDialog` asks for a date and a required
+  reason (`OccupancyEndReason`, migration 0040). The reason must fit the role:
+  an owner can't «move out», and a tenant can't sell. The server refuses a
+  mismatch, an already-ended spell, or an end date before the start.
+- **Labelled by role, behind a ⋯ menu.** «إنهاء الملكية» / «إنهاء الإيجار» /
+  «خروج الشاغل». Spells ended «سُجِّل بالخطأ» are kept in the database and
+  hidden from the unit's history.
+- **An owner no longer blocks «تأكيد الشغور»,** on the client or the server.
+  The old refusal is what taught officers to end ownerships just to record an
+  empty flat.
+- **`building.changed` finally has an audit subscriber.** The comments had
+  always claimed one existed.
+
+### 13.3 The matrix shows the unit's state, not only who is recorded
+
+`cellBadge` now answers two questions. Colour and short label give the state
+(green = lived in, blue = vacant, unfinished or seasonal, amber = something that
+decides a bill is missing, red = a contradiction). The second line names who is
+recorded. `UnitStateLegend` sits under both matrices.
+
+`BuildingDetail.units[].ownerDeclaredStatus` carries the owner card's حالة
+wherever the unit has none. That is the same order billing reads them in, so
+the tile can't disagree with the bill.
+
+### 13.4 «مالك غير مقيم» and «مسكن موسمي»
+
+- **Owner record.** `User.residence` (`CitizenResidence`, NOT NULL DEFAULT
+  `RESIDENT`), plus `residencePlace` and a local contact. The record asks for
+  names, phone and place of residence only. Its cards may only be OWNER, and it
+  is excluded from population figures. The form shows likely duplicates by name
+  or phone while typing.
+- **Seasonal home.** `UnitStatus.SEASONAL`, plus `presenceMonths`,
+  `ownerLastStayAt` and `vacancyDeclaredAt` on the unit. These are recorded, not
+  billed from. The owner still bears occupancy fees
+  (`OWNER_BILLED_WHILE_ABSENT`; pinned in `assessment.spec.ts`), because a
+  building is presumed occupied until a تصريح بالشغور is filed.
+
+The legal basis is Law 60/1988 (Art. 3–4, 7, 11, 14, 17, 78–79), with Shura and
+هيئة التشريع opinions. See the `reference-law-60-1988-rental-value` memory.
+
+### 13.5 Fee bearer guidance corrected
+
+Art. 78 puts the *construction* fee for sewers and pavements on the owner.
+Art. 79 puts the annual *maintenance* fee on the occupant, and it isn't owed on
+a vacant building. `feeBearerHint` and `fee.schema.ts` used to call the whole
+fee owner-borne.
+
+### 13.6 Migration 0040 and deployment order
+
+`0040_owner_records_and_occupancy_end` is additive only: a new enum, new
+nullable or defaulted columns, and `ADD VALUE 'SEASONAL'`. It has been applied
+**nowhere but a throwaway test database**.
+
+> **Deploy order matters.** Prisma selects every column of `users` and `units`,
+> so code from this phase running against a schema without 0040 fails every
+> citizen and building read. Apply it with `pnpm db:deploy:staging`, then
+> production through the workflow, **before** deploying the code.
+
+**Verification:** `pnpm typecheck` clean. ESLint shows 0 errors on the changed
+areas. **681 unit tests / 33 suites**, plus **95 integration tests / 5 suites run
+serially** against Docker Postgres 16 with every migration through 0040 applied.
+`pnpm build:check` passes. Run the integration suites with `--runInBand`: run in
+parallel, they share one database and fail each other.
+
+**Not covered:** the frontend still has no test runner, so the new dialog,
+matrix labels, owner form and duplicate hint are verified by `tsc`, lint and a
+production build only. The UI hasn't been exercised in a browser, because
+staging lacks migration 0040.

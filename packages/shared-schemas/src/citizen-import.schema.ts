@@ -117,15 +117,23 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
     hint: Object.values(ar.residentStatus).join(' / '),
     always: true,
   },
+  /*
+    The identity-document columns stay so sheets built against the old template
+    keep parsing, but nothing requires them any more: an identity document is no
+    longer collected for a Lebanese citizen, and a non-Lebanese one's passport and
+    residency numbers are «إلزامي إن وجد» — written when the person has one, never
+    invented. See `personalDetailsObject.identityDocType`.
+  */
   {
     key: 'identityDocType',
     header: 'نوع الوثيقة',
-    hint: Object.values(ar.identityDocType).join(' / '),
-    always: true,
+    hint: 'لغير اللبنانيين: جواز سفر — اختياري',
   },
-  { key: 'identityDocNumber', header: 'رقم الوثيقة', hint: 'إلزامي للبنانيين' },
+  // Header text is the column's identity (`HEADER_TO_KEY`), so it keeps its old
+  // wording; only the hint changed.
+  { key: 'identityDocNumber', header: 'رقم الوثيقة', hint: 'رقم جواز السفر لغير اللبنانيين — إلزامي إن وجد' },
   { key: 'civilRecordNumber', header: 'رقم السجل', hint: 'إلزامي للبنانيين، أرقام فقط' },
-  { key: 'residencyNumber', header: 'رقم الإقامة', hint: 'لغير اللبنانيين — يكفي هذا أو رقم الوثيقة' },
+  { key: 'residencyNumber', header: 'رقم الإقامة', hint: 'لغير اللبنانيين — إلزامي إن وجد' },
   {
     key: 'maritalStatus',
     header: 'الحالة الاجتماعية',

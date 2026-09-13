@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import {
+  CalendarDays,
   ChevronDown,
   DoorOpen,
   FileQuestion,
@@ -187,6 +188,8 @@ const UNIT_STATUS_ICON: Record<UnitStatus, typeof House> = {
   // to be distinguishable from both at a glance, because picking the wrong one
   // of the three is what decides whether two people are billed for one flat.
   FREE_OCCUPIED: HandHeart,
+  // A calendar: lived in for some months of the year, by people who live elsewhere.
+  SEASONAL: CalendarDays,
   VACANT: DoorOpen,
   UNDER_CONSTRUCTION: HardHat,
 };

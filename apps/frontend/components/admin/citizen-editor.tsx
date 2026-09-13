@@ -77,6 +77,44 @@ function text(value: unknown): string | undefined {
  * that fires on every registration to report zero of everything is a toast
  * people learn to dismiss without reading.
  */
+/**
+ * What a passport number did to this filing — said because both outcomes that
+ * are not «new» change what the officer does next.
+ *
+ * Filings used to *merge* on a repeated number, silently renaming whoever held
+ * it. Now a same-name holder gets this registration added to their file
+ * (`ATTACHED`), and a different-name holder leaves the number off a separate
+ * new record for review (`CONFLICT`). Neither is an error, and neither may be
+ * silent: the first means the officer is looking at an existing person's file,
+ * the second that somebody's document number is wrong.
+ */
+function announceIdentity(
+  identity: 'NEW' | 'ATTACHED' | 'CONFLICT' | null | undefined,
+  toast: ReturnType<typeof useToast>,
+  locale: string,
+): void {
+  const en = locale === 'en';
+  if (identity === 'ATTACHED') {
+    toast.success(
+      en ? 'Added to an existing file' : 'أُضيف إلى ملف موجود',
+      {
+        description: en
+          ? 'This passport number belongs to a citizen with the same name, so the registration was added to their file. Nothing on it was changed.'
+          : 'رقم الجواز هذا لمواطن بالاسم نفسه، فأُضيف التسجيل إلى ملفه دون تغيير أي من بياناته.',
+      },
+    );
+  } else if (identity === 'CONFLICT') {
+    toast.error(
+      en ? 'Passport number belongs to someone else' : 'رقم الجواز مسجَّل لشخص آخر',
+      {
+        description: en
+          ? 'Saved as a separate person without the number, and marked for review. Check the document.'
+          : 'حُفظ كشخص مستقل دون الرقم ووُضع قيد المراجعة. تحقَّق من الوثيقة.',
+      },
+    );
+  }
+}
+
 function announceCensus(
   census: CensusSyncResult | null,
   toast: ReturnType<typeof useToast>,
@@ -713,6 +751,7 @@ export function CitizenEditor({
           }
 
           setInitial({
+            residence: queued.payload.residence ?? 'RESIDENT',
             personal: queued.payload.personal,
             contact: queued.payload.contact,
             properties:
@@ -784,6 +823,7 @@ export function CitizenEditor({
 
         setReference(form.referenceNumber);
         setInitial({
+          residence: form.residence ?? 'RESIDENT',
           // The record's existing «غير مؤكَّد» flags, so whoever opens it to
           // finish sees which blanks were deliberate and what was said about
           // each — and clears one simply by filling the field in.
@@ -1235,6 +1275,7 @@ export function CitizenEditor({
         } else {
           const created = await createCitizen(tenant, token, payload);
           announceCensus(created.census, toast, locale, created.deduplicated);
+          announceIdentity(created.identity, toast, locale);
 
           // The household is on the server. Cleared here rather than after the
           // case-linking below, which is allowed to fail without the

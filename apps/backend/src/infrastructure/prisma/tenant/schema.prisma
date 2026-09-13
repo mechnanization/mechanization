@@ -72,6 +72,15 @@ enum IdentityDocType {
   PASSPORT
 }
 
+/// نوع الملف — a household living in the town, or an owner who lives
+/// elsewhere and is recorded only so the register can say who owns a unit and
+/// how to reach them. Added by migration 0040. See `CITIZEN_RESIDENCE` in
+/// shared-schemas.
+enum CitizenResidence {
+  RESIDENT
+  NON_RESIDENT_OWNER
+}
+
 model User {
   id   String   @id @default(uuid()) @db.Uuid
   kind UserKind
@@ -91,6 +100,16 @@ model User {
   totpConfirmedAt DateTime?
 
   // ── Citizen-only ──
+  /// NOT NULL with a default rather than nullable, so a filter excluding owner
+  /// records (`residence: { not: 'NON_RESIDENT_OWNER' }`) cannot silently drop
+  /// every row whose value is null — Postgres `<>` is never true for NULL.
+  residence         CitizenResidence @default(RESIDENT)
+  /// Where a non-resident owner lives — a town or a country. Free text.
+  residencePlace    String?
+  /// The relative or caretaker who holds the keys for an owner who is not here.
+  localContactName  String?
+  localContactPhone String?
+
   phone    String?
   whatsapp String?
 
@@ -358,6 +377,10 @@ enum UnitStatus {
   /// See `OCCUPIED_BY_OTHERS` in shared-schemas, which is what the exemption
   /// now reads instead of comparing against RENTED alone.
   FREE_OCCUPIED
+  /// مسكن موسمي — kept by owners who live elsewhere and use it on visits.
+  /// Added by migration 0040. The owner still bears the occupancy fee unless a
+  /// تصريح بالشغور says otherwise; see `OWNER_BILLED_WHILE_ABSENT`.
+  SEASONAL
   VACANT
   UNDER_CONSTRUCTION
 }
@@ -759,6 +782,15 @@ enum OccupancyRole {
   FREE_OCCUPANT
 }
 
+/// Why a spell ended. Asked by «إنهاء الإشغال» since migration 0040; null on
+/// every spell ended before then, and on those a registration edit releases.
+enum OccupancyEndReason {
+  MOVED_OUT
+  OWNERSHIP_TRANSFERRED
+  /// Kept as evidence of what was entered, hidden from the unit's history.
+  RECORDED_IN_ERROR
+}
+
 /// One physical structure standing on a parcel.
 ///
 /// Exists independently of any citizen or registration: the municipality
@@ -909,6 +941,13 @@ model Unit {
 
   surveyStatus SurveyStatus @default(NOT_SURVEYED)
 
+  /// «مسكن موسمي» facts (migration 0040): the months its owners are usually
+  /// present (1–12), when they last stayed, and when a تصريح بالشغور was filed.
+  /// Recorded for the council's billing decision, not acted on by the biller.
+  presenceMonths    Int[]     @default([])
+  ownerLastStayAt   DateTime?
+  vacancyDeclaredAt DateTime?
+
   notes String?
 
   createdAt DateTime @default(now())
@@ -950,6 +989,8 @@ model UnitOccupancy {
   /// than being deleted.
   fromDate DateTime  @default(now())
   toDate   DateTime?
+  /// Why it ended, when an officer said so. See `OccupancyEndReason`.
+  endReason OccupancyEndReason?
 
   /// The registration this occupancy was established by, when there is one.
   /// Null for an occupancy recorded straight onto the unit matrix before the

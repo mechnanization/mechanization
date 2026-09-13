@@ -41,6 +41,20 @@ export interface SubmitRegistrationResult {
    * The sync queue reports it as "already synced" instead of "created".
    */
   deduplicated: boolean;
+  /**
+   * What the identity document did to this filing, when one was given.
+   *
+   *  - `NEW` — nobody holds the number; a new citizen carries it.
+   *  - `ATTACHED` — the number belongs to a citizen with the same name, so this
+   *    registration was added to their file. Nothing on that file was
+   *    overwritten.
+   *  - `CONFLICT` — the number belongs to somebody with a *different* name. A
+   *    new citizen was created without it and the number is recorded in a
+   *    «غير مؤكَّد» flag for a person to resolve.
+   *
+   * Absent when no number was given, which is now the ordinary case.
+   */
+  identity?: 'NEW' | 'ATTACHED' | 'CONFLICT';
 }
 
 /*

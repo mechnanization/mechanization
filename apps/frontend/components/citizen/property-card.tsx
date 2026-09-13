@@ -149,6 +149,7 @@ export function PropertyCard({
   citizenId,
   censusPicker = false,
   lockedCensusTarget,
+  ownerOnly = false,
 }: {
   tenant: string;
   index: number;
@@ -198,6 +199,12 @@ export function PropertyCard({
   censusPicker?: boolean;
   /** Set when the form was launched from a building's unit matrix. */
   lockedCensusTarget?: LockedCensusTarget | null;
+  /**
+   * An owner record («مالك غير مقيم») holds only what the owner owns. Whoever
+   * lives in the property is a household with a file of their own, so the
+   * occupancy choice is «مالك» and nothing else — the schema refuses the rest.
+   */
+  ownerOnly?: boolean;
 }) {
   const labels = getLabels(locale);
   const visible: readonly string[] = draft.propertyType
@@ -506,7 +513,7 @@ export function PropertyCard({
                 value={draft.occupancyType ?? ''}
                 invalid={Boolean(errors.occupancyType)}
                 onChange={(v) => set({ occupancyType: v as OccupancyType })}
-                options={OCCUPANCY_TYPE.map((option) => ({
+                options={OCCUPANCY_TYPE.filter((option) => !ownerOnly || option === 'OWNER').map((option) => ({
                   value: option,
                   label: labels.occupancyType[option] ?? option,
                 }))}

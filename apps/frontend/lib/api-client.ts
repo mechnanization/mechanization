@@ -6,6 +6,7 @@ import type {
   CaseStatus,
   CaseType,
   CitizenRecordStatus,
+  CitizenResidence,
   CurrencyCode,
   DamageLevel,
   DamageSource,
@@ -18,6 +19,7 @@ import type {
   InspectorPayoutItem,
   InspectorProfileResponse,
   NumberingSequence,
+  OccupancyEndReason,
   OccupancyRole,
   RecordInspectorPayoutInput,
   SequenceKey,
@@ -865,6 +867,12 @@ export interface UnitOccupant {
   shares: number | null;
   fromDate: string;
   toDate: string | null;
+  /**
+   * Why the spell ended, when an officer said so. `RECORDED_IN_ERROR` spells
+   * are kept on the record and left out of the unit's visible history.
+   * Optional on the wire for responses from before the field existed.
+   */
+  endReason?: OccupancyEndReason | null;
   registrationId: string | null;
   /**
    * Whether the citizen's own file claims this flat.
@@ -901,6 +909,15 @@ export interface UnitRow {
   unitArea: number | null;
   unitStatus: UnitStatus | null;
   surveyStatus: SurveyStatus;
+  /**
+   * «مسكن موسمي» — the months (1–12) its owners are usually present, when they
+   * last stayed, and when a تصريح بالشغور was filed. Recorded for the council's
+   * billing decision; nothing bills from them. Optional on the wire for
+   * responses from before migration 0040.
+   */
+  presenceMonths?: number[];
+  ownerLastStayAt?: string | null;
+  vacancyDeclaredAt?: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -913,6 +930,12 @@ export interface UnitWithOccupants extends UnitRow {
   visits: UnitVisitRow[];
   /** Every attempt ever made, uncapped — this is «٣ محاولات» on the cell. */
   visitCount: number;
+  /**
+   * حالة الوحدة as the owner's own card states it, sent only when `unitStatus`
+   * is unset. The unit's value wins where it has one — the order billing reads
+   * them in — so the matrix shows `unitStatus ?? ownerDeclaredStatus`.
+   */
+  ownerDeclaredStatus?: UnitStatus | null;
 }
 
 /** One building opened in the matrix drawer. */
@@ -1380,7 +1403,12 @@ export async function updateUnit(
   tenant: string,
   token: string,
   unitId: string,
-  input: Partial<UpsertUnitInput>,
+  input: Partial<UpsertUnitInput> & {
+    /** «مسكن موسمي» facts — see `UnitRow.presenceMonths`. */
+    presenceMonths?: number[];
+    ownerLastStayAt?: string | null;
+    vacancyDeclaredAt?: string | null;
+  },
 ) {
   const result = await apiFetch<UnitRow>(
     tenant,
@@ -1441,12 +1469,16 @@ export async function endOccupancy(
   tenant: string,
   token: string,
   occupancyId: string,
-  toDate?: string,
+  input: { reason: OccupancyEndReason; toDate?: string },
 ) {
   const result = await apiFetch<UnitOccupant>(
     tenant,
     `/buildings/occupancies/${encodeURIComponent(occupancyId)}/end`,
-    { token, method: 'PATCH', body: JSON.stringify(toDate ? { toDate } : {}) },
+    {
+      token,
+      method: 'PATCH',
+      body: JSON.stringify(input.toDate ? input : { reason: input.reason }),
+    },
   );
   invalidateCensus(tenant);
   return result;
@@ -1741,6 +1773,11 @@ export interface CitizenProfile {
   maritalStatus: string | null;
   bloodType: string | null;
   referenceNumber: string | null;
+  /** نوع الملف. Optional on the wire for cached responses from before 0040. */
+  residence?: CitizenResidence;
+  residencePlace?: string | null;
+  localContactName?: string | null;
+  localContactPhone?: string | null;
   registeredAt: string;
   /** False for a deactivated record — kept for its history, refused a session. */
   isActive: boolean;
@@ -1812,6 +1849,8 @@ export interface CitizenListItem {
   identityDocType: string | null;
   identityDocNumber: string | null;
   residentStatus: string | null;
+  /** نوع الملف — a household file, or «مالك غير مقيم». */
+  residence?: CitizenResidence;
   isActive: boolean;
   registeredAt: string;
 
@@ -1901,6 +1940,8 @@ export interface CitizenFormData {
   registrationId: string | null;
   referenceNumber: string | null;
   status: string | null;
+  /** نوع الملف the record was filed as. */
+  residence?: CitizenResidence;
   personal: Record<string, unknown>;
   contact: Record<string, unknown>;
   properties: Array<Record<string, unknown>>;
@@ -1925,6 +1966,8 @@ export function getCitizenForm(tenant: string, token: string, citizenId: string)
 }
 
 export interface CitizenWriteInput {
+  /** نوع الملف. Absent reads as a household file on the server. */
+  residence?: CitizenResidence;
   personal: Record<string, unknown>;
   contact: Record<string, unknown>;
   properties: Array<Record<string, unknown>>;
@@ -2025,6 +2068,12 @@ export async function createCitizen(tenant: string, token: string, input: Citize
     propertyCount: number;
     status: CitizenRecordStatus;
     deduplicated: boolean;
+    /**
+     * What a passport number did: `ATTACHED` to the person already holding it
+     * (same name), or `CONFLICT` — held by someone with a different name, so a
+     * separate citizen was created and the number left for review.
+     */
+    identity?: 'NEW' | 'ATTACHED' | 'CONFLICT' | null;
     census: CensusSyncResult | null;
     landlordLinks: LandlordLinkOffers | null;
   }>(tenant, '/citizens', { token, method: 'POST', body: JSON.stringify(input) });

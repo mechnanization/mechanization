@@ -471,6 +471,85 @@ describeIfDb('CensusSyncService', () => {
     expect(dropped.toDate).not.toBeNull();
   });
 
+  /*
+    The production eviction of 2026-09-12, in its smallest shape.
+
+    One citizen held flat 1 through their first registration. A second
+    registration was then filed against the same citizen for flat 2 — which is
+    what an identity-document merge produced, and what re-filing a person
+    already on file still produces. Scoped to the citizen, the second filing's
+    sync closed flat 1, because nothing on *it* claimed flat 1. A new filing
+    adds; only an edit states everything a person holds.
+  */
+  it('a new filing never releases a flat an earlier filing claimed', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9B');
+    const citizenId = await citizen('يوسف');
+    const first = await registrationFor({
+      citizenId,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9B',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+    });
+    await census.syncRegistration({ registrationId: first, citizenId, actor: actor() });
+
+    const second = await registrationFor({
+      citizenId,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9B',
+      buildingId: building.id,
+      unitIds: [units[1]!.id],
+    });
+    const result = await census.syncRegistration({
+      registrationId: second,
+      citizenId,
+      actor: actor(),
+      scope: 'REGISTRATION',
+    });
+
+    expect(result.occupanciesEnded).toBe(0);
+    expect(
+      await db.unitOccupancy.count({ where: { citizenId, toDate: null } }),
+    ).toBe(2);
+  });
+
+  /*
+    Case 6 from the field: an owner filed «شاغرة» on their own card, and the
+    matrix drew the flat as an ordinary registered one, because nothing reads
+    the card's حالة onto the unit. The building detail now carries it — and
+    only where the unit has no answer of its own, which is the order billing
+    reads the two in.
+  */
+  it('shows the حالة an owner stated on their card when the unit has none', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9C');
+    const owner = await citizen('ريما');
+    const registrationId = await registrationFor({
+      citizenId: owner,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9C',
+      buildingId: building.id,
+      unitIds: [units[0]!.id, units[1]!.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: units[0]!.id },
+      data: { unitStatus: 'VACANT' },
+    });
+    await census.syncRegistration({ registrationId, citizenId: owner, actor: actor() });
+    // The second flat has its own answer, which must win over the card.
+    await db.unit.update({ where: { id: units[1]!.id }, data: { unitStatus: 'OWNER_OCCUPIED' } });
+    await db.buildingUnit.updateMany({
+      where: { unitId: units[1]!.id },
+      data: { unitStatus: 'VACANT' },
+    });
+
+    const detail = await buildings.get(building.id);
+    const byId = new Map(detail.units.map((unit) => [unit.id, unit]));
+
+    expect(byId.get(units[0]!.id)?.unitStatus).toBeNull();
+    expect(byId.get(units[0]!.id)?.ownerDeclaredStatus).toBe('VACANT');
+    expect(byId.get(units[1]!.id)?.ownerDeclaredStatus).toBeNull();
+  });
+
   it('never touches an occupancy somebody recorded from the matrix', async () => {
     const { building, units } = await surveyedBlock('SYNC-10');
     const matrixCitizen = await citizen('سلمى');

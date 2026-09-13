@@ -130,14 +130,26 @@ export type FeeBasis = (typeof FEE_BASIS)[number];
  * الرسوم التأسيسية كالأرصفة والمجاري. Those are not one fee with an exception;
  * they are two fees with different bearers.
  *
- *  - `OCCUPANT` — رسم النظافة, القيمة التأجيرية. Falls on whoever is actually
+ *  - `OCCUPANT` — رسم النظافة, القيمة التأجيرية, and the annual رسم صيانة
+ *    المجارير والأرصفة. Falls on whoever is actually
  *    in the unit. An owner pays for what they live in; a مستأجر and a شاغل
  *    بتسامح pay for what they occupy; a flat the owner has let is billed to
  *    its tenant on the tenant's own card, not twice; an empty or unfinished
  *    unit is billed to nobody.
- *  - `OWNER` — رسم الأرصفة, المجاري, and the rest of the الرسوم التأسيسية.
+ *  - `OWNER` — the one-off رسم إنشاء المجارير والأرصفة and the rest of the
+ *    الرسوم التأسيسية.
  *    Falls on the deed holder for everything they own, whether it is occupied,
  *    let, empty or still being built. Tenants owe none of it.
+ *
+ * **Maintenance is not construction.** Law 60/1988 splits the pavement and
+ * sewer fee in two: Art. 78 charges the *construction* fee to the owner who
+ * applies for a building permit, once; Art. 79 charges the annual
+ * *maintenance* fee (1.5% of the rental value) to the occupant, «أيا كانت صفته»,
+ * collected with the rental-value fee — and, per جمعية العمل البلدي's reading
+ * of the same law, not owed for a vacant building. An annual الأرصفة notice set
+ * to `OWNER` would bill absent owners for empty flats against the text of the
+ * law. This docblock and the labels used to call الأرصفة والمجاري owner-borne
+ * without the distinction; see `feeBearerHint`.
  *
  * There is deliberately no third value meaning "charge everyone who holds it".
  * That was the behaviour before this existed, and it is not a policy any

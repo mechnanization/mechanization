@@ -27,7 +27,19 @@ export const personalDetailsObject = z.object({
   lastName: arabicOrLatinName,
   gender: genderSchema,
   bloodType: bloodTypeSchema,
-  identityDocType: identityDocTypeSchema,
+  /*
+    No longer asked. The form stopped collecting an identity document on
+    2026-09-13: officers had been told it was not required and filled it with
+    shared or invented numbers, and because citizens were matched on it, every
+    repeated number merged a different person into whoever used it first.
+
+    Kept optional rather than removed, for two reasons. Real records already
+    hold real numbers and none of them may be lost — an edit that no longer
+    sends the field leaves the stored value alone (`CitizensService.update`).
+    And a non-Lebanese person's passport number still travels in
+    `identityDocNumber`, under `PASSPORT`.
+  */
+  identityDocType: identityDocTypeSchema.optional(),
   identityDocNumber: documentNumber.optional().or(z.literal('')),
   civilRecordNumber: civilRecordNumber.optional().or(z.literal('')),
   nationality: z
@@ -41,33 +53,24 @@ export const personalDetailsObject = z.object({
 });
 
 /**
- * Four conditional rules are enforced here rather than in the UI alone:
+ * Two conditional rules are enforced here rather than in the UI alone:
  *  1. civilRecordNumber (رقم السجل) is a Lebanese civil-registry number — it is
  *     required for a Lebanese person and meaningless for anyone else, so it is
  *     required only when `isLebanese` is true.
- *  2. identityDocNumber is required for a Lebanese person, whichever document
- *     type they picked. Its UI label varies by doc type (see
- *     `labels.ar.identityDocNumberLabel`).
- *  3. A non-Lebanese person is not asked for both a passport number and a
- *     رقم إقامة — someone who has given the municipality either one is
- *     identifiable, and requiring the other on top would block someone who
- *     simply does not have it yet (a passport pending renewal, a residency
- *     permit still in process). At least one of identityDocNumber /
- *     residencyNumber must be present; neither is required on its own.
- *  4. residentStatus REFUGEE describes someone displaced from outside Lebanon —
+ *  2. residentStatus REFUGEE describes someone displaced from outside Lebanon —
  *     a Lebanese citizen cannot hold it. The UI hides the option once لبناني
  *     is chosen; this is what actually stops it reaching the server if that
  *     selection is ever bypassed or left stale from before a nationality switch.
+ *
+ * Two rules that used to be here are gone, deliberately. A Lebanese person is
+ * no longer asked for an identity document at all (see `identityDocType`), and
+ * a non-Lebanese person may leave both the passport number and the رقم إقامة
+ * empty: the form labels them «إلزامي إن وجد» — to be written down when the
+ * person has one, never to be invented when they do not. A required number is
+ * exactly what produced the invented ones.
  */
 export const personalDetailsSchema = personalDetailsObject.superRefine((data, ctx) => {
   if (data.isLebanese) {
-    if (!data.identityDocNumber) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['identityDocNumber'],
-        message: 'رقم الوثيقة مطلوب',
-      });
-    }
     if (!data.civilRecordNumber) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -82,13 +85,6 @@ export const personalDetailsSchema = personalDetailsObject.superRefine((data, ct
         message: 'صفة «لاجئ» غير متاحة للمواطنين اللبنانيين',
       });
     }
-    return;
-  }
-
-  if (!data.identityDocNumber && !data.residencyNumber) {
-    const message = 'أدخل رقم جواز السفر أو رقم الإقامة — يكفي إدخال واحد منهما';
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['identityDocNumber'], message });
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['residencyNumber'], message });
   }
 });
 
@@ -218,3 +214,83 @@ export const partialContactDetailsSchema = contactDetailsObject
   });
 
 export type PartialContactDetails = z.infer<typeof partialContactDetailsSchema>;
+
+// ─────────────────────  «مالك غير مقيم» — an owner record  ─────────────────────
+
+/**
+ * What the register keeps about an owner who lives outside the town.
+ *
+ * A short record, not a household file with its gaps flagged. The rental-value
+ * fee falls on whoever occupies the unit (Law 60/1988, Art. 3–4); what the law
+ * wants of an owner is their name on the assessment roll (Art. 17) and where
+ * they live (Art. 14). So this asks exactly that — a name, how to reach them,
+ * where they live, and optionally somebody local who holds the keys — and
+ * nothing a household file asks: no identity document, no رقم السجل, no blood
+ * type, no marital status, no household counts, no صفة الإقامة.
+ *
+ * Filed as a full household with «حفظ سريع» instead, the same owner would sit in
+ * «يتطلب مراجعة» for ever over fields that are missing *on purpose*, and صفة
+ * الإقامة offers no true answer for someone who lives in Abidjan.
+ *
+ * اسم الأب is asked and not required: the person answering is often a tenant or
+ * a neighbour who knows the owner's name and number and nothing else.
+ */
+export const nonResidentOwnerPersonalSchema = z.object({
+  firstName: arabicOrLatinName,
+  middleName: arabicOrLatinName.optional().or(z.literal('')),
+  lastName: arabicOrLatinName,
+  /** Town or country — «بيروت»، «ساحل العاج». Free text: there is no list to pick from. */
+  residencePlace: z
+    .string({ required_error: 'مكان إقامة المالك مطلوب' })
+    .trim()
+    .min(2, 'مكان الإقامة قصير جداً')
+    .max(80, 'مكان الإقامة طويل جداً'),
+});
+
+/** Same division of labour as `partialPersonalDetailsSchema`: shape, not rules. */
+export const partialNonResidentOwnerPersonalSchema = nonResidentOwnerPersonalSchema
+  .partial()
+  .required({ firstName: true, lastName: true });
+
+/**
+ * How to reach an owner who is not here.
+ *
+ * The phone is required because reaching them is why the record exists — and it
+ * is flaggable like any other field, for the owner whose tenant knows a name and
+ * no number. The local contact is the relative or caretaker with the keys: a
+ * contact, not a person the register tracks, so two strings rather than a link
+ * to another citizen.
+ */
+const nonResidentOwnerContactObject = z.object({
+  phone: internationalPhone,
+  whatsappSameAsPhone: z.boolean().default(true),
+  whatsapp: internationalPhone.optional(),
+  localContactName: z.string().trim().max(120, 'الاسم طويل جداً').optional(),
+  localContactPhone: internationalPhone.optional().or(z.literal('')),
+});
+
+export const nonResidentOwnerContactSchema = nonResidentOwnerContactObject
+  .transform((data) => ({
+    ...data,
+    whatsapp: data.whatsappSameAsPhone ? data.phone : data.whatsapp,
+    localContactName: data.localContactName || undefined,
+    localContactPhone: data.localContactPhone || undefined,
+  }))
+  .superRefine((data, ctx) => {
+    if (!data.whatsappSameAsPhone && !data.whatsapp) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['whatsapp'],
+        message: 'رقم الواتساب مطلوب',
+      });
+    }
+  });
+
+export const partialNonResidentOwnerContactSchema = nonResidentOwnerContactObject
+  .partial()
+  .transform((data) => ({
+    ...data,
+    whatsapp: data.whatsappSameAsPhone === false ? data.whatsapp : (data.phone ?? data.whatsapp),
+    localContactName: data.localContactName || undefined,
+    localContactPhone: data.localContactPhone || undefined,
+  }));

@@ -86,6 +86,20 @@ export interface BuildingDetail extends BuildingRow {
       visits: VisitRow[];
       /** Every attempt ever made, uncapped. This is «٣ محاولات» on the cell. */
       visitCount: number;
+      /**
+       * حالة الوحدة as an owner's own property card states it, for a unit whose
+       * canonical `unitStatus` nobody has set.
+       *
+       * An owner filed through the registration form answers «حالة الوحدة» on
+       * their card, and nothing copies that answer onto the unit — so an owner
+       * who said «شاغرة» showed on the matrix as an ordinary registered flat.
+       * Derived here rather than copied, because billing already reads the
+       * same two places in the same order (P2-T8: a linked unit's value wins
+       * field by field, the card decides where the unit has none), and the
+       * matrix must never describe a unit differently from how it is billed.
+       * Among co-owners who disagree, the most recently updated card speaks.
+       */
+      ownerDeclaredStatus: string | null;
     }
   >;
 }
@@ -456,6 +470,7 @@ export class BuildingsService {
 
     const zone = await this.zoneOfParcel(row.parcelNumber);
     const backing = await this.claimsBackingOccupancies(row.id, row.units);
+    const declared = await this.ownerDeclaredStatuses(row.id, row.units);
 
     return {
       ...toBuildingRow(row),
@@ -468,8 +483,65 @@ export class BuildingsService {
         ),
         visits: unit.visits.map(toVisitRow),
         visitCount: unit._count.visits,
+        ownerDeclaredStatus: unit.unitStatus ? null : (declared.get(unit.id) ?? null),
       })),
     };
+  }
+
+  /**
+   * The حالة الوحدة each unit's owner stated on their own card, for units that
+   * have none of their own. See `BuildingDetail.units.ownerDeclaredStatus`.
+   *
+   * The two shapes a card reaches a unit by, mirroring
+   * `claimsBackingOccupancies`: a مبنى card's ticked unit row, and a منزل card
+   * on a structure with exactly one unit. Owner cards only — a مستأجر or شاغل
+   * بتسامح card carries no حالة (their capacity is the answer, and the unit
+   * already records it through `unitStatusForRole`).
+   */
+  private async ownerDeclaredStatuses(
+    buildingId: string,
+    units: ReadonlyArray<{ id: string; unitStatus: string | null }>,
+  ): Promise<ReadonlyMap<string, string>> {
+    const open = units.filter((unit) => !unit.unitStatus).map((unit) => unit.id);
+    const declared = new Map<string, string>();
+    if (open.length === 0) return declared;
+
+    const [ticked, houses] = await Promise.all([
+      this.db.buildingUnit.findMany({
+        where: {
+          unitId: { in: open },
+          unitStatus: { not: null },
+          propertyEntry: { occupancyType: 'OWNER' as never },
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: { unitId: true, unitStatus: true },
+      }),
+      units.length === 1
+        ? this.db.propertyEntry.findMany({
+            where: {
+              buildingId,
+              propertyType: 'HOUSE' as never,
+              occupancyType: 'OWNER' as never,
+              unitStatus: { not: null },
+            },
+            orderBy: { updatedAt: 'desc' },
+            select: { unitStatus: true },
+            take: 1,
+          })
+        : Promise.resolve([]),
+    ]);
+
+    for (const row of ticked) {
+      if (row.unitId && row.unitStatus && !declared.has(row.unitId)) {
+        declared.set(row.unitId, row.unitStatus);
+      }
+    }
+    const house = houses[0];
+    const only = units[0];
+    if (house?.unitStatus && only && open.includes(only.id) && !declared.has(only.id)) {
+      declared.set(only.id, house.unitStatus);
+    }
+    return declared;
   }
 
   /**
@@ -1463,11 +1535,24 @@ export class BuildingsService {
       (input.unitStatus !== undefined && isUnoccupied(input.unitStatus)) ||
       input.surveyStatus === 'VACANT_CONFIRMED';
 
+    /*
+      …but an owner does not make a flat lived in.
+
+      This refused on *any* live spell, the owner's included, and the drawer's
+      tooltip said «أنهِ الإشغال أولاً». So to record that an owner's flat is
+      empty, officers ended the owner — which erased the ownership and released
+      the flat from their file, billing and all. The deed is not a statement of
+      residence (D2): an owner recorded on a شاغرة unit is exactly what the
+      join table exists to say. Only a مستأجر or شاغل بتسامح contradicts
+      vacancy, because they *are* somebody living there.
+    */
     if (goingEmpty) {
-      const live = await this.db.unitOccupancy.count({ where: { unitId, toDate: null } });
+      const live = await this.db.unitOccupancy.count({
+        where: { unitId, toDate: null, role: { in: ['TENANT', 'FREE_OCCUPANT'] as never } },
+      });
       if (live > 0) {
         throw new ConflictError(
-          `لا يمكن تسجيل الوحدة ${before.unitCode} كشاغرة: يوجد ${live} إشغال قائم عليها. أنهِ الإشغال أولاً`,
+          `لا يمكن تسجيل الوحدة ${before.unitCode} كشاغرة: يسكنها ${live} مستأجر أو شاغل مسجَّل. أنهِ إشغاله أولاً`,
         );
       }
     }
@@ -1488,6 +1573,11 @@ export class BuildingsService {
         ...(input.surveyStatus !== undefined
           ? { surveyStatus: input.surveyStatus as never }
           : {}),
+        ...(input.presenceMonths !== undefined ? { presenceMonths: input.presenceMonths } : {}),
+        ...(input.ownerLastStayAt !== undefined ? { ownerLastStayAt: input.ownerLastStayAt } : {}),
+        ...(input.vacancyDeclaredAt !== undefined
+          ? { vacancyDeclaredAt: input.vacancyDeclaredAt }
+          : {}),
         ...(input.notes !== undefined ? { notes: input.notes?.trim() || null } : {}),
       },
     });
@@ -1495,8 +1585,16 @@ export class BuildingsService {
     this.record({
       action: 'UNIT_UPDATED',
       buildingId: before.buildingId,
-      before: { unitCode: before.unitCode, surveyStatus: before.surveyStatus },
-      after: { unitCode: updated.unitCode, surveyStatus: updated.surveyStatus },
+      before: {
+        unitCode: before.unitCode,
+        surveyStatus: before.surveyStatus,
+        unitStatus: before.unitStatus,
+      },
+      after: {
+        unitCode: updated.unitCode,
+        surveyStatus: updated.surveyStatus,
+        unitStatus: updated.unitStatus,
+      },
       actor,
     });
 
@@ -2033,7 +2131,7 @@ export class BuildingsService {
    */
   async endOccupancy(
     occupancyId: string,
-    toDate: Date | undefined,
+    input: { toDate?: Date; reason: string },
     actor: { id: string; role: string },
   ): Promise<OccupancyRow> {
     const existing = await this.db.unitOccupancy.findUnique({
@@ -2042,9 +2140,48 @@ export class BuildingsService {
     });
     if (!existing) throw new NotFoundError('سجل الإشغال غير موجود');
 
+    /*
+      Ending an ended spell is refused rather than re-dated.
+
+      A double tap, or two officers on one drawer, used to move `toDate` again
+      and release the file claim a second time — harmless to the claim, but it
+      rewrote *when* somebody left. The first answer stands.
+    */
+    if (existing.toDate) {
+      throw new ConflictError('هذا الإشغال منتهٍ مسبقاً');
+    }
+
+    /*
+      The reason has to fit the capacity.
+
+      An owner does not «move out» — a deed is not a residence (D2), and an
+      owner who left the flat but still holds it has not ended anything the
+      matrix records; their unit is «شاغرة» or «مسكن موسمي». A tenant does not
+      sell. Accepting either would store a history that reads as a fact and is
+      not one. «سُجِّل بالخطأ» fits everyone.
+    */
+    const fits =
+      input.reason === 'RECORDED_IN_ERROR' ||
+      (existing.role === 'OWNER'
+        ? input.reason === 'OWNERSHIP_TRANSFERRED'
+        : input.reason === 'MOVED_OUT');
+    if (!fits) {
+      throw new ValidationError(
+        existing.role === 'OWNER'
+          ? 'إنهاء ملكية يكون ببيع أو نقل ملكية، أو لأنها سُجِّلت بالخطأ'
+          : 'إنهاء إشغال مستأجر أو شاغل يكون بخروجه من الوحدة، أو لأنه سُجِّل بالخطأ',
+        { reason: input.reason },
+      );
+    }
+
+    const toDate = input.toDate ?? new Date();
+    if (toDate < existing.fromDate) {
+      throw new ValidationError('تاريخ الانتهاء قبل تاريخ بدء الإشغال', { toDate });
+    }
+
     const updated = await this.db.unitOccupancy.update({
       where: { id: occupancyId },
-      data: { toDate: toDate ?? new Date() },
+      data: { toDate, endReason: input.reason as never },
       include: { citizen: { select: { firstName: true, lastName: true } } },
     });
 
@@ -2060,6 +2197,8 @@ export class BuildingsService {
       after: {
         unitCode: existing.unit.unitCode,
         toDate: updated.toDate,
+        role: existing.role,
+        reason: input.reason,
         citizenId: existing.citizenId,
         /*
           Named in the audit row because this is the part that edits somebody's
@@ -2635,6 +2774,9 @@ function toUnitRow(row: {
   unitArea: { toString(): string } | null;
   unitStatus: string | null;
   surveyStatus: string;
+  presenceMonths?: number[];
+  ownerLastStayAt?: Date | null;
+  vacancyDeclaredAt?: Date | null;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -2655,6 +2797,9 @@ function toUnitRow(row: {
     unitArea: row.unitArea == null ? null : Number(row.unitArea.toString()),
     unitStatus: row.unitStatus,
     surveyStatus: row.surveyStatus,
+    presenceMonths: row.presenceMonths ?? [],
+    ownerLastStayAt: row.ownerLastStayAt ?? null,
+    vacancyDeclaredAt: row.vacancyDeclaredAt ?? null,
     notes: row.notes,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -2693,6 +2838,7 @@ function toOccupancyRow(
     shares: number | null;
     fromDate: Date;
     toDate: Date | null;
+    endReason?: string | null;
     registrationId: string | null;
   },
   /**
@@ -2712,6 +2858,7 @@ function toOccupancyRow(
     shares: row.shares,
     fromDate: row.fromDate,
     toDate: row.toDate,
+    endReason: row.endReason ?? null,
     registrationId: row.registrationId,
     backedByFile,
   };

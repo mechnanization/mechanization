@@ -79,6 +79,17 @@ export class CensusSyncService {
     registrationId: string;
     citizenId: string;
     actor: { id: string; role: string };
+    /**
+     * Which of this citizen's spells a flat no longer claimed may be closed.
+     *
+     *  - `CITIZEN` (the default) — any spell any of their registrations
+     *    established. What an **edit** means: the form is the citizen's current
+     *    statement of everything they hold. See `endUnclaimed`.
+     *  - `REGISTRATION` — only spells *this* registration established. What a
+     *    **new filing** means: it adds what it names and says nothing about
+     *    what the person already holds elsewhere.
+     */
+    scope?: 'CITIZEN' | 'REGISTRATION';
   }): Promise<CensusSyncResult> {
     const result: CensusSyncResult = {
       occupanciesCreated: 0,
@@ -233,6 +244,7 @@ export class CensusSyncService {
       citizenId: input.citizenId,
       keep: [...claimed.keys()],
       actor: input.actor,
+      scope: input.scope ?? 'CITIZEN',
     });
 
     if (firstFailure) throw firstFailure;
@@ -474,12 +486,21 @@ export class CensusSyncService {
     citizenId: string;
     keep: readonly string[];
     actor: { id: string; role: string };
+    scope: 'CITIZEN' | 'REGISTRATION';
   }): Promise<number> {
     const where = {
       citizenId: input.citizenId,
       toDate: null,
-      registrationId: { not: null },
-      registration: { citizenId: input.citizenId },
+      /*
+        `REGISTRATION` narrows the widening described above back to this one
+        filing, for the create path. On 2026-09-12 identity-document merges put
+        several brothers' registrations under one citizen, and each new filing
+        closed the flat the previous brother had just been recorded in — the
+        widening was right for an edit and wrong for a filing.
+      */
+      ...(input.scope === 'REGISTRATION'
+        ? { registrationId: input.registrationId }
+        : { registrationId: { not: null }, registration: { citizenId: input.citizenId } }),
       ...(input.keep.length > 0 ? { unitId: { notIn: [...input.keep] } } : {}),
     };
 
@@ -539,6 +560,7 @@ export class CensusSyncService {
     registrationId: string;
     citizenId: string;
     actor: { id: string; role: string };
+    scope?: 'CITIZEN' | 'REGISTRATION';
   }): Promise<CensusSyncResult | null> {
     try {
       return await this.syncRegistration(input);

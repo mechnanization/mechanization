@@ -79,6 +79,8 @@ export interface QueuedSubmission {
   /** What the record will be called in the queue list, before it has an id. */
   displayName: string;
   payload: {
+    /** نوع الملف. Absent on records queued before owner records existed — a household. */
+    residence?: 'RESIDENT' | 'NON_RESIDENT_OWNER';
     personal: Record<string, unknown>;
     contact: Record<string, unknown>;
     properties: Array<Record<string, unknown>>;

@@ -33,6 +33,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../../common/exce
 import { CensusSyncService } from '../buildings/census-sync.service';
 import { LandlordLinkService, type LandlordProposal } from './landlord-link.service';
 import {
+  identityDocumentOf,
   RegistrationService,
   unestablishedOnCard,
 } from '../registration/registration.service';
@@ -109,6 +110,8 @@ export interface CitizenListItem {
   identityDocType: string | null;
   identityDocNumber: string | null;
   residentStatus: string | null;
+  /** نوع الملف — a household file, or «مالك غير مقيم». */
+  residence: string;
   isActive: boolean;
   registeredAt: string;
 
@@ -159,6 +162,7 @@ interface CitizenListRow {
   identityDocType: string | null;
   identityDocNumber: string | null;
   residentStatus: string | null;
+  residence: string;
   isActive: boolean;
   createdAt: Date;
   registrationCount: number;
@@ -336,6 +340,7 @@ export class CitizensService {
           u."identityDocType"::text  AS "identityDocType",
           u."identityDocNumber",
           u."residentStatus"::text   AS "residentStatus",
+          u.residence::text          AS residence,
           u."isActive",
           u."createdAt",
           (SELECT count(*)::int FROM ${this.S}registrations r WHERE r."citizenId" = u.id)
@@ -446,6 +451,7 @@ export class CitizensService {
         identityDocType: row.identityDocType,
         identityDocNumber: row.identityDocNumber,
         residentStatus: row.residentStatus,
+        residence: row.residence,
         isActive: row.isActive,
         registeredAt: row.createdAt.toISOString(),
         registrationCount: row.registrationCount,
@@ -502,6 +508,10 @@ export class CitizensService {
           totalRegisteredMembers: true,
           actualHouseholdMembers: true,
           bloodType: true,
+          residence: true,
+          residencePlace: true,
+          localContactName: true,
+          localContactPhone: true,
           registrations: {
             orderBy: { submittedAt: 'desc' },
             take: 1,
@@ -545,6 +555,7 @@ export class CitizensService {
         no note at all.
       */
       notes: registration?.notes ?? null,
+      residence: citizen.residence,
       personal: {
         firstName: citizen.firstName,
         middleName: citizen.middleName ?? '',
@@ -558,6 +569,7 @@ export class CitizensService {
         identityDocType: citizen.identityDocType,
         identityDocNumber: citizen.identityDocNumber ?? '',
         civilRecordNumber: citizen.civilRecordNumber ?? '',
+        residencePlace: citizen.residencePlace ?? '',
       },
       contact: {
         phone: citizen.phone,
@@ -568,6 +580,8 @@ export class CitizensService {
         maritalStatus: citizen.maritalStatus,
         totalRegisteredMembers: citizen.totalRegisteredMembers,
         actualHouseholdMembers: citizen.actualHouseholdMembers,
+        localContactName: citizen.localContactName ?? '',
+        localContactPhone: citizen.localContactPhone ?? '',
       },
       properties: (registration?.properties ?? []).map((property) => ({
         id: property.id,
@@ -650,6 +664,17 @@ export class CitizensService {
           registrationId: result.registrationId,
           citizenId: result.citizenId,
           actor: input.actor,
+          /*
+            A new filing releases nothing it did not itself claim.
+
+            Scoped wider, a filing attached to someone already on file closed
+            every flat their earlier registrations held — a shop registered on
+            Monday lost to a flat registered on Tuesday. In production that
+            evicted each merged brother from the flat the previous one had just
+            been recorded in. Only an *edit* of a file is a statement about
+            everything it holds.
+          */
+          scope: 'REGISTRATION',
         });
 
     /*
@@ -686,6 +711,10 @@ export class CitizensService {
           propertyCount: result.propertyCount,
           status: result.status,
           unestablishedFields: input.payload.flags.length,
+          residence: input.payload.residence,
+          // Which way a given passport number went: a new holder, added to the
+          // file of the person who already holds it, or a clash left for review.
+          ...(result.identity ? { identity: result.identity } : {}),
         },
         actorId: input.actor.id,
         actorRole: input.actor.role,
@@ -700,6 +729,14 @@ export class CitizensService {
       status: result.status,
       /** The queue reads this to tell "created" from "already had it". */
       deduplicated: result.deduplicated,
+      /**
+       * `ATTACHED` — added to the file of the person already holding this
+       * passport number. `CONFLICT` — somebody with a different name holds it;
+       * a separate citizen was created without it. Absent when no number was
+       * given. The form says which, because both change what the officer does
+       * next.
+       */
+      identity: result.identity ?? null,
       /**
        * What the census did about it — units linked, cases closed, a building
        * named.
@@ -847,6 +884,9 @@ export class CitizensService {
           */
           payload: {
             ...parsed.data,
+            // A register typed up from paper is a register of households; an
+            // owner record is a decision somebody makes at a doorstep.
+            residence: 'RESIDENT',
             flags: [],
             blanketFlagReason: undefined,
             // Nor a note, and for the same reason: a note is something an
@@ -1013,46 +1053,7 @@ export class CitizensService {
     const registrationId = await this.db.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: citizen.id },
-        data: {
-          firstName: input.payload.personal.firstName,
-          middleName: input.payload.personal.middleName || null,
-          lastName: input.payload.personal.lastName,
-          /*
-            Every column is written explicitly, `null` included.
-
-            `undefined` in a Prisma `update` means "leave this alone", which is
-            the wrong answer for a field the officer has just flagged: the
-            record would claim the value is unestablished while still storing
-            the old one, and whoever came to complete it would find it already
-            filled. Flagging a field clears it, here as on the create path.
-          */
-          gender: (input.payload.personal.gender ?? null) as never,
-          nationality: input.payload.personal.nationality ?? null,
-          isLebanese: input.payload.personal.isLebanese ?? null,
-          residencyNumber: input.payload.personal.residencyNumber || null,
-          residentStatus: (input.payload.personal.residentStatus ?? null) as never,
-          identityDocType: (input.payload.personal.identityDocType ?? null) as never,
-          /*
-            Null, not '', when the document itself was left unestablished.
-
-            The empty string is a value, and `users` is uniquely keyed by
-            (نوع الوثيقة, رقم الوثيقة) — so a second citizen in the same
-            position would collide with the first on a number neither of them
-            has. A null is distinct from every other null in a Postgres unique
-            index, which is exactly the semantics "we do not know" needs.
-          */
-          identityDocNumber:
-            input.payload.personal.identityDocNumber ||
-            input.payload.personal.residencyNumber ||
-            null,
-          civilRecordNumber: input.payload.personal.civilRecordNumber || null,
-          phone: input.payload.contact.phone ?? null,
-          whatsapp: input.payload.contact.whatsapp ?? input.payload.contact.phone ?? null,
-          maritalStatus: (input.payload.contact.maritalStatus ?? null) as never,
-          totalRegisteredMembers: input.payload.contact.totalRegisteredMembers ?? null,
-          actualHouseholdMembers: input.payload.contact.actualHouseholdMembers ?? null,
-          bloodType: (input.payload.personal.bloodType ?? null) as never,
-        },
+        data: citizenColumnsForEdit(input.payload),
       });
 
       // A citizen with no registration at all (never expected from this form,
@@ -1481,4 +1482,73 @@ export class CitizensService {
 
     return { found, missing: new Set(hasCadastre ? unresolved : []) };
   }
+}
+
+/**
+ * The `users` columns an edit writes — which depends on what kind of file it is,
+ * and deliberately leaves alone everything the form no longer asks.
+ *
+ * **Asked fields are written explicitly, `null` included.** `undefined` in a
+ * Prisma `update` means "leave this alone", which is the wrong answer for a
+ * field the officer has just flagged: the record would claim the value is
+ * unestablished while still storing the old one. Flagging a field clears it,
+ * here as on the create path.
+ *
+ * **Fields the form does not ask are not written at all**, and that is the
+ * no-data-loss rule, not an oversight:
+ *
+ *  - The identity document. A Lebanese citizen is no longer asked for one, so
+ *    this form cannot be the thing that erases the real numbers already on
+ *    file. A non-Lebanese person's passport number is written only when one is
+ *    given; a blank field keeps what is stored.
+ *  - An owner record's household columns. A person converted to «مالك غير
+ *    مقيم» keeps whatever was filed for them as a household; the form stops
+ *    asking and stops showing, and nothing is erased by the conversion. The
+ *    reverse conversion keeps `residencePlace` and the local contact for the
+ *    same reason.
+ */
+export function citizenColumnsForEdit(
+  payload: AdminCitizenUpdateSubmission,
+): Prisma.UserUpdateInput {
+  const { personal, contact } = payload;
+  const shared = {
+    firstName: personal.firstName,
+    middleName: personal.middleName || null,
+    lastName: personal.lastName,
+    phone: contact.phone ?? null,
+    whatsapp: contact.whatsapp ?? contact.phone ?? null,
+  };
+
+  if (payload.residence === 'NON_RESIDENT_OWNER') {
+    return {
+      ...shared,
+      residence: 'NON_RESIDENT_OWNER',
+      residencePlace: personal.residencePlace ?? null,
+      localContactName: contact.localContactName ?? null,
+      localContactPhone: contact.localContactPhone ?? null,
+    };
+  }
+
+  const passport = identityDocumentOf(payload);
+
+  return {
+    ...shared,
+    residence: 'RESIDENT',
+    gender: (personal.gender ?? null) as never,
+    nationality: personal.nationality ?? null,
+    isLebanese: personal.isLebanese ?? null,
+    residencyNumber: personal.residencyNumber || null,
+    residentStatus: (personal.residentStatus ?? null) as never,
+    civilRecordNumber: personal.civilRecordNumber || null,
+    maritalStatus: (contact.maritalStatus ?? null) as never,
+    totalRegisteredMembers: contact.totalRegisteredMembers ?? null,
+    actualHouseholdMembers: contact.actualHouseholdMembers ?? null,
+    bloodType: (personal.bloodType ?? null) as never,
+    ...(passport.identityDocNumber
+      ? {
+          identityDocType: passport.identityDocType as never,
+          identityDocNumber: passport.identityDocNumber,
+        }
+      : {}),
+  };
 }
