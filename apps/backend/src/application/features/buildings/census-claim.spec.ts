@@ -78,6 +78,10 @@ function harness(options: HarnessOptions = {}) {
       count: jest.fn().mockResolvedValue(unitsInBuilding),
     },
     user: { findUnique: jest.fn().mockResolvedValue({ id: CITIZEN, kind: 'CITIZEN' }) },
+    // No vacancy standing on this flat: `recordOccupancy` asks before it writes
+    // over one. The refusal and the acknowledged override are covered in
+    // `occupancy-end.spec.ts` and the DB integration suite.
+    unitVacancyConfirmation: { findFirst: jest.fn().mockResolvedValue(null) },
     unitOccupancy: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({

@@ -150,6 +150,33 @@ export interface VisitRow {
   createdAt: Date;
 }
 
+/**
+ * One «تأكيد الشغور» — see the `UnitVacancyConfirmation` model.
+ *
+ * `endedAt` null is the one standing on the unit now. The snapshot pair is
+ * carried to the client so the undo can say what the flat will go back to
+ * *before* it is pressed, rather than reporting it afterwards.
+ */
+export interface VacancyRow {
+  id: string;
+  unitId: string;
+  /** A `VacancyBasis`, or null on a row backfilled by migration 0041. */
+  basis: string | null;
+  observedAt: Date;
+  notes: string | null;
+  confirmedById: string | null;
+  confirmedByName: string | null;
+  previousUnitStatus: string | null;
+  previousSurveyStatus: string | null;
+  endedAt: Date | null;
+  /** A `VacancyEndReason`, set with `endedAt` and never without it. */
+  endReason: string | null;
+  endNotes: string | null;
+  endedById: string | null;
+  endedByName: string | null;
+  createdAt: Date;
+}
+
 export interface DamageRow {
   id: string;
   buildingId: string | null;

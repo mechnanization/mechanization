@@ -194,6 +194,8 @@ model User {
   damageAssessments     DamageAssessment[]   @relation("DamageAssessedBy")
   buildingsCreated      Building[]           @relation("BuildingCreatedBy")
   unitVisits            UnitVisit[]          @relation("UnitVisitOfficer")
+  vacanciesConfirmed    UnitVacancyConfirmation[] @relation("VacancyConfirmedBy")
+  vacanciesEnded        UnitVacancyConfirmation[] @relation("VacancyEndedBy")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -791,6 +793,26 @@ enum OccupancyEndReason {
   RECORDED_IN_ERROR
 }
 
+/// What a «تأكيد الشغور» rests on. Recorded because the confirmation stops the
+/// owner's occupancy fee, and the law is specific about what supports one — a
+/// unit is presumed occupied until a تصريح بالشغور is filed (هيئة التشريع
+/// 725/2003). See `VACANCY_BASIS` in shared-schemas for the full reasoning.
+enum VacancyBasis {
+  FIELD_INSPECTION
+  OWNER_STATEMENT
+  NEIGHBOUR_OR_CARETAKER
+  DECLARATION_FILED
+}
+
+/// Why a confirmed vacancy was lifted — and therefore what the unit goes back
+/// to. `RECORDED_IN_ERROR` restores the state the confirmation replaced;
+/// `NO_LONGER_VACANT` leaves the unit occupied-by-someone-unrecorded, which is
+/// the presumption the law starts from. See `VACANCY_END_REASON`.
+enum VacancyEndReason {
+  RECORDED_IN_ERROR
+  NO_LONGER_VACANT
+}
+
 /// One physical structure standing on a parcel.
 ///
 /// Exists independently of any citizen or registration: the municipality
@@ -958,6 +980,7 @@ model Unit {
   damageAssessments DamageAssessment[]
   buildingUnits     BuildingUnit[]
   visits            UnitVisit[]
+  vacancies         UnitVacancyConfirmation[]
 
   @@unique([buildingId, floor, sequence])
   @@index([buildingId])
@@ -1044,6 +1067,65 @@ model UnitVisit {
   @@index([unitId, visitedAt])
   @@index([officerId])
   @@map("unit_visits")
+}
+
+/// One «تأكيد الشغور»: that a unit was found empty, on what basis, by whom —
+/// and, once it is lifted, when and why.
+///
+/// Append-only, like `DamageAssessment` and for the same reason. Confirming a
+/// vacancy is not a display state: `isUnoccupied` exempts the owner from the
+/// occupancy fee, so this is the row a resident disputing a bill — or an owner
+/// disputing one — is entitled to read. It is closed by `endedAt`, never
+/// deleted, so a vacancy withdrawn still says what the municipality believed
+/// and for how long.
+///
+/// `previousUnitStatus` / `previousSurveyStatus` are what makes the action
+/// undoable: the unit's own columns hold *current* state, so without a snapshot
+/// here, lifting a confirmation recorded in error could only guess what the
+/// flat said before it. Both are null on rows migration 0041 backfilled from
+/// units already marked vacant, where nobody recorded what came before either —
+/// `vacancyReversal` falls back to the unit's own visit history for those.
+///
+/// One live confirmation per unit is enforced by a partial unique index
+/// (`unit_vacancy_confirmations_active_key ... WHERE "endedAt" IS NULL`) in
+/// migration 0041. Prisma's schema language cannot express a partial index, so
+/// it exists in SQL only — exactly as migration 0030's damage CHECK does.
+model UnitVacancyConfirmation {
+  id     String @id @default(uuid()) @db.Uuid
+  unitId String @db.Uuid
+  unit   Unit   @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  /// What the vacancy rests on — see `VACANCY_BASIS`. Null only on backfilled
+  /// rows: the question did not exist when they were written.
+  basis VacancyBasis?
+
+  /// When the unit was found empty — back-datable from a paper round, and the
+  /// date the vacancy is said to run from.
+  observedAt DateTime @default(now())
+
+  notes String?
+
+  /// Nullable and `SetNull`, as `UnitVisit.officer` is: the finding outlives
+  /// the officer's employment.
+  confirmedById String? @db.Uuid
+  confirmedBy   User?   @relation("VacancyConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+
+  previousUnitStatus   UnitStatus?
+  previousSurveyStatus SurveyStatus?
+
+  /// Set together, or both null while the confirmation stands. A CHECK
+  /// constraint in migration 0041 holds the pair together.
+  endedAt   DateTime?
+  endReason VacancyEndReason?
+  endNotes  String?
+  endedById String?           @db.Uuid
+  endedBy   User?             @relation("VacancyEndedBy", fields: [endedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([unitId, createdAt])
+  @@map("unit_vacancy_confirmations")
 }
 
 /// One observation of a structure's condition at a point in time.

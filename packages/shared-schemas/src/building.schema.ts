@@ -9,6 +9,8 @@ import {
   surveyStatusSchema,
   unitStatusSchema,
   unitTypeSchema,
+  vacancyBasisSchema,
+  vacancyEndReasonSchema,
 } from './enums';
 import { areaField, propertyNumberField } from './property.schema';
 import { uuid } from './primitives';
@@ -567,6 +569,20 @@ export const upsertOccupancySchema = z
      * refuses it there rather than quietly preferring one of the two answers.
      */
     unitStatus: unitStatusSchema.optional(),
+    /**
+     * «نعم، الوحدة لم تعد شاغرة» — the answer to a question the server asks.
+     *
+     * Recording somebody *in* a unit the municipality has confirmed *empty* is
+     * two statements that cannot both stand. The server refuses the pair
+     * unless this is set, and with it set lifts the vacancy as
+     * `NO_LONGER_VACANT` in the same breath — so the flat is never left saying
+     * «شاغرة» with a tenant listed underneath, which is the contradiction that
+     * used to exempt the owner from a fee while billing the tenant for it.
+     *
+     * Only a claim that contradicts vacancy needs it: an owner recorded on an
+     * empty flat is ordinary (a deed is not residence, D2) and asks nothing.
+     */
+    endsVacancy: z.boolean().optional(),
     fromDate: z.coerce.date({ invalid_type_error: 'تاريخ البدء غير صالح' }).optional(),
     toDate: z.coerce.date({ invalid_type_error: 'تاريخ الانتهاء غير صالح' }).optional(),
   })
@@ -637,9 +653,25 @@ export type EndOccupancyInput = z.infer<typeof endOccupancySchema>;
  */
 export const logVisitSchema = z.object({
   unitId: uuid,
-  outcome: surveyStatusSchema.refine((value) => value !== 'NOT_SURVEYED', {
-    message: 'نتيجة الزيارة لا يمكن أن تكون «غير ممسوحة»',
-  }),
+  /*
+    Two values a visit may not carry, for opposite reasons.
+
+    `NOT_SURVEYED` means nobody went, so a visit carrying it is a contradiction.
+    `VACANT_CONFIRMED` is the other end: it is a finding that stops the owner's
+    occupancy fee, and this form asks for none of what that needs — what the
+    vacancy rests on, and a record that can be lifted again. It had neither, so
+    the same words meant two different things depending on which control an
+    officer used: «تأكيد الشغور» exempted the owner and a visit with this
+    outcome did not, while both painted the cell «شاغرة». It goes through
+    `confirmVacancy` now, which asks.
+  */
+  outcome: surveyStatusSchema
+    .refine((value) => value !== 'NOT_SURVEYED', {
+      message: 'نتيجة الزيارة لا يمكن أن تكون «غير ممسوحة»',
+    })
+    .refine((value) => value !== 'VACANT_CONFIRMED', {
+      message: 'لتأكيد الشغور استخدم «تأكيد الشغور» — يُسجَّل مستنده ويمكن إلغاؤه لاحقاً',
+    }),
   /**
    * Back-datable from a paper form or a phone that was offline, and refused in
    * the future for the same reason `assessedAt` is: that direction is a typo,
@@ -653,6 +685,74 @@ export const logVisitSchema = z.object({
 });
 
 export type LogVisitInput = z.infer<typeof logVisitSchema>;
+
+/**
+ * «تأكيد الشغور» — recording that a unit is empty, with what says so.
+ *
+ * The action used to be one tap that wrote «شاغرة» and «مؤكَّدة الشغور» over
+ * whatever the unit said, with nothing kept but the two new values. That is a
+ * bill-changing finding — a vacant unit's owner is exempt from the occupancy
+ * fee — made with no basis recorded, no way to tell it from a legacy row, and
+ * no way back except typing the old status in again from memory, if anyone
+ * remembered it.
+ *
+ * So a confirmation is now a *record*: `basis` says what it rests on,
+ * `observedAt` when the flat was seen that way, and the row keeps the unit's
+ * previous state so lifting it restores what was there. See `VACANCY_BASIS`.
+ */
+export const confirmVacancySchema = z
+  .object({
+    basis: vacancyBasisSchema,
+    /** When the unit was found empty. Back-datable from a paper round; never future. */
+    observedAt: z.coerce
+      .date({ invalid_type_error: 'تاريخ المعاينة غير صالح' })
+      .max(new Date(Date.now() + 60_000), 'تاريخ المعاينة في المستقبل')
+      .optional(),
+    notes: z.string().trim().max(1000, 'الملاحظات طويلة جداً').optional(),
+  })
+  .superRefine((value, ctx) => {
+    /*
+      Hearsay has to name its source.
+
+      «قال الجيران إنها فارغة» is the weakest thing a vacancy can stand on and
+      the easiest to record, so it is the one that must say who said it — that
+      is what a resident disputing the exemption, or an owner disputing the
+      fee, has to be able to read a year later.
+    */
+    if (value.basis === 'NEIGHBOUR_OR_CARETAKER' && !value.notes) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['notes'],
+        message: 'اذكر من أفاد بذلك',
+      });
+    }
+  });
+
+export type ConfirmVacancyInput = z.infer<typeof confirmVacancySchema>;
+
+/**
+ * Lifting a confirmed vacancy — available at any time, and never a delete.
+ *
+ * `reason` decides what the unit goes back to, which is why it is asked rather
+ * than defaulted: a vacancy «سُجِّل بالخطأ» never happened and the unit returns
+ * to its previous state, while one that is «لم تعد شاغرة» was true until
+ * somebody moved in and the unit returns to «الإشغال غير محدد» — occupied by
+ * someone the register has not recorded yet. See `VACANCY_END_REASON`.
+ *
+ * `endedAt` is when it stopped being empty; the service refuses a date before
+ * the confirmation's own `observedAt`, which would describe a vacancy that
+ * ended before it began.
+ */
+export const endVacancySchema = z.object({
+  reason: vacancyEndReasonSchema,
+  endedAt: z.coerce
+    .date({ invalid_type_error: 'التاريخ غير صالح' })
+    .max(new Date(Date.now() + 60_000), 'التاريخ في المستقبل')
+    .optional(),
+  notes: z.string().trim().max(1000, 'الملاحظات طويلة جداً').optional(),
+});
+
+export type EndVacancyInput = z.infer<typeof endVacancySchema>;
 
 /**
  * What the census ledger filters on.

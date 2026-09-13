@@ -28,6 +28,8 @@ import type {
   SurveyStatus,
   UnitStatus,
   UnitType,
+  VacancyBasis,
+  VacancyEndReason,
 } from '@mechanization/shared-schemas';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
@@ -923,6 +925,37 @@ export interface UnitRow {
   updatedAt: string;
 }
 
+/**
+ * One «تأكيد الشغور» — that a unit was found empty, on what basis, and by whom.
+ *
+ * `endedAt` null is the one standing: it is why the unit reads «شاغرة» and why
+ * its owner is exempt from the occupancy fee. The rest are closed history, kept
+ * rather than deleted — a vacancy withdrawn still records what the municipality
+ * believed and for how long.
+ *
+ * `previousUnitStatus` / `previousSurveyStatus` are what the flat said before,
+ * carried so the undo can state what it will restore *before* it is pressed.
+ * Both null on a row migration 0041 backfilled, where nobody recorded either.
+ */
+export interface UnitVacancyConfirmation {
+  id: string;
+  unitId: string;
+  /** Null only on a backfilled row — the question did not exist then. */
+  basis: VacancyBasis | null;
+  observedAt: string;
+  notes: string | null;
+  confirmedById: string | null;
+  confirmedByName: string | null;
+  previousUnitStatus: UnitStatus | null;
+  previousSurveyStatus: SurveyStatus | null;
+  endedAt: string | null;
+  endReason: VacancyEndReason | null;
+  endNotes: string | null;
+  endedById: string | null;
+  endedByName: string | null;
+  createdAt: string;
+}
+
 /** A unit as the matrix draws it — with whoever is, and was, inside it. */
 export interface UnitWithOccupants extends UnitRow {
   occupants: UnitOccupant[];
@@ -936,6 +969,14 @@ export interface UnitWithOccupants extends UnitRow {
    * them in — so the matrix shows `unitStatus ?? ownerDeclaredStatus`.
    */
   ownerDeclaredStatus?: UnitStatus | null;
+  /**
+   * «تأكيد الشغور» on this unit, newest first and capped server-side at five.
+   *
+   * Optional on the wire so a cached response from a build before migration
+   * 0041 reads as "none" rather than throwing — a unit with no confirmations is
+   * the ordinary case anyway.
+   */
+  vacancies?: UnitVacancyConfirmation[];
 }
 
 /** One building opened in the matrix drawer. */
@@ -1009,6 +1050,12 @@ export interface CensusSyncResult {
   /** Units lifted out of «غير ممسوحة» / «زيارة بلا رد» / «بيانات ناقصة». */
   unitsSurveyed: number;
   casesResolved: number;
+  /**
+   * Units whose confirmed vacancy this registration lifted, because it recorded
+   * a household in a flat the municipality had called empty. Optional on the
+   * wire for responses from before migration 0041.
+   */
+  vacanciesEnded?: number;
   /** Structures that had no name until this card supplied one. */
   buildingsNamed: number;
 }
@@ -1154,6 +1201,17 @@ export interface RecordOccupancyInput {
    * and those are four different bills.
    */
   unitStatus?: UnitStatus;
+  /**
+   * «نعم، الوحدة لم تعد شاغرة».
+   *
+   * Recording somebody in a unit whose vacancy is standing is refused without
+   * this — the server answers with the confirmation itself so the officer can
+   * see when the flat was called empty and on what basis before overriding it.
+   * With it, the vacancy is lifted as «لم تعد شاغرة» in the same request.
+   *
+   * Not needed to record an owner, who contradicts nothing by holding a deed.
+   */
+  endsVacancy?: boolean;
   fromDate?: string;
   toDate?: string;
 }
@@ -1530,9 +1588,70 @@ export interface LogVisitInput {
  * محاولات» is the difference between assigning a door and escalating it.
  */
 export async function logUnitVisit(tenant: string, token: string, input: LogVisitInput) {
-  const result = await apiFetch<{ visit: UnitVisitRow; visitCount: number }>(
+  const result = await apiFetch<{
+    visit: UnitVisitRow;
+    visitCount: number;
+    /**
+     * The unit's confirmed vacancy was left standing, so its حالة المسح did
+     * *not* move to this visit's outcome. A locked door on a flat already
+     * confirmed empty is not news; a visit that found somebody home means the
+     * confirmation needs lifting, and only a person can decide that.
+     */
+    vacancyStands?: boolean;
+  }>(tenant, '/buildings/visits', { token, method: 'POST', body: JSON.stringify(input) });
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
+ * Records that a unit was found empty, with what says so.
+ *
+ * Its own call rather than a `updateUnit({ unitStatus: 'VACANT', surveyStatus:
+ * 'VACANT_CONFIRMED' })`, which is what this was and which the server now
+ * refuses: a confirmed vacancy exempts the owner from the occupancy fee, so it
+ * is recorded as a row carrying its basis, its date and whoever decided it —
+ * and it can be lifted again at any time by `endVacancy`.
+ *
+ * Refused while a مستأجر or شاغل بتسامح is recorded in the unit, while the flat
+ * is a مسكن موسمي, and while another confirmation is already standing. Each
+ * refusal names its own remedy, so callers should surface it verbatim.
+ */
+export async function confirmVacancy(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: { basis: VacancyBasis; observedAt?: string; notes?: string },
+) {
+  const result = await apiFetch<{
+    vacancy: UnitVacancyConfirmation;
+    unit: UnitRow;
+    /** «شاغرة قيد التحقق» cases this answered and closed. */
+    casesResolved: number;
+  }>(tenant, `/buildings/units/${encodeURIComponent(unitId)}/vacancy`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
+ * Lifts the vacancy standing on a unit — the undo, available at any time.
+ *
+ * `reason` decides what the flat goes back to: «سُجِّل بالخطأ» restores the
+ * حالة the confirmation replaced, «لم تعد شاغرة» leaves it occupied by somebody
+ * not yet recorded, which is what bills the owner again until they are.
+ */
+export async function endVacancy(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: { reason: VacancyEndReason; endedAt?: string; notes?: string },
+) {
+  const result = await apiFetch<{ vacancy: UnitVacancyConfirmation; unit: UnitRow }>(
     tenant,
-    '/buildings/visits',
+    `/buildings/units/${encodeURIComponent(unitId)}/vacancy/end`,
     { token, method: 'POST', body: JSON.stringify(input) },
   );
   invalidateCensus(tenant);

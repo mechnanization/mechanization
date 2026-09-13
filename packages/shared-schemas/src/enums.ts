@@ -581,6 +581,86 @@ export const occupancyEndReasonSchema = arabicEnum(
 export type OccupancyEndReason = z.infer<typeof occupancyEndReasonSchema>;
 
 /**
+ * What a «تأكيد الشغور» rests on — asked every time one is recorded.
+ *
+ * Confirming a vacancy is not a display state: it stops the occupancy fee
+ * being charged to the owner (`isUnoccupied` → `bearsFee`), so it is a finding
+ * with a consequence, and the law is specific about what may support one. A
+ * unit is *presumed occupied* until a تصريح بالشغور is filed on the declarant's
+ * responsibility (هيئة التشريع والاستشارات 725/2003), failing to file one does
+ * not make an occupied flat vacant (Shura 518/2007), and furniture is not proof
+ * of occupancy either way (Shura 122/2003). So the register records which of
+ * these an officer actually had:
+ *
+ *  - `FIELD_INSPECTION` — they stood at the door and found it empty.
+ *  - `OWNER_STATEMENT` — the owner says it is empty, with no declaration filed.
+ *  - `NEIGHBOUR_OR_CARETAKER` — a neighbour or ناطور said so. The weakest, and
+ *    the one whose note has to name who said it.
+ *  - `DECLARATION_FILED` — a تصريح بالشغور is on file. The strongest, and the
+ *    only one the law itself provides for.
+ *
+ * Kept apart from `DamageSource` deliberately, though both answer "how do we
+ * know": that one grades an engineering reading, this one grades a statement
+ * about who is inside, and the two vocabularies share not one value.
+ */
+export const VACANCY_BASIS = [
+  'FIELD_INSPECTION',
+  'OWNER_STATEMENT',
+  'NEIGHBOUR_OR_CARETAKER',
+  'DECLARATION_FILED',
+] as const;
+export const vacancyBasisSchema = arabicEnum(VACANCY_BASIS, 'يرجى تحديد مستند تأكيد الشغور');
+export type VacancyBasis = z.infer<typeof vacancyBasisSchema>;
+
+/**
+ * Why a confirmed vacancy was lifted — the undo, which is always available.
+ *
+ * Two reasons, and they are not interchangeable because they restore different
+ * things:
+ *
+ *  - `RECORDED_IN_ERROR` — the flat was never empty. The unit goes back to
+ *    whatever it said before the confirmation, which the confirmation itself
+ *    stored for exactly this purpose.
+ *  - `NO_LONGER_VACANT` — it was empty and is not any more. The vacancy stays
+ *    true for the period it covered, so the record is closed rather than
+ *    corrected, and the unit returns to «الإشغال غير محدد»: somebody is in it
+ *    and the register does not yet know who, which is the presumption the law
+ *    starts from and the state that bills the owner again.
+ *
+ * Neither deletes the confirmation. A resident disputing a bill is entitled to
+ * see that the municipality called their flat empty, when, and on what basis —
+ * and that is as true of a confirmation withdrawn as of one that stands.
+ */
+/**
+ * Whether recording this person in this capacity contradicts an empty flat.
+ *
+ * Shared because both sides of the same question have to give the same answer:
+ * the unit panel asks it to decide whether to warn the officer *before* they
+ * link somebody, and `recordOccupancy` asks it to decide whether to refuse
+ * without an acknowledgement. Two copies of this rule would mean a form that
+ * warns about something the server allows, or worse, one that does not warn
+ * about something it refuses.
+ *
+ * A مستأجر or شاغل بتسامح is somebody living there, so recording them ends the
+ * vacancy. An owner is not (D2: a deed is not a statement of residence) — an
+ * owner recorded on a شاغرة flat is the ordinary case, and the reason «تأكيد
+ * الشغور» stopped being refused over owners. What an owner *says* about the flat
+ * still can: «مشغولة من المالك» or «مؤجرة» on a unit confirmed empty is the same
+ * contradiction arriving through the other field.
+ */
+export function contradictsVacancy(role: string, unitStatus?: string | null): boolean {
+  if (role !== 'OWNER') return true;
+  return unitStatus !== undefined && unitStatus !== null && unitStatus !== 'VACANT';
+}
+
+export const VACANCY_END_REASON = ['RECORDED_IN_ERROR', 'NO_LONGER_VACANT'] as const;
+export const vacancyEndReasonSchema = arabicEnum(
+  VACANCY_END_REASON,
+  'يرجى تحديد سبب إلغاء تأكيد الشغور',
+);
+export type VacancyEndReason = z.infer<typeof vacancyEndReasonSchema>;
+
+/**
  * The one place the three taxonomies are allowed to meet.
  *
  * `StructureType` describes what stands on the parcel, `PropertyType` describes

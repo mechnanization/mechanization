@@ -290,6 +290,8 @@ describe('deleteUnit — what it refuses', () => {
     visits?: number;
     damage?: number;
     cards?: number;
+    /** Confirmations the municipality stands behind — see the vacancy refusal. */
+    vacancies?: number;
   }) {
     const del = jest.fn().mockResolvedValue({});
     const db = {
@@ -312,6 +314,9 @@ describe('deleteUnit — what it refuses', () => {
       unitVisit: { count: jest.fn().mockResolvedValue(counts.visits ?? 0) },
       damageAssessment: { count: jest.fn().mockResolvedValue(counts.damage ?? 0) },
       buildingUnit: { count: jest.fn().mockResolvedValue(counts.cards ?? 0) },
+      unitVacancyConfirmation: {
+        count: jest.fn().mockResolvedValue(counts.vacancies ?? 0),
+      },
       building: { update: jest.fn() },
     };
 
@@ -338,6 +343,9 @@ describe('deleteUnit — what it refuses', () => {
     ["a citizen's property card", { cards: 1 }],
     ['a damage assessment', { damage: 1 }],
     ['a field visit', { visits: 1 }],
+    // A confirmation is why the flat reads «شاغرة» and why its owner is exempt
+    // from the occupancy fee. Deleting the unit cascades it away.
+    ['a vacancy confirmation', { vacancies: 1 }],
   ])('refuses a flat carrying %s', async (_what, counts) => {
     const { instance, del } = service(counts);
     await expect(instance.deleteUnit(UNIT, actor)).rejects.toThrow();

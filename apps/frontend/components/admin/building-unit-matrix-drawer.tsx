@@ -20,15 +20,19 @@ import {
   type DamageLevel,
   type OccupancyEndReason,
   type UpsertUnitInput,
+  type VacancyBasis,
+  type VacancyEndReason,
 } from '@mechanization/shared-schemas';
 import {
   addUnit,
   ApiRequestError,
+  confirmVacancy,
   createCase,
   deleteUnit,
   duplicateUnitsOf,
   type DuplicateUnitCandidate,
   endOccupancy,
+  endVacancy,
   getBuilding,
   getBuildingDamage,
   logApiError,
@@ -55,10 +59,12 @@ import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import {
+  activeVacancy,
   AddPersonForm,
   BuildingSummaryBadges,
   CaseForm,
   cellBadge,
+  ConfirmVacancyDialog,
   DamageForm,
   effectiveUnitStatus,
   floorLabel,
@@ -69,6 +75,7 @@ import {
   SeasonalHomePanel,
   UnitStateLegend,
   vacancyBlocker,
+  VacancyPanel,
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
@@ -174,6 +181,8 @@ export function BuildingUnitMatrixDrawer({
   const [action, setAction] = useState<ActionKind>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** Whether «تأكيد الشغور» is asking its questions. */
+  const [confirmingVacancy, setConfirmingVacancy] = useState(false);
 
   const load = useCallback(async () => {
     if (!buildingId) return;
@@ -209,6 +218,7 @@ export function BuildingUnitMatrixDrawer({
       setSelectedUnitId(null);
       setAction(null);
       setActionError(null);
+      setConfirmingVacancy(false);
       return;
     }
     void load();
@@ -381,17 +391,86 @@ export function BuildingUnitMatrixDrawer({
       en ? 'Could not remove the unit.' : 'تعذّر حذف الوحدة.',
     );
 
-  const markVacant = (unit: UnitWithOccupants) =>
-    run(
-      async () => {
-        await updateUnit(tenant, token, unit.id, {
-          surveyStatus: 'VACANT_CONFIRMED',
-          unitStatus: 'VACANT',
-        });
-        return en ? `Unit ${unit.unitCode} confirmed vacant` : `تم تأكيد شغور الوحدة ${unit.unitCode}`;
-      },
-      en ? 'Could not update the unit.' : 'تعذّر تحديث الوحدة.',
+  /*
+    Both halves of «تأكيد الشغور» are dialogs, so neither goes through `run`:
+    a refusal belongs in the dialog the officer is looking at — «يسكنها مستأجر
+    مسجَّل» is a thing to act on, not a toast behind a closed dialog — and each
+    rethrows for the dialog to show.
+  */
+  const saveVacancy = async (
+    unit: UnitWithOccupants,
+    input: { basis: VacancyBasis; observedAt?: string; notes: string },
+  ) => {
+    let result;
+    try {
+      result = await confirmVacancy(tenant, token, unit.id, {
+        basis: input.basis,
+        ...(input.observedAt ? { observedAt: input.observedAt } : {}),
+        ...(input.notes ? { notes: input.notes } : {}),
+      });
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not confirm the vacancy.'
+            : 'تعذّر تأكيد الشغور.',
+      );
+    }
+    await load();
+    onChanged?.();
+    toast.success(
+      [
+        en ? `Unit ${unit.unitCode} confirmed vacant` : `تم تأكيد شغور الوحدة ${unit.unitCode}`,
+        result.casesResolved > 0
+          ? en
+            ? `${result.casesResolved} case(s) closed`
+            : `أُغلقت ${result.casesResolved} حالة`
+          : null,
+      ]
+        .filter(Boolean)
+        .join('، '),
     );
+  };
+
+  const liftVacancy = async (
+    unit: UnitWithOccupants,
+    input: { reason: VacancyEndReason; endedAt?: string; notes: string },
+  ) => {
+    try {
+      await endVacancy(tenant, token, unit.id, {
+        reason: input.reason,
+        ...(input.endedAt ? { endedAt: input.endedAt } : {}),
+        ...(input.notes ? { notes: input.notes } : {}),
+      });
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not lift the vacancy.'
+            : 'تعذّر إلغاء تأكيد الشغور.',
+      );
+    }
+    await load();
+    onChanged?.();
+    /*
+      «لم تعد شاغرة» leaves the flat occupied by somebody unrecorded, so the
+      next step is to record them — the form opens rather than being looked for.
+    */
+    if (input.reason === 'NO_LONGER_VACANT') setAction('occupant');
+    toast.success(
+      input.reason === 'NO_LONGER_VACANT'
+        ? en
+          ? 'Vacancy lifted — record whoever lives there now'
+          : 'أُلغي تأكيد الشغور — سجّل من يسكنها الآن'
+        : en
+          ? 'Vacancy lifted and the unit restored'
+          : 'أُلغي تأكيد الشغور وعادت الوحدة إلى حالتها السابقة',
+    );
+  };
 
   /*
     Ending a spell also releases the citizen's own claim on the flat — see
@@ -810,6 +889,16 @@ export function BuildingUnitMatrixDrawer({
                 onEnd={closeSpell}
               />
 
+              {/* Why the flat reads «شاغرة», and the control that lifts it. */}
+              <VacancyPanel
+                unit={selectedUnit}
+                unitCode={`${building.code}-${selectedUnit.unitCode}`}
+                locale={locale}
+                busy={busy}
+                canWrite={canWrite}
+                onEnd={(values) => liftVacancy(selectedUnit, values)}
+              />
+
               {effectiveUnitStatus(selectedUnit) === 'SEASONAL' ? (
                 <SeasonalHomePanel
                   unit={selectedUnit}
@@ -819,6 +908,15 @@ export function BuildingUnitMatrixDrawer({
                   onSave={(values) => void saveSeasonal(selectedUnit, values)}
                 />
               ) : null}
+
+              <ConfirmVacancyDialog
+                unit={selectedUnit}
+                unitCode={`${building.code}-${selectedUnit.unitCode}`}
+                locale={locale}
+                open={confirmingVacancy}
+                onOpenChange={setConfirmingVacancy}
+                onConfirm={(values) => saveVacancy(selectedUnit, values)}
+              />
 
               {canWrite ? (
                 <div className="flex flex-wrap gap-2">
@@ -853,24 +951,30 @@ export function BuildingUnitMatrixDrawer({
                     straight across them — leaving a unit that says nobody is
                     there beside the rows naming who is, and quietly dropping
                     the owner's occupancy fee, because `isUnoccupied` exempts a
-                    vacant flat. `updateUnit` now refuses it outright, and a
+                    vacant flat. The server refuses that outright now, and a
                     seasonal home as well; the button says why rather than
                     letting an officer discover it from an error.
+
+                    Hidden entirely once a confirmation is standing: the panel
+                    above carries the vacancy and the control that lifts it, and
+                    a greyed-out «تأكيد الشغور» beside it would read as the
+                    action being unavailable rather than already done.
                   */}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      busy ||
-                      selectedUnit.surveyStatus === 'VACANT_CONFIRMED' ||
-                      vacancyBlocked !== null
-                    }
-                    title={vacancyBlocked ?? undefined}
-                    onClick={() => void markVacant(selectedUnit)}
-                  >
-                    <DoorClosed className="size-4" aria-hidden />
-                    {en ? 'Mark vacant' : 'تأكيد الشغور'}
-                  </Button>
+                  {activeVacancy(selectedUnit) ? null : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || vacancyBlocked !== null}
+                      title={vacancyBlocked ?? undefined}
+                      onClick={() => {
+                        setActionError(null);
+                        setConfirmingVacancy(true);
+                      }}
+                    >
+                      <DoorClosed className="size-4" aria-hidden />
+                      {en ? 'Confirm vacant…' : 'تأكيد الشغور…'}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant={action === 'damage' ? 'default' : 'outline'}
@@ -939,7 +1043,8 @@ export function BuildingUnitMatrixDrawer({
                       ? (residence) => registerHref(building.id, selectedUnit.id, residence)
                       : undefined
                   }
-                  onSubmit={(citizen, role, shares, unitStatus) =>
+                  vacancy={activeVacancy(selectedUnit)}
+                  onSubmit={(citizen, role, shares, unitStatus, endsVacancy) =>
                     void run(
                       async () => {
                         const result = await recordOccupancy(tenant, token, {
@@ -948,6 +1053,7 @@ export function BuildingUnitMatrixDrawer({
                           role,
                           shares,
                           unitStatus,
+                          ...(endsVacancy ? { endsVacancy } : {}),
                         });
                         return occupancyMessage(
                           citizen.fullName,

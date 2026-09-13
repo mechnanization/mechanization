@@ -7,11 +7,14 @@ import {
   nextBuildingSuffix,
   OCCUPIABLE_LIFECYCLE,
   STRUCTURE_TYPE_MAP,
+  contradictsVacancy,
   isDwellingUnitType,
   isUnoccupied,
   SURVEYED_STATUS,
   unitStatusForRole,
+  type ConfirmVacancyInput,
   type CreateBuildingInput,
+  type EndVacancyInput,
   type StructureType,
   type UnitBlueprint,
   type LogVisitInput,
@@ -35,8 +38,10 @@ import type {
   FileLinkResult,
   OccupancyRow,
   UnitRow,
+  VacancyRow,
   VisitRow,
 } from './building.types';
+import { activeVacancy, closeActiveVacancy, toVacancyRow } from './unit-vacancy';
 
 /**
  * The census's write side: structures, their unit matrices, and who is in them.
@@ -67,6 +72,16 @@ const MAX_GENERATED_UNITS = 400;
  */
 const MAX_VISITS_RETURNED = 10;
 
+/**
+ * How many of a unit's vacancy confirmations travel with the matrix.
+ *
+ * The one standing is what the panel acts on; the closed ones behind it are
+ * context — «شاغرة من آذار إلى تموز» is what tells an officer the flat has been
+ * through this before. Capped for `MAX_VISITS_RETURNED`'s reason, and smaller,
+ * because a flat confirmed empty five times is already an unusual history.
+ */
+const MAX_VACANCIES_RETURNED = 5;
+
 const DAMAGED_LEVELS: readonly string[] = [
   'RESTRICTED_USE',
   'UNSAFE_EVACUATE',
@@ -87,6 +102,16 @@ export interface BuildingDetail extends BuildingRow {
       visits: VisitRow[];
       /** Every attempt ever made, uncapped. This is «٣ محاولات» on the cell. */
       visitCount: number;
+      /**
+       * «تأكيد الشغور», newest first — capped at `MAX_VACANCIES_RETURNED`.
+       *
+       * The row with no `endedAt` is the one standing, and it is what makes the
+       * flat read «شاغرة»; the rest are closed history. Sent with the matrix
+       * rather than fetched per unit because the panel needs to say *why* a
+       * unit is empty and offer to lift it, both without a second round trip on
+       * a phone in a stairwell.
+       */
+      vacancies: VacancyRow[];
       /**
        * حالة الوحدة as an owner's own property card states it, for a unit whose
        * canonical `unitStatus` nobody has set.
@@ -130,7 +155,15 @@ export class BuildingsService {
       | 'UNIT_DELETED'
       | 'OCCUPANCY_RECORDED'
       | 'OCCUPANCY_ENDED'
-      | 'UNIT_VISIT_LOGGED';
+      | 'UNIT_VISIT_LOGGED'
+      /*
+        The two halves of «تأكيد الشغور». Audited as loudly as an occupancy is,
+        and for the same reason: confirming a vacancy stops the owner's
+        occupancy fee and lifting it starts it again, so each is a row a
+        resident disputing a notice is entitled to see.
+      */
+      | 'UNIT_VACANCY_CONFIRMED'
+      | 'UNIT_VACANCY_ENDED';
     buildingId: string;
     before?: Record<string, unknown>;
     after?: Record<string, unknown>;
@@ -460,6 +493,23 @@ export class BuildingsService {
                 take: MAX_VISITS_RETURNED,
                 include: { officer: { select: { firstName: true, lastName: true } } },
               },
+              /*
+                «تأكيد الشغور», standing or lifted.
+
+                Newest first and capped, as the visits beside it are. The one
+                still open is what the panel offers to lift; the closed ones are
+                why the flat reads the way it does — and they are the only place
+                an officer can see that a vacancy was recorded in error rather
+                than simply never recorded.
+              */
+              vacancies: {
+                orderBy: [{ observedAt: 'desc' }, { createdAt: 'desc' }],
+                take: MAX_VACANCIES_RETURNED,
+                include: {
+                  confirmedBy: { select: { firstName: true, lastName: true } },
+                  endedBy: { select: { firstName: true, lastName: true } },
+                },
+              },
               _count: { select: { visits: true } },
             },
           },
@@ -484,6 +534,7 @@ export class BuildingsService {
         ),
         visits: unit.visits.map(toVisitRow),
         visitCount: unit._count.visits,
+        vacancies: unit.vacancies.map(toVacancyRow),
         ownerDeclaredStatus: unit.unitStatus ? null : (declared.get(unit.id) ?? null),
       })),
     };
@@ -1521,6 +1572,45 @@ export class BuildingsService {
     if (!before) throw new NotFoundError('الوحدة غير موجودة');
 
     /*
+      Confirming a vacancy is not a field edit, and this is no longer the door
+      onto it.
+
+      `{ unitStatus: 'VACANT', surveyStatus: 'VACANT_CONFIRMED' }` is exactly
+      what «تأكيد الشغور» used to send, and it wrote a finding that exempts the
+      owner from the occupancy fee with nothing recorded about who decided it or
+      what it rested on — and nothing to undo. `confirmVacancy` asks for both.
+      Refused here rather than quietly redirected: a PATCH that silently created
+      a confirmation record would be a second door onto the same fact, which is
+      how the two drift.
+    */
+    if (input.surveyStatus === 'VACANT_CONFIRMED') {
+      throw new ValidationError(
+        `لتأكيد شغور الوحدة ${before.unitCode} استخدم «تأكيد الشغور» — يُسجَّل مستنده ويمكن إلغاؤه لاحقاً`,
+        { surveyStatus: input.surveyStatus },
+      );
+    }
+
+    /*
+      …and while one is standing, the two columns it wrote are its to hold.
+
+      Editing حالة الوحدة or حالة المسح out from under an open confirmation
+      leaves the register saying two things at once: a row asserting the flat is
+      empty, and a unit saying it is «مؤجرة». The remedy is the undo, which
+      exists precisely so this never has to be done by hand — and which records
+      why the vacancy no longer holds.
+    */
+    const standing = await activeVacancy(this.db, unitId);
+    if (
+      standing &&
+      ((input.unitStatus !== undefined && input.unitStatus !== before.unitStatus) ||
+        (input.surveyStatus !== undefined && input.surveyStatus !== before.surveyStatus))
+    ) {
+      throw new ConflictError(
+        `الوحدة ${before.unitCode} مؤكَّد شغورها. ألغِ تأكيد الشغور أولاً ثم عدّل حالتها`,
+      );
+    }
+
+    /*
       Moving a unit re-derives its code, because the code *is* its position —
       `floor × 100 + sequence`. A unit corrected from floor 2 to floor 3 whose
       code still read `0201` would be the one thing D9 forbids: a code that
@@ -1540,67 +1630,13 @@ export class BuildingsService {
     }
 
     /*
-      A flat cannot be empty and lived in at the same time.
-
-      «تأكيد الشغور» sends `unitStatus: 'VACANT'` with `surveyStatus:
-      'VACANT_CONFIRMED'`, and it used to write both over a unit holding live
-      occupancies without a word — leaving a row that says nobody is there
-      beside two rows naming who is. `isUnoccupied` then exempted the owner from
-      the occupancy fee, so the contradiction was not merely untidy: it silently
-      stopped a bill.
-
-      Refused rather than cascaded into ending the spells, because those are
-      opposite statements about people and only the officer knows which is true.
-      «أنهِ الإشغال» is one click away in the same drawer and says who moved out
-      and when; guessing that here would close somebody's tenancy as a side
-      effect of a status change.
+      Calling a flat empty is refused the same way wherever it is done — see
+      `assertMayBeCalledEmpty`. Reached from here for a status edit that sets
+      «شاغرة» or «قيد الإنجاز» directly, and from `confirmVacancy` for the
+      finding itself.
     */
-    const goingEmpty =
-      (input.unitStatus !== undefined && isUnoccupied(input.unitStatus)) ||
-      input.surveyStatus === 'VACANT_CONFIRMED';
-
-    /*
-      …but an owner does not make a flat lived in.
-
-      This refused on *any* live spell, the owner's included, and the drawer's
-      tooltip said «أنهِ الإشغال أولاً». So to record that an owner's flat is
-      empty, officers ended the owner — which erased the ownership and released
-      the flat from their file, billing and all. The deed is not a statement of
-      residence (D2): an owner recorded on a شاغرة unit is exactly what the
-      join table exists to say. Only a مستأجر or شاغل بتسامح contradicts
-      vacancy, because they *are* somebody living there.
-    */
-    if (goingEmpty) {
-      const live = await this.db.unitOccupancy.count({
-        where: { unitId, toDate: null, role: { in: ['TENANT', 'FREE_OCCUPANT'] as never } },
-      });
-      if (live > 0) {
-        throw new ConflictError(
-          `لا يمكن تسجيل الوحدة ${before.unitCode} كشاغرة: يسكنها ${live} مستأجر أو شاغل مسجَّل. أنهِ إشغاله أولاً`,
-        );
-      }
-
-      /*
-        …and a seasonal home is not empty because its owners are away.
-
-        Away is what «مسكن موسمي» means. An officer surveying a summer house in
-        January found nobody and pressed «تأكيد الشغور», which wrote «شاغرة»
-        over it — and a seasonal home is billed to its owner
-        (`OWNER_BILLED_WHILE_ABSENT`) while a vacant one is exempt, so the winter
-        survey cancelled the summer's fees. The months without the owners are
-        the تصريح بالشغور's to settle (`vacancyDeclaredAt`), and an owner who has
-        stopped coming is re-recorded with «شاغرة» by `recordOccupancy`, which
-        does not come through here.
-
-        Read the way billing reads it: the unit's own value, or the owner's
-        card where the unit has none — a card saying «موسمي» is overridden by
-        the unit's «شاغرة» just the same.
-      */
-      if (await this.isSeasonal(before)) {
-        throw new ConflictError(
-          `لا يمكن تسجيل الوحدة ${before.unitCode} كشاغرة: هي مسكن موسمي، وغياب أصحابه لا يجعلها شاغرة. سجّل تصريح الشغور في بيانات السكن الموسمي، أو أعد ربط المالك بحالة «شاغرة» إن لم يعودوا يأتون`,
-        );
-      }
+    if (input.unitStatus !== undefined && isUnoccupied(input.unitStatus)) {
+      await this.assertMayBeCalledEmpty(before);
     }
 
     const updated = await this.db.unit.update({
@@ -1645,6 +1681,269 @@ export class BuildingsService {
     });
 
     return toUnitRow(updated);
+  }
+
+  // ─────────────────────────  «تأكيد الشغور»  ─────────────────────────
+
+  /**
+   * The two things that make "this flat is empty" untrue, refused wherever it
+   * is said.
+   *
+   * **Somebody living there.** A مستأجر or شاغل بتسامح recorded on the unit is
+   * the flat's occupant, and writing «شاغرة» over them leaves a row saying
+   * nobody is there beside rows naming who is — which `isUnoccupied` then reads
+   * as an exemption, so the contradiction silently stops a bill. Refused rather
+   * than cascaded into ending their spells: those are opposite statements about
+   * people, and only the officer knows which is true. «إنهاء الإشغال» is a click
+   * away and asks who left and when.
+   *
+   * **An owner is not one of them**, and that asymmetry is load-bearing. This
+   * used to refuse over any live spell including the owner's, so officers ended
+   * the *ownership* to record an empty flat — erasing the deed from the file,
+   * billing and all. A deed is not a statement of residence (D2); an owner
+   * recorded on a شاغرة unit is exactly what the join table exists to say.
+   *
+   * **A seasonal home.** Its owners being away is what «مسكن موسمي» means, and
+   * a seasonal home is billed to them (`OWNER_BILLED_WHILE_ABSENT`) while a
+   * vacant one is exempt — so a summer house surveyed in January was one tap
+   * from cancelling the summer's fees. Read the way billing reads it: the
+   * unit's own حالة, or the owner's card where the unit has none.
+   */
+  private async assertMayBeCalledEmpty(unit: {
+    id: string;
+    buildingId: string;
+    unitCode: string;
+    unitStatus: string | null;
+  }): Promise<void> {
+    const live = await this.db.unitOccupancy.count({
+      where: { unitId: unit.id, toDate: null, role: { in: ['TENANT', 'FREE_OCCUPANT'] as never } },
+    });
+    if (live > 0) {
+      throw new ConflictError(
+        `لا يمكن تسجيل الوحدة ${unit.unitCode} كشاغرة: يسكنها ${live} مستأجر أو شاغل مسجَّل. أنهِ إشغاله أولاً`,
+      );
+    }
+
+    if (await this.isSeasonal(unit)) {
+      throw new ConflictError(
+        `لا يمكن تسجيل الوحدة ${unit.unitCode} كشاغرة: هي مسكن موسمي، وغياب أصحابه لا يجعلها شاغرة. سجّل تصريح الشغور في بيانات السكن الموسمي، أو أعد ربط المالك بحالة «شاغرة» إن لم يعودوا يأتون`,
+      );
+    }
+  }
+
+  /**
+   * Records that a unit was found empty — as a row that says so, not as two
+   * overwritten columns.
+   *
+   * ## Why this is not a status edit
+   *
+   * A confirmed vacancy exempts the owner from the occupancy fee (Law 60/1988
+   * Art. 11 — the fee is owed for *actual* occupancy), so it is a finding with a
+   * cost to the municipality if it is wrong and a cost to the owner if it is
+   * missing. The old button wrote «شاغرة» and «مؤكَّدة الشغور» and kept nothing
+   * else: not who decided, not what they had, not what the flat said before. A
+   * resident disputing an assessment could be told only that the register said
+   * so.
+   *
+   * So the confirmation is the record, and the unit's two columns are its
+   * *effect*. `basis` is what it rests on (the law is specific — see
+   * `VACANCY_BASIS`), `observedAt` is when the flat was seen empty, and the
+   * previous حالة and حالة مسح are snapshotted so `endVacancy` can put them
+   * back.
+   *
+   * ## What it refuses
+   *
+   * The two in `assertMayBeCalledEmpty`, plus a vacancy already standing — the
+   * partial unique index in migration 0041 is the backstop for two officers
+   * confirming the same flat at once, and this is the message for the ordinary
+   * case of one officer pressing twice.
+   *
+   * A unit already marked `DEMOLISHED` is allowed through deliberately: a
+   * demolished flat is empty, and refusing here would leave the only way to say
+   * so blocked behind a status nobody is going to change back.
+   */
+  async confirmVacancy(
+    unitId: string,
+    input: ConfirmVacancyInput,
+    actor: { id: string; role: string },
+  ): Promise<{ vacancy: VacancyRow; unit: UnitRow; casesResolved: number }> {
+    const unit = await this.db.unit.findUnique({ where: { id: unitId } });
+    if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+
+    const standing = await activeVacancy(this.db, unitId);
+    if (standing) {
+      throw new ConflictError(
+        `الوحدة ${unit.unitCode} مؤكَّد شغورها مسبقاً منذ ${standing.observedAt
+          .toISOString()
+          .slice(0, 10)}`,
+      );
+    }
+
+    await this.assertMayBeCalledEmpty(unit);
+
+    /*
+      One transaction, because the row and the effect are one fact. A
+      confirmation with the unit left unchanged would be a vacancy nothing bills
+      on; a changed unit with no confirmation is the state this whole feature
+      exists to get rid of.
+    */
+    const [vacancy, updated] = await this.db.$transaction(async (tx) => {
+      const created = await tx.unitVacancyConfirmation.create({
+        data: {
+          unitId,
+          basis: input.basis as never,
+          ...(input.observedAt ? { observedAt: input.observedAt } : {}),
+          notes: input.notes?.trim() || null,
+          confirmedById: actor.id,
+          previousUnitStatus: unit.unitStatus,
+          previousSurveyStatus: unit.surveyStatus,
+        },
+        include: {
+          confirmedBy: { select: { firstName: true, lastName: true } },
+          endedBy: { select: { firstName: true, lastName: true } },
+        },
+      });
+
+      const unitRow = await tx.unit.update({
+        where: { id: unitId },
+        data: { unitStatus: 'VACANT', surveyStatus: 'VACANT_CONFIRMED' },
+      });
+
+      return [created, unitRow] as const;
+    });
+
+    /*
+      A «شاغرة قيد التحقق» case is a question this answers.
+
+      Only that type, and only on this exact unit: the other case types are
+      about access, ownership or a note, and closing them here would silently
+      clear somebody else's dispatch item — the specific way a case list stops
+      being believed.
+    */
+    const casesResolved = await this.cases.resolveVacancyCasesForUnit(unitId, actor);
+
+    this.record({
+      action: 'UNIT_VACANCY_CONFIRMED',
+      buildingId: unit.buildingId,
+      before: { unitStatus: unit.unitStatus, surveyStatus: unit.surveyStatus },
+      after: {
+        unitCode: unit.unitCode,
+        vacancyId: vacancy.id,
+        basis: input.basis,
+        observedAt: vacancy.observedAt,
+        casesResolved,
+      },
+      actor,
+    });
+
+    return { vacancy: toVacancyRow(vacancy), unit: toUnitRow(updated), casesResolved };
+  }
+
+  /**
+   * Lifts the vacancy standing on a unit — the undo, available at any time.
+   *
+   * ## Why it is always available
+   *
+   * The old action had no way back at all: an officer who confirmed the wrong
+   * flat could only type a status in again and hope they remembered the right
+   * one, and nothing recorded that the register had ever called it empty. A
+   * finding that changes a bill has to be reversible by the people who make it,
+   * or it gets worked around — and the workaround here was ending the owner's
+   * spell, which erases a deed.
+   *
+   * ## What it restores, and what it refuses to touch
+   *
+   * `vacancyReversal` decides, and it only ever rewrites the two values the
+   * confirmation itself wrote. A unit whose حالة has moved on since is left
+   * alone: that is a newer statement about the flat, and an undo pressed a month
+   * later has no business overruling it.
+   *
+   * The confirmation is closed, never deleted — including one «سُجِّل بالخطأ»,
+   * which is kept for the reason an occupancy recorded in error is: the row is
+   * evidence of what was entered and by whom. What it is *not* is history, so
+   * the matrix hides it from the unit's timeline while the audit keeps it.
+   */
+  async endVacancy(
+    unitId: string,
+    input: EndVacancyInput,
+    actor: { id: string; role: string },
+  ): Promise<{ vacancy: VacancyRow; unit: UnitRow }> {
+    const unit = await this.db.unit.findUnique({ where: { id: unitId } });
+    if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+
+    const standing = await activeVacancy(this.db, unitId);
+    if (!standing) {
+      throw new ConflictError(`لا يوجد تأكيد شغور قائم على الوحدة ${unit.unitCode}`);
+    }
+
+    /*
+      Refused rather than clamped, unlike `closeActiveVacancy`'s own guard: here
+      a person typed the date, and a vacancy that ended before it was observed is
+      something for them to correct, not for the server to quietly round.
+    */
+    if (input.endedAt && input.endedAt < standing.observedAt) {
+      throw new ValidationError(
+        `التاريخ قبل تاريخ تأكيد الشغور (${standing.observedAt.toISOString().slice(0, 10)})`,
+        { endedAt: input.endedAt },
+      );
+    }
+
+    const [vacancy, updated] = await this.db.$transaction(async (tx) => {
+      const closed = await closeActiveVacancy(tx, {
+        unitId,
+        unit,
+        reason: input.reason,
+        endedAt: input.endedAt,
+        notes: input.notes,
+        actorId: actor.id,
+      });
+      // Nothing can have closed it in between — the read above and this write
+      // are in the same request — but the helper is the only thing that knows
+      // how, so its null is handled rather than asserted away.
+      if (!closed) throw new ConflictError(`لا يوجد تأكيد شغور قائم على الوحدة ${unit.unitCode}`);
+
+      const unitRow =
+        Object.keys(closed.restore).length > 0
+          ? await tx.unit.update({
+              where: { id: unitId },
+              data: {
+                ...(closed.restore.unitStatus !== undefined
+                  ? { unitStatus: closed.restore.unitStatus as never }
+                  : {}),
+                ...(closed.restore.surveyStatus !== undefined
+                  ? { surveyStatus: closed.restore.surveyStatus as never }
+                  : {}),
+              },
+            })
+          : unit;
+
+      const withNames = await tx.unitVacancyConfirmation.findUniqueOrThrow({
+        where: { id: closed.confirmation!.id },
+        include: {
+          confirmedBy: { select: { firstName: true, lastName: true } },
+          endedBy: { select: { firstName: true, lastName: true } },
+        },
+      });
+
+      return [withNames, unitRow] as const;
+    });
+
+    this.record({
+      action: 'UNIT_VACANCY_ENDED',
+      buildingId: unit.buildingId,
+      before: { unitStatus: unit.unitStatus, surveyStatus: unit.surveyStatus },
+      after: {
+        unitCode: unit.unitCode,
+        vacancyId: vacancy.id,
+        reason: input.reason,
+        endedAt: vacancy.endedAt,
+        unitStatus: updated.unitStatus,
+        surveyStatus: updated.surveyStatus,
+      },
+      actor,
+    });
+
+    return { vacancy: toVacancyRow(vacancy), unit: toUnitRow(updated) };
   }
 
   /**
@@ -1692,12 +1991,25 @@ export class BuildingsService {
     });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
 
-    const [current, historical, visits, damage, cards] = await Promise.all([
+    const [current, historical, visits, damage, cards, vacancies] = await Promise.all([
       this.db.unitOccupancy.count({ where: { unitId, toDate: null } }),
       this.db.unitOccupancy.count({ where: { unitId } }),
       this.db.unitVisit.count({ where: { unitId } }),
       this.db.damageAssessment.count({ where: { unitId } }),
       this.db.buildingUnit.count({ where: { unitId } }),
+      /*
+        Confirmations the municipality stands behind — a standing one, or one
+        closed as «لم تعد شاغرة». Both say the flat was found empty on a date,
+        which is what an exemption was granted on, and `onDelete: Cascade` would
+        take them with the unit.
+
+        Ones closed as «سُجِّل بالخطأ» are excluded on purpose: they assert
+        nothing about the flat, so they must not be the reason a phantom unit
+        can never be removed.
+      */
+      this.db.unitVacancyConfirmation.count({
+        where: { unitId, NOT: { endReason: 'RECORDED_IN_ERROR' as never } },
+      }),
     ]);
 
     if (current > 0) {
@@ -1727,6 +2039,12 @@ export class BuildingsService {
     if (visits > 0) {
       throw new ConflictError(
         `لا يمكن حذف الوحدة ${unit.unitCode}: سُجِّلت عليها ${visits} زيارة ميدانية. صحّح بيانات الوحدة بدلاً من حذفها`,
+      );
+    }
+
+    if (vacancies > 0) {
+      throw new ConflictError(
+        `لا يمكن حذف الوحدة ${unit.unitCode}: سُجِّل عليها ${vacancies} تأكيد شغور، وعليه تُعفى من رسوم الإشغال. ألغِ تأكيد الشغور بسبب «سُجِّل بالخطأ» إن لم تكن الوحدة موجودة أصلاً`,
       );
     }
 
@@ -1785,7 +2103,14 @@ export class BuildingsService {
   ): Promise<{ occupancy: OccupancyRow; casesResolved: number; fileLink: FileLinkResult }> {
     const unit = await this.db.unit.findUnique({
       where: { id: input.unitId },
-      select: { id: true, buildingId: true, unitCode: true, unitType: true },
+      select: {
+        id: true,
+        buildingId: true,
+        unitCode: true,
+        unitType: true,
+        unitStatus: true,
+        surveyStatus: true,
+      },
     });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
 
@@ -1801,6 +2126,85 @@ export class BuildingsService {
       unitStatus: input.unitStatus,
       unitCode: unit.unitCode,
     });
+
+    /*
+      Linking somebody to a flat the municipality has confirmed empty.
+
+      This is the other half of «تأكيد الشغور» being undoable: a unit found
+      empty in March and let in June must be re-linkable without an officer
+      first remembering to go and lift the vacancy, and without the register
+      spending the interval saying both things at once. It used to say both —
+      `recordOccupancy`'s حالة write is narrowed to `unitStatus: null`, so a
+      tenant recorded on a «شاغرة» unit left the unit empty on paper, the owner
+      exempt, and the matrix showing «تعارض».
+
+      So it is asked rather than assumed. Without `endsVacancy` the refusal
+      carries the confirmation with it, so the client can show *when* the flat
+      was confirmed empty and on what basis before anyone overrides a finding
+      somebody else recorded. With it, the vacancy is closed as «لم تعد شاغرة»
+      in the same request.
+
+      An owner is not asked: a deed is not residence (D2), and an owner on a
+      شاغرة flat is the ordinary case. What an owner *says* about the flat can
+      still contradict it — see `contradictsVacancy`.
+    */
+    const standing = await activeVacancy(this.db, input.unitId);
+    if (standing && contradictsVacancy(input.role, input.unitStatus)) {
+      if (!input.endsVacancy) {
+        throw new ConflictError(
+          `الوحدة ${unit.unitCode} مؤكَّد شغورها منذ ${standing.observedAt
+            .toISOString()
+            .slice(0, 10)}. تسجيل من يشغلها يُنهي تأكيد الشغور`,
+          {
+            vacancy: {
+              id: standing.id,
+              basis: standing.basis,
+              observedAt: standing.observedAt,
+              notes: standing.notes,
+            },
+          },
+        );
+      }
+
+      /*
+        Closed before the writes below rather than after, so they see the unit
+        the reversal leaves: the survey lift reads `PARTIAL` as still open and
+        carries it to «مكتملة», and the حالة write finds the null it needs to
+        fill with «مؤجرة» or «مشغولة بتسامح».
+      */
+      const closed = await closeActiveVacancy(this.db, {
+        unitId: input.unitId,
+        unit,
+        reason: 'NO_LONGER_VACANT',
+        actorId: actor.id,
+      });
+      if (closed) {
+        await this.db.unit.update({
+          where: { id: input.unitId },
+          data: {
+            ...(closed.restore.unitStatus !== undefined
+              ? { unitStatus: closed.restore.unitStatus as never }
+              : {}),
+            ...(closed.restore.surveyStatus !== undefined
+              ? { surveyStatus: closed.restore.surveyStatus as never }
+              : {}),
+          },
+        });
+        this.record({
+          action: 'UNIT_VACANCY_ENDED',
+          buildingId: unit.buildingId,
+          before: { unitStatus: unit.unitStatus, surveyStatus: unit.surveyStatus },
+          after: {
+            unitCode: unit.unitCode,
+            vacancyId: closed.confirmation!.id,
+            reason: 'NO_LONGER_VACANT',
+            citizenId: input.citizenId,
+            via: 'OCCUPANCY',
+          },
+          actor,
+        });
+      }
+    }
 
     /*
       A person is in a unit once, in one capacity, at a time.
@@ -2353,12 +2757,30 @@ export class BuildingsService {
   async logVisit(
     input: LogVisitInput,
     actor: { id: string; role: string },
-  ): Promise<{ visit: VisitRow; visitCount: number }> {
+  ): Promise<{ visit: VisitRow; visitCount: number; vacancyStands: boolean }> {
     const unit = await this.db.unit.findUnique({
       where: { id: input.unitId },
       select: { id: true, buildingId: true, unitCode: true, surveyStatus: true },
     });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+
+    /*
+      A visit to a flat whose vacancy is standing is logged, and leaves the
+      finding alone.
+
+      The status is otherwise *set* by the outcome, which is right for a finding
+      an officer states directly — but a confirmed vacancy is a finding too, and
+      one with a record behind it and an exemption resting on it. Letting an
+      ordinary «زيارة بلا رد» walk the unit out of `VACANT_CONFIRMED` would
+      leave the confirmation standing with the unit no longer reading as empty:
+      the register saying two things, which is what the confirmation table was
+      added to stop. A locked door on an empty flat is also not news.
+
+      The visit itself is always recorded — it happened, and D10's count is what
+      dispatch reads — and the caller is told the vacancy still stands so the
+      officer can lift it if what they found says otherwise.
+    */
+    const standing = await activeVacancy(this.db, input.unitId);
 
     const [visit, visitCount] = await this.db.$transaction(async (tx) => {
       const created = await tx.unitVisit.create({
@@ -2372,10 +2794,12 @@ export class BuildingsService {
         include: { officer: { select: { firstName: true, lastName: true } } },
       });
 
-      await tx.unit.update({
-        where: { id: input.unitId },
-        data: { surveyStatus: input.outcome as never },
-      });
+      if (!standing) {
+        await tx.unit.update({
+          where: { id: input.unitId },
+          data: { surveyStatus: input.outcome as never },
+        });
+      }
 
       return [created, await tx.unitVisit.count({ where: { unitId: input.unitId } })] as const;
     });
@@ -2384,11 +2808,18 @@ export class BuildingsService {
       action: 'UNIT_VISIT_LOGGED',
       buildingId: unit.buildingId,
       before: { surveyStatus: unit.surveyStatus },
-      after: { unitCode: unit.unitCode, outcome: input.outcome, attempts: visitCount },
+      after: {
+        unitCode: unit.unitCode,
+        outcome: input.outcome,
+        attempts: visitCount,
+        // Named in the audit row because the outcome and the unit's status
+        // disagree in this case, and the reason has to be readable later.
+        ...(standing ? { vacancyStands: true } : {}),
+      },
       actor,
     });
 
-    return { visit: toVisitRow(visit), visitCount };
+    return { visit: toVisitRow(visit), visitCount, vacancyStands: standing !== null };
   }
 
   /** Every attempt on one unit, newest first. The panel behind «٣ محاولات». */

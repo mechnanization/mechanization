@@ -68,6 +68,8 @@ describeIfDb('BuildingsService', () => {
   let db: TenantPrismaClient;
   let buildings: BuildingsService;
   let damage: DamageService;
+  /** Held at suite scope so the vacancy tests can open a حالة and read it back. */
+  let cases: CasesService;
   let officerId: string;
 
   const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' });
@@ -95,7 +97,7 @@ describeIfDb('BuildingsService', () => {
     } as unknown as TenantContextService;
 
     const events = new EventEmitter2();
-    const cases = new CasesService(
+    cases = new CasesService(
       new PrismaCaseRepository(context),
       { findById: async () => ({ id: officerId, kind: 'CITIZEN' }) } as never,
       events,
@@ -537,6 +539,175 @@ describeIfDb('BuildingsService', () => {
     expect(rows[0]?.role).toBe('OWNER');
   });
 
+  /**
+   * «تأكيد الشغور», end to end: confirmed, contradicted, lifted, re-linked.
+   *
+   * Against a real database because the whole point is that four tables agree —
+   * the confirmation, the unit's two status columns, the occupancy and the
+   * partial unique index that stops two confirmations standing at once. A mock
+   * can assert the calls; only Postgres can say the register ends up coherent.
+   */
+  describe('«تأكيد الشغور» and its undo', () => {
+    const flat = async (parcelNumber: string) => {
+      const { building } = await createBuilding(
+        { parcelNumber, structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+        actor(),
+      );
+      const { units } = await buildings.generateUnits(
+        building.id,
+        { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+        actor(),
+      );
+      return { buildingId: building.id, unitId: units[0]!.id };
+    };
+
+    const unitOf = async (buildingId: string, unitId: string) =>
+      (await buildings.get(buildingId)).units.find((row) => row.id === unitId);
+
+    it('records the finding, its basis, and what the unit said before', async () => {
+      const { buildingId, unitId } = await flat('9610');
+      await buildings.recordOccupancy(
+        { unitId, citizenId: await citizen('رامي'), role: 'OWNER', unitStatus: 'RENTED' },
+        actor(),
+      );
+
+      await buildings.confirmVacancy(
+        unitId,
+        { basis: 'DECLARATION_FILED', notes: 'تصريح مقدَّم بتاريخ ١ أيلول' },
+        actor(),
+      );
+
+      const unit = await unitOf(buildingId, unitId);
+      expect(unit?.unitStatus).toBe('VACANT');
+      expect(unit?.surveyStatus).toBe('VACANT_CONFIRMED');
+      const [vacancy] = unit?.vacancies ?? [];
+      expect(vacancy).toMatchObject({
+        basis: 'DECLARATION_FILED',
+        endedAt: null,
+        previousUnitStatus: 'RENTED',
+        confirmedByName: 'مفتش ميداني',
+      });
+    });
+
+    /*
+      The database is the backstop for two officers on one flat with no signal:
+      the partial unique index means only one confirmation can stand, whatever
+      the service's own read decided a moment earlier.
+    */
+    it('refuses a second standing confirmation', async () => {
+      const { unitId } = await flat('9615');
+      await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+
+      await expect(
+        buildings.confirmVacancy(unitId, { basis: 'OWNER_STATEMENT' }, actor()),
+      ).rejects.toThrow(ConflictError);
+
+      expect(await db.unitVacancyConfirmation.count({ where: { unitId, endedAt: null } })).toBe(1);
+    });
+
+    it('puts the unit back when the confirmation was recorded in error', async () => {
+      const { buildingId, unitId } = await flat('9620');
+      await buildings.recordOccupancy(
+        { unitId, citizenId: await citizen('هدى'), role: 'OWNER', unitStatus: 'RENTED' },
+        actor(),
+      );
+      await buildings.confirmVacancy(unitId, { basis: 'NEIGHBOUR_OR_CARETAKER' }, actor());
+
+      await buildings.endVacancy(unitId, { reason: 'RECORDED_IN_ERROR' }, actor());
+
+      const unit = await unitOf(buildingId, unitId);
+      expect(unit?.unitStatus).toBe('RENTED');
+      expect(unit?.surveyStatus).toBe('COMPLETE');
+      // Closed, not deleted: the municipality called this flat empty and that
+      // is part of its record either way.
+      expect(unit?.vacancies?.[0]).toMatchObject({ endReason: 'RECORDED_IN_ERROR' });
+      expect(await db.unitVacancyConfirmation.count({ where: { unitId } })).toBe(1);
+    });
+
+    /*
+      The relink, which is the case the undo exists for: a flat confirmed empty
+      in one season and let in the next. Refused without an acknowledgement so
+      one officer cannot silently overwrite another's finding, and in one step
+      with it — the vacancy ends, the tenancy starts, and the unit is «مؤجرة»
+      rather than a tenant sitting under a «شاغرة» flag.
+    */
+    it('refuses to record an occupant over a standing vacancy, and says what stands', async () => {
+      const { unitId } = await flat('9630');
+      await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+
+      await expect(
+        buildings.recordOccupancy(
+          { unitId, citizenId: await citizen('سلمى'), role: 'TENANT' },
+          actor(),
+        ),
+      ).rejects.toThrow('مؤكَّد شغورها');
+
+      expect(await db.unitOccupancy.count({ where: { unitId } })).toBe(0);
+    });
+
+    it('lifts the vacancy and lets the flat when the officer confirms it', async () => {
+      const { buildingId, unitId } = await flat('9640');
+      await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+
+      await buildings.recordOccupancy(
+        { unitId, citizenId: await citizen('جاد'), role: 'TENANT', endsVacancy: true },
+        actor(),
+      );
+
+      const unit = await unitOf(buildingId, unitId);
+      expect(unit?.unitStatus).toBe('RENTED');
+      expect(unit?.surveyStatus).toBe('COMPLETE');
+      expect(unit?.occupants.filter((row) => row.toDate === null)).toHaveLength(1);
+      expect(unit?.vacancies?.[0]).toMatchObject({ endReason: 'NO_LONGER_VACANT' });
+    });
+
+    /*
+      An owner is not somebody living there (D2), so recording one asks nothing
+      and the vacancy stands — which is the whole reason «تأكيد الشغور» stopped
+      being refused over owners in the first place.
+    */
+    it('records an owner on an empty flat without touching the vacancy', async () => {
+      const { buildingId, unitId } = await flat('9650');
+      await buildings.confirmVacancy(unitId, { basis: 'OWNER_STATEMENT' }, actor());
+
+      await buildings.recordOccupancy(
+        { unitId, citizenId: await citizen('فادي'), role: 'OWNER' },
+        actor(),
+      );
+
+      const unit = await unitOf(buildingId, unitId);
+      expect(unit?.unitStatus).toBe('VACANT');
+      expect(unit?.vacancies?.[0]?.endedAt).toBeNull();
+    });
+
+    it('refuses to edit the unit’s status out from under a standing confirmation', async () => {
+      const { unitId } = await flat('9660');
+      await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+
+      await expect(
+        buildings.updateUnit(unitId, { unitStatus: 'OWNER_OCCUPIED' }, actor()),
+      ).rejects.toThrow('ألغِ تأكيد الشغور');
+    });
+
+    it('closes the «شاغرة قيد التحقق» case the confirmation answers, and only that one', async () => {
+      const { buildingId, unitId } = await flat('9670');
+      const open = await cases.create(
+        { notes: 'الجيران يقولون إنها فارغة', caseType: 'VACANT_UNCONFIRMED', buildingId, unitId },
+        actor(),
+      );
+      const other = await cases.create(
+        { notes: 'نزاع على الملكية', caseType: 'OWNERSHIP_DISPUTE', buildingId, unitId },
+        actor(),
+      );
+
+      const result = await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+
+      expect(result.casesResolved).toBe(1);
+      expect((await cases.get(open.id)).status).toBe('RESOLVED');
+      expect((await cases.get(other.id)).status).toBe('OPEN');
+    });
+  });
+
   it('refuses to delete a building somebody has been surveyed in', async () => {
     const { building } = await createBuilding(
       { parcelNumber: '6400', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
@@ -864,7 +1035,9 @@ describeIfDb('BuildingsService', () => {
       actor(),
     );
     await buildings.updateUnit(units[0]!.id, { surveyStatus: 'COMPLETE' }, actor());
-    await buildings.updateUnit(units[1]!.id, { surveyStatus: 'VACANT_CONFIRMED' }, actor());
+    // «شاغرة مؤكَّدة» counts as surveyed, and is now reached through the
+    // confirmation rather than through a status edit — see `confirmVacancy`.
+    await buildings.confirmVacancy(units[1]!.id, { basis: 'FIELD_INSPECTION' }, actor());
     await damage.record(
       { buildingId: building.id, level: 'TOTAL_COLLAPSE', source: 'SATELLITE' },
       actor(),
@@ -970,6 +1143,40 @@ describeIfDb('BuildingsService', () => {
     ]);
   });
 
+  it('leaves a confirmed vacancy standing, and logs the visit anyway', async () => {
+    const { building } = await createBuilding(
+      { parcelNumber: '9515', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const { units } = await buildings.generateUnits(
+      building.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+      actor(),
+    );
+    const unitId = units[0]!.id;
+
+    await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+
+    /*
+      A visit that finds a locked door on a flat already confirmed empty is not
+      news, and must not walk the unit out of the finding — that would leave the
+      confirmation standing with the unit no longer reading as vacant, which is
+      the register saying two things at once. The attempt is still counted.
+    */
+    const result = await buildings.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER' }, actor());
+    expect(result.visitCount).toBe(1);
+    expect(result.vacancyStands).toBe(true);
+
+    const unit = (await buildings.get(building.id)).units[0];
+    expect(unit?.surveyStatus).toBe('VACANT_CONFIRMED');
+    expect(unit?.unitStatus).toBe('VACANT');
+
+    // Lifting it is what lets an ordinary visit move the unit again.
+    await buildings.endVacancy(unitId, { reason: 'RECORDED_IN_ERROR' }, actor());
+    await buildings.logVisit({ unitId, outcome: 'COMPLETE' }, actor());
+    expect((await buildings.get(building.id)).units[0]?.surveyStatus).toBe('COMPLETE');
+  });
+
   it('moves the unit to the outcome of the visit, including out of a finding', async () => {
     const { building } = await createBuilding(
       { parcelNumber: '9510', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
@@ -982,14 +1189,18 @@ describeIfDb('BuildingsService', () => {
     );
     const unitId = units[0]!.id;
 
-    await buildings.logVisit({ unitId, outcome: 'VACANT_CONFIRMED' }, actor());
-    expect((await buildings.get(building.id)).units[0]?.surveyStatus).toBe('VACANT_CONFIRMED');
+    await buildings.logVisit({ unitId, outcome: 'REFUSED' }, actor());
+    expect((await buildings.get(building.id)).units[0]?.surveyStatus).toBe('REFUSED');
 
     /*
       A later visit that finds somebody home overrides it, and that is the
       difference from `recordOccupancy`'s narrow lift: this is an officer
       stating a finding directly rather than a side effect of some other action,
       and a finding replaces the previous one.
+
+      The one finding a visit cannot state this way is «شاغرة مؤكَّدة» — that
+      one carries an exemption and goes through `confirmVacancy`, which asks
+      what it rests on. The test above covers it.
     */
     const result = await buildings.logVisit({ unitId, outcome: 'COMPLETE' }, actor());
     expect(result.visitCount).toBe(2);

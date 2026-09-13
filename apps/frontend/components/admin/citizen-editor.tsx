@@ -168,7 +168,15 @@ function announceCensus(
   }
 
   const linked = census.occupanciesCreated + census.occupanciesRefreshed;
-  if (linked === 0 && census.casesResolved === 0 && census.buildingsNamed === 0) return;
+  const vacanciesEnded = census.vacanciesEnded ?? 0;
+  if (
+    linked === 0 &&
+    census.casesResolved === 0 &&
+    census.buildingsNamed === 0 &&
+    vacanciesEnded === 0
+  ) {
+    return;
+  }
 
   const parts = [
     linked > 0
@@ -200,6 +208,17 @@ function announceCensus(
       ? en
         ? `${census.occupanciesEnded} previous unit link(s) ended`
         : `أُنهيت ${census.occupanciesEnded} صلة سابقة بوحدات`
+      : null,
+    /*
+      Registering a household into a flat the municipality had confirmed empty
+      lifts that confirmation — which starts the owner being billed for it
+      again. It happened to a record nobody had open, on a screen with no unit
+      matrix on it, so it is said rather than left to be discovered.
+    */
+    vacanciesEnded > 0
+      ? en
+        ? `${vacanciesEnded} confirmed vacancy(ies) lifted`
+        : `أُلغي تأكيد الشغور عن ${vacanciesEnded} وحدة`
       : null,
   ].filter(Boolean);
 

@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   buildingFilterSchema,
+  confirmVacancySchema,
   createBuildingSchema,
   createDamageAssessmentSchema,
   endOccupancySchema,
+  endVacancySchema,
   logVisitSchema,
   unitBlueprintSchema,
   updateBuildingSchema,
@@ -11,9 +13,11 @@ import {
   upsertOccupancySchema,
   upsertUnitSchema,
   type BuildingFilter,
+  type ConfirmVacancyInput,
   type CreateBuildingInput,
   type CreateDamageAssessmentInput,
   type EndOccupancyInput,
+  type EndVacancyInput,
   type LogVisitInput,
   type UnitBlueprint,
   type UpdateBuildingInput,
@@ -186,6 +190,46 @@ export class BuildingsController {
   async deleteUnit(@Param('unitId') unitId: string, @CurrentUser() user: SessionClaims) {
     await this.buildings.deleteUnit(unitId, this.actor(user));
     return { deleted: true };
+  }
+
+  // ─────────────────────────  «تأكيد الشغور»  ─────────────────────────
+
+  /**
+   * Records that a unit was found empty, and what says so.
+   *
+   * Its own route rather than a `PATCH units/:id` carrying two statuses, which
+   * is what it used to be: this exempts the owner from the occupancy fee, so it
+   * asks for a basis and keeps a record that can be lifted. `updateUnit` now
+   * refuses the pair outright and points here.
+   *
+   * A write, so the field roles — the person who found the flat empty is the
+   * person standing at it.
+   */
+  @Roles(...WRITE_ROLES)
+  @Post('units/:unitId/vacancy')
+  async confirmVacancy(
+    @Param('unitId') unitId: string,
+    @Body(new ZodValidationPipe(confirmVacancySchema)) body: ConfirmVacancyInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.buildings.confirmVacancy(unitId, body, this.actor(user));
+  }
+
+  /**
+   * Lifts the vacancy standing on a unit — available at any time.
+   *
+   * `DELETE` would be the wrong verb twice over: nothing is deleted (the
+   * confirmation is closed and kept, like an ended occupancy), and the action
+   * takes a body — the reason decides what the unit goes back to.
+   */
+  @Roles(...WRITE_ROLES)
+  @Post('units/:unitId/vacancy/end')
+  async endVacancy(
+    @Param('unitId') unitId: string,
+    @Body(new ZodValidationPipe(endVacancySchema)) body: EndVacancyInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.buildings.endVacancy(unitId, body, this.actor(user));
   }
 
   // ────────────────────────────  Occupancy  ────────────────────────────

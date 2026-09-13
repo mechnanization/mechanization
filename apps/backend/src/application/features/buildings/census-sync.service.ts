@@ -4,6 +4,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { unitStatusForRole } from '@mechanization/shared-schemas';
 import type { OccupancyRole, OccupancyType } from '@mechanization/shared-schemas';
 import { CasesService } from '../cases/cases.service';
+import { closeActiveVacancy } from './unit-vacancy';
 
 /**
  * The write path from a citizen's registration back into the census (P5-T1).
@@ -97,6 +98,7 @@ export class CensusSyncService {
       occupanciesEnded: 0,
       unitsSurveyed: 0,
       casesResolved: 0,
+      vacanciesEnded: 0,
       buildingsNamed: 0,
     };
 
@@ -217,6 +219,7 @@ export class CensusSyncService {
         else result.occupanciesRefreshed += 1;
         result.unitsSurveyed += applied.surveyed;
         result.casesResolved += applied.casesResolved;
+        if (applied.vacancyEnded) result.vacanciesEnded += 1;
       } catch (error) {
         /*
           Kept, not swallowed. The other flats on this card are independent —
@@ -269,10 +272,22 @@ export class CensusSyncService {
     registrationId: string;
     role: OccupancyRole;
     actor: { id: string; role: string };
-  }): Promise<{ created: boolean; surveyed: number; casesResolved: number }> {
+  }): Promise<{
+    created: boolean;
+    surveyed: number;
+    casesResolved: number;
+    /** Whether this household moving in lifted a confirmed vacancy. */
+    vacancyEnded: boolean;
+  }> {
     const unit = await this.db.unit.findUnique({
       where: { id: input.unitId },
-      select: { id: true, buildingId: true, unitCode: true, surveyStatus: true },
+      select: {
+        id: true,
+        buildingId: true,
+        unitCode: true,
+        surveyStatus: true,
+        unitStatus: true,
+      },
     });
 
     /*
@@ -295,7 +310,7 @@ export class CensusSyncService {
       this.logger.warn(
         `census sync: unit ${input.unitId} belongs to building ${unit.buildingId}, not ${input.buildingId} as the card claims — ignored`,
       );
-      return { created: false, surveyed: 0, casesResolved: 0 };
+      return { created: false, surveyed: 0, casesResolved: 0, vacancyEnded: false };
     }
 
     /*
@@ -307,7 +322,7 @@ export class CensusSyncService {
       quietly — the citizen's own card is untouched and still says what they
       filed, which is the record that matters.
     */
-    if (!unit) return { created: false, surveyed: 0, casesResolved: 0 };
+    if (!unit) return { created: false, surveyed: 0, casesResolved: 0, vacancyEnded: false };
 
     const current = await this.db.unitOccupancy.findFirst({
       where: { unitId: input.unitId, citizenId: input.citizenId, toDate: null },
@@ -330,6 +345,63 @@ export class CensusSyncService {
           registrationId: input.registrationId,
         },
       })) > 0;
+
+    let vacancyEnded = false;
+
+    /*
+      A registration that puts a household into a flat confirmed empty lifts the
+      confirmation, and does not ask.
+
+      The matrix path asks — see `recordOccupancy` — because an officer is
+      standing there with a screen in front of them. Here there is nobody to
+      ask: the registration has already committed, `syncQuietly` runs after the
+      fact, and refusing would leave the citizen's own file claiming a flat the
+      census insists is empty, which is the split-record state D2 exists to
+      prevent. A household filing a registration *is* the statement that they
+      live there, and it is the better evidence: it names them.
+
+      Closed as «لم تعد شاغرة» rather than «سُجِّل بالخطأ» — the flat was empty
+      when it was confirmed, and somebody has since moved in. Owners are left
+      alone, as everywhere: an owner registering their own empty flat contradicts
+      nothing (D2).
+    */
+    if (input.role !== 'OWNER') {
+      const closed = await closeActiveVacancy(this.db, {
+        unitId: input.unitId,
+        unit,
+        reason: 'NO_LONGER_VACANT',
+        actorId: input.actor.id,
+      });
+      if (closed) {
+        await this.db.unit.update({
+          where: { id: input.unitId },
+          data: {
+            ...(closed.restore.unitStatus !== undefined
+              ? { unitStatus: closed.restore.unitStatus as never }
+              : {}),
+            ...(closed.restore.surveyStatus !== undefined
+              ? { surveyStatus: closed.restore.surveyStatus as never }
+              : {}),
+          },
+        });
+        vacancyEnded = true;
+        this.events.emit('building.changed', {
+          tenantSlug: this.tenantContext.tenantSlug,
+          action: 'UNIT_VACANCY_ENDED',
+          buildingId: unit.buildingId,
+          before: { unitStatus: unit.unitStatus, surveyStatus: unit.surveyStatus },
+          after: {
+            unitCode: unit.unitCode,
+            vacancyId: closed.confirmation!.id,
+            reason: 'NO_LONGER_VACANT',
+            citizenId: input.citizenId,
+            via: 'REGISTRATION',
+          },
+          actorId: input.actor.id,
+          actorRole: input.actor.role,
+        });
+      }
+    }
 
     if (current) {
       await this.db.unitOccupancy.update({
@@ -435,7 +507,7 @@ export class CensusSyncService {
       actorRole: input.actor.role,
     });
 
-    return { created: !current, surveyed: lifted.count, casesResolved };
+    return { created: !current, surveyed: lifted.count, casesResolved, vacancyEnded };
   }
 
   /**
@@ -585,6 +657,15 @@ export interface CensusSyncResult {
   /** Units lifted out of «غير ممسوحة» / «زيارة بلا رد» / «بيانات ناقصة». */
   unitsSurveyed: number;
   casesResolved: number;
+  /**
+   * Units whose confirmed vacancy this registration lifted — because it
+   * recorded a household living in a flat the municipality had called empty.
+   *
+   * Reported for `casesResolved`'s reason: it changes what the owner is billed,
+   * and it happened to a record nobody had open. Silent would be worse here
+   * than anywhere, since the officer's own screen shows no unit matrix.
+   */
+  vacanciesEnded: number;
   /** Structures that had no name until this card supplied one. */
   buildingsNamed: number;
 }

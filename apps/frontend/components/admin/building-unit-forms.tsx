@@ -6,17 +6,20 @@ import {
   AlertTriangle,
   CalendarClock,
   CalendarDays,
+  DoorClosed,
   EllipsisVertical,
   Footprints,
   Loader2,
   MapPin,
   Search,
   ShieldAlert,
+  Undo2,
   UserRound,
   UsersRound,
 } from 'lucide-react';
 import {
   CASE_TYPE,
+  contradictsVacancy,
   DAMAGE_LEVEL,
   DAMAGE_SOURCE,
   getLabels,
@@ -26,6 +29,8 @@ import {
   SURVEY_STATUS,
   UNIT_STATUS,
   unitStatusForRole,
+  VACANCY_BASIS,
+  VACANCY_END_REASON,
   type BuildingLifecycle,
   type CaseType,
   type CitizenResidence,
@@ -36,6 +41,8 @@ import {
   type StructureType,
   type SurveyStatus,
   type UnitStatus,
+  type VacancyBasis,
+  type VacancyEndReason,
 } from '@mechanization/shared-schemas';
 import {
   createCase,
@@ -45,6 +52,7 @@ import {
   type CitizenListItem,
   type OccupancyFileLink,
   type UnitOccupant,
+  type UnitVacancyConfirmation,
   type UnitVisitRow,
   type UnitWithOccupants,
 } from '@/lib/api-client';
@@ -96,8 +104,31 @@ export const SEARCH_DEBOUNCE_MS = 350;
  * enum shows up here without anyone remembering to add it.
  */
 export const VISIT_OUTCOMES = SURVEY_STATUS.filter(
-  (status): status is Exclude<SurveyStatus, 'NOT_SURVEYED'> => status !== 'NOT_SURVEYED',
+  (status): status is Exclude<SurveyStatus, 'NOT_SURVEYED' | 'VACANT_CONFIRMED'> =>
+    /*
+      `VACANT_CONFIRMED` is excluded for the opposite reason to `NOT_SURVEYED`.
+
+      That one means nobody went. This one is a finding that stops the owner's
+      occupancy fee — and a visit form asks for none of what that needs: what
+      the vacancy rests on, and a record that can be lifted again. Both existed
+      and only one of them exempted anybody, so «شاغرة» on a cell meant two
+      different things depending on which control an officer had used. It goes
+      through «تأكيد الشغور» now, and `logVisitSchema` refuses it here.
+    */
+    status !== 'NOT_SURVEYED' && status !== 'VACANT_CONFIRMED',
 );
+
+/**
+ * The «تأكيد الشغور» standing on a unit, or null.
+ *
+ * `vacancies` arrives newest first and closed rows are kept, so "is this flat
+ * confirmed empty" is the one with no `endedAt` — not merely the newest, and
+ * not the unit's حالة, which a confirmation causes but which can also be set
+ * by an owner's own answer.
+ */
+export function activeVacancy(unit: UnitWithOccupants): UnitVacancyConfirmation | null {
+  return (unit.vacancies ?? []).find((row) => row.endedAt === null) ?? null;
+}
 
 /** The five tints a unit can wear. See `cellBadge` and `UnitStateLegend`. */
 export type CellVariant =
@@ -600,6 +631,7 @@ export function AddPersonForm({
   busy,
   locale,
   newFileHref,
+  vacancy,
   onSubmit,
 }: {
   tenant: string;
@@ -612,15 +644,27 @@ export function AddPersonForm({
    * no-match line says to register the person first.
    */
   newFileHref?: (residence: CitizenResidence) => string;
+  /**
+   * The «تأكيد الشغور» standing on this unit, when there is one.
+   *
+   * Linking somebody who lives there contradicts it, and the server refuses the
+   * pair without an acknowledgement. Asked here rather than left to arrive as a
+   * refusal: the officer can see when the flat was confirmed empty and on what
+   * basis while they are deciding, instead of after a failed save.
+   */
+  vacancy?: UnitVacancyConfirmation | null;
   onSubmit: (
     citizen: CitizenListItem,
     role: OccupancyRole,
     shares?: number,
     unitStatus?: UnitStatus,
+    /** «نعم، لم تعد شاغرة» — sent only when the link contradicts a standing vacancy. */
+    endsVacancy?: boolean,
   ) => void;
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
+  const [acknowledgedVacancy, setAcknowledgedVacancy] = useState(false);
 
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<CitizenListItem[]>([]);
@@ -640,6 +684,18 @@ export function AddPersonForm({
    * a guess nobody made.
    */
   const [unitStatus, setUnitStatus] = useState<UnitStatus | ''>('');
+
+  /**
+   * Whether what is about to be recorded contradicts the standing vacancy.
+   *
+   * The same predicate the server applies (`contradictsVacancy`), imported
+   * rather than restated: a form that warns about something the server allows
+   * teaches officers to ignore the warning, and one that stays quiet about
+   * something it refuses is a failed save with no explanation.
+   */
+  const endsStandingVacancy = Boolean(
+    vacancy && role && contradictsVacancy(role, role === 'OWNER' ? unitStatus || null : null),
+  );
 
   useEffect(() => {
     if (!term.trim()) {
@@ -860,9 +916,39 @@ export function AddPersonForm({
         </p>
       ) : null}
 
+      {/*
+        The flat is confirmed empty and this says somebody is in it.
+
+        A tick rather than a second dialog: the officer is already in the middle
+        of an answer, and what they need is the date and the basis in front of
+        them while they give it. Ticking it lifts the vacancy as «لم تعد شاغرة»
+        with the link — the two are one event — and the server refuses the pair
+        without it, so nothing can override a colleague's finding by accident.
+      */}
+      {endsStandingVacancy ? (
+        <label className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-4 shrink-0"
+            checked={acknowledgedVacancy}
+            onChange={(event) => setAcknowledgedVacancy(event.target.checked)}
+          />
+          <span>
+            {en
+              ? `This unit has been confirmed vacant since ${formatDate(vacancy!.observedAt)}`
+              : `الوحدة مؤكَّد شغورها منذ ${formatDate(vacancy!.observedAt)}`}
+            {vacancy!.basis ? ` (${labels.vacancyBasis[vacancy!.basis]})` : ''}
+            {'. '}
+            {en
+              ? 'Recording an occupant lifts that confirmation.'
+              : 'تسجيل من يشغلها يُنهي تأكيد الشغور.'}
+          </span>
+        </label>
+      ) : null}
+
       <Button
         size="sm"
-        disabled={busy || !chosen || !role}
+        disabled={busy || !chosen || !role || (endsStandingVacancy && !acknowledgedVacancy)}
         onClick={() => {
           if (!chosen || !role) return;
           const parsed = Number(shares);
@@ -874,6 +960,7 @@ export function AddPersonForm({
             // server refuses it on anyone else, whose capacity settles the
             // unit's حالة without being asked.
             role === 'OWNER' && unitStatus ? unitStatus : undefined,
+            endsStandingVacancy ? true : undefined,
           );
         }}
       >
@@ -1096,9 +1183,24 @@ export async function logVisitWithFollowUp(
     visitedAt: values.visitedAt || undefined,
     notes: values.notes || undefined,
   });
-  const logged = en
-    ? `Visit logged — ${result.visitCount} attempt(s) on this unit`
-    : `تم تسجيل الزيارة — ${result.visitCount} محاولة على هذه الوحدة`;
+  const logged = [
+    en
+      ? `Visit logged — ${result.visitCount} attempt(s) on this unit`
+      : `تم تسجيل الزيارة — ${result.visitCount} محاولة على هذه الوحدة`,
+    /*
+      The unit's حالة المسح did not move to this outcome, and saying so is the
+      point: a confirmed vacancy is a finding with an exemption resting on it,
+      so a visit does not overwrite it. If the officer found somebody home, the
+      confirmation is what has to be lifted — and this is where they learn that.
+    */
+    result.vacancyStands
+      ? en
+        ? 'the unit stays confirmed vacant — lift that if you found it occupied'
+        : 'وتبقى الوحدة مؤكَّدة الشغور — ألغِ التأكيد إن وجدتها مشغولة'
+      : null,
+  ]
+    .filter(Boolean)
+    .join('، ');
 
   const caseType = FOLLOW_UP_CASE[values.outcome];
   if (!caseType || !values.revisitAt) return logged;
@@ -1139,6 +1241,9 @@ export async function logVisitWithFollowUp(
  * owners are settled by a تصريح بالشغور in the seasonal panel above.
  */
 export function vacancyBlocker(unit: UnitWithOccupants, en: boolean): string | null {
+  if (activeVacancy(unit)) {
+    return en ? 'This unit is already confirmed vacant.' : 'الوحدة مؤكَّد شغورها مسبقاً.';
+  }
   if (livingOccupants(unit).length > 0) {
     return en
       ? 'A tenant or occupant is recorded here — end their occupancy first. An owner does not block this.'
@@ -1698,6 +1803,564 @@ export function OccupantList({
           if (!open) setEnding(null);
         }}
         onConfirm={(input) => onEnd(ending!, input)}
+      />
+    </>
+  );
+}
+
+// ────────────────────────────  «تأكيد الشغور»  ────────────────────────────
+
+/**
+ * The safeguard «تأكيد الشغور» never had.
+ *
+ * One tap used to write «شاغرة» over whatever the unit said, and that tap
+ * exempts the owner from the occupancy fee — the flat stops being billed as
+ * lived in. Nothing asked what the officer had seen, nothing recorded who
+ * decided it, and nothing could put it back.
+ *
+ * So this asks three things and states one. **What it rests on** has no
+ * default, because a pre-selected basis is exactly what muscle memory confirms
+ * — and the law distinguishes them: a تصريح بالشغور filed by the owner is the
+ * strongest, a neighbour's word the weakest, and a unit is presumed occupied
+ * until something says otherwise (هيئة التشريع والاستشارات 725/2003). **When**
+ * it was seen empty, back-datable from a paper round. **Who said so**, required
+ * for hearsay alone. And it states the consequence — including naming the owner
+ * whose bill this changes, because that is the fact an officer can check
+ * against the person standing in front of them.
+ *
+ * It also says what it will overwrite where the flat already claims to be
+ * occupied: «مؤجرة» on the register and «شاغرة» at the door is a contradiction
+ * worth a second look before it is resolved silently.
+ */
+export function ConfirmVacancyDialog({
+  unit,
+  unitCode,
+  locale,
+  open,
+  onOpenChange,
+  onConfirm,
+}: {
+  unit: UnitWithOccupants;
+  /** The building-qualified code, so the title names the flat the way the panel does. */
+  unitCode: string;
+  locale: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (input: { basis: VacancyBasis; observedAt?: string; notes: string }) => Promise<void>;
+}) {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+  const [basis, setBasis] = useState<VacancyBasis | null>(null);
+  const [observedAt, setObservedAt] = useState(today());
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  // A fresh question every time it opens — never the previous flat's answer.
+  useEffect(() => {
+    if (open) {
+      setBasis(null);
+      setObservedAt(today());
+      setNotes('');
+      setFailure(null);
+      setBusy(false);
+    }
+  }, [open]);
+
+  if (!open) return null;
+
+  const owners = liveSpells(unit).filter((occupant) => occupant.role === 'OWNER');
+  const status = effectiveUnitStatus(unit);
+  const overwriting = status && !isUnoccupied(status) ? status : null;
+  // Hearsay names its source; the server refuses it otherwise.
+  const needsSource = basis === 'NEIGHBOUR_OR_CARETAKER';
+
+  const confirm = async () => {
+    if (!basis || busy || (needsSource && !notes.trim())) return;
+    setBusy(true);
+    setFailure(null);
+    try {
+      await onConfirm({
+        basis,
+        ...(observedAt && observedAt !== today() ? { observedAt } : {}),
+        notes: notes.trim(),
+      });
+      onOpenChange(false);
+    } catch (caught) {
+      setFailure(
+        caught instanceof Error && caught.message
+          ? caught.message
+          : en
+            ? 'Could not confirm the vacancy.'
+            : 'تعذّر تأكيد الشغور.',
+      );
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={busy ? undefined : onOpenChange}>
+      <DialogContent className="max-w-md" closeLabel={en ? 'Cancel' : 'إلغاء'}>
+        <DialogHeader>
+          <div className="flex items-start gap-3">
+            <span
+              aria-hidden
+              className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-sky-500/10 text-sky-700 dark:text-sky-400"
+            >
+              <DoorClosed className="size-5" />
+            </span>
+            <div className="min-w-0 space-y-1.5 text-start">
+              <DialogTitle>
+                {en ? 'Confirm unit ' : 'تأكيد شغور الوحدة '}
+                <span dir="ltr" className="font-mono">
+                  {unitCode}
+                </span>
+                {en ? ' vacant?' : '؟'}
+              </DialogTitle>
+              <DialogDescription>
+                {en
+                  ? 'The unit is recorded as vacant and stops being billed to its owner as occupied. You can lift this at any time.'
+                  : 'تُسجَّل الوحدة «شاغرة» وتتوقف عنها رسوم الإشغال على مالكها. يمكنك إلغاء التأكيد في أي وقت.'}
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          {owners.length > 0 ? (
+            <p className="rounded-md bg-accent/40 px-2.5 py-2 text-xs">
+              {en ? 'Owner on record: ' : 'المالك المسجَّل: '}
+              <span className="font-medium">
+                {owners
+                  .map((owner) => owner.citizenName ?? (en ? 'Unnamed' : 'بلا اسم'))
+                  .join('، ')}
+              </span>
+            </p>
+          ) : null}
+
+          {overwriting ? (
+            <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs leading-relaxed">
+              <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+              {en
+                ? `The register currently says «${labels.unitStatus[overwriting]}». Confirming replaces that.`
+                : `الوحدة مسجَّلة حالياً «${labels.unitStatus[overwriting]}». التأكيد يستبدل هذه الحالة.`}
+            </p>
+          ) : null}
+
+          <fieldset className="space-y-1.5">
+            <legend className="text-xs font-medium">
+              {en ? 'What says it is empty?' : 'ما الذي يثبت شغورها؟'}{' '}
+              <span className="text-destructive">*</span>
+            </legend>
+            <div className="grid gap-2" role="radiogroup">
+              {VACANCY_BASIS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={basis === option}
+                  onClick={() => setBasis(option)}
+                  className={cn(
+                    'min-h-11 rounded-md border px-3 py-2 text-start text-sm transition-colors',
+                    basis === option
+                      ? 'border-primary bg-primary/10 font-medium text-primary'
+                      : 'hover:bg-accent',
+                  )}
+                >
+                  {labels.vacancyBasis[option]}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          <Field
+            label={en ? 'Seen empty on' : 'تاريخ المعاينة'}
+            htmlFor="vacancy-observed"
+            hint={en ? 'Defaults to today' : 'الافتراضي اليوم'}
+          >
+            <Input
+              id="vacancy-observed"
+              type="date"
+              max={today()}
+              value={observedAt}
+              onChange={(event) => setObservedAt(event.target.value)}
+              dir="ltr"
+              className="text-start"
+            />
+          </Field>
+
+          <Field
+            label={en ? 'Notes' : 'ملاحظات'}
+            htmlFor="vacancy-notes"
+            required={needsSource}
+            hint={
+              needsSource
+                ? en
+                  ? 'Name who said so — it is what the record rests on'
+                  : 'اذكر من أفاد بذلك — عليه يستند التأكيد'
+                : undefined
+            }
+          >
+            <Textarea
+              id="vacancy-notes"
+              rows={2}
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              placeholder={
+                en ? 'Locked, no furniture, no meter reading' : 'مقفلة، بلا أثاث، والعداد متوقف'
+              }
+            />
+          </Field>
+
+          {failure ? (
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
+            >
+              {failure}
+            </p>
+          ) : null}
+        </div>
+
+        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={busy}
+            className="w-full sm:w-auto"
+          >
+            {en ? 'Cancel' : 'إلغاء'}
+          </Button>
+          <Button
+            onClick={() => void confirm()}
+            disabled={busy || !basis || (needsSource && !notes.trim())}
+            className="w-full sm:w-auto"
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+            {en ? 'Confirm vacant' : 'تأكيد الشغور'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * The undo, asked the way `EndOccupancyDialog` asks.
+ *
+ * The reason is not a formality: it decides what the flat goes back to, and the
+ * dialog says which before it is pressed. «سُجِّل بالخطأ» puts back the حالة the
+ * confirmation replaced — the register was wrong and this is the correction.
+ * «لم تعد شاغرة» leaves the unit occupied-by-someone-unrecorded, which is the
+ * presumption the law starts from and the state that bills the owner again
+ * until whoever moved in is recorded.
+ */
+export function EndVacancyDialog({
+  vacancy,
+  unitCode,
+  locale,
+  onOpenChange,
+  onConfirm,
+}: {
+  /** The standing confirmation; the dialog is open while this is set. */
+  vacancy: UnitVacancyConfirmation | null;
+  unitCode: string;
+  locale: string;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (input: {
+    reason: VacancyEndReason;
+    endedAt?: string;
+    notes: string;
+  }) => Promise<void>;
+}) {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+  const [reason, setReason] = useState<VacancyEndReason | null>(null);
+  const [endedAt, setEndedAt] = useState(today());
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (vacancy) {
+      setReason(null);
+      setEndedAt(today());
+      setNotes('');
+      setFailure(null);
+      setBusy(false);
+    }
+  }, [vacancy]);
+
+  if (!vacancy) return null;
+
+  const restored = vacancy.previousUnitStatus
+    ? labels.unitStatus[vacancy.previousUnitStatus]
+    : en
+      ? 'Occupancy not established'
+      : 'الإشغال غير محدد';
+
+  const confirm = async () => {
+    if (!reason || busy) return;
+    setBusy(true);
+    setFailure(null);
+    try {
+      await onConfirm({
+        reason,
+        ...(reason === 'NO_LONGER_VACANT' && endedAt ? { endedAt } : {}),
+        notes: notes.trim(),
+      });
+      onOpenChange(false);
+    } catch (caught) {
+      setFailure(
+        caught instanceof Error && caught.message
+          ? caught.message
+          : en
+            ? 'Could not lift the vacancy.'
+            : 'تعذّر إلغاء تأكيد الشغور.',
+      );
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={busy ? undefined : onOpenChange}>
+      <DialogContent className="max-w-md" closeLabel={en ? 'Cancel' : 'إلغاء'}>
+        <DialogHeader>
+          <div className="min-w-0 space-y-1.5 text-start">
+            <DialogTitle>
+              {en ? 'Lift the vacancy on unit ' : 'إلغاء تأكيد شغور الوحدة '}
+              <span dir="ltr" className="font-mono">
+                {unitCode}
+              </span>
+              {en ? '?' : '؟'}
+            </DialogTitle>
+            <DialogDescription>
+              {en
+                ? 'The confirmation is closed and kept on record — it is not deleted.'
+                : 'يُغلق التأكيد ويبقى محفوظاً في السجل — لا يُحذف.'}
+            </DialogDescription>
+          </div>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <fieldset className="space-y-1.5">
+            <legend className="text-xs font-medium">
+              {en ? 'Why?' : 'السبب'} <span className="text-destructive">*</span>
+            </legend>
+            <div className="grid gap-2" role="radiogroup">
+              {VACANCY_END_REASON.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={reason === option}
+                  onClick={() => setReason(option)}
+                  className={cn(
+                    'min-h-11 rounded-md border px-3 py-2 text-start text-sm transition-colors',
+                    reason === option
+                      ? 'border-primary bg-primary/10 font-medium text-primary'
+                      : 'hover:bg-accent',
+                  )}
+                >
+                  {labels.vacancyEndReason[option]}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          {/* What the flat will read afterwards, said before it is pressed. */}
+          {reason ? (
+            <p className="rounded-md bg-accent/40 px-2.5 py-2 text-xs leading-relaxed">
+              {reason === 'RECORDED_IN_ERROR'
+                ? en
+                  ? `The unit goes back to «${restored}».`
+                  : `تعود الوحدة إلى «${restored}».`
+                : en
+                  ? 'The unit is treated as occupied by somebody not yet recorded, and is billed to its owner again until they are. Record whoever lives there next.'
+                  : 'تُعدّ الوحدة مشغولة بمن لم يُسجَّل بعد، وتعود الرسوم على المالك إلى أن يُسجَّل. سجّل من يسكنها بعد ذلك.'}
+            </p>
+          ) : null}
+
+          {reason === 'NO_LONGER_VACANT' ? (
+            <Field label={en ? 'Occupied again since' : 'تاريخ انتهاء الشغور'} htmlFor="vacancy-ended">
+              <Input
+                id="vacancy-ended"
+                type="date"
+                min={vacancy.observedAt.slice(0, 10)}
+                max={today()}
+                value={endedAt}
+                onChange={(event) => setEndedAt(event.target.value)}
+                dir="ltr"
+                className="text-start"
+              />
+            </Field>
+          ) : null}
+
+          <Field label={en ? 'Notes' : 'ملاحظات'} htmlFor="vacancy-end-notes">
+            <Textarea
+              id="vacancy-end-notes"
+              rows={2}
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              placeholder={
+                en ? 'A family moved in at the start of the month' : 'سكنتها أسرة مطلع الشهر'
+              }
+            />
+          </Field>
+
+          {failure ? (
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
+            >
+              {failure}
+            </p>
+          ) : null}
+        </div>
+
+        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={busy}
+            className="w-full sm:w-auto"
+          >
+            {en ? 'Cancel' : 'إلغاء'}
+          </Button>
+          <Button
+            onClick={() => void confirm()}
+            disabled={busy || !reason}
+            className="w-full sm:w-auto"
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+            {en ? 'Lift the vacancy' : 'إلغاء تأكيد الشغور'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Why this flat reads «شاغرة», and the one control that changes it.
+ *
+ * Shown wherever a confirmation is standing. The three facts on it are the ones
+ * a dispute turns on — since when, on what basis, and by whom — and they used
+ * to exist nowhere: the matrix said «شاغرة» and that was the whole of the
+ * record. Underneath, the confirmations already closed, because a flat that has
+ * been confirmed empty twice before is telling an officer something about the
+ * building.
+ *
+ * Ones closed «سُجِّل بالخطأ» are left out and counted, exactly as occupancies
+ * recorded in error are: they are not history, and a list that shows them
+ * invites reading a correction as a fact.
+ */
+export function VacancyPanel({
+  unit,
+  unitCode,
+  locale,
+  busy,
+  canWrite,
+  onEnd,
+}: {
+  unit: UnitWithOccupants;
+  unitCode: string;
+  locale: string;
+  busy: boolean;
+  canWrite: boolean;
+  onEnd: (input: {
+    reason: VacancyEndReason;
+    endedAt?: string;
+    notes: string;
+  }) => Promise<void>;
+}) {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+  const [ending, setEnding] = useState<UnitVacancyConfirmation | null>(null);
+
+  const standing = activeVacancy(unit);
+  const closed = (unit.vacancies ?? []).filter(
+    (row) => row.endedAt !== null && row.endReason !== 'RECORDED_IN_ERROR',
+  );
+  const corrections = (unit.vacancies ?? []).filter(
+    (row) => row.endReason === 'RECORDED_IN_ERROR',
+  ).length;
+
+  if (!standing && closed.length === 0 && corrections === 0) return null;
+
+  return (
+    <>
+      {standing ? (
+        <div className="space-y-2 rounded-md border border-sky-500/30 bg-sky-500/5 p-3">
+          <p className="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
+            <DoorClosed className="size-3.5 shrink-0 text-sky-700 dark:text-sky-400" aria-hidden />
+            {en ? 'Confirmed vacant since ' : 'مؤكَّدة الشغور منذ '}
+            {formatDate(standing.observedAt)}
+          </p>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {standing.basis
+              ? labels.vacancyBasis[standing.basis]
+              : en
+                ? 'Recorded before the basis was asked for'
+                : 'سُجِّل قبل أن يُسأل عن المستند'}
+            {standing.confirmedByName ? ` — ${standing.confirmedByName}` : ''}
+          </p>
+          {standing.notes ? (
+            <p className="text-[11px] leading-relaxed">{standing.notes}</p>
+          ) : null}
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {en
+              ? 'The owner is not billed the occupancy fee for it while this stands.'
+              : 'لا تُحتسب على المالك رسوم الإشغال عنها ما دام هذا التأكيد قائماً.'}
+          </p>
+          {canWrite ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setEnding(standing)}
+            >
+              <Undo2 className="size-4" aria-hidden />
+              {en ? 'Lift the vacancy…' : 'إلغاء تأكيد الشغور…'}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {closed.length > 0 ? (
+        <ul className="space-y-1">
+          {closed.map((row) => (
+            <li
+              key={row.id}
+              className="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground"
+            >
+              <DoorClosed className="size-3 shrink-0" aria-hidden />
+              {en ? 'Vacant ' : 'شاغرة '}
+              {formatDate(row.observedAt)} — {formatDate(row.endedAt!)}
+              {row.endReason ? (
+                <Badge variant="soft-muted">{labels.vacancyEndReason[row.endReason]}</Badge>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {corrections > 0 ? (
+        <p className="text-[11px] text-muted-foreground">
+          {en
+            ? `${corrections} vacancy confirmation(s) recorded in error — kept, not shown.`
+            : `${corrections} تأكيد شغور سُجِّل بالخطأ — محفوظ ولا يُعرض.`}
+        </p>
+      ) : null}
+
+      <EndVacancyDialog
+        vacancy={ending}
+        unitCode={unitCode}
+        locale={locale}
+        onOpenChange={(open) => {
+          if (!open) setEnding(null);
+        }}
+        onConfirm={onEnd}
       />
     </>
   );

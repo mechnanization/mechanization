@@ -20,6 +20,8 @@ import type {
   SurveyStatus,
   UnitStatus,
   UnitType,
+  VacancyBasis,
+  VacancyEndReason,
 } from './enums';
 import type { CaseStatus } from './case.schema';
 import type { FeeBasis, FeeBearer, FeeTargetCategory } from './fee.schema';
@@ -290,6 +292,20 @@ export const ar = {
     OWNERSHIP_TRANSFERRED: 'بيع أو نقل ملكية',
     RECORDED_IN_ERROR: 'سُجِّل بالخطأ',
   } satisfies Record<OccupancyEndReason, string>,
+
+  /** ما يستند إليه «تأكيد الشغور». See `VACANCY_BASIS`. */
+  vacancyBasis: {
+    FIELD_INSPECTION: 'معاينة ميدانية — وُجدت خالية',
+    OWNER_STATEMENT: 'إفادة المالك',
+    NEIGHBOUR_OR_CARETAKER: 'إفادة الجيران أو الناطور',
+    DECLARATION_FILED: 'تصريح بالشغور مقدَّم إلى البلدية',
+  } satisfies Record<VacancyBasis, string>,
+
+  /** Why a confirmed vacancy was lifted. See `VACANCY_END_REASON`. */
+  vacancyEndReason: {
+    RECORDED_IN_ERROR: 'سُجِّل بالخطأ — لم تكن شاغرة',
+    NO_LONGER_VACANT: 'لم تعد شاغرة',
+  } satisfies Record<VacancyEndReason, string>,
 
   /**
    * نوع الملف — a household that lives in the town, or somebody who lives
@@ -583,6 +599,18 @@ export const en = {
     OWNERSHIP_TRANSFERRED: 'Sold or ownership transferred',
     RECORDED_IN_ERROR: 'Recorded in error',
   } satisfies Record<OccupancyEndReason, string>,
+
+  vacancyBasis: {
+    FIELD_INSPECTION: 'Field inspection — found empty',
+    OWNER_STATEMENT: 'The owner says so',
+    NEIGHBOUR_OR_CARETAKER: 'A neighbour or caretaker says so',
+    DECLARATION_FILED: 'Vacancy declaration filed with the municipality',
+  } satisfies Record<VacancyBasis, string>,
+
+  vacancyEndReason: {
+    RECORDED_IN_ERROR: 'Recorded in error — it was not vacant',
+    NO_LONGER_VACANT: 'No longer vacant',
+  } satisfies Record<VacancyEndReason, string>,
 
   citizenResidence: {
     RESIDENT: 'Household living in the town',
