@@ -25,6 +25,7 @@ import {
   formatBuildingCode,
   getLabels,
   isOccupiableLifecycle,
+  isUnsurveyableShell,
   nextBuildingSuffix,
   STRUCTURE_TYPE,
   UNZONED_CODE,
@@ -545,12 +546,81 @@ export function BuildingEditor({
    * unfixable from the one screen that exists to fix them.
    */
   const houseShortcut = isHouse && !editing;
-  /** The last real step — the matrix step doesn't exist for a new house. */
-  const lastStep: 0 | 1 | 2 = houseShortcut ? 1 : 2;
-  const visibleSteps = houseShortcut ? STEPS.slice(0, 2) : STEPS;
+
+  /** Units the census already holds for this building, as loaded. */
+  const hasRecordedUnits = useMemo(
+    () => gridUnits.some((unit) => unit.existingId),
+    [gridUnits],
+  );
+
+  /**
+   * A structure whose interior cannot be surveyed — «مهدوم» or «متضررة من
+   * الحرب و غير مسكونة». There are no storeys to count and no flats to paint,
+   * so the wizard stops asking for both.
+   *
+   * Withheld from a building that already has units on file, and that
+   * exception is the important half. Marking a standing block war-damaged is
+   * a correction about the shell; its twelve recorded flats still carry
+   * occupancies, visits and codes, and hiding the only screen that can reach
+   * them would strand them — findable by nobody, fixable from nowhere. The
+   * officer gets the matrix, and decides unit by unit what became of each.
+   */
+  const shellShortcut = isUnsurveyableShell(lifecycleStatus) && !hasRecordedUnits;
+
+  /**
+   * Standing, damaged, empty — the full wizard, deliberately. The storeys are
+   * countable from the pavement and the flats are what reconstruction is
+   * costed on, so this building gets its floor fields and its matrix like any
+   * other. Only the notes prompt changes, to ask for what was seen.
+   */
+  const warDamaged = lifecycleStatus === 'WAR_DAMAGED_UNINHABITED';
+
+  /** Neither a new house nor an unsurveyable shell has a matrix to paint. */
+  const skipsMatrix = houseShortcut || shellShortcut;
+  /** The last real step — the matrix step doesn't exist for either of them. */
+  const lastStep: 0 | 1 | 2 = skipsMatrix ? 1 : 2;
+  const visibleSteps = skipsMatrix ? STEPS.slice(0, 2) : STEPS;
+
+  /**
+   * The wizard shrinking under the officer's feet must not leave them standing
+   * on a step that no longer exists — on an edit every step is clickable, so
+   * they can be on the matrix when they set the status to «مهدوم».
+   */
+  useEffect(() => {
+    setStep((current) => (current > lastStep ? lastStep : current));
+  }, [lastStep]);
+
+  /**
+   * The fields are hidden, so the values behind them have to be ones the
+   * schema accepts rather than whatever was typed before: `floorsCount` is
+   * `.min(1)` and would refuse a save with an empty box, and a 4 left over
+   * from a guess at a collapsed building is a fabricated observation.
+   *
+   * 1 and 0 are not claims about the rubble. They are the schema's floor,
+   * recorded because something must be, and the notes field below is where
+   * what was actually seen goes.
+   */
+  useEffect(() => {
+    if (!shellShortcut) return;
+    setFloorsCount('1');
+    setBasementsCount('0');
+    setGridSize(DEFAULT_GRID_SIZE);
+    setGridUnits((current) => current.filter((unit) => unit.existingId));
+  }, [shellShortcut]);
+
+  /** The reverse: a status corrected back to a standing building gets its
+   *  floor count back rather than silently keeping the 1 this shortcut wrote.
+   *  Skipped for a house, whose 1 is the truth and whose own effect owns it. */
+  const wasShell = useRef(shellShortcut);
+  useEffect(() => {
+    if (wasShell.current && !shellShortcut && !houseShortcut) {
+      setFloorsCount((current) => (current === '1' ? '3' : current));
+    }
+    wasShell.current = shellShortcut;
+  }, [shellShortcut, houseShortcut]);
 
   useEffect(() => {
-    if (!houseShortcut) return;
+    if (!houseShortcut || shellShortcut) return;
     setFloorsCount('1');
     setGridSize(1);
     setGridUnits([
@@ -563,7 +633,10 @@ export function BuildingEditor({
         colorIndex: 0,
       },
     ]);
-  }, [houseShortcut]);
+    /* `shellShortcut` is a dependency, not just a guard: a house marked
+       «مهدوم» and then corrected back has had its one unit cleared, and
+       without this the effect would not re-run to paint it again. */
+  }, [houseShortcut, shellShortcut]);
 
   /** The reverse transition — leaving a structure type of "house" un-paints
    *  the auto-created unit rather than leaving it stranded as a stale 1×1
@@ -911,9 +984,17 @@ export function BuildingEditor({
     ? en
       ? 'Save Changes'
       : 'حفظ التعديلات'
-    : en
-      ? 'Create Building'
-      : 'إنشاء المبنى';
+    : shellShortcut
+      ? /* «حفظ المبنى» rather than «إنشاء المبنى» on a shortened wizard: the
+           officer is on step 2 of 2 and the button is where «التالي» stood a
+           moment ago, so it has to read as the end of the form, not as a
+           second way of starting one. */
+        en
+        ? 'Save Building'
+        : 'حفظ المبنى'
+      : en
+        ? 'Create Building'
+        : 'إنشاء المبنى';
 
   if (editing && loadingDetail) {
     return (
@@ -1385,6 +1466,39 @@ export function BuildingEditor({
                 </Field>
               </div>
 
+              {/*
+                Said out loud, because two things vanish at once — the floor
+                fields above and the matrix step in the rail — and a form that
+                quietly drops half of itself reads as a bug. The second line is
+                the one that matters on an edit: it explains why a building
+                that already has flats keeps its matrix while this one loses it.
+              */}
+              {isUnsurveyableShell(lifecycleStatus) ? (
+                <div className="flex items-start gap-2 rounded-xl border border-sky-500/40 bg-sky-500/10 p-3.5 text-xs text-sky-700 dark:text-sky-400">
+                  <Info className="size-4 shrink-0 mt-0.5" aria-hidden />
+                  <div className="space-y-1">
+                    <p className="font-semibold">
+                      {en
+                        ? 'Structure classified as demolished — there are no storeys left to count, so the floor fields and the unit matrix are skipped automatically.'
+                        : 'المنشأة مصنَّفة مهدومة — لم يبقَ طوابق تُعدّ، لذا يُتخطّى عدد الطوابق ومصفوفة الوحدات تلقائياً.'}
+                    </p>
+                    {hasRecordedUnits ? (
+                      <p className="opacity-80">
+                        {en
+                          ? 'This building already has units on file, so the matrix stays available — record what became of each one there.'
+                          : 'لهذا المبنى وحدات مسجَّلة مسبقاً، لذا تبقى المصفوفة متاحة — سجِّل مصير كل وحدة فيها.'}
+                      </p>
+                    ) : (
+                      <p className="opacity-80">
+                        {en
+                          ? 'Describe what was observed in the field notes below.'
+                          : 'دوِّن ما شوهد ميدانياً في الملاحظات أدناه.'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
               {duplicates && duplicates.length > 0 ? (
                 <div className="space-y-3 rounded-xl border border-warning/50 bg-warning/10 p-3.5">
                   <div className="flex items-start gap-2 text-xs font-semibold text-warning">
@@ -1466,7 +1580,7 @@ export function BuildingEditor({
                 </Field>
               </div>
 
-              {houseShortcut ? null : (
+              {skipsMatrix ? null : (
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field
                     label={en ? 'Floors Count' : 'عدد الطوابق'}
@@ -1537,15 +1651,40 @@ export function BuildingEditor({
                 label={en ? 'Field Notes (Optional)' : 'ملاحظات ميدانية (اختياري)'}
                 htmlFor="building-notes"
                 error={fieldErrors.notes}
-                hint={en ? 'Useful guidance for upcoming field visits' : 'إرشادات تفيد فرق المسح الميداني القادمة'}
+                hint={
+                  /* On a demolished plot this field stops being optional in
+                     practice: the floor count and the matrix are gone, so it
+                     is the only place left that can say what was seen. */
+                  shellShortcut
+                    ? en
+                      ? 'The only record of what was observed — the floor count and matrix are skipped'
+                      : 'السجل الوحيد لما شوهد — عدد الطوابق والمصفوفة متخطَّاة'
+                    : warDamaged
+                      ? en
+                        ? 'Record the damage — the storeys and units are still entered normally'
+                        : 'دوِّن الأضرار — عدد الطوابق والوحدات تُدخَل كالمعتاد'
+                      : en
+                        ? 'Useful guidance for upcoming field visits'
+                        : 'إرشادات تفيد فرق المسح الميداني القادمة'
+                }
               >
                 <Textarea
                   id="building-notes"
-                  rows={2}
+                  rows={shellShortcut || warDamaged ? 3 : 2}
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
                   placeholder={
-                    en ? 'e.g. Side entrance via garden stairs…' : 'مثال: المدخل من الدرج الجانبي عبر الحديقة…'
+                    shellShortcut
+                      ? en
+                        ? 'e.g. Structure cleared after shelling; plot empty at the time of the visit…'
+                        : 'مثال: أُزيلت المنشأة بعد القصف؛ العقار خالٍ وقت الزيارة…'
+                      : warDamaged
+                        ? en
+                          ? 'e.g. Severe structural damage from shelling, uninhabitable, residents displaced; storeys counted from the street…'
+                          : 'مثال: أضرار إنشائية بالغة من القصف، غير صالحة للسكن، السكان نازحون؛ عُدّت الطوابق من الخارج…'
+                        : en
+                          ? 'e.g. Side entrance via garden stairs…'
+                          : 'مثال: المدخل من الدرج الجانبي عبر الحديقة…'
                   }
                   className="resize-none"
                 />

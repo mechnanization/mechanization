@@ -715,6 +715,18 @@ enum BuildingLifecycle {
   /// occupiable on purpose — an abandoned block with a displaced family in it
   /// is precisely what a war-damage census is looking for.
   DERELICT
+  /// متضررة من الحرب وغير مسكونة — standing, war-damaged, established as empty.
+  ///
+  /// Still a building: its storeys are countable and its units are recorded
+  /// like any other's, because how many flats a damaged block holds is the
+  /// figure reconstruction is costed on, and it is knowable only while the
+  /// structure is still standing. Not `DEMOLISHED`, which has nothing left to
+  /// measure.
+  ///
+  /// Outside the occupiable denominator where `DERELICT` is inside it, and the
+  /// difference is occupancy rather than fabric: a derelict block may shelter a
+  /// displaced family and gets knocked on, this one has been found empty.
+  WAR_DAMAGED_UNINHABITED
   DEMOLISHED
   NOT_REALISED
 }
