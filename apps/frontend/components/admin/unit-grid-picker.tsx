@@ -829,7 +829,22 @@ export function UnitGridPicker({
         the last column used to leave the page.
       */}
       <div dir="ltr" className="overflow-x-auto overscroll-x-contain max-h-[360px] sm:max-h-[420px] overflow-y-auto rounded-xl border border-border/80 bg-muted/10 p-2 sm:p-2.5">
-        <div className="inline-flex flex-col gap-1 min-w-full">
+        {/*
+          `inline-flex` with `min-w-full`, and both halves are load-bearing.
+
+          `min-w-full` is what makes the matrix fill the panel when it is
+          narrower than the box — so this is already the "fill the width" half,
+          without stretching any cell beyond its share.
+
+          `inline-flex` is what lets it grow *past* the box when twenty columns
+          do not fit, so the rows span the whole scrollable width rather than
+          being clipped at the viewport edge. A plain `flex` would cap every row
+          at 100% of the scroll port, and the ground floor's pavement rule —
+          the dashed border that separates the basements from everything above
+          them — would stop dead in the middle of the grid on any building wide
+          enough to scroll.
+        */}
+        <div className="inline-flex min-w-full flex-col gap-1.5">
           {rows.map((floor) => {
             return (
               <div
@@ -918,7 +933,33 @@ export function UnitGridPicker({
                           if (unit) openEdit(unit);
                         }}
                         className={cn(
-                          'relative aspect-square min-h-9 touch-none select-none rounded-[4px] border text-[10px] font-semibold leading-none transition-colors',
+                          /*
+                            A fixed height, and deliberately not `aspect-square`.
+
+                            Square cells sound right for a grid and behave badly
+                            in one: the columns are `1fr`, so on a wide screen a
+                            three-column matrix gave each cell a third of the
+                            panel — some four hundred pixels — and
+                            `aspect-square` made it four hundred tall to match.
+                            Three floors then needed twelve hundred pixels in a
+                            box capped at four hundred, so the officer was handed
+                            a viewport onto one and a half cells and had to
+                            scroll a 3×3 grid. The fewer the columns, the worse
+                            it got, which is exactly backwards.
+
+                            Height is now the thing that is fixed and width is
+                            the thing that flexes, so the matrix fills its box
+                            across and fits down it: nine floors sit inside the
+                            same cap that used to hold one and a half.
+
+                            44px at the small end is the touch-target floor the
+                            tablet pass set, and it is the same shape the
+                            read-only matrix on the ledger page already draws
+                            (`MATRIX_ROW_HEIGHT`) — a floor is a horizontal strip
+                            divided into units, which is what a building
+                            elevation actually looks like.
+                          */
+                          'relative h-11 touch-none select-none rounded-[4px] border text-[10px] font-semibold leading-none transition-colors sm:h-12',
                           !unit && !isPendingCell &&
                             'border-border/70 bg-background hover:bg-muted/60 cursor-pointer',
                           isPendingCell && !unit && 'border-primary bg-primary/15',
