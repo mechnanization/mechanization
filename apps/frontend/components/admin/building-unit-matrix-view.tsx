@@ -38,6 +38,7 @@ import {
   endVacancy,
   getBuilding,
   getBuildingDamage,
+  linkOccupancyOwner,
   logApiError,
   recordDamage,
   recordOccupancy,
@@ -78,8 +79,10 @@ import {
   logVisitWithFollowUp,
   occupancyMessage,
   OccupantList,
+  ownerLinkMessage,
   SeasonalHomePanel,
   UnitStateLegend,
+  unitOwners,
   vacancyBlocker,
   VacancyPanel,
   VisitForm,
@@ -429,6 +432,26 @@ export function BuildingUnitMatrixView({
     }
     await load();
     toast.success(endTenancyMessage(result, locale));
+  };
+
+  /** «ربط بالمالك» — a refusal is rethrown for the dialog to show, as `closeSpell`'s is. */
+  const linkOwner = async (occupant: UnitOccupant, ownerId: string, confirmRecordedAfter: boolean) => {
+    if (!token) throw new Error('unauthenticated');
+    let result: Awaited<ReturnType<typeof linkOccupancyOwner>>;
+    try {
+      result = await linkOccupancyOwner(tenant, token, occupant.id, ownerId, confirmRecordedAfter);
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not link the owner.'
+            : 'تعذّر الربط بالمالك.',
+      );
+    }
+    await load();
+    toast.success(ownerLinkMessage(result, en));
   };
 
   const saveSeasonal = (
@@ -805,6 +828,7 @@ export function BuildingUnitMatrixView({
                 busy={busy}
                 citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
                 onEnd={closeSpell}
+                onLinkOwner={linkOwner}
               />
 
               {/* Why the flat reads «شاغرة», and the control that lifts it. */}
@@ -936,7 +960,8 @@ export function BuildingUnitMatrixView({
                     }`
                   }
                   vacancy={activeVacancy(selectedUnit)}
-                  onSubmit={(citizen, occRole, shares, unitStatus, endsVacancy) =>
+                  owners={unitOwners(selectedUnit)}
+                  onSubmit={({ citizen, role: occRole, endsVacancy, ...rest }) =>
                     void run(
                       async () => {
                         if (!token) throw new Error('unauthenticated');
@@ -944,8 +969,7 @@ export function BuildingUnitMatrixView({
                           unitId: selectedUnit.id,
                           citizenId: citizen.id,
                           role: occRole,
-                          shares,
-                          unitStatus,
+                          ...rest,
                           ...(endsVacancy ? { endsVacancy } : {}),
                         });
                         return occupancyMessage(
@@ -953,6 +977,8 @@ export function BuildingUnitMatrixView({
                           selectedUnit.unitCode,
                           result,
                           en,
+                          unitOwners(selectedUnit).find((owner) => owner.citizenId === rest.landlordCitizenId)
+                            ?.citizenName,
                         );
                       },
                       en ? 'Could not record the occupancy.' : 'تعذّر تسجيل الإشغال.',

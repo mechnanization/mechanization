@@ -6,6 +6,7 @@ import {
   createDamageAssessmentSchema,
   endOccupancySchema,
   endVacancySchema,
+  linkOccupancyOwnerSchema,
   logVisitSchema,
   unitBlueprintSchema,
   updateBuildingSchema,
@@ -18,6 +19,7 @@ import {
   type CreateDamageAssessmentInput,
   type EndOccupancyInput,
   type EndVacancyInput,
+  type LinkOccupancyOwnerInput,
   type LogVisitInput,
   type UnitBlueprint,
   type UpdateBuildingInput,
@@ -240,6 +242,9 @@ export class BuildingsController {
    * Records who is in a unit — and closes whatever case was waiting to find
    * out, which is why the response says how many closed. Silently resolving
    * someone else's case is how a dispatch list stops being believed.
+   *
+   * Through `TenancyService`, so a مستأجر or شاغل بتسامح and the owner they hold
+   * the flat from are recorded and linked as one write.
    */
   @Roles(...WRITE_ROLES)
   @Post('occupancies')
@@ -247,7 +252,27 @@ export class BuildingsController {
     @Body(new ZodValidationPipe(upsertOccupancySchema)) body: UpsertOccupancyInput,
     @CurrentUser() user: SessionClaims,
   ) {
-    return this.buildings.recordOccupancy(body, this.actor(user));
+    return this.tenancy.recordOccupancy(body, this.actor(user));
+  }
+
+  /**
+   * «ربط بالمالك» — which of the flat's recorded owners a tenant already on it
+   * holds it from. An owner recorded after the tenant needs the officer's
+   * confirmation; see `LandlordLinkService.linkRecordedOwner`.
+   */
+  @Roles(...WRITE_ROLES)
+  @Post('occupancies/:occupancyId/owner-link')
+  async linkOccupancyOwner(
+    @Param('occupancyId') occupancyId: string,
+    @Body(new ZodValidationPipe(linkOccupancyOwnerSchema)) body: LinkOccupancyOwnerInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.tenancy.linkOccupancyOwner(
+      occupancyId,
+      body.landlordCitizenId,
+      this.actor(user),
+      body.confirmRecordedAfter ?? false,
+    );
   }
 
   /**

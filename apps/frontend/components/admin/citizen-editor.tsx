@@ -638,6 +638,9 @@ function toDraft(property: Record<string, unknown>): PropertyDraft {
       ? {
           units: units.map(
             (unit): UnitDraft => ({
+              // The stored row itself, so the save keeps it by identity and can
+              // refuse it if its flat ended while this form was open.
+              id: text((unit as Record<string, unknown>).id),
               // The per-flat half of the same link: which canonical `Unit` this
               // line is about. Without it the matrix chips come back unticked
               // and a re-save orphans every row that named a surveyed flat.

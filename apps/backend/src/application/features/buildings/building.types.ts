@@ -73,6 +73,11 @@ export interface OccupancyRow {
   unitId: string;
   citizenId: string;
   citizenName: string | null;
+  /**
+   * The occupant's phone, so whoever is standing at the unit can reach the owner,
+   * tenant or شاغل بتسامح recorded there without opening each file.
+   */
+  citizenPhone: string | null;
   role: string;
   shares: number | null;
   fromDate: Date;
@@ -106,6 +111,52 @@ export interface OccupancyRow {
    * the register.
    */
   backedByFile: boolean;
+  /**
+   * When this spell was entered in the register — not `fromDate`, which an
+   * officer may back-date. «Recorded before the tenant» is decided on this: a
+   * tenant may be linked by picking only to an owner recorded on the flat first.
+   */
+  recordedAt: Date;
+  /**
+   * Who a current مستأجر or شاغل بتسامح holds the flat from, as their own card
+   * says. Null on an owner's spell, a former spell, and on the write paths —
+   * like `backedByFile`, only `get` has the reads in hand to answer it.
+   */
+  ownerLink: OccupancyOwnerLink | null;
+}
+
+/**
+ * The tenancy card behind a non-owner's spell, and whether the owner it names
+ * is an owner of this flat.
+ *
+ *   • `LINKED` — linked to one of the flat's current owners. Among co-owners
+ *     that is the one the tenant deals with; the rest are listed on the unit.
+ *   • `LINKED_ELSEWHERE` — linked to somebody who is not a current owner of
+ *     this flat: the ownership changed since, or the flat was put on a card
+ *     that belongs to another owner's tenancy. Shown, never silently fixed.
+ *   • `UNLINKED` — the card names no registered owner (perhaps a typed name).
+ *   • `NO_CARD` — nothing on the tenant's file claims this flat.
+ */
+export interface OccupancyOwnerLink {
+  state: 'LINKED' | 'LINKED_ELSEWHERE' | 'UNLINKED' | 'NO_CARD';
+  propertyEntryId: string | null;
+  ownerId: string | null;
+  ownerName: string | null;
+  /** The owner as the tenant named them on the card, when not linked. */
+  typedName: string | null;
+}
+
+/**
+ * Who a non-owner holds the flat from, as `claimOnFile` needs it to choose the
+ * card: one tenancy card per owner, so a flat is never filed under a card
+ * that names someone else.
+ */
+export interface LandlordSpec {
+  /** A registered owner recorded on the unit. */
+  citizenId?: string | null;
+  /** Or the owner as the tenant names them. */
+  name?: string | null;
+  phone?: string | null;
 }
 
 /**

@@ -43,7 +43,6 @@ import {
 import { Field, FieldFlagProvider, flagsToArray } from '@/components/ui/field';
 import { UnverifiedFieldsDialog } from './unverified-fields-dialog';
 import { QuickSaveDialog } from './quick-save-dialog';
-import { CitizenReviewDialog } from './citizen-review-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
@@ -425,6 +424,33 @@ function reindexFlags(flags: ReadonlyMap<string, string>, removed: number): Map<
   return next;
 }
 
+/**
+ * The same renumbering one level down, after row `rowIndex` of card `cardIndex`
+ * leaves the form — ended from the file while the form is open. That row's own
+ * flags go with it and the rows after it move up, as the server does.
+ */
+function reindexRowFlags(
+  flags: ReadonlyMap<string, string>,
+  cardIndex: number,
+  rowIndex: number,
+): Map<string, string> {
+  const next = new Map<string, string>();
+
+  for (const [path, reason] of flags) {
+    const match = /^properties\.(\d+)\.units\.(\d+)\.(.+)$/.exec(path);
+    if (!match || Number(match[1]) !== cardIndex) {
+      next.set(path, reason);
+      continue;
+    }
+
+    const row = Number(match[2]);
+    if (row === rowIndex) continue;
+    next.set(`properties.${cardIndex}.units.${row > rowIndex ? row - 1 : row}.${match[3]}`, reason);
+  }
+
+  return next;
+}
+
 /** Drops UI-only fields and coerces the numeric strings the inputs produce. */
 export function toPayloadProperty(property: PropertyDraft): Record<string, unknown> {
   /*
@@ -486,8 +512,11 @@ export function toPayloadProperty(property: PropertyDraft): Record<string, unkno
 
 /** Coerces one building unit's numeric strings for the wire. */
 function toPayloadUnit(unit: UnitDraft): Record<string, unknown> {
-  const { unitArea, unitId, ...rest } = unit;
+  const { unitArea, unitId, id, ...rest } = unit;
   return {
+    // The stored row this line was loaded from: the server keeps it by identity
+    // and refuses it if its flat ended while the form was open.
+    ...(id ? { id } : {}),
     ...(unitId ? { unitId } : {}),
     ...rest,
     ...(unitArea !== undefined && unitArea !== '' ? { unitArea: Number(unitArea) } : {}),
@@ -726,14 +755,6 @@ export function CitizenForm({
   const [showErrors, setShowErrors] = useState(false);
   const [unverifiedDialogOpen, setUnverifiedDialogOpen] = useState(false);
   const [quickSaveOpen, setQuickSaveOpen] = useState(false);
-  /**
-   * «مراجعة قبل الحفظ» — the record read back before it is filed.
-   *
-   * Opened only by a save that has already passed validation, so the panel
-   * shows a record that can actually be stored rather than one the server is
-   * about to refuse. See `CitizenReviewDialog`.
-   */
-  const [reviewOpen, setReviewOpen] = useState(false);
   /** Which رقم العقار's roster is open, if any. */
   const [rosterParcel, setRosterParcel] = useState<string | null>(null);
   /** Which property cards are folded shut. */
@@ -964,7 +985,10 @@ export function CitizenForm({
             onViewParcel={token ? setRosterParcel : undefined}
             onRemove={() => removeProperty(index)}
             // Ended on the server, kept there as history — no longer this form's.
-            onEnded={() => removeProperty(index)}
+            // A partial end leaves the card here without the rows that ended.
+            onEnded={(result, cardEnded) =>
+              cardEnded ? removeProperty(index) : removeEndedRows(index, result.endedRowIds ?? [])
+            }
             // Zero properties is a valid registration, so the last remaining
             // card is removable too — not just every card after the first.
             canRemove
@@ -1010,7 +1034,9 @@ export function CitizenForm({
                 onChange={(update) => setProperty(index, update)}
                 onViewParcel={token ? setRosterParcel : undefined}
                 onRemove={() => removeProperty(index)}
-                onEnded={() => removeProperty(index)}
+                onEnded={(result, cardEnded) =>
+                  cardEnded ? removeProperty(index) : removeEndedRows(index, result.endedRowIds ?? [])
+                }
                 canRemove
                 errors={scopeErrors(shown, `properties.${index}`)}
                 locale={locale}
@@ -1066,6 +1092,44 @@ export function CitizenForm({
         else if (i > index) next.add(i - 1);
       }
       return next;
+    });
+  }, []);
+
+  /**
+   * Rows of card `index` that «إنهاء الإيجار» just ended while the card goes on.
+   *
+   * Taken out of the form by id rather than left for the officer to notice: a
+   * save carrying them would name rows that have ended, which the server refuses
+   * so an ended flat is never written back as held. Flags on those rows go with
+   * them; later rows' flags move up.
+   */
+  const removeEndedRows = useCallback((index: number, rowIds: readonly string[]) => {
+    if (rowIds.length === 0) return;
+    setValues((current) => {
+      const card = current.properties[index];
+      const units = card?.units ?? [];
+      const positions = units
+        .map((unit, position) => (unit.id && rowIds.includes(unit.id) ? position : -1))
+        .filter((position) => position >= 0)
+        .sort((a, b) => b - a);
+      if (!card || positions.length === 0) return current;
+
+      let flags: Map<string, string> = new Map(current.flags);
+      let unverified: Map<string, string> = new Map(current.unverified);
+      for (const position of positions) {
+        flags = reindexRowFlags(flags, index, position);
+        unverified = reindexRowFlags(unverified, index, position);
+      }
+      return {
+        ...current,
+        properties: current.properties.map((property, i) =>
+          i === index
+            ? { ...property, units: units.filter((unit) => !(unit.id && rowIds.includes(unit.id))) }
+            : property,
+        ),
+        flags,
+        unverified,
+      };
     });
   }, []);
 
@@ -1297,14 +1361,8 @@ export function CitizenForm({
         a value that was entered and is wrong. The dialog closes so the officer
         can see which field the complaint landed on, because leaving it open
         over a form they cannot read is the one outcome that helps nobody.
-
-        The review panel closes for the same reason and one more: it has no
-        errors on it. It renders the record, not the complaints about it, so
-        leaving it open over a failed save would show a record that looks
-        finished while the page behind it says otherwise.
       */
       if (withBlanketReason) setQuickSaveOpen(false);
-      setReviewOpen(false);
 
       const firstInvalidSection = sections.find((s) => sectionInvalid(s.id));
       if (firstInvalidSection) {
@@ -1320,97 +1378,6 @@ export function CitizenForm({
 
     setQuickSaveOpen(false);
     onSubmit(candidate);
-  }
-
-  /**
-   * «حفظ» — validate, then show the officer what they are about to file.
-   *
-   * The check runs *before* the panel rather than after it, so a record that
-   * cannot be saved never reaches a screen whose whole message is "this is
-   * what will be saved". A failure lands exactly where it landed before: on
-   * the field, with the first offending section scrolled into view.
-   *
-   * Quick save does not come through here. It is the path for a visit that
-   * produced almost nothing, it confirms with a reason of its own, and a
-   * review panel listing what could not be collected is not a review.
-   */
-  function requestSave() {
-    const errors = validate(values);
-    setFieldErrors(errors);
-    setShowErrors(true);
-
-    if (Object.keys(errors).length === 0) {
-      setReviewOpen(true);
-      return;
-    }
-
-    const firstInvalidSection = sections.find((s) => sectionInvalid(s.id));
-    if (firstInvalidSection) {
-      setMobileStep(firstInvalidSection.id as SectionId);
-    }
-    setTimeout(() => {
-      document
-        .querySelector('[data-section-invalid="true"]')
-        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 50);
-  }
-
-  /**
-   * «تعديل» on a section of the review — close the panel and put the officer
-   * in front of that section, on whichever layout they are using.
-   *
-   * `jumpTo` drives the desktop page's scroll; `setMobileStep` decides which
-   * of the three the phone is showing. Both are set because the panel does not
-   * know which one is on screen, and setting the wrong one strands the officer
-   * back at البيانات الشخصية after asking for العقارات.
-   */
-  function editSection(section: 'personal' | 'contact' | 'properties' | 'notes') {
-    setReviewOpen(false);
-    // ملاحظات is not a step: on a phone it sits under whichever one is open,
-    // so asking to edit it must not move the officer off the step they were on.
-    if (section !== 'notes') setMobileStep(section);
-
-    // Deferred: the dialog is still holding focus and scroll-locking the page
-    // as this runs, and a `scrollIntoView` under that lock does nothing.
-    setTimeout(() => {
-      /*
-        Both layouts are mounted at once and only one has a layout box, so
-        which element to scroll to is a question about the viewport, not about
-        the section. Scrolling to the other layout's copy is a silent no-op —
-        `display:none` has nothing to scroll into view — which is exactly how
-        this fails if it is got wrong: nothing happens and nothing says so.
-      */
-      const desktop = window.matchMedia('(min-width: 640px)').matches;
-
-      if (!desktop) {
-        /*
-          The phone has no jump anchors — the step *is* the navigation, and it
-          has already been switched above. All that is left is to return to the
-          top of the form the way «التالي» does, except for ملاحظات, which is at
-          the bottom of the step and is therefore scrolled to directly.
-        */
-        if (section === 'notes') {
-          document
-            .getElementById('notes-mobile')
-            ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          return;
-        }
-        scrollElementToTop(formRootRef.current);
-        return;
-      }
-
-      /*
-        ملاحظات is scrolled to directly rather than through `jumpTo`, which also
-        sets the jump bar's highlight — and `notes` is not one of the bar's
-        three sections, so it would leave every pill unlit until the next scroll
-        moved the observer.
-      */
-      if (section === 'notes') {
-        document.getElementById('notes')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        return;
-      }
-      jumpTo(section);
-    }, 60);
   }
 
   /**
@@ -1903,7 +1870,7 @@ export function CitizenForm({
             <Button
               type="button"
               size="sm"
-              onClick={requestSave}
+              onClick={() => handleSubmit()}
               disabled={submitting}
               className="h-10 px-4 text-xs font-semibold gap-1.5 bg-primary text-primary-foreground shadow-sm shrink-0"
             >
@@ -2034,7 +2001,7 @@ export function CitizenForm({
             <Button
               type="button"
               size="sm"
-              onClick={requestSave}
+              onClick={() => handleSubmit()}
               disabled={submitting}
               className="h-8 px-4 text-xs font-medium rounded-lg shadow-2xs gap-1.5"
             >
@@ -2055,28 +2022,6 @@ export function CitizenForm({
         </div>
       </div>
     </div>
-
-    {/*
-      «مراجعة قبل الحفظ». Mounted only while it is open: it walks every field
-      of the record to build its tiles, and that is work worth doing once at the
-      moment «حفظ» is pressed rather than on every keystroke of the form behind
-      it. It also means the panel is rebuilt from current values each time it
-      opens, so a correction made through «تعديل» is on it when it comes back.
-    */}
-    {reviewOpen ? (
-      <CitizenReviewDialog
-        open
-        onOpenChange={setReviewOpen}
-        values={values}
-        mode={mode}
-        submitting={submitting}
-        error={error}
-        offline={offline}
-        onConfirm={() => handleSubmit()}
-        onEditSection={editSection}
-        locale={locale}
-      />
-    ) : null}
 
     <QuickSaveDialog
       open={quickSaveOpen}
@@ -2238,7 +2183,7 @@ function StepNotesField({
       /*
         Not `id="notes"`. The desktop card owns that, it comes *second* in the
         document, and `getElementById` returns the first match — so sharing the
-        id would point the review panel's «تعديل» at this element on desktop,
+        id would point the page's `notes` anchor at this element on desktop,
         where it is `display:none` and `scrollIntoView` is a silent no-op.
       */
       id="notes-mobile"

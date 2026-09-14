@@ -13,7 +13,7 @@ import {
   vacancyEndReasonSchema,
 } from './enums';
 import { areaField, propertyNumberField } from './property.schema';
-import { uuid } from './primitives';
+import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
 
 /**
  * The building census, as it crosses the wire.
@@ -585,8 +585,60 @@ export const upsertOccupancySchema = z
     endsVacancy: z.boolean().optional(),
     fromDate: z.coerce.date({ invalid_type_error: 'تاريخ البدء غير صالح' }).optional(),
     toDate: z.coerce.date({ invalid_type_error: 'تاريخ الانتهاء غير صالح' }).optional(),
+    /**
+     * «المالك» — who a مستأجر or شاغل بتسامح holds the flat from.
+     *
+     * One of the owners already recorded on this unit. The link is made in the
+     * same request, and only to an owner recorded before the tenant: the unit's
+     * own owner list is the evidence, so no phone match is needed. Among
+     * co-owners it names the one the tenant deals with; the others stay visible
+     * from the unit.
+     *
+     * Before this, the matrix recorded the tenant with no owner at all, and the
+     * flat went onto whichever tenancy card they already had in the building —
+     * so a flat rented from one owner could read as rented from another.
+     */
+    landlordCitizenId: uuid.optional(),
+    /**
+     * The owner as the tenant names them, when they are not recorded on the
+     * unit. Written on the tenancy card, where the owner-link queue matches the
+     * number once that person registers.
+     */
+    landlordName: arabicOrLatinName.optional(),
+    landlordPhone: internationalPhone.optional(),
   })
   .superRefine((value, ctx) => {
+    const namesLandlord =
+      value.landlordCitizenId !== undefined ||
+      value.landlordName !== undefined ||
+      value.landlordPhone !== undefined;
+    // An owner holds the flat from nobody.
+    if (namesLandlord && value.role === 'OWNER') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['landlordCitizenId'],
+        message: 'المالك لا يُسأل عن مالك آخر',
+      });
+    }
+    // A registered owner is identified; typing a name beside it would be a second answer.
+    if (
+      value.landlordCitizenId !== undefined &&
+      (value.landlordName !== undefined || value.landlordPhone !== undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['landlordName'],
+        message: 'اختر مالكاً مسجَّلاً أو اكتب اسم المالك، لا كليهما',
+      });
+    }
+    if (value.landlordCitizenId !== undefined && value.landlordCitizenId === value.citizenId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['landlordCitizenId'],
+        message: 'لا يمكن أن يكون الشخص مالكاً للوحدة التي يستأجرها',
+      });
+    }
+
     // Shares are a fraction of ownership. A tenant holding 400 of them is a
     // contradiction, and storing it would corrupt any later sum over a unit.
     if (value.shares !== undefined && value.role !== 'OWNER') {
@@ -714,9 +766,13 @@ export type EndOccupancyInput = z.infer<typeof endOccupancySchema>;
  * «إنهاء الإيجار» from the tenant's own file — the same operation the matrix
  * runs, reached from the card rather than from the flat.
  *
- * `unitIds` narrows it to some of the card's flats (somebody renting two shops
- * who gives one up); absent, the whole card ends. An owner's departure is not a
- * tenancy ending, so `OWNERSHIP_TRANSFERRED` is not offered.
+ * `rowIds` names exactly the card's rows the tenant gave up — a flat linked to
+ * سجل المباني or a line that never was, like a shop typed on the form. A card
+ * with more than one current row must name them: an absent list used to mean
+ * «every row on the card», so ending one flat also ended rows the dialog had
+ * never shown. `unitIds` is the older narrowing by census flat, still accepted.
+ * An owner's departure is not a tenancy ending, so `OWNERSHIP_TRANSFERRED` is
+ * not offered.
  */
 export const endTenancySchema = z
   .object({
@@ -724,12 +780,28 @@ export const endTenancySchema = z
       errorMap: () => ({ message: 'يرجى تحديد سبب إنهاء الإيجار' }),
     }),
     endedAt: pastDate('تاريخ الانتهاء غير صالح').optional(),
-    unitIds: z.array(uuid).max(60).optional(),
+    rowIds: z.array(uuid).min(1, 'حدِّد الوحدات التي تركها').max(60).optional(),
+    unitIds: z.array(uuid).min(1, 'حدِّد الوحدات التي تركها').max(60).optional(),
     ...afterTenancyFields,
   })
   .superRefine(refineAfterTenancy);
 
 export type EndTenancyInput = z.infer<typeof endTenancySchema>;
+
+/**
+ * «ربط بالمالك» from the unit — names which of the flat's recorded owners a
+ * tenant already on it holds it from.
+ *
+ * An owner recorded on the flat after the tenant is refused until
+ * `confirmRecordedAfter` says the officer was told so and confirms this is who
+ * the tenant rents from.
+ */
+export const linkOccupancyOwnerSchema = z.object({
+  landlordCitizenId: uuid,
+  confirmRecordedAfter: z.boolean().optional(),
+});
+
+export type LinkOccupancyOwnerInput = z.infer<typeof linkOccupancyOwnerSchema>;
 
 /**
  * One attempt to survey a unit, logged from the matrix.

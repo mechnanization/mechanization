@@ -36,6 +36,8 @@ import type {
   BuildingRow,
   CensusSummary,
   FileLinkResult,
+  LandlordSpec,
+  OccupancyOwnerLink,
   OccupancyRow,
   UnitRow,
   VacancyRow,
@@ -491,7 +493,7 @@ export class BuildingsService {
                 // matrix cell shows who is in the flat now, and the drawer
                 // below it shows who was.
                 orderBy: [{ toDate: 'asc' }, { fromDate: 'desc' }],
-                include: { citizen: { select: { firstName: true, lastName: true } } },
+                include: { citizen: { select: { firstName: true, lastName: true, phone: true } } },
               },
               /*
                 The attempts behind the status (D10).
@@ -536,6 +538,7 @@ export class BuildingsService {
     const zone = await this.zoneOfParcel(row.parcelNumber);
     const backing = await this.claimsBackingOccupancies(row.id, row.units);
     const declared = await this.ownerDeclaredStatuses(row.id, row.units);
+    const ownerLinks = await this.occupancyOwnerLinks(row.id, row.units);
 
     return {
       ...toBuildingRow(row),
@@ -543,9 +546,16 @@ export class BuildingsService {
       zoneName: zone?.name ?? null,
       units: row.units.map((unit) => ({
         ...toUnitRow(unit),
-        occupants: unit.occupancies.map((occupancy) =>
-          toOccupancyRow(occupancy, backing.has(`${occupancy.unitId}:${occupancy.citizenId}`)),
-        ),
+        occupants: unit.occupancies.map((occupancy) => {
+          const key = `${occupancy.unitId}:${occupancy.citizenId}`;
+          return toOccupancyRow(
+            occupancy,
+            backing.has(key),
+            occupancy.toDate === null && occupancy.role !== 'OWNER'
+              ? (ownerLinks.get(key) ?? null)
+              : null,
+          );
+        }),
         visits: unit.visits.map(toVisitRow),
         visitCount: unit._count.visits,
         vacancies: unit.vacancies.map(toVacancyRow),
@@ -744,6 +754,85 @@ export class BuildingsService {
     }
 
     return backed;
+  }
+
+  /**
+   * Who each current tenant or شاغل بتسامح in this building holds their flat
+   * from, according to their own tenancy card — and whether that owner is an
+   * owner of the flat. See `OccupancyOwnerLink`.
+   *
+   * One read for the building. The card is found by the claim shapes
+   * `claimsBackingOccupancies` uses, itemised row first, because that is the
+   * card the flat is billed and ended through.
+   */
+  private async occupancyOwnerLinks(
+    buildingId: string,
+    units: ReadonlyArray<{
+      id: string;
+      occupancies: ReadonlyArray<{ citizenId: string; role: string; toDate: Date | null }>;
+    }>,
+  ): Promise<ReadonlyMap<string, OccupancyOwnerLink>> {
+    const links = new Map<string, OccupancyOwnerLink>();
+    const tenantIds = [
+      ...new Set(
+        units.flatMap((unit) =>
+          unit.occupancies
+            .filter((row) => row.toDate === null && row.role !== 'OWNER')
+            .map((row) => row.citizenId),
+        ),
+      ),
+    ];
+    if (tenantIds.length === 0) return links;
+
+    const cards = await this.db.propertyEntry.findMany({
+      where: {
+        buildingId,
+        endedAt: null,
+        occupancyType: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+        registration: { citizenId: { in: tenantIds } },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        propertyType: true,
+        landlordName: true,
+        landlordCitizenId: true,
+        landlordCitizen: { select: { firstName: true, middleName: true, lastName: true } },
+        registration: { select: { citizenId: true } },
+        units: { where: { endedAt: null }, select: { unitId: true } },
+      },
+    });
+
+    for (const unit of units) {
+      const owners = new Set(
+        unit.occupancies
+          .filter((row) => row.toDate === null && row.role === 'OWNER')
+          .map((row) => row.citizenId),
+      );
+      for (const spell of unit.occupancies) {
+        if (spell.toDate !== null || spell.role === 'OWNER') continue;
+        const theirs = cards.filter((card) => card.registration.citizenId === spell.citizenId);
+        const card =
+          theirs.find((entry) => entry.units.some((row) => row.unitId === unit.id)) ??
+          theirs.find((entry) => entry.propertyType === 'HOUSE' && units.length === 1) ??
+          theirs.find((entry) => entry.propertyType === 'BUILDING' && entry.units.length === 0);
+
+        links.set(`${unit.id}:${spell.citizenId}`, {
+          state: !card
+            ? 'NO_CARD'
+            : !card.landlordCitizenId
+              ? 'UNLINKED'
+              : owners.has(card.landlordCitizenId)
+                ? 'LINKED'
+                : 'LINKED_ELSEWHERE',
+          propertyEntryId: card?.id ?? null,
+          ownerId: card?.landlordCitizenId ?? null,
+          ownerName: card?.landlordCitizen ? personName(card.landlordCitizen) : null,
+          typedName: card && !card.landlordCitizenId ? card.landlordName : null,
+        });
+      }
+    }
+    return links;
   }
 
   // ──────────────────────────────  Creation  ──────────────────────────────
@@ -2263,7 +2352,7 @@ export class BuildingsService {
             ...(input.fromDate ? { fromDate: input.fromDate } : {}),
             ...(input.toDate !== undefined ? { toDate: input.toDate } : {}),
           },
-          include: { citizen: { select: { firstName: true, lastName: true } } },
+          include: { citizen: { select: { firstName: true, lastName: true, phone: true } } },
         })
       : await this.db.unitOccupancy.create({
           data: {
@@ -2274,7 +2363,7 @@ export class BuildingsService {
             ...(input.fromDate ? { fromDate: input.fromDate } : {}),
             ...(input.toDate ? { toDate: input.toDate } : {}),
           },
-          include: { citizen: { select: { firstName: true, lastName: true } } },
+          include: { citizen: { select: { firstName: true, lastName: true, phone: true } } },
         });
 
     /*
@@ -2345,6 +2434,15 @@ export class BuildingsService {
 
     const casesResolved = await this.cases.resolveForUnit(input.unitId, input.citizenId, actor);
 
+    const landlord: LandlordSpec | null =
+      input.role === 'OWNER'
+        ? null
+        : {
+            citizenId: input.landlordCitizenId ?? null,
+            name: input.landlordName ?? null,
+            phone: input.landlordPhone ?? null,
+          };
+
     const fileLink = await this.claimOnFile({
       unitId: input.unitId,
       buildingId: unit.buildingId,
@@ -2352,6 +2450,7 @@ export class BuildingsService {
       role: input.role,
       shares: input.shares ?? null,
       unitStatus: input.unitStatus ?? impliedStatus ?? null,
+      landlord,
     });
 
     this.record({
@@ -2362,6 +2461,7 @@ export class BuildingsService {
         citizenId: input.citizenId,
         role: input.role,
         unitStatus: input.unitStatus ?? null,
+        ...(input.landlordCitizenId ? { landlordCitizenId: input.landlordCitizenId } : {}),
         casesResolved,
         /*
           Named in the audit row for the reason `endOccupancy` names its release:
@@ -2411,6 +2511,19 @@ export class BuildingsService {
    * the occupancy stands on its own and the matrix goes on saying so. That is
    * the state the warning was written for, and it is now the only state that
    * produces it.
+   *
+   * ## One card per capacity, and one tenancy card per owner
+   *
+   * A card's rows are billed in the card's own نوع الإشغال, and a tenancy card
+   * names one owner. So a flat goes onto an existing card only when both agree:
+   * the same capacity, and — for a مستأجر or شاغل بتسامح — the same owner
+   * (`holdsFrom`). Otherwise a new card is minted.
+   *
+   * This used to take the first card on the building whatever it said: a flat
+   * rented from one owner was ticked onto the tenancy card of another, and a
+   * flat somebody owns onto their own مستأجر card. Somebody renting a shop from
+   * one owner and the flat above it from another is ordinary, and each tenancy
+   * has to be able to name its own owner and end on its own.
    */
   /**
    * `claimOnFile` for a spell that already exists.
@@ -2428,6 +2541,7 @@ export class BuildingsService {
     role: string;
     shares: number | null;
     unitStatus: string | null;
+    landlord?: LandlordSpec | null;
   }): Promise<FileLinkResult> {
     return this.claimOnFile(input);
   }
@@ -2439,6 +2553,8 @@ export class BuildingsService {
     role: string;
     shares: number | null;
     unitStatus: string | null;
+    /** Non-owner capacities only: who the flat is held from. */
+    landlord?: LandlordSpec | null;
   }): Promise<FileLinkResult> {
     const building = await this.db.building.findUnique({
       where: { id: input.buildingId },
@@ -2463,13 +2579,6 @@ export class BuildingsService {
     const unitsInBuilding = await this.db.unit.count({ where: { buildingId: building.id } });
 
     /*
-      Any card of theirs on this structure, in any capacity — the same breadth
-      `declareOwnership` uses and for the same reason: a citizen who filed a
-      مستأجر card here and has now been recorded as owner of a *different* flat
-      in it is a real situation, and minting a second card under them is not
-      this path’s call to make.
-    */
-    /*
       Current cards only. An ended tenancy is the citizen's history on this
       structure, not a card to tick a new flat onto — somebody who rented here,
       left, and now owns a flat gets a card saying so, not a row on the old lease.
@@ -2484,36 +2593,59 @@ export class BuildingsService {
         id: true,
         propertyType: true,
         occupancyType: true,
+        landlordCitizenId: true,
+        landlordPhone: true,
+        landlordLinkDismissedIds: true,
         units: { where: { endedAt: null }, select: { id: true, unitId: true } },
       },
       orderBy: { createdAt: 'asc' },
     });
 
-    /*
-      The card in the same capacity first, and the oldest card only after that.
+    const claims = (card: (typeof cards)[number]) =>
+      card.units.some((row) => row.unitId === input.unitId) ||
+      (card.propertyType === 'HOUSE' && unitsInBuilding === 1) ||
+      (card.propertyType === 'BUILDING' && card.units.length === 0);
 
-      Oldest-first alone ticked an owner's flat onto whichever card was filed
-      first — and for somebody who rents flat 1 and owns flat 3 in one block,
-      that is the مستأجر card. `billableUnits` takes the role from the card, so
-      the flat they own was billed to them as a tenancy: the wrong bearer on
-      every owner-borne fee, on a row that looks correct. Preferring the card
-      whose نوع الإشغال matches the role changes nothing for anyone holding a
-      single card, and stops the mixed case landing on the wrong one whenever a
-      right one exists.
+    /*
+      Already ticked, or already backed by one of the two whole-structure shapes.
+      Nothing to write, and nothing to warn about either.
+
+      Any capacity counts, the same-capacity card first. A second card claiming
+      the same flat would bill it twice; the flat on a card of the wrong capacity
+      is a correction for a person, not for this path to make by duplicating it.
     */
-    const existing = cards.find((card) => card.occupancyType === input.role) ?? cards[0];
+    const holder =
+      cards.find((card) => card.occupancyType === input.role && claims(card)) ?? cards.find(claims);
+    if (holder) {
+      return { backed: true, outcome: 'ALREADY_CLAIMED', propertyEntryId: holder.id };
+    }
+
+    const nonOwner = input.role !== 'OWNER';
+    const owner =
+      nonOwner && input.landlord?.citizenId
+        ? await this.db.user.findUnique({
+            where: { id: input.landlord.citizenId },
+            select: {
+              id: true,
+              firstName: true,
+              middleName: true,
+              lastName: true,
+              phone: true,
+              whatsapp: true,
+            },
+          })
+        : null;
+
+    /*
+      The card this flat may join: same capacity — rows bill in the card's نوع
+      الإشغال — and for a non-owner, the same owner. See the docblock.
+    */
+    const sameCapacity = cards.filter((card) => card.occupancyType === input.role);
+    const existing = nonOwner
+      ? await this.cardHeldFrom(sameCapacity, input.landlord ?? null, owner)
+      : sameCapacity[0];
 
     if (existing) {
-      // Already ticked, or already backed by one of the two whole-structure
-      // shapes. Nothing to write, and nothing to warn about either.
-      const claimed =
-        existing.units.some((row) => row.unitId === input.unitId) ||
-        (existing.propertyType === 'HOUSE' && unitsInBuilding === 1) ||
-        (existing.propertyType === 'BUILDING' && existing.units.length === 0);
-      if (claimed) {
-        return { backed: true, outcome: 'ALREADY_CLAIMED', propertyEntryId: existing.id };
-      }
-
       /*
         An itemised card that has not ticked this flat.
 
@@ -2587,6 +2719,25 @@ export class BuildingsService {
         propertyNumber: building.parcelNumber || null,
         buildingName: building.name,
         /*
+          Who the flat is held from, on the tenancy card that exists for it.
+
+          A registered owner's own name and number: a tenancy card needs both to
+          pass the form it is edited in, and the number is what an owner link is
+          kept against. The link itself (`landlordCitizenId`) is written by the
+          owner-link service with the rest of what it records, not here.
+        */
+        ...(nonOwner && owner
+          ? {
+              landlordName: personName(owner),
+              landlordPhone: owner.phone ?? owner.whatsapp ?? null,
+            }
+          : nonOwner && (input.landlord?.name || input.landlord?.phone)
+            ? {
+                landlordName: input.landlord.name ?? null,
+                landlordPhone: input.landlord.phone ?? null,
+              }
+            : {}),
+        /*
           A منزل bills its single unit from its own columns and has no units
           array to tick, so the description and the حالة go on the card itself.
 
@@ -2618,6 +2769,77 @@ export class BuildingsService {
     });
 
     return { backed: true, outcome: 'ENTRY_CREATED', propertyEntryId: minted.id };
+  }
+
+  /**
+   * The tenant's card, among `cards` (one capacity, oldest first), that holds
+   * its flats from this landlord — or none, and a new card is minted.
+   *
+   *  - **A registered owner**: the card already linked to them, or a card not
+   *    linked to anyone whose typed number is theirs (a number somebody said
+   *    «لا أحد منهم» to on this card does not count). A card whose flats are
+   *    recorded as owned by somebody else is never theirs, whatever it says.
+   *  - **A typed number**: an unlinked card naming that same number.
+   *  - **Nothing known**: no card. Two flats whose owners nobody has named are
+   *    not known to share one, and filing them together would give both the
+   *    first owner anyone identifies.
+   */
+  private async cardHeldFrom<
+    T extends {
+      id: string;
+      landlordCitizenId: string | null;
+      landlordPhone: string | null;
+      landlordLinkDismissedIds: string[];
+      units: Array<{ unitId: string | null }>;
+    },
+  >(
+    cards: readonly T[],
+    landlord: LandlordSpec | null,
+    owner: { id: string; phone: string | null; whatsapp: string | null } | null,
+  ): Promise<T | undefined> {
+    if (owner) {
+      const linked = cards.find((card) => card.landlordCitizenId === owner.id);
+      if (linked) return linked;
+
+      const numbers = [owner.phone, owner.whatsapp].filter(Boolean);
+      const typed = cards.filter(
+        (card) =>
+          !card.landlordCitizenId &&
+          card.landlordPhone !== null &&
+          numbers.includes(card.landlordPhone) &&
+          !card.landlordLinkDismissedIds.includes(owner.id),
+      );
+      if (typed.length === 0) return undefined;
+
+      const unitIds = [
+        ...new Set(
+          typed.flatMap((card) =>
+            card.units.map((row) => row.unitId).filter((id): id is string => Boolean(id)),
+          ),
+        ),
+      ];
+      const otherOwners = unitIds.length
+        ? await this.db.unitOccupancy.findMany({
+            where: {
+              unitId: { in: unitIds },
+              toDate: null,
+              role: 'OWNER' as never,
+              citizenId: { not: owner.id },
+            },
+            select: { unitId: true },
+          })
+        : [];
+      const ownedElsewhere = new Set(otherOwners.map((row) => row.unitId));
+      return typed.find((card) =>
+        card.units.every((row) => !row.unitId || !ownedElsewhere.has(row.unitId)),
+      );
+    }
+
+    const phone = landlord?.phone ?? null;
+    if (phone) {
+      return cards.find((card) => !card.landlordCitizenId && card.landlordPhone === phone);
+    }
+    return undefined;
   }
 
   /**
@@ -2722,7 +2944,7 @@ export class BuildingsService {
     const updated = await this.db.unitOccupancy.update({
       where: { id: occupancyId },
       data: { toDate, endReason: input.reason as never },
-      include: { citizen: { select: { firstName: true, lastName: true } } },
+      include: { citizen: { select: { firstName: true, lastName: true, phone: true } } },
     });
 
     const released = await this.releaseCensusClaim({
@@ -3444,13 +3666,14 @@ function toOccupancyRow(
     id: string;
     unitId: string;
     citizenId: string;
-    citizen?: { firstName: string; lastName: string } | null;
+    citizen?: { firstName: string; lastName: string; phone?: string | null } | null;
     role: string;
     shares: number | null;
     fromDate: Date;
     toDate: Date | null;
     endReason?: string | null;
     registrationId: string | null;
+    createdAt: Date;
   },
   /**
    * Defaults to `true` so the write paths — which return the row they just
@@ -3459,12 +3682,14 @@ function toOccupancyRow(
    * queries in hand to answer it honestly. See `OccupancyRow.backedByFile`.
    */
   backedByFile = true,
+  ownerLink: OccupancyOwnerLink | null = null,
 ): OccupancyRow {
   return {
     id: row.id,
     unitId: row.unitId,
     citizenId: row.citizenId,
     citizenName: row.citizen ? `${row.citizen.firstName} ${row.citizen.lastName}` : null,
+    citizenPhone: row.citizen?.phone ?? null,
     role: row.role,
     shares: row.shares,
     fromDate: row.fromDate,
@@ -3472,5 +3697,11 @@ function toOccupancyRow(
     endReason: row.endReason ?? null,
     registrationId: row.registrationId,
     backedByFile,
+    recordedAt: row.createdAt,
+    ownerLink,
   };
+}
+
+function personName(person: { firstName: string; middleName?: string | null; lastName: string }): string {
+  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ').trim();
 }

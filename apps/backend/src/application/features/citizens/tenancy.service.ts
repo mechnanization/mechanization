@@ -5,6 +5,7 @@ import {
   statusForFlags,
   type AfterTenancyStatus,
   type FieldFlag,
+  type UpsertOccupancyInput,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -12,8 +13,13 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CasesService } from '../cases/cases.service';
-import { withoutCardFlags } from './card-flags';
-import { LandlordLinkService, type PendingEvent, type RevertReport } from './landlord-link.service';
+import { withoutCardFlags, withoutRowFlags } from './card-flags';
+import {
+  LandlordLinkService,
+  type PendingEvent,
+  type RecordedOwnerLinkResult,
+  type RevertReport,
+} from './landlord-link.service';
 
 /**
  * «إنهاء الإيجار» — one operation, whichever door it is reached through.
@@ -68,6 +74,51 @@ export class TenancyService {
   // ─────────────────────────────  Entry points  ─────────────────────────────
 
   /**
+   * «إضافة شخص إلى الوحدة» — records the person on the flat and, for a مستأجر
+   * or شاغل بتسامح, the owner they hold it from, as one write.
+   *
+   * The owner is one of those recorded on the unit (`landlordCitizenId`), linked
+   * by `LandlordLinkService.linkRecordedOwner` on the tenancy card the flat was
+   * filed under — a card of its own when the tenant already rents something
+   * else here from somebody else. A refused link refuses the whole record: the
+   * officer picked an owner, and a tenant saved without one would look done.
+   */
+  async recordOccupancy(
+    input: UpsertOccupancyInput,
+    actor: Actor,
+  ): Promise<
+    Awaited<ReturnType<BuildingsService['recordOccupancy']>> & {
+      ownerLink: RecordedOwnerLinkResult | null;
+    }
+  > {
+    return this.inTransaction(async () => {
+      const recorded = await this.buildings.recordOccupancy(input, actor);
+      const ownerLink =
+        input.role !== 'OWNER' && input.landlordCitizenId
+          ? await this.links.linkRecordedOwner({
+              occupancyId: recorded.occupancy.id,
+              ownerId: input.landlordCitizenId,
+              actor,
+            })
+          : null;
+      return { ...recorded, ownerLink };
+    });
+  }
+
+  /**
+   * «ربط بالمالك» for a tenant already on the unit. An owner recorded after the
+   * tenant needs `confirmRecordedAfter`. See `linkRecordedOwner`.
+   */
+  linkOccupancyOwner(
+    occupancyId: string,
+    ownerId: string,
+    actor: Actor,
+    confirmRecordedAfter = false,
+  ): Promise<RecordedOwnerLinkResult> {
+    return this.links.linkRecordedOwner({ occupancyId, ownerId, confirmRecordedAfter, actor });
+  }
+
+  /**
    * The matrix's «إنهاء الإشغال». An owner's spell is not a tenancy — a sale or
    * a correction of who owns the flat — and keeps its own path.
    */
@@ -102,24 +153,38 @@ export class TenancyService {
     return this.end(target, { ...input, reason: input.reason }, actor);
   }
 
-  /** «إنهاء الإيجار» on a card — from the tenant's file or their edit form. */
+  /**
+   * «إنهاء الإيجار» on a card — from the tenant's file or their edit form.
+   *
+   * Ends exactly the rows named (`rowIds`, or the older `unitIds`). A card with
+   * more than one current row is refused without a choice: an absent choice
+   * used to end every row on the card, including lines the dialog never showed.
+   */
   async endCard(
     propertyEntryId: string,
-    input: EndInput & { reason: EndReason; unitIds?: readonly string[] },
+    input: EndInput & {
+      reason: EndReason;
+      rowIds?: readonly string[];
+      unitIds?: readonly string[];
+    },
     actor: Actor,
   ): Promise<EndTenancyResult> {
-    const target = await this.targetFromCard(propertyEntryId, input.unitIds);
+    const target = await this.targetFromCard(propertyEntryId, {
+      rowIds: input.rowIds,
+      unitIds: input.unitIds,
+    });
     return this.end(target, input, actor);
   }
 
   /**
    * What ending this card would touch, for the dialog to ask the right
-   * questions before anything is pressed: which flats, whether each still has
-   * somebody else in it (then its status is not asked), who owns it, and
-   * whether a link names the landlord.
+   * questions before anything is pressed: every current row — a flat linked to
+   * سجل المباني or a line that never was — whether each flat still has somebody
+   * else in it (then its status is not asked), who owns it, and whether a link
+   * names the landlord.
    */
   async previewCard(propertyEntryId: string): Promise<TenancyPreview> {
-    const target = await this.targetFromCard(propertyEntryId);
+    const target = await this.targetFromCard(propertyEntryId, { everyRow: true });
     const card = target.cards[0]!;
     const landlord = card.landlordCitizenId
       ? await this.db.user.findUnique({
@@ -128,20 +193,45 @@ export class TenancyService {
         })
       : null;
 
+    const unitView = (unit: TargetUnit) => ({
+      unitId: unit.unitId,
+      unitCode: unit.unitCode,
+      needsStatus: !unit.othersRemain,
+      othersRemain: unit.othersRemain,
+      ownerNames: unit.ownerNames,
+      ownerNonResident: unit.ownerNonResident,
+      dwelling: unit.dwelling,
+    });
+
     return {
       tenant: { id: target.citizenId, name: target.citizenName },
       occupancyType: card.occupancyType,
+      propertyType: card.propertyType,
       landlordName: landlord ? fullName(landlord) : null,
       startedAt: target.startedAt?.toISOString() ?? null,
-      units: target.units.map((unit) => ({
-        unitId: unit.unitId,
-        unitCode: unit.unitCode,
-        needsStatus: !unit.othersRemain,
-        othersRemain: unit.othersRemain,
-        ownerNames: unit.ownerNames,
-        ownerNonResident: unit.ownerNonResident,
-        dwelling: unit.dwelling,
-      })),
+      units: target.units.map(unitView),
+      rows: card.units.map((row) => {
+        const unit = row.unitId ? target.units.find((entry) => entry.unitId === row.unitId) : undefined;
+        return {
+          rowId: row.id,
+          unitType: row.unitType,
+          floor: row.floor,
+          side: row.side,
+          unitArea: row.unitArea == null ? null : Number(row.unitArea),
+          ...(unit
+            ? unitView(unit)
+            : {
+                unitId: null,
+                unitCode: null,
+                // A line never linked to a flat has no census status to set.
+                needsStatus: false,
+                othersRemain: false,
+                ownerNames: [],
+                ownerNonResident: false,
+                dwelling: isDwellingUnitType(row.unitType),
+              }),
+        };
+      }),
     };
   }
 
@@ -198,7 +288,7 @@ export class TenancyService {
 
   private async targetFromCard(
     propertyEntryId: string,
-    requested?: readonly string[],
+    selection: { rowIds?: readonly string[]; unitIds?: readonly string[]; everyRow?: boolean },
   ): Promise<Target> {
     const card = await this.db.propertyEntry.findUnique({
       where: { id: propertyEntryId },
@@ -210,14 +300,29 @@ export class TenancyService {
       throw new ValidationError('هذه بطاقة مالك — لا إيجار فيها لإنهائه', { propertyEntryId });
     }
 
-    const named = new Set(card.units.map((row) => row.unitId).filter((id): id is string => Boolean(id)));
-    if (requested && requested.some((unitId) => !named.has(unitId))) {
-      throw new ValidationError('إحدى الوحدات المحددة ليست على هذه البطاقة', { unitIds: requested });
+    let endingRows: typeof card.units;
+    if (selection.rowIds?.length) {
+      const current = new Set(card.units.map((row) => row.id));
+      // An ended row, or one from another card: the dialog is out of date.
+      if (selection.rowIds.some((rowId) => !current.has(rowId))) {
+        throw new ConflictError('إحدى الوحدات المحددة لم تعد قائمة على هذه البطاقة — حدّث الصفحة', {
+          rowIds: selection.rowIds,
+        });
+      }
+      endingRows = card.units.filter((row) => selection.rowIds!.includes(row.id));
+    } else if (selection.unitIds?.length) {
+      const named = new Set(card.units.map((row) => row.unitId).filter((id): id is string => Boolean(id)));
+      if (selection.unitIds.some((unitId) => !named.has(unitId))) {
+        throw new ValidationError('إحدى الوحدات المحددة ليست على هذه البطاقة', { unitIds: selection.unitIds });
+      }
+      endingRows = card.units.filter((row) => row.unitId && selection.unitIds!.includes(row.unitId));
+    } else if (card.units.length > 1 && !selection.everyRow) {
+      throw new ValidationError('لهذه البطاقة أكثر من وحدة — حدِّد الوحدات التي تركها', {
+        needsRows: true,
+      });
+    } else {
+      endingRows = card.units;
     }
-
-    const endingRows = requested?.length
-      ? card.units.filter((row) => row.unitId && requested.includes(row.unitId))
-      : card.units;
     let unitIds = [...new Set(endingRows.map((row) => row.unitId).filter((id): id is string => Boolean(id)))];
 
     /*
@@ -362,6 +467,7 @@ export class TenancyService {
     const result: EndTenancyResult = {
       occupanciesEnded: 0,
       rowsEnded: 0,
+      endedRowIds: [],
       cardsEnded: 0,
       statusApplied: input.afterStatus && freed.length > 0 ? input.afterStatus : null,
       casesOpened: 0,
@@ -398,13 +504,55 @@ export class TenancyService {
             where: { id: { in: card.endingRowIds }, endedAt: null },
             data: { endedAt, endReason: input.reason as never },
           });
+          if (rows.count !== card.endingRowIds.length) {
+            throw new ConflictError('تغيّرت وحدات هذه البطاقة للتو — حدّث الصفحة');
+          }
           result.rowsEnded += rows.count;
+          result.endedRowIds.push(...card.endingRowIds);
         }
 
         const current = await this.db.buildingUnit.count({
           where: { propertyEntryId: card.id, endedAt: null },
         });
         const cardEnded = current === 0;
+
+        /*
+          Rows that ended on a card that goes on: a flag names a row by its place
+          among the card's current rows, so each ended row takes its own flags
+          with it and the rows after it move up. Last first, so each position is
+          still the one it was read at.
+        */
+        if (!cardEnded && card.endingRowIds.length > 0) {
+          const registration = await this.db.registration.findUnique({
+            where: { id: card.registrationId },
+            select: {
+              flaggedFields: true,
+              properties: { where: { endedAt: null }, select: { id: true }, orderBy: { createdAt: 'asc' } },
+            },
+          });
+          const cardIndex = registration?.properties.findIndex((row) => row.id === card.id) ?? -1;
+          const positions = card.endingRowIds
+            .map((rowId) => card.units.findIndex((row) => row.id === rowId))
+            .filter((index) => index >= 0)
+            .sort((a, b) => b - a);
+          let flags: unknown = registration?.flaggedFields;
+          let changed = false;
+          for (const rowIndex of positions) {
+            const shifted = withoutRowFlags(flags, { cardIndex, rowIndex });
+            flags = shifted.flags;
+            changed ||= shifted.changed;
+            droppedFlags.push(...shifted.removed);
+          }
+          if (changed) {
+            await this.db.registration.update({
+              where: { id: card.registrationId },
+              data: {
+                flaggedFields: flags as never,
+                status: statusForFlags(flags as unknown as FieldFlag[]) as never,
+              },
+            });
+          }
+        }
 
         const data: Record<string, unknown> = {};
         if (cardEnded) {
@@ -681,7 +829,12 @@ const CARD_SELECT = {
   buildingId: true,
   landlordCitizenId: true,
   landlordLinkFootprint: true,
-  units: { where: { endedAt: null }, select: { id: true, unitId: true } },
+  // In the order the edit form lists them — the order row flags count positions in.
+  units: {
+    where: { endedAt: null },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, unitId: true, unitType: true, floor: true, side: true, unitArea: true },
+  },
 } as const;
 
 type Actor = { id: string; role: string };
@@ -702,7 +855,14 @@ interface TargetCard {
   buildingId: string | null;
   landlordCitizenId: string | null;
   landlordLinkFootprint: Prisma.JsonValue;
-  units: Array<{ id: string; unitId: string | null }>;
+  units: Array<{
+    id: string;
+    unitId: string | null;
+    unitType: string | null;
+    floor: string | null;
+    side: string | null;
+    unitArea: Prisma.Decimal | null;
+  }>;
   /** The current rows on this card the tenancy is giving up. */
   endingRowIds: string[];
 }
@@ -732,6 +892,8 @@ interface Target {
 export interface EndTenancyResult {
   occupanciesEnded: number;
   rowsEnded: number;
+  /** The card rows this ending closed — so an open edit form can drop exactly those. */
+  endedRowIds: string[];
   cardsEnded: number;
   statusApplied: AfterTenancyStatus | null;
   casesOpened: number;
@@ -748,11 +910,32 @@ export interface EndTenancyResult {
 export interface TenancyPreview {
   tenant: { id: string; name: string };
   occupancyType: string;
+  propertyType: string;
   landlordName: string | null;
   startedAt: string | null;
+  /** The flats linked to سجل المباني. */
   units: Array<{
     unitId: string;
     unitCode: string;
+    needsStatus: boolean;
+    othersRemain: boolean;
+    ownerNames: string[];
+    ownerNonResident: boolean;
+    dwelling: boolean;
+  }>;
+  /**
+   * Every current row on the card, in the form's order — what the dialog lets
+   * the officer choose from. A row with no `unitId` is a line never linked to a
+   * flat; it ends like any other and has no census status to ask about.
+   */
+  rows: Array<{
+    rowId: string;
+    unitId: string | null;
+    unitCode: string | null;
+    unitType: string | null;
+    floor: string | null;
+    side: string | null;
+    unitArea: number | null;
     needsStatus: boolean;
     othersRemain: boolean;
     ownerNames: string[];

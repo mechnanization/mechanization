@@ -208,7 +208,15 @@ export class CitizenController {
         .flatMap((registration) => registration.properties)
         // What they hold now: a tenancy that ended is not a property they have.
         .filter((property) => !property.endedAt)
-        .map(({ landlordCitizenId: _id, landlordReferenceNumber: _reference, ...property }) => property),
+        .map(({ landlordCitizenId: _id, landlordReferenceNumber: _reference, ...property }) => ({
+          ...property,
+          // The owners' names are the tenant's to see; their register ids and
+          // co-owners' numbers are not — the landlord's number is on the card.
+          units: property.units.map((unit) => ({
+            ...unit,
+            owners: unit.owners.map(({ citizenId: _owner, phone: _phone, ...owner }) => owner),
+          })),
+        })),
       payments: citizen.payments,
       fees: citizen.fees,
     };
@@ -303,6 +311,7 @@ export class CitizenController {
       {
         reason: body.reason,
         endedAt: body.endedAt,
+        rowIds: body.rowIds,
         unitIds: body.unitIds,
         afterStatus: body.afterStatus,
         vacancyBasis: body.vacancyBasis,

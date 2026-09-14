@@ -864,6 +864,8 @@ export interface UnitOccupant {
   unitId: string;
   citizenId: string;
   citizenName: string | null;
+  /** Their phone, shown on the unit. Optional for a server from before it. */
+  citizenPhone?: string | null;
   role: OccupancyRole;
   /** أسهم out of 2400 — owners only. */
   shares: number | null;
@@ -890,6 +892,26 @@ export interface UnitOccupant {
    * matrix with a warning.
    */
   backedByFile?: boolean;
+  /**
+   * When the spell was entered in the register (not `fromDate`, which may be
+   * back-dated). A tenant may be linked by picking only to an owner recorded
+   * before them. Optional on the wire for responses from before it existed.
+   */
+  recordedAt?: string;
+  /** Who a current tenant holds the flat from, per their own card. Null otherwise. */
+  ownerLink?: OccupantOwnerLink | null;
+}
+
+/**
+ * The tenancy card behind a current tenant's spell, and whether it names an
+ * owner of this flat — see `OccupancyOwnerLink` on the server.
+ */
+export interface OccupantOwnerLink {
+  state: 'LINKED' | 'LINKED_ELSEWHERE' | 'UNLINKED' | 'NO_CARD';
+  propertyEntryId: string | null;
+  ownerId: string | null;
+  ownerName: string | null;
+  typedName: string | null;
 }
 
 /** One canonical unit. It exists whether or not anybody has been surveyed in it. */
@@ -1214,6 +1236,25 @@ export interface RecordOccupancyInput {
   endsVacancy?: boolean;
   fromDate?: string;
   toDate?: string;
+  /**
+   * «المالك» — non-owners only. One of the owners already recorded on this
+   * unit, linked in the same request; among co-owners, the one the tenant deals
+   * with. The server refuses an owner recorded after the tenant.
+   */
+  landlordCitizenId?: string;
+  /** The owner as the tenant names them, when not recorded on the unit. */
+  landlordName?: string;
+  landlordPhone?: string;
+}
+
+/** What linking the picked owner did — see `LandlordLinkService.linkRecordedOwner`. */
+export interface RecordedOwnerLink {
+  linked: boolean;
+  alreadyLinked: boolean;
+  /** The flat moved onto a tenancy card of its own to carry this owner. */
+  split: boolean;
+  propertyEntryId: string | null;
+  reason: 'TENANT_NO_FILE' | 'UNLINKABLE_STRUCTURE' | null;
 }
 
 /**
@@ -1513,10 +1554,37 @@ export async function recordOccupancy(
     occupancy: UnitOccupant;
     casesResolved: number;
     fileLink: OccupancyFileLink;
+    /** Null when no owner was picked. Optional for a server from before it. */
+    ownerLink?: RecordedOwnerLink | null;
   }>(
     tenant,
     '/buildings/occupancies',
     { token, method: 'POST', body: JSON.stringify(input) },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
+ * «ربط بالمالك» — links a tenant already on the unit to one of its recorded
+ * owners. `confirmRecordedAfter` is required when that owner was recorded on the
+ * unit after the tenant, and is sent only once the officer confirmed it.
+ */
+export async function linkOccupancyOwner(
+  tenant: string,
+  token: string,
+  occupancyId: string,
+  landlordCitizenId: string,
+  confirmRecordedAfter = false,
+) {
+  const result = await apiFetch<RecordedOwnerLink>(
+    tenant,
+    `/buildings/occupancies/${encodeURIComponent(occupancyId)}/owner-link`,
+    {
+      token,
+      method: 'POST',
+      body: JSON.stringify({ landlordCitizenId, ...(confirmRecordedAfter ? { confirmRecordedAfter } : {}) }),
+    },
   );
   invalidateCensus(tenant);
   return result;
@@ -1538,6 +1606,8 @@ export interface AfterTenancyAnswer {
 export interface EndTenancyResult {
   occupanciesEnded: number;
   rowsEnded: number;
+  /** The card rows this ending closed. Optional for a server from before it. */
+  endedRowIds?: string[];
   cardsEnded: number;
   statusApplied: AfterTenancyStatus | null;
   casesOpened: number;
@@ -1576,8 +1646,10 @@ export async function endOccupancy(
 export interface TenancyPreview {
   tenant: { id: string; name: string };
   occupancyType: string;
+  propertyType?: string;
   landlordName: string | null;
   startedAt: string | null;
+  /** The card's flats linked to سجل المباني. */
   units: Array<{
     unitId: string;
     unitCode: string;
@@ -1588,6 +1660,27 @@ export interface TenancyPreview {
     ownerNonResident: boolean;
     dwelling: boolean;
   }>;
+  /**
+   * Every current row on the card, in the form's order — linked flats and
+   * lines never linked to one alike. What the dialog chooses from. Optional for
+   * a server from before it.
+   */
+  rows?: TenancyPreviewRow[];
+}
+
+export interface TenancyPreviewRow {
+  rowId: string;
+  unitId: string | null;
+  unitCode: string | null;
+  unitType: string | null;
+  floor: string | null;
+  side: string | null;
+  unitArea: number | null;
+  needsStatus: boolean;
+  othersRemain: boolean;
+  ownerNames: string[];
+  ownerNonResident: boolean;
+  dwelling: boolean;
 }
 
 export function getTenancyEndPreview(tenant: string, token: string, propertyEntryId: string) {
@@ -1606,6 +1699,8 @@ export async function endTenancy(
   input: {
     reason: 'MOVED_OUT' | 'RECORDED_IN_ERROR';
     endedAt?: string;
+    /** Exactly the rows left. Required by the server once a card has more than one. */
+    rowIds?: string[];
     unitIds?: string[];
   } & AfterTenancyAnswer,
 ) {
@@ -1875,6 +1970,13 @@ export interface CitizenProfileUnit {
   vacancyDeclaredAt?: string | null;
   /** The «تأكيد الشغور» standing on the censused unit, if one is. */
   vacancy?: CitizenProfileVacancy | null;
+  /**
+   * Everyone سجل المباني records as a current owner of the linked flat, with
+   * their أسهم. On a tenancy card: the flat's whole ownership beside the one
+   * co-owner the card is linked to. `citizenId` is absent on the citizen's own
+   * portal view.
+   */
+  owners?: Array<{ citizenId?: string; name: string; phone?: string | null; shares: number | null }>;
 }
 
 export interface CitizenProfileProperty {
@@ -2478,8 +2580,9 @@ export type LinkBlockCode =
   | 'UNIT_VACANT'
   | 'OWNER_NO_FILE'
   | 'OWNER_CARD_UNLINKED'
-  | 'OWNER_OTHER_CAPACITY'
   | 'OWNER_OCCUPIES_UNIT'
+  /** A flat on the card is recorded as owned by somebody other than this candidate. */
+  | 'UNIT_OWNED_BY_OTHER'
   | 'RECONCILE_FAILED';
 
 export interface LinkBlock {

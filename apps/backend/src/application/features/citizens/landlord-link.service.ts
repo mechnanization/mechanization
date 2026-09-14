@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { internationalPhone, STRUCTURE_TYPE_MAP } from '@mechanization/shared-schemas';
+import { internationalPhone, STRUCTURE_TYPE_MAP, unitStatusForRole } from '@mechanization/shared-schemas';
 import type { StructureType } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -9,7 +9,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { BuildingsService } from '../buildings/buildings.service';
 import type { FileLinkResult } from '../buildings/building.types';
-import { withoutCardFlags } from './card-flags';
+import { withoutCardFlags, withoutRowFlags } from './card-flags';
 
 /**
  * Identifying the owner a مستأجر named, among the register's own citizens.
@@ -351,7 +351,7 @@ export class LandlordLinkService {
       ...new Set(buildings.map((building) => building.parcelNumber).filter(Boolean)),
     ] as string[];
 
-    const [vacancies, citizens, cards, occupancies] = await Promise.all([
+    const [vacancies, citizens, cards, occupancies, owners] = await Promise.all([
       unitIds.length
         ? this.db.unitVacancyConfirmation.findMany({
             where: { unitId: { in: unitIds }, endedAt: null },
@@ -406,6 +406,16 @@ export class LandlordLinkService {
             select: { unitId: true, citizenId: true, role: true },
           })
         : Promise.resolve([]),
+      unitIds.length
+        ? this.db.unitOccupancy.findMany({
+            where: { unitId: { in: unitIds }, toDate: null, role: 'OWNER' as never },
+            select: {
+              unitId: true,
+              citizenId: true,
+              citizen: { select: { firstName: true, middleName: true, lastName: true } },
+            },
+          })
+        : Promise.resolve([]),
     ]);
 
     const cardsByCitizen = new Map<string, PlanCard[]>();
@@ -416,12 +426,20 @@ export class LandlordLinkService {
       cardsByCitizen.set(owner, bucket);
     }
 
+    const unitOwners = new Map<string, Array<{ citizenId: string; name: string }>>();
+    for (const row of owners) {
+      const bucket = unitOwners.get(row.unitId) ?? [];
+      bucket.push({ citizenId: row.citizenId, name: fullName(row.citizen) });
+      unitOwners.set(row.unitId, bucket);
+    }
+
     return {
       buildings: buildingById,
       vacantUnitIds: new Set(vacancies.map((row) => row.unitId)),
       citizens: new Map(citizens.map((citizen) => [citizen.id, citizen])),
       cardsByCitizen,
       occupancies,
+      unitOwners,
     };
   }
 
@@ -495,17 +513,14 @@ export class LandlordLinkService {
     if (unlinked) return { block: block('OWNER_CARD_UNLINKED'), outcome: null };
 
     /*
-      The owner holds this building only as a مستأجر or شاغل. `claimOnFile`
-      would tick the flat they own onto that card, and the role on a bill comes
-      from the card — every owner-borne fee on the flat charged to them as a
-      tenancy. An ownership card on their file is the step that fixes it, and
-      `claimOnFile` prefers that card as soon as it exists.
+      An owner who also rents or occupies something else in this building is not
+      blocked. It used to be — `claimOnFile` would have ticked the flat they own
+      onto their مستأجر card and billed it as a tenancy — but a flat now only
+      joins a card of its own capacity, so the link mints them an ownership card
+      beside the tenancy, which is exactly the two facts that are true.
     */
     const onBuilding = cards.filter((card) => card.buildingId === building.id);
     const ownerCard = onBuilding.find((card) => card.occupancyType === 'OWNER');
-    if (onBuilding.length > 0 && !ownerCard) {
-      return { block: block('OWNER_OTHER_CAPACITY'), outcome: null };
-    }
 
     const unitIds = new Set(target.units.map((unit) => unit.unitId));
     const occupying = context.occupancies.find(
@@ -514,6 +529,30 @@ export class LandlordLinkService {
     if (occupying) {
       const code = target.units.find((unit) => unit.unitId === occupying.unitId)?.unitCode ?? null;
       return { block: block('OWNER_OCCUPIES_UNIT', code), outcome: null };
+    }
+
+    /*
+      A flat the census already records as somebody else's.
+
+      A link records its candidate as the owner of every flat on the card, so
+      linking here would make them a *second* owner of a flat whose owner is
+      known — and a card holding flats from two owners (the matrix used to file
+      them that way) would hand one owner the other's flat on the next save of
+      the tenant's file. Among co-owners, any one of them is a valid link; the
+      rest stay listed on the unit.
+    */
+    const ownedByOthers = target.units.find((unit) => {
+      const owners = context.unitOwners.get(unit.unitId) ?? [];
+      return owners.length > 0 && !owners.some((owner) => owner.citizenId === citizen.id);
+    });
+    if (ownedByOthers) {
+      const names = (context.unitOwners.get(ownedByOthers.unitId) ?? [])
+        .map((owner) => owner.name)
+        .join('، ');
+      return {
+        block: block('UNIT_OWNED_BY_OTHER', ownedByOthers.unitCode, names || null),
+        outcome: null,
+      };
     }
 
     const mapped = STRUCTURE_TYPE_MAP[building.structureType as StructureType];
@@ -690,6 +729,423 @@ export class LandlordLinkService {
       rowsAdded: footprint.units.filter((unit) => unit.row).length,
       outcome: plan.outcome,
     };
+  }
+
+  /**
+   * «المالك» chosen on the unit: links a tenant already recorded on a flat to
+   * one of the owners recorded on that flat.
+   *
+   * ## Why picking is enough here, and only here
+   *
+   * `confirm` needs a phone match because a number is the only evidence a
+   * tenant's card carries. On the unit, the evidence is the census itself: the
+   * person picked is recorded as this flat's owner.
+   *
+   * An owner recorded **after** the tenant is a later claim about a tenancy
+   * already on file, so it is not linked on the pick alone: the request is
+   * refused with `recordedAfter` until the officer confirms, having been told
+   * the order, that this is who the tenant rents from (`confirmRecordedAfter`).
+   *
+   * ## One card per owner
+   *
+   * The link is written on the tenancy card that carries this flat. When that
+   * card also carries flats not recorded as this owner's — a shop and the flat
+   * above it rented from two people — the flat moves onto a card of its own
+   * first, so each tenancy names its own owner and ends on its own. A card
+   * already linked to another owner is refused: undoing that link is a person's
+   * decision, made from the tenant's file.
+   *
+   * Among co-owners the one picked is the one the tenant deals with; the others
+   * remain listed on the unit. Runs inside the caller's transaction when there
+   * is one — `TenancyService.recordOccupancy` records the tenant and links the
+   * owner as one write.
+   */
+  async linkRecordedOwner(input: {
+    occupancyId: string;
+    ownerId: string;
+    /** «نعم، يستأجر منه» — given after being told the owner was recorded after the tenant. */
+    confirmRecordedAfter?: boolean;
+    actor: { id: string; role: string };
+  }): Promise<RecordedOwnerLinkResult> {
+    const outcome = await this.inTransaction(() => this.linkRecordedOwnerInScope(input));
+    if (outcome.announce) {
+      this.announce({ ...outcome.announce, actor: input.actor });
+    }
+    return outcome.result;
+  }
+
+  private async linkRecordedOwnerInScope(input: {
+    occupancyId: string;
+    ownerId: string;
+    confirmRecordedAfter?: boolean;
+    actor: { id: string; role: string };
+  }): Promise<{
+    result: RecordedOwnerLinkResult;
+    announce: {
+      action: string;
+      ownerId: string;
+      tenantId: string;
+      entryId: string;
+      footprint: LinkFootprint;
+      detail?: Record<string, unknown>;
+    } | null;
+  }> {
+    const spell = await this.db.unitOccupancy.findUnique({
+      where: { id: input.occupancyId },
+      select: {
+        id: true,
+        unitId: true,
+        citizenId: true,
+        role: true,
+        toDate: true,
+        createdAt: true,
+        unit: { select: { id: true, buildingId: true, unitCode: true } },
+        citizen: { select: { firstName: true, middleName: true, lastName: true } },
+      },
+    });
+    if (!spell) throw new NotFoundError('سجل الإشغال غير موجود');
+    if (spell.toDate) throw new ConflictError('انتهى هذا الإشغال — لا يُربط بمالك');
+    if (spell.role === 'OWNER') {
+      throw new ValidationError('المالك لا يُربط بمالك آخر', { occupancyId: input.occupancyId });
+    }
+    if (spell.citizenId === input.ownerId) {
+      throw new ValidationError('لا يمكن ربط الشخص بنفسه مالكاً', { occupancyId: input.occupancyId });
+    }
+
+    const unitCode = spell.unit.unitCode;
+    const ownerSpell = await this.db.unitOccupancy.findFirst({
+      where: { unitId: spell.unitId, citizenId: input.ownerId, role: 'OWNER' as never, toDate: null },
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    });
+    if (!ownerSpell) {
+      throw new ValidationError(`هذا المواطن ليس مالكاً مسجَّلاً على الوحدة ${unitCode}`, {
+        landlordCitizenId: input.ownerId,
+      });
+    }
+    // Recorded after the tenant: linked only once the officer confirms — see the docblock.
+    const recordedAfter = ownerSpell.createdAt.getTime() > spell.createdAt.getTime();
+    if (recordedAfter && !input.confirmRecordedAfter) {
+      throw new ConflictError(
+        `سُجِّل هذا المالك على الوحدة ${unitCode} بعد ${fullName(spell.citizen)}. تأكّد أنه من يستأجر منه قبل الربط.`,
+        { landlordCitizenId: input.ownerId, recordedAfter: true },
+      );
+    }
+
+    const owner = await this.db.user.findUnique({
+      where: { id: input.ownerId },
+      select: {
+        id: true,
+        kind: true,
+        isActive: true,
+        firstName: true,
+        middleName: true,
+        lastName: true,
+        phone: true,
+        whatsapp: true,
+      },
+    });
+    if (!owner || owner.kind !== 'CITIZEN') {
+      throw new ValidationError('المواطن غير موجود', { landlordCitizenId: input.ownerId });
+    }
+    if (!owner.isActive) {
+      throw new ValidationError('ملف هذا المواطن معطَّل', { landlordCitizenId: input.ownerId });
+    }
+
+    let card = await this.tenancyCardFor(spell);
+    if (!card) {
+      // Nothing on their file claims the flat yet: file it, under this owner.
+      const filed = await this.buildings.ensureOnFile({
+        unitId: spell.unitId,
+        buildingId: spell.unit.buildingId,
+        citizenId: spell.citizenId,
+        role: spell.role,
+        shares: null,
+        unitStatus: unitStatusForRole(spell.role as never),
+        landlord: { citizenId: owner.id },
+      });
+      if (!filed.propertyEntryId) {
+        return {
+          result: {
+            linked: false,
+            alreadyLinked: false,
+            split: false,
+            propertyEntryId: null,
+            reason: filed.outcome === 'NO_FILE' ? 'TENANT_NO_FILE' : 'UNLINKABLE_STRUCTURE',
+          },
+          announce: null,
+        };
+      }
+      card = await this.tenancyCardFor(spell);
+      if (!card) throw new ConflictError('تعذّر إيجاد بطاقة المستأجر لهذه الوحدة — حدّث الصفحة');
+    }
+
+    if (card.occupancyType !== spell.role) {
+      throw new ConflictError(
+        `الوحدة ${unitCode} مسجَّلة في ملف ${fullName(spell.citizen)} على بطاقة بصفة أخرى — صحِّح صفته على البطاقة في ملفه أولاً`,
+        { propertyEntryId: card.id },
+      );
+    }
+
+    if (card.landlordCitizenId === owner.id) {
+      // Already this owner's tenancy: only make sure the link covers this flat.
+      const footprint =
+        readFootprint(card.landlordLinkFootprint, owner.id) ?? emptyFootprint(owner.id, input.actor.id);
+      const covered = footprint.units.some((unit) => unit.unitId === spell.unitId);
+      if (!covered) {
+        await this.applyUnits({
+          entryId: card.id,
+          ownerId: owner.id,
+          occupiedBy: card.occupancyType,
+          units: [{ unitId: spell.unitId, unitCode }],
+          footprint,
+          actor: input.actor,
+        });
+        await this.db.propertyEntry.update({
+          where: { id: card.id },
+          data: { landlordLinkFootprint: footprint as never },
+        });
+      }
+      return {
+        result: { linked: false, alreadyLinked: true, split: false, propertyEntryId: card.id, reason: null },
+        announce: covered
+          ? null
+          : {
+              action: 'LANDLORD_LINK_UPDATED',
+              ownerId: owner.id,
+              tenantId: spell.citizenId,
+              entryId: card.id,
+              footprint,
+            },
+      };
+    }
+
+    if (card.landlordCitizenId) {
+      const current = card.landlordCitizen ? fullName(card.landlordCitizen) : '';
+      throw new ConflictError(
+        `الوحدة ${unitCode} على بطاقة إيجار مربوطة بمالك آخر${current ? ` (${current})` : ''} — ألغِ ذلك الربط من ملف المستأجر أولاً`,
+        { propertyEntryId: card.id },
+      );
+    }
+
+    /*
+      A مبنى card that itemises nothing claims every flat its holder occupies
+      here. Linking it names one owner for all of them, which is only true when
+      this is the only one.
+    */
+    if (card.propertyType === 'BUILDING' && card.units.length === 0) {
+      const others = await this.db.unitOccupancy.count({
+        where: {
+          citizenId: spell.citizenId,
+          toDate: null,
+          role: { not: 'OWNER' as never },
+          unitId: { not: spell.unitId },
+          unit: { buildingId: spell.unit.buildingId },
+        },
+      });
+      if (others > 0) {
+        throw new ConflictError(
+          'بطاقة المستأجر في هذا المبنى لا تحدد وحداته وله فيه أكثر من وحدة — حدِّد وحداته على البطاقة في ملفه أولاً',
+          { propertyEntryId: card.id },
+        );
+      }
+    }
+
+    /*
+      Other rows on the card: kept together only when every one of them is a
+      flat recorded as this owner's too. A line never linked to a flat, or a flat
+      of somebody else's, means another tenancy — this flat moves to its own card.
+    */
+    let targetId = card.id;
+    let split = false;
+    const ownRow = card.units.find((row) => row.unitId === spell.unitId);
+    const otherRows = card.units.filter((row) => row !== ownRow);
+    if (ownRow && otherRows.length > 0) {
+      const linkedIds = otherRows.map((row) => row.unitId).filter((id): id is string => Boolean(id));
+      const ownedByOwner = linkedIds.length
+        ? await this.db.unitOccupancy.findMany({
+            where: { unitId: { in: linkedIds }, citizenId: owner.id, role: 'OWNER' as never, toDate: null },
+            select: { unitId: true },
+          })
+        : [];
+      const theirs = new Set(ownedByOwner.map((row) => row.unitId));
+      const allTheirs = otherRows.every((row) => row.unitId && theirs.has(row.unitId));
+      if (!allTheirs) {
+        targetId = await this.moveRowToOwnCard(card, ownRow.id);
+        split = true;
+      }
+    }
+
+    const entry = await this.db.propertyEntry.findUnique({
+      where: { id: targetId },
+      select: { ...ENTRY_SELECT, landlordPhone: true, landlordName: true },
+    });
+    if (!entry) throw new ConflictError('تعذّر إيجاد بطاقة المستأجر لهذه الوحدة — حدّث الصفحة');
+
+    const context = await this.loadPlanContext([entry], [owner.id]);
+    const target = this.planTarget(entry, context);
+    const plan = target.block
+      ? { block: target.block, outcome: null }
+      : this.planFor(target, context.citizens.get(owner.id)!, context);
+    if (plan.block) throw new ConflictError(plan.block.message, { block: plan.block });
+
+    /*
+      The card names who the flat is held from. What the tenant typed is kept;
+      a card that named nobody gets the owner's own name and number, which a
+      tenancy card needs in order to be saved from the form at all.
+    */
+    const taken = await this.db.propertyEntry.updateMany({
+      where: { id: targetId, landlordCitizenId: null },
+      data: {
+        landlordCitizenId: owner.id,
+        ...(entry.landlordName ? {} : { landlordName: fullName(owner) }),
+        ...(entry.landlordPhone ? {} : { landlordPhone: owner.phone ?? owner.whatsapp ?? null }),
+      },
+    });
+    if (taken.count === 0) {
+      throw new ConflictError('تغيّر ربط هذه البطاقة للتو — حدّث الصفحة', { propertyEntryId: targetId });
+    }
+
+    const footprint = emptyFootprint(owner.id, input.actor.id);
+    await this.applyUnits({
+      entryId: targetId,
+      ownerId: owner.id,
+      occupiedBy: entry.occupancyType,
+      units: target.units,
+      footprint,
+      actor: input.actor,
+    });
+    await this.db.propertyEntry.update({
+      where: { id: targetId },
+      data: { landlordLinkFootprint: footprint as never },
+    });
+
+    return {
+      result: { linked: true, alreadyLinked: false, split, propertyEntryId: targetId, reason: null },
+      announce: {
+        action: 'LANDLORD_LINKED',
+        ownerId: owner.id,
+        tenantId: spell.citizenId,
+        entryId: targetId,
+        footprint,
+        detail: { via: 'RECORDED_OWNER', recordedAfterTenant: recordedAfter, split },
+      },
+    };
+  }
+
+  /**
+   * The current tenancy card that carries this spell's flat — the same claim
+   * shapes the census reads, itemised row first.
+   */
+  private async tenancyCardFor(spell: {
+    unitId: string;
+    citizenId: string;
+    role: string;
+    unit: { buildingId: string };
+  }) {
+    const [cards, unitsInBuilding] = await Promise.all([
+      this.db.propertyEntry.findMany({
+        where: {
+          buildingId: spell.unit.buildingId,
+          endedAt: null,
+          registration: { citizenId: spell.citizenId },
+        },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          registrationId: true,
+          occupancyType: true,
+          propertyType: true,
+          landlordCitizenId: true,
+          landlordLinkFootprint: true,
+          landlordCitizen: { select: { firstName: true, middleName: true, lastName: true } },
+          units: {
+            where: { endedAt: null },
+            orderBy: { createdAt: 'asc' },
+            select: { id: true, unitId: true },
+          },
+        },
+      }),
+      this.db.unit.count({ where: { buildingId: spell.unit.buildingId } }),
+    ]);
+
+    const named = (card: (typeof cards)[number]) => card.units.some((row) => row.unitId === spell.unitId);
+    return (
+      cards.find((card) => card.occupancyType === spell.role && named(card)) ??
+      cards.find(named) ??
+      cards.find((card) => card.propertyType === 'HOUSE' && unitsInBuilding === 1) ??
+      cards.find((card) => card.propertyType === 'BUILDING' && card.units.length === 0) ??
+      null
+    );
+  }
+
+  /**
+   * Moves one row off a tenancy card onto a new card of its own — the same
+   * tenancy, attributed to its own owner — keeping the row itself (its id, what
+   * the tenant said about the flat) and the «غير مؤكَّد» flags on it.
+   *
+   * The new card copies what describes the property, not what describes the
+   * tenancy: no owner, no link, no documents. A lease stays on the card it was
+   * attached to, where a person can see it and re-attach it.
+   */
+  private async moveRowToOwnCard(
+    card: { id: string; registrationId: string },
+    rowId: string,
+  ): Promise<string> {
+    const [source, registration] = await Promise.all([
+      this.db.propertyEntry.findUnique({
+        where: { id: card.id },
+        select: {
+          occupancyType: true,
+          propertyType: true,
+          neighborhood: true,
+          propertyNumber: true,
+          buildingName: true,
+          buildingId: true,
+          latitude: true,
+          longitude: true,
+          units: { where: { endedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true } },
+        },
+      }),
+      this.db.registration.findUnique({
+        where: { id: card.registrationId },
+        select: {
+          flaggedFields: true,
+          properties: { where: { endedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true } },
+        },
+      }),
+    ]);
+    if (!source || !registration) throw new ConflictError('تعذّر فصل الوحدة عن بطاقتها — حدّث الصفحة');
+
+    const created = await this.db.propertyEntry.create({
+      select: { id: true },
+      data: {
+        registrationId: card.registrationId,
+        occupancyType: source.occupancyType,
+        propertyType: source.propertyType,
+        neighborhood: source.neighborhood,
+        propertyNumber: source.propertyNumber,
+        buildingName: source.buildingName,
+        buildingId: source.buildingId,
+        latitude: source.latitude,
+        longitude: source.longitude,
+      },
+    });
+    await this.db.buildingUnit.update({ where: { id: rowId }, data: { propertyEntryId: created.id } });
+
+    // The new card is the newest current card, so it takes the last position.
+    const moved = withoutRowFlags(registration.flaggedFields, {
+      cardIndex: registration.properties.findIndex((property) => property.id === card.id),
+      rowIndex: source.units.findIndex((row) => row.id === rowId),
+      toCardIndex: registration.properties.length,
+    });
+    if (moved.changed) {
+      await this.db.registration.update({
+        where: { id: card.registrationId },
+        data: { flaggedFields: moved.flags as never },
+      });
+    }
+    return created.id;
   }
 
   /**
@@ -1847,9 +2303,12 @@ export class LandlordLinkService {
     tenantId: string | null;
     entryId: string;
     footprint: LinkFootprint;
+    /** How the link was made, when it was not the phone match. */
+    detail?: Record<string, unknown>;
     actor: { id: string; role: string };
   }): void {
     const after = {
+      ...(input.detail ?? {}),
       propertyEntryId: input.entryId,
       unitsClaimed: input.footprint.units.length,
       occupanciesRecorded: input.footprint.units.filter((unit) => unit.occupancyId).length,
@@ -2004,6 +2463,8 @@ interface PlanContext {
   citizens: Map<string, PlanCitizen>;
   cardsByCitizen: Map<string, PlanCard[]>;
   occupancies: Array<{ unitId: string; citizenId: string; role: string }>;
+  /** Every current owner recorded on each planned flat, whoever they are. */
+  unitOwners: Map<string, Array<{ citizenId: string; name: string }>>;
 }
 
 interface PlanTarget {
@@ -2026,8 +2487,8 @@ export type LinkBlockCode =
   | 'UNIT_VACANT'
   | 'OWNER_NO_FILE'
   | 'OWNER_CARD_UNLINKED'
-  | 'OWNER_OTHER_CAPACITY'
   | 'OWNER_OCCUPIES_UNIT'
+  | 'UNIT_OWNED_BY_OTHER'
   | 'RECONCILE_FAILED';
 
 export interface LinkBlock {
@@ -2036,7 +2497,7 @@ export interface LinkBlock {
   unitCode: string | null;
 }
 
-function block(code: LinkBlockCode, unitCode: string | null = null): LinkBlock {
+function block(code: LinkBlockCode, unitCode: string | null = null, detail: string | null = null): LinkBlock {
   const unit = unitCode ? ` ${unitCode}` : '';
   const messages: Record<LinkBlockCode, string> = {
     NOT_ON_SURVEY:
@@ -2047,9 +2508,10 @@ function block(code: LinkBlockCode, unitCode: string | null = null): LinkBlock {
     OWNER_NO_FILE: 'لا يوجد ملف لهذا المواطن يمكن إضافة العقار إليه.',
     OWNER_CARD_UNLINKED:
       'سجّل هذا المالك العقار نفسه في ملفه دون ربطه بسجل المباني. اربط بطاقته بالمبنى أولاً حتى لا يُحتسب العقار مرتين.',
-    OWNER_OTHER_CAPACITY:
-      'هذا المواطن مسجَّل في المبنى نفسه كمستأجر أو شاغل. أضف له بطاقة «مالك» لهذا المبنى في ملفه أولاً.',
     OWNER_OCCUPIES_UNIT: `هذا المواطن مسجَّل مستأجراً أو شاغلاً في الوحدة${unit} نفسها، فلا يمكن تسجيله مالكاً لها.`,
+    UNIT_OWNED_BY_OTHER: `الوحدة${unit} مسجَّل لها مالك في سجل المباني${
+      detail ? ` (${detail})` : ''
+    } وهذا المواطن ليس بين مالكيها. إن كان شريكاً في ملكيتها فسجّله مالكاً على الوحدة أولاً، وإلا فصحِّح الوحدة على بطاقة المستأجر.`,
     RECONCILE_FAILED: 'تعذّر تحديث عقار المالك المرتبط.',
   };
   return { code, message: messages[code], unitCode };
@@ -2308,6 +2770,19 @@ export interface LandlordProposal {
   candidates: Array<
     LandlordCandidate & { outcome: LinkOutcome | null; blocked: LinkBlock | null }
   >;
+}
+
+/** What «المالك» picked on the unit changed. */
+export interface RecordedOwnerLinkResult {
+  /** A link was written by this call. */
+  linked: boolean;
+  /** The tenancy card already named this owner. */
+  alreadyLinked: boolean;
+  /** The flat was moved onto a card of its own to carry this owner. */
+  split: boolean;
+  propertyEntryId: string | null;
+  /** Why nothing could hold the link: the tenant has no file, or it is a tent. */
+  reason: 'TENANT_NO_FILE' | 'UNLINKABLE_STRUCTURE' | null;
 }
 
 /** What one confirmation changed. */

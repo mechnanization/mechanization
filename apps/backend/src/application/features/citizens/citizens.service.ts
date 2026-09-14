@@ -1359,6 +1359,8 @@ export class CitizensService {
           unitStatus: (unit.unitStatus ?? null) as never,
           unitId: unit.unitId ?? null,
         }));
+        /** The stored row each line was loaded from, when the form sent one. */
+        const rowIds = (p.units ?? []).map((unit) => (unit as { id?: string }).id ?? null);
 
         if (id) {
           const state = linkState.get(id);
@@ -1393,23 +1395,91 @@ export class CitizensService {
             };
           }
 
+          /*
+            Rows are kept by identity: a line the form loaded is updated in place,
+            a line it no longer sends is removed, a new line is created.
+
+            They used to be deleted and re-created on every save, which gave the
+            file nothing to recognise a line by — so a form left open across
+            «إنهاء الإيجار» on one flat re-created that flat as held the next
+            time it was saved. A line naming a row that has since ended is now
+            refused instead. Ended rows are never touched: the form does not load
+            them, and they are the record of what the tenancy gave up.
+          */
+          const stored = await tx.buildingUnit.findMany({
+            where: { propertyEntryId: id },
+            select: { id: true, endedAt: true, createdAt: true },
+          });
+          const storedById = new Map(stored.map((row) => [row.id, row]));
+          const kept = new Set<string>();
+          const lines = units.map((unit, position) => {
+            const rowId = rowIds[position];
+            const row = rowId ? storedById.get(rowId) : undefined;
+            if (row?.endedAt) {
+              throw new ConflictError(
+                'انتهى الإيجار على إحدى وحدات هذه البطاقة منذ فتح هذا النموذج — حدّث الصفحة',
+                { propertyId: id, rowId },
+              );
+            }
+            if (row && !kept.has(row.id)) {
+              kept.add(row.id);
+              return { unit, row };
+            }
+            return { unit, row: undefined };
+          });
+
+          /*
+            A row's place is its creation order — the order the form lists rows
+            in and «غير مؤكَّد» flags count them in. Kept rows keep their own
+            timestamps when the form's order already agrees with them (every new
+            line after every kept one, kept ones in stored order); otherwise the
+            order the form sent is written onto them, so a flag on the third line
+            stays on the third line.
+          */
+          const keptTimes = lines.flatMap((line) => (line.row ? [line.row.createdAt.getTime()] : []));
+          const lastKept = lines.map((line) => Boolean(line.row)).lastIndexOf(true);
+          const firstNew = lines.findIndex((line) => !line.row);
+          const inStoredOrder =
+            keptTimes.every((time, index) => index === 0 || time >= keptTimes[index - 1]!) &&
+            (firstNew === -1 || lastKept === -1 || firstNew > lastKept);
+          // Explicit, a millisecond apart: rows written in one transaction can
+          // otherwise share a timestamp and come back in any order.
+          const base = inStoredOrder
+            ? Math.max(Date.now(), keptTimes.length ? Math.max(...keptTimes) + 1 : 0)
+            : Date.now() - lines.length;
+          const order = (position: number, isNew: boolean) =>
+            inStoredOrder && !isNew ? {} : { createdAt: new Date(base + position) };
+
           await tx.propertyEntry.update({
             where: { id },
             data: {
               ...data,
               ...landlordLinkReset,
-              // Units are replaced wholesale rather than reconciled one by one.
-              // They carry no documents and no id anyone outside this record
-              // holds, so identity buys nothing here — unlike the property row
-              // above, whose id a deed is attached to.
-              // Except an ended row: the record of a flat this tenancy gave up,
-              // which the form never loaded and so never sends back.
-              units: { deleteMany: { endedAt: null }, create: units },
+              units: { deleteMany: { endedAt: null, id: { notIn: [...kept] } } },
             },
           });
+          for (const [position, line] of lines.entries()) {
+            if (line.row) {
+              await tx.buildingUnit.update({
+                where: { id: line.row.id },
+                data: { ...line.unit, ...order(position, false) },
+              });
+            } else {
+              await tx.buildingUnit.create({
+                data: { ...line.unit, ...order(position, true), propertyEntryId: id },
+              });
+            }
+          }
         } else {
+          const base = Date.now();
           await tx.propertyEntry.create({
-            data: { registrationId, ...data, units: { create: units } },
+            data: {
+              registrationId,
+              ...data,
+              units: {
+                create: units.map((unit, position) => ({ ...unit, createdAt: new Date(base + position) })),
+              },
+            },
           });
         }
       }

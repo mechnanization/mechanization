@@ -38,6 +38,8 @@ interface HarnessOptions {
   /** Cards the candidate holds on this building or parcel. */
   ownerCards?: Array<Record<string, unknown>>;
   occupancies?: Array<Record<string, unknown>>;
+  /** Current owner spells recorded on the planned flats, whoever holds them. */
+  unitOwners?: Array<{ unitId: string; citizenId: string; name?: string }>;
   vacantUnitIds?: string[];
   registrations?: number;
 }
@@ -126,7 +128,20 @@ function harness(options: HarnessOptions = {}) {
         .fn()
         .mockResolvedValue((options.vacantUnitIds ?? []).map((unitId) => ({ unitId }))),
     },
-    unitOccupancy: { findMany: jest.fn().mockResolvedValue(options.occupancies ?? []) },
+    unitOccupancy: {
+      // Two reads: the candidate's own spells, and every owner of the flats.
+      findMany: jest.fn().mockImplementation(({ where }: { where: { role?: string } }) =>
+        Promise.resolve(
+          where.role === 'OWNER'
+            ? (options.unitOwners ?? []).map((row) => ({
+                unitId: row.unitId,
+                citizenId: row.citizenId,
+                citizen: { firstName: row.name ?? 'مالك', middleName: null, lastName: 'مسجَّل' },
+              }))
+            : (options.occupancies ?? []),
+        ),
+      ),
+    },
     user: {
       findUnique: jest.fn().mockResolvedValue(citizen),
       findMany: jest.fn().mockResolvedValue(planCitizen ? [planCitizen] : []),
@@ -329,22 +344,31 @@ describe('confirm — blocked until the property can reach the owner’s file', 
     ).toBe('OWNER_CARD_UNLINKED');
   });
 
-  it('an owner who holds this building only as a tenant — the flat would bill as a tenancy', async () => {
-    expect(
-      await blockOf({
-        ownerCards: [
-          {
-            id: 'tenancy',
-            occupancyType: 'TENANT',
-            propertyType: 'BUILDING',
-            buildingId: BUILDING,
-            propertyNumber: '1042',
-            units: [{ unitId: 'unit-2' }],
-            registration: { citizenId: OWNER },
-          },
-        ],
-      }),
-    ).toBe('OWNER_OTHER_CAPACITY');
+  it('lets through an owner who also rents another flat in the building', async () => {
+    /*
+      Owning one flat and renting the shop below it is ordinary. This was
+      blocked while `claimOnFile` would have ticked the owned flat onto the
+      tenancy card; a flat now only joins a card of its own capacity, so the
+      link gives them an ownership card beside the tenancy.
+    */
+    const { service, transaction } = harness({
+      ownerCards: [
+        {
+          id: 'tenancy',
+          occupancyType: 'TENANT',
+          propertyType: 'BUILDING',
+          buildingId: BUILDING,
+          propertyNumber: '1042',
+          units: [{ unitId: 'unit-2' }],
+          registration: { citizenId: OWNER },
+        },
+      ],
+    });
+    transaction.mockRejectedValue(new Error('reached the write'));
+
+    await expect(
+      service.confirm({ propertyEntryId: ENTRY, citizenId: OWNER, actor }),
+    ).rejects.toThrow('reached the write');
   });
 
   it('an owner recorded as living in that very flat as its tenant', async () => {
@@ -357,6 +381,32 @@ describe('confirm — blocked until the property can reach the owner’s file', 
 
   it('an owner with no file to put the property on', async () => {
     expect(await blockOf({ registrations: 0 })).toBe('OWNER_NO_FILE');
+  });
+
+  it('a flat the census already records as somebody else’s', async () => {
+    /*
+      A link makes its candidate the owner of every flat on the card. On a flat
+      with a known owner that is a second owner — and on a card the matrix used
+      to fill with flats from two owners, the next save of the tenant's file
+      handed one owner the other's flat.
+    */
+    expect(
+      await blockOf({ unitOwners: [{ unitId: 'unit-1', citizenId: 'owner-2', name: 'هشام' }] }),
+    ).toBe('UNIT_OWNED_BY_OTHER');
+  });
+
+  it('lets through a candidate who is one of the flat’s co-owners', async () => {
+    const { service, transaction } = harness({
+      unitOwners: [
+        { unitId: 'unit-1', citizenId: 'owner-2' },
+        { unitId: 'unit-1', citizenId: OWNER },
+      ],
+    });
+    transaction.mockRejectedValue(new Error('reached the write'));
+
+    await expect(
+      service.confirm({ propertyEntryId: ENTRY, citizenId: OWNER, actor }),
+    ).rejects.toThrow('reached the write');
   });
 
   it('lets a منزل on a one-unit structure through, naming that unit', async () => {

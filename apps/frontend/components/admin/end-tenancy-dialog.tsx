@@ -11,6 +11,7 @@ import {
   type AfterTenancyAnswer,
   type EndTenancyResult,
   type TenancyPreview,
+  type TenancyPreviewRow,
 } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -43,9 +44,18 @@ const today = () => new Date().toISOString().slice(0, 10);
  *
  * The same operation the unit matrix's «إنهاء الإشغال» runs, reached from the
  * card instead of the flat. It reads what the ending would touch before it asks
- * anything, so it only asks what applies: which flats (when the card names more
- * than one), and what each freed flat is now — never a flat somebody else is
- * still recorded living in.
+ * anything, so it only asks what applies: which of the card's rows they left,
+ * and what each freed flat is now — never a flat somebody else is still
+ * recorded living in.
+ *
+ * ## Every row, and nothing chosen for the officer
+ *
+ * It used to list only the flats linked to سجل المباني, pre-tick all of them,
+ * and send no choice when every box stayed ticked — which the server read as
+ * «end every row on the card». A card holding one linked flat and a shop typed
+ * on the form showed the flat alone and ended both. So every current row is
+ * listed, a card with more than one starts with none chosen, and the rows
+ * chosen are sent by id, every time.
  *
  * Nothing is deleted. The card stays on the tenant's file as an ended tenancy
  * with its lease, and the owner stays the owner.
@@ -57,7 +67,6 @@ export function EndTenancyDialog({
   open,
   onOpenChange,
   onEnded,
-  allowPartial = true,
   notice,
   locale = 'ar',
 }: {
@@ -66,13 +75,8 @@ export function EndTenancyDialog({
   propertyEntryId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** `cardEnded` is false when only some of the card's flats were given up. */
+  /** `cardEnded` is false when only some of the card's rows were given up. */
   onEnded: (result: EndTenancyResult, cardEnded: boolean) => void;
-  /**
-   * Whether the officer may end only some of the card's flats. Off in the edit
-   * form, whose unsaved rows would otherwise write an ended flat back as held.
-   */
-  allowPartial?: boolean;
   /** One line about the place it was opened from, shown above the buttons. */
   notice?: string;
   locale?: string;
@@ -108,7 +112,9 @@ export function EndTenancyDialog({
       .then((found) => {
         if (controller.signal.aborted) return;
         setPreview(found);
-        setSelected(new Set(found.units.map((unit) => unit.unitId)));
+        // A lone row is the tenancy itself; among several, nothing is chosen for the officer.
+        const rows = found.rows ?? [];
+        setSelected(new Set(rows.length === 1 ? [rows[0]!.rowId] : []));
       })
       .catch((caught) => {
         logApiError(caught);
@@ -125,27 +131,32 @@ export function EndTenancyDialog({
     return () => controller.abort();
   }, [open, tenant, token, propertyEntryId, en]);
 
-  const units = useMemo(() => preview?.units ?? [], [preview]);
-  const chosen = useMemo(() => units.filter((unit) => selected.has(unit.unitId)), [units, selected]);
-  const everyUnit = chosen.length === units.length;
-  const freed = chosen.filter((unit) => unit.needsStatus);
-  const kept = chosen.filter((unit) => unit.othersRemain);
+  const rows = useMemo(() => preview?.rows ?? [], [preview]);
+  /**
+   * What ends: the chosen rows, or — on a منزل, which has no rows — its one flat.
+   * Only a linked flat carries a census status to ask about.
+   */
+  const houseUnits = useMemo(() => (rows.length === 0 ? (preview?.units ?? []) : []), [rows, preview]);
+  const chosen = useMemo(() => rows.filter((row) => selected.has(row.rowId)), [rows, selected]);
+  const ending = rows.length > 0 ? chosen : houseUnits;
+  const everyRow = rows.length === 0 || chosen.length === rows.length;
+  const freed = ending.filter((unit) => unit.needsStatus);
+  const kept = ending.filter((unit) => unit.othersRemain);
   const asksStatus = freed.length > 0;
   const ownerNonResident = freed.some((unit) => unit.ownerNonResident && unit.dwelling);
-  const partial = allowPartial && units.length > 1;
   const free = preview?.occupancyType === 'FREE_OCCUPANT';
 
   const ready =
     Boolean(preview) &&
     Boolean(reason) &&
-    (units.length === 0 || chosen.length > 0) &&
+    (rows.length === 0 || chosen.length > 0) &&
     (!asksStatus || afterTenancyComplete(after));
 
-  const toggle = (unitId: string, on: boolean) =>
+  const toggle = (rowId: string, on: boolean) =>
     setSelected((current) => {
       const next = new Set(current);
-      if (on) next.add(unitId);
-      else next.delete(unitId);
+      if (on) next.add(rowId);
+      else next.delete(rowId);
       return next;
     });
 
@@ -157,8 +168,8 @@ export function EndTenancyDialog({
       const result = await endTenancy(tenant, token, propertyEntryId, {
         reason,
         ...(reason === 'MOVED_OUT' && endedAt && endedAt !== today() ? { endedAt } : {}),
-        // All of them is the whole card — including rows never linked to a flat.
-        ...(everyUnit ? {} : { unitIds: chosen.map((unit) => unit.unitId) }),
+        // Exactly the rows chosen, always — never «whatever is on the card».
+        ...(rows.length > 0 ? { rowIds: chosen.map((row) => row.rowId) } : {}),
         ...(asksStatus ? afterTenancyPayload(after) : {}),
       });
       onOpenChange(false);
@@ -185,10 +196,49 @@ export function EndTenancyDialog({
       ? 'End tenancy'
       : 'إنهاء الإيجار';
 
-  const codes = (list: typeof units) => (
+  const codes = (list: ReadonlyArray<{ unitCode: string | null }>) => (
     <bdi dir="ltr" className="font-mono">
-      {list.map((unit) => unit.unitCode).join(', ')}
+      {list
+        .map((unit) => unit.unitCode)
+        .filter(Boolean)
+        .join(', ')}
     </bdi>
+  );
+
+  /** A row as the card shows it: its flat's code, or what the form said about the line. */
+  const rowLabel = (row: TenancyPreviewRow) => (
+    <span className="min-w-0 flex-1">
+      {row.unitCode ? (
+        <bdi dir="ltr" className="font-mono font-medium">
+          {row.unitCode}
+        </bdi>
+      ) : (
+        <span className="font-medium">
+          {row.unitType ? (labels.unitType[row.unitType as never] ?? row.unitType) : en ? 'Unit' : 'وحدة'}
+        </span>
+      )}
+      {row.floor ? (
+        <span className="ms-2 text-xs text-muted-foreground">
+          {en ? `Floor ${row.floor}` : `الطابق ${row.floor}`}
+        </span>
+      ) : null}
+      {row.unitArea != null ? (
+        <span className="ms-2 text-xs text-muted-foreground">
+          {row.unitArea} {en ? 'm²' : 'م²'}
+        </span>
+      ) : null}
+      {row.ownerNames.length > 0 ? (
+        <span className="ms-2 text-xs text-muted-foreground">
+          {en ? 'Owner: ' : 'المالك: '}
+          {row.ownerNames.join('، ')}
+        </span>
+      ) : null}
+      {!row.unitId ? (
+        <span className="ms-2 text-[11px] text-muted-foreground">
+          {en ? '(not linked to the building register)' : '(غير مربوطة بسجل المباني)'}
+        </span>
+      ) : null}
+    </span>
   );
 
   return (
@@ -230,18 +280,23 @@ export function EndTenancyDialog({
           </p>
         ) : (
           <div className="space-y-4">
-            {partial ? (
+            {rows.length > 1 ? (
               <fieldset className="space-y-1.5">
                 <legend className="mb-1 text-sm font-medium">
                   {en ? 'Which units did they leave?' : 'أي الوحدات تركها؟'}{' '}
                   <span className="text-destructive">*</span>
                 </legend>
+                <p className="text-xs text-muted-foreground">
+                  {en
+                    ? 'Tick only what they left. The rest stay on the card as current.'
+                    : 'حدِّد ما تركه فقط، ويبقى الباقي قائماً على البطاقة.'}
+                </p>
                 <div className="grid gap-2">
-                  {units.map((unit) => {
-                    const on = selected.has(unit.unitId);
+                  {rows.map((row) => {
+                    const on = selected.has(row.rowId);
                     return (
                       <label
-                        key={unit.unitId}
+                        key={row.rowId}
                         className={cn(
                           'flex min-h-11 cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm transition-colors duration-150',
                           on ? 'border-primary bg-primary/10' : 'hover:bg-accent',
@@ -249,46 +304,33 @@ export function EndTenancyDialog({
                       >
                         <Checkbox
                           checked={on}
-                          onCheckedChange={(value) => toggle(unit.unitId, value === true)}
+                          onCheckedChange={(value) => toggle(row.rowId, value === true)}
                           className="size-5"
                         />
-                        <span className="min-w-0 flex-1">
-                          <bdi dir="ltr" className="font-mono font-medium">
-                            {unit.unitCode}
-                          </bdi>
-                          {unit.ownerNames.length > 0 ? (
-                            <span className="ms-2 text-xs text-muted-foreground">
-                              {en ? 'Owner: ' : 'المالك: '}
-                              {unit.ownerNames.join('، ')}
-                            </span>
-                          ) : null}
-                        </span>
+                        {rowLabel(row)}
                       </label>
                     );
                   })}
                 </div>
               </fieldset>
-            ) : units.length === 1 ? (
+            ) : rows.length === 1 ? (
+              <p className="flex text-sm">{rowLabel(rows[0]!)}</p>
+            ) : houseUnits.length > 0 ? (
               <p className="text-sm">
                 {en ? 'Unit ' : 'الوحدة '}
-                {codes(units)}
-                {units[0]!.ownerNames.length > 0 ? (
+                {codes(houseUnits)}
+                {houseUnits[0]!.ownerNames.length > 0 ? (
                   <span className="text-muted-foreground">
                     {en ? ' — owner: ' : ' — المالك: '}
-                    {units[0]!.ownerNames.join('، ')}
+                    {houseUnits[0]!.ownerNames.join('، ')}
                   </span>
                 ) : null}
               </p>
-            ) : units.length === 0 ? (
+            ) : (
               <p className="rounded-md bg-muted/50 p-2.5 text-xs leading-relaxed text-muted-foreground">
                 {en
                   ? 'This card is not linked to a unit in the building register, so only the card ends.'
                   : 'هذه البطاقة غير مربوطة بوحدة في سجل المباني، فتنتهي البطاقة وحدها.'}
-              </p>
-            ) : (
-              <p className="text-sm">
-                {en ? 'Every unit on the card: ' : 'كل وحدات البطاقة: '}
-                {codes(units)}
               </p>
             )}
 
@@ -334,7 +376,7 @@ export function EndTenancyDialog({
 
             {reason && asksStatus ? (
               <div className="space-y-1.5">
-                {units.length > 1 ? (
+                {rows.length > 1 ? (
                   <p className="text-xs text-muted-foreground">
                     {en ? 'For ' : 'عن '}
                     {codes(freed)}
@@ -361,11 +403,11 @@ export function EndTenancyDialog({
               <ul className="list-disc space-y-1.5 ps-5 text-sm leading-relaxed">
                 <li>
                   {en ? 'They stop being charged for ' : 'تتوقف الرسوم عليه عن '}
-                  {units.length === 0
+                  {ending.length === 0
                     ? en
                       ? 'this property.'
                       : 'هذا العقار.'
-                    : chosen.length === 1
+                    : ending.length === 1
                       ? en
                         ? 'this unit.'
                         : 'هذه الوحدة.'
@@ -374,7 +416,7 @@ export function EndTenancyDialog({
                         : 'هذه الوحدات.'}
                 </li>
                 <li>
-                  {everyUnit
+                  {everyRow
                     ? en
                       ? 'The card stays on their file marked «Ended», lease and documents included.'
                       : 'تبقى البطاقة في ملفه بعلامة «منتهية» مع العقد والمستندات.'

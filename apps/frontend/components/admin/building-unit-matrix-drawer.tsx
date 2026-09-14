@@ -34,6 +34,7 @@ import {
   endVacancy,
   getBuilding,
   getBuildingDamage,
+  linkOccupancyOwner,
   logApiError,
   recordDamage,
   recordOccupancy,
@@ -73,8 +74,10 @@ import {
   logVisitWithFollowUp,
   occupancyMessage,
   OccupantList,
+  ownerLinkMessage,
   SeasonalHomePanel,
   UnitStateLegend,
+  unitOwners,
   vacancyBlocker,
   VacancyPanel,
   VisitForm,
@@ -506,6 +509,26 @@ export function BuildingUnitMatrixDrawer({
     toast.success(endTenancyMessage(result, locale));
   };
 
+  /** «ربط بالمالك» — a refusal is rethrown for the dialog to show, as `closeSpell`'s is. */
+  const linkOwner = async (occupant: UnitOccupant, ownerId: string, confirmRecordedAfter: boolean) => {
+    let result: Awaited<ReturnType<typeof linkOccupancyOwner>>;
+    try {
+      result = await linkOccupancyOwner(tenant, token, occupant.id, ownerId, confirmRecordedAfter);
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not link the owner.'
+            : 'تعذّر الربط بالمالك.',
+      );
+    }
+    await load();
+    onChanged?.();
+    toast.success(ownerLinkMessage(result, en));
+  };
+
   const saveSeasonal = (
     unit: UnitWithOccupants,
     values: { presenceMonths: number[]; ownerLastStayAt: string | null; vacancyDeclaredAt: string | null },
@@ -892,6 +915,7 @@ export function BuildingUnitMatrixDrawer({
                 busy={busy}
                 citizenHref={citizenHref}
                 onEnd={closeSpell}
+                onLinkOwner={linkOwner}
               />
 
               {/* Why the flat reads «شاغرة», and the control that lifts it. */}
@@ -1050,15 +1074,15 @@ export function BuildingUnitMatrixDrawer({
                       : undefined
                   }
                   vacancy={activeVacancy(selectedUnit)}
-                  onSubmit={(citizen, role, shares, unitStatus, endsVacancy) =>
+                  owners={unitOwners(selectedUnit)}
+                  onSubmit={({ citizen, role, endsVacancy, ...rest }) =>
                     void run(
                       async () => {
                         const result = await recordOccupancy(tenant, token, {
                           unitId: selectedUnit.id,
                           citizenId: citizen.id,
                           role,
-                          shares,
-                          unitStatus,
+                          ...rest,
                           ...(endsVacancy ? { endsVacancy } : {}),
                         });
                         return occupancyMessage(
@@ -1066,6 +1090,8 @@ export function BuildingUnitMatrixDrawer({
                           selectedUnit.unitCode,
                           result,
                           en,
+                          unitOwners(selectedUnit).find((owner) => owner.citizenId === rest.landlordCitizenId)
+                            ?.citizenName,
                         );
                       },
                       en ? 'Could not record the occupancy.' : 'تعذّر تسجيل الإشغال.',

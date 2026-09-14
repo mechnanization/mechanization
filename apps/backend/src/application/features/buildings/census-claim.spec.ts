@@ -52,11 +52,17 @@ interface HarnessOptions {
     id: string;
     propertyType: string;
     occupancyType: string;
+    landlordCitizenId?: string | null;
+    landlordPhone?: string | null;
     units: Array<{ id: string; unitId: string | null }>;
   }>;
   structureType?: string;
   /** What the unit's حالة already is, for the narrowing assertions. */
   role?: string;
+  /** Registered citizens by id, for the owner a tenant is recorded as renting from. */
+  owners?: Record<string, { phone: string | null; whatsapp?: string | null }>;
+  /** Current owner spells on units other than this one, for the typed-number reuse. */
+  otherOwnerSpells?: Array<{ unitId: string }>;
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -86,7 +92,23 @@ function harness(options: HarnessOptions = {}) {
       updateMany: unitUpdateMany,
       count: jest.fn().mockResolvedValue(unitsInBuilding),
     },
-    user: { findUnique: jest.fn().mockResolvedValue({ id: CITIZEN, kind: 'CITIZEN' }) },
+    user: {
+      findUnique: jest.fn().mockImplementation(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          options.owners?.[where.id]
+            ? {
+                id: where.id,
+                kind: 'CITIZEN',
+                firstName: 'مالك',
+                middleName: null,
+                lastName: 'مسجَّل',
+                whatsapp: null,
+                ...options.owners[where.id],
+              }
+            : { id: CITIZEN, kind: 'CITIZEN' },
+        ),
+      ),
+    },
     // No vacancy standing on this flat: `recordOccupancy` asks before it writes
     // over one. The refusal and the acknowledged override are covered in
     // `occupancy-end.spec.ts` and the DB integration suite.
@@ -105,6 +127,7 @@ function harness(options: HarnessOptions = {}) {
         citizen: { firstName: 'محمد', lastName: 'لا' },
       }),
       update: jest.fn(),
+      findMany: jest.fn().mockResolvedValue(options.otherOwnerSpells ?? []),
     },
     building: {
       findUnique: jest.fn().mockResolvedValue({
@@ -116,9 +139,16 @@ function harness(options: HarnessOptions = {}) {
     },
     registration: { findFirst: jest.fn().mockResolvedValue(registration) },
     propertyEntry: {
-      findMany: jest
-        .fn()
-        .mockResolvedValue(existingCards ?? (existingEntry ? [existingEntry] : [])),
+      findMany: jest.fn().mockResolvedValue(
+        (existingCards ?? (existingEntry ? [existingEntry] : [])).map((card) => ({
+          // A card of the capacity being recorded unless the test says otherwise.
+          occupancyType: options.role ?? 'OWNER',
+          landlordCitizenId: null,
+          landlordPhone: null,
+          landlordLinkDismissedIds: [],
+          ...card,
+        })),
+      ),
       create: propertyEntryCreate,
     },
     buildingUnit: { create: buildingUnitCreate },
@@ -335,6 +365,166 @@ describe('recordOccupancy — establishing the census claim', () => {
 
     expect(propertyEntryCreate).not.toHaveBeenCalled();
     expect(result.fileLink).toEqual({ backed: false, outcome: 'UNLINKABLE_STRUCTURE' });
+  });
+});
+
+/**
+ * One tenancy card per owner.
+ *
+ * The defect: a tenant already renting flat 0001 from one owner was recorded on
+ * flat 0101 of another, and the flat was ticked onto the first card — so their
+ * file said 0101 was rented from the wrong person, ending it recorded the
+ * ending against that person, and the next save of the file would have moved
+ * the first owner onto the second owner's flat.
+ */
+describe('recordOccupancy — one tenancy card per owner', () => {
+  const OWNER_A = 'owner-a';
+  const OWNER_B = 'owner-b';
+
+  it('files a flat rented from a second owner on a card of its own', async () => {
+    const { service, propertyEntryCreate, buildingUnitCreate } = harness({
+      role: 'TENANT',
+      owners: { [OWNER_B]: { phone: '+96171000002' } },
+      existingCards: [
+        {
+          id: 'rented-from-a',
+          propertyType: 'BUILDING',
+          occupancyType: 'TENANT',
+          landlordCitizenId: OWNER_A,
+          landlordPhone: '+96171000001',
+          units: [{ id: 'bu-1', unitId: 'unit-shop' }],
+        },
+      ],
+    });
+
+    const result = await record(service, { role: 'TENANT', landlordCitizenId: OWNER_B });
+
+    expect(buildingUnitCreate).not.toHaveBeenCalled();
+    expect(propertyEntryCreate).toHaveBeenCalledTimes(1);
+    const { data } = propertyEntryCreate.mock.calls[0][0];
+    expect(data.occupancyType).toBe('TENANT');
+    // The owner's own name and number, so the card can be saved from the form.
+    expect(data.landlordPhone).toBe('+96171000002');
+    expect(data.landlordName).toBe('مالك مسجَّل');
+    // The link itself is the owner-link service's to write, with its footprint.
+    expect(data.landlordCitizenId).toBeUndefined();
+    expect(result.fileLink.outcome).toBe('ENTRY_CREATED');
+  });
+
+  it('adds the flat to the tenancy card already linked to the same owner', async () => {
+    const { service, propertyEntryCreate, buildingUnitCreate } = harness({
+      role: 'TENANT',
+      owners: { [OWNER_B]: { phone: '+96171000002' } },
+      existingCards: [
+        {
+          id: 'rented-from-a',
+          propertyType: 'BUILDING',
+          occupancyType: 'TENANT',
+          landlordCitizenId: OWNER_A,
+          units: [{ id: 'bu-1', unitId: 'unit-shop' }],
+        },
+        {
+          id: 'rented-from-b',
+          propertyType: 'BUILDING',
+          occupancyType: 'TENANT',
+          landlordCitizenId: OWNER_B,
+          units: [{ id: 'bu-2', unitId: 'unit-store' }],
+        },
+      ],
+    });
+
+    const result = await record(service, { role: 'TENANT', landlordCitizenId: OWNER_B });
+
+    expect(propertyEntryCreate).not.toHaveBeenCalled();
+    expect(buildingUnitCreate.mock.calls[0][0].data.propertyEntryId).toBe('rented-from-b');
+    expect(result.fileLink).toEqual({
+      backed: true,
+      outcome: 'UNIT_ADDED',
+      propertyEntryId: 'rented-from-b',
+    });
+  });
+
+  it('reuses an unlinked card typed with the owner’s number — unless its flats are somebody else’s', async () => {
+    const card = {
+      id: 'typed-b',
+      propertyType: 'BUILDING',
+      occupancyType: 'TENANT',
+      landlordPhone: '+96171000002',
+      units: [{ id: 'bu-1', unitId: 'unit-other' }],
+    };
+
+    const theirs = harness({
+      role: 'TENANT',
+      owners: { [OWNER_B]: { phone: '+96171000002' } },
+      existingCards: [card],
+    });
+    const reused = await record(theirs.service, { role: 'TENANT', landlordCitizenId: OWNER_B });
+    expect(reused.fileLink.outcome).toBe('UNIT_ADDED');
+
+    const somebodyElses = harness({
+      role: 'TENANT',
+      owners: { [OWNER_B]: { phone: '+96171000002' } },
+      existingCards: [card],
+      otherOwnerSpells: [{ unitId: 'unit-other' }],
+    });
+    const minted = await record(somebodyElses.service, { role: 'TENANT', landlordCitizenId: OWNER_B });
+    expect(minted.fileLink.outcome).toBe('ENTRY_CREATED');
+  });
+
+  it('files a tenancy whose owner nobody named on a card of its own', async () => {
+    /*
+      Two flats with unknown owners are not known to share one, and filing them
+      together would hand both to whichever owner is identified first.
+    */
+    const { service, propertyEntryCreate } = harness({
+      role: 'TENANT',
+      existingCards: [
+        {
+          id: 'unknown-owner',
+          propertyType: 'BUILDING',
+          occupancyType: 'TENANT',
+          units: [{ id: 'bu-1', unitId: 'unit-other' }],
+        },
+      ],
+    });
+
+    const result = await record(service, { role: 'TENANT' });
+
+    expect(propertyEntryCreate).toHaveBeenCalledTimes(1);
+    expect(result.fileLink.outcome).toBe('ENTRY_CREATED');
+  });
+
+  it('writes a typed owner onto the new tenancy card', async () => {
+    const { service, propertyEntryCreate } = harness({ role: 'TENANT' });
+
+    await record(service, { role: 'TENANT', landlordName: 'سعيد حرب', landlordPhone: '+96171000009' });
+
+    const { data } = propertyEntryCreate.mock.calls[0][0];
+    expect(data.landlordName).toBe('سعيد حرب');
+    expect(data.landlordPhone).toBe('+96171000009');
+  });
+
+  it('never ticks a flat somebody owns onto their مستأجر card', async () => {
+    /*
+      Rows bill in the card's نوع الإشغال. With only a tenancy card on the
+      building, the owned flat used to land on it and bill as a tenancy.
+    */
+    const { service, propertyEntryCreate, buildingUnitCreate } = harness({
+      existingCards: [
+        {
+          id: 'tenancy-card',
+          propertyType: 'BUILDING',
+          occupancyType: 'TENANT',
+          units: [{ id: 'bu-1', unitId: 'unit-rented' }],
+        },
+      ],
+    });
+
+    const result = await record(service, { role: 'OWNER' });
+
+    expect(buildingUnitCreate).not.toHaveBeenCalled();
+    expect(propertyEntryCreate.mock.calls[0][0].data.occupancyType).toBe('OWNER');
+    expect(result.fileLink.outcome).toBe('ENTRY_CREATED');
   });
 });
 

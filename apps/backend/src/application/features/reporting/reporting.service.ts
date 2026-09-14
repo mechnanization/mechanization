@@ -252,6 +252,16 @@ export interface CitizenProfileUnit {
   vacancyDeclaredAt: string | null;
   /** The «تأكيد الشغور» standing on the censused unit, if one is. */
   vacancy: CitizenProfileVacancy | null;
+  /**
+   * Everyone سجل المباني records as a current owner of the linked flat, oldest
+   * first, with their أسهم.
+   *
+   * On a tenancy card this is the flat's full ownership beside the one owner
+   * the card is linked to: among co-owners the link names whoever the tenant
+   * deals with, and the rest are read from here rather than hidden. Empty when
+   * the line is not linked to a flat, or nobody is recorded owning it.
+   */
+  owners: Array<{ citizenId: string; name: string; phone: string | null; shares: number | null }>;
 }
 
 /**
@@ -1079,6 +1089,18 @@ export class ReportingService {
                           take: 1,
                           select: { id: true, basis: true, observedAt: true },
                         },
+                        // The flat's current owners — see `CitizenProfileUnit.owners`.
+                        occupancies: {
+                          where: { toDate: null, role: 'OWNER' },
+                          orderBy: { createdAt: 'asc' },
+                          select: {
+                            citizenId: true,
+                            shares: true,
+                            citizen: {
+                              select: { firstName: true, middleName: true, lastName: true, phone: true },
+                            },
+                          },
+                        },
                       },
                     },
                   },
@@ -1297,6 +1319,12 @@ export class ReportingService {
                     observedAt: vacancy.observedAt.toISOString(),
                   }
                 : null,
+              owners: (unit.unit?.occupancies ?? []).map((owner) => ({
+                citizenId: owner.citizenId,
+                name: personName(owner.citizen),
+                phone: owner.citizen.phone,
+                shares: owner.shares,
+              })),
             };
           }),
         })),

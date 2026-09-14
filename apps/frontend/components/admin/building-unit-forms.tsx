@@ -52,6 +52,8 @@ import {
   type AfterTenancyAnswer,
   type CitizenListItem,
   type OccupancyFileLink,
+  type OccupantOwnerLink,
+  type RecordedOwnerLink,
   type UnitOccupant,
   type UnitVacancyConfirmation,
   type UnitVisitRow,
@@ -179,6 +181,18 @@ function liveSpells(unit: UnitWithOccupants) {
   return unit.occupants
     .filter((occupant) => occupant.toDate === null)
     .sort((a, b) => (a.fromDate < b.fromDate ? 1 : -1));
+}
+
+/**
+ * The flat's current owners, first recorded first — co-owners included.
+ *
+ * What «المالك» offers a tenant: the unit's own owner list is the evidence a
+ * picked owner rests on, so nobody outside it is offered.
+ */
+export function unitOwners(unit: UnitWithOccupants): UnitOccupant[] {
+  return unit.occupants
+    .filter((occupant) => occupant.toDate === null && occupant.role === 'OWNER')
+    .sort((a, b) => ((a.recordedAt ?? a.fromDate) < (b.recordedAt ?? b.fromDate) ? -1 : 1));
 }
 
 /**
@@ -545,8 +559,9 @@ export function BuildingSummaryBadges({
 export function occupancyMessage(
   name: string,
   unitCode: string,
-  result: { casesResolved: number; fileLink: OccupancyFileLink },
+  result: { casesResolved: number; fileLink: OccupancyFileLink; ownerLink?: RecordedOwnerLink | null },
   en: boolean,
+  ownerName?: string | null,
 ): string {
   const parts = [
     en ? `${name} recorded in unit ${unitCode}` : `تم تسجيل ${name} في الوحدة ${unitCode}`,
@@ -580,8 +595,44 @@ export function occupancyMessage(
       break;
   }
 
+  // Said because it happens inside the tenant's file, which the officer is not looking at.
+  if (result.ownerLink?.linked || result.ownerLink?.alreadyLinked) {
+    const who = ownerName ? (en ? ` to ${ownerName}` : ` بالمالك ${ownerName}`) : '';
+    parts.push(
+      result.ownerLink.split
+        ? en
+          ? `linked${who} on a tenancy card of its own`
+          : `ورُبط${who} في بطاقة إيجار مستقلة`
+        : en
+          ? `linked${who}`
+          : `ورُبط${who}`,
+    );
+  }
+
   return parts.join(' — ');
 }
+/** What «ربط بالمالك» from the unit did, for the toast. */
+export function ownerLinkMessage(result: RecordedOwnerLink, en: boolean): string {
+  if (result.reason === 'TENANT_NO_FILE') {
+    return en
+      ? 'The tenant has no file to hold the link — register them first'
+      : 'لا ملف لهذا المستأجر يحمل الربط — سجّله أولاً';
+  }
+  if (result.reason === 'UNLINKABLE_STRUCTURE') {
+    return en ? 'A tent carries no tenancy card to link' : 'الخيمة لا تحمل بطاقة إيجار تُربط';
+  }
+  if (result.alreadyLinked) {
+    return en ? 'The tenancy already names this owner' : 'بطاقة الإيجار مربوطة بهذا المالك مسبقاً';
+  }
+  return result.split
+    ? en
+      ? 'Linked to the owner, on a tenancy card of its own for this unit'
+      : 'رُبط المستأجر بالمالك في بطاقة إيجار مستقلة لهذه الوحدة'
+    : en
+      ? 'Linked to the owner'
+      : 'رُبط المستأجر بالمالك';
+}
+
 /**
  * «إضافة شخص إلى الوحدة» — the one way a person reaches a flat from the matrix.
  *
@@ -647,6 +698,20 @@ export function occupancyMessage(
  * used to open on «مالك», and a pre-filled select is indistinguishable from an
  * answered one.
  */
+export interface AddPersonValues {
+  citizen: CitizenListItem;
+  role: OccupancyRole;
+  shares?: number;
+  unitStatus?: UnitStatus;
+  /** «نعم، لم تعد شاغرة» — sent only when the link contradicts a standing vacancy. */
+  endsVacancy?: boolean;
+  /** Non-owners: the recorded owner they hold the flat from. */
+  landlordCitizenId?: string;
+  /** Non-owners: the owner as named, when not recorded on the unit. */
+  landlordName?: string;
+  landlordPhone?: string;
+}
+
 export function AddPersonForm({
   tenant,
   token,
@@ -654,6 +719,7 @@ export function AddPersonForm({
   locale,
   newFileHref,
   vacancy,
+  owners = [],
   onSubmit,
 }: {
   tenant: string;
@@ -677,18 +743,41 @@ export function AddPersonForm({
    * basis while they are deciding, instead of after a failed save.
    */
   vacancy?: UnitVacancyConfirmation | null;
-  onSubmit: (
-    citizen: CitizenListItem,
-    role: OccupancyRole,
-    shares?: number,
-    unitStatus?: UnitStatus,
-    /** «نعم، لم تعد شاغرة» — sent only when the link contradicts a standing vacancy. */
-    endsVacancy?: boolean,
-  ) => void;
+  /**
+   * The owners recorded on this unit — what «المالك» offers a مستأجر or a شاغل
+   * بتسامح. See `unitOwners`.
+   */
+  owners?: UnitOccupant[];
+  onSubmit: (values: AddPersonValues) => void;
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
   const [acknowledgedVacancy, setAcknowledgedVacancy] = useState(false);
+  /**
+   * «المالك»: a recorded owner's citizen id, `OTHER` for an owner not recorded
+   * on the unit, or unanswered. A lone owner starts chosen — there is nobody
+   * else it could be among the recorded ones — and co-owners start unanswered,
+   * because which one the tenant deals with is exactly the question.
+   */
+  const [landlordChoice, setLandlordChoice] = useState<string>(() =>
+    owners.length === 1 ? owners[0]!.citizenId : owners.length === 0 ? 'OTHER' : '',
+  );
+  const [typedLandlordName, setTypedLandlordName] = useState('');
+  const [typedLandlordPhone, setTypedLandlordPhone] = useState('');
+  /*
+    The unit's owners can change under an open form — somebody records the owner
+    first, then comes back to the tenant — so the default is re-derived from the
+    list it was a default of, never kept from a list that no longer holds.
+  */
+  const ownerIds = owners.map((owner) => owner.citizenId).join(',');
+  useEffect(() => {
+    setLandlordChoice((current) => {
+      // An answer still on offer stands; «غير مسجَّل» always is.
+      if (current === 'OTHER' || (current && ownerIds.split(',').includes(current))) return current;
+      if (ownerIds === '') return 'OTHER';
+      return ownerIds.includes(',') ? '' : ownerIds;
+    });
+  }, [ownerIds]);
 
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<CitizenListItem[]>([]);
@@ -1002,6 +1091,108 @@ export function AddPersonForm({
       ) : null}
 
       {/*
+        «المالك» — who a مستأجر or شاغل بتسامح holds the flat from.
+
+        Asked here because nothing else will: the matrix used to record the
+        tenant with no owner at all, and the flat went onto whatever tenancy card
+        they already had in the building — so a flat rented from one owner read
+        as rented from another. The choice is among the owners recorded on this
+        flat; picking one links the tenancy to them in the same save. An owner
+        not recorded here is typed instead, and the owner-link queue matches the
+        number once that person is registered.
+      */}
+      {role && role !== 'OWNER' ? (
+        <fieldset className="space-y-2">
+          <legend className="mb-1 text-sm font-medium">
+            {en ? 'Owner of the unit' : 'المالك'}
+            {owners.length > 0 ? <span className="text-destructive"> *</span> : null}
+          </legend>
+          {owners.length > 1 ? (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {en
+                ? 'This unit has more than one owner. Choose the one the occupant deals with; the others stay recorded as owners.'
+                : 'للوحدة أكثر من مالك. اختر من يتعامل معه الشاغل منهم، ويبقى الآخرون مسجَّلين مالكين.'}
+            </p>
+          ) : null}
+          {owners.length > 0 ? (
+            <div className="grid gap-2" role="radiogroup">
+              {[...owners.map((owner) => owner.citizenId), 'OTHER'].map((value) => {
+                const owner = owners.find((row) => row.citizenId === value);
+                const on = landlordChoice === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => setLandlordChoice(value)}
+                    className={cn(
+                      'flex min-h-11 flex-wrap items-center gap-x-2 rounded-md border px-3 py-2 text-start text-sm transition-colors',
+                      on ? 'border-primary bg-primary/10 font-medium text-primary' : 'hover:bg-accent',
+                    )}
+                  >
+                    {owner ? (
+                      <>
+                        <span>{owner.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}</span>
+                        {owner.citizenPhone ? (
+                          <span dir="ltr" className="font-mono text-xs font-normal text-muted-foreground">
+                            {owner.citizenPhone}
+                          </span>
+                        ) : null}
+                        {owner.shares ? (
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {en ? `${owner.shares}/2400 shares` : `${owner.shares}/٢٤٠٠ سهم`}
+                          </span>
+                        ) : null}
+                      </>
+                    ) : en ? (
+                      'Someone not recorded on this unit'
+                    ) : (
+                      'مالك غير مسجَّل على هذه الوحدة'
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          {landlordChoice === 'OTHER' ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label={en ? 'Owner’s name' : 'اسم المالك'}
+                htmlFor="occupant-landlord-name"
+                hint={en ? 'Optional' : 'اختياري'}
+              >
+                <Input
+                  id="occupant-landlord-name"
+                  value={typedLandlordName}
+                  onChange={(event) => setTypedLandlordName(event.target.value)}
+                />
+              </Field>
+              <Field
+                label={en ? 'Owner’s phone' : 'هاتف المالك'}
+                htmlFor="occupant-landlord-phone"
+                hint={
+                  en
+                    ? 'Offered for linking once the owner is registered on this number'
+                    : 'يُعرض الربط للتأكيد عندما يُسجَّل المالك على هذا الرقم'
+                }
+              >
+                <Input
+                  id="occupant-landlord-phone"
+                  type="tel"
+                  inputMode="tel"
+                  dir="ltr"
+                  className="text-start"
+                  value={typedLandlordPhone}
+                  onChange={(event) => setTypedLandlordPhone(event.target.value)}
+                />
+              </Field>
+            </div>
+          ) : null}
+        </fieldset>
+      ) : null}
+
+      {/*
         The flat is confirmed empty and this says somebody is in it.
 
         A tick rather than a second dialog: the officer is already in the middle
@@ -1033,20 +1224,34 @@ export function AddPersonForm({
 
       <Button
         size="sm"
-        disabled={busy || !chosen || !role || (endsStandingVacancy && !acknowledgedVacancy)}
+        disabled={
+          busy ||
+          !chosen ||
+          !role ||
+          (endsStandingVacancy && !acknowledgedVacancy) ||
+          // A non-owner on a flat with recorded owners says which one, or that it is none of them.
+          (role !== 'OWNER' && owners.length > 0 && !landlordChoice)
+        }
         onClick={() => {
           if (!chosen || !role) return;
           const parsed = Number(shares);
-          onSubmit(
-            chosen,
+          const nonOwner = role !== 'OWNER';
+          const recordedOwner =
+            nonOwner && landlordChoice && landlordChoice !== 'OTHER' ? landlordChoice : undefined;
+          const typed = nonOwner && landlordChoice === 'OTHER';
+          onSubmit({
+            citizen: chosen,
             role,
-            role === 'OWNER' && shares.trim() && Number.isFinite(parsed) ? parsed : undefined,
+            shares: role === 'OWNER' && shares.trim() && Number.isFinite(parsed) ? parsed : undefined,
             // Sent for an owner only, and only when actually chosen. The
             // server refuses it on anyone else, whose capacity settles the
             // unit's حالة without being asked.
-            role === 'OWNER' && unitStatus ? unitStatus : undefined,
-            endsStandingVacancy ? true : undefined,
-          );
+            unitStatus: role === 'OWNER' && unitStatus ? unitStatus : undefined,
+            endsVacancy: endsStandingVacancy ? true : undefined,
+            landlordCitizenId: recordedOwner,
+            landlordName: typed && typedLandlordName.trim() ? typedLandlordName.trim() : undefined,
+            landlordPhone: typed && typedLandlordPhone.trim() ? typedLandlordPhone.trim() : undefined,
+          });
         }}
       >
         {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
@@ -1796,6 +2001,7 @@ export function OccupantList({
   busy,
   citizenHref,
   onEnd,
+  onLinkOwner,
 }: {
   unit: UnitWithOccupants;
   locale: string;
@@ -1804,10 +2010,21 @@ export function OccupantList({
   /** Where a name links to; plain text when absent. */
   citizenHref?: (citizenId: string) => string;
   onEnd: (occupant: UnitOccupant, input: EndOccupancyAnswer) => Promise<void>;
+  /**
+   * «ربط بالمالك» — links a tenant to one of the flat's owners. `confirmRecordedAfter`
+   * is the officer's confirmation for an owner recorded after the tenant. Throws
+   * to report a refusal.
+   */
+  onLinkOwner?: (occupant: UnitOccupant, ownerId: string, confirmRecordedAfter: boolean) => Promise<void>;
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
   const [ending, setEnding] = useState<UnitOccupant | null>(null);
+  const [linking, setLinking] = useState<UnitOccupant | null>(null);
+  const owners = unitOwners(unit);
+  /** The flat's owners a tenant may be linked to — anyone but themselves. */
+  const ownersFor = (occupant: UnitOccupant) =>
+    owners.filter((owner) => owner.citizenId !== occupant.citizenId);
 
   const shown = unit.occupants.filter((occupant) => occupant.endReason !== 'RECORDED_IN_ERROR');
   const hidden = unit.occupants.length - shown.length;
@@ -1858,6 +2075,20 @@ export function OccupantList({
                     {en ? `${occupant.shares}/2400 shares` : `${occupant.shares}/٢٤٠٠ سهم`}
                   </span>
                 ) : null}
+                {/*
+                  The number, beside the name, for owner and occupant alike: the
+                  officer at the door is the person who needs to call whoever is
+                  recorded here, and opening each file to find it was the detour.
+                */}
+                {occupant.citizenPhone ? (
+                  <a
+                    href={`tel:${occupant.citizenPhone}`}
+                    dir="ltr"
+                    className="font-mono text-primary underline-offset-2 hover:underline"
+                  >
+                    {occupant.citizenPhone}
+                  </a>
+                ) : null}
                 <span className="text-muted-foreground">
                   {occupant.toDate
                     ? `${formatDate(occupant.fromDate)} — ${formatDate(occupant.toDate)}`
@@ -1889,6 +2120,21 @@ export function OccupantList({
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
+                      {/*
+                        Offered to a tenant whose card names no registered owner,
+                        whenever the flat has an owner recorded. An owner recorded
+                        after the tenant is linked only once the officer confirms
+                        it in the dialog.
+                      */}
+                      {onLinkOwner &&
+                      occupant.role !== 'OWNER' &&
+                      occupant.ownerLink &&
+                      (occupant.ownerLink.state === 'UNLINKED' || occupant.ownerLink.state === 'NO_CARD') &&
+                      ownersFor(occupant).length > 0 ? (
+                        <DropdownMenuItem className="min-h-10" onSelect={() => setLinking(occupant)}>
+                          {en ? 'Link to the owner…' : 'ربط بالمالك…'}
+                        </DropdownMenuItem>
+                      ) : null}
                       <DropdownMenuItem
                         className="min-h-10 text-destructive focus:text-destructive"
                         onSelect={() => setEnding(occupant)}
@@ -1897,6 +2143,10 @@ export function OccupantList({
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+                ) : null}
+                {/* After the menu, so it wraps onto its own line and the ⋮ stays beside the name. */}
+                {current && occupant.ownerLink ? (
+                  <OwnerLinkLine link={occupant.ownerLink} owners={owners} en={en} />
                 ) : null}
               </li>
             );
@@ -1930,7 +2180,243 @@ export function OccupantList({
         }}
         onConfirm={(input) => onEnd(ending!, input)}
       />
+
+      {onLinkOwner ? (
+        <LinkOwnerDialog
+          occupant={linking}
+          owners={linking ? ownersFor(linking) : []}
+          unitCode={unit.unitCode}
+          locale={locale}
+          onOpenChange={(open) => {
+            if (!open) setLinking(null);
+          }}
+          onConfirm={(ownerId, confirmRecordedAfter) => onLinkOwner(linking!, ownerId, confirmRecordedAfter)}
+        />
+      ) : null}
     </>
+  );
+}
+
+/**
+ * Who a current tenant holds the flat from, as their own card says — beside
+ * their name on the unit, so an owner and a tenant recorded on the same flat
+ * are visibly connected, or visibly not.
+ */
+function OwnerLinkLine({
+  link,
+  owners,
+  en,
+}: {
+  link: OccupantOwnerLink;
+  owners: UnitOccupant[];
+  en: boolean;
+}) {
+  if (link.state === 'NO_CARD') return null;
+
+  if (link.state === 'LINKED') {
+    const others = owners.filter((owner) => owner.citizenId !== link.ownerId);
+    // The flat's only owner is listed right above — naming them again says nothing.
+    if (others.length === 0) return null;
+    return (
+      <span className="basis-full text-[11px] text-muted-foreground">
+        {en ? 'Owner: ' : 'المالك: '}
+        <span className="font-medium text-foreground">{link.ownerName}</span>
+        {others.length > 0
+          ? en
+            ? ` — co-owners: ${others.map((owner) => owner.citizenName).join(', ')}`
+            : ` — شركاؤه: ${others.map((owner) => owner.citizenName).join('، ')}`
+          : null}
+      </span>
+    );
+  }
+
+  if (link.state === 'LINKED_ELSEWHERE') {
+    return (
+      <span className="inline-flex basis-full items-center gap-1 text-[11px] text-amber-700 dark:text-amber-500">
+        <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+        {en
+          ? `Linked to ${link.ownerName}, who is not recorded as an owner of this unit`
+          : `مربوط بـ${link.ownerName}، وهو غير مسجَّل مالكاً لهذه الوحدة`}
+      </span>
+    );
+  }
+
+  return (
+    <span className="basis-full text-[11px] text-muted-foreground">
+      {en ? 'Not linked to an owner' : 'غير مربوط بمالك'}
+      {link.typedName ? (en ? ` (named: ${link.typedName})` : ` (ذكر: ${link.typedName})`) : null}
+    </span>
+  );
+}
+
+/**
+ * «ربط بالمالك» — which of the flat's owners a tenant already on it rents from.
+ *
+ * Among co-owners the one chosen is the one the tenant deals with; the rest
+ * stay recorded as owners. Nothing is chosen for the officer when there is more
+ * than one.
+ *
+ * An owner recorded on the flat after the tenant is offered too, but said so,
+ * and the link waits for a tick: the owner list is the evidence a pick rests
+ * on, and a name added to it later is a later claim about a tenancy already on
+ * file — which the officer is the one able to check.
+ */
+function LinkOwnerDialog({
+  occupant,
+  owners,
+  unitCode,
+  locale,
+  onOpenChange,
+  onConfirm,
+}: {
+  occupant: UnitOccupant | null;
+  owners: UnitOccupant[];
+  unitCode: string;
+  locale: string;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (ownerId: string, confirmRecordedAfter: boolean) => Promise<void>;
+}) {
+  const en = locale === 'en';
+  const [choice, setChoice] = useState<string | null>(null);
+  const [confirmedAfter, setConfirmedAfter] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (occupant) {
+      setChoice(owners.length === 1 ? owners[0]!.citizenId : null);
+      setConfirmedAfter(false);
+      setBusy(false);
+      setFailure(null);
+    }
+    // Reset per tenant opened, not per re-render of the owner list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [occupant?.id]);
+
+  if (!occupant) return null;
+
+  const recordedAfter = (owner: UnitOccupant) =>
+    (owner.recordedAt ?? owner.fromDate) > (occupant.recordedAt ?? occupant.fromDate);
+  const chosenOwner = owners.find((owner) => owner.citizenId === choice);
+  const needsConfirmation = Boolean(chosenOwner && recordedAfter(chosenOwner));
+
+  const confirm = async () => {
+    if (!choice || busy || (needsConfirmation && !confirmedAfter)) return;
+    setBusy(true);
+    setFailure(null);
+    try {
+      await onConfirm(choice, needsConfirmation);
+      onOpenChange(false);
+    } catch (caught) {
+      setFailure(
+        caught instanceof Error && caught.message
+          ? caught.message
+          : en
+            ? 'Could not link the owner.'
+            : 'تعذّر الربط بالمالك.',
+      );
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={busy ? undefined : onOpenChange}>
+      <DialogContent className="max-w-md" closeLabel={en ? 'Cancel' : 'إلغاء'}>
+        <DialogHeader>
+          <DialogTitle>
+            {en
+              ? `Who does ${occupant.citizenName ?? 'the tenant'} rent ${unitCode} from?`
+              : `ممّن يستأجر ${occupant.citizenName ?? 'المستأجر'} الوحدة ${unitCode}؟`}
+          </DialogTitle>
+          <DialogDescription>
+            {owners.length > 1
+              ? en
+                ? 'Choose the owner they deal with. The other owners stay recorded as owners of the unit.'
+                : 'اختر المالك الذي يتعامل معه. يبقى المالكون الآخرون مسجَّلين مالكين للوحدة.'
+              : en
+                ? 'The tenancy on their file will name this owner.'
+                : 'ستُسجَّل بطاقة الإيجار في ملفه باسم هذا المالك.'}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-2" role="radiogroup">
+          {owners.map((owner) => (
+            <button
+              key={owner.citizenId}
+              type="button"
+              role="radio"
+              aria-checked={choice === owner.citizenId}
+              onClick={() => {
+                setChoice(owner.citizenId);
+                setConfirmedAfter(false);
+              }}
+              className={cn(
+                'flex min-h-11 flex-wrap items-center gap-x-2 rounded-md border px-3 py-2 text-start text-sm transition-colors',
+                choice === owner.citizenId
+                  ? 'border-primary bg-primary/10 font-medium text-primary'
+                  : 'hover:bg-accent',
+              )}
+            >
+              <span>{owner.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}</span>
+              {owner.citizenPhone ? (
+                <span dir="ltr" className="font-mono text-xs font-normal text-muted-foreground">
+                  {owner.citizenPhone}
+                </span>
+              ) : null}
+              {owner.shares ? (
+                <span className="text-xs font-normal text-muted-foreground">
+                  {en ? `${owner.shares}/2400 shares` : `${owner.shares}/٢٤٠٠ سهم`}
+                </span>
+              ) : null}
+              {recordedAfter(owner) ? (
+                <span className="basis-full text-[11px] font-normal text-amber-700 dark:text-amber-500">
+                  {en ? 'Recorded on the unit after the tenant' : 'سُجِّل على الوحدة بعد المستأجر'}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+
+        {needsConfirmation ? (
+          <label className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 shrink-0"
+              checked={confirmedAfter}
+              onChange={(event) => setConfirmedAfter(event.target.checked)}
+            />
+            <span>
+              {en
+                ? `${chosenOwner?.citizenName ?? 'This owner'} was recorded on the unit after ${occupant.citizenName ?? 'the tenant'}. I confirm this is who they rent from.`
+                : `سُجِّل ${chosenOwner?.citizenName ?? 'هذا المالك'} على الوحدة بعد ${occupant.citizenName ?? 'المستأجر'}. أؤكّد أنه من يستأجر منه.`}
+            </span>
+          </label>
+        ) : null}
+
+        {failure ? (
+          <p
+            role="alert"
+            className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
+          >
+            {failure}
+          </p>
+        ) : null}
+
+        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy} className="w-full sm:w-auto">
+            {en ? 'Cancel' : 'إلغاء'}
+          </Button>
+          <Button
+            onClick={() => void confirm()}
+            disabled={busy || !choice || (needsConfirmation && !confirmedAfter)}
+            className="w-full sm:w-auto"
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+            {en ? 'Link' : 'ربط'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

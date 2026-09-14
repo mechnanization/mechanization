@@ -39,3 +39,49 @@ export function withoutCardFlags(
 
   return { flags: kept, removed, changed };
 }
+
+/**
+ * The same bookkeeping one level down: a row leaving card `cardIndex`'s list of
+ * current rows, which a flag names by position — `properties.2.units.3.unitArea`
+ * — in creation order, the order the edit form lists them in.
+ *
+ * Its own flags move to `toCardIndex` as that card's only row when the row is
+ * moved onto a card of its own, and leave with it (reported in `removed`) when
+ * the row simply ends. Every later row on the card moves down one place.
+ */
+export function withoutRowFlags(
+  flags: unknown,
+  input: { cardIndex: number; rowIndex: number; toCardIndex?: number | null },
+): { flags: Array<Record<string, unknown>>; removed: Array<Record<string, unknown>>; changed: boolean } {
+  const list = Array.isArray(flags) ? (flags as Array<Record<string, unknown>>) : [];
+  if (input.cardIndex < 0 || input.rowIndex < 0) return { flags: list, removed: [], changed: false };
+
+  const kept: Array<Record<string, unknown>> = [];
+  const removed: Array<Record<string, unknown>> = [];
+  let changed = false;
+
+  for (const flag of list) {
+    const match =
+      typeof flag.path === 'string' ? /^properties\.(\d+)\.units\.(\d+)\.(.+)$/.exec(flag.path) : null;
+    if (!match || Number(match[1]) !== input.cardIndex) {
+      kept.push(flag);
+      continue;
+    }
+    const row = Number(match[2]);
+    if (row === input.rowIndex) {
+      changed = true;
+      if (input.toCardIndex != null) {
+        kept.push({ ...flag, path: `properties.${input.toCardIndex}.units.0.${match[3]}` });
+      } else {
+        removed.push(flag);
+      }
+    } else if (row > input.rowIndex) {
+      kept.push({ ...flag, path: `properties.${input.cardIndex}.units.${row - 1}.${match[3]}` });
+      changed = true;
+    } else {
+      kept.push(flag);
+    }
+  }
+
+  return { flags: kept, removed, changed };
+}

@@ -33,6 +33,7 @@ import type {
 import {
   checkPropertyNumber,
   peekPropertyNumberCheck,
+  type EndTenancyResult,
   type PropertyNumberCheck,
 } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -67,6 +68,8 @@ import {
 } from '@/components/citizen/unit-fields';
 
 export interface UnitDraft {
+  /** The stored row this line was loaded from, on an edit. Never typed. */
+  id?: string;
   /**
    * The canonical `Unit` this line describes, when the officer linked one.
    *
@@ -226,11 +229,12 @@ export function PropertyCard({
   onViewParcel?: (propertyNumber: string) => void;
   onRemove: () => void;
   /**
-   * The saved tenancy on this card was ended from «إنهاء الإيجار». The card is
-   * history now and leaves the form — the caller drops it without asking, as
-   * the server has already kept it. Absent where a card cannot be ended here.
+   * The saved tenancy on this card was ended from «إنهاء الإيجار». When the
+   * whole card ended it is history and leaves the form; when only some rows did
+   * (`result.endedRowIds`), the card stays and those rows leave it. The server
+   * has already kept both. Absent where a card cannot be ended here.
    */
-  onEnded?: () => void;
+  onEnded?: (result: EndTenancyResult, cardEnded: boolean) => void;
   canRemove: boolean;
   errors?: Record<string, string>;
   locale?: string;
@@ -601,12 +605,11 @@ export function PropertyCard({
           propertyEntryId={draft.id}
           open={endOpen}
           onOpenChange={setEndOpen}
-          onEnded={() => onEnded?.()}
-          allowPartial={false}
+          onEnded={(result, cardEnded) => onEnded?.(result, cardEnded)}
           notice={
             locale === 'en'
-              ? 'The card leaves this form once it ends. Unsaved changes to it are not kept; the rest of the form is unchanged.'
-              : 'تخرج البطاقة من هذا النموذج بعد إنهائها، ولا تُحفظ تعديلات غير محفوظة عليها. باقي النموذج لا يتغيّر.'
+              ? 'What ends leaves this form: the whole card, or only the units ticked. Unsaved changes to those units are not kept; the rest of the form is unchanged.'
+              : 'ما يُنهى يخرج من هذا النموذج: البطاقة كلها، أو الوحدات المحددة وحدها. لا تُحفظ تعديلات غير محفوظة على تلك الوحدات، وباقي النموذج لا يتغيّر.'
           }
           locale={locale}
         />

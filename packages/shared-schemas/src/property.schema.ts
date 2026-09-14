@@ -186,6 +186,14 @@ export const neighborhoodField = z
  */
 export const buildingUnitSchema = z.object({
   /**
+   * The stored row this line was loaded from, on an edit. Absent on a new line.
+   *
+   * Lets a save keep each row's identity instead of re-creating the list, and
+   * refuse a line whose flat ended («إنهاء الإيجار») while the form was open —
+   * otherwise re-saving that form would bring the ended flat back as held.
+   */
+  id: uuid.optional(),
+  /**
    * The canonical `Unit` this card line describes, when the officer picked one.
    *
    * The link the census turns on (§3.7, P2-T8): where it is set the `Unit` is

@@ -1565,6 +1565,17 @@ function PropertyCard({
   */
   const isNonOwner = isTenant || property.occupancyType === 'FREE_OCCUPANT';
   const labels = getLabels(locale);
+  /** The current owners of the flats on this card, once each, as سجل المباني records them. */
+  const recordedOwners = currentUnits
+    .flatMap((unit) => unit.owners ?? [])
+    .filter(
+      (owner, index, all) =>
+        all.findIndex((other) => (other.citizenId ?? other.name) === (owner.citizenId ?? owner.name)) === index,
+    );
+  const linkedIsOwner = recordedOwners.some((owner) => owner.citizenId === property.landlordCitizenId);
+  const otherOwners = recordedOwners.filter(
+    (owner) => !owner.citizenId || owner.citizenId !== property.landlordCitizenId,
+  );
 
   const details = present([
     {
@@ -1731,6 +1742,64 @@ function PropertyCard({
       icon: Phone,
       label: locale === 'en' ? 'Landlord Phone' : 'هاتف المالك',
       value: property.landlordPhone ? <PhoneLink phone={property.landlordPhone} /> : null,
+    },
+    /*
+      Everyone else سجل المباني records as owning these flats.
+
+      A tenancy names the one owner the tenant deals with; a flat can have
+      several (heirs, each with أسهم). They are read from the unit, not stored on
+      the card, so nobody is hidden behind the linked name and a change of
+      ownership shows here without anyone editing this file. On a card linked to
+      nobody they are simply the flat's owners, which is what an officer needs to
+      see before linking one.
+    */
+    {
+      icon: Users,
+      label: property.landlordCitizenId
+        ? locale === 'en'
+          ? 'Co-owners of the unit'
+          : 'شركاؤه في ملكية الوحدة'
+        : locale === 'en'
+          ? 'Owners in the building register'
+          : 'مالكو الوحدة في سجل المباني',
+      value: otherOwners.length > 0 ? (
+        <span className="flex flex-wrap gap-x-3 gap-y-1">
+          {otherOwners.map((owner) => (
+            <span key={owner.citizenId ?? owner.name}>
+              {owner.citizenId ? (
+                <Link
+                  href={`${base}/citizens/${owner.citizenId}`}
+                  className="text-primary underline-offset-4 hover:underline"
+                >
+                  {owner.name}
+                </Link>
+              ) : (
+                owner.name
+              )}
+              {owner.phone ? (
+                <span className="ms-1.5 text-xs font-normal">
+                  <PhoneLink phone={owner.phone} />
+                </span>
+              ) : null}
+              {owner.shares ? (
+                <span className="ms-1 text-xs font-normal text-muted-foreground">
+                  ({owner.shares}/2400)
+                </span>
+              ) : null}
+            </span>
+          ))}
+        </span>
+      ) : null,
+      hint:
+        property.landlordCitizenId && !linkedIsOwner && recordedOwners.length > 0
+          ? locale === 'en'
+            ? 'The linked landlord is not recorded as an owner of this unit — check the link or the unit.'
+            : 'المالك المربوط غير مسجَّل مالكاً لهذه الوحدة — راجِع الربط أو الوحدة.'
+          : !property.landlordCitizenId
+            ? locale === 'en'
+              ? 'This tenancy is not linked to any of them.'
+              : 'هذا الإيجار غير مربوط بأيٍّ منهم.'
+            : undefined,
     },
   ]);
 
