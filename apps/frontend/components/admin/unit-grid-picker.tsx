@@ -856,12 +856,26 @@ export function UnitGridPicker({
                 key={floor}
                 className={cn(
                   'flex items-center gap-2',
-                  // The pavement. Drawn under the ground-floor row so the
-                  // basements below it read as below it, rather than as three
-                  // more storeys whose labels happen to start with a B.
+                  /*
+                    The pavement. Drawn under the ground-floor row so the
+                    basements below it read as below it, rather than as three
+                    more storeys whose labels happen to start with a B.
+
+                    Red, and `red-500` rather than `border-destructive`: this is
+                    a datum line, not a failure. Every other red in this app
+                    means something is wrong — a refused save, a flat that
+                    cannot be deleted — and borrowing that token here would make
+                    ground level read as an error state on every building with a
+                    basement. A literal colour says "this is the line" and
+                    claims nothing else.
+
+                    The same hue in both themes, which is why it is not
+                    theme-scoped: it sits on `bg-muted/10` either way, and the
+                    500 weight carries against both.
+                  */
                   floor === 0 &&
                     safeBasementsCount > 0 &&
-                    'border-b-2 border-dashed border-border pb-1.5',
+                    'border-b-2 border-dashed border-red-500 pb-1.5',
                 )}
               >
                 {/*
