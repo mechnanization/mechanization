@@ -55,7 +55,17 @@ export const MIN_HORIZONTAL_BLOCKS = 1;
 /** The column ceiling `upsertUnitSchema` stores — a painted span above it
  *  would be refused server-side, so the grid never offers one. */
 export const MAX_HORIZONTAL_BLOCKS = 20;
-export const DEFAULT_HORIZONTAL_BLOCKS = 6;
+/**
+ * The matrix opens 3×3, and the two halves of that are set here and in
+ * `DEFAULT_VERTICAL_BLOCKS` below.
+ *
+ * Six columns was a guess at a wide block, and it made the common case worse:
+ * a three-flat floor opened with three empty cells trailing it, which reads as
+ * three flats somebody forgot to paint rather than as spare grid. A square
+ * default reads as a blank canvas, which is what it is — and both dimensions
+ * are one tap from anything else.
+ */
+export const DEFAULT_HORIZONTAL_BLOCKS = 3;
 
 export const MIN_VERTICAL_BLOCKS = 1;
 export const MAX_VERTICAL_BLOCKS = 100;
@@ -204,6 +214,27 @@ export function UnitGridPicker({
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
+
+  /**
+   * The unit types this structure's blocks may be.
+   *
+   * `BUILDING_UNIT_TYPES` excludes «منزل مستقل» on purpose — it is what a whole
+   * منزل card *is*, not a flat on the third floor of something else — and that
+   * is right for every structure but one. A منزل is drawn here as a single
+   * block whose type is exactly that, and with the list unwidened its own type
+   * was absent from its own select: the officer opened the block and saw an
+   * empty dropdown on a value nothing was wrong with, and the tally below
+   * counted it as nothing at all.
+   *
+   * It costs nothing elsewhere. The extra entry appears only while the
+   * structure is a house, and a house that gains a second block stops being one
+   * — the editor asks, re-types the blocks, and this list narrows again on the
+   * same commit.
+   */
+  const unitTypeOptions =
+    structureType === 'INDEPENDENT_HOUSE'
+      ? ([...BUILDING_UNIT_TYPES, 'INDEPENDENT_HOUSE'] as readonly UnitType[])
+      : BUILDING_UNIT_TYPES;
 
   const colsCount = Math.max(MIN_HORIZONTAL_BLOCKS, gridSize || DEFAULT_HORIZONTAL_BLOCKS);
   const safeFloorsCount = Math.max(MIN_VERTICAL_BLOCKS, floorsCount || DEFAULT_VERTICAL_BLOCKS);
@@ -587,6 +618,22 @@ export function UnitGridPicker({
               ? 'Drag across blocks to paint a unit, or tap to place and adjust its size. Click any unit to edit or delete.'
               : 'اسحب عبر الخانات لتحديد وحدة، أو انقر لإضافتها وتعديل حجمها. انقر أي وحدة لتعديلها أو حذفها.'}
           </p>
+          {/*
+            The height and the depth are asked *here* and nowhere else.
+
+            They used to be two number inputs on the previous step as well, and
+            the duplication was the problem rather than the wording: an officer
+            typed «٦» into a box on one screen and then painted five floors on
+            another, and the two disagreed with nothing on either screen to say
+            so. The count is a fact about the matrix, so it is asked where the
+            matrix is — the steppers beside this text move the grid itself, and
+            what the grid shows is what gets saved.
+          */}
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            {en
+              ? 'The floor and basement counts are set here — the grid is what gets saved.'
+              : 'عدد الطوابق وعدد الطوابق تحت الأرض يُحدَّدان من هنا — والمصفوفة هي ما يُحفظ.'}
+          </p>
           {existingCount > 0 ? (
             <p className="text-[11px] leading-snug text-muted-foreground">
               {en
@@ -920,7 +967,7 @@ export function UnitGridPicker({
               <span className="font-semibold font-mono">{units.length - existingCount}</span>
             </Badge>
           ) : null}
-          {BUILDING_UNIT_TYPES.map((type) => {
+          {unitTypeOptions.map((type) => {
             const count = units.filter((u) => u.unitType === type).length;
             if (count === 0) return null;
             return (
@@ -960,7 +1007,7 @@ export function UnitGridPicker({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {BUILDING_UNIT_TYPES.map((type) => (
+                  {unitTypeOptions.map((type) => (
                     <SelectItem key={type} value={type}>
                       {labels.unitType[type]}
                     </SelectItem>

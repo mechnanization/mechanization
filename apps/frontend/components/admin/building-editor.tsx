@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import {
   BUILDING_LIFECYCLE,
+  defaultUnitTypeFor,
   formatBuildingCode,
   getLabels,
   isOccupiableLifecycle,
@@ -60,6 +61,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -83,6 +85,7 @@ import {
 } from './parcel-pin-picker';
 import {
   DEFAULT_GRID_SIZE,
+  DEFAULT_VERTICAL_BLOCKS,
   flattenGridUnits,
   MAX_HORIZONTAL_BLOCKS,
   UnitGridPicker,
@@ -90,6 +93,21 @@ import {
 } from './unit-grid-picker';
 
 const LOOKUP_DEBOUNCE_MS = 350;
+
+/**
+ * What a منزل becomes when the officer says it is a building.
+ *
+ * Named rather than inlined because two things have to agree about it — the
+ * structure type written to the shell, and the unit type
+ * `defaultUnitTypeFor` derives for every block being re-typed — and they are
+ * several lines apart.
+ *
+ * «بناية سكنية» and not «متعدد الاستعمالات»: the officer has told us there is
+ * more than one dwelling and nothing more, and a residential block is what
+ * that is nineteen times out of twenty. Every other type is one tap away on
+ * the step they were just on.
+ */
+const PROMOTED_STRUCTURE_TYPE = 'RESIDENTIAL_BUILDING' as const;
 /** The grid's own physical ceiling (20×20) — a defensive assertion, not a
  *  real user-facing limit, since the grid itself can never produce more. */
 const MAX_GRID_UNITS = 400;
@@ -779,24 +797,43 @@ export function BuildingEditor({
 
   const isHouse = structureType === 'INDEPENDENT_HOUSE';
   /**
-   * A house being *created* is one unit, full stop — no floor count to ask
-   * for, and no matrix step: the one unit it has is «منزل مستقل» by
-   * definition, so there is nothing left to paint or choose.
+   * A house being *created* is seeded as a single painted block.
    *
-   * A house being *corrected* keeps both. What is on file may be a house with
-   * two floors, or one whose matrix is empty and needs its unit added — and a
-   * form that hid the only controls that could say so would make those states
-   * unfixable from the one screen that exists to fix them.
+   * It used to be seeded and then *hidden*: the matrix step did not exist for a
+   * new منزل, on the reasoning that its one unit is «منزل مستقل» by definition
+   * and there is nothing left to choose. That reasoning held for the unit and
+   * not for the officer. A house has a floor count, it may have a basement, and
+   * — far more often than the shortcut allowed for — the thing in front of them
+   * turns out not to be a house at all once they have walked round it.
+   *
+   * So the block is still painted for them, and the step is still shown. One
+   * block *is* the house; painting a second one is the officer discovering it
+   * is a building, and `requestUnits` below turns that into a question rather
+   * than into a save the server refuses.
    */
   const houseShortcut = isHouse && !editing;
-  /** The last real step — the matrix step doesn't exist for a new house. */
-  const lastStep: 0 | 1 | 2 = houseShortcut ? 1 : 2;
-  const visibleSteps = houseShortcut ? STEPS.slice(0, 2) : STEPS;
+  /** Every structure has all three steps now — see `houseShortcut`. */
+  const lastStep: 0 | 1 | 2 = 2;
+  const visibleSteps = STEPS;
 
   useEffect(() => {
     if (!houseShortcut) return;
     setFloorsCount('1');
-    setGridSize(1);
+    /*
+      One painted block on a grid with room beside it — not a 1×1 grid.
+
+      What makes it a house is the single *unit*, not a canvas with nowhere to
+      draw. Seeded at 1×1 the promotion was unreachable: every cell was already
+      taken, so an officer who walked round the back and found a second door had
+      to work out that the «أفقي (الأعمدة)» stepper was what stood between them
+      and recording it. The question this editor now asks — «هل تريد تحويلها من
+      منزل إلى بناية؟» — can only be asked if there is somewhere to paint the
+      block that triggers it.
+
+      The height stays at one storey, which is the honest default for a منزل and
+      is a stepper away from anything else.
+    */
+    setGridSize(DEFAULT_GRID_SIZE);
     setGridUnits([
       {
         clientId: crypto.randomUUID(),
@@ -809,6 +846,20 @@ export function BuildingEditor({
     ]);
   }, [houseShortcut]);
 
+  /**
+   * The officer answered «نعم، هي بناية», so the reset below must not fire.
+   *
+   * The promotion changes نوع المنشأة, which flips `houseShortcut`, which is
+   * exactly the transition the reset watches for — and the reset drops every
+   * unpainted unit, which on that commit is the whole floor plan they just
+   * confirmed. They would tap «نعم» and watch their matrix collapse to one
+   * square, with the structure type silently changed underneath it.
+   *
+   * A ref rather than state because it must be readable by the effect on the
+   * *same* commit that sets it, and it is not something anything renders.
+   */
+  const promotedFromHouse = useRef(false);
+
   /** The reverse transition — leaving a structure type of "house" un-paints
    *  the auto-created unit rather than leaving it stranded as a stale 1×1
    *  grid the officer never drew. Units the census already holds survive it:
@@ -816,12 +867,56 @@ export function BuildingEditor({
   const wasHouse = useRef(houseShortcut);
   useEffect(() => {
     if (wasHouse.current && !houseShortcut) {
-      setGridSize(DEFAULT_GRID_SIZE);
-      setGridUnits((current) => current.filter((unit) => unit.existingId));
-      setFloorsCount((current) => (current === '1' ? '3' : current));
+      if (promotedFromHouse.current) {
+        // The grid *is* the reason the type changed. Keep it exactly as drawn.
+        promotedFromHouse.current = false;
+      } else {
+        setGridSize(DEFAULT_GRID_SIZE);
+        setGridUnits((current) => current.filter((unit) => unit.existingId));
+        setFloorsCount((current) => (current === '1' ? '3' : current));
+      }
     }
     wasHouse.current = houseShortcut;
   }, [houseShortcut]);
+
+  /**
+   * The grid the officer has painted but not yet been allowed to keep.
+   *
+   * Held while «هل تريد تحويلها من منزل إلى بناية؟» is on screen — see
+   * `requestUnits`.
+   */
+  const [pendingUnits, setPendingUnits] = useState<GridUnitDraft[] | null>(null);
+
+  /**
+   * Every change the matrix makes passes through here, so that one of them can
+   * be turned into a question.
+   *
+   * A منزل مستقل is one dwelling — `assertUnitFits` refuses a second unit on
+   * one server-side, and refuses it at *save* time, which is the worst possible
+   * moment: the officer has painted a floor plan, walked to the end of the
+   * wizard and pressed «إنشاء المبنى», and is told the structure type they
+   * chose three screens ago contradicts it.
+   *
+   * Painting a second block is not a mistake, though. It is the commonest
+   * correction there is — the officer walked round the back and found a second
+   * door — and the only thing wrong with it is that نوع المنشأة still says
+   * «منزل مستقل». So it is asked, here, at the moment it becomes true, and a
+   * yes changes the type along with the grid.
+   *
+   * Only ever intercepts the 1 → 2 crossing. Every other edit — moving a block,
+   * widening one, deleting back down — goes straight through, because a
+   * question asked on every paint stroke is a question people learn to dismiss.
+   */
+  const requestUnits = useCallback(
+    (next: GridUnitDraft[]) => {
+      if (isHouse && next.length > 1) {
+        setPendingUnits(next);
+        return;
+      }
+      setGridUnits(next);
+    },
+    [isHouse],
+  );
 
   const topFloorAllowed = Math.max(0, (Number(floorsCount) || 1) - 1);
   const bottomFloorAllowed = -Math.max(0, Number(basementsCount) || 0);
@@ -839,11 +934,24 @@ export function BuildingEditor({
 
   // ── Per-step validation gates ──
   const step1Valid = Boolean(trimmedParcel) && !(pin && pinVerdict === false);
+  /*
+    What stops «التالي» on the facility step.
+
+    `orphanedUnits` used to be part of this and no longer is, because the two
+    things that resolve it — the floor count and the matrix — are both on the
+    step this gate guards the way *to*. Holding an officer on the previous
+    screen until they fix something they can only reach by leaving it is a dead
+    end, and the save still refuses the same condition with a message that now
+    sends them to the right place.
+
+    The height and depth checks stay as assertions rather than as live gates:
+    nothing on this step can set them any more, so they can only fail if some
+    other path has put nonsense in the state.
+  */
   const step2Valid =
     !(duplicates?.length && !acknowledgedDuplicates) &&
     Number(floorsCount) >= 1 &&
-    Number(basementsCount) >= 0 &&
-    orphanedUnits.length === 0;
+    Number(basementsCount) >= 0;
 
   const goNext = () =>
     setStep((current) => (current < lastStep ? ((current + 1) as 0 | 1 | 2) : current));
@@ -993,7 +1101,9 @@ export function BuildingEditor({
           ? `${orphanedUnits.length} unit(s) are on floors above the current floor count (${floorsCount}). Raise the floor count or remove them from the matrix.`
           : `${orphanedUnits.length} وحدة موضوعة على طوابق أعلى من عدد الطوابق الحالي (${floorsCount}). ارفع عدد الطوابق أو احذف هذه الوحدات من المصفوفة.`,
       );
-      setStep(1);
+      // The matrix step, because that is where the floor count now lives —
+      // both halves of the fix this message asks for are on the same screen.
+      setStep(2);
       return;
     }
 
@@ -2090,72 +2200,23 @@ export function BuildingEditor({
                 </Field>
               </div>
 
-              {houseShortcut ? null : (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field
-                    label={en ? 'Floors Count' : 'عدد الطوابق'}
-                    htmlFor="building-floors"
-                    required
-                    error={fieldErrors.floorsCount}
-                    hint={en ? 'Total storeys above ground' : 'إجمالي عدد الطوابق فوق الأرض'}
-                  >
-                    <Input
-                      id="building-floors"
-                      type="number"
-                      min={1}
-                      max={100}
-                      step={1}
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={floorsCount}
-                      onChange={(event) => setFloorsCount(event.target.value)}
-                      dir="ltr"
-                      className="text-start h-10 font-mono"
-                    />
-                  </Field>
+              {/*
+                «عدد الطوابق» and «عدد الطوابق تحت الأرض» are not asked here.
 
-                  {/*
-                    A depth, not a signed floor: 2 means B1 and B2. Asked
-                    separately from the height because they are two different
-                    observations — one made from the pavement, one from the
-                    stairwell — and because «عدد الطوابق» has always meant
-                    storeys above ground everywhere else in the system.
-                  */}
-                  <Field
-                    label={en ? 'Basement Levels' : 'عدد الطوابق تحت الأرض'}
-                    htmlFor="building-basements"
-                    error={fieldErrors.basementsCount}
-                    hint={
-                      en
-                        ? 'Levels below ground — 2 means B1 and B2. Leave at 0 for none.'
-                        : 'الطوابق تحت الأرض — 2 تعني B1 و B2. اتركه صفراً إن لم يوجد قبو.'
-                    }
-                  >
-                    <Input
-                      id="building-basements"
-                      type="number"
-                      min={0}
-                      max={10}
-                      step={1}
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={basementsCount}
-                      onChange={(event) => setBasementsCount(event.target.value)}
-                      dir="ltr"
-                      className="text-start h-10 font-mono"
-                    />
-                  </Field>
-                </div>
-              )}
+                They were two number inputs on this step *and* two steppers on
+                the matrix, and the duplication was the defect rather than the
+                clutter: an officer typed «٦» here and then painted five floors
+                there, and the two disagreed with nothing on either screen to
+                say which one the save would believe. (It believed neither
+                outright — `create` reconciles the count upward from the units,
+                so the typed number only ever mattered when it was *larger*,
+                which is the case nobody could see.)
 
-              {orphanedUnits.length > 0 ? (
-                <p role="alert" className="flex items-center gap-1.5 text-xs text-destructive">
-                  <AlertTriangle className="size-3.5 shrink-0" />
-                  {en
-                    ? `${orphanedUnits.length} unit(s) in the matrix are on floors above this count. Raise it, or remove them in the next step.`
-                    : `${orphanedUnits.length} وحدة في المصفوفة موضوعة على طوابق أعلى من هذا العدد. ارفع العدد، أو احذفها في الخطوة التالية.`}
-                </p>
-              ) : null}
+                A floor count is a fact about the matrix. It is now asked where
+                the matrix is, by the control that moves the grid — so what the
+                officer is looking at is what gets saved, and there is no second
+                number to contradict it.
+              */}
 
               <Field
                 label={en ? 'Field Notes (Optional)' : 'ملاحظات ميدانية (اختياري)'}
@@ -2212,7 +2273,9 @@ export function BuildingEditor({
                 gridSize={gridSize}
                 onGridSizeChange={setGridSize}
                 units={gridUnits}
-                onUnitsChange={setGridUnits}
+                // Not `setGridUnits` — a house gaining a second block is a
+                // question before it is a change. See `requestUnits`.
+                onUnitsChange={requestUnits}
               />
 
               {/*
@@ -2292,12 +2355,8 @@ export function BuildingEditor({
               <div className="rounded-lg border bg-background/70 p-3 space-y-1">
                 <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Floors & Units' : 'الطوابق والوحدات'}</p>
                 <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
-                  {houseShortcut
-                    ? `1 ${en ? 'floor' : 'طابق'}`
-                    : `${floorsCount} ${en ? 'floors' : 'طوابق'}`}
-                  {!houseShortcut && Number(basementsCount) > 0
-                    ? ` + B${Number(basementsCount)}`
-                    : ''}{' '}
+                  {`${floorsCount} ${en ? 'floors' : 'طوابق'}`}
+                  {Number(basementsCount) > 0 ? ` + B${Number(basementsCount)}` : ''}{' '}
                   · {gridUnits.length + hiddenUnits.length} {en ? 'units' : 'وحدة'}
                 </p>
               </div>
@@ -2325,7 +2384,98 @@ export function BuildingEditor({
           </CardContent>
         </Card>
 
-        {/* Desktop Bottom Step Navigation */}
+        {/*
+        «هل تريد تحويلها من منزل إلى بناية؟»
+
+        Not destructive — nothing is lost and the answer is very often yes, so
+        it gets the neutral treatment rather than the red one. What it is, is
+        *consequential*: نوع المنشأة decides which property card the citizen's
+        file gets (`STRUCTURE_TYPE_MAP`), whether a card can itemise flats at
+        all, and — through `assertUnitFits` — whether this save is accepted.
+
+        Declining keeps the house and drops the paint stroke, which is the
+        honest outcome: the grid cannot show two units under a type that
+        permits one, so there is no half-state to leave the officer in.
+      */}
+      <ConfirmDialog
+        open={pendingUnits !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingUnits(null);
+        }}
+        destructive={false}
+        title={
+          en
+            ? 'Change this from a house to a building?'
+            : 'هل تريد تحويلها من منزل مستقل إلى بناية؟'
+        }
+        description={
+          en ? (
+            <>
+              A standalone house is a single dwelling, so it can hold only one unit. You have
+              painted {pendingUnits?.length ?? 0}. Confirming changes نوع المنشأة to
+              «بناية سكنية» and keeps what you drew.
+            </>
+          ) : (
+            <>
+              المنزل المستقل مسكن واحد ولا يقبل أكثر من وحدة، وقد رسمت{' '}
+              {pendingUnits?.length ?? 0} وحدات. التأكيد يغيّر «نوع المنشأة» إلى «بناية سكنية»
+              ويُبقي ما رسمته.
+            </>
+          )
+        }
+        confirmLabel={en ? 'Yes, it is a building' : 'نعم، هي بناية'}
+        cancelLabel={en ? 'No, keep it a house' : 'لا، أبقِها منزلاً'}
+        onConfirm={() => {
+          const next = pendingUnits;
+          setPendingUnits(null);
+          if (!next) return;
+          /*
+            Flagged before the type changes, because changing it is what runs
+            the reset that would otherwise throw this grid away — see
+            `promotedFromHouse`.
+          */
+          promotedFromHouse.current = true;
+          setStructureType(PROMOTED_STRUCTURE_TYPE);
+          /*
+            The units are re-typed, not just carried across.
+
+            The block this house was seeded with — and the one the officer
+            painted beside it, since the picker defaults from the *current*
+            structure type — are both «منزل مستقل». That is not a unit a
+            building can contain: `BUILDING_UNIT_TYPES` excludes it precisely
+            because a منزل مستقل is what a whole منزل card *is*, and
+            `PropertyEntry` refuses it on a مبنى. Left alone, the promotion
+            would produce a residential block whose flats are each a standalone
+            house — rejected by the card the moment anyone registered a
+            household in one, and unselectable in the grid's own edit sheet, so
+            the officer could not even correct it by hand.
+
+            Only the ones that say «منزل مستقل» are touched. A محل or a مستودع
+            the officer deliberately chose is their answer, and re-typing it
+            would be this dialog overruling a decision it was not asked about.
+
+            `defaultUnitTypeFor` rather than a literal «شقة», so a basement
+            block comes out as مستودع — the same suggestion the picker would
+            have made had the type been right from the start.
+          */
+          setGridUnits(
+            next.map((unit) =>
+              unit.unitType === 'INDEPENDENT_HOUSE'
+                ? { ...unit, unitType: defaultUnitTypeFor(PROMOTED_STRUCTURE_TYPE, unit.floor) }
+                : unit,
+            ),
+          );
+          // The grid has to be at least as wide as what was painted on it: the
+          // house seeded a single column, and the second block the officer drew
+          // is in the second one.
+          setGridSize((current) =>
+            Math.max(current, DEFAULT_GRID_SIZE, ...next.map((unit) => unit.endCol)),
+          );
+          setFloorsCount((current) => (current === '1' ? String(DEFAULT_VERTICAL_BLOCKS) : current));
+        }}
+      />
+
+      {/* Desktop Bottom Step Navigation */}
         <div className="hidden sm:flex items-center justify-between pt-2">
           <Link
             href={cancelHref}
