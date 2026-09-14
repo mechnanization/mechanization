@@ -48,6 +48,12 @@ function harness(overrides: {
   ownerCard?: Record<string, unknown> | null;
   building?: Record<string, unknown> | null;
   registration?: Record<string, unknown> | null;
+  /**
+   * The canonical units of the structure, as `declareOwnership` reads them to
+   * copy a منزل's area onto the card it mints. Default: one unit with no area
+   * recorded, which is what a matrix painted from the street looks like.
+   */
+  units?: Array<Record<string, unknown>>;
 } = {}) {
   const propertyEntryUpdate = jest.fn().mockResolvedValue({});
   const propertyEntryUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
@@ -107,6 +113,9 @@ function harness(overrides: {
       findMany: jest.fn().mockResolvedValue([]),
     },
     unitOccupancy: { findMany: jest.fn().mockResolvedValue([]) },
+    unit: {
+      findMany: jest.fn().mockResolvedValue(overrides.units ?? [{ unitArea: null }]),
+    },
   };
 
   const service = new LandlordLinkService(
@@ -298,6 +307,78 @@ describe('confirm — putting the structure on the owner’s own file', () => {
 
     const [[call]] = propertyEntryCreate.mock.calls;
     expect(call.data).toMatchObject({ propertyType: 'HOUSE', unitStatus: 'RENTED' });
+  });
+
+  /*
+    The other half of the same card, and the half that decides whether it can
+    be billed at all.
+
+    `assessCitizen` refuses to price a PER_AREA notice against a card with no
+    مساحة — correctly, since the alternative is charging a measurement nobody
+    took. So an owner linked from the queue used to receive a منزل card that was
+    unbillable on the basis a house is most often billed on, while the census
+    held the measurement all along. `claimOnFile` has always copied it; this
+    path had not.
+  */
+  it('copies the census area onto the منزل card it mints', async () => {
+    const { service, propertyEntryCreate } = harness({
+      building: {
+        id: 'building-1',
+        parcelNumber: '1042',
+        name: null,
+        structureType: 'INDEPENDENT_HOUSE',
+      },
+      units: [{ unitArea: 180 }],
+    });
+
+    await service.confirm({ propertyEntryId: ENTRY, citizenId: OWNER, actor });
+
+    const [[call]] = propertyEntryCreate.mock.calls;
+    expect(call.data).toMatchObject({ propertyType: 'HOUSE', unitArea: 180 });
+  });
+
+  it('leaves the area null rather than guessing, when the census has none', async () => {
+    /*
+      Null and not zero. An unmeasured house is one a PER_AREA notice declines
+      to price, and that refusal is visible to whoever issues it; a zero would
+      be priced, at nothing, and nobody would ever see it.
+    */
+    const { service, propertyEntryCreate } = harness({
+      building: {
+        id: 'building-1',
+        parcelNumber: '1042',
+        name: null,
+        structureType: 'INDEPENDENT_HOUSE',
+      },
+      units: [{ unitArea: null }],
+    });
+
+    await service.confirm({ propertyEntryId: ENTRY, citizenId: OWNER, actor });
+
+    const [[call]] = propertyEntryCreate.mock.calls;
+    expect(call.data.unitArea).toBeNull();
+  });
+
+  it('copies no area when the structure holds more than one unit', async () => {
+    /*
+      "The unit a منزل is" is only unambiguous when there is one. A structure
+      mapped to HOUSE that somehow holds two is a contradiction for a person to
+      resolve, and picking one of the two areas would resolve it by guessing.
+    */
+    const { service, propertyEntryCreate } = harness({
+      building: {
+        id: 'building-1',
+        parcelNumber: '1042',
+        name: null,
+        structureType: 'INDEPENDENT_HOUSE',
+      },
+      units: [{ unitArea: 180 }, { unitArea: 95 }],
+    });
+
+    await service.confirm({ propertyEntryId: ENTRY, citizenId: OWNER, actor });
+
+    const [[call]] = propertyEntryCreate.mock.calls;
+    expect(call.data.unitArea).toBeNull();
   });
 
   it('records a شاغل بتسامح as مشغولة بتسامح rather than as a tenancy', async () => {

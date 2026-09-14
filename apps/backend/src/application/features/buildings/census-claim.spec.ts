@@ -49,6 +49,14 @@ interface HarnessOptions {
   structureType?: string;
   /** What the unit's حالة already is, for the narrowing assertions. */
   role?: string;
+  /**
+   * The area the census already holds for the flat.
+   *
+   * Null by default, which is what a matrix painted from the street looks like:
+   * `generateUnits` and the grid picker both assert that a flat exists, not
+   * that anybody has measured it.
+   */
+  unitArea?: number | null;
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -62,16 +70,42 @@ function harness(options: HarnessOptions = {}) {
   const propertyEntryCreate = jest.fn().mockResolvedValue({ id: 'entry-new' });
   const buildingUnitCreate = jest.fn().mockResolvedValue({ id: 'bu-new' });
   const unitUpdate = jest.fn().mockResolvedValue({});
-  const unitUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+
+  /*
+    The flat's area as the stub holds it, so a write is visible to the read
+    that follows it.
+
+    The one piece of state this harness keeps, and it has to: `claimOnFile`
+    copies the canonical unit's description onto the card it mints, so whether
+    the card carries the officer's measurement or the null it replaced depends
+    entirely on the order of the write and that read. A stub that answered the
+    same thing before and after the update could not tell the two apart, and
+    the ordering is exactly what went wrong.
+
+    The narrowing is modelled too — `where: { unitArea: null }` — because it is
+    what protects a surveyed measurement from being overwritten here.
+  */
+  let storedArea: number | null = options.unitArea ?? null;
+  const unitUpdateMany = jest
+    .fn()
+    .mockImplementation(({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      if ('unitArea' in data) {
+        if (where.unitArea === null && storedArea !== null) return Promise.resolve({ count: 0 });
+        storedArea = data.unitArea as number;
+        return Promise.resolve({ count: 1 });
+      }
+      return Promise.resolve({ count: 1 });
+    });
 
   const db = {
     unit: {
       findUnique: jest.fn().mockImplementation(({ select }: { select: Record<string, unknown> }) =>
         // Two different reads of the same row: `recordOccupancy` wants the
-        // building, `unitDescription` wants the flat's description.
+        // building and the area it may be about to fill in, `unitDescription`
+        // wants the flat's description.
         'buildingId' in select
-          ? { id: UNIT, buildingId: BUILDING, unitCode: '0101' }
-          : { unitType: 'APARTMENT', floor: 1, side: 'شرقية', unitArea: null },
+          ? { id: UNIT, buildingId: BUILDING, unitCode: '0101', unitArea: storedArea }
+          : { unitType: 'APARTMENT', floor: 1, side: 'شرقية', unitArea: storedArea },
       ),
       update: unitUpdate,
       updateMany: unitUpdateMany,
@@ -126,6 +160,77 @@ function record(service: BuildingsService, over: Record<string, unknown> = {}) {
     actor,
   );
 }
+
+/**
+ * مساحة الوحدة, recorded from the doorstep.
+ *
+ * The matrix is painted from the street, so `Unit.unitArea` is routinely null —
+ * and this path mints the citizen's card *from* the unit, so the card inherited
+ * the null and `assessCitizen` then refused to price a PER_AREA notice against
+ * it. Linking an occupant is the first moment anybody is inside, and the form
+ * had nowhere to put the measurement.
+ *
+ * The two rules these pin down: it fills a gap and never overwrites a finding,
+ * and it is written before the card is minted so the card carries the new
+ * number rather than the null it replaced.
+ */
+describe('recordOccupancy — the flat’s area', () => {
+  it('writes the area onto the unit, narrowed to one that has none', async () => {
+    const { service, db } = harness();
+
+    await record(service, { unitArea: 96.5 });
+
+    const [[call]] = db.unit.updateMany.mock.calls.filter(
+      ([arg]: [{ data: Record<string, unknown> }]) => 'unitArea' in arg.data,
+    );
+    expect(call.where).toEqual({ id: UNIT, unitArea: null });
+    expect(call.data).toEqual({ unitArea: 96.5 });
+  });
+
+  it('writes nothing at all when the form sent no area', async () => {
+    const { service, db } = harness();
+
+    await record(service);
+
+    const areaWrites = db.unit.updateMany.mock.calls.filter(
+      ([arg]: [{ data: Record<string, unknown> }]) => 'unitArea' in arg.data,
+    );
+    expect(areaWrites).toHaveLength(0);
+  });
+
+  it('leaves a measured flat alone — the narrowing is what does it', async () => {
+    /*
+      The guard is in the `where`, not in the caller, so it holds even against a
+      client that sends an area for a unit that already has one. Correcting a
+      surveyed measurement is the unit editor's job; doing it as a side effect
+      of filing a tenant would change a PER_AREA bill with nothing on screen to
+      say so.
+    */
+    const { service, db } = harness({ unitArea: 180 });
+
+    await record(service, { unitArea: 1 });
+
+    const [[call]] = db.unit.updateMany.mock.calls.filter(
+      ([arg]: [{ data: Record<string, unknown> }]) => 'unitArea' in arg.data,
+    );
+    expect(call.where.unitArea).toBeNull();
+  });
+
+  it('carries the area onto the card it mints, not the null it replaced', async () => {
+    /*
+      Ordering, asserted because it is the whole point. `claimOnFile` copies the
+      canonical unit's description onto the new card, so the area has to be on
+      the unit *before* the card is built — otherwise the officer measures the
+      flat, the unit gets the number, and the card that bills it does not.
+    */
+    const { service, propertyEntryCreate } = harness({ unitArea: null });
+
+    await record(service, { unitArea: 96.5 });
+
+    const { data } = propertyEntryCreate.mock.calls[0][0];
+    expect(data.units.create.unitArea).toBe(96.5);
+  });
+});
 
 describe('recordOccupancy — establishing the census claim', () => {
   it('mints a property card on the citizen’s file, ticking this very flat', async () => {

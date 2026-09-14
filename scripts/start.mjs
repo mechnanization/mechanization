@@ -38,6 +38,7 @@ function cleanupStaleProcesses() {
     execSync(
       `powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 4000, 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Get-CimInstance Win32_Process -Filter \\"Name = 'node.exe'\\" | Where-Object { $_.ProcessId -ne ${currentPid} -and ($_.CommandLine -like '*@mechanization*' -or $_.CommandLine -like '*presentation*main*' -or $_.CommandLine -like '*nest*' -or $_.CommandLine -like '*apps*backend*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`,
       { stdio: 'ignore' },
+      { stdio: 'ignore', timeout: 10_000 },
     );
   } catch {
     // Ignore cleanup errors
@@ -47,9 +48,17 @@ function cleanupStaleProcesses() {
 // Clean up any stale background processes from prior aborted runs that might hold file locks on Prisma engine DLLs
 cleanupStaleProcesses();
 
+// Verify local environment configuration before starting processes
+try {
+  execSync('node scripts/db/check.mjs local', { stdio: 'inherit' });
+} catch {
+  process.exit(1);
+}
+
 // Ensure shared packages are built before apps start
 try {
   execSync('pnpm --filter "./packages/*" build', { stdio: 'ignore' });
+  execSync('pnpm --filter "./packages/*" build', { stdio: 'ignore', timeout: 60_000 });
 } catch {
   // Continue even if package build fails; dev watch will surface issues
 }
@@ -57,6 +66,7 @@ try {
 function dockerAvailable() {
   try {
     execSync('docker info', { stdio: 'ignore' });
+    execSync('docker info', { stdio: 'ignore', timeout: 2_500 });
     return true;
   } catch {
     return false;
@@ -87,6 +97,12 @@ async function ensureDockerRunning() {
   }
 
   console.warn(colorize('! docker took too long to start — skipping redis, app will fall through to Postgres', YELLOW));
+  console.warn(
+    colorize(
+      '! docker not running or unresponsive — skipping redis, app will fall through to Postgres',
+      YELLOW,
+    ),
+  );
   return false;
 }
 
@@ -108,6 +124,8 @@ if (await ensureDockerRunning()) {
 let errorTailLinesRemaining = 0;
 const ERROR_TAIL_LINES = 30;
 const ERROR_PATTERN = /\bERROR\b|Error:|error TS\d+:|EADDRINUSE|EPERM|Cannot find module|Failed to compile|Failed to start/i;
+const ERROR_PATTERN =
+  /\bERROR\b|Error:|error TS\d+:|EADDRINUSE|EPERM|Cannot find module|Failed to compile|Failed to start|Invalid environment configuration/i;
 const WARN_PATTERN = /\bWARN\b/;
 const RESTART_TRIGGER_PATTERN = /Starting compilation in watch mode|File change detected|Starting incremental compilation/;
 const COMPILE_RESULT_PATTERN = /Found (\d+) errors?\. Watching for file changes\./;

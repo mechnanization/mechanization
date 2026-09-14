@@ -50,6 +50,48 @@ import type {
 const MAX_GENERATED_UNITS = 400;
 
 /**
+ * «العقارات المشتركة», minus the building's own — the list as it is stored.
+ *
+ * A structure standing on two or three adjacent عقارات is ordinary here, and
+ * `parcelNumber` can name only one of them: the display code and the per-parcel
+ * suffix are both derived from it (D9), so widening it to a list would change
+ * what a building code means and break the `(parcelNumber, codeSuffix)`
+ * uniqueness the allocation turns on.
+ *
+ * The one rule this enforces is that the building's own parcel is never in it.
+ * An officer who types it there has repeated themselves rather than recorded a
+ * second parcel, and storing it would make the structure appear to straddle
+ * itself — which is then *counted*, in a figure nobody would think to check
+ * against the parcel it is already filed under.
+ *
+ * Exported for the same reason `rollupOf` is: it decides what gets written and
+ * it is decidable without a database, so it is pinned by a test rather than
+ * left to the integration suite that only runs where there is a Postgres.
+ *
+ * Duplicates within the list are already collapsed by
+ * `createBuildingSchema`'s own transform; this is the one member the schema
+ * cannot know about, because the schema does not know which parcel is being
+ * edited.
+ */
+export function sharedParcelsExcluding(
+  values: readonly string[] | undefined,
+  own: string,
+): string[] {
+  const ownTrimmed = own.trim();
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const raw of values ?? []) {
+    const value = raw.trim();
+    if (!value || value === ownTrimmed || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+
+  return out;
+}
+
+/**
  * What «متضرر» counts as on the census tiles.
  *
  * The three levels that mean the structure's use is impaired. `NOT_AFFECTED`
@@ -761,6 +803,13 @@ export class BuildingsService {
           code: formatBuildingCode({ zoneCode: zone?.code, parcelNumber, codeSuffix }),
           name: input.name?.trim() || null,
           postedNumber: input.postedNumber?.trim() || null,
+          /*
+            `?? null` rather than `|| null`: `false` is «غير مفروزة», a finding
+            an officer made, and it must not be flattened into «لم يُسأل».
+          */
+          isPartitioned: input.isPartitioned ?? null,
+          // Never the parcel the code derives from — see `sharedParcelsExcluding`.
+          sharedParcelNumbers: sharedParcelsExcluding(input.sharedParcelNumbers, parcelNumber),
           structureType: input.structureType as never,
           lifecycleStatus: input.lifecycleStatus as never,
           latitude: input.latitude ?? null,
@@ -911,6 +960,19 @@ export class BuildingsService {
         ...(input.name !== undefined ? { name: input.name?.trim() || null } : {}),
         ...(input.postedNumber !== undefined
           ? { postedNumber: input.postedNumber?.trim() || null }
+          : {}),
+        // `null` is «غير محدد» and is storable, so the presence check is on
+        // `undefined` alone — an absent key leaves the column as it is.
+        ...(input.isPartitioned !== undefined ? { isPartitioned: input.isPartitioned } : {}),
+        ...(input.sharedParcelNumbers !== undefined
+          ? {
+              // `parcelNumber` cannot be edited, so `before` is the authority
+              // on which one this list may not contain.
+              sharedParcelNumbers: sharedParcelsExcluding(
+                input.sharedParcelNumbers,
+                before.parcelNumber,
+              ),
+            }
           : {}),
         ...(input.structureType !== undefined
           ? { structureType: input.structureType as never }
@@ -1641,7 +1703,7 @@ export class BuildingsService {
   ): Promise<{ occupancy: OccupancyRow; casesResolved: number; fileLink: FileLinkResult }> {
     const unit = await this.db.unit.findUnique({
       where: { id: input.unitId },
-      select: { id: true, buildingId: true, unitCode: true },
+      select: { id: true, buildingId: true, unitCode: true, unitArea: true },
     });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
 
@@ -1752,6 +1814,34 @@ export class BuildingsService {
       });
     }
 
+    /*
+      مساحة الوحدة, filled in from the doorstep — and only where it is missing.
+
+      The gap this closes: `generateUnits` and the grid painter both create
+      flats with no area, because they assert that a flat exists rather than
+      that anyone has measured it. Recording an occupant was the first moment
+      somebody had actually been inside, and the form had nowhere to put the
+      number — so `claimOnFile` below minted the citizen's property card from a
+      unit with `unitArea` null, billing could not price a PER_AREA notice
+      against it, and the edit form rendered the absence as «0».
+
+      Narrowed to `unitArea: null` for the same reason the survey-status lift
+      and the implied حالة are narrowed: only "nobody established this" may be
+      answered by a side effect of recording who lives here. A flat the census
+      has already measured keeps its measurement — correcting a surveyed area is
+      the unit editor's job, and silently overwriting it while filing a tenant
+      would be a change nobody asked for and nobody would see.
+
+      Written before `claimOnFile` so the card it mints copies the new area
+      rather than the null it replaced.
+    */
+    if (input.unitArea !== undefined) {
+      await this.db.unit.updateMany({
+        where: { id: input.unitId, unitArea: null },
+        data: { unitArea: input.unitArea },
+      });
+    }
+
     const casesResolved = await this.cases.resolveForUnit(input.unitId, input.citizenId, actor);
 
     const fileLink = await this.claimOnFile({
@@ -1771,6 +1861,15 @@ export class BuildingsService {
         citizenId: input.citizenId,
         role: input.role,
         unitStatus: input.unitStatus ?? null,
+        /*
+          Logged only where it was actually written — i.e. where the unit had
+          no area and this request supplied one. An audit row saying an area
+          was recorded when the update matched nothing would be a lie about the
+          one field on this form that decides a PER_AREA bill.
+        */
+        ...(input.unitArea !== undefined && unit.unitArea == null
+          ? { unitArea: input.unitArea }
+          : {}),
         casesResolved,
         /*
           Named in the audit row for the reason `endOccupancy` names its release:
@@ -2586,6 +2685,8 @@ function toBuildingRow(row: {
   code: string;
   name: string | null;
   postedNumber: string | null;
+  isPartitioned: boolean | null;
+  sharedParcelNumbers: string[];
   structureType: string;
   lifecycleStatus: string;
   latitude: number | null;
@@ -2606,6 +2707,8 @@ function toBuildingRow(row: {
     code: row.code,
     name: row.name,
     postedNumber: row.postedNumber,
+    isPartitioned: row.isPartitioned,
+    sharedParcelNumbers: row.sharedParcelNumbers,
     structureType: row.structureType,
     lifecycleStatus: row.lifecycleStatus,
     latitude: row.latitude,

@@ -231,6 +231,93 @@ describeIfDb('BuildingsService', () => {
     expect(new Set(results.map((r) => r.building.code)).size).toBe(6);
   });
 
+  // ──────────────  فرز and the parcels a structure straddles  ──────────────
+
+  /*
+    Migration 0040's two columns, read back through a real round trip.
+
+    Both are here rather than in the unit suite because what is being checked is
+    that the column *holds what was written* — that the nullable boolean comes
+    back as `null` and not as `false`, and that a Postgres `TEXT[]` with a
+    `'{}'` default comes back as an empty array and not as `null`. Those are
+    claims about the database, and a mocked client would echo whatever the
+    service handed it.
+  */
+  it('keeps «not established» distinct from «not partitioned» through storage', async () => {
+    const unasked = await createBuilding(
+      { parcelNumber: '4001', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const answeredNo = await createBuilding(
+      {
+        parcelNumber: '4002',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        isPartitioned: false,
+      },
+      actor(),
+    );
+    const answeredYes = await createBuilding(
+      {
+        parcelNumber: '4003',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        isPartitioned: true,
+      },
+      actor(),
+    );
+
+    expect(unasked.building.isPartitioned).toBeNull();
+    expect(answeredNo.building.isPartitioned).toBe(false);
+    expect(answeredYes.building.isPartitioned).toBe(true);
+  });
+
+  it('lets a correction withdraw a فرز that was ticked by mistake', async () => {
+    const created = await createBuilding(
+      {
+        parcelNumber: '4004',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        isPartitioned: true,
+      },
+      actor(),
+    );
+
+    const back = await buildings.update(created.building.id, { isPartitioned: null }, actor());
+
+    // `null` is «غير محدد» and is storable, which is what makes the answer
+    // two-way. An update that could only ever set it would leave an officer
+    // unable to undo a tap.
+    expect(back.isPartitioned).toBeNull();
+  });
+
+  it('records the other parcels a structure stands on, never its own', async () => {
+    const created = await createBuilding(
+      {
+        parcelNumber: '4005',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        sharedParcelNumbers: ['4006', '4005', '4007'],
+      },
+      actor(),
+    );
+
+    // Its own عقار is filtered out — a building that straddles itself would be
+    // counted as straddling. See `sharedParcelsExcluding`.
+    expect(created.building.sharedParcelNumbers).toEqual(['4006', '4007']);
+  });
+
+  it('reads a structure on one parcel back as an empty list, not a null', async () => {
+    const created = await createBuilding(
+      { parcelNumber: '4008', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+
+    // The column defaults to `'{}'`, so "stands on one parcel" is an empty
+    // array everywhere — there is no third state for a caller to handle.
+    expect(created.building.sharedParcelNumbers).toEqual([]);
+  });
+
   it('does not reuse a suffix across different parcels', async () => {
     const one = await createBuilding({ parcelNumber: '10', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 }, actor());
     const two = await createBuilding({ parcelNumber: '11', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 }, actor());

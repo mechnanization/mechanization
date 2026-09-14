@@ -569,8 +569,18 @@ export function UnitGridPicker({
 
   return (
     <div className="space-y-3">
-      {/* ── Header with Matrix Dimensions ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+      {/*
+        ── Header with Matrix Dimensions ──────────────────────────────────
+
+        Stacked until `lg` rather than until `sm`.
+
+        A tablet is the width where the old breakpoint did the most damage: the
+        row went horizontal at 640px, which left the three stepper groups
+        competing with a paragraph of instructions for about 300px and wrapping
+        into each other. The controls now get the full width of the panel until
+        there is genuinely room beside the text, which is around 1024px.
+      */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
         <div className="max-w-sm space-y-1">
           <p className="text-xs text-muted-foreground leading-snug">
             {en
@@ -586,24 +596,46 @@ export function UnitGridPicker({
           ) : null}
         </div>
 
-        {/* Matrix Dimensions Controls */}
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+        {/*
+          ── Matrix Dimensions Controls ──────────────────────────────────
+
+          A responsive grid rather than a wrapping flex row, and the difference
+          is the whole of this fix.
+
+          Three groups of «[−] number [+]» used to wrap at whatever width ran
+          out. On a tablet that produced two groups on one line and the third
+          orphaned below, with the 24px steppers of one group sitting a few
+          pixels from the numeric input of the next — near enough that a thumb
+          aimed at «زيادة الطوابق» hit «تحت الأرض» instead, and the two adjacent
+          rounded corners read as one control that had gone wrong.
+
+          Now: one group per row until `sm`, three equal columns above it. Each
+          group owns a full-width box, so its parts can never sit beside another
+          group's, and the gap between boxes is never smaller than the gap
+          inside one.
+
+          The targets themselves go from `size-6` (24px) to 40px on touch
+          widths, dropping back to 32px only from `lg` where a pointer is doing
+          the aiming. 24px is below every touch-target guideline there is, and
+          these are the controls an officer uses while standing up.
+        */}
+        <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 lg:w-auto lg:gap-3">
           {/* Vertical / Floors */}
-          <div className="flex items-center gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
-            <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
-              {en ? 'Vertical (Floors):' : 'عمودي (الطوابق):'}
+          <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
+            <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
+              {en ? 'Vertical (Floors)' : 'عمودي (الطوابق)'}
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1.5">
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestVerticalChange(safeFloorsCount - 1)}
                 disabled={safeFloorsCount <= MIN_VERTICAL_BLOCKS || safeFloorsCount <= minFloorsAllowed}
                 aria-label={en ? 'Fewer floors' : 'إنقاص الطوابق'}
               >
-                <Minus className="size-3" />
+                <Minus className="size-4" />
               </Button>
               <Input
                 type="number"
@@ -615,34 +647,35 @@ export function UnitGridPicker({
                 value={verticalInput}
                 onChange={(e) => handleVerticalInputChange(e.target.value)}
                 onBlur={handleVerticalInputBlur}
-                className="h-6 w-11 text-center font-mono text-xs font-semibold px-1 py-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label={en ? 'Number of floors' : 'عدد الطوابق'}
+                className="h-10 w-12 shrink-0 px-1 py-0 text-center font-mono text-sm font-semibold [appearance:textfield] lg:h-8 lg:text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 dir="ltr"
               />
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestVerticalChange(safeFloorsCount + 1)}
                 disabled={safeFloorsCount >= MAX_VERTICAL_BLOCKS}
                 aria-label={en ? 'More floors' : 'زيادة الطوابق'}
               >
-                <Plus className="size-3" />
+                <Plus className="size-4" />
               </Button>
             </div>
           </div>
 
           {/* Below ground / Basements */}
-          <div className="flex items-center gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
-            <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
-              {en ? 'Below ground (B):' : 'تحت الأرض (B):'}
+          <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
+            <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
+              {en ? 'Below ground (B)' : 'تحت الأرض (B)'}
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1.5">
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestBasementChange(safeBasementsCount - 1)}
                 disabled={
                   safeBasementsCount <= MIN_BASEMENT_BLOCKS ||
@@ -650,7 +683,7 @@ export function UnitGridPicker({
                 }
                 aria-label={en ? 'Fewer basements' : 'إنقاص الطوابق تحت الأرض'}
               >
-                <Minus className="size-3" />
+                <Minus className="size-4" />
               </Button>
               <Input
                 type="number"
@@ -662,39 +695,40 @@ export function UnitGridPicker({
                 value={basementInput}
                 onChange={(e) => handleBasementInputChange(e.target.value)}
                 onBlur={handleBasementInputBlur}
-                className="h-6 w-11 text-center font-mono text-xs font-semibold px-1 py-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label={en ? 'Levels below ground' : 'عدد الطوابق تحت الأرض'}
+                className="h-10 w-12 shrink-0 px-1 py-0 text-center font-mono text-sm font-semibold [appearance:textfield] lg:h-8 lg:text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 dir="ltr"
               />
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestBasementChange(safeBasementsCount + 1)}
                 disabled={safeBasementsCount >= MAX_BASEMENT_BLOCKS}
                 aria-label={en ? 'More basements' : 'زيادة الطوابق تحت الأرض'}
               >
-                <Plus className="size-3" />
+                <Plus className="size-4" />
               </Button>
             </div>
           </div>
 
           {/* Horizontal / Columns */}
-          <div className="flex items-center gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
-            <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
-              {en ? 'Horizontal (Cols):' : 'أفقي (الأعمدة):'}
+          <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
+            <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
+              {en ? 'Horizontal (Cols)' : 'أفقي (الأعمدة)'}
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1.5">
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestHorizontalChange(colsCount - 1)}
                 disabled={colsCount <= MIN_HORIZONTAL_BLOCKS || colsCount <= minColsAllowed}
                 aria-label={en ? 'Fewer columns' : 'إنقاص الأعمدة'}
               >
-                <Minus className="size-3" />
+                <Minus className="size-4" />
               </Button>
               <Input
                 type="number"
@@ -706,19 +740,20 @@ export function UnitGridPicker({
                 value={horizontalInput}
                 onChange={(e) => handleHorizontalInputChange(e.target.value)}
                 onBlur={handleHorizontalInputBlur}
-                className="h-6 w-11 text-center font-mono text-xs font-semibold px-1 py-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label={en ? 'Number of columns' : 'عدد الأعمدة'}
+                className="h-10 w-12 shrink-0 px-1 py-0 text-center font-mono text-sm font-semibold [appearance:textfield] lg:h-8 lg:text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 dir="ltr"
               />
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestHorizontalChange(colsCount + 1)}
                 disabled={colsCount >= MAX_HORIZONTAL_BLOCKS}
                 aria-label={en ? 'More columns' : 'زيادة الأعمدة'}
               >
-                <Plus className="size-3" />
+                <Plus className="size-4" />
               </Button>
             </div>
           </div>
@@ -738,15 +773,22 @@ export function UnitGridPicker({
         <span className="font-mono">{units.length} {en ? 'units' : 'وحدة'}</span>
       </div>
 
-      {/* ── Compact Grid Container with Fixed/Max Height ── */}
-      <div dir="ltr" className="overflow-x-auto max-h-[360px] sm:max-h-[420px] overflow-y-auto rounded-xl border border-border/80 bg-muted/10 p-2 sm:p-2.5">
+      {/*
+        ── Compact Grid Container with Fixed/Max Height ──────────────────
+
+        `overscroll-x-contain` so a horizontal swipe that runs out of grid does
+        not turn into a back-navigation gesture on the tablet browsers that map
+        one to the other. Painting a unit is a drag, and a drag that overshoots
+        the last column used to leave the page.
+      */}
+      <div dir="ltr" className="overflow-x-auto overscroll-x-contain max-h-[360px] sm:max-h-[420px] overflow-y-auto rounded-xl border border-border/80 bg-muted/10 p-2 sm:p-2.5">
         <div className="inline-flex flex-col gap-1 min-w-full">
           {rows.map((floor) => {
             return (
               <div
                 key={floor}
                 className={cn(
-                  'flex items-center gap-1.5',
+                  'flex items-center gap-2',
                   // The pavement. Drawn under the ground-floor row so the
                   // basements below it read as below it, rather than as three
                   // more storeys whose labels happen to start with a B.
@@ -755,17 +797,49 @@ export function UnitGridPicker({
                     'border-b-2 border-dashed border-border pb-1.5',
                 )}
               >
+                {/*
+                  The frozen floor gutter — and `pointer-events-none` on it.
+
+                  It is `sticky`, so on a grid wider than the viewport it slides
+                  over the leftmost cells as the officer scrolls. That is the
+                  standard frozen-column behaviour and it is wanted: a matrix
+                  whose floor labels scroll away is a matrix you cannot read.
+                  What was not wanted is that a `<span>` sitting on top of a
+                  column of buttons *swallowed their taps* — an officer trying to
+                  paint the first column of a scrolled grid tapped the label,
+                  nothing happened, and nothing on screen explained why.
+
+                  A label has no behaviour of its own, so it has no business
+                  intercepting a pointer. With this, the only thing it does is
+                  be legible.
+
+                  Opaque rather than `/95` + blur for the same reason: a cell
+                  half-visible through a translucent label reads as two controls
+                  overlapping, which is exactly what it must not look like now
+                  that one of them is unreachable there.
+                */}
                 <span
                   className={cn(
-                    'sticky left-0 z-10 w-16 sm:w-20 shrink-0 text-end text-[10px] sm:text-[11px] font-medium tabular-nums px-1.5 py-0.5 rounded shadow-2xs select-none bg-card/95 dark:bg-muted/95 backdrop-blur-xs',
+                    'pointer-events-none sticky left-0 z-10 w-14 sm:w-20 shrink-0 text-end text-[10px] sm:text-[11px] font-medium tabular-nums px-1.5 py-1 rounded shadow-2xs select-none bg-card dark:bg-muted',
                     floor < 0 ? 'font-mono text-foreground/70' : 'text-muted-foreground',
                   )}
                 >
                   {floorLabel(floor, en)}
                 </span>
+                {/*
+                  `minmax(2.25rem, 1fr)` rather than `1.5rem`.
+
+                  24px was below every touch-target guideline there is, and these
+                  cells are dragged across by somebody standing in a stairwell
+                  with a tablet. 36px is the smallest that can be hit reliably;
+                  twenty of them still fit inside 800px, so the widest grid the
+                  picker can produce is no more scroll-bound on a tablet than it
+                  was before. `gap-1.5` separates them by 6px so two adjacent
+                  cells cannot be caught by one thumb.
+                */}
                 <div
-                  className="grid flex-1 gap-1"
-                  style={{ gridTemplateColumns: `repeat(${colsCount}, minmax(1.5rem, 1fr))` }}
+                  className="grid flex-1 gap-1.5"
+                  style={{ gridTemplateColumns: `repeat(${colsCount}, minmax(2.25rem, 1fr))` }}
                 >
                   {cols.map((col) => {
                     const unit = unitAt(floor, col);
@@ -797,7 +871,7 @@ export function UnitGridPicker({
                           if (unit) openEdit(unit);
                         }}
                         className={cn(
-                          'relative aspect-square touch-none select-none rounded-[4px] border text-[9px] font-semibold leading-none transition-colors',
+                          'relative aspect-square min-h-9 touch-none select-none rounded-[4px] border text-[10px] font-semibold leading-none transition-colors',
                           !unit && !isPendingCell &&
                             'border-border/70 bg-background hover:bg-muted/60 cursor-pointer',
                           isPendingCell && !unit && 'border-primary bg-primary/15',
@@ -815,7 +889,7 @@ export function UnitGridPicker({
                         )}
                       >
                         {unit && isStart ? (
-                          <span className="absolute inset-0 flex items-center justify-center truncate px-0.5 text-[8px] font-bold">
+                          <span className="absolute inset-0 flex items-center justify-center truncate px-0.5 text-[9px] font-bold">
                             {unit.unitCode ?? labels.unitType[unit.unitType].slice(0, 2)}
                           </span>
                         ) : null}

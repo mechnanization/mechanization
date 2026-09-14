@@ -1179,10 +1179,25 @@ function PropertyCard({
                   <Layers className="size-3.5 shrink-0" aria-hidden />
                   {locale === 'en' ? `Floor ${unit.floor}` : `الطابق ${unit.floor}`}
                 </span>
-                <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                  <Ruler className="size-3.5 shrink-0" aria-hidden />
-                  {unit.unitArea} {locale === 'en' ? 'm²' : 'م²'}
-                </span>
+                {/*
+                  Withheld rather than printed as «0 م²» when nobody has
+                  measured the flat. A zero is a measurement, and this line is
+                  read by a clerk deciding whether a PER_AREA notice can be
+                  priced — which it cannot, against an unmeasured unit (see
+                  `assessCitizen`). An absent row says «لم تُقَس»; a zero says
+                  the flat has no floor.
+                */}
+                {unit.unitArea != null ? (
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <Ruler className="size-3.5 shrink-0" aria-hidden />
+                    {unit.unitArea} {locale === 'en' ? 'm²' : 'م²'}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground/70">
+                    <Ruler className="size-3.5 shrink-0" aria-hidden />
+                    {locale === 'en' ? 'Area not recorded' : 'المساحة غير مسجَّلة'}
+                  </span>
+                )}
                 {unit.side ? (
                   <span className="inline-flex items-center gap-1.5 text-muted-foreground">
                     <MapPin className="size-3.5 shrink-0" aria-hidden />

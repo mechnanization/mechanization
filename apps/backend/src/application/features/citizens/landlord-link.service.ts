@@ -632,6 +632,31 @@ export class LandlordLinkService {
       return { created: false };
     }
 
+    /*
+      The area of the single unit a منزل is, where the census holds one.
+
+      `claimOnFile` already copies it onto the card it mints from the matrix,
+      and this path — the other way an existing registered owner acquires a card
+      they did not fill in — did not. The consequence is the same one:
+      `assessCitizen` refuses to price a PER_AREA notice against a card with no
+      area, so an owner linked from the queue was unbillable on exactly the
+      basis a house is most often billed on.
+
+      Read only for a منزل, and only when the structure has exactly one unit.
+      That is what makes "the unit" unambiguous — a مبنى card here deliberately
+      carries no unit rows (it claims the structure, not an enumerated list of
+      flats), so there is no single area to copy and nothing is guessed.
+    */
+    const soleUnit =
+      mapped.propertyType === 'HOUSE'
+        ? await this.db.unit.findMany({
+            where: { buildingId: building.id },
+            select: { unitArea: true },
+            take: 2,
+          })
+        : [];
+    const houseArea = soleUnit.length === 1 ? (soleUnit[0]?.unitArea ?? null) : null;
+
     await this.db.propertyEntry.create({
       data: {
         registrationId: registration.id,
@@ -659,6 +684,10 @@ export class LandlordLinkService {
               unitStatus: (input.occupiedBy === 'FREE_OCCUPANT'
                 ? 'FREE_OCCUPIED'
                 : 'RENTED') as never,
+              // Null where the census has not measured it, which stays honest:
+              // an unmeasured house is one a PER_AREA notice declines to price,
+              // and that refusal is visible. A zero would be priced at nothing.
+              unitArea: houseArea,
             }
           : {}),
       },

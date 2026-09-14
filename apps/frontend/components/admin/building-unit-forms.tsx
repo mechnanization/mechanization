@@ -1,7 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CalendarClock, Footprints, Loader2, MapPin, Search, ShieldAlert, UserRound } from 'lucide-react';
+import {
+  CalendarClock,
+  Footprints,
+  Loader2,
+  MapPin,
+  Ruler,
+  Search,
+  ShieldAlert,
+  UserRound,
+} from 'lucide-react';
 import {
   CASE_TYPE,
   DAMAGE_LEVEL,
@@ -385,23 +394,54 @@ export function occupancyMessage(
  *
  * The server refuses the second field on a non-owner, so the two surfaces
  * cannot drift into disagreeing about which question applies to whom.
+ *
+ * ## The third question, and why it is conditional
+ *
+ * «مساحة الوحدة» is asked only when the census has no answer, and that is the
+ * whole point of it. The matrix is painted from the street — `generateUnits`
+ * and the grid picker both assert that a flat *exists*, not that anyone has
+ * measured it — so `Unit.unitArea` is routinely null. Linking a citizen is the
+ * first moment somebody is actually inside, and this form had nowhere to put
+ * the tape measure's answer.
+ *
+ * What that cost: `claimOnFile` mints the citizen's property card from the
+ * canonical unit, so the card inherited the null; a PER_AREA notice cannot be
+ * priced against a unit with no area, and the citizen's own edit form rendered
+ * the absence as «0». One missing question, three symptoms, none of them
+ * visible from here.
+ *
+ * Where the register *does* hold an area it is stated rather than asked — the
+ * rule every lock in `UnitFields` follows. Re-asking a measured flat would
+ * invite two officers to record two different sizes for one room, and the
+ * server refuses the overwrite anyway.
  */
 export function OccupantForm({
   tenant,
   token,
   busy,
   locale,
+  unitArea: recordedArea,
   onSubmit,
 }: {
   tenant: string;
   token: string;
   busy: boolean;
   locale: string;
+  /**
+   * The area the census already holds for this flat, or null if it holds none.
+   *
+   * Null is what opens the field. Passing `undefined` — a caller that has not
+   * been updated — is treated the same as null rather than as "measured", so a
+   * surface that forgets to wire it asks a redundant question instead of
+   * silently dropping the only one that can fill the gap.
+   */
+  unitArea: number | null | undefined;
   onSubmit: (
     citizen: CitizenListItem,
     role: OccupancyRole,
     shares?: number,
     unitStatus?: UnitStatus,
+    unitArea?: number,
   ) => void;
 }) {
   const en = locale === 'en';
@@ -423,6 +463,16 @@ export function OccupantForm({
    * a guess nobody made.
    */
   const [unitStatus, setUnitStatus] = useState<UnitStatus | ''>('');
+  /**
+   * م², typed only when the census has none. Empty means «لم تُقَس» and sends
+   * nothing at all — the unit keeps its null and the matrix goes on showing it
+   * as unmeasured, which is honest. An invented number here would be priced.
+   */
+  const [unitArea, setUnitArea] = useState('');
+  /** The register has an answer, so the field states it rather than asks. */
+  const areaFromCensus = recordedArea != null;
+  const parsedArea = Number(unitArea.trim());
+  const areaIsValid = unitArea.trim() === '' || (Number.isFinite(parsedArea) && parsedArea > 0);
 
   useEffect(() => {
     if (!term.trim()) {
@@ -560,6 +610,51 @@ export function OccupantForm({
       </div>
 
       {/*
+        مساحة الوحدة — asked of everyone, and only where the census is silent.
+
+        Not gated on capacity, unlike the two questions around it: the size of a
+        room is not a fact about who is standing in it, and a مستأجر with a tape
+        measure knows it as well as the owner does. Gated on the *register*
+        instead, which is the rule every lock in `UnitFields` follows: a field
+        is stated rather than asked if, and only if, the register has an answer.
+      */}
+      {areaFromCensus ? (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Ruler className="size-3.5 shrink-0" aria-hidden />
+          {en
+            ? `Recorded area: ${recordedArea} m². Correct it from the unit itself.`
+            : `المساحة المسجَّلة: ${recordedArea} م². التعديل يتم على الوحدة نفسها.`}
+        </p>
+      ) : (
+        <Field
+          label={en ? 'Unit Area (sq. meters)' : 'مساحة الوحدة (متر مربع)'}
+          htmlFor="occupant-unit-area"
+          error={
+            areaIsValid
+              ? undefined
+              : en
+                ? 'The area must be greater than zero.'
+                : 'المساحة يجب أن تكون أكبر من صفر.'
+          }
+          hint={
+            en
+              ? 'The census has no area for this unit. Leave it empty if it has not been measured — a guess would be billed.'
+              : 'لا توجد مساحة مسجَّلة لهذه الوحدة. اتركه فارغاً إن لم تُقَس — الرقم المُقدَّر تُحتسب عليه الرسوم.'
+          }
+        >
+          <Input
+            id="occupant-unit-area"
+            inputMode="decimal"
+            dir="ltr"
+            className="text-start"
+            invalid={!areaIsValid}
+            value={unitArea}
+            onChange={(event) => setUnitArea(event.target.value)}
+          />
+        </Field>
+      )}
+
+      {/*
         Asked of an owner alone, and asked plainly: «ومن يشغلها؟». A مستأجر or
         a شاغل بتسامح has already answered it by being recorded, and is shown
         the answer instead of a second question — see the docblock.
@@ -605,9 +700,9 @@ export function OccupantForm({
 
       <Button
         size="sm"
-        disabled={busy || !chosen}
+        disabled={busy || !chosen || !areaIsValid}
         onClick={() => {
-          if (!chosen) return;
+          if (!chosen || !areaIsValid) return;
           const parsed = Number(shares);
           onSubmit(
             chosen,
@@ -617,6 +712,17 @@ export function OccupantForm({
             // server refuses it on anyone else, whose capacity settles the
             // unit's حالة without being asked.
             role === 'OWNER' && unitStatus ? unitStatus : undefined,
+            /*
+              Omitted rather than sent as 0 when the box is empty, and never
+              sent at all when the census already has an answer.
+
+              An empty box means «لم تُقَس», which the unit already records as
+              null; sending a zero would replace "unmeasured" with a
+              measurement of zero, and the difference between those two is
+              whether a PER_AREA notice refuses to price the flat or prices it
+              at nothing.
+            */
+            !areaFromCensus && unitArea.trim() ? parsedArea : undefined,
           );
         }}
       >

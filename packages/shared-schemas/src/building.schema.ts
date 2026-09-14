@@ -49,6 +49,46 @@ const postedNumber = z.string().trim().min(1).max(40, 'الرقم المكتوب
 const notes = z.string().trim().max(1000, 'الملاحظات طويلة جداً');
 
 /**
+ * «هل الوحدة مفروزة على عقار؟» — has this structure been legally partitioned.
+ *
+ * فرز is the cadastral act that splits one عقار into separately titled units,
+ * and it is the fact that decides whether a flat in this building can hold a
+ * deed of its own or only a share of the whole. The census had no column for
+ * it, so the answer lived in whatever an officer typed into «ملاحظات» — where
+ * nothing could count it, filter on it, or put it on a notice.
+ *
+ * **Three states, not two.** `true` مفروزة, `false` غير مفروزة, and `null` —
+ * nobody asked, or the officer could not find out. A boolean defaulting to
+ * `false` would make «we did not check» indistinguishable from «we checked and
+ * it is not», and only one of those is a finding. The same rule
+ * `unitStatusField` follows, for the same reason.
+ */
+const isPartitioned = z.boolean();
+
+/**
+ * «إن كانت الوحدة مشتركة على أكثر من عقار» — the other عقارات it stands on.
+ *
+ * A building that straddles two or three cadastral parcels is ordinary here,
+ * and `parcelNumber` can only name one of them: it is the parcel the code is
+ * derived from (D9) and the one the suffix was allocated against, so it cannot
+ * become a list without changing what a building code means. These are the
+ * *additional* parcels, recorded beside it.
+ *
+ * Deliberately not a link to the cadastre table. `Building.parcelNumber` is
+ * itself a bare string for a reason `Zone.parcelNumbers` states — `cadastre:import`
+ * rebuilds the parcel table wholesale, and a survey correction must not cascade
+ * a municipality's buildings away — and a second parcel reference cannot be
+ * held to a stricter rule than the first.
+ *
+ * Duplicates are collapsed rather than refused, exactly as `parcelNumbersField`
+ * does on a zone: the officer adding a row twice expressed the right intent.
+ */
+const sharedParcelNumbers = z
+  .array(parcelNumber)
+  .max(20, 'عدد العقارات المشتركة كبير جداً')
+  .transform((values) => [...new Set(values.map((value) => value.trim()))]);
+
+/**
  * A pin, or nothing. Never half of one.
  *
  * Latitude and longitude are checked together rather than as two independent
@@ -221,6 +261,17 @@ export const createBuildingSchema = z
      * same is a question that gets answered wrong.
      */
     lifecycleStatus: buildingLifecycleSchema.default('IN_USE'),
+    /**
+     * Optional rather than defaulted, and the absence is the third answer —
+     * see `isPartitioned`. A `.default(false)` here would have every building
+     * ever created assert it is not partitioned, which nobody established.
+     */
+    isPartitioned: isPartitioned.optional(),
+    /**
+     * Optional and empty by default: a structure on one parcel is the
+     * overwhelming majority, and `create` reads the absence as «none».
+     */
+    sharedParcelNumbers: sharedParcelNumbers.optional(),
     /*
       No `neighborhood`, deliberately.
 
@@ -350,6 +401,14 @@ export const updateBuildingSchema = z
     longitude: longitude.nullable().optional(),
     floorsCount: floorsCount.optional(),
     basementsCount: basementsCount.optional(),
+    /**
+     * Nullable as well as optional, unlike most of this shape: «غير محدد» is a
+     * real answer here and an officer has to be able to go back to it after
+     * ticking «نعم» by mistake. Absent means "leave it as it is"; `null` means
+     * "unset it".
+     */
+    isPartitioned: isPartitioned.nullable().optional(),
+    sharedParcelNumbers: sharedParcelNumbers.optional(),
     notes: notes.nullable().optional(),
   })
   .superRefine((value, ctx) => {
@@ -542,6 +601,32 @@ export const upsertOccupancySchema = z
      * refuses it there rather than quietly preferring one of the two answers.
      */
     unitStatus: unitStatusSchema.optional(),
+    /**
+     * مساحة الوحدة, asked here because this is where the gap was discovered.
+     *
+     * The area belongs to the `Unit`, not to this spell, and that is exactly why
+     * it is accepted on this request: linking a citizen to a flat is the first
+     * moment anybody has *been in it*, and until now the form had nowhere to put
+     * the tape measure's answer. `generateUnits` and the grid painter both
+     * create flats with `unitArea` null — they assert the flat exists, not that
+     * anyone has measured it — so a matrix filled from the street is a matrix
+     * of unmeasured units.
+     *
+     * The consequence ran downhill. `claimOnFile` mints the citizen's property
+     * card from the canonical unit, so the card inherited the null; billing
+     * refuses to price a PER_AREA notice against a unit with no area
+     * (`assessCitizen`), and the edit form rendered the absence as «0» until the
+     * read paths were null-guarded. One missing question, three symptoms.
+     *
+     * Written onto the `Unit` and never onto the occupancy: the flat has one
+     * area whoever is standing in it, and storing it per spell would let two
+     * officers record two different sizes for one room. `recordOccupancy` fills
+     * it only where the census has no answer — a measured flat is not
+     * overwritten from this form, because correcting a surveyed area is the
+     * unit editor's job and doing it here would be a side effect of recording a
+     * tenant.
+     */
+    unitArea: areaField.optional(),
     fromDate: z.coerce.date({ invalid_type_error: 'تاريخ البدء غير صالح' }).optional(),
     toDate: z.coerce.date({ invalid_type_error: 'تاريخ الانتهاء غير صالح' }).optional(),
   })

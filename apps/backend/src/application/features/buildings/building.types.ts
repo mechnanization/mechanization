@@ -22,6 +22,16 @@ export interface BuildingRow {
   code: string;
   name: string | null;
   postedNumber: string | null;
+  /**
+   * «هل الوحدة مفروزة على عقار» — `null` means nobody asked, which is a
+   * different answer from `false`. See the column.
+   */
+  isPartitioned: boolean | null;
+  /**
+   * The *other* عقارات this structure stands on, beside `parcelNumber`.
+   * Empty for the overwhelming majority, which stand on exactly one.
+   */
+  sharedParcelNumbers: string[];
   structureType: string;
   /**
    * Where the structure is in its own life — permitted, going up, standing,

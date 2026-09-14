@@ -206,6 +206,24 @@ export function askableFields(values: CitizenFormValues): AskableField[] {
     const branch = PROPERTY_FIELD_MAP[property.propertyType as keyof typeof PROPERTY_FIELD_MAP];
 
     for (const field of branch ?? []) {
+      /*
+        «اسم المبنى» is no longer required of either structure branch, so it can
+        no longer be the reason a record is incomplete — and a flag that cannot
+        excuse anything is the failure this list's docblock names: it puts a
+        «غير مؤكَّد» box under a field that was never going to fail, until the
+        flags stop meaning "this record is missing something".
+
+        Excluded here and *not* from `PROPERTY_FIELD_MAP`, which is a different
+        question with a different answer. That map says which fields a card
+        carries, and `branchFieldsOnly` reads it to decide what survives the
+        trip to the server — dropping the name from it would stop storing the
+        names officers do supply.
+
+        See `buildingNameField`, and the note below about حالة الوحدة, which is
+        absent from this list for exactly the same reason.
+      */
+      if (field === 'buildingName') continue;
+
       fields.push({
         path: `properties.${propertyIndex}.${field}`,
         field,
