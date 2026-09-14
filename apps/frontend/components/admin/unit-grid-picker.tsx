@@ -279,6 +279,60 @@ export function UnitGridPicker({
     [units],
   );
 
+  /**
+   * One floor as the things that get *drawn* on it, rather than as its columns.
+   *
+   * A unit painted across three blocks is one unit, and it now renders as one
+   * element spanning three grid columns instead of three elements pretending to
+   * be joined. The pretence never worked: the three buttons were stitched with
+   * `border-s-0` and matching corner radii, but the grid's own `gap` still cut
+   * 6px of background between them — so a three-block شقة read as three separate
+   * flats with a label stuck in the first one, which is the opposite of what the
+   * officer drew.
+   *
+   * Merging also fixes the label. It was rendered on the start cell and centred
+   * in *that* cell, so «0201» sat a third of the way along its own unit; centred
+   * across the span it now lands in the middle of the block, and there is room
+   * for the whole unit type rather than the two characters the old cell could
+   * fit.
+   *
+   * Empty columns stay one slot each. They have to: they are the drag target,
+   * and `onPointerMove` reads `data-col` off whatever is under the pointer to
+   * decide how far the selection reaches. A merged run of empty cells would
+   * report one column for the whole run and the drag would quantise to it.
+   *
+   * The pending selection is likewise left unmerged, for the same reason and one
+   * more: dragging *back* over cells already in the selection has to shrink it,
+   * which needs each of those columns to report its own number.
+   */
+  const slotsFor = useCallback(
+    (floor: number): Array<{ unit?: GridUnitDraft; startCol: number; endCol: number }> => {
+      const slots: Array<{ unit?: GridUnitDraft; startCol: number; endCol: number }> = [];
+
+      for (let col = 1; col <= colsCount; col += 1) {
+        const unit = unitAt(floor, col);
+        if (!unit) {
+          slots.push({ startCol: col, endCol: col });
+          continue;
+        }
+
+        /*
+          Clipped to the grid rather than trusted outright. A unit can extend
+          past the current width — the officer narrowed the matrix after
+          painting it — and a `grid-column` end beyond the track count would
+          make the browser add implicit columns, silently widening the row past
+          every other floor.
+        */
+        const endCol = Math.min(unit.endCol, colsCount);
+        slots.push({ unit, startCol: col, endCol: Math.max(col, endCol) });
+        col = Math.max(col, endCol);
+      }
+
+      return slots;
+    },
+    [colsCount, unitAt],
+  );
+
   // ── Drag-to-select, via Pointer Events so mouse/touch/pen share one path ──
   useEffect(() => {
     if (!pending) return;
@@ -578,7 +632,8 @@ export function UnitGridPicker({
     { length: safeFloorsCount + safeBasementsCount },
     (_, i) => safeFloorsCount - 1 - i,
   );
-  const cols = Array.from({ length: colsCount }, (_, i) => i + 1);
+  /* No column list any more: a row is walked by `slotsFor`, which merges a
+     unit's columns into one slot and leaves the empty ones one apiece. */
   /** The confirmed unit the open panel is editing, for the facts the panel
    *  itself does not carry — its code and whether it may be removed. */
   const panelUnit = panel?.clientId
@@ -922,21 +977,25 @@ export function UnitGridPicker({
                   className="grid flex-1 gap-1.5"
                   style={{ gridTemplateColumns: `repeat(${colsCount}, minmax(2.25rem, 1fr))` }}
                 >
-                  {cols.map((col) => {
-                    const unit = unitAt(floor, col);
+                  {slotsFor(floor).map((slot) => {
+                    const unit = slot.unit;
                     const isPendingCell =
-                      pending?.floor === floor && col >= pending.startCol && col <= pending.endCol;
-                    const isStart = unit?.startCol === col;
-                    const isEnd = unit?.endCol === col;
+                      !unit &&
+                      pending?.floor === floor &&
+                      slot.startCol >= pending.startCol &&
+                      slot.endCol <= pending.endCol;
                     const palette = unit ? PALETTE[unit.colorIndex % PALETTE.length] : null;
 
                     return (
                       <button
-                        key={col}
+                        key={unit ? `u:${unit.clientId}` : `c:${slot.startCol}`}
                         type="button"
                         data-cell
                         data-floor={floor}
-                        data-col={col}
+                        data-col={slot.startCol}
+                        // One grid item spanning the whole unit — this is what
+                        // makes three painted blocks read as one. See `slotsFor`.
+                        style={{ gridColumn: `${slot.startCol} / ${slot.endCol + 1}` }}
                         title={
                           unit
                             ? [unit.unitCode, labels.unitType[unit.unitType]]
@@ -946,7 +1005,7 @@ export function UnitGridPicker({
                         }
                         onPointerDown={(event) => {
                           event.preventDefault();
-                          startSelection(floor, col);
+                          startSelection(floor, slot.startCol);
                         }}
                         onClick={() => {
                           if (unit) openEdit(unit);
@@ -981,7 +1040,7 @@ export function UnitGridPicker({
                           'relative h-11 touch-none select-none rounded-[4px] border text-[10px] font-semibold leading-none transition-colors sm:h-12',
                           !unit && !isPendingCell &&
                             'border-border/70 bg-background hover:bg-muted/60 cursor-pointer',
-                          isPendingCell && !unit && 'border-primary bg-primary/15',
+                          isPendingCell && 'border-primary bg-primary/15',
                           unit &&
                             cn(
                               'cursor-pointer border-transparent ring-1',
@@ -989,15 +1048,11 @@ export function UnitGridPicker({
                               palette?.text,
                               palette?.ring,
                             ),
-                          unit && isStart && 'rounded-s-[4px]',
-                          unit && !isStart && 'rounded-s-none border-s-0',
-                          unit && isEnd && 'rounded-e-[4px]',
-                          unit && !isEnd && 'rounded-e-none',
                         )}
                       >
-                        {unit && isStart ? (
-                          <span className="absolute inset-0 flex items-center justify-center truncate px-0.5 text-[9px] font-bold">
-                            {unit.unitCode ?? labels.unitType[unit.unitType].slice(0, 2)}
+                        {unit ? (
+                          <span className="absolute inset-0 flex items-center justify-center truncate px-1 text-[9px] font-bold">
+                            {unit.unitCode ?? labels.unitType[unit.unitType]}
                           </span>
                         ) : null}
                       </button>
