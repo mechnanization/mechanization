@@ -801,7 +801,28 @@ model Building {
   /// existed asserting a finding no officer made — and فرز decides whether a
   /// flat inside can carry a deed of its own, so a guess here is a guess about
   /// title.
+  ///
+  /// The building wizard offers a single «مفروزة» checkbox, so it writes `true`
+  /// or `null` and never `false`: a tick is an assertion, an untouched box is
+  /// silence. `false` stays representable for a form that one day records
+  /// «we read the صحيفة and there is no فرز», which is a finding and not the
+  /// same as never having looked.
   isPartitioned Boolean?
+
+  /// أرقام الأقسام — the numbered units a فرز produced, each with its own
+  /// صحيفة عقارية.
+  ///
+  /// The half of a فرز that anyone actually needs. «This building is مفروزة» is
+  /// not an answer to «which قسم is flat 4?» — a transfer, a deed search and a
+  /// resident at the counter all want the number, and without it they are sent
+  /// to the survey office anyway.
+  ///
+  /// Only ever populated where `isPartitioned` is true; `BuildingsService`
+  /// clears it otherwise, because أقسام on a structure nobody recorded a فرز
+  /// for is a contradiction rather than a finding. Free text for the reason
+  /// `parcelNumber` is: these are somebody else's identifiers and our own
+  /// format has no business being imposed on them.
+  partitionNumbers String[] @default([])
 
   /// «إن كانت الوحدة مشتركة على أكثر من عقار» — the *other* عقارات the
   /// structure stands on.

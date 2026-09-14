@@ -362,6 +362,8 @@ export interface QueuedBuilding {
      * officer actually answered.
      */
     isPartitioned?: boolean;
+    /** أرقام الأقسام, carried only where the فرز box was actually ticked. */
+    partitionNumbers?: string[];
     /** The other عقارات the structure stands on, if it straddles more than one. */
     sharedParcelNumbers?: string[];
     notes?: string;

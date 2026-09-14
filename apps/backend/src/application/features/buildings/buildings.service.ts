@@ -78,12 +78,40 @@ export function sharedParcelsExcluding(
   own: string,
 ): string[] {
   const ownTrimmed = own.trim();
+  return cleanList(values).filter((value) => value !== ownTrimmed);
+}
+
+/**
+ * أرقام الأقسام, kept only where a فرز was actually recorded.
+ *
+ * The pairing rule for migration 0047's two partition columns, and it is here
+ * rather than in a Zod refinement because a PATCH may legitimately send the
+ * numbers without restating the flag — resolving that needs the stored row,
+ * which a schema cannot see. The caller passes whichever answer now applies.
+ *
+ * Cleared rather than refused, which is the same judgement `PropertyEntry.
+ * normalise` makes about an out-of-branch leftover: a form whose checkbox was
+ * ticked, filled in and then cleared is a correction somebody got right, and
+ * failing their save over the rows they just abandoned would be punishing them
+ * for changing their mind. What must not survive is the leftover — أقسام under
+ * a structure nobody has recorded a فرز for is a contradiction, and one a deed
+ * search would later read as fact.
+ */
+export function partitionNumbersFor(
+  isPartitioned: boolean | null | undefined,
+  values: readonly string[] | undefined,
+): string[] {
+  return isPartitioned === true ? cleanList(values) : [];
+}
+
+/** Trimmed, de-duplicated, blanks dropped — the shape both lists are stored in. */
+function cleanList(values: readonly string[] | undefined): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
 
   for (const raw of values ?? []) {
     const value = raw.trim();
-    if (!value || value === ownTrimmed || seen.has(value)) continue;
+    if (!value || seen.has(value)) continue;
     seen.add(value);
     out.push(value);
   }
@@ -808,6 +836,8 @@ export class BuildingsService {
             an officer made, and it must not be flattened into «لم يُسأل».
           */
           isPartitioned: input.isPartitioned ?? null,
+          // Dropped unless a فرز was actually asserted — see `partitionNumbersFor`.
+          partitionNumbers: partitionNumbersFor(input.isPartitioned, input.partitionNumbers),
           // Never the parcel the code derives from — see `sharedParcelsExcluding`.
           sharedParcelNumbers: sharedParcelsExcluding(input.sharedParcelNumbers, parcelNumber),
           structureType: input.structureType as never,
@@ -964,6 +994,26 @@ export class BuildingsService {
         // `null` is «غير محدد» and is storable, so the presence check is on
         // `undefined` alone — an absent key leaves the column as it is.
         ...(input.isPartitioned !== undefined ? { isPartitioned: input.isPartitioned } : {}),
+        /*
+          The أقسام follow the flag, whichever of the two this request restates.
+
+          Written whenever *either* field is present, because they are one fact:
+          a PATCH that unsets `isPartitioned` and says nothing about the numbers
+          must still clear them, or the building keeps أقسام under a فرز it no
+          longer records. `partitioned` resolves the flag against the stored row
+          so a request carrying only the numbers is judged against the فرز the
+          building actually has.
+        */
+        ...(input.partitionNumbers !== undefined || input.isPartitioned !== undefined
+          ? {
+              partitionNumbers: partitionNumbersFor(
+                input.isPartitioned !== undefined ? input.isPartitioned : before.isPartitioned,
+                input.partitionNumbers !== undefined
+                  ? input.partitionNumbers
+                  : before.partitionNumbers,
+              ),
+            }
+          : {}),
         ...(input.sharedParcelNumbers !== undefined
           ? {
               // `parcelNumber` cannot be edited, so `before` is the authority
@@ -2686,6 +2736,7 @@ function toBuildingRow(row: {
   name: string | null;
   postedNumber: string | null;
   isPartitioned: boolean | null;
+  partitionNumbers: string[];
   sharedParcelNumbers: string[];
   structureType: string;
   lifecycleStatus: string;
@@ -2708,6 +2759,7 @@ function toBuildingRow(row: {
     name: row.name,
     postedNumber: row.postedNumber,
     isPartitioned: row.isPartitioned,
+    partitionNumbers: row.partitionNumbers,
     sharedParcelNumbers: row.sharedParcelNumbers,
     structureType: row.structureType,
     lifecycleStatus: row.lifecycleStatus,

@@ -421,12 +421,25 @@ export function BuildingUnitMatrixView({
                       ? `also on ${building.sharedParcelNumbers.join(', ')}`
                       : `وعلى العقارات ${building.sharedParcelNumbers.join('، ')}`
                     : null,
+                  /*
+                    The فرز, with its أقسام where they have been collected.
+
+                    «مفروزة» on its own does not answer the question anybody
+                    asks it — «which قسم?» — so the numbers are printed beside
+                    it rather than left to the editor. A ticked فرز with no
+                    numbers yet is still stated: a block is visibly مفروزة long
+                    before somebody has the صحيفة in front of them.
+                  */
                   building.isPartitioned == null
                     ? null
                     : building.isPartitioned
-                      ? en
-                        ? 'Partitioned'
-                        : 'مفروزة'
+                      ? building.partitionNumbers?.length
+                        ? en
+                          ? `Partitioned — parts ${building.partitionNumbers.join(', ')}`
+                          : `مفروزة — الأقسام ${building.partitionNumbers.join('، ')}`
+                        : en
+                          ? 'Partitioned'
+                          : 'مفروزة'
                       : en
                         ? 'Not partitioned'
                         : 'غير مفروزة',

@@ -291,6 +291,53 @@ describeIfDb('BuildingsService', () => {
     expect(back.isPartitioned).toBeNull();
   });
 
+  it('stores the أقسام a فرز produced, and clears them when the فرز is withdrawn', async () => {
+    /*
+      The pairing, through a real round trip — because what is being checked is
+      that the `TEXT[]` comes back as an array and that an update which unsets
+      the flag actually empties the column rather than leaving أقسام under a
+      building that no longer records a partition.
+    */
+    const created = await createBuilding(
+      {
+        parcelNumber: '4009',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        isPartitioned: true,
+        partitionNumbers: ['12', '13'],
+      },
+      actor(),
+    );
+    expect(created.building.partitionNumbers).toEqual(['12', '13']);
+
+    // Unsetting the flag alone must take the numbers with it: the PATCH says
+    // nothing about them, and they are only meaningful beside a فرز.
+    const withdrawn = await buildings.update(
+      created.building.id,
+      { isPartitioned: null },
+      actor(),
+    );
+    expect(withdrawn.isPartitioned).toBeNull();
+    expect(withdrawn.partitionNumbers).toEqual([]);
+  });
+
+  it('refuses to store أقسام under a structure with no recorded فرز', async () => {
+    const created = await createBuilding(
+      {
+        parcelNumber: '4010',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        partitionNumbers: ['12'],
+      },
+      actor(),
+    );
+
+    // Dropped rather than refused — a ticked-then-cleared checkbox is a
+    // correction, not a bad request. See `partitionNumbersFor`.
+    expect(created.building.isPartitioned).toBeNull();
+    expect(created.building.partitionNumbers).toEqual([]);
+  });
+
   it('records the other parcels a structure stands on, never its own', async () => {
     const created = await createBuilding(
       {

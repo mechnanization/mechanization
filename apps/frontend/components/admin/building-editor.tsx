@@ -70,7 +70,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -301,14 +300,28 @@ export function BuildingEditor({
   /** Whether رقم العقار was read off the map rather than typed — see `applyPin`. */
   const [parcelFromMap, setParcelFromMap] = useState(false);
   /**
-   * «هل الوحدة مفروزة على عقار؟» — `null` is «غير محدد» and is the default.
+   * «مفروزة» — ticked, or silent.
    *
-   * Three states rather than a checkbox, because a checkbox has no way to say
-   * "nobody asked" and فرز decides whether a flat inside can carry a deed of its
-   * own. An unticked box asserting «غير مفروزة» about every building ever
-   * created is a claim about title nobody made.
+   * A checkbox, and the asymmetry is deliberate: a tick is an officer asserting
+   * a فرز, and an untouched box is «لم يُسأل» rather than «غير مفروزة». That is
+   * why the save sends `true` or `null` and never `false` — فرز decides whether
+   * a flat inside can carry a deed of its own, and an unticked box on every
+   * building ever created is not a finding about title anybody made.
+   *
+   * The column keeps room for `false` (see `Building.isPartitioned`) so a form
+   * that one day records «we read the صحيفة and there is no فرز» has somewhere
+   * to put it. This control is not that form.
    */
-  const [isPartitioned, setIsPartitioned] = useState<boolean | null>(null);
+  const [isPartitioned, setIsPartitioned] = useState(false);
+  /**
+   * أرقام الأقسام — asked only once the box is ticked.
+   *
+   * Kept as a list including blanks so a half-typed row survives a re-render;
+   * blanks are dropped on save. A فرز with no numbers recorded is still a فرز,
+   * so an empty list is allowed — «مفروزة، والأرقام لم تُجمع بعد» is an ordinary
+   * state for a building surveyed from the street.
+   */
+  const [partitionNumbers, setPartitionNumbers] = useState<string[]>([]);
   /**
    * «إن كانت الوحدة مشتركة على أكثر من عقار» — the other عقارات it stands on.
    *
@@ -376,7 +389,8 @@ export function BuildingEditor({
       pinParcelRef.current = detail.parcelNumber;
       setName(detail.name ?? '');
       setPostedNumber(detail.postedNumber ?? '');
-      setIsPartitioned(detail.isPartitioned ?? null);
+      setIsPartitioned(detail.isPartitioned === true);
+      setPartitionNumbers(detail.partitionNumbers ?? []);
       setSharedParcels(detail.sharedParcelNumbers ?? []);
       setStructureType(detail.structureType);
       setLifecycleStatus(detail.lifecycleStatus);
@@ -562,6 +576,27 @@ export function BuildingEditor({
    * payload and a direct API call reach it without passing through here — so
    * this is what the officer sees rather than a second authority.
    */
+  /**
+   * أرقام الأقسام as they go on the wire: trimmed, de-duplicated, blanks gone —
+   * and empty whenever the box is not ticked.
+   *
+   * The server resolves the same pairing (`partitionNumbersFor`), because an
+   * offline payload and a direct API call reach it without passing through
+   * here. This is what the officer sees, not a second authority.
+   */
+  const cleanedPartitionNumbers = useMemo(() => {
+    if (!isPartitioned) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of partitionNumbers) {
+      const value = raw.trim();
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      out.push(value);
+    }
+    return out;
+  }, [partitionNumbers, isPartitioned]);
+
   const cleanedSharedParcels = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -832,10 +867,16 @@ export function BuildingEditor({
     await updateBuilding(tenant, activeToken, id, {
       name: name.trim() || null,
       postedNumber: postedNumber.trim() || null,
-      // `null` is «غير محدد» and is a storable answer, so it is sent rather
-      // than omitted — an officer must be able to un-tick a فرز they set by
-      // mistake, and an omitted key would leave it set for ever.
-      isPartitioned,
+      /*
+        `null` and not `false` for an unticked box — «لم يُسأل», not a denial.
+
+        Sent rather than omitted because an officer must be able to withdraw a
+        فرز they ticked by mistake, and an omitted key would leave it set for
+        ever. The numbers travel with it; the server clears them whenever the
+        flag is not true, so the two cannot drift.
+      */
+      isPartitioned: isPartitioned ? true : null,
+      partitionNumbers: cleanedPartitionNumbers,
       sharedParcelNumbers: cleanedSharedParcels,
       structureType,
       lifecycleStatus,
@@ -1018,10 +1059,12 @@ export function BuildingEditor({
             parcelNumber: trimmedParcel,
             name: name.trim() || undefined,
             postedNumber: postedNumber.trim() || undefined,
-            // Omitted when «غير محدد», matching the create schema: an absent key
-            // and a null mean the same thing on a *creation*, and the queue's
-            // payload is replayed through `createBuilding`.
-            ...(isPartitioned === null ? {} : { isPartitioned }),
+            // Omitted when the box was not ticked, matching the create schema:
+            // an absent key and a null mean the same thing on a *creation*, and
+            // the queue's payload is replayed through `createBuilding`.
+            ...(isPartitioned
+              ? { isPartitioned: true, partitionNumbers: cleanedPartitionNumbers }
+              : {}),
             ...(cleanedSharedParcels.length > 0
               ? { sharedParcelNumbers: cleanedSharedParcels }
               : {}),
@@ -1057,7 +1100,9 @@ export function BuildingEditor({
         parcelNumber: trimmedParcel,
         name: name.trim() || undefined,
         postedNumber: postedNumber.trim() || undefined,
-        ...(isPartitioned === null ? {} : { isPartitioned }),
+        ...(isPartitioned
+          ? { isPartitioned: true, partitionNumbers: cleanedPartitionNumbers }
+          : {}),
         ...(cleanedSharedParcels.length > 0
           ? { sharedParcelNumbers: cleanedSharedParcels }
           : {}),
@@ -1674,32 +1719,123 @@ export function BuildingEditor({
               {/*
                 ── 4. الفرز ───────────────────────────────────────────────
 
-                Three answers, because «لم يُسأل» is one of them. فرز decides
-                whether a flat inside can carry a deed of its own, so a control
-                that could only say yes or no would have every building ever
-                created asserting «غير مفروزة» — a claim about title nobody made.
+                One checkbox, and the أقسام only once it is ticked.
+
+                It was a three-way choice — «غير محدد / مفروزة / غير مفروزة» —
+                and two of those three answers earned nothing. What a transfer,
+                a deed search or a resident at the counter is actually asking is
+                «which قسم?», and a form that could only say "yes, partitioned"
+                sent them to the survey office anyway. So the yes now opens the
+                field that answers the real question.
+
+                The asymmetry in what the box means is deliberate. Ticked is an
+                officer asserting a فرز; unticked is «لم يُسأل», not «غير
+                مفروزة» — so the save sends `true` or `null` and never `false`.
+                An unticked box on every building ever created is not a finding
+                about title that anybody made, and فرز decides whether a flat
+                inside can carry a deed of its own.
+
+                An empty list under a ticked box is allowed, and is ordinary: a
+                block surveyed from the street is visibly مفروزة long before
+                anyone has the قسم numbers off the صحيفة.
               */}
               <StepField
                 en={en}
                 ordinal={!editing && zones.length > 0 ? 4 : 3}
-                title={en ? 'Is it partitioned on a parcel?' : 'هل الوحدة مفروزة على عقار؟'}
+                title={en ? 'Partitioned on a parcel?' : 'هل الوحدة مفروزة على عقار؟'}
                 hint={
                   en
-                    ? 'Optional. Partitioning (فرز) splits one parcel into separately titled units. Leave it unset if it has not been established.'
-                    : 'اختياري. الفرز يقسّم العقار إلى وحدات ذات صحائف عقارية مستقلة. اتركه «غير محدد» إن لم يُتحقَّق منه.'
+                    ? 'Optional. Partitioning (فرز) splits one parcel into separately titled units. Leave it unticked if it has not been established.'
+                    : 'اختياري. الفرز يقسّم العقار إلى وحدات ذات صحائف عقارية مستقلة. اتركه دون تحديد إن لم يُتحقَّق منه.'
                 }
               >
-                <SegmentedControl
-                  value={isPartitioned === null ? 'UNSET' : isPartitioned ? 'YES' : 'NO'}
-                  onChange={(next) =>
-                    setIsPartitioned(next === 'UNSET' ? null : next === 'YES')
-                  }
-                  options={[
-                    { value: 'UNSET', label: en ? 'Not established' : 'غير محدد' },
-                    { value: 'YES', label: en ? 'Partitioned' : 'مفروزة' },
-                    { value: 'NO', label: en ? 'Not partitioned' : 'غير مفروزة' },
-                  ]}
-                />
+                <div className="space-y-3">
+                  <label className="flex min-h-10 cursor-pointer items-center gap-2.5 rounded-lg border bg-background/80 px-3 py-2 text-sm font-medium transition-colors hover:bg-accent/40">
+                    <Checkbox
+                      checked={isPartitioned}
+                      onCheckedChange={(checked) => {
+                        const next = checked === true;
+                        setIsPartitioned(next);
+                        /*
+                          Un-ticking clears the أقسام rather than parking them.
+
+                          The server discards them for an untick anyway, so
+                          leaving the rows on screen would show the officer
+                          numbers that are not going to be saved — and a field
+                          that silently disagrees with what it will store is
+                          worse than one that is simply empty. Re-ticking starts
+                          from one blank row, which is where they were anyway.
+                        */
+                        if (!next) setPartitionNumbers([]);
+                      }}
+                    />
+                    <span>{en ? 'Partitioned (مفروزة)' : 'مفروزة'}</span>
+                  </label>
+
+                  {isPartitioned ? (
+                    <div className="space-y-2 rounded-lg border border-primary/25 bg-primary/[0.04] p-3">
+                      <p className="text-[11px] font-medium text-foreground/80">
+                        {en ? 'Partition numbers (أرقام الأقسام)' : 'أرقام الأقسام'}
+                      </p>
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        {en
+                          ? 'One per titled unit, as written on the صحيفة عقارية. Leave empty if the numbers have not been collected yet — the partition is still recorded.'
+                          : 'رقم لكل قسم كما هو مدوَّن في الصحيفة العقارية. اتركها فارغة إن لم تُجمع الأرقام بعد — يبقى الفرز مسجَّلاً.'}
+                      </p>
+
+                      {partitionNumbers.map((value, index) => (
+                        <div key={index} className="flex items-center gap-2">
+                          <Input
+                            value={value}
+                            onChange={(event) =>
+                              setPartitionNumbers((current) =>
+                                current.map((row, position) =>
+                                  position === index ? event.target.value : row,
+                                ),
+                              )
+                            }
+                            dir="ltr"
+                            inputMode="numeric"
+                            placeholder="12"
+                            aria-label={
+                              en ? `Partition number ${index + 1}` : `رقم القسم ${index + 1}`
+                            }
+                            className="h-10 flex-1 text-start font-mono"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() =>
+                              setPartitionNumbers((current) =>
+                                current.filter((_row, position) => position !== index),
+                              )
+                            }
+                            aria-label={en ? 'Remove this partition' : 'حذف هذا القسم'}
+                            className="size-10 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            <X className="size-4" />
+                          </Button>
+                        </div>
+                      ))}
+
+                      <button
+                        type="button"
+                        onClick={() => setPartitionNumbers((current) => [...current, ''])}
+                        className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-dashed border-primary/50 px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-primary/5"
+                      >
+                        <Plus className="size-3.5 shrink-0" aria-hidden />
+                        {partitionNumbers.length === 0
+                          ? en
+                            ? 'Add a partition number'
+                            : 'إضافة رقم قسم'
+                          : en
+                            ? 'Add another'
+                            : 'إضافة رقم آخر'}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </StepField>
 
               {/*

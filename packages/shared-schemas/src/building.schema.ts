@@ -62,8 +62,43 @@ const notes = z.string().trim().max(1000, 'الملاحظات طويلة جدا�
  * `false` would make «we did not check» indistinguishable from «we checked and
  * it is not», and only one of those is a finding. The same rule
  * `unitStatusField` follows, for the same reason.
+ *
+ * The building wizard's control is a single «مفروزة» checkbox, so it sends
+ * `true` or nothing at all: a tick is an officer asserting a فرز, an untouched
+ * box is silence. `false` stays accepted here because the distinction is real
+ * and a later form may want to record it — «we read the صحيفة and there is no
+ * فرز» is a finding, and not the same as never having looked.
  */
 const isPartitioned = z.boolean();
+
+/**
+ * أرقام الأقسام — the numbered units a فرز produced.
+ *
+ * The half of a فرز anybody actually needs. «This building is مفروزة» does not
+ * answer «which قسم is flat 4?», and a transfer, a deed search and a resident at
+ * the counter are all asking the second question — so a flag without the
+ * numbers sends them to the survey office anyway, which is the trip the census
+ * exists to save.
+ *
+ * Free text, for the reason `parcelNumber` is: these are the cadastre's own
+ * identifiers, and imposing our format on them would only make the field refuse
+ * what is written on the deed.
+ *
+ * Meaningful only alongside `isPartitioned: true`. That pairing is enforced in
+ * `BuildingsService` rather than by a refinement here, because a PATCH may
+ * legitimately carry the numbers without restating the flag — the rule needs
+ * the stored row to resolve, and a schema cannot see it.
+ */
+const partitionNumbers = z
+  .array(
+    z
+      .string({ required_error: 'رقم القسم مطلوب' })
+      .trim()
+      .min(1, 'رقم القسم مطلوب')
+      .max(40, 'رقم القسم طويل جداً'),
+  )
+  .max(200, 'عدد الأقسام كبير جداً')
+  .transform((values) => [...new Set(values.map((value) => value.trim()))]);
 
 /**
  * «إن كانت الوحدة مشتركة على أكثر من عقار» — the other عقارات it stands on.
@@ -268,6 +303,13 @@ export const createBuildingSchema = z
      */
     isPartitioned: isPartitioned.optional(),
     /**
+     * أرقام الأقسام, carried only where a فرز was actually asserted — `create`
+     * drops them otherwise rather than refusing, the same way
+     * `PropertyEntry.normalise` strips an out-of-branch leftover: a form whose
+     * checkbox was ticked and then cleared is a correction, not a bad request.
+     */
+    partitionNumbers: partitionNumbers.optional(),
+    /**
      * Optional and empty by default: a structure on one parcel is the
      * overwhelming majority, and `create` reads the absence as «none».
      */
@@ -408,6 +450,7 @@ export const updateBuildingSchema = z
      * "unset it".
      */
     isPartitioned: isPartitioned.nullable().optional(),
+    partitionNumbers: partitionNumbers.optional(),
     sharedParcelNumbers: sharedParcelNumbers.optional(),
     notes: notes.nullable().optional(),
   })

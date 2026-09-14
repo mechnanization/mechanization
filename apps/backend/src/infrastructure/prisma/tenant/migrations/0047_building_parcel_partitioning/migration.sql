@@ -32,6 +32,27 @@
 --
 -- That is the same rule `units.unitStatus` follows, and for the same reason.
 --
+-- The wizard's control is a single «مفروزة» checkbox, so in practice it writes
+-- `true` or NULL and never `false`: ticking the box is an officer asserting a
+-- فرز, and leaving it alone is silence rather than a denial. The column keeps
+-- room for `false` because a later surveyor's form may well want to record
+-- «we checked the صحيفة عقارية and there is no فرز», which is a finding worth
+-- having and is not the same as never having looked.
+--
+-- == Why the أقسام are a list beside the flag =============================
+--
+-- A فرز is not a yes on its own — it produces numbered أقسام, each with its own
+-- صحيفة عقارية, and those numbers are what a transfer, a deed search and a
+-- resident at the counter are all actually asking about. A boolean that
+-- recorded only that a فرز exists would send whoever needs a قسم number back to
+-- the survey office, which is the trip the census exists to save.
+--
+-- Empty for every building already on file, which is honest: nothing could
+-- record a قسم number before this column, so nobody did. Non-empty only where
+-- `isPartitioned` is true — the service clears it otherwise, because أقسام on a
+-- structure nobody has recorded a فرز for is a contradiction rather than a
+-- finding.
+--
 -- == Why the parcel list defaults to empty rather than NULL ===============
 --
 -- The opposite case, and the asymmetry is deliberate. «Which *other* parcels
@@ -44,7 +65,7 @@
 --
 -- == Additive only ========================================================
 --
--- Two ADD COLUMNs, no backfill, no constraint on existing rows, nothing
+-- Three ADD COLUMNs, no backfill, no constraint on existing rows, nothing
 -- dropped. Every build already deployed goes on reading and writing the table
 -- exactly as before — neither column is referenced by anything that predates
 -- this migration — so this is an expand step that needs no contract to follow
@@ -55,4 +76,5 @@
 
 ALTER TABLE "buildings"
   ADD COLUMN IF NOT EXISTS "isPartitioned" BOOLEAN,
+  ADD COLUMN IF NOT EXISTS "partitionNumbers" TEXT[] NOT NULL DEFAULT '{}',
   ADD COLUMN IF NOT EXISTS "sharedParcelNumbers" TEXT[] NOT NULL DEFAULT '{}';

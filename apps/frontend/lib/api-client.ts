@@ -829,6 +829,14 @@ export interface BuildingSummary {
    */
   isPartitioned?: boolean | null;
   /**
+   * أرقام الأقسام the فرز produced, each with its own صحيفة عقارية.
+   *
+   * Empty unless `isPartitioned` is true — the server keeps the two in step,
+   * because أقسام under a structure with no recorded فرز is a contradiction a
+   * deed search would later read as fact.
+   */
+  partitionNumbers?: string[];
+  /**
    * The *other* عقارات this structure stands on, beside `parcelNumber`.
    *
    * Optional for the same reason, and empty for the overwhelming majority of
@@ -1035,6 +1043,15 @@ export interface CreateBuildingInput {
    */
   isPartitioned?: boolean;
   /**
+   * أرقام الأقسام, sent only alongside `isPartitioned: true`.
+   *
+   * The server drops them otherwise rather than refusing the request — a form
+   * whose checkbox was ticked, filled in and then cleared is a correction, and
+   * failing the save over the rows somebody abandoned would punish them for
+   * changing their mind.
+   */
+  partitionNumbers?: string[];
+  /**
    * The *other* عقارات this structure stands on.
    *
    * `parcelNumber` above names one and cannot name more: the code and the
@@ -1110,6 +1127,12 @@ export type UpdateBuildingInput = Partial<{
    * the answer one-way.
    */
   isPartitioned: boolean | null;
+  /**
+   * Replaces the stored أقسام wholesale, and is cleared outright whenever the
+   * فرز flag is not `true` — sending either field makes the server re-resolve
+   * both, so a PATCH that unsets the flag cannot leave the numbers behind.
+   */
+  partitionNumbers: string[];
   /** Replaces the stored list wholesale — an empty array clears it. */
   sharedParcelNumbers: string[];
   structureType: StructureType;

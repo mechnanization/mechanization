@@ -28,6 +28,11 @@ export interface BuildingRow {
    */
   isPartitioned: boolean | null;
   /**
+   * أرقام الأقسام a فرز produced. Empty unless `isPartitioned` is true — the
+   * two are one fact, and the service keeps them in step.
+   */
+  partitionNumbers: string[];
+  /**
    * The *other* عقارات this structure stands on, beside `parcelNumber`.
    * Empty for the overwhelming majority, which stand on exactly one.
    */

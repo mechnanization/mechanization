@@ -5,7 +5,7 @@ import {
   unitBlueprintSchema,
   upsertOccupancySchema,
 } from '@mechanization/shared-schemas';
-import { rollupOf, sharedParcelsExcluding } from './buildings.service';
+import { partitionNumbersFor, rollupOf, sharedParcelsExcluding } from './buildings.service';
 import { damageSeverity, worstDamage } from './damage.service';
 
 /**
@@ -59,6 +59,36 @@ describe('survey rollup — the worst status, never the majority (D11)', () => {
 
   it('does not take a map down over a status nobody added to the ladder', () => {
     expect(rollupOf(['COMPLETE', 'SOMETHING_NEW'])).toBe('COMPLETE');
+  });
+});
+
+describe('الفرز — the أقسام a partition produced, and when they may exist', () => {
+  /*
+    The two columns migration 0047 adds are one fact, and this is the rule that
+    keeps them in step. أقسام under a structure nobody has recorded a فرز for is
+    not a partial record — it is a contradiction, and one a later deed search
+    would read as fact.
+  */
+  it('keeps the أقسام only where a فرز was actually recorded', () => {
+    expect(partitionNumbersFor(true, ['12', '13'])).toEqual(['12', '13']);
+    expect(partitionNumbersFor(false, ['12', '13'])).toEqual([]);
+    expect(partitionNumbersFor(null, ['12', '13'])).toEqual([]);
+    expect(partitionNumbersFor(undefined, ['12', '13'])).toEqual([]);
+  });
+
+  it('allows a فرز nobody has the numbers for yet', () => {
+    /*
+      Ordinary, not incomplete. A block is visibly مفروزة from the street long
+      before anyone has the صحيفة عقارية in front of them, and refusing the
+      flag without its numbers would mean the officer who can see the first
+      fact has to withhold it until somebody establishes the second.
+    */
+    expect(partitionNumbersFor(true, [])).toEqual([]);
+    expect(partitionNumbersFor(true, undefined)).toEqual([]);
+  });
+
+  it('collapses repeats and drops blanks rather than refusing the save', () => {
+    expect(partitionNumbersFor(true, ['12', ' 12 ', '', '  ', '13'])).toEqual(['12', '13']);
   });
 });
 
@@ -169,6 +199,13 @@ describe('createBuildingSchema', () => {
     has to survive the parse rather than being filled in.
   */
   it('keeps «not established» distinct from «not partitioned»', () => {
+    /*
+      The wizard's control is a single checkbox and sends `true` or nothing, so
+      `false` is currently unreachable from the UI. The schema keeps it anyway:
+      «we read the صحيفة and there is no فرز» is a finding, and it is not the
+      same as never having looked. A schema that collapsed the two would make
+      the distinction unrecoverable the day a form wants to record it.
+    */
     const unasked = createBuildingSchema.safeParse(valid);
     expect(unasked.success).toBe(true);
     if (!unasked.success) return;
@@ -178,6 +215,19 @@ describe('createBuildingSchema', () => {
     expect(answeredNo.success).toBe(true);
     if (!answeredNo.success) return;
     expect(answeredNo.data.isPartitioned).toBe(false);
+  });
+
+  it('carries أرقام الأقسام beside the فرز flag', () => {
+    const result = createBuildingSchema.safeParse({
+      ...valid,
+      isPartitioned: true,
+      partitionNumbers: ['12', ' 12 ', '13'],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    // De-duplicated on the way in, like every other list on this shape. The
+    // *pairing* with the flag is the service's rule — see `partitionNumbersFor`.
+    expect(result.data.partitionNumbers).toEqual(['12', '13']);
   });
 
   /*
