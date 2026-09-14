@@ -83,11 +83,11 @@ describeIfDb('LandlordLinkService', () => {
     /*
       The real audit subscriber, wired the way Nest wires it.
 
-      A link's writes emit `building.changed` from *inside* its transaction, and
-      the subscriber writes through the scope's client — the transaction. These
-      are what prove the audit row commits with the link and disappears with a
-      link that rolled back, rather than being written after the transaction
-      closed and lost.
+      A link's writes emit `building.changed` from *inside* its transaction.
+      The subscriber queues its row until the transaction commits — see
+      `runInTenantTransaction` — so these prove the audit row is written for a
+      link that committed and never for one that rolled back, rather than being
+      sent to an already-closed transaction and lost.
     */
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     events.on('building.changed', (payload) => audit.onBuildingChanged(payload));

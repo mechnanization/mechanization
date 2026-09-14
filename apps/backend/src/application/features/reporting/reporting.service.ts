@@ -207,6 +207,9 @@ export interface CitizenProfileVacancy {
 /** One unit inside a BUILDING — شقة, عيادة or محل. */
 export interface CitizenProfileUnit {
   id: string;
+  /** This flat left the tenancy (migration 0046) — shown as history, billed for nothing. */
+  endedAt: string | null;
+  endReason: string | null;
   /**
    * Nullable since migration 0031 — a per-unit «غير مؤكَّد» flag blanks the
    * field it excuses, so the review screen has to be able to render a flat the
@@ -262,6 +265,13 @@ export interface CitizenProfileUnit {
  */
 export interface CitizenProfileProperty {
   id: string;
+  /**
+   * When this tenancy ended, and why (migration 0046). Null on a current card.
+   * An ended card is kept on the file as history — with its lease — and bills
+   * nothing.
+   */
+  endedAt: string | null;
+  endReason: string | null;
   /**
    * Null when the officer recorded الحي or رقم العقار as «غير مؤكَّد».
    *
@@ -455,6 +465,8 @@ export interface CitizenProfileLandlordOf {
   unitCodes: string[];
   /** Null on a link confirmed before migration 0045 recorded when. */
   linkedAt: string | null;
+  /** Set when the tenancy has ended — the link is then history, not a live claim. */
+  endedAt: string | null;
 }
 
 export interface CitizenProfile {
@@ -587,7 +599,7 @@ export class ReportingService {
           (SELECT count(*)::int FROM ${this.S}registrations) AS total,
           (SELECT count(*)::int FROM ${this.S}registrations WHERE "submittedAt" >= ${sevenDaysAgo}) AS recent,
           (SELECT COALESCE(json_object_agg("propertyType", cnt), '{}'::json)
-             FROM (SELECT "propertyType", count(*)::int AS cnt FROM ${this.S}property_entries GROUP BY "propertyType") p
+             FROM (SELECT "propertyType", count(*)::int AS cnt FROM ${this.S}property_entries WHERE "endedAt" IS NULL GROUP BY "propertyType") p
           ) AS "byPropertyType",
           (SELECT COALESCE(json_object_agg("residentStatus", cnt), '{}'::json)
              FROM (
@@ -643,7 +655,7 @@ export class ReportingService {
       this.db.$queryRaw<AnalyticsRow[]>`
         WITH owned_parcels AS (
           SELECT DISTINCT "propertyNumber" FROM ${this.S}property_entries
-           WHERE "occupancyType" = 'OWNER' AND "propertyNumber" IS NOT NULL
+           WHERE "occupancyType" = 'OWNER' AND "propertyNumber" IS NOT NULL AND "endedAt" IS NULL
         ),
         -- A TENANT/FREE_OCCUPANT filing of a unit whose رقم العقار some OWNER
         -- already registered under: the same apartment, filed twice — once by
@@ -652,12 +664,15 @@ export class ReportingService {
         excluded_entries AS (
           SELECT pe.* FROM ${this.S}property_entries pe
            WHERE pe."occupancyType" <> 'OWNER'
+             AND pe."endedAt" IS NULL
              AND pe."propertyNumber" IS NOT NULL
              AND EXISTS (SELECT 1 FROM owned_parcels op WHERE op."propertyNumber" = pe."propertyNumber")
         ),
         countable_entries AS (
           SELECT pe.* FROM ${this.S}property_entries pe
            WHERE pe.id NOT IN (SELECT id FROM excluded_entries)
+             -- An ended tenancy (migration 0046) is history, not a property held.
+             AND pe."endedAt" IS NULL
         )
         SELECT
           -- Households only. A non-resident record («غير مقيم في البلدة», migration 0040)
@@ -708,6 +723,7 @@ export class ReportingService {
                      FROM (SELECT bu."unitType"::text AS type, count(*)::int AS n
                              FROM ${this.S}building_units bu
                              JOIN countable_entries ce ON ce.id = bu."propertyEntryId"
+                            WHERE bu."endedAt" IS NULL
                             GROUP BY 1
                            UNION ALL
                            SELECT "unitType"::text, count(*)::int
@@ -715,14 +731,16 @@ export class ReportingService {
                     GROUP BY 1) x)
             AS "unitsByType",
           (SELECT ((SELECT count(*) FROM ${this.S}building_units bu
-                      JOIN countable_entries ce ON ce.id = bu."propertyEntryId")
+                      JOIN countable_entries ce ON ce.id = bu."propertyEntryId"
+                     WHERE bu."endedAt" IS NULL)
                  + (SELECT count(*) FROM countable_entries WHERE "unitType" IS NOT NULL))::int)
             AS "unitTotal",
           (SELECT count(*)::int FROM excluded_entries)
             AS "duplicatePropertiesExcluded",
           (SELECT (SELECT count(*)::int FROM excluded_entries WHERE "unitType" IS NOT NULL)
                 + (SELECT count(*)::int FROM ${this.S}building_units bu
-                     JOIN excluded_entries ee ON ee.id = bu."propertyEntryId"))
+                     JOIN excluded_entries ee ON ee.id = bu."propertyEntryId"
+                    WHERE bu."endedAt" IS NULL))
             AS "duplicateUnitsExcluded",
           COALESCE((SELECT sum(amount) FROM ${this.S}citizen_payments), 0)::float8
             AS "billedTotal",
@@ -808,6 +826,8 @@ export class ReportingService {
           latitude: { not: null },
           longitude: { not: null },
           propertyNumber: { not: null },
+          // A tenant who left is not on the map (migration 0046).
+          endedAt: null,
         },
         select: {
           id: true,
@@ -891,9 +911,10 @@ export class ReportingService {
         localContactPhone: true,
         // The owner's side of every confirmed link — see `landlordOf`.
         namedAsLandlordOn: {
-          orderBy: { createdAt: 'asc' },
+          orderBy: [{ endedAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }],
           select: {
             id: true,
+            endedAt: true,
             occupancyType: true,
             buildingName: true,
             propertyNumber: true,
@@ -952,8 +973,16 @@ export class ReportingService {
             flaggedFields: true,
             notes: true,
             properties: {
+              /*
+                Current cards first, in the order the edit form lists them — the
+                order «غير مؤكَّد» flags count positions in — and ended tenancies
+                after them, as the history they are.
+              */
+              orderBy: [{ endedAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }],
               select: {
                 id: true,
+                endedAt: true,
+                endReason: true,
                 neighborhood: true,
                 propertyNumber: true,
                 propertyType: true,
@@ -1008,6 +1037,8 @@ export class ReportingService {
                   orderBy: { createdAt: 'asc' },
                   select: {
                     id: true,
+                    endedAt: true,
+                    endReason: true,
                     unitType: true,
                     floor: true,
                     side: true,
@@ -1177,6 +1208,7 @@ export class ReportingService {
             .map((row) => row.unit?.unitCode)
             .filter((code): code is string => Boolean(code)),
           linkedAt: typeof footprint?.linkedAt === 'string' ? footprint.linkedAt : null,
+          endedAt: card.endedAt?.toISOString() ?? null,
         };
       }),
       registrations: citizen.registrations.map((registration) => ({
@@ -1206,6 +1238,8 @@ export class ReportingService {
         notes: registration.notes,
         properties: registration.properties.map((property) => ({
           id: property.id,
+          endedAt: property.endedAt?.toISOString() ?? null,
+          endReason: property.endReason,
           neighborhood: property.neighborhood,
           propertyNumber: property.propertyNumber,
           propertyType: property.propertyType,
@@ -1235,12 +1269,14 @@ export class ReportingService {
           buildingCode: property.building?.code ?? null,
           buildingPostedNumber: property.building?.postedNumber ?? null,
           buildingLifecycleStatus: property.building?.lifecycleStatus ?? null,
-          unitCount: property.units.length,
+          unitCount: property.units.filter((unit) => !unit.endedAt).length,
           units: property.units.map((unit) => {
             // At most one by the partial unique index; see the select above.
             const vacancy = unit.unit?.vacancies[0];
             return {
               id: unit.id,
+              endedAt: unit.endedAt?.toISOString() ?? null,
+              endReason: unit.endReason,
               unitType: unit.unitType,
               floor: unit.floor,
               side: unit.side,
@@ -1308,6 +1344,7 @@ export class ReportingService {
           latitude: { not: null },
           longitude: { not: null },
           propertyNumber: { not: null },
+          endedAt: null,
         },
         select: {
           id: true,
@@ -1320,7 +1357,7 @@ export class ReportingService {
           latitude: true,
           longitude: true,
           createdAt: true,
-          _count: { select: { units: true } },
+          _count: { select: { units: { where: { endedAt: null } } } },
           registration: {
             select: {
               id: true,
@@ -1565,6 +1602,9 @@ export class ReportingService {
       // A reader summing this column has to treat blank as "not asked", the
       // same way the assessment does.
       'unit_status',
+      // When the tenancy on this line ended (migration 0046). Blank is current;
+      // a line with a date is history and holds nothing today.
+      'ended_at',
     ];
 
     const lines = [header.join(',')];
@@ -1596,8 +1636,9 @@ export class ReportingService {
               unitArea: true,
               unitStatus: true,
               buildingName: true,
+              endedAt: true,
               units: {
-                select: { unitType: true, floor: true, unitArea: true, unitStatus: true },
+                select: { unitType: true, floor: true, unitArea: true, unitStatus: true, endedAt: true },
               },
             },
           },
@@ -1647,6 +1688,7 @@ export class ReportingService {
                 (unit?.unitArea ?? property?.unitArea)?.toString() ?? '',
                 // Same split, same reason — a building states it per unit.
                 unit?.unitStatus ?? property?.unitStatus ?? '',
+                (unit?.endedAt ?? property?.endedAt)?.toISOString() ?? '',
               ]
                 .map(csvCell)
                 .join(','),
@@ -1715,7 +1757,18 @@ export class ReportingService {
    */
   @OnEvent('damage.recorded')
   async onDashboardDataChanged(): Promise<void> {
-    await this.cache.invalidatePrefix(`dashboard:${this.tenantContext.tenantSlug}:`);
+    /*
+      From inside a transaction, cleared once it commits. Cleared before, a read
+      in between re-caches the state the transaction is about to replace, and
+      serves it for the whole TTL.
+    */
+    const prefix = `dashboard:${this.tenantContext.tenantSlug}:`;
+    const transaction = this.tenantContext.peek()?.transaction;
+    if (transaction) {
+      transaction.afterCommit.push(() => this.cache.invalidatePrefix(prefix));
+      return;
+    }
+    await this.cache.invalidatePrefix(prefix);
   }
 }
 

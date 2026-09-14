@@ -49,6 +49,7 @@ import {
   listCitizens,
   logApiError,
   logUnitVisit,
+  type AfterTenancyAnswer,
   type CitizenListItem,
   type OccupancyFileLink,
   type UnitOccupant,
@@ -84,6 +85,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  AfterTenancyQuestion,
+  afterTenancyComplete,
+  afterTenancyPayload,
+} from '@/components/admin/after-tenancy-question';
 
 /**
  * The per-unit forms and small display helpers shared by
@@ -1563,6 +1569,9 @@ function reasonsFor(role: OccupancyRole): OccupancyEndReason[] {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+/** What «إنهاء الإشغال» sends — the reason, the date, and for a tenancy what the flat is now. */
+export type EndOccupancyAnswer = { reason: OccupancyEndReason; toDate?: string } & AfterTenancyAnswer;
+
 /**
  * The confirmation «إنهاء الإشغال» never had.
  *
@@ -1578,6 +1587,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 export function EndOccupancyDialog({
   occupant,
   unitCode,
+  asksStatus = false,
   locale,
   onOpenChange,
   onConfirm,
@@ -1585,14 +1595,20 @@ export function EndOccupancyDialog({
   /** The spell being ended; the dialog is open while this is set. */
   occupant: UnitOccupant | null;
   unitCode: string;
+  /**
+   * A tenant or occupant is leaving and nobody else is recorded living in the
+   * flat, so what it is now has to be said — see `AfterTenancyQuestion`.
+   */
+  asksStatus?: boolean;
   locale: string;
   onOpenChange: (open: boolean) => void;
-  onConfirm: (input: { reason: OccupancyEndReason; toDate?: string }) => Promise<void>;
+  onConfirm: (input: EndOccupancyAnswer) => Promise<void>;
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
   const [reason, setReason] = useState<OccupancyEndReason | null>(null);
   const [toDate, setToDate] = useState(today());
+  const [after, setAfter] = useState<AfterTenancyAnswer>({});
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -1601,6 +1617,7 @@ export function EndOccupancyDialog({
     if (occupant) {
       setReason(null);
       setToDate(today());
+      setAfter({});
       setFailure(null);
       setBusy(false);
     }
@@ -1610,14 +1627,20 @@ export function EndOccupancyDialog({
 
   const name = occupant.citizenName ?? (en ? 'this person' : 'هذا الشخص');
   const action = endActionLabel(occupant.role, en);
+  const tenancy = occupant.role !== 'OWNER';
+  const ready = Boolean(reason) && (!asksStatus || afterTenancyComplete(after));
 
   const confirm = async () => {
-    if (!reason || busy) return;
+    if (!reason || !ready || busy) return;
     setBusy(true);
     setFailure(null);
     try {
       // Today is the server's default; only a back-dated end is sent.
-      await onConfirm({ reason, ...(toDate && toDate !== today() ? { toDate } : {}) });
+      await onConfirm({
+        reason,
+        ...(toDate && toDate !== today() ? { toDate } : {}),
+        ...(asksStatus ? afterTenancyPayload(after) : {}),
+      });
       onOpenChange(false);
     } catch (caught) {
       setFailure(
@@ -1651,9 +1674,13 @@ export function EndOccupancyDialog({
                 {en ? '?' : '؟'}
               </DialogTitle>
               <DialogDescription>
-                {en
-                  ? 'They move to «Former» on this unit, the unit is released from their file, and fees for it stop being charged to them.'
-                  : 'ينتقل إلى «سابق» على هذه الوحدة، وتُفصل الوحدة عن ملفه، وتتوقف الرسوم عليه عنها.'}
+                {tenancy
+                  ? en
+                    ? 'They move to «Former» on this unit and stop being charged for it. Their card stays on their file as an ended tenancy, documents included, and the owner stays the owner.'
+                    : 'ينتقل إلى «سابق» على هذه الوحدة وتتوقف رسومها عليه. تبقى بطاقته في ملفه كإيجار منتهٍ مع مستنداتها، ويبقى المالك مالكاً.'
+                  : en
+                    ? 'They move to «Former» on this unit, the unit is released from their file, and fees for it stop being charged to them.'
+                    : 'ينتقل إلى «سابق» على هذه الوحدة، وتُفصل الوحدة عن ملفه، وتتوقف الرسوم عليه عنها.'}
               </DialogDescription>
             </div>
           </div>
@@ -1707,6 +1734,17 @@ export function EndOccupancyDialog({
             </Field>
           ) : null}
 
+          {asksStatus && reason ? (
+            <AfterTenancyQuestion value={after} onChange={setAfter} locale={locale} />
+          ) : null}
+          {tenancy && !asksStatus && reason ? (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {en
+                ? 'Someone else is still recorded living in this unit, so its status stays as it is.'
+                : 'ما زال شخص آخر مسجَّلاً ساكناً في هذه الوحدة، فتبقى حالتها كما هي.'}
+            </p>
+          ) : null}
+
           {failure ? (
             <p
               role="alert"
@@ -1729,7 +1767,7 @@ export function EndOccupancyDialog({
           <Button
             variant="destructive"
             onClick={() => void confirm()}
-            disabled={busy || !reason}
+            disabled={busy || !ready}
             className="w-full sm:w-auto"
           >
             {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
@@ -1765,7 +1803,7 @@ export function OccupantList({
   busy: boolean;
   /** Where a name links to; plain text when absent. */
   citizenHref?: (citizenId: string) => string;
-  onEnd: (occupant: UnitOccupant, input: { reason: OccupancyEndReason; toDate?: string }) => Promise<void>;
+  onEnd: (occupant: UnitOccupant, input: EndOccupancyAnswer) => Promise<void>;
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
@@ -1877,6 +1915,15 @@ export function OccupantList({
       <EndOccupancyDialog
         occupant={ending}
         unitCode={unit.unitCode}
+        asksStatus={
+          Boolean(ending) &&
+          ending!.role !== 'OWNER' &&
+          !unit.occupants.some(
+            // The server's rule: another person, not another row of the same one.
+            (other) =>
+              other.citizenId !== ending!.citizenId && other.toDate === null && other.role !== 'OWNER',
+          )
+        }
         locale={locale}
         onOpenChange={(open) => {
           if (!open) setEnding(null);

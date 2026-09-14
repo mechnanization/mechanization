@@ -356,7 +356,7 @@ export class CitizensService {
           (SELECT count(*)::int
              FROM ${this.S}property_entries pe
              JOIN ${this.S}registrations r ON r.id = pe."registrationId"
-            WHERE r."citizenId" = u.id)
+            WHERE r."citizenId" = u.id AND pe."endedAt" IS NULL)
             AS "propertyCount",
           (SELECT r.status::text FROM ${this.S}registrations r
             WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1)
@@ -539,9 +539,15 @@ export class CitizensService {
               flaggedFields: true,
               notes: true,
               properties: {
+                /*
+                  Current cards only. An ended tenancy is history on the file —
+                  shown on the profile, never edited or re-saved — and loading it
+                  here would put it back into the payload as a card still held.
+                */
+                where: { endedAt: null },
                 orderBy: { createdAt: 'asc' },
                 include: {
-                  units: { orderBy: { createdAt: 'asc' } },
+                  units: { where: { endedAt: null }, orderBy: { createdAt: 'asc' } },
                   landlordCitizen: {
                     select: {
                       id: true,
@@ -1067,7 +1073,7 @@ export class CitizensService {
             // somebody gave about it. Both are read again, locked, inside the
             // transaction; this copy only decides which flags stand.
             properties: {
-              select: { id: true, landlordPhone: true, landlordCitizenId: true },
+              select: { id: true, landlordPhone: true, landlordCitizenId: true, endedAt: true },
             },
           },
         },
@@ -1112,7 +1118,9 @@ export class CitizensService {
       below rather than being silently discarded.
     */
     const serverCards = new Map(
-      (citizen.registrations[0]?.properties ?? []).map((property) => [property.id, property]),
+      (citizen.registrations[0]?.properties ?? [])
+        .filter((property) => !property.endedAt)
+        .map((property) => [property.id, property]),
     );
     const linkLocked = new Set<number>();
     input.payload.properties.forEach((property, index) => {
@@ -1162,11 +1170,28 @@ export class CitizensService {
     }
 
     const existing = citizen.registrations[0];
-    const existingIds = new Set(existing?.properties.map((property) => property.id) ?? []);
+    /*
+      The cards this save reconciles — the current ones. An ended tenancy is not
+      in the form, so it must not read as a card the officer removed: deleting it
+      would take the lease and the record of the tenancy with it.
+    */
+    const endedIds = new Set(
+      (existing?.properties ?? []).filter((property) => property.endedAt).map((property) => property.id),
+    );
+    const existingIds = new Set(
+      (existing?.properties ?? [])
+        .filter((property) => !property.endedAt)
+        .map((property) => property.id),
+    );
 
     // An id from another citizen's claim must not be steered into this one.
     // Checked before anything is written, so a crafted payload fails whole.
     for (const { id } of entries) {
+      if (id && endedIds.has(id)) {
+        throw new ConflictError('انتهى الإيجار على إحدى البطاقات منذ فتح هذا النموذج — حدّث الصفحة', {
+          propertyId: id,
+        });
+      }
       if (id && !existingIds.has(id)) {
         throw new ValidationError('هذا العقار لا ينتمي إلى آخر طلب لهذا المواطن', {
           propertyId: id,
@@ -1377,7 +1402,9 @@ export class CitizensService {
               // They carry no documents and no id anyone outside this record
               // holds, so identity buys nothing here — unlike the property row
               // above, whose id a deed is attached to.
-              units: { deleteMany: {}, create: units },
+              // Except an ended row: the record of a flat this tenancy gave up,
+              // which the form never loaded and so never sends back.
+              units: { deleteMany: { endedAt: null }, create: units },
             },
           });
         } else {
@@ -1603,7 +1630,8 @@ export class CitizensService {
 
     const entries = await withConnectionRetry(() =>
       this.db.propertyEntry.findMany({
-        where: { propertyNumber: trimmed },
+        // Who is on this parcel now — a tenant who left is not.
+        where: { propertyNumber: trimmed, endedAt: null },
         select: {
           id: true,
           propertyType: true,
@@ -1614,6 +1642,7 @@ export class CitizensService {
           unitArea: true,
           unitStatus: true,
           units: {
+            where: { endedAt: null },
             select: { id: true, unitType: true, floor: true, unitArea: true, unitStatus: true },
           },
           registration: {

@@ -102,15 +102,23 @@ export class CensusSyncService {
       buildingsNamed: 0,
     };
 
+    /*
+      Current cards and rows only (migration 0046).
+
+      An ended tenancy keeps its card and its row — and the row keeps naming its
+      flat, because that is the record of which flat it was. Read here, it would
+      re-open the very spell «إنهاء الإيجار» just closed, the next time anybody
+      saved the household's file for any reason.
+    */
     const properties = await this.db.propertyEntry.findMany({
-      where: { registrationId: input.registrationId, buildingId: { not: null } },
+      where: { registrationId: input.registrationId, buildingId: { not: null }, endedAt: null },
       select: {
         id: true,
         propertyType: true,
         occupancyType: true,
         buildingId: true,
         buildingName: true,
-        units: { select: { id: true, unitId: true } },
+        units: { where: { endedAt: null }, select: { id: true, unitId: true } },
       },
     });
 

@@ -18,7 +18,6 @@ import {
   defaultUnitTypeFor,
   type CitizenResidence,
   type DamageLevel,
-  type OccupancyEndReason,
   type UpsertUnitInput,
   type VacancyBasis,
   type VacancyEndReason,
@@ -58,7 +57,9 @@ import { Sheet } from '@/components/ui/sheet';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import {
+  type EndOccupancyAnswer,
   activeVacancy,
   AddPersonForm,
   BuildingSummaryBadges,
@@ -479,19 +480,17 @@ export function BuildingUnitMatrixDrawer({
   };
 
   /*
-    Ending a spell also releases the citizen's own claim on the flat — see
-    `BuildingsService.endOccupancy` — and the message says so, because that
-    half happens inside a file the officer is not looking at. Told plainly
-    rather than left to be discovered from a bill that stopped arriving.
+    Ending a spell also changes the citizen's own file — an owner's claim is
+    released, a tenant's card is kept as an ended tenancy — see
+    `TenancyService.endOccupancy`, and the message says so, because that half
+    happens inside a file the officer is not looking at.
   */
-  const closeSpell = async (
-    occupant: UnitOccupant,
-    input: { reason: OccupancyEndReason; toDate?: string },
-  ) => {
+  const closeSpell = async (occupant: UnitOccupant, input: EndOccupancyAnswer) => {
     // Not through `run`: a refusal belongs in the dialog the officer is
     // looking at, so it is rethrown for `EndOccupancyDialog` to show.
+    let result: Awaited<ReturnType<typeof endOccupancy>>;
     try {
-      await endOccupancy(tenant, token, occupant.id, input);
+      result = await endOccupancy(tenant, token, occupant.id, input);
     } catch (caught) {
       logApiError(caught);
       throw new Error(
@@ -504,11 +503,7 @@ export function BuildingUnitMatrixDrawer({
     }
     await load();
     onChanged?.();
-    toast.success(
-      en
-        ? 'Occupancy ended, and the property released from their file'
-        : 'تم إنهاء الإشغال وفصل العقار عن ملف المواطن',
-    );
+    toast.success(endTenancyMessage(result, locale));
   };
 
   const saveSeasonal = (

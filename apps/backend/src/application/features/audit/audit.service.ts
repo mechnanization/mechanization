@@ -446,6 +446,21 @@ export class AuditService {
    * alarm, not a user-facing error.
    */
   private async record(entry: Parameters<typeof AuditLogEntry.create>[0]): Promise<void> {
+    /*
+      Emitted from inside a transaction: written once it commits, and not at all
+      if it rolls back. Written straight away through the transaction client, a
+      row for an event near the end of the work reached the database after the
+      commit and was refused — see `runInTenantTransaction`.
+    */
+    const transaction = this.tenantContext.peek()?.transaction;
+    if (transaction) {
+      transaction.afterCommit.push(() => this.write(entry));
+      return;
+    }
+    await this.write(entry);
+  }
+
+  private async write(entry: Parameters<typeof AuditLogEntry.create>[0]): Promise<void> {
     try {
       await this.audit.append(AuditLogEntry.create(entry));
     } catch (error) {

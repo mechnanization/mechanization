@@ -12,14 +12,17 @@ import {
   adminCreateCitizenSubmissionSchema,
   adminUpdateCitizenSubmissionSchema,
   citizenImportSchema,
+  endTenancySchema,
 } from '@mechanization/shared-schemas';
 import type {
   AdminCitizenSubmission,
   AdminCitizenUpdateSubmission,
   CitizenImportRequest,
+  EndTenancyInput,
 } from '@mechanization/shared-schemas';
 import { CitizensService } from '../../application/features/citizens/citizens.service';
 import { LandlordLinkService } from '../../application/features/citizens/landlord-link.service';
+import { TenancyService } from '../../application/features/citizens/tenancy.service';
 import { ReportingService } from '../../application/features/reporting/reporting.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { NotFoundError } from '../../application/common/exceptions';
@@ -68,6 +71,7 @@ export class CitizenController {
     private readonly citizens: CitizensService,
     private readonly reporting: ReportingService,
     private readonly landlordLinkService: LandlordLinkService,
+    private readonly tenancy: TenancyService,
   ) {}
 
   /**
@@ -202,6 +206,8 @@ export class CitizenController {
       */
       properties: citizen.registrations
         .flatMap((registration) => registration.properties)
+        // What they hold now: a tenancy that ended is not a property they have.
+        .filter((property) => !property.endedAt)
         .map(({ landlordCitizenId: _id, landlordReferenceNumber: _reference, ...property }) => property),
       payments: citizen.payments,
       fees: citizen.fees,
@@ -267,6 +273,43 @@ export class CitizenController {
     if (!phone?.trim()) return { candidate: null, candidates: [] };
     const candidates = await this.landlordLinkService.candidatesFor(phone);
     return { candidate: candidates.length === 1 ? candidates[0] : null, candidates };
+  }
+
+  /**
+   * What ending this tenancy would touch — which flats, whether anybody else
+   * still lives in each, who owns them — so «إنهاء الإيجار» asks the right
+   * questions before anything is pressed.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Get('tenancies/:propertyEntryId/end-preview')
+  tenancyEndPreview(@Param('propertyEntryId') propertyEntryId: string) {
+    return this.tenancy.previewCard(propertyEntryId);
+  }
+
+  /**
+   * «إنهاء الإيجار» from the tenant's file: the card and its flats end — kept as
+   * history, lease included — the owner stays owner, and the flat gets the
+   * status the officer gives it. The same operation the unit matrix runs.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Post('tenancies/:propertyEntryId/end')
+  endTenancy(
+    @Param('propertyEntryId') propertyEntryId: string,
+    @Body(new ZodValidationPipe(endTenancySchema)) body: EndTenancyInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.tenancy.endCard(
+      propertyEntryId,
+      {
+        reason: body.reason,
+        endedAt: body.endedAt,
+        unitIds: body.unitIds,
+        afterStatus: body.afterStatus,
+        vacancyBasis: body.vacancyBasis,
+        vacancyNotes: body.vacancyNotes,
+      },
+      { id: user.sub, role: user.role ?? 'STAFF' },
+    );
   }
 
   /**

@@ -5,6 +5,7 @@ import {
   Building2,
   CheckCircle2,
   ChevronDown,
+  DoorOpen,
   Loader2,
   Lock,
   MapPin,
@@ -54,6 +55,7 @@ import {
 } from '@/components/admin/building-unit-picker';
 import { LandlordMatchHint } from '@/components/admin/landlord-match-hint';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
+import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { cn, scopeErrors } from '@/lib/utils';
 import {
   type CensusUnitFacts,
@@ -175,6 +177,7 @@ export function PropertyCard({
   onAddOnSameParcel,
   onViewParcel,
   onRemove,
+  onEnded,
   canRemove,
   errors = {},
   locale = 'ar',
@@ -222,6 +225,12 @@ export function PropertyCard({
   /** Show who else is registered on this parcel. Admin form only. */
   onViewParcel?: (propertyNumber: string) => void;
   onRemove: () => void;
+  /**
+   * The saved tenancy on this card was ended from «إنهاء الإيجار». The card is
+   * history now and leaves the form — the caller drops it without asking, as
+   * the server has already kept it. Absent where a card cannot be ended here.
+   */
+  onEnded?: () => void;
   canRemove: boolean;
   errors?: Record<string, string>;
   locale?: string;
@@ -448,6 +457,9 @@ export function PropertyCard({
   const landlordLinked = Boolean(draft.landlordLink);
   const landlordFromRegister = landlordLinked || Boolean(draft.landlordCitizenId);
   const [unlinkOpen, setUnlinkOpen] = useState(false);
+  const [endOpen, setEndOpen] = useState(false);
+  /** A saved tenancy the staff form can end — see «إنهاء الإيجار» in the header. */
+  const endable = Boolean(token && censusPicker && draft.id && isNonOwner && onEnded);
   /*
     An agreement the server will not be able to act on yet.
 
@@ -548,6 +560,29 @@ export function PropertyCard({
           </span>
         </button>
 
+        {/*
+          «إنهاء الإيجار» beside «حذف», because the two are what an officer
+          reaches for when a tenant has gone — and only one of them keeps the
+          record that they lived there. Offered on a saved card only: an unsaved
+          one has no tenancy yet to end.
+        */}
+        {endable ? (
+          <Button
+            variant="ghost"
+            className="shrink-0 gap-1.5 px-2.5 sm:px-3"
+            onClick={() => setEndOpen(true)}
+          >
+            <DoorOpen className="size-4" aria-hidden />
+            {isTenant
+              ? locale === 'en'
+                ? 'End tenancy'
+                : 'إنهاء الإيجار'
+              : locale === 'en'
+                ? 'End occupancy'
+                : 'إنهاء الإشغال'}
+          </Button>
+        ) : null}
+
         {canRemove ? (
           <Button
             variant="ghost"
@@ -558,6 +593,24 @@ export function PropertyCard({
           </Button>
         ) : null}
       </CardHeader>
+
+      {endable && token && draft.id ? (
+        <EndTenancyDialog
+          tenant={tenant}
+          token={token}
+          propertyEntryId={draft.id}
+          open={endOpen}
+          onOpenChange={setEndOpen}
+          onEnded={() => onEnded?.()}
+          allowPartial={false}
+          notice={
+            locale === 'en'
+              ? 'The card leaves this form once it ends. Unsaved changes to it are not kept; the rest of the form is unchanged.'
+              : 'تخرج البطاقة من هذا النموذج بعد إنهائها، ولا تُحفظ تعديلات غير محفوظة عليها. باقي النموذج لا يتغيّر.'
+          }
+          locale={locale}
+        />
+      ) : null}
 
       {/*
         Folded away with CSS, not unmounted.
@@ -1250,19 +1303,33 @@ export function PropertyCard({
         onOpenChange={setConfirmingRemove}
         title={locale === 'en' ? `Delete Property ${index + 1}?` : `حذف العقار ${index + 1}؟`}
         description={
-          locale === 'en' ? (
-            <>
-              This property and all entered information
-              {units.length > 0 ? ` and ${units.length} unit(s) inside it` : ''} will be removed from the form.
-              Nothing is saved until you submit the form.
-            </>
-          ) : (
-            <>
-              سيُحذف هذا العقار من النموذج بكل ما أُدخل فيه
-              {units.length > 0 ? ` و${units.length} وحدة داخله` : ''}. لن يُحفظ شيء حتى تُرسل
-              النموذج، فيمكنك إضافته من جديد.
-            </>
-          )
+          <>
+            {locale === 'en' ? (
+              <>
+                This property and all entered information
+                {units.length > 0 ? ` and ${units.length} unit(s) inside it` : ''} will be removed from the form.
+                Nothing is saved until you submit the form.
+              </>
+            ) : (
+              <>
+                سيُحذف هذا العقار من النموذج بكل ما أُدخل فيه
+                {units.length > 0 ? ` و${units.length} وحدة داخله` : ''}. لن يُحفظ شيء حتى تُرسل
+                النموذج، فيمكنك إضافته من جديد.
+              </>
+            )}
+            {/*
+              Deleting a saved tenancy erases that it ever happened. When the
+              tenant simply left, that is the wrong tool, and the moment to say
+              so is here.
+            */}
+            {endable ? (
+              <span className="mt-2 block font-medium text-foreground">
+                {locale === 'en'
+                  ? 'If the tenant has left, use «End tenancy» instead — it keeps the record of the tenancy and asks what the unit is now.'
+                  : 'إذا ترك المستأجر العقار فاستخدم «إنهاء الإيجار» بدلاً من الحذف — يُبقي سجل الإيجار ويسأل عن حال الوحدة الآن.'}
+              </span>
+            ) : null}
+          </>
         }
         confirmLabel={locale === 'en' ? 'Delete Property' : 'حذف العقار'}
         onConfirm={() => {

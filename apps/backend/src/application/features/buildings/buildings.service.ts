@@ -577,7 +577,8 @@ export class BuildingsService {
         where: {
           unitId: { in: open },
           unitStatus: { not: null },
-          propertyEntry: { occupancyType: 'OWNER' as never },
+          endedAt: null,
+          propertyEntry: { occupancyType: 'OWNER' as never, endedAt: null },
         },
         orderBy: { updatedAt: 'desc' },
         select: { unitId: true, unitStatus: true },
@@ -589,6 +590,7 @@ export class BuildingsService {
               propertyType: 'HOUSE' as never,
               occupancyType: 'OWNER' as never,
               unitStatus: { not: null },
+              endedAt: null,
             },
             orderBy: { updatedAt: 'desc' },
             select: { unitStatus: true },
@@ -674,10 +676,13 @@ export class BuildingsService {
     const unitIds = units.map((unit) => unit.id);
 
     const [ticked, wholeBuilding, unitemised] = await Promise.all([
+      // Current claims only: an ended tenancy row still names its flat, as
+      // history, and must not read as a live claim backing anybody.
       this.db.buildingUnit.findMany({
         where: {
           unitId: { in: unitIds },
-          propertyEntry: { registration: { citizenId: { in: citizenIds } } },
+          endedAt: null,
+          propertyEntry: { endedAt: null, registration: { citizenId: { in: citizenIds } } },
         },
         select: {
           unitId: true,
@@ -689,6 +694,7 @@ export class BuildingsService {
             where: {
               buildingId,
               propertyType: 'HOUSE' as never,
+              endedAt: null,
               registration: { citizenId: { in: citizenIds } },
             },
             select: { registration: { select: { citizenId: true } } },
@@ -706,11 +712,11 @@ export class BuildingsService {
         goes quiet on exactly the records it exists to catch.
       */
       this.db.propertyEntry.findMany({
-        where: { buildingId, registration: { citizenId: { in: citizenIds } } },
+        where: { buildingId, endedAt: null, registration: { citizenId: { in: citizenIds } } },
         select: {
           propertyType: true,
           registration: { select: { citizenId: true } },
-          _count: { select: { units: true } },
+          _count: { select: { units: { where: { endedAt: null } } } },
         },
       }),
     ]);
@@ -1723,6 +1729,21 @@ export class BuildingsService {
    * from cancelling the summer's fees. Read the way billing reads it: the
    * unit's own حالة, or the owner's card where the unit has none.
    */
+  /**
+   * One transaction — or the caller's, when there already is one.
+   *
+   * «إنهاء الإيجار» confirms the vacancy it leaves behind inside its own
+   * transaction, so the tenancy and the vacancy commit together. The client this
+   * service reads is that transaction then, and a transaction client has no
+   * `$transaction` of its own: the work simply joins the one already open.
+   */
+  private atomic<T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    const client = this.db as unknown as { $transaction?: unknown };
+    return typeof client.$transaction === 'function'
+      ? this.db.$transaction(work, { maxWait: 15_000, timeout: 30_000 })
+      : work(this.db as unknown as Prisma.TransactionClient);
+  }
+
   private async assertMayBeCalledEmpty(unit: {
     id: string;
     buildingId: string;
@@ -1801,7 +1822,7 @@ export class BuildingsService {
       on; a changed unit with no confirmation is the state this whole feature
       exists to get rid of.
     */
-    const [vacancy, updated] = await this.db.$transaction(async (tx) => {
+    const [vacancy, updated] = await this.atomic(async (tx) => {
       const created = await tx.unitVacancyConfirmation.create({
         data: {
           unitId,
@@ -2448,13 +2469,22 @@ export class BuildingsService {
       in it is a real situation, and minting a second card under them is not
       this path’s call to make.
     */
+    /*
+      Current cards only. An ended tenancy is the citizen's history on this
+      structure, not a card to tick a new flat onto — somebody who rented here,
+      left, and now owns a flat gets a card saying so, not a row on the old lease.
+    */
     const cards = await this.db.propertyEntry.findMany({
-      where: { buildingId: building.id, registration: { citizenId: input.citizenId } },
+      where: {
+        buildingId: building.id,
+        endedAt: null,
+        registration: { citizenId: input.citizenId },
+      },
       select: {
         id: true,
         propertyType: true,
         occupancyType: true,
-        units: { select: { id: true, unitId: true } },
+        units: { where: { endedAt: null }, select: { id: true, unitId: true } },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -2761,7 +2791,10 @@ export class BuildingsService {
     const unitLinks = await this.db.buildingUnit.updateMany({
       where: {
         unitId: input.unitId,
-        propertyEntry: { registration: { citizenId: input.citizenId } },
+        // An ended row keeps naming its flat on purpose — it is the record of
+        // which flat the tenancy was. Only a current claim is released.
+        endedAt: null,
+        propertyEntry: { endedAt: null, registration: { citizenId: input.citizenId } },
       },
       data: { unitId: null },
     });
@@ -2778,6 +2811,7 @@ export class BuildingsService {
       where: {
         buildingId: input.buildingId,
         propertyType: 'HOUSE' as never,
+        endedAt: null,
         registration: { citizenId: input.citizenId },
         // Nothing itemised; the `buildingId` is the whole of the claim. A card
         // that still ticks a flat elsewhere in this structure is not what the

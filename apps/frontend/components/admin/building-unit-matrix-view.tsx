@@ -23,7 +23,6 @@ import {
   getLabels,
   defaultUnitTypeFor,
   type DamageLevel,
-  type OccupancyEndReason,
   type UpsertUnitInput,
   type VacancyBasis,
   type VacancyEndReason,
@@ -63,7 +62,9 @@ import {
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import {
+  type EndOccupancyAnswer,
   activeVacancy,
   AddPersonForm,
   BuildingSummaryBadges,
@@ -411,13 +412,11 @@ export function BuildingUnitMatrixView({
     looking at, not in a toast behind it, so the error is rethrown for the
     dialog to show and the dialog stays open.
   */
-  const closeSpell = async (
-    occupant: UnitOccupant,
-    input: { reason: OccupancyEndReason; toDate?: string },
-  ) => {
+  const closeSpell = async (occupant: UnitOccupant, input: EndOccupancyAnswer) => {
     if (!token) throw new Error('unauthenticated');
+    let result: Awaited<ReturnType<typeof endOccupancy>>;
     try {
-      await endOccupancy(tenant, token, occupant.id, input);
+      result = await endOccupancy(tenant, token, occupant.id, input);
     } catch (caught) {
       logApiError(caught);
       throw new Error(
@@ -429,11 +428,7 @@ export function BuildingUnitMatrixView({
       );
     }
     await load();
-    toast.success(
-      en
-        ? 'Occupancy ended, and the property released from their file'
-        : 'تم إنهاء الإشغال وفصل العقار عن ملف المواطن',
-    );
+    toast.success(endTenancyMessage(result, locale));
   };
 
   const saveSeasonal = (

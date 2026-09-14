@@ -1522,21 +1522,97 @@ export async function recordOccupancy(
   return result;
 }
 
-/** Ends a spell without deleting it — the history is the point (D2). */
+/**
+ * What a flat is once its tenant has gone — asked with the ending, because
+ * «مؤجرة» with nobody in it charges nobody. See `AFTER_TENANCY_STATUS`.
+ */
+export type AfterTenancyStatus = 'OWNER_OCCUPIED' | 'VACANT' | 'RENTED_TO_OTHER' | 'UNKNOWN';
+
+export interface AfterTenancyAnswer {
+  afterStatus?: AfterTenancyStatus;
+  vacancyBasis?: VacancyBasis;
+  vacancyNotes?: string;
+}
+
+/** What ending a tenancy changed. */
+export interface EndTenancyResult {
+  occupanciesEnded: number;
+  rowsEnded: number;
+  cardsEnded: number;
+  statusApplied: AfterTenancyStatus | null;
+  casesOpened: number;
+  vacanciesConfirmed: number;
+  link: Array<{ propertyEntryId: string; ownerId: string; kept: boolean }>;
+}
+
+/**
+ * Ends a spell without deleting it — the history is the point (D2).
+ *
+ * A tenant's spell ends their tenancy: their card is kept as an ended tenancy,
+ * the owner stays owner, and the flat gets `afterStatus` when nobody else is
+ * still recorded living there.
+ */
 export async function endOccupancy(
   tenant: string,
   token: string,
   occupancyId: string,
-  input: { reason: OccupancyEndReason; toDate?: string },
+  input: { reason: OccupancyEndReason; toDate?: string } & AfterTenancyAnswer,
 ) {
-  const result = await apiFetch<UnitOccupant>(
+  const { toDate, ...rest } = input;
+  const result = await apiFetch<EndTenancyResult | { ownerSpellEnded: true }>(
     tenant,
     `/buildings/occupancies/${encodeURIComponent(occupancyId)}/end`,
     {
       token,
       method: 'PATCH',
-      body: JSON.stringify(input.toDate ? input : { reason: input.reason }),
+      body: JSON.stringify(toDate ? { ...rest, toDate } : rest),
     },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/** What ending a tenancy card would touch — for the dialog's questions. */
+export interface TenancyPreview {
+  tenant: { id: string; name: string };
+  occupancyType: string;
+  landlordName: string | null;
+  startedAt: string | null;
+  units: Array<{
+    unitId: string;
+    unitCode: string;
+    /** Nobody else lives there, so what it is now has to be said. */
+    needsStatus: boolean;
+    othersRemain: boolean;
+    ownerNames: string[];
+    ownerNonResident: boolean;
+    dwelling: boolean;
+  }>;
+}
+
+export function getTenancyEndPreview(tenant: string, token: string, propertyEntryId: string) {
+  return apiFetch<TenancyPreview>(
+    tenant,
+    `/citizens/tenancies/${encodeURIComponent(propertyEntryId)}/end-preview`,
+    { token },
+  );
+}
+
+/** «إنهاء الإيجار» on a card — the same operation the unit matrix runs. */
+export async function endTenancy(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  input: {
+    reason: 'MOVED_OUT' | 'RECORDED_IN_ERROR';
+    endedAt?: string;
+    unitIds?: string[];
+  } & AfterTenancyAnswer,
+) {
+  const result = await apiFetch<EndTenancyResult>(
+    tenant,
+    `/citizens/tenancies/${encodeURIComponent(propertyEntryId)}/end`,
+    { token, method: 'POST', body: JSON.stringify(input) },
   );
   invalidateCensus(tenant);
   return result;
@@ -1756,6 +1832,9 @@ export interface CitizenProfileVacancy {
 
 export interface CitizenProfileUnit {
   id: string;
+  /** This flat left the tenancy (migration 0046) — history, billed for nothing. */
+  endedAt?: string | null;
+  endReason?: string | null;
   /** The canonical `Unit` this line was linked to, if any. */
   unitId?: string | null;
   unitCode?: string | null;
@@ -1800,6 +1879,13 @@ export interface CitizenProfileUnit {
 
 export interface CitizenProfileProperty {
   id: string;
+  /**
+   * When this tenancy ended, and why (migration 0046). An ended card is kept on
+   * the file as history, with its lease, and bills nothing. Optional on the wire
+   * for a profile cached before it existed.
+   */
+  endedAt?: string | null;
+  endReason?: string | null;
   /** Null when the officer recorded it as «غير مؤكَّد» — see the registration's flags. */
   neighborhood: string | null;
   propertyNumber: string | null;
@@ -1998,6 +2084,8 @@ export interface CitizenProfileLandlordOf {
   propertyNumber: string | null;
   unitCodes: string[];
   linkedAt: string | null;
+  /** Set when the tenancy ended — the link is then the record of who the landlord was. */
+  endedAt?: string | null;
 }
 
 /**

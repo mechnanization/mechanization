@@ -20,6 +20,7 @@ import {
   Flag,
   Hash,
   Heart,
+  History,
   Home,
   IdCard,
   Key,
@@ -77,6 +78,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Money } from '@/components/ui/money';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
+import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { LoadingState } from '@/components/ui/states';
 import {
   SettlePaymentDialog,
@@ -486,13 +488,17 @@ export default function CitizenProfilePage({
   */
   const isNonResident = citizen.residence === 'NON_RESIDENT_OWNER';
 
+  // What they hold now — a tenancy they left is history, not a property.
   const propertyCount = citizen.registrations.reduce(
-    (total, registration) => total + registration.properties.length,
+    (total, registration) =>
+      total + registration.properties.filter((property) => !property.endedAt).length,
     0,
   );
 
   const locatedProperty = findLocatedProperty(
-    citizen.registrations.flatMap((registration) => registration.properties),
+    citizen.registrations.flatMap((registration) =>
+      registration.properties.filter((property) => !property.endedAt),
+    ),
   );
 
   const openDocument = async (documentId: string) => {
@@ -958,23 +964,56 @@ export default function CitizenProfilePage({
                 </div>
               ) : null}
 
-              {registration.properties.map((property) => (
-                <PropertyCard
-                  key={property.id}
-                  property={property}
-                  base={base}
-                  locale={locale}
-                  tenant={tenant}
-                  token={token}
-                  canEdit={canEdit}
-                  onChanged={() => void reload()}
-                />
-              ))}
+              {registration.properties
+                .filter((property) => !property.endedAt)
+                .map((property) => (
+                  <PropertyCard
+                    key={property.id}
+                    property={property}
+                    base={base}
+                    locale={locale}
+                    tenant={tenant}
+                    token={token}
+                    canEdit={canEdit}
+                    onChanged={() => void reload()}
+                  />
+                ))}
 
-              {registration.properties.length === 0 ? (
+              {registration.properties.every((property) => property.endedAt) ? (
                 <p className="text-sm text-muted-foreground">
-                  {locale === 'en' ? 'No properties in this application.' : 'لا توجد عقارات في هذا الطلب.'}
+                  {locale === 'en' ? 'No current properties in this application.' : 'لا توجد عقارات قائمة في هذا الطلب.'}
                 </p>
+              ) : null}
+
+              {/*
+                «إيجارات منتهية» — tenancies this person has left.
+
+                Kept on the file with their lease rather than deleted, and set
+                apart under their own heading rather than mixed in, so nobody
+                counting what this person holds today counts a flat they left.
+              */}
+              {registration.properties.some((property) => property.endedAt) ? (
+                <div className="space-y-3 border-t pt-4">
+                  <SubHeading icon={History}>
+                    {locale === 'en'
+                      ? `Ended tenancies (${registration.properties.filter((property) => property.endedAt).length})`
+                      : `إيجارات منتهية (${registration.properties.filter((property) => property.endedAt).length})`}
+                  </SubHeading>
+                  {registration.properties
+                    .filter((property) => property.endedAt)
+                    .map((property) => (
+                      <PropertyCard
+                        key={property.id}
+                        property={property}
+                        base={base}
+                        locale={locale}
+                        tenant={tenant}
+                        token={token}
+                        canEdit={canEdit}
+                        onChanged={() => void reload()}
+                      />
+                    ))}
+                </div>
               ) : null}
 
               <div className="space-y-2 border-t pt-4">
@@ -1069,6 +1108,10 @@ function LandlordOfSection({
 }) {
   const en = locale === 'en';
   const [unlinking, setUnlinking] = useState<string | null>(null);
+  // Standing tenancies first; one that ended stays listed as who rented from them.
+  const ordered = [...cards.filter((card) => !card.endedAt), ...cards.filter((card) => card.endedAt)];
+  const current = cards.filter((card) => !card.endedAt).length;
+  const past = cards.length - current;
 
   return (
     <CollapsibleSection
@@ -1078,15 +1121,22 @@ function LandlordOfSection({
       defaultOpen={false}
       summary={
         <span className="text-muted-foreground">
-          {cards.length} {en ? 'linked tenancy card(s)' : 'بطاقة مستأجر مرتبطة'}
+          {current} {en ? 'linked tenancy card(s)' : 'بطاقة مستأجر مرتبطة'}
+          {past > 0 ? (en ? ` · ${past} ended` : ` · ${past} منتهية`) : null}
         </span>
       }
     >
       <ul className="divide-y rounded-lg border">
-        {cards.map((card) => (
+        {ordered.map((card) => (
           <li key={card.propertyEntryId} className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
             <div className="min-w-0 flex-1 space-y-1">
               <p className="flex flex-wrap items-center gap-2 text-sm">
+                {card.endedAt ? (
+                  <Badge variant="soft-muted">
+                    {en ? 'Ended ' : 'انتهى في '}
+                    {formatDate(card.endedAt)}
+                  </Badge>
+                ) : null}
                 <Badge variant="soft-muted">
                   {card.occupancyType === 'FREE_OCCUPANT'
                     ? en
@@ -1130,7 +1180,7 @@ function LandlordOfSection({
                 ) : null}
               </p>
             </div>
-            {canEdit && token ? (
+            {canEdit && token && !card.endedAt ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -1494,8 +1544,16 @@ function PropertyCard({
   onChanged: () => void;
 }) {
   const [unlinkOpen, setUnlinkOpen] = useState(false);
+  const [endOpen, setEndOpen] = useState(false);
   const Icon = PROPERTY_ICON[property.propertyType] ?? Building2;
   const isTenant = property.occupancyType === 'TENANT';
+  /*
+    A tenancy this person has left: history, with its lease, billed for nothing.
+    Nothing on it can be changed from here — not the link, not the ending — and
+    the status it recorded is not shown as the flat's status today.
+  */
+  const ended = Boolean(property.endedAt);
+  const currentUnits = property.units.filter((unit) => !unit.endedAt);
   /*
     A شاغل بتسامح has a landlord block too, and no lease.
 
@@ -1608,10 +1666,11 @@ function PropertyCard({
       label: locale === 'en' ? 'Unit Status' : 'حالة الوحدة',
       // `present` drops a null row, so an unrecorded status shows as an absent
       // fact rather than as a rendered «—» claiming something was established.
-      value: property.unitStatus
-        ? (labels.unitStatus[property.unitStatus as never] ?? property.unitStatus)
-        : null,
-      hint: ownerBilledHint(property.unitStatus, locale),
+      value:
+        property.unitStatus && !ended
+          ? (labels.unitStatus[property.unitStatus as never] ?? property.unitStatus)
+          : null,
+      hint: ended ? undefined : ownerBilledHint(property.unitStatus, locale),
     },
   ]);
 
@@ -1676,12 +1735,15 @@ function PropertyCard({
   ]);
 
   return (
-    <div className="divide-y rounded-lg border bg-muted/20">
+    <div className={cn('divide-y rounded-lg border', ended ? 'border-dashed bg-background' : 'bg-muted/20')}>
       <div className="flex flex-wrap items-start justify-between gap-3 p-4">
         <div className="flex min-w-0 items-start gap-3">
           <span
             aria-hidden
-            className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
+            className={cn(
+              'flex size-10 shrink-0 items-center justify-center rounded-lg',
+              ended ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary',
+            )}
           >
             <Icon className="size-5" />
           </span>
@@ -1726,18 +1788,65 @@ function PropertyCard({
                   {labels.buildingLifecycle.WAR_DAMAGED_UNINHABITED}
                 </Badge>
               ) : null}
+              {ended ? (
+                <Badge variant="soft-muted">{locale === 'en' ? 'Ended' : 'منتهية'}</Badge>
+              ) : null}
             </div>
+            {ended ? (
+              <p className="text-xs text-muted-foreground">
+                {locale === 'en' ? 'Ended on ' : 'انتهت في '}
+                {formatDate(property.endedAt!)}
+                {property.endReason
+                  ? ` — ${labels.occupancyEndReason[property.endReason as never] ?? property.endReason}`
+                  : null}
+              </p>
+            ) : null}
           </div>
         </div>
 
-        {property.latitude != null ? (
-          <Link
-            href={mapHref(base, property)}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-          >
-            <MapPin className="size-3.5" aria-hidden />
-            {locale === 'en' ? 'View on Map' : 'عرض على الخريطة'}
-          </Link>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {property.latitude != null ? (
+            <Link
+              href={mapHref(base, property)}
+              className="inline-flex min-h-9 items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+            >
+              <MapPin className="size-3.5" aria-hidden />
+              {locale === 'en' ? 'View on Map' : 'عرض على الخريطة'}
+            </Link>
+          ) : null}
+          {/*
+            «إنهاء الإيجار» — for when they have left. On the card itself, beside
+            its name, because the card is what ends; the dialog asks what the
+            flat is now before anything is written.
+          */}
+          {isNonOwner && !ended && canEdit && token ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 transition-transform duration-150 ease-out active:scale-[0.97] motion-reduce:transform-none"
+              onClick={() => setEndOpen(true)}
+            >
+              <DoorOpen className="size-4" aria-hidden />
+              {isTenant
+                ? locale === 'en'
+                  ? 'End tenancy'
+                  : 'إنهاء الإيجار'
+                : locale === 'en'
+                  ? 'End occupancy'
+                  : 'إنهاء الإشغال'}
+            </Button>
+          ) : null}
+        </div>
+        {isNonOwner && !ended && canEdit && token ? (
+          <EndTenancyDialog
+            tenant={tenant}
+            token={token}
+            propertyEntryId={property.id}
+            open={endOpen}
+            onOpenChange={setEndOpen}
+            onEnded={onChanged}
+            locale={locale}
+          />
         ) : null}
       </div>
 
@@ -1753,7 +1862,7 @@ function PropertyCard({
         <div className="space-y-3 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <SubHeading icon={UserCheck}>{locale === 'en' ? 'Landlord' : 'المالك'}</SubHeading>
-            {property.landlordCitizenId && canEdit && token ? (
+            {property.landlordCitizenId && !ended && canEdit && token ? (
               <Button variant="outline" size="sm" className="h-9" onClick={() => setUnlinkOpen(true)}>
                 <Unlink className="size-4" aria-hidden />
                 {locale === 'en' ? 'Undo link' : 'إلغاء الربط'}
@@ -1765,7 +1874,7 @@ function PropertyCard({
               <Fact key={fact.label} {...fact} />
             ))}
           </dl>
-          {property.landlordCitizenId && canEdit && token ? (
+          {property.landlordCitizenId && !ended && canEdit && token ? (
             <LandlordUnlinkDialog
               tenant={tenant}
               token={token}
@@ -1782,11 +1891,14 @@ function PropertyCard({
       {property.units.length > 0 ? (
         <div className="space-y-3 p-4">
           <SubHeading icon={Layers}>
-            {locale === 'en' ? `Units (${property.units.length})` : `الوحدات (${property.units.length})`}
+            {locale === 'en'
+              ? `Units (${ended ? property.units.length : currentUnits.length})`
+              : `الوحدات (${ended ? property.units.length : currentUnits.length})`}
           </SubHeading>
           <ul className="divide-y rounded-lg border bg-background">
-            {property.units.map((unit) => (
-              <UnitRow key={unit.id} unit={unit} locale={locale} />
+            {/* Flats still held first; a flat given up on a current card after them. */}
+            {[...currentUnits, ...property.units.filter((unit) => unit.endedAt)].map((unit) => (
+              <UnitRow key={unit.id} unit={unit} locale={locale} ended={ended || Boolean(unit.endedAt)} />
             ))}
           </ul>
         </div>
@@ -1809,7 +1921,20 @@ function PropertyCard({
  * floor and no area. This row rendered those unconditionally, which produced
  * «الطابق » followed by nothing and a bare «م²».
  */
-function UnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string }) {
+function UnitRow({
+  unit,
+  locale,
+  ended = false,
+}: {
+  unit: CitizenProfileUnit;
+  locale: string;
+  /**
+   * The tenancy on this flat is over. Its status, vacancy and seasonal lines
+   * describe the flat today — somebody else's business now — so they are not
+   * shown under a person who no longer lives there.
+   */
+  ended?: boolean;
+}) {
   const en = locale === 'en';
   const labels = getLabels(locale);
 
@@ -1819,7 +1944,7 @@ function UnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string })
     carries five things.
   */
   const censusDiffers =
-    unit.censusUnitStatus != null && unit.censusUnitStatus !== unit.unitStatus;
+    !ended && unit.censusUnitStatus != null && unit.censusUnitStatus !== unit.unitStatus;
 
   const seasonalMonths = unit.presenceMonths?.length
     ? formatMonthList(unit.presenceMonths, locale)
@@ -1876,9 +2001,16 @@ function UnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string })
           </span>
         ) : null}
 
-        {unit.unitStatus ? (
+        {unit.unitStatus && !ended ? (
           <Badge variant={unitStatusTone(unit.unitStatus)} className="shrink-0">
             {labels.unitStatus[unit.unitStatus as never] ?? unit.unitStatus}
+          </Badge>
+        ) : null}
+
+        {unit.endedAt ? (
+          <Badge variant="soft-muted" className="shrink-0">
+            {en ? 'Left ' : 'تركها في '}
+            {formatDate(unit.endedAt)}
           </Badge>
         ) : null}
 
@@ -1900,7 +2032,7 @@ function UnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string })
         518/2007 — failing to file a declaration does not make an occupied flat
         vacant, and a neighbour's word is not the same evidence as a تصريح).
       */}
-      {unit.vacancy ? (
+      {unit.vacancy && !ended ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md bg-warning/5 px-2 py-1 text-xs text-warning">
           <DoorClosed className="size-3.5 shrink-0" aria-hidden />
           <span className="font-medium">
@@ -1926,7 +2058,7 @@ function UnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string })
         exactly that and read by nothing else, so this page is where they are
         readable at all.
       */}
-      {unit.unitStatus === 'SEASONAL' || unit.censusUnitStatus === 'SEASONAL' ? (
+      {!ended && (unit.unitStatus === 'SEASONAL' || unit.censusUnitStatus === 'SEASONAL') ? (
         <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2 text-xs text-muted-foreground">
           <Sun className="size-3.5 shrink-0" aria-hidden />
           {seasonalMonths ? (

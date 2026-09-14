@@ -633,15 +633,103 @@ export type UpsertOccupancyInput = z.infer<typeof upsertOccupancySchema>;
  * `toDate` cannot be in the future: a spell ends when somebody leaves, not when
  * an officer expects them to.
  */
-export const endOccupancySchema = z.object({
-  toDate: z.coerce
-    .date({ invalid_type_error: 'تاريخ الانتهاء غير صالح' })
-    .max(new Date(Date.now() + 60_000), 'تاريخ الانتهاء في المستقبل')
-    .optional(),
-  reason: occupancyEndReasonSchema,
+/**
+ * What a flat is once its tenant has gone — asked in the same step that ends
+ * the tenancy (migration 0046).
+ *
+ * It cannot be left to stand. «مؤجرة» with nobody in it charges nobody: the
+ * tenant is gone, and the owner is exempt from the occupancy fee *because* the
+ * flat reads «مؤجرة». So the officer says what it is now:
+ *
+ *  - `OWNER_OCCUPIED` — the owner lives there; they bear the occupancy fee.
+ *  - `VACANT` — empty; recorded as a «تأكيد الشغور», with what it rests on,
+ *    because a vacancy exempts the owner and the law is specific about it.
+ *  - `RENTED_TO_OTHER` — somebody else rents it; the flat stays «مؤجرة» and a
+ *    case is opened so the new tenant is registered.
+ *  - `UNKNOWN` — the officer does not know; the status is cleared (so the owner
+ *    is billed, the presumption the law starts from) and a case is opened for
+ *    a visit.
+ */
+export const AFTER_TENANCY_STATUS = ['OWNER_OCCUPIED', 'VACANT', 'RENTED_TO_OTHER', 'UNKNOWN'] as const;
+export const afterTenancyStatusSchema = z.enum(AFTER_TENANCY_STATUS, {
+  errorMap: () => ({ message: 'حدِّد حالة الوحدة بعد خروج الشاغل' }),
 });
+export type AfterTenancyStatus = z.infer<typeof afterTenancyStatusSchema>;
+
+/**
+ * Not in the future, checked when the request arrives — a bound computed once
+ * when the module loads goes stale on a server that has been up since yesterday.
+ */
+const pastDate = (message: string) =>
+  z.coerce
+    .date({ invalid_type_error: message })
+    .refine((value) => value.getTime() <= Date.now() + 60_000, 'التاريخ في المستقبل');
+
+const afterTenancyFields = {
+  afterStatus: afterTenancyStatusSchema.optional(),
+  vacancyBasis: vacancyBasisSchema.optional(),
+  vacancyNotes: z.string().trim().max(1000, 'الملاحظات طويلة جداً').optional(),
+};
+
+function refineAfterTenancy(
+  value: { afterStatus?: AfterTenancyStatus; vacancyBasis?: string; vacancyNotes?: string },
+  ctx: z.RefinementCtx,
+) {
+  if (value.afterStatus === 'VACANT' && !value.vacancyBasis) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['vacancyBasis'],
+      message: 'على ماذا يستند الشغور؟',
+    });
+  }
+  // Hearsay names its source — the same rule `confirmVacancySchema` applies.
+  if (
+    value.afterStatus === 'VACANT' &&
+    value.vacancyBasis === 'NEIGHBOUR_OR_CARETAKER' &&
+    !value.vacancyNotes
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['vacancyNotes'],
+      message: 'اذكر من أفاد بذلك',
+    });
+  }
+}
+
+export const endOccupancySchema = z
+  .object({
+    toDate: pastDate('تاريخ الانتهاء غير صالح').optional(),
+    reason: occupancyEndReasonSchema,
+    /**
+     * Asked only when a مستأجر or شاغل بتسامح leaves and nobody else is still
+     * recorded in the flat. The server says when it is missing.
+     */
+    ...afterTenancyFields,
+  })
+  .superRefine(refineAfterTenancy);
 
 export type EndOccupancyInput = z.infer<typeof endOccupancySchema>;
+
+/**
+ * «إنهاء الإيجار» from the tenant's own file — the same operation the matrix
+ * runs, reached from the card rather than from the flat.
+ *
+ * `unitIds` narrows it to some of the card's flats (somebody renting two shops
+ * who gives one up); absent, the whole card ends. An owner's departure is not a
+ * tenancy ending, so `OWNERSHIP_TRANSFERRED` is not offered.
+ */
+export const endTenancySchema = z
+  .object({
+    reason: z.enum(['MOVED_OUT', 'RECORDED_IN_ERROR'], {
+      errorMap: () => ({ message: 'يرجى تحديد سبب إنهاء الإيجار' }),
+    }),
+    endedAt: pastDate('تاريخ الانتهاء غير صالح').optional(),
+    unitIds: z.array(uuid).max(60).optional(),
+    ...afterTenancyFields,
+  })
+  .superRefine(refineAfterTenancy);
+
+export type EndTenancyInput = z.infer<typeof endTenancySchema>;
 
 /**
  * One attempt to survey a unit, logged from the matrix.

@@ -27,6 +27,7 @@ import {
 } from '@mechanization/shared-schemas';
 import { BuildingsService } from '../../application/features/buildings/buildings.service';
 import { DamageService } from '../../application/features/buildings/damage.service';
+import { TenancyService } from '../../application/features/citizens/tenancy.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
@@ -73,6 +74,7 @@ export class BuildingsController {
   constructor(
     private readonly buildings: BuildingsService,
     private readonly damage: DamageService,
+    private readonly tenancy: TenancyService,
   ) {}
 
   private actor(user: SessionClaims) {
@@ -248,7 +250,15 @@ export class BuildingsController {
     return this.buildings.recordOccupancy(body, this.actor(user));
   }
 
-  /** Ends a spell without deleting it — the history is the point (D2). */
+  /**
+   * Ends a spell without deleting it — the history is the point (D2).
+   *
+   * A مستأجر's or شاغل بتسامح's spell is a tenancy ending, and goes through
+   * `TenancyService` — the same operation «إنهاء الإيجار» runs from their file —
+   * so their card ends with it, their owner link follows the reason, and the
+   * flat is given the status the officer says it has now. An owner's spell keeps
+   * its own path.
+   */
   @Roles(...WRITE_ROLES)
   @Patch('occupancies/:occupancyId/end')
   async endOccupancy(
@@ -256,9 +266,15 @@ export class BuildingsController {
     @Body(new ZodValidationPipe(endOccupancySchema)) body: EndOccupancyInput,
     @CurrentUser() user: SessionClaims,
   ) {
-    return this.buildings.endOccupancy(
+    return this.tenancy.endOccupancy(
       occupancyId,
-      { toDate: body.toDate, reason: body.reason },
+      {
+        reason: body.reason,
+        endedAt: body.toDate,
+        afterStatus: body.afterStatus,
+        vacancyBasis: body.vacancyBasis,
+        vacancyNotes: body.vacancyNotes,
+      },
       this.actor(user),
     );
   }

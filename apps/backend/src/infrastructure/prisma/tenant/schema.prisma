@@ -516,6 +516,15 @@ model PropertyEntry {
   /// happen in between. See `LinkMint`.
   landlordLinkMint Json?
 
+  /// When this tenancy ended, and why (migration 0046). Null on a current card.
+  ///
+  /// Set once every flat on the card has ended — or, for a منزل, the house has.
+  /// An ended card is history: it bills nothing, the census sync ignores it, the
+  /// edit form does not load it, and nothing deletes it — the lease attached to
+  /// it stays. `landlordCitizenId` stays too, as who the landlord was.
+  endedAt   DateTime?
+  endReason OccupancyEndReason?
+
   propertyType   PropertyType
   /// الحي — common to every property type. Free text: unlike رقم العقار there is
   /// no neighbourhood layer in the cadastre to check it against.
@@ -621,6 +630,12 @@ model BuildingUnit {
   /// flat, which no amount of matching on `buildingName` and `floor` could do.
   unitId String? @db.Uuid
   unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  /// This flat stopped being part of the tenancy (migration 0046). `unitId` is
+  /// kept, so the file can still say which flat it was and until when; an ended
+  /// row bills nothing and the census sync ignores it.
+  endedAt   DateTime?
+  endReason OccupancyEndReason?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

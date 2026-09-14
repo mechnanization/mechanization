@@ -343,7 +343,8 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
    */
   async countRegistrationsForParcel(propertyNumber: string): Promise<number> {
     return this.db.propertyEntry.count({
-      where: { propertyNumber: propertyNumber.trim() },
+      // Who is registered here now — a tenancy that ended is history (0046).
+      where: { propertyNumber: propertyNumber.trim(), endedAt: null },
     });
   }
 

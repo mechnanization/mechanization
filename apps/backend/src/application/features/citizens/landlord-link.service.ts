@@ -5,9 +5,11 @@ import type { StructureType } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
+import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { BuildingsService } from '../buildings/buildings.service';
 import type { FileLinkResult } from '../buildings/building.types';
+import { withoutCardFlags } from './card-flags';
 
 /**
  * Identifying the owner a مستأجر named, among the register's own citizens.
@@ -200,6 +202,7 @@ export class LandlordLinkService {
         WHERE pe."landlordCitizenId" IS NULL
           AND pe."landlordPhone" IS NOT NULL
           AND pe."occupancyType" <> 'OWNER'
+          AND pe."endedAt" IS NULL
           ${narrow}
       ),
       by_number AS (
@@ -370,6 +373,7 @@ export class LandlordLinkService {
         ? this.db.propertyEntry.findMany({
             where: {
               registration: { citizenId: { in: [...candidateIds] } },
+              endedAt: null,
               OR: [
                 ...(buildingIds.length ? [{ buildingId: { in: buildingIds } }] : []),
                 ...(parcels.length
@@ -390,7 +394,7 @@ export class LandlordLinkService {
               propertyType: true,
               buildingId: true,
               propertyNumber: true,
-              units: { select: { unitId: true } },
+              units: { where: { endedAt: null }, select: { unitId: true } },
               registration: { select: { citizenId: true } },
             },
             orderBy: { createdAt: 'asc' },
@@ -554,9 +558,17 @@ export class LandlordLinkService {
 
     const entry = await this.db.propertyEntry.findUnique({
       where: { id: input.propertyEntryId },
-      select: { ...ENTRY_SELECT, landlordLinkFootprint: true },
+      select: { ...ENTRY_SELECT, landlordLinkFootprint: true, endedAt: true },
     });
     if (!entry) throw new NotFoundError('بطاقة العقار غير موجودة');
+
+    // A tenancy that ended names the landlord it had; there is nothing to put
+    // on anybody's file for a flat nobody rents any more.
+    if (entry.endedAt) {
+      throw new ConflictError('انتهى هذا الإيجار — لا يمكن ربط مالك به', {
+        propertyEntryId: input.propertyEntryId,
+      });
+    }
 
     const citizen = await this.db.user.findUnique({
       where: { id: input.citizenId },
@@ -916,7 +928,7 @@ export class LandlordLinkService {
     actor: { id: string; role: string },
   ): Promise<ReconcileResult> {
     const linked = await this.db.propertyEntry.findMany({
-      where: { registrationId, landlordCitizenId: { not: null } },
+      where: { registrationId, landlordCitizenId: { not: null }, endedAt: null },
       select: { ...ENTRY_SELECT, landlordLinkFootprint: true },
     });
     const result: ReconcileResult = { updated: 0, blocked: [] };
@@ -1044,12 +1056,13 @@ export class LandlordLinkService {
         id: true,
         landlordCitizenId: true,
         landlordLinkFootprint: true,
+        endedAt: true,
         landlordCitizen: { select: { id: true, firstName: true, middleName: true, lastName: true } },
         units: { select: { unit: { select: { unitCode: true } } } },
       },
     });
     if (!entry) throw new NotFoundError('بطاقة العقار غير موجودة');
-    if (!entry.landlordCitizenId || !entry.landlordCitizen) {
+    if (!entry.landlordCitizenId || !entry.landlordCitizen || entry.endedAt) {
       return {
         linked: false,
         ownerId: null,
@@ -1116,6 +1129,7 @@ export class LandlordLinkService {
         id: true,
         landlordCitizenId: true,
         landlordLinkFootprint: true,
+        endedAt: true,
         registration: { select: { citizenId: true } },
         buildingId: true,
         units: { select: { unitId: true, unit: { select: { unitCode: true, buildingId: true } } } },
@@ -1123,6 +1137,16 @@ export class LandlordLinkService {
     });
     if (!entry) throw new NotFoundError('بطاقة العقار غير موجودة');
     if (!entry.landlordCitizenId) return { ...emptyUnlink(), unlinked: false };
+    /*
+      The link on an ended tenancy is the record of who the landlord was, and
+      what it put on the owner's file became the owner's own when the tenancy
+      ended. Undoing it now would revert nothing and falsify the history.
+    */
+    if (entry.endedAt) {
+      throw new ConflictError('انتهى هذا الإيجار — الربط محفوظ كسجل لمن كان المالك', {
+        propertyEntryId: input.propertyEntryId,
+      });
+    }
 
     const ownerId = entry.landlordCitizenId;
     const events: PendingEvent[] = [];
@@ -1232,12 +1256,12 @@ export class LandlordLinkService {
       footprint instead, where undoing it later will find them.
     */
     const others = await client.propertyEntry.findMany({
-      where: { landlordCitizenId: input.ownerId, id: { not: input.entryId } },
+      where: { landlordCitizenId: input.ownerId, id: { not: input.entryId }, endedAt: null },
       select: {
         id: true,
         buildingId: true,
         landlordLinkFootprint: true,
-        units: { select: { unitId: true } },
+        units: { where: { endedAt: null }, select: { unitId: true } },
       },
     });
     const otherFootprints = new Map(
@@ -1472,6 +1496,127 @@ export class LandlordLinkService {
   }
 
   /**
+   * What happens to a link when (part of) its tenancy ends.
+   *
+   * Two different answers, because the two ways a tenancy ends are opposite
+   * statements about the past:
+   *
+   *  - **`KEEP` — the tenant left (`MOVED_OUT`).** The link was true. What it put
+   *    on the owner's file — the spell, the row, a card — stays, and becomes the
+   *    owner's own record: those flats drop out of the footprint (so a later undo
+   *    can never revert them) and a card the link created loses its mark once no
+   *    standing link still relies on it. The owner still owns the flat; a tenant
+   *    moving out changes nothing about the deed.
+   *  - **`REVERT` — the tenancy was recorded in error.** It never existed, so
+   *    nothing it supported about the owner does either: those flats are reverted
+   *    exactly as «إلغاء الربط» would revert them.
+   *
+   * When the whole card has ended, a `KEEP` leaves `landlordCitizenId` in place
+   * — who the landlord was is history worth keeping — and a `REVERT` clears it.
+   * Returns the column updates for the caller to write with the card's end, and
+   * the events to emit after commit.
+   */
+  async detachUnits(
+    client: Prisma.TransactionClient,
+    input: {
+      entryId: string;
+      ownerId: string;
+      footprint: unknown;
+      unitIds: readonly string[];
+      cardEnded: boolean;
+      mode: 'KEEP' | 'REVERT';
+    },
+  ): Promise<{
+    data: { landlordLinkFootprint?: unknown; landlordCitizenId?: null };
+    events: PendingEvent[];
+    report: RevertReport | null;
+  }> {
+    const footprint = readFootprint(input.footprint, input.ownerId);
+    const leavingIds = new Set(input.unitIds);
+
+    if (!footprint) {
+      // Nothing recorded to keep or revert. An erroneous tenancy still names
+      // no landlord once it has wholly ended.
+      return {
+        data: input.mode === 'REVERT' && input.cardEnded ? { landlordCitizenId: null } : {},
+        events: [],
+        report: input.mode === 'REVERT' ? { ...emptyReport(), legacy: true } : null,
+      };
+    }
+
+    const leaving = footprint.units.filter((unit) => leavingIds.has(unit.unitId));
+    const remaining = footprint.units.filter((unit) => !leavingIds.has(unit.unitId));
+
+    if (input.mode === 'REVERT') {
+      const reverted = await this.revertUnits(client, {
+        entryId: input.entryId,
+        ownerId: input.ownerId,
+        units: leaving,
+        mintedCardIds: input.cardEnded ? footprint.mintedCardIds : [],
+      });
+      const mintedCardIds = footprint.mintedCardIds.filter(
+        (id) => !reverted.report.removedCardIds.includes(id),
+      );
+      return {
+        data: input.cardEnded
+          ? { landlordCitizenId: null, landlordLinkFootprint: Prisma.DbNull }
+          : { landlordLinkFootprint: { ...footprint, units: remaining, mintedCardIds } },
+        events: reverted.events,
+        report: reverted.report,
+      };
+    }
+
+    /*
+      KEEP. A card this link created stops being "the link's" once nothing still
+      standing claims it through a link — this one's remaining flats, or another
+      tenant's link — so no future undo can delete what is now simply the
+      owner's card.
+    */
+    const candidates = new Set<string>([
+      ...leaving.map((unit) => unit.row?.propertyEntryId).filter((id): id is string => Boolean(id)),
+      ...(input.cardEnded || remaining.length === 0 ? footprint.mintedCardIds : []),
+    ]);
+    const stillHere = (cardId: string) =>
+      !input.cardEnded &&
+      remaining.some((unit) => unit.row?.propertyEntryId === cardId);
+
+    if (candidates.size > 0) {
+      const others = await client.propertyEntry.findMany({
+        where: { landlordCitizenId: input.ownerId, id: { not: input.entryId }, endedAt: null },
+        select: { id: true, landlordLinkFootprint: true },
+      });
+      const claimedElsewhere = (cardId: string) =>
+        others.some((other) => {
+          const theirs = readFootprint(other.landlordLinkFootprint, input.ownerId);
+          return Boolean(
+            theirs?.mintedCardIds.includes(cardId) ||
+              theirs?.units.some((unit) => unit.row?.propertyEntryId === cardId),
+          );
+        });
+
+      for (const cardId of candidates) {
+        if (stillHere(cardId) || claimedElsewhere(cardId)) continue;
+        await client.propertyEntry.updateMany({
+          where: { id: cardId, NOT: { landlordLinkMint: { equals: Prisma.DbNull } } },
+          data: { landlordLinkMint: Prisma.DbNull },
+        });
+      }
+    }
+
+    const mintedCardIds = footprint.mintedCardIds.filter((id) => stillHere(id));
+    return {
+      data: {
+        landlordLinkFootprint:
+          input.cardEnded || remaining.length === 0
+            ? Prisma.DbNull
+            : { ...footprint, units: remaining, mintedCardIds },
+      },
+      events: [],
+      report: null,
+    };
+  }
+
+  /**
    * Whether a card the owner filed themselves — not one a link created —
    * claims this flat, in either of the two shapes the census sync reads a
    * claim from: an itemised tick, or a منزل on a one-unit structure.
@@ -1484,10 +1629,11 @@ export class LandlordLinkService {
     const ownCards = {
       registration: { citizenId: ownerId },
       landlordLinkMint: { equals: Prisma.DbNull },
+      endedAt: null,
     };
 
     const ticked = await client.buildingUnit.count({
-      where: { unitId, propertyEntry: ownCards },
+      where: { unitId, endedAt: null, propertyEntry: ownCards },
     });
     if (ticked > 0) return true;
 
@@ -1521,30 +1667,18 @@ export class LandlordLinkService {
       where: { id: registrationId },
       select: {
         flaggedFields: true,
-        properties: { select: { id: true }, orderBy: { createdAt: 'asc' } },
+        // The positions flags are counted in: the current cards, as the form lists them.
+        properties: { where: { endedAt: null }, select: { id: true }, orderBy: { createdAt: 'asc' } },
       },
     });
     const index = registration?.properties.findIndex((property) => property.id === cardId) ?? -1;
-    const flags = Array.isArray(registration?.flaggedFields)
-      ? (registration!.flaggedFields as Array<{ path?: unknown }>)
-      : [];
+    const shifted = withoutCardFlags(registration?.flaggedFields, index);
+    if (shifted.removed.length > 0) return 'FLAGGED';
 
-    const shifted = flags.map((flag) => {
-      const match = typeof flag.path === 'string' ? /^properties\.(\d+)\.(.+)$/.exec(flag.path) : null;
-      if (!match) return { flag, onCard: false };
-      const position = Number(match[1]);
-      if (index >= 0 && position === index) return { flag, onCard: true };
-      if (index >= 0 && position > index) {
-        return { flag: { ...flag, path: `properties.${position - 1}.${match[2]}` }, onCard: false };
-      }
-      return { flag, onCard: false };
-    });
-    if (shifted.some((row) => row.onCard)) return 'FLAGGED';
-
-    if (index >= 0 && shifted.some((row, at) => row.flag !== flags[at])) {
+    if (shifted.changed) {
       await client.registration.update({
         where: { id: registrationId },
-        data: { flaggedFields: shifted.map((row) => row.flag) as never },
+        data: { flaggedFields: shifted.flags as never },
       });
     }
     await client.propertyEntry.delete({ where: { id: cardId } });
@@ -1677,6 +1811,7 @@ export class LandlordLinkService {
           JOIN ${S}registrations r ON r.id = pe."registrationId"
           WHERE pe."buildingId" = un."buildingId"
             AND pe."occupancyType" = 'OWNER'
+            AND pe."endedAt" IS NULL
             AND r."citizenId" = o."citizenId"
         )
     `;
@@ -1686,23 +1821,12 @@ export class LandlordLinkService {
   // ─────────────────────────────  Plumbing  ─────────────────────────────
 
   /**
-   * Runs `work` in one transaction that every service it calls also writes
-   * through.
-   *
-   * The link's writes go through `BuildingsService` and `CasesService`, which
-   * read the tenant client from the request scope rather than taking one as an
-   * argument. Re-entering the scope with the transaction client in place of
-   * the pooled one makes all of them part of this transaction without widening
-   * a single signature. Events they emit reach listeners inside the same scope,
-   * so an audit row for an occupancy is written in — and rolled back with — the
-   * transaction that recorded it.
+   * One transaction the link's writes through `BuildingsService` and
+   * `CasesService` all join, with the audit rows they emit written once it
+   * commits. See `runInTenantTransaction`.
    */
-  private async inTransaction<T>(work: () => Promise<T>): Promise<T> {
-    const scope = this.tenantContext.require();
-    return this.db.$transaction(
-      (tx) => this.tenantContext.run({ ...scope, prisma: tx as never }, work),
-      { maxWait: 15_000, timeout: 60_000 },
-    );
+  private inTransaction<T>(work: () => Promise<T>): Promise<T> {
+    return runInTenantTransaction(this.tenantContext, work);
   }
 
   /** Emits what a revert returned, once its transaction has committed. */
@@ -1792,7 +1916,11 @@ const ENTRY_SELECT = {
       citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } },
     },
   },
-  units: { select: { unitId: true, unit: { select: { buildingId: true, unitCode: true } } } },
+  // Current rows only — a flat an ended tenancy gave up is not one a link claims.
+  units: {
+    where: { endedAt: null },
+    select: { unitId: true, unit: { select: { buildingId: true, unitCode: true } } },
+  },
 } as const;
 
 const ROW_SELECT = {

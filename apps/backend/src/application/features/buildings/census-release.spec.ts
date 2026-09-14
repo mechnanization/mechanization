@@ -82,7 +82,10 @@ describe('endOccupancy — releasing the census claim', () => {
     expect(buildingUnitUpdateMany).toHaveBeenCalledWith({
       where: {
         unitId: UNIT,
-        propertyEntry: { registration: { citizenId: CITIZEN } },
+        // An ended tenancy's row keeps naming its flat as history (0046); only
+        // a current claim is released.
+        endedAt: null,
+        propertyEntry: { endedAt: null, registration: { citizenId: CITIZEN } },
       },
       data: { unitId: null },
     });
@@ -117,6 +120,7 @@ describe('endOccupancy — releasing the census claim', () => {
       where: {
         buildingId: BUILDING,
         propertyType: 'HOUSE',
+        endedAt: null,
         registration: { citizenId: CITIZEN },
         units: { none: { unitId: { not: null } } },
       },

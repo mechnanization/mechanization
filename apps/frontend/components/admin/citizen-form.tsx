@@ -963,6 +963,8 @@ export function CitizenForm({
             onAddOnSameParcel={() => addProperty(index)}
             onViewParcel={token ? setRosterParcel : undefined}
             onRemove={() => removeProperty(index)}
+            // Ended on the server, kept there as history — no longer this form's.
+            onEnded={() => removeProperty(index)}
             // Zero properties is a valid registration, so the last remaining
             // card is removable too — not just every card after the first.
             canRemove
@@ -1008,6 +1010,7 @@ export function CitizenForm({
                 onChange={(update) => setProperty(index, update)}
                 onViewParcel={token ? setRosterParcel : undefined}
                 onRemove={() => removeProperty(index)}
+                onEnded={() => removeProperty(index)}
                 canRemove
                 errors={scopeErrors(shown, `properties.${index}`)}
                 locale={locale}
