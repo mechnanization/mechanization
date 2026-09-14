@@ -21,6 +21,7 @@ const complete = () => ({
     firstName: 'علي',
     middleName: 'حسن',
     lastName: 'نصرالله',
+    motherName: 'فاطمة خليل',
     gender: 'MALE',
     bloodType: 'O_POSITIVE',
     identityDocType: 'NATIONAL_ID',
@@ -76,6 +77,35 @@ describe('citizen submission — no flags', () => {
     delete input.personal.civilRecordNumber;
 
     expect(failures(input)).toEqual(['personal.civilRecordNumber']);
+  });
+
+  /**
+   * فئة الدم is the one question on the personal step whose honest answer is
+   * often «لا أعرف». Demanding it produced guesses, so an absent one is
+   * accepted with no flag and no «يتطلب مراجعة» — and an empty string, which a
+   * select that was opened and closed sends, arrives as an absence rather than
+   * as a value the enum column could not store.
+   */
+  it('accepts a record with no blood type, unflagged', () => {
+    const input = complete();
+    delete input.personal.bloodType;
+
+    const result = adminCreateCitizenSubmissionSchema.safeParse(input);
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.personal.bloodType).toBeUndefined();
+    expect(statusForFlags(result.data.flags)).not.toBe('REQUIRES_REVIEW');
+  });
+
+  it('normalises an empty blood type to an absence', () => {
+    const input = complete();
+    input.personal.bloodType = '';
+
+    const result = adminCreateCitizenSubmissionSchema.safeParse(input);
+
+    expect(result.success).toBe(true);
+    expect(result.data!.personal.bloodType).toBeUndefined();
   });
 });
 
@@ -195,10 +225,10 @@ describe('citizen submission — a flag excuses one field', () => {
   it('does not excuse the field next to it', () => {
     const input = complete();
     delete input.personal.civilRecordNumber;
-    delete input.personal.bloodType;
+    delete input.personal.motherName;
     input.flags = [{ path: 'personal.civilRecordNumber', reason: 'إخراج القيد عند الأخ' }];
 
-    expect(failures(input)).toEqual(['personal.bloodType']);
+    expect(failures(input)).toEqual(['personal.motherName']);
   });
 
   it('does not excuse the same field on a different property card', () => {
@@ -537,7 +567,7 @@ describe('citizen submission — recorded-but-unverified fields', () => {
   it('discards an UNVERIFIED flag sent by a client', () => {
     const input = complete();
     input.flags = [
-      { path: 'personal.bloodType', reason: 'لا يهم', kind: 'UNVERIFIED' },
+      { path: 'personal.motherName', reason: 'لا يهم', kind: 'UNVERIFIED' },
     ] as never;
 
     const result = adminCreateCitizenSubmissionSchema.safeParse(input);
@@ -550,8 +580,8 @@ describe('citizen submission — recorded-but-unverified fields', () => {
 
   it('treats a flag with no kind as the officer own — every stored row predates the split', () => {
     const input = complete();
-    delete input.personal.bloodType;
-    input.flags = [{ path: 'personal.bloodType', reason: 'الأهل غير متواجدين' }];
+    delete input.personal.motherName;
+    input.flags = [{ path: 'personal.motherName', reason: 'الأهل غير متواجدين' }];
 
     const result = adminCreateCitizenSubmissionSchema.safeParse(input);
 

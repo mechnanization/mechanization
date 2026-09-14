@@ -72,6 +72,15 @@ enum IdentityDocType {
   PASSPORT
 }
 
+/// نوع الملف — a household living in the town, or an owner who lives
+/// elsewhere and is recorded only so the register can say who owns a unit and
+/// how to reach them. Added by migration 0040. See `CITIZEN_RESIDENCE` in
+/// shared-schemas.
+enum CitizenResidence {
+  RESIDENT
+  NON_RESIDENT_OWNER
+}
+
 model User {
   id   String   @id @default(uuid()) @db.Uuid
   kind UserKind
@@ -91,6 +100,16 @@ model User {
   totpConfirmedAt DateTime?
 
   // ── Citizen-only ──
+  /// NOT NULL with a default rather than nullable, so a filter excluding owner
+  /// records (`residence: { not: 'NON_RESIDENT_OWNER' }`) cannot silently drop
+  /// every row whose value is null — Postgres `<>` is never true for NULL.
+  residence         CitizenResidence @default(RESIDENT)
+  /// Where a non-resident owner lives — a town or a country. Free text.
+  residencePlace    String?
+  /// The relative or caretaker who holds the keys for an owner who is not here.
+  localContactName  String?
+  localContactPhone String?
+
   phone    String?
   whatsapp String?
 
@@ -98,6 +117,28 @@ model User {
   middleName String?
   lastName   String
   gender     Gender?
+
+  /// اسم الأم وشهرتها — what tells two people with the same three names apart.
+  ///
+  /// The register stopped asking a Lebanese citizen for an identity document
+  /// on 2026-09-13 (see `identityDocNumber`), which was right and left nothing
+  /// behind it: three name parts, a phone a household shares, and a رقم سجل
+  /// shared by everyone on the same قيد. This is the fact a Lebanese ID card
+  /// and the قيد carry for precisely that job, and the one identifying answer
+  /// at a counter nobody has a reason to invent.
+  ///
+  /// **Never a key.** Siblings share a mother, so it disambiguates people and
+  /// identifies none. Nothing matches or upserts on it; it is a signal a human
+  /// reads when deciding whether two records are one person. Treating it as an
+  /// identifier would rebuild the merge bug that removed the document number,
+  /// on a value that collides *by design* within a family.
+  ///
+  /// Nullable with no backfill. Records filed before migration 0044 hold NULL,
+  /// which means «لم يُسأل» and not «answered blank» — the edit form asks for
+  /// it on any household file that lacks it, and an officer who does not know
+  /// marks it «غير مؤكَّد» rather than inventing one. Asked of household files
+  /// only: a NON_RESIDENT_OWNER record holds a name, a phone and a town.
+  motherName String?
 
   nationality       String?
   isLebanese        Boolean?
@@ -141,13 +182,18 @@ model User {
   /// a space — plus a second, space-free copy of each identifier so a
   /// reference number typed without its dashes still matches.
   ///
+  /// `motherName` is in it (migration 0044) and deliberately only in the
+  /// spaced half: it is matched as name tokens, and a compacted copy would let
+  /// a query match across the seam into the reference number beside it.
+  ///
   /// **Never write to it.** The database computes it and rejects any INSERT or
   /// UPDATE that supplies a value. It is optional here only because Prisma
   /// omits an absent optional field from the statement it builds, which is the
   /// one way to model a generated column in a schema language that has no
   /// word for one. Declared so it can be *filtered* on; see
   /// `searchTokens` in application/common/search-terms.ts for the matching
-  /// query side, and migration 0018 for the definition.
+  /// query side, migration 0018 for the definition and 0044 for the one
+  /// amendment to it.
   searchText String?
 
   createdAt DateTime @default(now())
@@ -175,6 +221,8 @@ model User {
   damageAssessments     DamageAssessment[]   @relation("DamageAssessedBy")
   buildingsCreated      Building[]           @relation("BuildingCreatedBy")
   unitVisits            UnitVisit[]          @relation("UnitVisitOfficer")
+  vacanciesConfirmed    UnitVacancyConfirmation[] @relation("VacancyConfirmedBy")
+  vacanciesEnded        UnitVacancyConfirmation[] @relation("VacancyEndedBy")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -183,6 +231,9 @@ model User {
   /// docs/open-decisions.md about tolerating near-duplicate name spellings.
   @@unique([identityDocType, identityDocNumber])
   @@index([kind, phone])
+  /// The other half of the owner match — a landlord's number is as often the
+  /// one they answer on WhatsApp as the one they registered with (0045).
+  @@index([kind, whatsapp])
   @@index([kind, role])
   @@map("users")
 }
@@ -358,6 +409,10 @@ enum UnitStatus {
   /// See `OCCUPIED_BY_OTHERS` in shared-schemas, which is what the exemption
   /// now reads instead of comparing against RENTED alone.
   FREE_OCCUPIED
+  /// مسكن موسمي — kept by owners who live elsewhere and use it on visits.
+  /// Added by migration 0040. The owner still bears the occupancy fee unless a
+  /// تصريح بالشغور says otherwise; see `OWNER_BILLED_WHILE_ABSENT`.
+  SEASONAL
   VACANT
   UNDER_CONSTRUCTION
 }
@@ -380,6 +435,11 @@ enum UnitType {
   OFFICE
   SHOP
   WAREHOUSE
+  /// كراج — the lock-up attached to a dwelling, not a commercial garage.
+  /// Its own type because a مستودع is business premises rated as such, and
+  /// filing a household's garage as one puts it on the assessment roll as
+  /// commercial floor space. Never a dwelling.
+  GARAGE
 }
 
 enum LandType {
@@ -432,6 +492,38 @@ model PropertyEntry {
   /// Cleared whenever `landlordPhone` changes: a different number is a
   /// different claim, and the answer to the old one says nothing about it.
   landlordLinkDismissedAt DateTime?
+
+  /// Who «لا أحد منهم» rejected on this card (migration 0045).
+  ///
+  /// A dismissal is an answer about the citizens the clerk was shown, not about
+  /// the number: the real owner registering a month later on the same line was
+  /// never offered while `landlordLinkDismissedAt` alone stood for everyone.
+  /// Empty beside a timestamp means a dismissal from before 0045, read as
+  /// rejecting the citizens registered at that moment.
+  landlordLinkDismissedIds String[] @default([]) @db.Uuid
+
+  /// What confirming the owner link wrote into the owner's records (0045).
+  ///
+  /// The occupancies, unit rows and cards `LandlordLinkService.confirm` created,
+  /// each with the values it wrote — so «إلغاء الربط» reverts exactly those and
+  /// keeps anything a person has since edited. Null on an unlinked card and on
+  /// a link confirmed before 0045. See `LinkFootprint`.
+  landlordLinkFootprint Json?
+
+  /// Present only on an owner card an owner link created, with the values it
+  /// was created with (0045). The edit path never writes it, so the card stays
+  /// recognisable as the link's own however many saves of the owner's file
+  /// happen in between. See `LinkMint`.
+  landlordLinkMint Json?
+
+  /// When this tenancy ended, and why (migration 0046). Null on a current card.
+  ///
+  /// Set once every flat on the card has ended — or, for a منزل, the house has.
+  /// An ended card is history: it bills nothing, the census sync ignores it, the
+  /// edit form does not load it, and nothing deletes it — the lease attached to
+  /// it stays. `landlordCitizenId` stays too, as who the landlord was.
+  endedAt   DateTime?
+  endReason OccupancyEndReason?
 
   propertyType   PropertyType
   /// الحي — common to every property type. Free text: unlike رقم العقار there is
@@ -538,6 +630,12 @@ model BuildingUnit {
   /// flat, which no amount of matching on `buildingName` and `floor` could do.
   unitId String? @db.Uuid
   unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  /// This flat stopped being part of the tenancy (migration 0046). `unitId` is
+  /// kept, so the file can still say which flat it was and until when; an ended
+  /// row bills nothing and the census sync ignores it.
+  endedAt   DateTime?
+  endReason OccupancyEndReason?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -692,6 +790,18 @@ enum BuildingLifecycle {
   /// occupiable on purpose — an abandoned block with a displaced family in it
   /// is precisely what a war-damage census is looking for.
   DERELICT
+  /// متضررة من الحرب وغير مسكونة — standing, war-damaged, established as empty.
+  ///
+  /// Still a building: its storeys are countable and its units are recorded
+  /// like any other's, because how many flats a damaged block holds is the
+  /// figure reconstruction is costed on, and it is knowable only while the
+  /// structure is still standing. Not `DEMOLISHED`, which has nothing left to
+  /// measure.
+  ///
+  /// Outside the occupiable denominator where `DERELICT` is inside it, and the
+  /// difference is occupancy rather than fabric: a derelict block may shelter a
+  /// displaced family and gets knocked on, this one has been found empty.
+  WAR_DAMAGED_UNINHABITED
   DEMOLISHED
   NOT_REALISED
 }
@@ -757,6 +867,35 @@ enum OccupancyRole {
   OWNER
   TENANT
   FREE_OCCUPANT
+}
+
+/// Why a spell ended. Asked by «إنهاء الإشغال» since migration 0040; null on
+/// every spell ended before then, and on those a registration edit releases.
+enum OccupancyEndReason {
+  MOVED_OUT
+  OWNERSHIP_TRANSFERRED
+  /// Kept as evidence of what was entered, hidden from the unit's history.
+  RECORDED_IN_ERROR
+}
+
+/// What a «تأكيد الشغور» rests on. Recorded because the confirmation stops the
+/// owner's occupancy fee, and the law is specific about what supports one — a
+/// unit is presumed occupied until a تصريح بالشغور is filed (هيئة التشريع
+/// 725/2003). See `VACANCY_BASIS` in shared-schemas for the full reasoning.
+enum VacancyBasis {
+  FIELD_INSPECTION
+  OWNER_STATEMENT
+  NEIGHBOUR_OR_CARETAKER
+  DECLARATION_FILED
+}
+
+/// Why a confirmed vacancy was lifted — and therefore what the unit goes back
+/// to. `RECORDED_IN_ERROR` restores the state the confirmation replaced;
+/// `NO_LONGER_VACANT` leaves the unit occupied-by-someone-unrecorded, which is
+/// the presumption the law starts from. See `VACANCY_END_REASON`.
+enum VacancyEndReason {
+  RECORDED_IN_ERROR
+  NO_LONGER_VACANT
 }
 
 /// One physical structure standing on a parcel.
@@ -850,6 +989,12 @@ model Building {
   @@index([parcelNumber])
   @@index([latitude, longitude])
   @@index([lifecycleStatus])
+  /// What «سجل المباني» is ordered by. The log lists newest first so an
+  /// officer sees the building they just filed at the top rather than
+  /// somewhere in the middle of a list sorted by parcel — and a paged
+  /// `ORDER BY … DESC` with no index behind it sorts the whole table on every
+  /// page turn.
+  @@index([createdAt])
   @@map("buildings")
 }
 
@@ -909,6 +1054,13 @@ model Unit {
 
   surveyStatus SurveyStatus @default(NOT_SURVEYED)
 
+  /// «مسكن موسمي» facts (migration 0040): the months its owners are usually
+  /// present (1–12), when they last stayed, and when a تصريح بالشغور was filed.
+  /// Recorded for the council's billing decision, not acted on by the biller.
+  presenceMonths    Int[]     @default([])
+  ownerLastStayAt   DateTime?
+  vacancyDeclaredAt DateTime?
+
   notes String?
 
   createdAt DateTime @default(now())
@@ -919,6 +1071,7 @@ model Unit {
   damageAssessments DamageAssessment[]
   buildingUnits     BuildingUnit[]
   visits            UnitVisit[]
+  vacancies         UnitVacancyConfirmation[]
 
   @@unique([buildingId, floor, sequence])
   @@index([buildingId])
@@ -950,6 +1103,8 @@ model UnitOccupancy {
   /// than being deleted.
   fromDate DateTime  @default(now())
   toDate   DateTime?
+  /// Why it ended, when an officer said so. See `OccupancyEndReason`.
+  endReason OccupancyEndReason?
 
   /// The registration this occupancy was established by, when there is one.
   /// Null for an occupancy recorded straight onto the unit matrix before the
@@ -1003,6 +1158,65 @@ model UnitVisit {
   @@index([unitId, visitedAt])
   @@index([officerId])
   @@map("unit_visits")
+}
+
+/// One «تأكيد الشغور»: that a unit was found empty, on what basis, by whom —
+/// and, once it is lifted, when and why.
+///
+/// Append-only, like `DamageAssessment` and for the same reason. Confirming a
+/// vacancy is not a display state: `isUnoccupied` exempts the owner from the
+/// occupancy fee, so this is the row a resident disputing a bill — or an owner
+/// disputing one — is entitled to read. It is closed by `endedAt`, never
+/// deleted, so a vacancy withdrawn still says what the municipality believed
+/// and for how long.
+///
+/// `previousUnitStatus` / `previousSurveyStatus` are what makes the action
+/// undoable: the unit's own columns hold *current* state, so without a snapshot
+/// here, lifting a confirmation recorded in error could only guess what the
+/// flat said before it. Both are null on rows migration 0041 backfilled from
+/// units already marked vacant, where nobody recorded what came before either —
+/// `vacancyReversal` falls back to the unit's own visit history for those.
+///
+/// One live confirmation per unit is enforced by a partial unique index
+/// (`unit_vacancy_confirmations_active_key ... WHERE "endedAt" IS NULL`) in
+/// migration 0041. Prisma's schema language cannot express a partial index, so
+/// it exists in SQL only — exactly as migration 0030's damage CHECK does.
+model UnitVacancyConfirmation {
+  id     String @id @default(uuid()) @db.Uuid
+  unitId String @db.Uuid
+  unit   Unit   @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  /// What the vacancy rests on — see `VACANCY_BASIS`. Null only on backfilled
+  /// rows: the question did not exist when they were written.
+  basis VacancyBasis?
+
+  /// When the unit was found empty — back-datable from a paper round, and the
+  /// date the vacancy is said to run from.
+  observedAt DateTime @default(now())
+
+  notes String?
+
+  /// Nullable and `SetNull`, as `UnitVisit.officer` is: the finding outlives
+  /// the officer's employment.
+  confirmedById String? @db.Uuid
+  confirmedBy   User?   @relation("VacancyConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+
+  previousUnitStatus   UnitStatus?
+  previousSurveyStatus SurveyStatus?
+
+  /// Set together, or both null while the confirmation stands. A CHECK
+  /// constraint in migration 0041 holds the pair together.
+  endedAt   DateTime?
+  endReason VacancyEndReason?
+  endNotes  String?
+  endedById String?           @db.Uuid
+  endedBy   User?             @relation("VacancyEndedBy", fields: [endedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([unitId, createdAt])
+  @@map("unit_vacancy_confirmations")
 }
 
 /// One observation of a structure's condition at a point in time.

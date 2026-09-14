@@ -6,6 +6,7 @@ import type {
   CaseStatus,
   CaseType,
   CitizenRecordStatus,
+  CitizenResidence,
   CurrencyCode,
   DamageLevel,
   DamageSource,
@@ -18,6 +19,7 @@ import type {
   InspectorPayoutItem,
   InspectorProfileResponse,
   NumberingSequence,
+  OccupancyEndReason,
   OccupancyRole,
   RecordInspectorPayoutInput,
   SequenceKey,
@@ -26,6 +28,8 @@ import type {
   SurveyStatus,
   UnitStatus,
   UnitType,
+  VacancyBasis,
+  VacancyEndReason,
 } from '@mechanization/shared-schemas';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
@@ -860,17 +864,25 @@ export interface UnitOccupant {
   unitId: string;
   citizenId: string;
   citizenName: string | null;
+  /** Their phone, shown on the unit. Optional for a server from before it. */
+  citizenPhone?: string | null;
   role: OccupancyRole;
   /** أسهم out of 2400 — owners only. */
   shares: number | null;
   fromDate: string;
   toDate: string | null;
+  /**
+   * Why the spell ended, when an officer said so. `RECORDED_IN_ERROR` spells
+   * are kept on the record and left out of the unit's visible history.
+   * Optional on the wire for responses from before the field existed.
+   */
+  endReason?: OccupancyEndReason | null;
   registrationId: string | null;
   /**
    * Whether the citizen's own file claims this flat.
    *
    * `false` means the census records them here but their registration does
-   * not name the property — the half-finished state «تسجيل شاغل» produces,
+   * not name the property — the half-finished state «ربط شخص بالوحدة» can produce,
    * which is legitimate at the doorstep and needs finishing afterwards.
    * Billing reads the file, not this row, so an unbacked occupancy is a flat
    * nobody is charged for.
@@ -880,6 +892,26 @@ export interface UnitOccupant {
    * matrix with a warning.
    */
   backedByFile?: boolean;
+  /**
+   * When the spell was entered in the register (not `fromDate`, which may be
+   * back-dated). A tenant may be linked by picking only to an owner recorded
+   * before them. Optional on the wire for responses from before it existed.
+   */
+  recordedAt?: string;
+  /** Who a current tenant holds the flat from, per their own card. Null otherwise. */
+  ownerLink?: OccupantOwnerLink | null;
+}
+
+/**
+ * The tenancy card behind a current tenant's spell, and whether it names an
+ * owner of this flat — see `OccupancyOwnerLink` on the server.
+ */
+export interface OccupantOwnerLink {
+  state: 'LINKED' | 'LINKED_ELSEWHERE' | 'UNLINKED' | 'NO_CARD';
+  propertyEntryId: string | null;
+  ownerId: string | null;
+  ownerName: string | null;
+  typedName: string | null;
 }
 
 /** One canonical unit. It exists whether or not anybody has been surveyed in it. */
@@ -901,9 +933,49 @@ export interface UnitRow {
   unitArea: number | null;
   unitStatus: UnitStatus | null;
   surveyStatus: SurveyStatus;
+  /**
+   * «مسكن موسمي» — the months (1–12) its owners are usually present, when they
+   * last stayed, and when a تصريح بالشغور was filed. Recorded for the council's
+   * billing decision; nothing bills from them. Optional on the wire for
+   * responses from before migration 0040.
+   */
+  presenceMonths?: number[];
+  ownerLastStayAt?: string | null;
+  vacancyDeclaredAt?: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * One «تأكيد الشغور» — that a unit was found empty, on what basis, and by whom.
+ *
+ * `endedAt` null is the one standing: it is why the unit reads «شاغرة» and why
+ * its owner is exempt from the occupancy fee. The rest are closed history, kept
+ * rather than deleted — a vacancy withdrawn still records what the municipality
+ * believed and for how long.
+ *
+ * `previousUnitStatus` / `previousSurveyStatus` are what the flat said before,
+ * carried so the undo can state what it will restore *before* it is pressed.
+ * Both null on a row migration 0043 backfilled, where nobody recorded either.
+ */
+export interface UnitVacancyConfirmation {
+  id: string;
+  unitId: string;
+  /** Null only on a backfilled row — the question did not exist then. */
+  basis: VacancyBasis | null;
+  observedAt: string;
+  notes: string | null;
+  confirmedById: string | null;
+  confirmedByName: string | null;
+  previousUnitStatus: UnitStatus | null;
+  previousSurveyStatus: SurveyStatus | null;
+  endedAt: string | null;
+  endReason: VacancyEndReason | null;
+  endNotes: string | null;
+  endedById: string | null;
+  endedByName: string | null;
+  createdAt: string;
 }
 
 /** A unit as the matrix draws it — with whoever is, and was, inside it. */
@@ -913,6 +985,20 @@ export interface UnitWithOccupants extends UnitRow {
   visits: UnitVisitRow[];
   /** Every attempt ever made, uncapped — this is «٣ محاولات» on the cell. */
   visitCount: number;
+  /**
+   * حالة الوحدة as the owner's own card states it, sent only when `unitStatus`
+   * is unset. The unit's value wins where it has one — the order billing reads
+   * them in — so the matrix shows `unitStatus ?? ownerDeclaredStatus`.
+   */
+  ownerDeclaredStatus?: UnitStatus | null;
+  /**
+   * «تأكيد الشغور» on this unit, newest first and capped server-side at five.
+   *
+   * Optional on the wire so a cached response from a build before migration
+   * 0043 reads as "none" rather than throwing — a unit with no confirmations is
+   * the ordinary case anyway.
+   */
+  vacancies?: UnitVacancyConfirmation[];
 }
 
 /** One building opened in the matrix drawer. */
@@ -986,6 +1072,12 @@ export interface CensusSyncResult {
   /** Units lifted out of «غير ممسوحة» / «زيارة بلا رد» / «بيانات ناقصة». */
   unitsSurveyed: number;
   casesResolved: number;
+  /**
+   * Units whose confirmed vacancy this registration lifted, because it recorded
+   * a household in a flat the municipality had called empty. Optional on the
+   * wire for responses from before migration 0043.
+   */
+  vacanciesEnded?: number;
   /** Structures that had no name until this card supplied one. */
   buildingsNamed: number;
 }
@@ -1131,8 +1223,38 @@ export interface RecordOccupancyInput {
    * and those are four different bills.
    */
   unitStatus?: UnitStatus;
+  /**
+   * «نعم، الوحدة لم تعد شاغرة».
+   *
+   * Recording somebody in a unit whose vacancy is standing is refused without
+   * this — the server answers with the confirmation itself so the officer can
+   * see when the flat was called empty and on what basis before overriding it.
+   * With it, the vacancy is lifted as «لم تعد شاغرة» in the same request.
+   *
+   * Not needed to record an owner, who contradicts nothing by holding a deed.
+   */
+  endsVacancy?: boolean;
   fromDate?: string;
   toDate?: string;
+  /**
+   * «المالك» — non-owners only. One of the owners already recorded on this
+   * unit, linked in the same request; among co-owners, the one the tenant deals
+   * with. The server refuses an owner recorded after the tenant.
+   */
+  landlordCitizenId?: string;
+  /** The owner as the tenant names them, when not recorded on the unit. */
+  landlordName?: string;
+  landlordPhone?: string;
+}
+
+/** What linking the picked owner did — see `LandlordLinkService.linkRecordedOwner`. */
+export interface RecordedOwnerLink {
+  linked: boolean;
+  alreadyLinked: boolean;
+  /** The flat moved onto a tenancy card of its own to carry this owner. */
+  split: boolean;
+  propertyEntryId: string | null;
+  reason: 'TENANT_NO_FILE' | 'UNLINKABLE_STRUCTURE' | null;
 }
 
 /**
@@ -1380,7 +1502,12 @@ export async function updateUnit(
   tenant: string,
   token: string,
   unitId: string,
-  input: Partial<UpsertUnitInput>,
+  input: Partial<UpsertUnitInput> & {
+    /** «مسكن موسمي» facts — see `UnitRow.presenceMonths`. */
+    presenceMonths?: number[];
+    ownerLastStayAt?: string | null;
+    vacancyDeclaredAt?: string | null;
+  },
 ) {
   const result = await apiFetch<UnitRow>(
     tenant,
@@ -1427,6 +1554,8 @@ export async function recordOccupancy(
     occupancy: UnitOccupant;
     casesResolved: number;
     fileLink: OccupancyFileLink;
+    /** Null when no owner was picked. Optional for a server from before it. */
+    ownerLink?: RecordedOwnerLink | null;
   }>(
     tenant,
     '/buildings/occupancies',
@@ -1436,17 +1565,149 @@ export async function recordOccupancy(
   return result;
 }
 
-/** Ends a spell without deleting it — the history is the point (D2). */
+/**
+ * «ربط بالمالك» — links a tenant already on the unit to one of its recorded
+ * owners. `confirmRecordedAfter` is required when that owner was recorded on the
+ * unit after the tenant, and is sent only once the officer confirmed it.
+ */
+export async function linkOccupancyOwner(
+  tenant: string,
+  token: string,
+  occupancyId: string,
+  landlordCitizenId: string,
+  confirmRecordedAfter = false,
+) {
+  const result = await apiFetch<RecordedOwnerLink>(
+    tenant,
+    `/buildings/occupancies/${encodeURIComponent(occupancyId)}/owner-link`,
+    {
+      token,
+      method: 'POST',
+      body: JSON.stringify({ landlordCitizenId, ...(confirmRecordedAfter ? { confirmRecordedAfter } : {}) }),
+    },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
+ * What a flat is once its tenant has gone — asked with the ending, because
+ * «مؤجرة» with nobody in it charges nobody. See `AFTER_TENANCY_STATUS`.
+ */
+export type AfterTenancyStatus = 'OWNER_OCCUPIED' | 'VACANT' | 'RENTED_TO_OTHER' | 'UNKNOWN';
+
+export interface AfterTenancyAnswer {
+  afterStatus?: AfterTenancyStatus;
+  vacancyBasis?: VacancyBasis;
+  vacancyNotes?: string;
+}
+
+/** What ending a tenancy changed. */
+export interface EndTenancyResult {
+  occupanciesEnded: number;
+  rowsEnded: number;
+  /** The card rows this ending closed. Optional for a server from before it. */
+  endedRowIds?: string[];
+  cardsEnded: number;
+  statusApplied: AfterTenancyStatus | null;
+  casesOpened: number;
+  vacanciesConfirmed: number;
+  link: Array<{ propertyEntryId: string; ownerId: string; kept: boolean }>;
+}
+
+/**
+ * Ends a spell without deleting it — the history is the point (D2).
+ *
+ * A tenant's spell ends their tenancy: their card is kept as an ended tenancy,
+ * the owner stays owner, and the flat gets `afterStatus` when nobody else is
+ * still recorded living there.
+ */
 export async function endOccupancy(
   tenant: string,
   token: string,
   occupancyId: string,
-  toDate?: string,
+  input: { reason: OccupancyEndReason; toDate?: string } & AfterTenancyAnswer,
 ) {
-  const result = await apiFetch<UnitOccupant>(
+  const { toDate, ...rest } = input;
+  const result = await apiFetch<EndTenancyResult | { ownerSpellEnded: true }>(
     tenant,
     `/buildings/occupancies/${encodeURIComponent(occupancyId)}/end`,
-    { token, method: 'PATCH', body: JSON.stringify(toDate ? { toDate } : {}) },
+    {
+      token,
+      method: 'PATCH',
+      body: JSON.stringify(toDate ? { ...rest, toDate } : rest),
+    },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/** What ending a tenancy card would touch — for the dialog's questions. */
+export interface TenancyPreview {
+  tenant: { id: string; name: string };
+  occupancyType: string;
+  propertyType?: string;
+  landlordName: string | null;
+  startedAt: string | null;
+  /** The card's flats linked to سجل المباني. */
+  units: Array<{
+    unitId: string;
+    unitCode: string;
+    /** Nobody else lives there, so what it is now has to be said. */
+    needsStatus: boolean;
+    othersRemain: boolean;
+    ownerNames: string[];
+    ownerNonResident: boolean;
+    dwelling: boolean;
+  }>;
+  /**
+   * Every current row on the card, in the form's order — linked flats and
+   * lines never linked to one alike. What the dialog chooses from. Optional for
+   * a server from before it.
+   */
+  rows?: TenancyPreviewRow[];
+}
+
+export interface TenancyPreviewRow {
+  rowId: string;
+  unitId: string | null;
+  unitCode: string | null;
+  unitType: string | null;
+  floor: string | null;
+  side: string | null;
+  unitArea: number | null;
+  needsStatus: boolean;
+  othersRemain: boolean;
+  ownerNames: string[];
+  ownerNonResident: boolean;
+  dwelling: boolean;
+}
+
+export function getTenancyEndPreview(tenant: string, token: string, propertyEntryId: string) {
+  return apiFetch<TenancyPreview>(
+    tenant,
+    `/citizens/tenancies/${encodeURIComponent(propertyEntryId)}/end-preview`,
+    { token },
+  );
+}
+
+/** «إنهاء الإيجار» on a card — the same operation the unit matrix runs. */
+export async function endTenancy(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  input: {
+    reason: 'MOVED_OUT' | 'RECORDED_IN_ERROR';
+    endedAt?: string;
+    /** Exactly the rows left. Required by the server once a card has more than one. */
+    rowIds?: string[];
+    unitIds?: string[];
+  } & AfterTenancyAnswer,
+) {
+  const result = await apiFetch<EndTenancyResult>(
+    tenant,
+    `/citizens/tenancies/${encodeURIComponent(propertyEntryId)}/end`,
+    { token, method: 'POST', body: JSON.stringify(input) },
   );
   invalidateCensus(tenant);
   return result;
@@ -1498,9 +1759,70 @@ export interface LogVisitInput {
  * محاولات» is the difference between assigning a door and escalating it.
  */
 export async function logUnitVisit(tenant: string, token: string, input: LogVisitInput) {
-  const result = await apiFetch<{ visit: UnitVisitRow; visitCount: number }>(
+  const result = await apiFetch<{
+    visit: UnitVisitRow;
+    visitCount: number;
+    /**
+     * The unit's confirmed vacancy was left standing, so its حالة المسح did
+     * *not* move to this visit's outcome. A locked door on a flat already
+     * confirmed empty is not news; a visit that found somebody home means the
+     * confirmation needs lifting, and only a person can decide that.
+     */
+    vacancyStands?: boolean;
+  }>(tenant, '/buildings/visits', { token, method: 'POST', body: JSON.stringify(input) });
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
+ * Records that a unit was found empty, with what says so.
+ *
+ * Its own call rather than a `updateUnit({ unitStatus: 'VACANT', surveyStatus:
+ * 'VACANT_CONFIRMED' })`, which is what this was and which the server now
+ * refuses: a confirmed vacancy exempts the owner from the occupancy fee, so it
+ * is recorded as a row carrying its basis, its date and whoever decided it —
+ * and it can be lifted again at any time by `endVacancy`.
+ *
+ * Refused while a مستأجر or شاغل بتسامح is recorded in the unit, while the flat
+ * is a مسكن موسمي, and while another confirmation is already standing. Each
+ * refusal names its own remedy, so callers should surface it verbatim.
+ */
+export async function confirmVacancy(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: { basis: VacancyBasis; observedAt?: string; notes?: string },
+) {
+  const result = await apiFetch<{
+    vacancy: UnitVacancyConfirmation;
+    unit: UnitRow;
+    /** «شاغرة قيد التحقق» cases this answered and closed. */
+    casesResolved: number;
+  }>(tenant, `/buildings/units/${encodeURIComponent(unitId)}/vacancy`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
+ * Lifts the vacancy standing on a unit — the undo, available at any time.
+ *
+ * `reason` decides what the flat goes back to: «سُجِّل بالخطأ» restores the
+ * حالة the confirmation replaced, «لم تعد شاغرة» leaves it occupied by somebody
+ * not yet recorded, which is what bills the owner again until they are.
+ */
+export async function endVacancy(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: { reason: VacancyEndReason; endedAt?: string; notes?: string },
+) {
+  const result = await apiFetch<{ vacancy: UnitVacancyConfirmation; unit: UnitRow }>(
     tenant,
-    '/buildings/visits',
+    `/buildings/units/${encodeURIComponent(unitId)}/vacancy/end`,
     { token, method: 'POST', body: JSON.stringify(input) },
   );
   invalidateCensus(tenant);
@@ -1587,31 +1909,109 @@ export function getZoneParcelIndex(tenant: string, token: string) {
 }
 
 /** One unit inside a BUILDING — شقة, عيادة or محل. */
+/**
+ * One «تأكيد الشغور» still standing on a unit — that the municipality found
+ * this flat empty, when, and on what basis.
+ *
+ * Shown because it is the reason an owner is not being billed for the unit,
+ * and therefore the row a person disputing that — in either direction — is
+ * entitled to read. Optional on the wire so a response cached from before
+ * migration 0043 reads as "none".
+ */
+export interface CitizenProfileVacancy {
+  id: string;
+  /** Null only on a row 0043 backfilled — the question did not exist then. */
+  basis: VacancyBasis | null;
+  observedAt: string;
+}
+
 export interface CitizenProfileUnit {
   id: string;
+  /** This flat left the tenancy (migration 0046) — history, billed for nothing. */
+  endedAt?: string | null;
+  endReason?: string | null;
   /** The canonical `Unit` this line was linked to, if any. */
   unitId?: string | null;
   unitCode?: string | null;
   unitPostedNumber?: string | null;
-  unitType: string;
-  floor: string;
+  /**
+   * Nullable since migration 0031: a per-unit «غير مؤكَّد» flag blanks the
+   * field it excuses, so a flat the officer could not fully describe arrives
+   * with no type, no floor and no area. Every reader has to render that as an
+   * absence — «الطابق » with nothing after it is what the previous types,
+   * which promised a value here, produced on screen.
+   */
+  unitType: string | null;
+  floor: string | null;
   side: string | null;
-  unitArea: number;
+  unitArea: number | null;
   sharedRights: string[];
-  /** حالة الوحدة. Null means nobody was asked — not that it is occupied. */
+  /** حالة الوحدة as the owner's card states it. Null means nobody was asked. */
   unitStatus: string | null;
+  /**
+   * حالة الوحدة as سجل المباني holds it — which billing reads *first*.
+   *
+   * Reported alongside the card's own so a disagreement between them can be
+   * seen rather than silently resolved: «مشغولة من المالك» on a card over
+   * «شاغرة» in the census is either a vacancy to lift or a card to correct.
+   * Null when this line was never linked to a censused unit.
+   */
+  censusUnitStatus?: string | null;
+  /**
+   * «مسكن موسمي» facts — the months (1–12) the owners are usually present,
+   * when they last stayed, and when a تصريح بالشغور was filed.
+   *
+   * The owner bears the occupancy fee on a seasonal home anyway
+   * (`OWNER_BILLED_WHILE_ABSENT`); these are the facts the council weighs when
+   * deciding to shorten it. Empty and null on every other unit.
+   */
+  presenceMonths?: number[];
+  ownerLastStayAt?: string | null;
+  vacancyDeclaredAt?: string | null;
+  /** The «تأكيد الشغور» standing on the censused unit, if one is. */
+  vacancy?: CitizenProfileVacancy | null;
+  /**
+   * Everyone سجل المباني records as a current owner of the linked flat, with
+   * their أسهم. On a tenancy card: the flat's whole ownership beside the one
+   * co-owner the card is linked to. `citizenId` is absent on the citizen's own
+   * portal view.
+   */
+  owners?: Array<{ citizenId?: string; name: string; phone?: string | null; shares: number | null }>;
 }
 
 export interface CitizenProfileProperty {
   id: string;
+  /**
+   * When this tenancy ended, and why (migration 0046). An ended card is kept on
+   * the file as history, with its lease, and bills nothing. Optional on the wire
+   * for a profile cached before it existed.
+   */
+  endedAt?: string | null;
+  endReason?: string | null;
   /** Null when the officer recorded it as «غير مؤكَّد» — see the registration's flags. */
   neighborhood: string | null;
   propertyNumber: string | null;
   propertyType: string;
   occupancyType: string;
-  /** Non-owner occupancies. The phone is required of a tenant only. */
+  /**
+   * Non-owner occupancies. The phone is required of a tenant only.
+   *
+   * The confirmed owner's registered name while a link stands — resolved on the
+   * server so every screen printing it shows the same person — and what the
+   * tenant said otherwise. `landlordNameAsTyped` is always the tenant's words.
+   */
   landlordName: string | null;
+  landlordNameAsTyped?: string | null;
   landlordPhone: string | null;
+  /**
+   * The registered citizen this card's owner was confirmed to be, if anyone.
+   *
+   * Read back so an edit opens with the standing link showing — otherwise the
+   * form asks «هل هو المالك؟» about a question somebody already answered, over
+   * a name field it has left unlocked and editable.
+   */
+  landlordCitizenId?: string | null;
+  landlordReferenceNumber?: string | null;
   /** HOUSE only, owner only. A BUILDING keeps this per unit. */
   unitStatus: string | null;
   buildingName: string | null;
@@ -1638,6 +2038,14 @@ export interface CitizenProfileProperty {
   buildingId: string | null;
   buildingCode: string | null;
   buildingPostedNumber: string | null;
+  /**
+   * حالة المبنى, and the value this is here for is `WAR_DAMAGED_UNINHABITED`:
+   * a structure still standing, war-damaged and established as empty. Its units
+   * are recorded like any building's, so without this nothing on the card tells
+   * a flat in it from a flat somebody lives in. Optional on the wire; null on a
+   * card never linked to a censused building.
+   */
+  buildingLifecycleStatus?: string | null;
   unitCount: number;
   units: CitizenProfileUnit[];
 }
@@ -1725,6 +2133,14 @@ export interface CitizenFeeTotals {
 export interface CitizenProfile {
   id: string;
   fullName: string;
+  /**
+   * اسم الأم وشهرتها.
+   *
+   * Optional on the wire and null on households filed before migration 0044 —
+   * both mean «لم يُسأل», which every reader must render as such rather than as
+   * a difference between two people.
+   */
+  motherName?: string | null;
   phone: string | null;
   whatsapp: string | null;
   gender: string | null;
@@ -1741,12 +2157,37 @@ export interface CitizenProfile {
   maritalStatus: string | null;
   bloodType: string | null;
   referenceNumber: string | null;
+  /** نوع الملف. Optional on the wire for cached responses from before 0040. */
+  residence?: CitizenResidence;
+  residencePlace?: string | null;
+  localContactName?: string | null;
+  localContactPhone?: string | null;
   registeredAt: string;
   /** False for a deactivated record — kept for its history, refused a session. */
   isActive: boolean;
   registrations: CitizenProfileRegistration[];
+  /**
+   * Tenancy cards other households filed that were confirmed as naming this
+   * citizen as their landlord — the owner's side of every link. Optional on the
+   * wire for a profile cached before it existed.
+   */
+  landlordOf?: CitizenProfileLandlordOf[];
   payments: CitizenProfilePayment[];
   fees: CitizenFeeTotals;
+}
+
+/** One card naming this citizen as its confirmed landlord. */
+export interface CitizenProfileLandlordOf {
+  propertyEntryId: string;
+  occupancyType: string;
+  tenant: { id: string; name: string; referenceNumber: string | null };
+  buildingName: string | null;
+  buildingCode: string | null;
+  propertyNumber: string | null;
+  unitCodes: string[];
+  linkedAt: string | null;
+  /** Set when the tenancy ended — the link is then the record of who the landlord was. */
+  endedAt?: string | null;
 }
 
 /**
@@ -1790,6 +2231,23 @@ export interface MyCitizenSummary {
   identityDocNumberMasked: string | null;
   civilRecordNumberMasked: string | null;
 
+  /**
+   * اسم الأم وشهرتها — theirs to check, since it is now the register's only
+   * identifying answer for a Lebanese household. Null means «لم يُسأل».
+   */
+  motherName?: string | null;
+  /** نوع الملف, and what a «غير مقيم في البلدة» record holds instead of a household. */
+  residence?: CitizenResidence;
+  residencePlace?: string | null;
+  localContactName?: string | null;
+  localContactPhone?: string | null;
+  /**
+   * Field paths the register could not establish — «رقم الهاتف»,
+   * «properties.0.propertyNumber». Paths only: the officer's reason for each
+   * stays staff-side. Absent on a response from before this was sent.
+   */
+  unestablishedFields?: string[];
+
   properties: CitizenProfileProperty[];
   payments: CitizenProfilePayment[];
   fees: CitizenFeeTotals;
@@ -1805,6 +2263,14 @@ export function getMySummary(tenant: string, token: string) {
 export interface CitizenListItem {
   id: string;
   fullName: string;
+  /**
+   * اسم الأم وشهرتها — the one thing on this row that tells two «محمد خليل»s
+   * apart, which is why it travels with every list the UI offers people from.
+   *
+   * Optional and nullable on the wire: absent means «لم يُسأل» (a record filed
+   * before migration 0044), never «a different mother».
+   */
+  motherName?: string | null;
   phone: string | null;
   whatsapp: string | null;
   gender: string | null;
@@ -1812,6 +2278,8 @@ export interface CitizenListItem {
   identityDocType: string | null;
   identityDocNumber: string | null;
   residentStatus: string | null;
+  /** نوع الملف — a household file, or «غير مقيم في البلدة» (stored as NON_RESIDENT_OWNER). */
+  residence?: CitizenResidence;
   isActive: boolean;
   registeredAt: string;
 
@@ -1901,6 +2369,8 @@ export interface CitizenFormData {
   registrationId: string | null;
   referenceNumber: string | null;
   status: string | null;
+  /** نوع الملف the record was filed as. */
+  residence?: CitizenResidence;
   personal: Record<string, unknown>;
   contact: Record<string, unknown>;
   properties: Array<Record<string, unknown>>;
@@ -1925,6 +2395,8 @@ export function getCitizenForm(tenant: string, token: string, citizenId: string)
 }
 
 export interface CitizenWriteInput {
+  /** نوع الملف. Absent reads as a household file on the server. */
+  residence?: CitizenResidence;
   personal: Record<string, unknown>;
   contact: Record<string, unknown>;
   properties: Array<Record<string, unknown>>;
@@ -2025,6 +2497,12 @@ export async function createCitizen(tenant: string, token: string, input: Citize
     propertyCount: number;
     status: CitizenRecordStatus;
     deduplicated: boolean;
+    /**
+     * What a passport number did: `ATTACHED` to the person already holding it
+     * (same name), or `CONFLICT` — held by someone with a different name, so a
+     * separate citizen was created and the number left for review.
+     */
+    identity?: 'NEW' | 'ATTACHED' | 'CONFLICT' | null;
     census: CensusSyncResult | null;
     landlordLinks: LandlordLinkOffers | null;
   }>(tenant, '/citizens', { token, method: 'POST', body: JSON.stringify(input) });
@@ -2058,6 +2536,8 @@ export async function updateCitizen(
     status: CitizenRecordStatus;
     census: CensusSyncResult | null;
     landlordLinks: LandlordLinkOffers | null;
+    /** Links the save undid or brought into line with the card — see the server. */
+    landlordLinkChanges?: LandlordLinkChanges;
   }>(tenant, `/citizens/${encodeURIComponent(citizenId)}`, {
     token,
     method: 'PATCH',
@@ -2076,33 +2556,113 @@ export async function updateCitizen(
 // itself — see `LandlordLinkService` on the server for why both of those are
 // deliberate.
 
-/** A registered citizen a claimed landlord number could belong to. */
+/** A registered citizen a claimed landlord number belongs to. */
 export interface LandlordCandidate {
   id: string;
   name: string;
+  /** The middle name — the father's, which is what tells brothers apart. */
+  fatherName: string | null;
+  /** Read by a person comparing two records, never a key. */
+  motherName: string | null;
   phone: string | null;
   referenceNumber: string | null;
+  residence: string;
+  registeredAt: string | null;
+}
+
+/**
+ * Why a link cannot be made yet. Each code names the step that unblocks it,
+ * and `message` is the server's Arabic sentence saying so.
+ */
+export type LinkBlockCode =
+  | 'NOT_ON_SURVEY'
+  | 'NO_UNITS'
+  | 'UNIT_VACANT'
+  | 'OWNER_NO_FILE'
+  | 'OWNER_CARD_UNLINKED'
+  | 'OWNER_OCCUPIES_UNIT'
+  /** A flat on the card is recorded as owned by somebody other than this candidate. */
+  | 'UNIT_OWNED_BY_OTHER'
+  | 'RECONCILE_FAILED';
+
+export interface LinkBlock {
+  code: LinkBlockCode;
+  message: string;
+  unitCode: string | null;
+}
+
+/** What a link would do on the owner's file, stated before it is pressed. */
+export type LinkOutcome = 'NEW_CARD' | 'ADDED_TO_CARD' | 'ALREADY_ON_FILE' | 'OCCUPANCY_ONLY';
+
+export interface LandlordProposalCandidate extends LandlordCandidate {
+  outcome: LinkOutcome | null;
+  blocked: LinkBlock | null;
 }
 
 /** One unresolved claim, with whoever its number resolves to. */
 export interface LandlordProposal {
   propertyEntryId: string;
   occupancyType: string;
+  propertyType: string;
+  /** What the tenant said, as typed. */
   landlordName: string | null;
   landlordPhone: string;
   propertyNumber: string | null;
   buildingName: string | null;
   buildingId: string | null;
-  /** Flats on this card that name a canonical unit — what a link would claim. */
+  buildingCode: string | null;
+  /** The flats a link would put the owner on. Empty when the card is blocked. */
+  units: Array<{ unitId: string; unitCode: string | null }>;
   linkedUnitCount: number;
+  filedAt: string;
   filedBy: {
     registrationId: string;
     referenceNumber: string;
     citizenId: string;
     name: string;
   } | null;
-  /** Usually one. More than one is a shared household line. */
-  candidates: LandlordCandidate[];
+  /** Why no link can be made from this card yet, whoever the owner is. */
+  blocked: LinkBlock | null;
+  /** Oldest registration first. More than one is a shared household line. */
+  candidates: LandlordProposalCandidate[];
+}
+
+/** What undoing a link reverted, and what it deliberately kept. */
+export interface UnlinkResult {
+  unlinked: boolean;
+  /** Confirmed before links recorded what they wrote — nothing could be reverted precisely. */
+  legacy: boolean;
+  occupanciesEnded: number;
+  rowsRemoved: number;
+  cardsRemoved: number;
+  casesReopened: number;
+  kept: Array<{
+    unitCode: string | null;
+    reason: 'EDITED' | 'SHARED' | 'OWNER_FILE_CLAIMS' | 'HAS_DOCUMENTS' | 'FLAGGED';
+    propertyEntryId?: string;
+  }>;
+  reviewUnits: Array<{ unitId: string; unitCode: string; buildingId: string }>;
+}
+
+/** What «إلغاء الربط» would do, read when its confirmation opens. */
+export interface UnlinkPreview {
+  linked: boolean;
+  ownerId: string | null;
+  ownerName: string | null;
+  legacy: boolean;
+  linkedAt: string | null;
+  unitCodes: string[];
+  cardsCreated: number;
+  invoicesSinceLink: number;
+}
+
+/** Links a save of a household file changed. */
+export interface LandlordLinkChanges {
+  unlinked: Array<{ propertyEntryId: string; report: Omit<UnlinkResult, 'unlinked' | 'reviewUnits'> }>;
+  reconciled: {
+    updated: number;
+    blocked: Array<{ propertyEntryId: string; block: LinkBlock }>;
+  } | null;
 }
 
 /**
@@ -2119,9 +2679,18 @@ export interface LandlordLinkOffers {
   naming: LandlordProposal[];
 }
 
-/** The standing queue — every unresolved claim that matches a citizen. */
-export function getLandlordLinks(tenant: string, token: string) {
-  return apiFetch<LandlordProposal[]>(tenant, '/citizens/landlord-links', { token });
+/** The standing queue — unresolved claims that match a citizen, a page at a time. */
+export function getLandlordLinks(
+  tenant: string,
+  token: string,
+  page: { limit: number; offset: number },
+  signal?: AbortSignal,
+) {
+  return apiFetch<{ items: LandlordProposal[]; total: number }>(
+    tenant,
+    `/citizens/landlord-links?limit=${page.limit}&offset=${page.offset}`,
+    { token, signal },
+  );
 }
 
 /** How much ownership the register knows about and does not bill. */
@@ -2134,19 +2703,23 @@ export function getLandlordLinkSummary(tenant: string, token: string) {
 }
 
 /**
- * Is this number one of ours? — the form's inline lookup.
+ * Who is registered on this number? — the form's inline lookup.
  *
- * Answers `null` where several citizens share the number, which is the shared
- * household case: the control says nothing rather than offering an arbitrary
- * one of them as though it were the answer.
+ * Everybody on it: a shared household line is where the officer standing with
+ * the tenant is best placed to say which person was meant.
  */
-export async function getLandlordCandidate(tenant: string, token: string, phone: string) {
-  const { candidate } = await apiFetch<{ candidate: LandlordCandidate | null }>(
+export async function getLandlordCandidates(
+  tenant: string,
+  token: string,
+  phone: string,
+  signal?: AbortSignal,
+) {
+  const { candidates } = await apiFetch<{ candidates: LandlordCandidate[] }>(
     tenant,
     `/citizens/landlord-links/candidate?phone=${encodeURIComponent(phone)}`,
-    { token },
+    { token, signal },
   );
-  return candidate;
+  return candidates ?? [];
 }
 
 /**
@@ -2173,6 +2746,8 @@ export async function confirmLandlordLink(
      * owner the municipality knows — and the link is no less complete for it.
      */
     ownerCardCreated: boolean;
+    rowsAdded?: number;
+    outcome?: LinkOutcome | null;
   }>(tenant, `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/confirm`, {
     token,
     method: 'POST',
@@ -2182,22 +2757,56 @@ export async function confirmLandlordLink(
   return result;
 }
 
-/** «ليس هو» — what lets the queue shrink. */
-export function dismissLandlordLink(tenant: string, token: string, propertyEntryId: string) {
+/** «لا أحد منهم» — these citizens are not the card's owner. */
+export function dismissLandlordLink(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  candidateIds: readonly string[],
+) {
   return apiFetch<{ dismissed: boolean }>(
     tenant,
     `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/dismiss`,
-    { token, method: 'POST' },
+    { token, method: 'POST', body: JSON.stringify({ candidateIds }) },
   );
 }
 
-/** Undoes a confirmation, putting the claim back in the queue. */
-export function unlinkLandlord(tenant: string, token: string, propertyEntryId: string) {
-  return apiFetch<{ unlinked: boolean }>(
+/** The «تراجع» on a dismissal. */
+export function restoreLandlordLink(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  candidateIds: readonly string[],
+) {
+  return apiFetch<{ restored: boolean }>(
+    tenant,
+    `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/restore`,
+    { token, method: 'POST', body: JSON.stringify({ candidateIds }) },
+  );
+}
+
+/** What undoing this card's link would revert — for the confirmation to state. */
+export function getLandlordUnlinkPreview(tenant: string, token: string, propertyEntryId: string) {
+  return apiFetch<UnlinkPreview>(
+    tenant,
+    `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}/unlink-preview`,
+    { token },
+  );
+}
+
+/**
+ * Undoes a confirmation: the claim goes back to the queue and what the link
+ * wrote into the owner's records is reverted. Invalidates the census, because
+ * the owner's spells and cards just changed.
+ */
+export async function unlinkLandlord(tenant: string, token: string, propertyEntryId: string) {
+  const result = await apiFetch<UnlinkResult>(
     tenant,
     `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}`,
     { token, method: 'DELETE' },
   );
+  invalidateCensus(tenant);
+  return result;
 }
 
 /** Soft delete and its undo — a deactivated citizen is skipped by the biller. */
@@ -2773,6 +3382,15 @@ export interface CitizenPaymentItem {
   paidAt: string | null;
   reviewNote: string | null;
   frequency: string | null;
+  /**
+   * How this amount was arrived at — «6 محل تجاري × 100,000 ل.ل».
+   *
+   * The server has sent it on this route since per-unit billing existed
+   * (`FeesService.listForCitizen`); the portal simply never read it, so the
+   * person actually holding the bill was the one party shown the total with no
+   * way to check it. Null on a flat charge, which explains itself.
+   */
+  assessment?: FeeAssessment | null;
 }
 
 /** The signed-in citizen's own bills. */

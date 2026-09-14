@@ -2,6 +2,7 @@ import type {
   BloodType,
   BuildingLifecycle,
   CaseType,
+  CitizenResidence,
   DamageLevel,
   DamageSource,
   DocumentType,
@@ -9,6 +10,7 @@ import type {
   IdentityDocType,
   LandType,
   MaritalStatus,
+  OccupancyEndReason,
   OccupancyRole,
   OccupancyType,
   PropertyType,
@@ -18,6 +20,8 @@ import type {
   SurveyStatus,
   UnitStatus,
   UnitType,
+  VacancyBasis,
+  VacancyEndReason,
 } from './enums';
 import type { CaseStatus } from './case.schema';
 import type { FeeBasis, FeeBearer, FeeTargetCategory } from './fee.schema';
@@ -64,6 +68,7 @@ export const ar = {
     OFFICE: 'مكاتب',
     SHOP: 'محلات تجارية',
     WAREHOUSE: 'مستودعات',
+    GARAGE: 'كراجات',
   } satisfies Record<FeeTargetCategory, string>,
 
   /** What the notice's amount is multiplied by. See `FEE_BASIS`. */
@@ -88,9 +93,9 @@ export const ar = {
    */
   feeBearerHint: {
     OCCUPANT:
-      'يُحتسب على من يشغل الوحدة فعلياً — المالك عن سكنه، والمستأجر عن مأجوره. لا تُحتسب الوحدات المؤجَّرة على مالكها لأن مستأجرها مكلَّف بها، ولا الوحدات الشاغرة أو قيد الإنجاز. مناسب لرسم النظافة والقيمة التأجيرية.',
+      'يُحتسب على من يشغل الوحدة فعلياً — المالك عن سكنه، والمستأجر عن مأجوره. لا تُحتسب الوحدات المؤجَّرة على مالكها لأن مستأجرها مكلَّف بها، ولا الوحدات الشاغرة أو قيد الإنجاز. مناسب لرسم النظافة والقيمة التأجيرية ورسم صيانة الأرصفة والمجاري السنوي (المادتان ٤ و٧٩ من القانون ٨٨/٦٠).',
     OWNER:
-      'يُحتسب على صاحب العقار عن كل ما يملكه — مشغولاً كان أو مؤجَّراً أو شاغراً أو قيد الإنجاز — ولا يُحتسب على المستأجرين. مناسب للرسوم التأسيسية كالأرصفة والمجاري.',
+      'يُحتسب على صاحب العقار عن كل ما يملكه — مشغولاً كان أو مؤجَّراً أو شاغراً أو قيد الإنجاز — ولا يُحتسب على المستأجرين. مناسب للرسوم التأسيسية كرسم إنشاء الأرصفة والمجاري (المادة ٧٨) — لا لرسم صيانتها السنوي، فذاك على الشاغل.',
   } satisfies Record<FeeBearer, string>,
 
   /** Where a payment stands. `PENDING_REVIEW` is a claim, not a receipt. */
@@ -164,6 +169,7 @@ export const ar = {
     OWNER_OCCUPIED: 'مشغولة من المالك',
     RENTED: 'مؤجرة',
     FREE_OCCUPIED: 'مشغولة بتسامح (بدون بدل)',
+    SEASONAL: 'مسكن موسمي — أصحابه مقيمون خارج البلدة',
     VACANT: 'شاغرة (غير مأهولة)',
     UNDER_CONSTRUCTION: 'قيد الإنجاز',
   } satisfies Record<UnitStatus, string>,
@@ -182,6 +188,7 @@ export const ar = {
     OFFICE: 'مكتب',
     SHOP: 'محل تجاري',
     WAREHOUSE: 'مستودع',
+    GARAGE: 'كراج',
   } satisfies Record<UnitType, string>,
 
   landType: {
@@ -211,6 +218,7 @@ export const ar = {
     UNDER_CONSTRUCTION: 'قيد الإنشاء',
     IN_USE: 'قائم ومستعمل',
     DERELICT: 'قائم ومهجور',
+    WAR_DAMAGED_UNINHABITED: 'متضررة من الحرب وغير مسكونة',
     DEMOLISHED: 'مهدوم',
     NOT_REALISED: 'لم يُنفَّذ',
   } satisfies Record<BuildingLifecycle, string>,
@@ -281,6 +289,38 @@ export const ar = {
     FREE_OCCUPANT: 'شاغل بتسامح (بدون بدل)',
   } satisfies Record<OccupancyRole, string>,
 
+  /** Why a spell ended — the three answers «إنهاء الإشغال» asks for. */
+  occupancyEndReason: {
+    MOVED_OUT: 'خرج من الوحدة',
+    OWNERSHIP_TRANSFERRED: 'بيع أو نقل ملكية',
+    RECORDED_IN_ERROR: 'سُجِّل بالخطأ',
+  } satisfies Record<OccupancyEndReason, string>,
+
+  /** ما يستند إليه «تأكيد الشغور». See `VACANCY_BASIS`. */
+  vacancyBasis: {
+    FIELD_INSPECTION: 'معاينة ميدانية — وُجدت خالية',
+    OWNER_STATEMENT: 'إفادة المالك',
+    NEIGHBOUR_OR_CARETAKER: 'إفادة الجيران أو الناطور',
+    DECLARATION_FILED: 'تصريح بالشغور مقدَّم إلى البلدية',
+  } satisfies Record<VacancyBasis, string>,
+
+  /** Why a confirmed vacancy was lifted. See `VACANCY_END_REASON`. */
+  vacancyEndReason: {
+    RECORDED_IN_ERROR: 'سُجِّل بالخطأ — لم تكن شاغرة',
+    NO_LONGER_VACANT: 'لم تعد شاغرة',
+  } satisfies Record<VacancyEndReason, string>,
+
+  /**
+   * نوع الملف — a household that lives in the town, or somebody who lives
+   * elsewhere and owns, rents or runs something here. Asked as a question about
+   * *where the person lives*, never about محل القيد. The stored value still says
+   * OWNER; see `CITIZEN_RESIDENCE` for why the label, not the value, changed.
+   */
+  citizenResidence: {
+    RESIDENT: 'أسرة مقيمة في البلدة',
+    NON_RESIDENT_OWNER: 'غير مقيم في البلدة',
+  } satisfies Record<CitizenResidence, string>,
+
   documentType: {
     IDENTITY: 'وثيقة الإثبات',
     OWNERSHIP_PROOF: 'سند الملكية',
@@ -312,6 +352,7 @@ export const ar = {
     firstName: 'الاسم الأول',
     middleName: 'اسم الأب',
     lastName: 'الشهرة',
+    motherName: 'اسم الأم وشهرتها',
     gender: 'الجنس',
     bloodType: 'فئة الدم',
     identityDocType: 'نوع وثيقة الإثبات',
@@ -324,6 +365,9 @@ export const ar = {
     maritalStatus: 'الحالة الاجتماعية',
     phone: 'رقم الهاتف',
     whatsapp: 'رقم الواتساب',
+    residencePlace: 'مكان الإقامة',
+    localContactName: 'اسم جهة الاتصال المحلية',
+    localContactPhone: 'هاتف جهة الاتصال المحلية',
     whatsappSameAsPhone: 'واتساب نفس رقم الهاتف',
     totalRegisteredMembers: 'إجمالي المسجلين في القيد',
     actualHouseholdMembers: 'عدد أفراد الأسرة المقيمين في المنزل (دون المتزوجين)',
@@ -343,6 +387,13 @@ export const ar = {
     shares: 'الأسهم',
     sharedRights: 'حقوق مشتركة',
     units: 'وحدات المبنى',
+    /*
+      Per-unit flags name these two (`properties.0.units.2.unitType`), and
+      without an entry here a flag list fell back to printing the raw path
+      segment — «unitType» in the middle of an Arabic sentence.
+    */
+    unitType: 'نوع الوحدة',
+    floor: 'الطابق',
   } as Record<string, string>,
 } as const;
 
@@ -384,6 +435,7 @@ export const en = {
     OFFICE: 'Offices',
     SHOP: 'Commercial Shops',
     WAREHOUSE: 'Warehouses',
+    GARAGE: 'Garages',
   } satisfies Record<FeeTargetCategory, string>,
 
   feeBasis: {
@@ -399,9 +451,9 @@ export const en = {
 
   feeBearerHint: {
     OCCUPANT:
-      'Charged to whoever actually occupies the unit — an owner for what they live in, a tenant for what they rent. A landlord is not charged for units they have let, because the tenant is billed for them; vacant and under-construction units are charged to nobody. Suits waste and rental-value fees.',
+      'Charged to whoever actually occupies the unit — an owner for what they live in, a tenant for what they rent. A landlord is not charged for units they have let, because the tenant is billed for them; vacant and under-construction units are charged to nobody. Suits waste, rental-value and the annual pavement and sewer maintenance fee (Law 60/1988, Art. 4 and 79).',
     OWNER:
-      'Charged to the deed holder for everything they own — occupied, let, vacant or still being built — and not to tenants at all. Suits foundational fees such as pavements and sewerage.',
+      'Charged to the deed holder for everything they own — occupied, let, vacant or still being built — and not to tenants at all. Suits foundational fees such as the pavement and sewer construction fee (Art. 78) — not the annual maintenance fee, which falls on the occupant.',
   } satisfies Record<FeeBearer, string>,
 
   paymentStatus: {
@@ -463,6 +515,7 @@ export const en = {
     OWNER_OCCUPIED: 'Owner-occupied',
     RENTED: 'Rented out',
     FREE_OCCUPIED: 'Occupied rent-free',
+    SEASONAL: 'Seasonal home — owners live elsewhere',
     VACANT: 'Vacant',
     UNDER_CONSTRUCTION: 'Under construction',
   } satisfies Record<UnitStatus, string>,
@@ -481,6 +534,7 @@ export const en = {
     OFFICE: 'Office',
     SHOP: 'Commercial Shop',
     WAREHOUSE: 'Warehouse',
+    GARAGE: 'Garage',
   } satisfies Record<UnitType, string>,
 
   landType: {
@@ -502,6 +556,7 @@ export const en = {
     UNDER_CONSTRUCTION: 'Under Construction',
     IN_USE: 'Standing — In Use',
     DERELICT: 'Standing — Abandoned',
+    WAR_DAMAGED_UNINHABITED: 'War-Damaged — Uninhabited',
     DEMOLISHED: 'Demolished',
     NOT_REALISED: 'Never Built',
   } satisfies Record<BuildingLifecycle, string>,
@@ -553,6 +608,29 @@ export const en = {
     FREE_OCCUPANT: 'Free occupant (no rent)',
   } satisfies Record<OccupancyRole, string>,
 
+  occupancyEndReason: {
+    MOVED_OUT: 'Moved out',
+    OWNERSHIP_TRANSFERRED: 'Sold or ownership transferred',
+    RECORDED_IN_ERROR: 'Recorded in error',
+  } satisfies Record<OccupancyEndReason, string>,
+
+  vacancyBasis: {
+    FIELD_INSPECTION: 'Field inspection — found empty',
+    OWNER_STATEMENT: 'The owner says so',
+    NEIGHBOUR_OR_CARETAKER: 'A neighbour or caretaker says so',
+    DECLARATION_FILED: 'Vacancy declaration filed with the municipality',
+  } satisfies Record<VacancyBasis, string>,
+
+  vacancyEndReason: {
+    RECORDED_IN_ERROR: 'Recorded in error — it was not vacant',
+    NO_LONGER_VACANT: 'No longer vacant',
+  } satisfies Record<VacancyEndReason, string>,
+
+  citizenResidence: {
+    RESIDENT: 'Household living in the town',
+    NON_RESIDENT_OWNER: 'Lives outside the town',
+  } satisfies Record<CitizenResidence, string>,
+
   documentType: {
     IDENTITY: 'Identity Document',
     OWNERSHIP_PROOF: 'Proof of Ownership',
@@ -570,6 +648,7 @@ export const en = {
     firstName: 'First Name',
     middleName: "Father's Name",
     lastName: 'Last Name',
+    motherName: "Mother's Full Name",
     gender: 'Gender',
     bloodType: 'Blood Type',
     identityDocType: 'ID Document Type',
@@ -582,6 +661,9 @@ export const en = {
     maritalStatus: 'Marital Status',
     phone: 'Phone Number',
     whatsapp: 'WhatsApp Number',
+    residencePlace: 'Place of Residence',
+    localContactName: 'Local Contact Name',
+    localContactPhone: 'Local Contact Phone',
     whatsappSameAsPhone: 'WhatsApp Same As Phone',
     totalRegisteredMembers: 'Total Registered (Civil Record)',
     actualHouseholdMembers: 'Family Members Living in House (excl. married)',
@@ -601,6 +683,8 @@ export const en = {
     shares: 'Shares',
     sharedRights: 'Shared Rights',
     units: 'Building Units',
+    unitType: 'Unit Type',
+    floor: 'Floor',
   } as Record<string, string>,
 } as const;
 

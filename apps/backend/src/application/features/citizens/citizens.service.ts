@@ -31,8 +31,15 @@ import type {
 } from '../../../domain/interfaces/parcel-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { CensusSyncService } from '../buildings/census-sync.service';
-import { LandlordLinkService, type LandlordProposal } from './landlord-link.service';
 import {
+  LandlordLinkService,
+  type LandlordProposal,
+  type PendingEvent,
+  type ReconcileResult,
+  type RevertReport,
+} from './landlord-link.service';
+import {
+  identityDocumentOf,
   RegistrationService,
   unestablishedOnCard,
 } from '../registration/registration.service';
@@ -109,6 +116,8 @@ export interface CitizenListItem {
   identityDocType: string | null;
   identityDocNumber: string | null;
   residentStatus: string | null;
+  /** نوع الملف — a household file, or «غير مقيم في البلدة» (stored as NON_RESIDENT_OWNER). */
+  residence: string;
   isActive: boolean;
   registeredAt: string;
 
@@ -152,6 +161,7 @@ interface CitizenListRow {
   firstName: string;
   middleName: string | null;
   lastName: string;
+  motherName: string | null;
   phone: string | null;
   whatsapp: string | null;
   gender: string | null;
@@ -159,6 +169,7 @@ interface CitizenListRow {
   identityDocType: string | null;
   identityDocNumber: string | null;
   residentStatus: string | null;
+  residence: string;
   isActive: boolean;
   createdAt: Date;
   registrationCount: number;
@@ -329,6 +340,7 @@ export class CitizensService {
           u."firstName",
           u."middleName",
           u."lastName",
+          u."motherName",
           u.phone,
           u.whatsapp,
           u.gender::text AS gender,
@@ -336,6 +348,7 @@ export class CitizensService {
           u."identityDocType"::text  AS "identityDocType",
           u."identityDocNumber",
           u."residentStatus"::text   AS "residentStatus",
+          u.residence::text          AS residence,
           u."isActive",
           u."createdAt",
           (SELECT count(*)::int FROM ${this.S}registrations r WHERE r."citizenId" = u.id)
@@ -343,7 +356,7 @@ export class CitizensService {
           (SELECT count(*)::int
              FROM ${this.S}property_entries pe
              JOIN ${this.S}registrations r ON r.id = pe."registrationId"
-            WHERE r."citizenId" = u.id)
+            WHERE r."citizenId" = u.id AND pe."endedAt" IS NULL)
             AS "propertyCount",
           (SELECT r.status::text FROM ${this.S}registrations r
             WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1)
@@ -439,6 +452,14 @@ export class CitizensService {
       items: rows.map((row) => ({
         id: row.id,
         fullName: [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' '),
+        /*
+          Carried on the list row because this is what tells two «محمد خليل»s
+          apart wherever people are offered for picking — the occupant search on
+          a unit, the duplicate check on a new file. Null on records filed before
+          migration 0044, and every reader must render that as «لم يُسأل» rather
+          than as a difference between two people.
+        */
+        motherName: row.motherName,
         phone: row.phone,
         whatsapp: row.whatsapp,
         gender: row.gender,
@@ -446,6 +467,7 @@ export class CitizensService {
         identityDocType: row.identityDocType,
         identityDocNumber: row.identityDocNumber,
         residentStatus: row.residentStatus,
+        residence: row.residence,
         isActive: row.isActive,
         registeredAt: row.createdAt.toISOString(),
         registrationCount: row.registrationCount,
@@ -488,6 +510,7 @@ export class CitizensService {
           firstName: true,
           middleName: true,
           lastName: true,
+          motherName: true,
           gender: true,
           nationality: true,
           isLebanese: true,
@@ -502,6 +525,10 @@ export class CitizensService {
           totalRegisteredMembers: true,
           actualHouseholdMembers: true,
           bloodType: true,
+          residence: true,
+          residencePlace: true,
+          localContactName: true,
+          localContactPhone: true,
           registrations: {
             orderBy: { submittedAt: 'desc' },
             take: 1,
@@ -512,8 +539,25 @@ export class CitizensService {
               flaggedFields: true,
               notes: true,
               properties: {
+                /*
+                  Current cards only. An ended tenancy is history on the file —
+                  shown on the profile, never edited or re-saved — and loading it
+                  here would put it back into the payload as a card still held.
+                */
+                where: { endedAt: null },
                 orderBy: { createdAt: 'asc' },
-                include: { units: { orderBy: { createdAt: 'asc' } } },
+                include: {
+                  units: { where: { endedAt: null }, orderBy: { createdAt: 'asc' } },
+                  landlordCitizen: {
+                    select: {
+                      id: true,
+                      firstName: true,
+                      middleName: true,
+                      lastName: true,
+                      referenceNumber: true,
+                    },
+                  },
+                },
               },
             },
           },
@@ -545,10 +589,19 @@ export class CitizensService {
         no note at all.
       */
       notes: registration?.notes ?? null,
+      residence: citizen.residence,
       personal: {
         firstName: citizen.firstName,
         middleName: citizen.middleName ?? '',
         lastName: citizen.lastName,
+        /*
+          Empty for a record filed before migration 0044, which is exactly what
+          the form needs: the field renders blank and required, so an officer
+          editing an old household either learns the answer or marks it «غير
+          مؤكَّد» with a reason. Nothing is invented to fill the gap, and the
+          gap stops being invisible.
+        */
+        motherName: citizen.motherName ?? '',
         gender: citizen.gender,
         bloodType: citizen.bloodType ?? '',
         nationality: citizen.nationality,
@@ -558,6 +611,7 @@ export class CitizensService {
         identityDocType: citizen.identityDocType,
         identityDocNumber: citizen.identityDocNumber ?? '',
         civilRecordNumber: citizen.civilRecordNumber ?? '',
+        residencePlace: citizen.residencePlace ?? '',
       },
       contact: {
         phone: citizen.phone,
@@ -568,12 +622,51 @@ export class CitizensService {
         maritalStatus: citizen.maritalStatus,
         totalRegisteredMembers: citizen.totalRegisteredMembers,
         actualHouseholdMembers: citizen.actualHouseholdMembers,
+        localContactName: citizen.localContactName ?? '',
+        localContactPhone: citizen.localContactPhone ?? '',
       },
       properties: (registration?.properties ?? []).map((property) => ({
         id: property.id,
         occupancyType: property.occupancyType,
         landlordName: property.landlordName,
         landlordPhone: property.landlordPhone,
+        /*
+          A standing owner link travels back, so the form opens saying so.
+
+          Without it an already-linked card renders «هل هو المالك؟» over a
+          question a clerk answered last week — and the name renders unlocked
+          and editable, inviting a second spelling of a person the register has
+          already identified. Re-answering it is harmless (`claimsFiledBy`
+          offers only unresolved claims, so the agreement matches nothing and is
+          dropped), which is exactly why it would go unnoticed.
+
+          It is not what re-writes the column on save: the link is the server's
+          to make through `confirm`, and an edit that leaves the number alone
+          leaves the link alone (`landlordLinkReset`).
+        */
+        landlordCitizenId: property.landlordCitizenId,
+        /*
+          The owner the link names, as the register holds them.
+
+          The form shows this name — read-only, with «إلغاء الربط» beside it —
+          in place of `landlordName`, which stays what the tenant said. Two
+          fields rather than one overwritten, so a later correction of the
+          owner's own spelling shows everywhere with nothing to rewrite, and an
+          unlink hands the tenant's words back untouched.
+        */
+        landlordLink: property.landlordCitizen
+          ? {
+              citizenId: property.landlordCitizen.id,
+              name: [
+                property.landlordCitizen.firstName,
+                property.landlordCitizen.middleName,
+                property.landlordCitizen.lastName,
+              ]
+                .filter(Boolean)
+                .join(' '),
+              referenceNumber: property.landlordCitizen.referenceNumber,
+            }
+          : null,
         propertyType: property.propertyType,
         neighborhood: property.neighborhood,
         propertyNumber: property.propertyNumber,
@@ -650,6 +743,17 @@ export class CitizensService {
           registrationId: result.registrationId,
           citizenId: result.citizenId,
           actor: input.actor,
+          /*
+            A new filing releases nothing it did not itself claim.
+
+            Scoped wider, a filing attached to someone already on file closed
+            every flat their earlier registrations held — a shop registered on
+            Monday lost to a flat registered on Tuesday. In production that
+            evicted each merged brother from the flat the previous one had just
+            been recorded in. Only an *edit* of a file is a statement about
+            everything it holds.
+          */
+          scope: 'REGISTRATION',
         });
 
     /*
@@ -670,7 +774,12 @@ export class CitizensService {
     */
     const landlordLinks = result.deduplicated
       ? null
-      : await this.landlordClaimsQuietly(result.registrationId, result.citizenId);
+      : await this.landlordClaimsQuietly(
+          result.registrationId,
+          result.citizenId,
+          input.payload,
+          input.actor,
+        );
 
     // A re-delivered offline submission created nothing, so it is not a change
     // to announce: the audit log already carries the entry the first delivery
@@ -686,6 +795,10 @@ export class CitizensService {
           propertyCount: result.propertyCount,
           status: result.status,
           unestablishedFields: input.payload.flags.length,
+          residence: input.payload.residence,
+          // Which way a given passport number went: a new holder, added to the
+          // file of the person who already holds it, or a clash left for review.
+          ...(result.identity ? { identity: result.identity } : {}),
         },
         actorId: input.actor.id,
         actorRole: input.actor.role,
@@ -700,6 +813,14 @@ export class CitizensService {
       status: result.status,
       /** The queue reads this to tell "created" from "already had it". */
       deduplicated: result.deduplicated,
+      /**
+       * `ATTACHED` — added to the file of the person already holding this
+       * passport number. `CONFLICT` — somebody with a different name holds it;
+       * a separate citizen was created without it. Absent when no number was
+       * given. The form says which, because both change what the officer does
+       * next.
+       */
+      identity: result.identity ?? null,
       /**
        * What the census did about it — units linked, cases closed, a building
        * named.
@@ -743,13 +864,44 @@ export class CitizensService {
   private async landlordClaimsQuietly(
     registrationId: string,
     citizenId: string,
+    payload: { properties: ReadonlyArray<{ landlordPhone?: string; landlordCitizenId?: string }> },
+    actor: { id: string; role: string },
   ): Promise<{ filed: LandlordProposal[]; naming: LandlordProposal[] } | null> {
     try {
+      /*
+        A save naming no landlord number cannot have filed a claim, so the
+        filed-by lookup is skipped for it — most saves, since an owner's own
+        file names nobody. The naming lookup always runs: it is how an owner
+        registering after their tenants is found.
+      */
+      const namesLandlord = payload.properties.some((card) => Boolean(card.landlordPhone));
       const [filed, naming] = await Promise.all([
-        this.landlordLinks.claimsFiledBy(registrationId),
+        namesLandlord ? this.landlordLinks.claimsFiledBy(registrationId) : Promise.resolve([]),
         this.landlordLinks.claimsNaming(citizenId),
       ]);
-      return { filed, naming };
+
+      /*
+        The officer already answered this on the form, so it is not asked again.
+
+        «نعم، هو المالك» is pressed while the tenant is still at the door and the
+        number is still correctable; the only thing that could not happen then
+        was the write, because the card did not exist yet. Applying it here is
+        what makes the button mean something on a submission that was filed
+        offline and delivered by a queue hours later.
+
+        Nothing is taken on trust: every answer goes through `confirm`, which
+        re-derives the match from the committed card. What comes back is the
+        claims *still* open, so the dialog and the queue ask about exactly what
+        remains unanswered — an answer that failed among them.
+      */
+      const agreements = payload.properties.flatMap((card) =>
+        card.landlordCitizenId && card.landlordPhone
+          ? [{ phone: card.landlordPhone, citizenId: card.landlordCitizenId }]
+          : [],
+      );
+      const applied = await this.landlordLinks.applyAgreements({ filed, agreements, actor });
+
+      return { filed: applied.remaining, naming };
     } catch (error) {
       this.logger.error(
         `landlord claim lookup failed for registration ${registrationId}: ${
@@ -847,6 +999,9 @@ export class CitizensService {
           */
           payload: {
             ...parsed.data,
+            // A register typed up from paper is a register of households; an
+            // owner record is a decision somebody makes at a doorstep.
+            residence: 'RESIDENT',
             flags: [],
             blanketFlagReason: undefined,
             // Nor a note, and for the same reason: a note is something an
@@ -912,10 +1067,14 @@ export class CitizensService {
           take: 1,
           select: {
             id: true,
-            // `landlordPhone` comes back so this save can tell whether the
-            // number *changed* — which is what invalidates any answer somebody
-            // gave about it. See `landlordLinkReset` below.
-            properties: { select: { id: true, landlordPhone: true } },
+            // `landlordPhone` and the link come back so this save can tell a
+            // card whose owner fields are locked to a confirmed link from one
+            // whose number *changed* — which is what invalidates any answer
+            // somebody gave about it. Both are read again, locked, inside the
+            // transaction; this copy only decides which flags stand.
+            properties: {
+              select: { id: true, landlordPhone: true, landlordCitizenId: true, endedAt: true },
+            },
           },
         },
       },
@@ -938,10 +1097,47 @@ export class CitizensService {
       anyone saves it after the survey office imports the parcel, with nobody
       having to remember that this record was waiting on it.
     */
-    const flags: FieldFlag[] = [
+    const submittedFlags: FieldFlag[] = [
       ...input.payload.flags,
       ...cadastreFlags(input.payload.properties, missing, input.payload.flags),
     ];
+
+    /*
+      Cards whose owner is a confirmed link keep the owner fields the link was
+      made against.
+
+      The form shows those fields read-only, so only a stale client sends
+      anything else — but a lock that holds only in the browser is not a lock.
+      The number is what the link was confirmed about and the name is what the
+      tenant said; neither is this save's to change while the link stands, and
+      «إلغاء الربط» is the one way to release them. A «غير مؤكَّد» flag on either
+      is dropped for the same reason: the register established both.
+
+      A number that genuinely differs (and is not merely flagged away) is still
+      honoured as before — it is somebody's correction, and it undoes the link
+      below rather than being silently discarded.
+    */
+    const serverCards = new Map(
+      (citizen.registrations[0]?.properties ?? [])
+        .filter((property) => !property.endedAt)
+        .map((property) => [property.id, property]),
+    );
+    const linkLocked = new Set<number>();
+    input.payload.properties.forEach((property, index) => {
+      const card = property as { id?: string; landlordPhone?: string };
+      const server = card.id ? serverCards.get(card.id) : undefined;
+      if (!server?.landlordCitizenId) return;
+      const phoneFlagged = submittedFlags.some(
+        (flag) => flag.path === `properties.${index}.landlordPhone`,
+      );
+      if (phoneFlagged || (card.landlordPhone ?? null) === server.landlordPhone) {
+        linkLocked.add(index);
+      }
+    });
+    const flags: FieldFlag[] = submittedFlags.filter((flag) => {
+      const match = /^properties\.(\d+)\.(landlordName|landlordPhone)$/.exec(flag.path);
+      return !(match && linkLocked.has(Number(match[1])));
+    });
 
     const entries = input.payload.properties.map((property, index) => {
       const { id, ...values } = property as { id?: string } & Record<string, unknown>;
@@ -951,13 +1147,16 @@ export class CitizensService {
           : undefined;
       return {
         id,
+        index,
         entry: PropertyEntry.create(
           {
             ...values,
             latitude: parcel?.latitude ?? null,
             longitude: parcel?.longitude ?? null,
           } as never,
-          unestablishedOnCard(flags, index),
+          // The flags as submitted: a locked card's flagged owner field is
+          // excused here and restored from the link when it is written.
+          unestablishedOnCard(submittedFlags, index),
         ),
       };
     });
@@ -971,11 +1170,28 @@ export class CitizensService {
     }
 
     const existing = citizen.registrations[0];
-    const existingIds = new Set(existing?.properties.map((property) => property.id) ?? []);
+    /*
+      The cards this save reconciles — the current ones. An ended tenancy is not
+      in the form, so it must not read as a card the officer removed: deleting it
+      would take the lease and the record of the tenancy with it.
+    */
+    const endedIds = new Set(
+      (existing?.properties ?? []).filter((property) => property.endedAt).map((property) => property.id),
+    );
+    const existingIds = new Set(
+      (existing?.properties ?? [])
+        .filter((property) => !property.endedAt)
+        .map((property) => property.id),
+    );
 
     // An id from another citizen's claim must not be steered into this one.
     // Checked before anything is written, so a crafted payload fails whole.
     for (const { id } of entries) {
+      if (id && endedIds.has(id)) {
+        throw new ConflictError('انتهى الإيجار على إحدى البطاقات منذ فتح هذا النموذج — حدّث الصفحة', {
+          propertyId: id,
+        });
+      }
       if (id && !existingIds.has(id)) {
         throw new ValidationError('هذا العقار لا ينتمي إلى آخر طلب لهذا المواطن', {
           propertyId: id,
@@ -986,22 +1202,9 @@ export class CitizensService {
     const keptIds = new Set(entries.map(({ id }) => id).filter(Boolean) as string[]);
     const removedIds = [...existingIds].filter((id) => !keptIds.has(id));
 
-    /**
-     * What each card said its landlord's number was before this save.
-     *
-     * A confirmed landlord link, and a dismissal of one, are both answers about
-     * a *specific number*. Change the number and neither answer describes
-     * anything any more: «نعم، هذا هو المالك» was said about `+96103123456`,
-     * and the card now says `+96171987654`. Left in place the link would carry
-     * over to a person the card no longer names — and, since a link can bill,
-     * go on charging them for a flat whose owner has just been corrected.
-     *
-     * Cleared rather than re-matched: the new number goes back into the queue
-     * as an open claim, which is the same state any newly typed number is in.
-     */
-    const previousLandlordPhone = new Map(
-      (existing?.properties ?? []).map((property) => [property.id, property.landlordPhone]),
-    );
+    /** What undoing links during this save wrote, emitted once it commits. */
+    const revertEvents: PendingEvent[] = [];
+    const unlinkedBySave: Array<{ propertyEntryId: string; report: RevertReport }> = [];
 
     // Where the record stands *after* this save. A record whose last gap was
     // just filled in leaves «يتطلب مراجعة» by the same rule that put it there.
@@ -1013,46 +1216,7 @@ export class CitizensService {
     const registrationId = await this.db.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: citizen.id },
-        data: {
-          firstName: input.payload.personal.firstName,
-          middleName: input.payload.personal.middleName || null,
-          lastName: input.payload.personal.lastName,
-          /*
-            Every column is written explicitly, `null` included.
-
-            `undefined` in a Prisma `update` means "leave this alone", which is
-            the wrong answer for a field the officer has just flagged: the
-            record would claim the value is unestablished while still storing
-            the old one, and whoever came to complete it would find it already
-            filled. Flagging a field clears it, here as on the create path.
-          */
-          gender: (input.payload.personal.gender ?? null) as never,
-          nationality: input.payload.personal.nationality ?? null,
-          isLebanese: input.payload.personal.isLebanese ?? null,
-          residencyNumber: input.payload.personal.residencyNumber || null,
-          residentStatus: (input.payload.personal.residentStatus ?? null) as never,
-          identityDocType: (input.payload.personal.identityDocType ?? null) as never,
-          /*
-            Null, not '', when the document itself was left unestablished.
-
-            The empty string is a value, and `users` is uniquely keyed by
-            (نوع الوثيقة, رقم الوثيقة) — so a second citizen in the same
-            position would collide with the first on a number neither of them
-            has. A null is distinct from every other null in a Postgres unique
-            index, which is exactly the semantics "we do not know" needs.
-          */
-          identityDocNumber:
-            input.payload.personal.identityDocNumber ||
-            input.payload.personal.residencyNumber ||
-            null,
-          civilRecordNumber: input.payload.personal.civilRecordNumber || null,
-          phone: input.payload.contact.phone ?? null,
-          whatsapp: input.payload.contact.whatsapp ?? input.payload.contact.phone ?? null,
-          maritalStatus: (input.payload.contact.maritalStatus ?? null) as never,
-          totalRegisteredMembers: input.payload.contact.totalRegisteredMembers ?? null,
-          actualHouseholdMembers: input.payload.contact.actualHouseholdMembers ?? null,
-          bloodType: (input.payload.personal.bloodType ?? null) as never,
-        },
+        data: citizenColumnsForEdit(input.payload),
       });
 
       // A citizen with no registration at all (never expected from this form,
@@ -1101,13 +1265,68 @@ export class CitizensService {
         });
       }
 
+      /*
+        The link state of these cards, read under a row lock.
+
+        A clerk can confirm or undo a link on one of these cards from the queue
+        while this form is open. Locking the registration's cards first makes
+        that confirmation wait for this save (and then find the card as this
+        save left it) instead of both deciding from a state neither will leave.
+      */
+      const linkState = new Map<
+        string,
+        {
+          landlordPhone: string | null;
+          landlordName: string | null;
+          landlordCitizenId: string | null;
+          landlordLinkFootprint: Prisma.JsonValue;
+        }
+      >();
+      if (existing?.id) {
+        await tx.$queryRaw`
+          SELECT id FROM ${this.S}property_entries
+          WHERE "registrationId" = ${existing.id}::uuid
+          FOR UPDATE
+        `;
+        const cards = await tx.propertyEntry.findMany({
+          where: { registrationId: existing.id },
+          select: {
+            id: true,
+            landlordPhone: true,
+            landlordName: true,
+            landlordCitizenId: true,
+            landlordLinkFootprint: true,
+          },
+        });
+        for (const card of cards) linkState.set(card.id, card);
+      }
+
+      /*
+        A card that leaves the file takes its link with it — and what that link
+        wrote into the owner's records goes too, before the card and the
+        footprint recording it are gone.
+      */
+      const undo = async (entryId: string) => {
+        const state = linkState.get(entryId);
+        if (!state?.landlordCitizenId) return;
+        const reverted = await this.landlordLinks.revertLink(tx, {
+          entryId,
+          ownerId: state.landlordCitizenId,
+          footprint: state.landlordLinkFootprint,
+        });
+        revertEvents.push(...reverted.events);
+        unlinkedBySave.push({ propertyEntryId: entryId, report: reverted.report });
+      };
+
+      for (const removedId of removedIds) await undo(removedId);
+
       if (removedIds.length > 0) {
         await tx.propertyEntry.deleteMany({
           where: { id: { in: removedIds }, registrationId },
         });
       }
 
-      for (const { id, entry } of entries) {
+      for (const { id, index, entry } of entries) {
         const p = entry.props;
         const data = {
           occupancyType: p.occupancyType as never,
@@ -1140,37 +1359,127 @@ export class CitizensService {
           unitStatus: (unit.unitStatus ?? null) as never,
           unitId: unit.unitId ?? null,
         }));
+        /** The stored row each line was loaded from, when the form sent one. */
+        const rowIds = (p.units ?? []).map((unit) => (unit as { id?: string }).id ?? null);
 
         if (id) {
+          const state = linkState.get(id);
+          const locked =
+            Boolean(state?.landlordCitizenId) &&
+            linkLocked.has(index) &&
+            p.occupancyType !== 'OWNER';
+
           /*
             A changed number invalidates whatever was decided about the old one.
 
-            Both columns go together: a confirmed link and a dismissal are the
-            two answers to the same question, and that question was asked about
-            a number this save has just replaced. Narrowed to an actual change,
-            so an ordinary edit that leaves the landlord alone does not throw
-            away a link a clerk confirmed last week.
+            A confirmed link and a dismissal are the two answers to the same
+            question, and that question was asked about a number this save has
+            just replaced. Left in place the link would carry over to a person
+            the card no longer names — and go on billing them — so it is undone,
+            with what it wrote into the owner's records, and the new number goes
+            back to the queue like any newly typed one. Narrowed to an actual
+            change, so an ordinary edit leaves a confirmed link alone.
           */
-          const landlordLinkReset =
-            (previousLandlordPhone.get(id) ?? null) !== (p.landlordPhone ?? null)
-              ? { landlordCitizenId: null, landlordLinkDismissedAt: null }
-              : {};
+          const phoneChanged = (state?.landlordPhone ?? null) !== (p.landlordPhone ?? null);
+          let landlordLinkReset: Record<string, unknown> = {};
+          if (locked) {
+            data.landlordName = state!.landlordName;
+            data.landlordPhone = state!.landlordPhone;
+          } else if (phoneChanged) {
+            if (state?.landlordCitizenId) await undo(id);
+            landlordLinkReset = {
+              landlordCitizenId: null,
+              landlordLinkFootprint: Prisma.DbNull,
+              landlordLinkDismissedAt: null,
+              landlordLinkDismissedIds: [],
+            };
+          }
+
+          /*
+            Rows are kept by identity: a line the form loaded is updated in place,
+            a line it no longer sends is removed, a new line is created.
+
+            They used to be deleted and re-created on every save, which gave the
+            file nothing to recognise a line by — so a form left open across
+            «إنهاء الإيجار» on one flat re-created that flat as held the next
+            time it was saved. A line naming a row that has since ended is now
+            refused instead. Ended rows are never touched: the form does not load
+            them, and they are the record of what the tenancy gave up.
+          */
+          const stored = await tx.buildingUnit.findMany({
+            where: { propertyEntryId: id },
+            select: { id: true, endedAt: true, createdAt: true },
+          });
+          const storedById = new Map(stored.map((row) => [row.id, row]));
+          const kept = new Set<string>();
+          const lines = units.map((unit, position) => {
+            const rowId = rowIds[position];
+            const row = rowId ? storedById.get(rowId) : undefined;
+            if (row?.endedAt) {
+              throw new ConflictError(
+                'انتهى الإيجار على إحدى وحدات هذه البطاقة منذ فتح هذا النموذج — حدّث الصفحة',
+                { propertyId: id, rowId },
+              );
+            }
+            if (row && !kept.has(row.id)) {
+              kept.add(row.id);
+              return { unit, row };
+            }
+            return { unit, row: undefined };
+          });
+
+          /*
+            A row's place is its creation order — the order the form lists rows
+            in and «غير مؤكَّد» flags count them in. Kept rows keep their own
+            timestamps when the form's order already agrees with them (every new
+            line after every kept one, kept ones in stored order); otherwise the
+            order the form sent is written onto them, so a flag on the third line
+            stays on the third line.
+          */
+          const keptTimes = lines.flatMap((line) => (line.row ? [line.row.createdAt.getTime()] : []));
+          const lastKept = lines.map((line) => Boolean(line.row)).lastIndexOf(true);
+          const firstNew = lines.findIndex((line) => !line.row);
+          const inStoredOrder =
+            keptTimes.every((time, index) => index === 0 || time >= keptTimes[index - 1]!) &&
+            (firstNew === -1 || lastKept === -1 || firstNew > lastKept);
+          // Explicit, a millisecond apart: rows written in one transaction can
+          // otherwise share a timestamp and come back in any order.
+          const base = inStoredOrder
+            ? Math.max(Date.now(), keptTimes.length ? Math.max(...keptTimes) + 1 : 0)
+            : Date.now() - lines.length;
+          const order = (position: number, isNew: boolean) =>
+            inStoredOrder && !isNew ? {} : { createdAt: new Date(base + position) };
 
           await tx.propertyEntry.update({
             where: { id },
             data: {
               ...data,
               ...landlordLinkReset,
-              // Units are replaced wholesale rather than reconciled one by one.
-              // They carry no documents and no id anyone outside this record
-              // holds, so identity buys nothing here — unlike the property row
-              // above, whose id a deed is attached to.
-              units: { deleteMany: {}, create: units },
+              units: { deleteMany: { endedAt: null, id: { notIn: [...kept] } } },
             },
           });
+          for (const [position, line] of lines.entries()) {
+            if (line.row) {
+              await tx.buildingUnit.update({
+                where: { id: line.row.id },
+                data: { ...line.unit, ...order(position, false) },
+              });
+            } else {
+              await tx.buildingUnit.create({
+                data: { ...line.unit, ...order(position, true), propertyEntryId: id },
+              });
+            }
+          }
         } else {
+          const base = Date.now();
           await tx.propertyEntry.create({
-            data: { registrationId, ...data, units: { create: units } },
+            data: {
+              registrationId,
+              ...data,
+              units: {
+                create: units.map((unit, position) => ({ ...unit, createdAt: new Date(base + position) })),
+              },
+            },
           });
         }
       }
@@ -1192,11 +1501,36 @@ export class CitizensService {
       committed, and answering a saved edit with an error would send the officer
       round again.
     */
+    this.landlordLinks.emitAll(revertEvents, input.actor);
+    for (const { propertyEntryId, report } of unlinkedBySave) {
+      this.events.emit('citizen.changed', {
+        tenantSlug: input.tenantSlug,
+        citizenId: citizen.id,
+        action: 'LANDLORD_UNLINKED',
+        after: { propertyEntryId, via: 'CITIZEN_UPDATED', ...report, kept: report.kept.length },
+        actorId: input.actor.id,
+        actorRole: input.actor.role,
+      });
+    }
+
     const census = await this.census.syncQuietly({
       registrationId,
       citizenId: citizen.id,
       actor: input.actor,
     });
+
+    /*
+      And every standing link on this file follows what its card now names.
+
+      After the census sync, so the tenant's own occupancy of a corrected flat
+      is in place before the owner is put on it. See
+      `LandlordLinkService.reconcileRegistration` — a card whose new state blocks
+      its link is left as it was and reported, never silently unlinked.
+    */
+    const landlordLinkChanges = {
+      unlinked: unlinkedBySave,
+      reconciled: await this.reconcileLinksQuietly(registrationId, input.actor),
+    };
 
     /*
       And the owner match is re-asked, because this save may have changed it.
@@ -1207,7 +1541,12 @@ export class CitizensService {
       correcting the number it was made against (see `landlordLinkReset`). Both
       leave a question this screen should put now rather than post to a queue.
     */
-    const landlordLinks = await this.landlordClaimsQuietly(registrationId, citizen.id);
+    const landlordLinks = await this.landlordClaimsQuietly(
+      registrationId,
+      citizen.id,
+      input.payload,
+      input.actor,
+    );
 
     this.events.emit('citizen.changed', {
       tenantSlug: input.tenantSlug,
@@ -1223,7 +1562,38 @@ export class CitizensService {
       actorRole: input.actor.role,
     });
 
-    return { updated: true, citizenId: citizen.id, status: nextStatus, census, landlordLinks };
+    return {
+      updated: true,
+      citizenId: citizen.id,
+      status: nextStatus,
+      census,
+      landlordLinks,
+      /**
+       * Links this save changed: undone because a card was removed or its
+       * number corrected, and standing links brought into line with the flats
+       * their card now names (or reported as blocked). The form says so,
+       * because each one moves somebody else's bill.
+       */
+      landlordLinkChanges,
+    };
+  }
+
+  /** `reconcileRegistration`, with its failure kept off a save that committed. */
+  private async reconcileLinksQuietly(
+    registrationId: string,
+    actor: { id: string; role: string },
+  ): Promise<ReconcileResult | null> {
+    try {
+      return await this.landlordLinks.reconcileRegistration(registrationId, actor);
+    } catch (error) {
+      this.logger.error(
+        `landlord link reconcile failed for registration ${registrationId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      return null;
+    }
   }
 
   /**
@@ -1330,7 +1700,8 @@ export class CitizensService {
 
     const entries = await withConnectionRetry(() =>
       this.db.propertyEntry.findMany({
-        where: { propertyNumber: trimmed },
+        // Who is on this parcel now — a tenant who left is not.
+        where: { propertyNumber: trimmed, endedAt: null },
         select: {
           id: true,
           propertyType: true,
@@ -1341,6 +1712,7 @@ export class CitizensService {
           unitArea: true,
           unitStatus: true,
           units: {
+            where: { endedAt: null },
             select: { id: true, unitType: true, floor: true, unitArea: true, unitStatus: true },
           },
           registration: {
@@ -1481,4 +1853,79 @@ export class CitizensService {
 
     return { found, missing: new Set(hasCadastre ? unresolved : []) };
   }
+}
+
+/**
+ * The `users` columns an edit writes — which depends on what kind of file it is,
+ * and deliberately leaves alone everything the form no longer asks.
+ *
+ * **Asked fields are written explicitly, `null` included.** `undefined` in a
+ * Prisma `update` means "leave this alone", which is the wrong answer for a
+ * field the officer has just flagged: the record would claim the value is
+ * unestablished while still storing the old one. Flagging a field clears it,
+ * here as on the create path.
+ *
+ * **Fields the form does not ask are not written at all**, and that is the
+ * no-data-loss rule, not an oversight:
+ *
+ *  - The identity document. A Lebanese citizen is no longer asked for one, so
+ *    this form cannot be the thing that erases the real numbers already on
+ *    file. A non-Lebanese person's passport number is written only when one is
+ *    given; a blank field keeps what is stored.
+ *  - A non-resident record's household columns. A person converted to «غير
+ *    مقيم في البلدة» keeps whatever was filed for them as a household; the form stops
+ *    asking and stops showing, and nothing is erased by the conversion. The
+ *    reverse conversion keeps `residencePlace` and the local contact for the
+ *    same reason.
+ */
+export function citizenColumnsForEdit(
+  payload: AdminCitizenUpdateSubmission,
+): Prisma.UserUpdateInput {
+  const { personal, contact } = payload;
+  const shared = {
+    firstName: personal.firstName,
+    middleName: personal.middleName || null,
+    lastName: personal.lastName,
+    phone: contact.phone ?? null,
+    whatsapp: contact.whatsapp ?? contact.phone ?? null,
+  };
+
+  if (payload.residence === 'NON_RESIDENT_OWNER') {
+    return {
+      ...shared,
+      residence: 'NON_RESIDENT_OWNER',
+      residencePlace: personal.residencePlace ?? null,
+      localContactName: contact.localContactName ?? null,
+      localContactPhone: contact.localContactPhone ?? null,
+    };
+  }
+
+  const passport = identityDocumentOf(payload);
+
+  return {
+    ...shared,
+    residence: 'RESIDENT',
+    /*
+      Written on the household branch alone, so converting a file to «غير مقيم
+      في البلدة» keeps whatever was filed rather than erasing it — the same
+      no-data-loss rule the household counts above follow.
+    */
+    motherName: personal.motherName || null,
+    gender: (personal.gender ?? null) as never,
+    nationality: personal.nationality ?? null,
+    isLebanese: personal.isLebanese ?? null,
+    residencyNumber: personal.residencyNumber || null,
+    residentStatus: (personal.residentStatus ?? null) as never,
+    civilRecordNumber: personal.civilRecordNumber || null,
+    maritalStatus: (contact.maritalStatus ?? null) as never,
+    totalRegisteredMembers: contact.totalRegisteredMembers ?? null,
+    actualHouseholdMembers: contact.actualHouseholdMembers ?? null,
+    bloodType: (personal.bloodType ?? null) as never,
+    ...(passport.identityDocNumber
+      ? {
+          identityDocType: passport.identityDocType as never,
+          identityDocNumber: passport.identityDocNumber,
+        }
+      : {}),
+  };
 }

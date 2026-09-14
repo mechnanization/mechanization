@@ -173,6 +173,32 @@ export class PrismaCaseRepository implements CaseRepository {
     return result.count;
   }
 
+  /**
+   * Closes the «شاغرة قيد التحقق» items a confirmed vacancy has just answered.
+   *
+   * The sibling of `resolveOpenForUnit`, narrowed in the one way that matters:
+   * by case *type*. That one is called when a person is recorded in a flat,
+   * which answers every open question about it; this one is called when the
+   * flat is confirmed empty, which answers exactly one — «شاغرة قيد التحقق» —
+   * and says nothing about a refused entry, an ownership dispute or a note
+   * somebody left for the next officer.
+   *
+   * No `resolvedCitizenId`: there is no citizen. A vacancy is resolved by the
+   * absence of one, and writing somebody's id into that column to satisfy the
+   * shape would put a name on a case they had nothing to do with.
+   */
+  async resolveVacancyCasesForUnit(unitId: string): Promise<number> {
+    const result = await this.db.case.updateMany({
+      where: {
+        unitId,
+        caseType: 'VACANT_UNCONFIRMED' as never,
+        status: { in: ['OPEN', 'SCHEDULED'] as never },
+      },
+      data: { status: 'RESOLVED', resolvedAt: new Date(), scheduledRevisitAt: null },
+    });
+    return result.count;
+  }
+
   async update(
     id: string,
     input: {

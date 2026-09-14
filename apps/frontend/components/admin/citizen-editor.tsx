@@ -21,7 +21,11 @@ import type {
   CensusSyncResult,
   CreateBuildingInput,
 } from '@/lib/api-client';
-import type { LandlordLinkOffers, PublicTenantConfig } from '@/lib/api-client';
+import type {
+  LandlordLinkChanges,
+  LandlordLinkOffers,
+  PublicTenantConfig,
+} from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatRelative } from '@/lib/dates';
 import {
@@ -53,14 +57,82 @@ import {
   CitizenForm,
   emptyCitizen,
   toSubmission,
+  withResidence,
+  withSeededName,
   type CitizenFormValues,
 } from './citizen-form';
-import { parseFloorLabel, STRUCTURE_TYPE_MAP } from '@mechanization/shared-schemas';
+import {
+  parseFloorLabel,
+  STRUCTURE_TYPE_MAP,
+  type CitizenResidence,
+} from '@mechanization/shared-schemas';
 import { mintId, type LockedCensusTarget } from './building-unit-picker';
 
 /** `null`/`undefined` → absent; a number → the string an `<input>` holds. */
 function text(value: unknown): string | undefined {
   return value === null || value === undefined || value === '' ? undefined : String(value);
+}
+
+/** The server's `landlordLink` for a card, or nothing when there is none. */
+function readLandlordLink(value: unknown): PropertyDraft['landlordLink'] {
+  if (!value || typeof value !== 'object') return undefined;
+  const link = value as { citizenId?: unknown; name?: unknown; referenceNumber?: unknown };
+  if (typeof link.citizenId !== 'string' || typeof link.name !== 'string') return undefined;
+  return {
+    citizenId: link.citizenId,
+    name: link.name,
+    referenceNumber: typeof link.referenceNumber === 'string' ? link.referenceNumber : null,
+  };
+}
+
+/**
+ * Tells the officer what the save did to owner links on this file.
+ *
+ * Each of these moved somebody else's bill — the owner's — as a consequence of
+ * an edit to the tenant's record, so none of them is allowed to happen
+ * silently: a card removed or a number corrected undoes its link, a corrected
+ * flat moves the owner with it, and a link the card can no longer carry is
+ * named with the step that fixes it.
+ */
+function announceLandlordLinkChanges(
+  changes: LandlordLinkChanges | undefined,
+  toast: ReturnType<typeof useToast>,
+  locale: string,
+): void {
+  if (!changes) return;
+  const en = locale === 'en';
+
+  const unlinked = changes.unlinked.length;
+  if (unlinked > 0) {
+    const kept = changes.unlinked.some(
+      (entry) => entry.report.legacy || entry.report.kept.length > 0,
+    );
+    toast.warning(en ? 'Owner link undone' : 'أُلغي ربط المالك', {
+      description: kept
+        ? en
+          ? 'A card was removed or its owner’s number changed, so its link was undone. Some records on the owner’s file were kept — review them.'
+          : 'حُذفت بطاقة أو تغيّر رقم مالكها فأُلغي ربطها. بقيت بعض السجلات في ملف المالك — راجعها.'
+        : en
+          ? 'A card was removed or its owner’s number changed, so its link was undone and what it added to the owner’s file was removed.'
+          : 'حُذفت بطاقة أو تغيّر رقم مالكها فأُلغي ربطها، وأُزيل ما أضافه إلى ملف المالك.',
+      duration: 10000,
+    });
+  }
+
+  if (changes.reconciled && changes.reconciled.updated > 0) {
+    toast.info(en ? 'Owner’s property updated' : 'تم تحديث عقار المالك', {
+      description: en
+        ? 'The linked owner now follows the units this card names.'
+        : 'المالك المرتبط أصبح مسجَّلاً على الوحدات التي تحددها هذه البطاقة.',
+    });
+  }
+
+  for (const { block } of changes.reconciled?.blocked ?? []) {
+    toast.warning(en ? 'The owner link needs attention' : 'ربط المالك يحتاج مراجعة', {
+      description: block.message,
+      duration: 12000,
+    });
+  }
 }
 
 /**
@@ -77,6 +149,44 @@ function text(value: unknown): string | undefined {
  * that fires on every registration to report zero of everything is a toast
  * people learn to dismiss without reading.
  */
+/**
+ * What a passport number did to this filing — said because both outcomes that
+ * are not «new» change what the officer does next.
+ *
+ * Filings used to *merge* on a repeated number, silently renaming whoever held
+ * it. Now a same-name holder gets this registration added to their file
+ * (`ATTACHED`), and a different-name holder leaves the number off a separate
+ * new record for review (`CONFLICT`). Neither is an error, and neither may be
+ * silent: the first means the officer is looking at an existing person's file,
+ * the second that somebody's document number is wrong.
+ */
+function announceIdentity(
+  identity: 'NEW' | 'ATTACHED' | 'CONFLICT' | null | undefined,
+  toast: ReturnType<typeof useToast>,
+  locale: string,
+): void {
+  const en = locale === 'en';
+  if (identity === 'ATTACHED') {
+    toast.success(
+      en ? 'Added to an existing file' : 'أُضيف إلى ملف موجود',
+      {
+        description: en
+          ? 'This passport number belongs to a citizen with the same name, so the registration was added to their file. Nothing on it was changed.'
+          : 'رقم الجواز هذا لمواطن بالاسم نفسه، فأُضيف التسجيل إلى ملفه دون تغيير أي من بياناته.',
+      },
+    );
+  } else if (identity === 'CONFLICT') {
+    toast.error(
+      en ? 'Passport number belongs to someone else' : 'رقم الجواز مسجَّل لشخص آخر',
+      {
+        description: en
+          ? 'Saved as a separate person without the number, and marked for review. Check the document.'
+          : 'حُفظ كشخص مستقل دون الرقم ووُضع قيد المراجعة. تحقَّق من الوثيقة.',
+      },
+    );
+  }
+}
+
 function announceCensus(
   census: CensusSyncResult | null,
   toast: ReturnType<typeof useToast>,
@@ -125,7 +235,15 @@ function announceCensus(
   }
 
   const linked = census.occupanciesCreated + census.occupanciesRefreshed;
-  if (linked === 0 && census.casesResolved === 0 && census.buildingsNamed === 0) return;
+  const vacanciesEnded = census.vacanciesEnded ?? 0;
+  if (
+    linked === 0 &&
+    census.casesResolved === 0 &&
+    census.buildingsNamed === 0 &&
+    vacanciesEnded === 0
+  ) {
+    return;
+  }
 
   const parts = [
     linked > 0
@@ -157,6 +275,17 @@ function announceCensus(
       ? en
         ? `${census.occupanciesEnded} previous unit link(s) ended`
         : `أُنهيت ${census.occupanciesEnded} صلة سابقة بوحدات`
+      : null,
+    /*
+      Registering a household into a flat the municipality had confirmed empty
+      lifts that confirmation — which starts the owner being billed for it
+      again. It happened to a record nobody had open, on a screen with no unit
+      matrix on it, so it is said rather than left to be discovered.
+    */
+    vacanciesEnded > 0
+      ? en
+        ? `${vacanciesEnded} confirmed vacancy(ies) lifted`
+        : `أُلغي تأكيد الشغور عن ${vacanciesEnded} وحدة`
       : null,
   ].filter(Boolean);
 
@@ -314,7 +443,7 @@ function unitsForNewStructure(
 /**
  * What the census already knows about the flat the officer just tapped.
  *
- * The «تسجيل أسرة في هذه الوحدة» button used to carry two UUIDs in a
+ * The unit panel's «ملف جديد» link (once «تسجيل أسرة في هذه الوحدة») used to carry two UUIDs in a
  * querystring and nothing else. The form opened blank, `BuildingUnitPicker`
  * rendered nothing at all — it returns null without a رقم العقار — and an
  * officer standing in a stairwell they had already surveyed retyped the parcel
@@ -481,6 +610,13 @@ function toDraft(property: Record<string, unknown>): PropertyDraft {
     occupancyType: property.occupancyType as PropertyDraft['occupancyType'],
     landlordName: text(property.landlordName),
     landlordPhone: text(property.landlordPhone),
+    landlordCitizenId: text(property.landlordCitizenId),
+    /*
+      The standing link, so the card opens locked to it — number and name — with
+      «إلغاء الربط» as the way out. Without it an edit showed the tenant's typed
+      name in an unlocked box over a link the server was still holding.
+    */
+    landlordLink: readLandlordLink(property.landlordLink),
     propertyType: property.propertyType as PropertyDraft['propertyType'],
     neighborhood: text(property.neighborhood),
     propertyNumber: text(property.propertyNumber),
@@ -502,6 +638,9 @@ function toDraft(property: Record<string, unknown>): PropertyDraft {
       ? {
           units: units.map(
             (unit): UnitDraft => ({
+              // The stored row itself, so the save keeps it by identity and can
+              // refuse it if its flat ended while this form was open.
+              id: text((unit as Record<string, unknown>).id),
               // The per-flat half of the same link: which canonical `Unit` this
               // line is about. Without it the matrix chips come back unticked
               // and a re-save orphans every row that named a surveyed flat.
@@ -550,6 +689,8 @@ export function CitizenEditor({
    */
   fromCaseId,
   lockedCensusTarget,
+  initialResidence,
+  initialName,
 }: {
   tenant: string;
   locale: string;
@@ -557,6 +698,21 @@ export function CitizenEditor({
   citizenId?: string;
   queueId?: string;
   fromCaseId?: string;
+  /**
+   * نوع الملف already answered by the link that opened this form — the unit
+   * panel's «مالك غير مقيم» choice. Applied to a new record only; a saved or
+   * queued one keeps what it was saved as.
+   */
+  initialResidence?: CitizenResidence;
+  /**
+   * The search term that sent the officer here — the occupant panel's own box,
+   * carried across so a search that found nobody is not retyped.
+   *
+   * Applied to a new record only, and only when it looks like a name rather
+   * than a number (`withSeededName`). Its real job is to give the duplicate
+   * check something to check on the very first render.
+   */
+  initialName?: string;
   /**
    * Arrived from a building's unit matrix — the structure, and possibly the
    * flat, is already decided.
@@ -713,6 +869,7 @@ export function CitizenEditor({
           }
 
           setInitial({
+            residence: queued.payload.residence ?? 'RESIDENT',
             personal: queued.payload.personal,
             contact: queued.payload.contact,
             properties:
@@ -759,7 +916,7 @@ export function CitizenEditor({
 
             A draft is what this officer was typing *last* time. A census
             target or a حالة is what they asked for *this* time, in the URL
-            they just followed — «تسجيل أسرة في هذه الوحدة» names a specific
+            they just followed — the unit panel's «ملف جديد» link names a specific
             flat, and restoring yesterday's half-finished household over it
             would answer a deliberate request with a stale one, in a form
             already carrying a locked building the draft knows nothing about.
@@ -769,7 +926,7 @@ export function CitizenEditor({
             other cases — nothing here writes — so following a unit link and
             then coming back to «تسجيل مواطن جديد» still finds it.
           */
-          if (!seeded) {
+          if (!seeded && !initialResidence && !initialName) {
             const draft = loadCitizenDraft(tenant);
             if (draft) {
               setInitial(draft.values);
@@ -778,12 +935,15 @@ export function CitizenEditor({
             }
           }
 
-          setInitial(seeded ? { ...empty, properties: seeded } : empty);
+          const fresh = seeded ? { ...empty, properties: seeded } : empty;
+          const withFile = initialResidence ? withResidence(fresh, initialResidence) : fresh;
+          setInitial(initialName ? withSeededName(withFile, initialName) : withFile);
           return;
         }
 
         setReference(form.referenceNumber);
         setInitial({
+          residence: form.residence ?? 'RESIDENT',
           // The record's existing «غير مؤكَّد» flags, so whoever opens it to
           // finish sees which blanks were deliberate and what was said about
           // each — and clears one simply by filling the field in.
@@ -877,7 +1037,18 @@ export function CitizenEditor({
       this component, so the effect already re-runs exactly when it should.
     */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenant, token, citizenId, queueId, fromCaseId, base, router, locale]);
+  }, [
+    tenant,
+    token,
+    citizenId,
+    queueId,
+    fromCaseId,
+    initialResidence,
+    initialName,
+    base,
+    router,
+    locale,
+  ]);
 
   /**
    * Creates every «منشأة جديدة» the officer chose, and rewrites the cards.
@@ -1201,7 +1372,7 @@ export function CitizenEditor({
       /*
         Where the officer actually wanted to end up.
 
-        An officer who arrived through «تسجيل أسرة في هذه الوحدة» was sent here
+        An officer who arrived through a unit panel's «ملف جديد» link was sent here
         *by a flat*, and their next move is invariably that same flat — check
         the occupancy landed, register the neighbour, log the next visit. The
         form dropped them on the new citizen's file instead, so every household
@@ -1231,10 +1402,12 @@ export function CitizenEditor({
         if (citizenId) {
           const updated = await updateCitizen(tenant, token, citizenId, payload);
           announceCensus(updated.census, toast, locale);
+          announceLandlordLinkChanges(updated.landlordLinkChanges, toast, locale);
           leave(updated.landlordLinks, `${base}/citizens/${citizenId}`);
         } else {
           const created = await createCitizen(tenant, token, payload);
           announceCensus(created.census, toast, locale, created.deduplicated);
+          announceIdentity(created.identity, toast, locale);
 
           // The household is on the server. Cleared here rather than after the
           // case-linking below, which is allowed to fail without the

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, Minus, Plus, Trash2 } from 'lucide-react';
 import {
   getLabels,
@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Sheet } from '@/components/ui/sheet';
+import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { floorLabel } from './parcel-pin-picker';
 
@@ -170,6 +171,7 @@ interface Panel {
 export function UnitGridPicker({
   locale,
   structureType,
+  onStructureTypeChange,
   floorsCount,
   onFloorsCountChange,
   basementsCount = 0,
@@ -181,6 +183,15 @@ export function UnitGridPicker({
 }: {
   locale: string;
   structureType: StructureType;
+  /**
+   * Raised when painting a second unit turns a «منزل مستقل» into a building.
+   *
+   * Optional so a read-only or single-purpose host can leave the
+   * classification alone; without it the matrix still paints the unit and
+   * simply does not reclassify, which is the honest behaviour for a caller
+   * that does not own `structureType`.
+   */
+  onStructureTypeChange?: (next: StructureType) => void;
   /** Number of floors above ground (vertical height of the matrix). */
   floorsCount: number;
   /** Callback when vertical blocks (floors) is changed in the matrix. */
@@ -204,6 +215,7 @@ export function UnitGridPicker({
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
+  const toast = useToast();
 
   const colsCount = Math.max(MIN_HORIZONTAL_BLOCKS, gridSize || DEFAULT_HORIZONTAL_BLOCKS);
   const safeFloorsCount = Math.max(MIN_VERTICAL_BLOCKS, floorsCount || DEFAULT_VERTICAL_BLOCKS);
@@ -247,6 +259,29 @@ export function UnitGridPicker({
       units.find((unit) => unit.floor === floor && cellsOverlap(unit, col)),
     [units],
   );
+
+  /**
+   * The type a freshly painted block opens with — the structure's own, always.
+   *
+   * The first block on an empty grid used to open as «منزل مستقل» regardless,
+   * on the reasoning that one block with no building around it *is* the whole
+   * structure. That reasoning ignores the answer already given: نوع المنشأة is
+   * chosen on step 1 of this wizard, and an officer who picked «مبنى سكني»
+   * there and painted their first flat was handed «منزل مستقل» — and, if they
+   * confirmed it without noticing, watched `reconcileStructureType` reclassify
+   * the building they had just described back into a house.
+   *
+   * A default may restate what the officer said; it may not contradict it. The
+   * type is still offered — `panelUnitTypes` keeps «منزل مستقل» on the list
+   * while the block is the matrix's only one — so the person who really is
+   * drawing a house inside a mis-typed structure picks it and the
+   * reclassification does its job, deliberately rather than by default.
+   *
+   * Below ground `defaultUnitTypeFor` already overrides with مستودع: whatever
+   * stands on the parcel, what is under it is storage.
+   */
+  const firstUnitTypeFor = (floor: number): UnitType =>
+    defaultUnitTypeFor(structureType, floor);
 
   // ── Drag-to-select, via Pointer Events so mouse/touch/pen share one path ──
   useEffect(() => {
@@ -293,7 +328,7 @@ export function UnitGridPicker({
           floor: current.floor,
           startCol: current.startCol,
           endCol: current.endCol,
-          unitType: defaultUnitTypeFor(structureType, current.floor),
+          unitType: firstUnitTypeFor(current.floor),
         });
       }
     };
@@ -323,6 +358,48 @@ export function UnitGridPicker({
     });
   };
 
+  /**
+   * Keeps `structureType` honest about what is painted on the grid.
+   *
+   * Both directions, because both are reachable now that a lone block can be
+   * typed «منزل مستقل»:
+   *
+   * - One block, typed as a house → the structure *is* that house. A matrix
+   *   holding a single منزل مستقل inside a «مبنى سكني» contradicts itself, and
+   *   the fee category and the census figures read the structure type, not the
+   *   unit.
+   * - A second block appears → whatever it is, a flat upstairs or a كراج
+   *   beside it, the thing on the parcel is no longer a house. Leaving it as
+   *   INDEPENDENT_HOUSE files a two-unit structure as a single-family home.
+   *
+   * Converted rather than refused, in both directions. The officer is looking
+   * at the building and we are not; a form that blocked the second unit would
+   * be telling them they are wrong about what they can see. Announced rather
+   * than silent, for the same reason — it changes a classification they chose.
+   */
+  const reconcileStructureType = (next: GridUnitDraft[]) => {
+    const sole = next.length === 1 ? next[0] : null;
+
+    if (sole?.unitType === 'INDEPENDENT_HOUSE' && structureType !== 'INDEPENDENT_HOUSE') {
+      onStructureTypeChange?.('INDEPENDENT_HOUSE');
+      toast.info(en ? 'Reclassified as a house' : 'أُعيد تصنيف المنشأة إلى منزل مستقل', {
+        description: en
+          ? 'The matrix holds one unit and it is an independent house, so the structure type was updated to match.'
+          : 'المصفوفة تضم وحدة واحدة نوعها منزل مستقل، فحُدِّث نوع المنشأة ليطابقها.',
+      });
+      return;
+    }
+
+    if (next.length > 1 && structureType === 'INDEPENDENT_HOUSE') {
+      onStructureTypeChange?.('RESIDENTIAL_BUILDING');
+      toast.info(en ? 'Reclassified as a building' : 'أُعيد تصنيف المنشأة إلى مبنى', {
+        description: en
+          ? 'An independent house holds one unit. A second one makes this a building, so its structure type was updated.'
+          : 'المنزل المستقل وحدة واحدة. بإضافة وحدة ثانية أصبحت المنشأة مبنى، وحُدِّث نوعها تلقائياً.',
+      });
+    }
+  };
+
   const confirmPanel = () => {
     if (!panel) return;
     if (panel.mode === 'create') {
@@ -334,21 +411,89 @@ export function UnitGridPicker({
         unitType: panel.unitType,
         colorIndex: nextColor.current++ % PALETTE.length,
       };
-      onUnitsChange([...units, draft]);
+      const next = [...units, draft];
+      onUnitsChange(next);
+      reconcileStructureType(next);
     } else if (panel.clientId) {
-      onUnitsChange(
-        units.map((unit) =>
-          unit.clientId === panel.clientId
-            ? { ...unit, unitType: panel.unitType, startCol: panel.startCol, endCol: panel.endCol }
-            : unit,
-        ),
+      const next = units.map((unit) =>
+        unit.clientId === panel.clientId
+          ? { ...unit, unitType: panel.unitType, startCol: panel.startCol, endCol: panel.endCol }
+          : unit,
       );
+      onUnitsChange(next);
+      reconcileStructureType(next);
     }
     setPanel(null);
   };
 
+  /** The lone block a house is drawn as, or nothing once there are two. */
+  const soleUnit = units.length === 1 ? units[0] : null;
+
+  /**
+   * Whether the unit the panel is on would be the matrix's only one.
+   *
+   * `create` counts the units already painted; `edit` excludes the unit being
+   * edited from that count, since it is the one in question rather than a
+   * neighbour of it.
+   */
+  const panelIsSoleUnit = panel
+    ? panel.mode === 'create'
+      ? units.length === 0
+      : units.filter((unit) => unit.clientId !== panel.clientId).length === 0
+    : false;
+
+  /**
+   * What the type list offers, which is not the same list everywhere.
+   *
+   * `BUILDING_UNIT_TYPES` is «what a مبنى can contain», and it subtracts
+   * `INDEPENDENT_HOUSE` for a good reason: a block of twelve flats does not
+   * contain a منزل مستقل, and offering it there invites a floor plan that
+   * contradicts itself.
+   *
+   * One block on its own is the case that reason does not cover. There is no
+   * building around it to be a unit *of* — the block is the whole structure,
+   * and «منزل مستقل» is what that structure is. Filing it as a شقة records a
+   * flat in a building nobody entered, which is what the structure type, the
+   * census figures and the fee category all then read.
+   *
+   * So the type appears exactly while it is true, and disappears the moment a
+   * second unit makes it false — at which point `confirmPanel` has already
+   * reclassified the structure to a building.
+   */
+  const panelUnitTypes: readonly UnitType[] = panelIsSoleUnit
+    ? ['INDEPENDENT_HOUSE', ...BUILDING_UNIT_TYPES]
+    : BUILDING_UNIT_TYPES;
+
+  /**
+   * Widens the grid by one column if it has to, then opens the create panel on
+   * the block immediately to the right of the only unit — pre-set to «كراج»,
+   * which is what an annexe beside a house nearly always is and is now a unit
+   * type of its own rather than a warehouse standing in for one.
+   */
+  const addAdjacentUnit = () => {
+    if (!soleUnit) return;
+    const target = soleUnit.endCol + 1;
+    if (target > colsCount) {
+      if (target > MAX_HORIZONTAL_BLOCKS) return;
+      onGridSizeChange(target);
+    }
+    setPanel({
+      mode: 'create',
+      floor: soleUnit.floor,
+      startCol: target,
+      endCol: target,
+      unitType: 'GARAGE',
+    });
+  };
+
   const deletePanelUnit = () => {
-    if (panel?.clientId) onUnitsChange(units.filter((unit) => unit.clientId !== panel.clientId));
+    if (panel?.clientId) {
+      const next = units.filter((unit) => unit.clientId !== panel.clientId);
+      onUnitsChange(next);
+      // Deleting back down to one unit is the same question in reverse — a
+      // matrix that is now a single منزل مستقل describes a house again.
+      reconcileStructureType(next);
+    }
     setPanel(null);
   };
 
@@ -547,7 +692,6 @@ export function UnitGridPicker({
     { length: safeFloorsCount + safeBasementsCount },
     (_, i) => safeFloorsCount - 1 - i,
   );
-  const cols = Array.from({ length: colsCount }, (_, i) => i + 1);
   /** The confirmed unit the open panel is editing, for the facts the panel
    *  itself does not carry — its code and whether it may be removed. */
   const panelUnit = panel?.clientId
@@ -586,10 +730,22 @@ export function UnitGridPicker({
           ) : null}
         </div>
 
-        {/* Matrix Dimensions Controls */}
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+        {/*
+          Matrix Dimensions Controls.
+
+          A grid with equal columns rather than a wrapping flex row, so the
+          three boxes are the same width instead of each shrinking to its own
+          label — «تحت الأرض (B):» is shorter than «عمودي (الطوابق):», and
+          content-sized boxes made three controls that do the same kind of job
+          look like three unrelated ones. Each is `justify-between` inside, so
+          the steppers line up in a column too.
+
+          `sm:grid-cols-3` only: below that they stack, and a stacked full-width
+          row is already uniform.
+        */}
+        <div className="grid gap-2 sm:grid-cols-3 sm:gap-3">
           {/* Vertical / Floors */}
-          <div className="flex items-center gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
+          <div className="flex items-center justify-between gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
             <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
               {en ? 'Vertical (Floors):' : 'عمودي (الطوابق):'}
             </span>
@@ -633,7 +789,7 @@ export function UnitGridPicker({
           </div>
 
           {/* Below ground / Basements */}
-          <div className="flex items-center gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
+          <div className="flex items-center justify-between gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
             <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
               {en ? 'Below ground (B):' : 'تحت الأرض (B):'}
             </span>
@@ -680,7 +836,7 @@ export function UnitGridPicker({
           </div>
 
           {/* Horizontal / Columns */}
-          <div className="flex items-center gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
+          <div className="flex items-center justify-between gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
             <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
               {en ? 'Horizontal (Cols):' : 'أفقي (الأعمدة):'}
             </span>
@@ -732,6 +888,33 @@ export function UnitGridPicker({
         </p>
       ) : null}
 
+      {/*
+        «إضافة كراج / ملحق» — the one-block case, made reachable.
+
+        A house is drawn as a single block on a one-column grid, and the way to
+        put a garage beside it was to work out that the *columns* control had to
+        be widened first, then drag on the block that appeared. Nobody works
+        that out while standing in front of the house. This does both steps.
+
+        Shown only while the grid holds exactly one unit, which is what makes it
+        unambiguous where "beside" is: there is one block, and the new one goes
+        to its right. Painting it triggers the reclassification in
+        `confirmPanel` like any other second unit.
+      */}
+      {soleUnit ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border bg-muted/20 p-2.5 text-xs">
+          <span className="text-muted-foreground">
+            {en
+              ? 'Need a garage or an annexe beside it?'
+              : 'هل يوجد كراج أو ملحق بجانبها؟'}
+          </span>
+          <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]" onClick={addAdjacentUnit}>
+            <Plus className="size-3" />
+            {en ? 'Add adjacent unit' : 'إضافة وحدة ملاصقة'}
+          </Button>
+        </div>
+      ) : null}
+
       {/* ── Mobile Scroll & Unit Count Hint ── */}
       <div className="sm:hidden flex items-center justify-between text-[11px] text-muted-foreground px-0.5">
         <span>{en ? 'Scroll horizontally for more columns →' : 'مرّر أفقياً لعرض باقي الخانات ←'}</span>
@@ -742,23 +925,127 @@ export function UnitGridPicker({
       <div dir="ltr" className="overflow-x-auto max-h-[360px] sm:max-h-[420px] overflow-y-auto rounded-xl border border-border/80 bg-muted/10 p-2 sm:p-2.5">
         <div className="inline-flex flex-col gap-1 min-w-full">
           {rows.map((floor) => {
+            /*
+              One grid item per *unit*, not per column.
+
+              A unit painted across three blocks used to be three buttons with
+              their inner corners squared off, which is not the same picture: a
+              1fr grid puts its `gap` between every item, so the three-block
+              warehouse an officer drew came back as three touching-but-separate
+              boxes with two hairlines through it — indistinguishable at a
+              glance from three one-block units side by side. That is the one
+              distinction the matrix exists to show.
+
+              Spanning a single element over the columns instead removes the
+              gaps inside the unit (a `gap` applies between items, never within
+              one) and gives the label one box to be centred in, rather than
+              centring it in the first block of three.
+
+              Empty cells stay one element per column: they are the drag
+              target, and `startSelection` needs a `data-col` per block.
+            */
+            const cells: ReactNode[] = [];
+            for (let col = 1; col <= colsCount; ) {
+              const unit = unitAt(floor, col);
+
+              if (!unit) {
+                const isPendingCell =
+                  pending?.floor === floor && col >= pending.startCol && col <= pending.endCol;
+                const thisCol = col;
+                cells.push(
+                  <button
+                    key={`empty-${thisCol}`}
+                    type="button"
+                    data-cell
+                    data-floor={floor}
+                    data-col={thisCol}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      startSelection(floor, thisCol);
+                    }}
+                    className={cn(
+                      'relative h-9 sm:h-10 touch-none select-none rounded-[4px] border text-[9px] font-semibold leading-none transition-colors',
+                      isPendingCell
+                        ? 'border-primary bg-primary/15'
+                        : 'border-border/70 bg-background hover:bg-muted/60 cursor-pointer',
+                    )}
+                  />,
+                );
+                col += 1;
+                continue;
+              }
+
+              // Clamped, because a unit may have been painted wider than the
+              // grid the officer has since narrowed to — it is listed as
+              // stranded elsewhere rather than drawn outside the matrix.
+              const start = Math.max(unit.startCol, 1);
+              const end = Math.min(unit.endCol, colsCount);
+              const span = Math.max(1, end - start + 1);
+              const palette = PALETTE[unit.colorIndex % PALETTE.length];
+
+              cells.push(
+                <button
+                  key={`unit-${unit.clientId}`}
+                  type="button"
+                  data-cell
+                  data-floor={floor}
+                  data-col={start}
+                  style={{ gridColumn: `span ${span} / span ${span}` }}
+                  title={[unit.unitCode, labels.unitType[unit.unitType]]
+                    .filter(Boolean)
+                    .join(' — ')}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    startSelection(floor, start);
+                  }}
+                  onClick={() => openEdit(unit)}
+                  className={cn(
+                    'relative h-9 sm:h-10 touch-none select-none cursor-pointer rounded-[4px] border border-transparent ring-1 px-1 transition-colors',
+                    palette?.bg,
+                    palette?.text,
+                    palette?.ring,
+                  )}
+                >
+                  {/* Centred across the whole merged rectangle. The type name
+                      is what an officer reads the floor plan by; the code is
+                      shown once it exists, since a standing flat is known by
+                      it. Both are truncated rather than wrapped — a two-line
+                      label would push the row taller than its neighbours. */}
+                  <span className="absolute inset-0 flex flex-col items-center justify-center gap-px overflow-hidden px-0.5 text-center">
+                    <span className="max-w-full truncate text-[9px] font-bold leading-tight">
+                      {unit.unitCode ?? labels.unitType[unit.unitType]}
+                    </span>
+                    {unit.unitCode && span > 1 ? (
+                      <span className="max-w-full truncate text-[8px] font-medium leading-tight opacity-80">
+                        {labels.unitType[unit.unitType]}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>,
+              );
+              col = end + 1;
+            }
+
             return (
               <div
                 key={floor}
                 className={cn(
                   'flex items-center gap-1.5',
-                  // The pavement. Drawn under the ground-floor row so the
-                  // basements below it read as below it, rather than as three
-                  // more storeys whose labels happen to start with a B.
+                  // The pavement, and it is red on purpose.
+                  //
+                  // It is the one line on the matrix that changes what a row
+                  // *means* — everything below it is B1, B2, and a unit painted
+                  // one row too low is a flat recorded in a basement. A dashed
+                  // grey rule read as another gridline; this does not.
                   floor === 0 &&
                     safeBasementsCount > 0 &&
-                    'border-b-2 border-dashed border-border pb-1.5',
+                    'border-b-2 border-destructive pb-1.5',
                 )}
               >
                 <span
                   className={cn(
                     'sticky left-0 z-10 w-16 sm:w-20 shrink-0 text-end text-[10px] sm:text-[11px] font-medium tabular-nums px-1.5 py-0.5 rounded shadow-2xs select-none bg-card/95 dark:bg-muted/95 backdrop-blur-xs',
-                    floor < 0 ? 'font-mono text-foreground/70' : 'text-muted-foreground',
+                    floor < 0 ? 'font-mono text-destructive/80' : 'text-muted-foreground',
                   )}
                 >
                   {floorLabel(floor, en)}
@@ -767,61 +1054,7 @@ export function UnitGridPicker({
                   className="grid flex-1 gap-1"
                   style={{ gridTemplateColumns: `repeat(${colsCount}, minmax(1.5rem, 1fr))` }}
                 >
-                  {cols.map((col) => {
-                    const unit = unitAt(floor, col);
-                    const isPendingCell =
-                      pending?.floor === floor && col >= pending.startCol && col <= pending.endCol;
-                    const isStart = unit?.startCol === col;
-                    const isEnd = unit?.endCol === col;
-                    const palette = unit ? PALETTE[unit.colorIndex % PALETTE.length] : null;
-
-                    return (
-                      <button
-                        key={col}
-                        type="button"
-                        data-cell
-                        data-floor={floor}
-                        data-col={col}
-                        title={
-                          unit
-                            ? [unit.unitCode, labels.unitType[unit.unitType]]
-                                .filter(Boolean)
-                                .join(' — ')
-                            : undefined
-                        }
-                        onPointerDown={(event) => {
-                          event.preventDefault();
-                          startSelection(floor, col);
-                        }}
-                        onClick={() => {
-                          if (unit) openEdit(unit);
-                        }}
-                        className={cn(
-                          'relative aspect-square touch-none select-none rounded-[4px] border text-[9px] font-semibold leading-none transition-colors',
-                          !unit && !isPendingCell &&
-                            'border-border/70 bg-background hover:bg-muted/60 cursor-pointer',
-                          isPendingCell && !unit && 'border-primary bg-primary/15',
-                          unit &&
-                            cn(
-                              'cursor-pointer border-transparent ring-1',
-                              palette?.bg,
-                              palette?.text,
-                              palette?.ring,
-                            ),
-                          unit && isStart && 'rounded-s-[4px]',
-                          unit && !isStart && 'rounded-s-none border-s-0',
-                          unit && isEnd && 'rounded-e-[4px]',
-                          unit && !isEnd && 'rounded-e-none',
-                        )}
-                      >
-                        {unit && isStart ? (
-                          <span className="absolute inset-0 flex items-center justify-center truncate px-0.5 text-[8px] font-bold">
-                            {unit.unitCode ?? labels.unitType[unit.unitType].slice(0, 2)}
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
+                  {cells}
                 </div>
               </div>
             );
@@ -846,7 +1079,11 @@ export function UnitGridPicker({
               <span className="font-semibold font-mono">{units.length - existingCount}</span>
             </Badge>
           ) : null}
-          {BUILDING_UNIT_TYPES.map((type) => {
+          {/* Derived from what is actually painted rather than from
+              `BUILDING_UNIT_TYPES`. That list excludes «منزل مستقل» — correctly,
+              as a list of what a building contains — so counting against it
+              silently omitted the one-block house from its own tally. */}
+          {[...new Set(units.map((unit) => unit.unitType))].map((type) => {
             const count = units.filter((u) => u.unitType === type).length;
             if (count === 0) return null;
             return (
@@ -886,7 +1123,7 @@ export function UnitGridPicker({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {BUILDING_UNIT_TYPES.map((type) => (
+                  {panelUnitTypes.map((type) => (
                     <SelectItem key={type} value={type}>
                       {labels.unitType[type]}
                     </SelectItem>

@@ -19,7 +19,13 @@ export class CasesService {
   ) {}
 
   private recordChange(input: {
-    action: 'CASE_CREATED' | 'CASE_UPDATED' | 'CASE_RESOLVED_WITH_CITIZEN' | 'CASE_DELETED';
+    action:
+      | 'CASE_CREATED'
+      | 'CASE_UPDATED'
+      | 'CASE_RESOLVED_WITH_CITIZEN'
+      /** Closed by a finding rather than by a person — see `resolveVacancyCasesForUnit`. */
+      | 'CASE_RESOLVED'
+      | 'CASE_DELETED';
     caseId: string;
     before?: Record<string, unknown>;
     after?: Record<string, unknown>;
@@ -146,6 +152,44 @@ export class CasesService {
         caseId: existing.id,
         before: { status: existing.status, resolvedCitizenId: existing.resolvedCitizenId },
         after: { status: 'RESOLVED', resolvedCitizenId: citizenId, via: 'UNIT_OCCUPANCY' },
+        actor,
+      });
+    }
+
+    return resolved;
+  }
+
+  /**
+   * Closes the «شاغرة قيد التحقق» cases a confirmed vacancy has answered.
+   *
+   * Called from `BuildingsService.confirmVacancy`, for `resolveForUnit`'s
+   * reason and with `resolveForUnit`'s restraint: this is the moment the thing
+   * that case was waiting on actually happened, and nothing else on the unit is
+   * answered by it. A refused entry is still refused, a disputed ownership
+   * still disputed, and both stay on somebody's list.
+   *
+   * Audited per case like the occupancy path, so a case that closes without
+   * anybody pressing anything on it still names what closed it.
+   */
+  async resolveVacancyCasesForUnit(
+    unitId: string,
+    actor: { id: string; role: string },
+  ): Promise<number> {
+    const open = await this.cases.findAll({ unitId, status: 'OPEN' });
+    const scheduled = await this.cases.findAll({ unitId, status: 'SCHEDULED' });
+    const affected = [...open, ...scheduled].filter(
+      (existing) => existing.caseType === 'VACANT_UNCONFIRMED',
+    );
+    if (affected.length === 0) return 0;
+
+    const resolved = await this.cases.resolveVacancyCasesForUnit(unitId);
+
+    for (const existing of affected) {
+      this.recordChange({
+        action: 'CASE_RESOLVED',
+        caseId: existing.id,
+        before: { status: existing.status },
+        after: { status: 'RESOLVED', via: 'VACANCY_CONFIRMED' },
         actor,
       });
     }

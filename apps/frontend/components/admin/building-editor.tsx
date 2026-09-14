@@ -25,6 +25,7 @@ import {
   formatBuildingCode,
   getLabels,
   isOccupiableLifecycle,
+  isUnsurveyableShell,
   nextBuildingSuffix,
   STRUCTURE_TYPE,
   UNZONED_CODE,
@@ -49,7 +50,13 @@ import {
   type DuplicateBuildingCandidate,
   type UnitWithOccupants,
 } from '@/lib/api-client';
+import {
+  clearBuildingDraft,
+  loadBuildingDraft,
+  saveBuildingDraft,
+} from '@/lib/building-draft';
 import { pointInGeometry } from '@/lib/map-geometry';
+import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { offlineStorageAvailable } from '@/lib/offline-db';
 import { queueBuilding } from '@/lib/offline-sync';
 import { loadSession, clearSession } from '@/lib/session';
@@ -224,6 +231,7 @@ export function BuildingEditor({
   initialParcelNumber,
   buildingId,
   initialStep = 0,
+  scope = 'all',
 }: {
   tenant: string;
   locale: string;
@@ -241,6 +249,19 @@ export function BuildingEditor({
   /** `?step=units` lands an officer on the matrix, which is what an empty
    *  shell's «توليد المصفوفة» is asking for. */
   initialStep?: 0 | 1 | 2;
+  /**
+   * How much of the building this pass is allowed to change.
+   *
+   * `'info'` is «تعديل معلومات المبنى»: the shell only — entrance, name, posted
+   * number, type, status, notes — with no matrix step and no unit diff on save.
+   * It exists because those two edits have different risks. Correcting a
+   * building's name is a one-field change; the matrix carries flats with
+   * occupancies, visits and server-allocated codes, and its save works by
+   * diffing what is on the grid against what was loaded. Routing every small
+   * shell correction through that diff makes each one a chance to remove a
+   * flat by accident.
+   */
+  scope?: 'all' | 'info';
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -308,27 +329,123 @@ export function BuildingEditor({
 
   const trimmedParcel = parcelNumber.trim();
 
-  /** Fills the whole wizard from the building on file. */
+  /**
+   * Restoring across a locale switch.
+   *
+   * The locale is a route segment, so switching language is a navigation to a
+   * different route: this component unmounts and a fresh one mounts with every
+   * `useState` back at its initial value. Without this, changing language four
+   * fields into a building — pin dropped, matrix painted — empties the form.
+   *
+   * Runs once, before the edit-mode fetch resolves, and `restoredRef` stops the
+   * autosave below from writing the blank initial state over a good draft in
+   * the same tick. See `lib/building-draft.ts` for why this is session-scoped.
+   */
+  /** The wizard's outermost element — what a step change scrolls back to. */
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  const restoredRef = useRef(false);
+  /** Whether the values on screen came from a draft rather than the server —
+   *  read by `loadDetail` so the refetch does not overwrite them. A ref, not
+   *  state: `loadDetail` must not be rebuilt when it flips. */
+  const draftRestoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+
+    const draft = loadBuildingDraft(tenant, buildingId);
+    if (!draft) return;
+
+    setStep(draft.step);
+    setParcelNumber(draft.parcelNumber);
+    pinParcelRef.current = draft.parcelNumber.trim() || null;
+    setName(draft.name);
+    setPostedNumber(draft.postedNumber);
+    setStructureType(draft.structureType);
+    setLifecycleStatus(draft.lifecycleStatus);
+    setFloorsCount(draft.floorsCount);
+    setBasementsCount(draft.basementsCount);
+    setNotes(draft.notes);
+    setPin(draft.pin);
+    setGridSize(draft.gridSize);
+    setGridUnits(draft.gridUnits);
+    setAcknowledgedDuplicates(draft.acknowledgedDuplicates);
+    draftRestoredRef.current = true;
+  }, [tenant, buildingId]);
+
+  /**
+   * Autosave, on every change to anything the officer typed, dropped or
+   * painted. Cheap: one `JSON.stringify` of a few fields into sessionStorage.
+   */
+  useEffect(() => {
+    if (!restoredRef.current) return;
+    saveBuildingDraft(tenant, buildingId, {
+      step,
+      parcelNumber,
+      name,
+      postedNumber,
+      structureType,
+      lifecycleStatus,
+      floorsCount,
+      basementsCount,
+      notes,
+      pin,
+      gridSize,
+      gridUnits,
+      acknowledgedDuplicates,
+    });
+  }, [
+    tenant,
+    buildingId,
+    step,
+    parcelNumber,
+    name,
+    postedNumber,
+    structureType,
+    lifecycleStatus,
+    floorsCount,
+    basementsCount,
+    notes,
+    pin,
+    gridSize,
+    gridUnits,
+    acknowledgedDuplicates,
+  ]);
+
+  /**
+   * Fills the whole wizard from the building on file.
+   *
+   * `keepEdits` is the locale-switch case. The remount refetches the building,
+   * and this would then write the server's copy over the corrections the
+   * officer had already typed — so when a draft was restored, only the parts
+   * the server owns are applied: the allocated code, the suffix, the baseline
+   * the save diffs against, and the units the grid cannot draw. What the
+   * officer typed stays theirs.
+   */
   const hydrate = useCallback(
-    (detail: BuildingDetail) => {
-      setParcelNumber(detail.parcelNumber);
-      pinParcelRef.current = detail.parcelNumber;
-      setName(detail.name ?? '');
-      setPostedNumber(detail.postedNumber ?? '');
-      setStructureType(detail.structureType);
-      setLifecycleStatus(detail.lifecycleStatus);
-      setNotes(detail.notes ?? '');
+    (detail: BuildingDetail, keepEdits = false) => {
+      if (!keepEdits) {
+        setParcelNumber(detail.parcelNumber);
+        pinParcelRef.current = detail.parcelNumber;
+        setName(detail.name ?? '');
+        setPostedNumber(detail.postedNumber ?? '');
+        setStructureType(detail.structureType);
+        setLifecycleStatus(detail.lifecycleStatus);
+        setNotes(detail.notes ?? '');
+        setPin(
+          detail.latitude != null && detail.longitude != null
+            ? [detail.longitude, detail.latitude]
+            : null,
+        );
+      }
       setSuffix(detail.codeSuffix);
       setSavedCode(detail.code);
-      setPin(
-        detail.latitude != null && detail.longitude != null
-          ? [detail.longitude, detail.latitude]
-          : null,
-      );
 
       const { drafts, hidden, columns, floors, basements } = gridFromUnits(detail.units, en);
-      setGridUnits(drafts);
-      setGridSize(columns);
+      if (!keepEdits) {
+        setGridUnits(drafts);
+        setGridSize(columns);
+      }
       setHiddenUnits(hidden);
       /*
         The taller of the two answers wins. A matrix carrying a unit on floor 5
@@ -341,8 +458,10 @@ export function BuildingEditor({
         This is the case that made the column worth adding — those units existed
         long before anywhere could say the basement did.
       */
-      setFloorsCount(String(Math.max(detail.floorsCount, floors)));
-      setBasementsCount(String(Math.max(detail.basementsCount ?? 0, basements)));
+      if (!keepEdits) {
+        setFloorsCount(String(Math.max(detail.floorsCount, floors)));
+        setBasementsCount(String(Math.max(detail.basementsCount ?? 0, basements)));
+      }
 
       baselineRef.current = new Map(
         drafts
@@ -367,7 +486,7 @@ export function BuildingEditor({
     setLoadingDetail(true);
     setLoadError(null);
     try {
-      hydrate(await getBuilding(tenant, token, buildingId));
+      hydrate(await getBuilding(tenant, token, buildingId), draftRestoredRef.current);
     } catch (caught) {
       logApiError(caught);
       if (caught instanceof ApiRequestError && caught.status === 401) {
@@ -545,12 +664,84 @@ export function BuildingEditor({
    * unfixable from the one screen that exists to fix them.
    */
   const houseShortcut = isHouse && !editing;
-  /** The last real step — the matrix step doesn't exist for a new house. */
-  const lastStep: 0 | 1 | 2 = houseShortcut ? 1 : 2;
-  const visibleSteps = houseShortcut ? STEPS.slice(0, 2) : STEPS;
+
+  /** Units the census already holds for this building, as loaded. */
+  const hasRecordedUnits = useMemo(
+    () => gridUnits.some((unit) => unit.existingId),
+    [gridUnits],
+  );
+
+  /**
+   * A structure whose interior cannot be surveyed — «مهدوم» or «متضررة من
+   * الحرب و غير مسكونة». There are no storeys to count and no flats to paint,
+   * so the wizard stops asking for both.
+   *
+   * Withheld from a building that already has units on file, and that
+   * exception is the important half. Marking a standing block war-damaged is
+   * a correction about the shell; its twelve recorded flats still carry
+   * occupancies, visits and codes, and hiding the only screen that can reach
+   * them would strand them — findable by nobody, fixable from nowhere. The
+   * officer gets the matrix, and decides unit by unit what became of each.
+   */
+  const shellShortcut = isUnsurveyableShell(lifecycleStatus) && !hasRecordedUnits;
+
+  /**
+   * Standing, damaged, empty — the full wizard, deliberately. The storeys are
+   * countable from the pavement and the flats are what reconstruction is
+   * costed on, so this building gets its floor fields and its matrix like any
+   * other. Only the notes prompt changes, to ask for what was seen.
+   */
+  const warDamaged = lifecycleStatus === 'WAR_DAMAGED_UNINHABITED';
+
+  /** An info-only pass never reaches the matrix either — by request rather
+   *  than because the structure has none. */
+  const infoOnly = scope === 'info';
+  /** Neither a new house nor an unsurveyable shell has a matrix to paint. */
+  const skipsMatrix = houseShortcut || shellShortcut || infoOnly;
+  /** The last real step — the matrix step doesn't exist for either of them. */
+  const lastStep: 0 | 1 | 2 = skipsMatrix ? 1 : 2;
+  const visibleSteps = skipsMatrix ? STEPS.slice(0, 2) : STEPS;
+
+  /**
+   * The wizard shrinking under the officer's feet must not leave them standing
+   * on a step that no longer exists — on an edit every step is clickable, so
+   * they can be on the matrix when they set the status to «مهدوم».
+   */
+  useEffect(() => {
+    setStep((current) => (current > lastStep ? lastStep : current));
+  }, [lastStep]);
+
+  /**
+   * The fields are hidden, so the values behind them have to be ones the
+   * schema accepts rather than whatever was typed before: `floorsCount` is
+   * `.min(1)` and would refuse a save with an empty box, and a 4 left over
+   * from a guess at a collapsed building is a fabricated observation.
+   *
+   * 1 and 0 are not claims about the rubble. They are the schema's floor,
+   * recorded because something must be, and the notes field below is where
+   * what was actually seen goes.
+   */
+  useEffect(() => {
+    if (!shellShortcut) return;
+    setFloorsCount('1');
+    setBasementsCount('0');
+    setGridSize(DEFAULT_GRID_SIZE);
+    setGridUnits((current) => current.filter((unit) => unit.existingId));
+  }, [shellShortcut]);
+
+  /** The reverse: a status corrected back to a standing building gets its
+   *  floor count back rather than silently keeping the 1 this shortcut wrote.
+   *  Skipped for a house, whose 1 is the truth and whose own effect owns it. */
+  const wasShell = useRef(shellShortcut);
+  useEffect(() => {
+    if (wasShell.current && !shellShortcut && !houseShortcut) {
+      setFloorsCount((current) => (current === '1' ? '3' : current));
+    }
+    wasShell.current = shellShortcut;
+  }, [shellShortcut, houseShortcut]);
 
   useEffect(() => {
-    if (!houseShortcut) return;
+    if (!houseShortcut || shellShortcut) return;
     setFloorsCount('1');
     setGridSize(1);
     setGridUnits([
@@ -563,7 +754,10 @@ export function BuildingEditor({
         colorIndex: 0,
       },
     ]);
-  }, [houseShortcut]);
+    /* `shellShortcut` is a dependency, not just a guard: a house marked
+       «مهدوم» and then corrected back has had its one unit cleared, and
+       without this the effect would not re-run to paint it again. */
+  }, [houseShortcut, shellShortcut]);
 
   /** The reverse transition — leaving a structure type of "house" un-paints
    *  the auto-created unit rather than leaving it stranded as a stale 1×1
@@ -595,15 +789,36 @@ export function BuildingEditor({
 
   // ── Per-step validation gates ──
   const step1Valid = Boolean(trimmedParcel) && !(pin && pinVerdict === false);
+  /*
+    No floor checks here any more. The height and the depth are the matrix's to
+    set — it is the only control that can see whether lowering either would
+    strand a painted unit — and this step no longer has a field that could put
+    them in an invalid state. Gating on numbers nobody on this screen can edit
+    would be a dead end an officer could not clear.
+  */
   const step2Valid =
-    !(duplicates?.length && !acknowledgedDuplicates) &&
-    Number(floorsCount) >= 1 &&
-    Number(basementsCount) >= 0 &&
-    orphanedUnits.length === 0;
+    !(duplicates?.length && !acknowledgedDuplicates) && orphanedUnits.length === 0;
 
-  const goNext = () =>
-    setStep((current) => (current < lastStep ? ((current + 1) as 0 | 1 | 2) : current));
-  const goBack = () => setStep((current) => (current > 0 ? ((current - 1) as 0 | 1 | 2) : current));
+  /**
+   * Moving between steps puts the top of the new step back on screen.
+   *
+   * «التالي» lives at the *bottom* of the wizard and the step it opens starts
+   * at the top. Without this, pressing it from the foot of a long step — the
+   * summary card at the end of «معلومات المنشأة», say — leaves the reader
+   * looking at the footer of a step they have never seen, with the first
+   * question a screen and a half above them. On a phone that reads as the
+   * button having done nothing.
+   *
+   * Both directions, and the step rail too: every one of them replaces the
+   * whole body of the card.
+   */
+  const goToStep = (next: 0 | 1 | 2) => {
+    setStep(next);
+    scrollElementToTop(rootRef.current);
+  };
+
+  const goNext = () => goToStep((step < lastStep ? step + 1 : step) as 0 | 1 | 2);
+  const goBack = () => goToStep((step > 0 ? step - 1 : step) as 0 | 1 | 2);
 
   /**
    * A correction: the shell in one PATCH, then the difference between the
@@ -631,6 +846,16 @@ export function BuildingEditor({
       basementsCount: Number(basementsCount) || 0,
       notes: notes.trim() || null,
     });
+
+    /*
+      «تعديل معلومات المبنى» stops here. The shell is saved and the matrix is
+      not touched — no removals, no additions, no re-sequencing. The diff below
+      is driven by what is on the grid, and on an info-only pass the grid was
+      never shown, so running it could only ever compare the building against
+      an untouched copy of itself. Skipping it outright is the guarantee the
+      button's label makes.
+    */
+    if (infoOnly) return [];
 
     const baseline = baselineRef.current;
     const failures: string[] = [];
@@ -720,7 +945,7 @@ export function BuildingEditor({
   const handleSave = async () => {
     if (!trimmedParcel) {
       setFieldErrors({ parcelNumber: en ? 'Parcel number is required' : 'رقم العقار مطلوب' });
-      setStep(0);
+      goToStep(0);
       return;
     }
     if (pin && pinVerdict === false) {
@@ -729,7 +954,7 @@ export function BuildingEditor({
           ? 'The entrance pin is outside the parcel boundary. Relocate it or clear it before saving.'
           : 'دبوس المدخل خارج حدود العقار. حرّكه أو احذفه قبل الحفظ.',
       );
-      setStep(0);
+      goToStep(0);
       return;
     }
     if (orphanedUnits.length > 0) {
@@ -738,7 +963,7 @@ export function BuildingEditor({
           ? `${orphanedUnits.length} unit(s) are on floors above the current floor count (${floorsCount}). Raise the floor count or remove them from the matrix.`
           : `${orphanedUnits.length} وحدة موضوعة على طوابق أعلى من عدد الطوابق الحالي (${floorsCount}). ارفع عدد الطوابق أو احذف هذه الوحدات من المصفوفة.`,
       );
-      setStep(1);
+      goToStep(1);
       return;
     }
 
@@ -782,10 +1007,11 @@ export function BuildingEditor({
               : `حُفظ المبنى، لكن رُفض ${failures.length} تعديل على الوحدات: ${failures.join(' · ')}`,
           );
           await loadDetail();
-          setStep(2);
+          goToStep(2);
           return;
         }
 
+        clearBuildingDraft(tenant, buildingId);
         toast.success(
           en ? `Building ${savedCode ?? ''} updated` : `تم تحديث المبنى ${savedCode ?? ''}`,
         );
@@ -817,6 +1043,7 @@ export function BuildingEditor({
           blueprint: null,
         });
 
+        clearBuildingDraft(tenant, buildingId);
         toast.info(en ? 'Saved on this device' : 'حُفظ على هذا الجهاز', {
           description: en
             ? `${codePreview ?? trimmedParcel} is provisional until network sync restores.`
@@ -851,6 +1078,12 @@ export function BuildingEditor({
       const saved = response.building;
       const reconciled = response.reconciled;
 
+      /* On file now, so the draft has done its job. Cleared before the toasts
+         rather than after the redirect: the officer may press «مبنى جديد»
+         straight from the list, and restoring the building they just created
+         into a form headed «مبنى جديد» is worse than no restore at all. */
+      clearBuildingDraft(tenant, buildingId);
+
       if (reconciled) {
         toast.warning(en ? 'Building code allocated' : 'تغيّر رمز المبنى عند الحفظ', {
           description: en
@@ -882,7 +1115,7 @@ export function BuildingEditor({
         setDuplicates(candidates);
         setAcknowledgedDuplicates(false);
         setError((caught as ApiRequestError).payload.message);
-        setStep(1);
+        goToStep(1);
         return;
       }
 
@@ -903,6 +1136,14 @@ export function BuildingEditor({
   };
 
   const cancelHref = `${base}/buildings`;
+  /**
+   * «إلغاء» is the officer saying the draft should not survive — so it is
+   * cleared here and *only* here among the ways off this screen. The
+   * breadcrumb is not: going to «سجل المباني» to look a code up and coming
+   * back is the ordinary thing to do mid-form, and losing the work to it is
+   * the bug this draft exists to prevent.
+   */
+  const cancelDraft = () => clearBuildingDraft(tenant, buildingId);
   const canGoNext = step === 0 ? step1Valid : step === 1 ? step2Valid : true;
   /** What the code line says: an allocated code on an edit, the provisional
    *  preview on a creation. */
@@ -911,9 +1152,17 @@ export function BuildingEditor({
     ? en
       ? 'Save Changes'
       : 'حفظ التعديلات'
-    : en
-      ? 'Create Building'
-      : 'إنشاء المبنى';
+    : shellShortcut
+      ? /* «حفظ المبنى» rather than «إنشاء المبنى» on a shortened wizard: the
+           officer is on step 2 of 2 and the button is where «التالي» stood a
+           moment ago, so it has to read as the end of the form, not as a
+           second way of starting one. */
+        en
+        ? 'Save Building'
+        : 'حفظ المبنى'
+      : en
+        ? 'Create Building'
+        : 'إنشاء المبنى';
 
   if (editing && loadingDetail) {
     return (
@@ -943,9 +1192,11 @@ export function BuildingEditor({
   }
 
   return (
-    <div className="w-full max-w-7xl mx-auto space-y-6 px-4 py-6 sm:px-6 lg:px-8 pb-28 sm:pb-12">
+    <div ref={rootRef} className="w-full max-w-7xl mx-auto space-y-6 px-4 py-6 sm:px-6 lg:px-8 pb-28 sm:pb-12">
       {/* ── Breadcrumb & Navigation ── */}
       <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
+        {/* No `cancelDraft` here — see its comment. Leaving to look a code up
+            and coming back must keep the work. */}
         <Link
           href={cancelHref}
           className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground font-medium"
@@ -1008,8 +1259,8 @@ export function BuildingEditor({
 
         {/* Desktop Action Buttons */}
         <div className="hidden sm:flex items-center gap-2.5 shrink-0">
-          <Link href={cancelHref} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-            {en ? 'Cancel' : 'إلغاء'}
+          <Link href={cancelHref} onClick={cancelDraft} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+
           </Link>
           {step > 0 ? (
             <Button variant="outline" size="sm" onClick={goBack} className="gap-1.5">
@@ -1062,7 +1313,7 @@ export function BuildingEditor({
             <li key={item.en} className="flex flex-1 items-center gap-2 sm:gap-3">
               <button
                 type="button"
-                onClick={() => reachable && setStep(index as 0 | 1 | 2)}
+                onClick={() => reachable && goToStep(index as 0 | 1 | 2)}
                 disabled={!reachable}
                 className={cn(
                   'flex size-8 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors sm:size-9',
@@ -1385,6 +1636,39 @@ export function BuildingEditor({
                 </Field>
               </div>
 
+              {/*
+                Said out loud, because two things vanish at once — the floor
+                fields above and the matrix step in the rail — and a form that
+                quietly drops half of itself reads as a bug. The second line is
+                the one that matters on an edit: it explains why a building
+                that already has flats keeps its matrix while this one loses it.
+              */}
+              {isUnsurveyableShell(lifecycleStatus) ? (
+                <div className="flex items-start gap-2 rounded-xl border border-sky-500/40 bg-sky-500/10 p-3.5 text-xs text-sky-700 dark:text-sky-400">
+                  <Info className="size-4 shrink-0 mt-0.5" aria-hidden />
+                  <div className="space-y-1">
+                    <p className="font-semibold">
+                      {en
+                        ? 'Structure classified as demolished — there are no storeys left to count, so the floor fields and the unit matrix are skipped automatically.'
+                        : 'المنشأة مصنَّفة مهدومة — لم يبقَ طوابق تُعدّ، لذا يُتخطّى عدد الطوابق ومصفوفة الوحدات تلقائياً.'}
+                    </p>
+                    {hasRecordedUnits ? (
+                      <p className="opacity-80">
+                        {en
+                          ? 'This building already has units on file, so the matrix stays available — record what became of each one there.'
+                          : 'لهذا المبنى وحدات مسجَّلة مسبقاً، لذا تبقى المصفوفة متاحة — سجِّل مصير كل وحدة فيها.'}
+                      </p>
+                    ) : (
+                      <p className="opacity-80">
+                        {en
+                          ? 'Describe what was observed in the field notes below.'
+                          : 'دوِّن ما شوهد ميدانياً في الملاحظات أدناه.'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
               {duplicates && duplicates.length > 0 ? (
                 <div className="space-y-3 rounded-xl border border-warning/50 bg-warning/10 p-3.5">
                   <div className="flex items-start gap-2 text-xs font-semibold text-warning">
@@ -1433,103 +1717,42 @@ export function BuildingEditor({
                 </div>
               ) : null}
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field
-                  label={en ? 'Building Name (Optional)' : 'اسم المبنى (اختياري)'}
-                  htmlFor="building-name"
-                  error={fieldErrors.name}
-                  hint={en ? 'Common name used by locals' : 'الاسم الشائع بين أهالي الحي'}
-                >
-                  <Input
-                    id="building-name"
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder={en ? 'Al-Nour Building' : 'بناية النور'}
-                    className="h-10"
-                  />
-                </Field>
+              {/*
+                «الرقم المكتوب على المبنى» is no longer asked for here.
 
-                <Field
-                  label={en ? 'Posted Number on Door (Optional)' : 'الرقم المكتوب على المبنى (اختياري)'}
-                  htmlFor="building-posted"
-                  error={fieldErrors.postedNumber}
-                  hint={en ? 'Physical plaque or painted door number' : 'رقم اللوحة أو المدوّن على الباب'}
-                >
-                  <Input
-                    id="building-posted"
-                    value={postedNumber}
-                    onChange={(event) => setPostedNumber(event.target.value)}
-                    dir="ltr"
-                    className="text-start h-10 font-mono"
-                    placeholder="12"
-                  />
-                </Field>
-              </div>
+                The value itself is not abandoned: `postedNumber` stays on the
+                building, stays on the wire, and is still printed beside the
+                allocated code wherever the two disagree — a collector in the
+                street trusts the door. What is gone is the *input*, so this
+                step stops asking an officer at a desk for a number that can
+                only be read off the wall.
 
-              {houseShortcut ? null : (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field
-                    label={en ? 'Floors Count' : 'عدد الطوابق'}
-                    htmlFor="building-floors"
-                    required
-                    error={fieldErrors.floorsCount}
-                    hint={en ? 'Total storeys above ground' : 'إجمالي عدد الطوابق فوق الأرض'}
-                  >
-                    <Input
-                      id="building-floors"
-                      type="number"
-                      min={1}
-                      max={100}
-                      step={1}
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={floorsCount}
-                      onChange={(event) => setFloorsCount(event.target.value)}
-                      dir="ltr"
-                      className="text-start h-10 font-mono"
-                    />
-                  </Field>
+                Deliberately still sent on save, carrying whatever was loaded.
+                Dropping it from the payload would have every edit of a
+                building quietly blank a plaque number somebody had recorded.
+              */}
+              <Field
+                label={en ? 'Building Name (Optional)' : 'اسم المبنى (اختياري)'}
+                htmlFor="building-name"
+                error={fieldErrors.name}
+                hint={en ? 'Common name used by locals' : 'الاسم الشائع بين أهالي الحي'}
+              >
+                <Input
+                  id="building-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder={en ? 'Al-Nour Building' : 'بناية النور'}
+                  className="h-10"
+                />
+              </Field>
 
-                  {/*
-                    A depth, not a signed floor: 2 means B1 and B2. Asked
-                    separately from the height because they are two different
-                    observations — one made from the pavement, one from the
-                    stairwell — and because «عدد الطوابق» has always meant
-                    storeys above ground everywhere else in the system.
-                  */}
-                  <Field
-                    label={en ? 'Basement Levels' : 'عدد الطوابق تحت الأرض'}
-                    htmlFor="building-basements"
-                    error={fieldErrors.basementsCount}
-                    hint={
-                      en
-                        ? 'Levels below ground — 2 means B1 and B2. Leave at 0 for none.'
-                        : 'الطوابق تحت الأرض — 2 تعني B1 و B2. اتركه صفراً إن لم يوجد قبو.'
-                    }
-                  >
-                    <Input
-                      id="building-basements"
-                      type="number"
-                      min={0}
-                      max={10}
-                      step={1}
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={basementsCount}
-                      onChange={(event) => setBasementsCount(event.target.value)}
-                      dir="ltr"
-                      className="text-start h-10 font-mono"
-                    />
-                  </Field>
-                </div>
-              )}
 
               {orphanedUnits.length > 0 ? (
                 <p role="alert" className="flex items-center gap-1.5 text-xs text-destructive">
                   <AlertTriangle className="size-3.5 shrink-0" />
                   {en
-                    ? `${orphanedUnits.length} unit(s) in the matrix are on floors above this count. Raise it, or remove them in the next step.`
-                    : `${orphanedUnits.length} وحدة في المصفوفة موضوعة على طوابق أعلى من هذا العدد. ارفع العدد، أو احذفها في الخطوة التالية.`}
+                    ? `${orphanedUnits.length} unit(s) sit outside the current height of the matrix. Open the unit matrix to raise it or remove them.`
+                    : `${orphanedUnits.length} وحدة خارج ارتفاع المصفوفة الحالي. افتح مصفوفة الوحدات لرفع الارتفاع أو حذفها.`}
                 </p>
               ) : null}
 
@@ -1537,15 +1760,40 @@ export function BuildingEditor({
                 label={en ? 'Field Notes (Optional)' : 'ملاحظات ميدانية (اختياري)'}
                 htmlFor="building-notes"
                 error={fieldErrors.notes}
-                hint={en ? 'Useful guidance for upcoming field visits' : 'إرشادات تفيد فرق المسح الميداني القادمة'}
+                hint={
+                  /* On a demolished plot this field stops being optional in
+                     practice: the floor count and the matrix are gone, so it
+                     is the only place left that can say what was seen. */
+                  shellShortcut
+                    ? en
+                      ? 'The only record of what was observed — the floor count and matrix are skipped'
+                      : 'السجل الوحيد لما شوهد — عدد الطوابق والمصفوفة متخطَّاة'
+                    : warDamaged
+                      ? en
+                        ? 'Record the damage — the storeys and units are still entered normally'
+                        : 'دوِّن الأضرار — عدد الطوابق والوحدات تُدخَل كالمعتاد'
+                      : en
+                        ? 'Useful guidance for upcoming field visits'
+                        : 'إرشادات تفيد فرق المسح الميداني القادمة'
+                }
               >
                 <Textarea
                   id="building-notes"
-                  rows={2}
+                  rows={shellShortcut || warDamaged ? 3 : 2}
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
                   placeholder={
-                    en ? 'e.g. Side entrance via garden stairs…' : 'مثال: المدخل من الدرج الجانبي عبر الحديقة…'
+                    shellShortcut
+                      ? en
+                        ? 'e.g. Structure cleared after shelling; plot empty at the time of the visit…'
+                        : 'مثال: أُزيلت المنشأة بعد القصف؛ العقار خالٍ وقت الزيارة…'
+                      : warDamaged
+                        ? en
+                          ? 'e.g. Severe structural damage from shelling, uninhabitable, residents displaced; storeys counted from the street…'
+                          : 'مثال: أضرار إنشائية بالغة من القصف، غير صالحة للسكن، السكان نازحون؛ عُدّت الطوابق من الخارج…'
+                        : en
+                          ? 'e.g. Side entrance via garden stairs…'
+                          : 'مثال: المدخل من الدرج الجانبي عبر الحديقة…'
                   }
                   className="resize-none"
                 />
@@ -1581,6 +1829,7 @@ export function BuildingEditor({
               <UnitGridPicker
                 locale={locale}
                 structureType={structureType}
+                onStructureTypeChange={setStructureType}
                 floorsCount={Number(floorsCount) || 1}
                 onFloorsCountChange={(newFloors) => setFloorsCount(String(newFloors))}
                 basementsCount={Number(basementsCount) || 0}
@@ -1615,96 +1864,112 @@ export function BuildingEditor({
           </Card>
         ) : null}
 
-        {/* ── Structure Summary (ملخص المنشأة) at the bottom ── */}
-        <Card className="shadow-xs border-border/80 bg-muted/15">
-          <CardHeader className="pb-3 border-b bg-muted/30">
-            <div className="flex items-center justify-between gap-2">
-              <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <ClipboardCheck className="size-4 text-primary" />
-                <span>{en ? 'Structure Summary' : 'ملخص المنشأة'}</span>
-              </CardTitle>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground hidden sm:inline">
-                  {en
-                    ? `Step ${step + 1} of ${visibleSteps.length}`
-                    : `الخطوة ${step + 1} من ${visibleSteps.length}`}
-                </span>
-                <Badge variant="outline" className="text-xs font-mono border-primary/40 bg-primary/5 text-primary">
-                  {codePreview ?? '—'}
-                </Badge>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Parcel Number' : 'رقم العقار'}</p>
-                <p dir="ltr" className="font-mono font-bold text-sm sm:text-base text-foreground truncate">
-                  {trimmedParcel || '—'}
-                </p>
-              </div>
+        {/*
+          ── Structure Summary (ملخص المنشأة) ──
 
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Building Code' : 'رمز المبنى'}</p>
-                <p dir="ltr" className="font-mono font-bold text-sm sm:text-base text-primary truncate">
-                  {codePreview || '—'}
-                </p>
-              </div>
+          The last step only. This is a read-back of what is about to be saved
+          — «راجع قبل الحفظ» — and on step 1 there is nothing to read back yet:
+          it sat under a half-filled form reciting «رقم العقار —», «القطاع —»,
+          «٠ وحدة», which says nothing the fields six inches above it were not
+          already saying, and says it in the tone of a result. Worse, it stood
+          between the form and «التالي», so every officer scrolled past a table
+          of dashes to reach the button.
 
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Sector' : 'القطاع'}</p>
-                <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
-                  {zoneCode ? `${zoneCode} · ${zoneName ?? ''}` : trimmedParcel ? UNZONED_CODE : '—'}
-                </p>
-              </div>
-
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Structure Type' : 'نوع المنشأة'}</p>
-                <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
-                  {labels.structureType[structureType]}
-                </p>
-              </div>
-
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Floors & Units' : 'الطوابق والوحدات'}</p>
-                <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
-                  {houseShortcut
-                    ? `1 ${en ? 'floor' : 'طابق'}`
-                    : `${floorsCount} ${en ? 'floors' : 'طوابق'}`}
-                  {!houseShortcut && Number(basementsCount) > 0
-                    ? ` + B${Number(basementsCount)}`
-                    : ''}{' '}
-                  · {gridUnits.length + hiddenUnits.length} {en ? 'units' : 'وحدة'}
-                </p>
-              </div>
-
-              <div className="rounded-lg border bg-background/70 p-3 space-y-1 col-span-2 sm:col-span-1">
-                <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Entrance Location' : 'موقع المدخل'}</p>
-                <div className="pt-0.5 flex items-center gap-1.5 flex-wrap">
-                  {pin ? (
-                    <Badge variant="soft-success" className="text-[11px] px-2">
-                      {en ? 'Pinned' : 'مُثبت'}
-                    </Badge>
-                  ) : (
-                    <Badge variant="soft-muted" className="text-[11px] px-2">
-                      {en ? 'Desk entry' : 'غير مُثبت'}
-                    </Badge>
-                  )}
-                  {name ? (
-                    <span className="text-[11px] text-muted-foreground truncate hidden lg:inline">
-                      · {name}
-                    </span>
-                  ) : null}
+          On the final step it is doing its actual job: the floors and units
+          come from a matrix on another screen, the sector is derived from the
+          parcel rather than typed, and the entrance is a pin on a map — none
+          of which is visible from here without it.
+        */}
+        {step === lastStep ? (
+          <Card className="shadow-xs border-border/80 bg-muted/15">
+            <CardHeader className="pb-3 border-b bg-muted/30">
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <ClipboardCheck className="size-4 text-primary" />
+                  <span>{en ? 'Structure Summary' : 'ملخص المنشأة'}</span>
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground hidden sm:inline">
+                    {en ? 'Review before saving' : 'راجع قبل الحفظ'}
+                  </span>
+                  <Badge variant="outline" className="text-xs font-mono border-primary/40 bg-primary/5 text-primary">
+                    {codePreview ?? '—'}
+                  </Badge>
                 </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Parcel Number' : 'رقم العقار'}</p>
+                  <p dir="ltr" className="font-mono font-bold text-sm sm:text-base text-foreground truncate">
+                    {trimmedParcel || '—'}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Building Code' : 'رمز المبنى'}</p>
+                  <p dir="ltr" className="font-mono font-bold text-sm sm:text-base text-primary truncate">
+                    {codePreview || '—'}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Sector' : 'القطاع'}</p>
+                  <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
+                    {zoneCode ? `${zoneCode} · ${zoneName ?? ''}` : trimmedParcel ? UNZONED_CODE : '—'}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Structure Type' : 'نوع المنشأة'}</p>
+                  <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
+                    {labels.structureType[structureType]}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Floors & Units' : 'الطوابق والوحدات'}</p>
+                  <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
+                    {houseShortcut
+                      ? `1 ${en ? 'floor' : 'طابق'}`
+                      : `${floorsCount} ${en ? 'floors' : 'طوابق'}`}
+                    {!houseShortcut && Number(basementsCount) > 0
+                      ? ` + B${Number(basementsCount)}`
+                      : ''}{' '}
+                    · {gridUnits.length + hiddenUnits.length} {en ? 'units' : 'وحدة'}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-background/70 p-3 space-y-1 col-span-2 sm:col-span-1">
+                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Entrance Location' : 'موقع المدخل'}</p>
+                  <div className="pt-0.5 flex items-center gap-1.5 flex-wrap">
+                    {pin ? (
+                      <Badge variant="soft-success" className="text-[11px] px-2">
+                        {en ? 'Pinned' : 'مُثبت'}
+                      </Badge>
+                    ) : (
+                      <Badge variant="soft-muted" className="text-[11px] px-2">
+                        {en ? 'Desk entry' : 'غير مُثبت'}
+                      </Badge>
+                    )}
+                    {name ? (
+                      <span className="text-[11px] text-muted-foreground truncate hidden lg:inline">
+                        · {name}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* Desktop Bottom Step Navigation */}
         <div className="hidden sm:flex items-center justify-between pt-2">
           <Link
             href={cancelHref}
+            onClick={cancelDraft}
             className={buttonVariants({ variant: 'outline', size: 'sm' })}
           >
             {en ? 'Cancel' : 'إلغاء'}
@@ -1755,6 +2020,7 @@ export function BuildingEditor({
         ) : (
           <Link
             href={cancelHref}
+            onClick={cancelDraft}
             className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 h-11 text-xs')}
           >
             {en ? 'Cancel' : 'إلغاء'}

@@ -19,6 +19,41 @@ function arabicEnum<T extends readonly [string, ...string[]]>(values: T, message
   });
 }
 
+/**
+ * Whether this person lives in the town — which decides how much the register
+ * asks about them.
+ *
+ * `RESIDENT` is a household file: identity, household, blood type, the lot.
+ *
+ * `NON_RESIDENT_OWNER` — «غير مقيم في البلدة» — is somebody who lives elsewhere
+ * (Tyre, Beirut, Abidjan) and holds something here: they **own** property, or
+ * they **rent or occupy something nobody lives in** — a shop they run, an
+ * office, a clinic, a warehouse, a plot they farm. Such a person is recorded so
+ * the register can say who owns or runs the property and how to reach them,
+ * nothing more. The rental-value fee falls on the occupant whether owner or
+ * tenant (Law 60/1988, Art. 3–4), and the occupancy notice names the occupant
+ * *and where they live* (Art. 14); nothing in the law needs their household,
+ * and asking for it is collection the purpose does not justify (Law 81/2018,
+ * Art. 87).
+ *
+ * **The stored value still says OWNER, and that is a known misnomer.** It was
+ * named when the record held owners only (migration 0040), and 0040 was applied
+ * before the record was widened to tenants of non-dwelling units on 2026-09-13.
+ * Renaming an enum value is a one-way change the deploy rules keep out of a
+ * routine release, so the value stays and the label says what it means. Read it
+ * as «not resident».
+ *
+ * The one rule that keeps the record honest: a tenancy or free occupancy on it
+ * must be of a unit nobody lives in — see `DWELLING_UNIT_TYPE`. Somebody who
+ * rents a flat and lives in it lives in the town.
+ *
+ * Decided by where the person *lives most of the year*, never by محل القيد:
+ * plenty of people registered in the town live in Beirut, and the reverse.
+ */
+export const CITIZEN_RESIDENCE = ['RESIDENT', 'NON_RESIDENT_OWNER'] as const;
+export const citizenResidenceSchema = arabicEnum(CITIZEN_RESIDENCE, 'نوع الملف غير صالح');
+export type CitizenResidence = z.infer<typeof citizenResidenceSchema>;
+
 export const GENDER = ['MALE', 'FEMALE'] as const;
 export const genderSchema = arabicEnum(GENDER, 'الجنس مطلوب');
 export type Gender = z.infer<typeof genderSchema>;
@@ -112,6 +147,25 @@ export const UNIT_STATUS = [
   'OWNER_OCCUPIED',
   'RENTED',
   'FREE_OCCUPIED',
+  /**
+   * «مسكن موسمي» — kept for owners who live outside the town and use it on
+   * visits: an expatriate family's flat opened for July and August.
+   *
+   * Not `VACANT`: it is furnished and at the owner's disposal, so it cannot be
+   * offered to let or to shelter a displaced household, which is what vacancy
+   * lists get used for. Not `OWNER_OCCUPIED`: nobody lives in it most of the
+   * year, and counting it as a resident household inflates the population.
+   *
+   * Deliberately in **neither** `UNOCCUPIED_UNIT_STATUS` nor
+   * `OCCUPIED_BY_OTHERS`, so the owner still bears the occupancy fee. Law
+   * 60/1988 levies the fee on actual occupancy (Art. 11), but هيئة التشريع
+   * والاستشارات 725/2003 presumes a building occupied until a تصريح بالشغور is
+   * filed — so without one the full year is owed, and how a declaration
+   * shortens it is the council's decision, not this enum's. The unit records
+   * the facts that decision needs: `presenceMonths`, `ownerLastStayAt` and
+   * `vacancyDeclaredAt`.
+   */
+  'SEASONAL',
   'VACANT',
   'UNDER_CONSTRUCTION',
 ] as const;
@@ -150,6 +204,17 @@ export const UNOCCUPIED_UNIT_STATUS = ['VACANT', 'UNDER_CONSTRUCTION'] as const;
  * occupied — which is most of what the census is for.
  */
 export const OCCUPIED_BY_OTHERS = ['RENTED', 'FREE_OCCUPIED'] as const;
+
+/**
+ * Statuses in which the **owner** is still the one billed for occupancy, even
+ * though nobody lives there all year.
+ *
+ * Named so the third way a status can land in `bearsFee` is a decision on the
+ * page rather than a value that fell through two lists — the memory of how
+ * `FREE_OCCUPIED` once did exactly that is why every status must be classified
+ * somewhere. See `SEASONAL` for why the owner bears it.
+ */
+export const OWNER_BILLED_WHILE_ABSENT = ['SEASONAL'] as const;
 
 /**
  * Whether this unit's شاغل is somebody other than its owner — **false for
@@ -222,9 +287,39 @@ export const UNIT_TYPE = [
   'OFFICE',
   'SHOP',
   'WAREHOUSE',
+  /**
+   * كراج — the accessory beside a house, not a commercial garage.
+   *
+   * Its own type rather than a `WAREHOUSE` with a note, because the two are
+   * rated differently and a rate is not a note: a مستودع is a business
+   * premises, a كراج is the lock-up attached to a dwelling. Filing one as the
+   * other puts a household's garage on the assessment roll as commercial
+   * floor space.
+   *
+   * Never a dwelling — absent from `DWELLING_UNIT_TYPE` below, so a
+   * non-resident may hold one without it making them a household in the town.
+   */
+  'GARAGE',
 ] as const;
 export const unitTypeSchema = arabicEnum(UNIT_TYPE, 'نوع الوحدة مطلوب');
 export type UnitType = z.infer<typeof unitTypeSchema>;
+
+/**
+ * The unit types somebody *lives* in — شقة and منزل مستقل.
+ *
+ * The line a non-resident record turns on (see `CITIZEN_RESIDENCE`). A person
+ * who lives outside the town may own anything here, and may rent or occupy
+ * what nobody lives in — a محل، مكتب، عيادة، مستودع or a plot of land. Renting a
+ * dwelling and living in it makes them a household in the town, with a file of
+ * their own; renting one and *not* living in it means the unit is being used as
+ * something else, and its type is what should be corrected — the rental-value
+ * rate itself differs by use (Law 60/1988, Art. 12: 5% residential, 7% other).
+ */
+export const DWELLING_UNIT_TYPE = ['APARTMENT', 'INDEPENDENT_HOUSE'] as const;
+
+export function isDwellingUnitType(type: string | null | undefined): boolean {
+  return type != null && (DWELLING_UNIT_TYPE as readonly string[]).includes(type);
+}
 
 export const LAND_TYPE = ['AGRICULTURAL', 'INDUSTRIAL'] as const;
 export const landTypeSchema = arabicEnum(LAND_TYPE, 'نوع الأرض مطلوب');
@@ -312,6 +407,24 @@ export const BUILDING_LIFECYCLE = [
    * would hide those households from every coverage figure.
    */
   'DERELICT',
+  /**
+   * متضررة من الحرب وغير مسكونة — still standing, damaged badly enough that
+   * nobody is in it.
+   *
+   * **Standing is the operative word.** The structure is visible, its storeys
+   * are countable from the street, and its flats are recorded exactly as any
+   * other building's are — a damaged block's unit count is the figure a
+   * reconstruction programme is costed on, and it is only knowable while the
+   * building is still there to be counted. That is what separates it from
+   * `DEMOLISHED`, where there is nothing left to measure.
+   *
+   * What separates it from `DERELICT` is the *«غير مسكونة»* half, and that is
+   * a claim about occupancy, not about the shell: a derelict block may hold a
+   * displaced family, so it stays in the census denominator and somebody goes
+   * and knocks. This one has been established as empty, so its units are on
+   * file without being counted as households waiting to be surveyed.
+   */
+  'WAR_DAMAGED_UNINHABITED',
   /** مهدوم — taken down. Distinct from `TOTAL_COLLAPSE`, which is damage. */
   'DEMOLISHED',
   /** لم يُنفَّذ — permitted, then abandoned or revoked. BAG's `niet gerealiseerd`. */
@@ -345,6 +458,40 @@ export const OCCUPIABLE_LIFECYCLE = ['IN_USE', 'DERELICT'] as const;
  */
 export function isOccupiableLifecycle(status: string | null | undefined): boolean {
   return status == null || (OCCUPIABLE_LIFECYCLE as readonly string[]).includes(status);
+}
+
+/**
+ * Structures with no storeys left to count, so the wizard stops asking.
+ *
+ * One value, and the narrowness is the point. Three other states are also
+ * outside the census denominator and none of them belongs here:
+ *
+ * - `PERMITTED` / `UNDER_CONSTRUCTION` — an officer in front of a half-built
+ *   block can count its storeys and lay out the flats it will have. Ordinary
+ *   desk work before handover.
+ * - `WAR_DAMAGED_UNINHABITED` — **the structure is still standing.** Its
+ *   storeys are visible from the pavement and countable, and how many flats a
+ *   damaged block holds is precisely the figure a reconstruction programme is
+ *   built on. Uninhabited is a statement about who is inside it, not about
+ *   whether it can be measured.
+ *
+ * Only «مهدوم» is different, and only because there is nothing there: the
+ * storeys are gone, not unsafe. Asking «كم طابقاً؟» of a cleared plot invites
+ * a guess, and a guessed floor count is worse than a recorded absence, because
+ * everything downstream reads it as an observation.
+ */
+export const UNSURVEYABLE_SHELL_LIFECYCLE = ['DEMOLISHED'] as const;
+
+/**
+ * Whether this structure's interior is beyond surveying — no floor count to
+ * ask for, no unit matrix to paint.
+ *
+ * Null reads as surveyable, matching `isOccupiableLifecycle` above: an absent
+ * status is a building nobody has classified, and the ordinary building is the
+ * safe assumption for one.
+ */
+export function isUnsurveyableShell(status: string | null | undefined): boolean {
+  return status != null && (UNSURVEYABLE_SHELL_LIFECYCLE as readonly string[]).includes(status);
 }
 
 /**
@@ -470,6 +617,113 @@ export type CaseType = z.infer<typeof caseTypeSchema>;
 export const OCCUPANCY_ROLE = ['OWNER', 'TENANT', 'FREE_OCCUPANT'] as const;
 export const occupancyRoleSchema = arabicEnum(OCCUPANCY_ROLE, 'صفة الإشغال مطلوبة');
 export type OccupancyRole = z.infer<typeof occupancyRoleSchema>;
+
+/**
+ * Why a spell on a unit ended — asked every time «إنهاء الإشغال» is pressed.
+ *
+ * The button used to end a spell with no question at all, and field inspectors
+ * pressed it by mistake: a small link on the same row as the person's name, on
+ * a phone. Worse, it was also pressed on purpose for the wrong reason, because
+ * «تأكيد الشغور» told them to end the owner first. A reason is what separates
+ * the three things an ended spell can mean, and they are not interchangeable:
+ *
+ *  - `MOVED_OUT` — the household left. History the municipality keeps.
+ *  - `OWNERSHIP_TRANSFERRED` — an owner sold or passed the unit on. Ending an
+ *    owner never means «moved out»; the deed is not a statement of residence.
+ *  - `RECORDED_IN_ERROR` — the spell should never have existed. Kept, because
+ *    the row is still evidence of what was entered and by whom, and hidden from
+ *    the unit's history, because it is not history.
+ */
+export const OCCUPANCY_END_REASON = [
+  'MOVED_OUT',
+  'OWNERSHIP_TRANSFERRED',
+  'RECORDED_IN_ERROR',
+] as const;
+export const occupancyEndReasonSchema = arabicEnum(
+  OCCUPANCY_END_REASON,
+  'يرجى تحديد سبب إنهاء الإشغال',
+);
+export type OccupancyEndReason = z.infer<typeof occupancyEndReasonSchema>;
+
+/**
+ * What a «تأكيد الشغور» rests on — asked every time one is recorded.
+ *
+ * Confirming a vacancy is not a display state: it stops the occupancy fee
+ * being charged to the owner (`isUnoccupied` → `bearsFee`), so it is a finding
+ * with a consequence, and the law is specific about what may support one. A
+ * unit is *presumed occupied* until a تصريح بالشغور is filed on the declarant's
+ * responsibility (هيئة التشريع والاستشارات 725/2003), failing to file one does
+ * not make an occupied flat vacant (Shura 518/2007), and furniture is not proof
+ * of occupancy either way (Shura 122/2003). So the register records which of
+ * these an officer actually had:
+ *
+ *  - `FIELD_INSPECTION` — they stood at the door and found it empty.
+ *  - `OWNER_STATEMENT` — the owner says it is empty, with no declaration filed.
+ *  - `NEIGHBOUR_OR_CARETAKER` — a neighbour or ناطور said so. The weakest, and
+ *    the one whose note has to name who said it.
+ *  - `DECLARATION_FILED` — a تصريح بالشغور is on file. The strongest, and the
+ *    only one the law itself provides for.
+ *
+ * Kept apart from `DamageSource` deliberately, though both answer "how do we
+ * know": that one grades an engineering reading, this one grades a statement
+ * about who is inside, and the two vocabularies share not one value.
+ */
+export const VACANCY_BASIS = [
+  'FIELD_INSPECTION',
+  'OWNER_STATEMENT',
+  'NEIGHBOUR_OR_CARETAKER',
+  'DECLARATION_FILED',
+] as const;
+export const vacancyBasisSchema = arabicEnum(VACANCY_BASIS, 'يرجى تحديد مستند تأكيد الشغور');
+export type VacancyBasis = z.infer<typeof vacancyBasisSchema>;
+
+/**
+ * Why a confirmed vacancy was lifted — the undo, which is always available.
+ *
+ * Two reasons, and they are not interchangeable because they restore different
+ * things:
+ *
+ *  - `RECORDED_IN_ERROR` — the flat was never empty. The unit goes back to
+ *    whatever it said before the confirmation, which the confirmation itself
+ *    stored for exactly this purpose.
+ *  - `NO_LONGER_VACANT` — it was empty and is not any more. The vacancy stays
+ *    true for the period it covered, so the record is closed rather than
+ *    corrected, and the unit returns to «الإشغال غير محدد»: somebody is in it
+ *    and the register does not yet know who, which is the presumption the law
+ *    starts from and the state that bills the owner again.
+ *
+ * Neither deletes the confirmation. A resident disputing a bill is entitled to
+ * see that the municipality called their flat empty, when, and on what basis —
+ * and that is as true of a confirmation withdrawn as of one that stands.
+ */
+/**
+ * Whether recording this person in this capacity contradicts an empty flat.
+ *
+ * Shared because both sides of the same question have to give the same answer:
+ * the unit panel asks it to decide whether to warn the officer *before* they
+ * link somebody, and `recordOccupancy` asks it to decide whether to refuse
+ * without an acknowledgement. Two copies of this rule would mean a form that
+ * warns about something the server allows, or worse, one that does not warn
+ * about something it refuses.
+ *
+ * A مستأجر or شاغل بتسامح is somebody living there, so recording them ends the
+ * vacancy. An owner is not (D2: a deed is not a statement of residence) — an
+ * owner recorded on a شاغرة flat is the ordinary case, and the reason «تأكيد
+ * الشغور» stopped being refused over owners. What an owner *says* about the flat
+ * still can: «مشغولة من المالك» or «مؤجرة» on a unit confirmed empty is the same
+ * contradiction arriving through the other field.
+ */
+export function contradictsVacancy(role: string, unitStatus?: string | null): boolean {
+  if (role !== 'OWNER') return true;
+  return unitStatus !== undefined && unitStatus !== null && unitStatus !== 'VACANT';
+}
+
+export const VACANCY_END_REASON = ['RECORDED_IN_ERROR', 'NO_LONGER_VACANT'] as const;
+export const vacancyEndReasonSchema = arabicEnum(
+  VACANCY_END_REASON,
+  'يرجى تحديد سبب إلغاء تأكيد الشغور',
+);
+export type VacancyEndReason = z.infer<typeof vacancyEndReasonSchema>;
 
 /**
  * The one place the three taxonomies are allowed to meet.

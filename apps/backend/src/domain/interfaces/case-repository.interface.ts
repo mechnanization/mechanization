@@ -84,6 +84,13 @@ export interface CaseRepository {
    */
   resolveOpenForUnit(unitId: string, citizenId: string): Promise<number>;
 
+  /**
+   * Closes the «شاغرة قيد التحقق» cases on a unit whose vacancy has just been
+   * confirmed. Narrowed to that one type, and carries no citizen — see the
+   * implementation. Returns how many.
+   */
+  resolveVacancyCasesForUnit(unitId: string): Promise<number>;
+
   update(
     id: string,
     input: {

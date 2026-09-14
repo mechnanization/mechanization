@@ -1003,12 +1003,14 @@ export class FeesService {
       place.
     */
     const category = input.targetCategory!;
+    // A tenancy that ended (migration 0046) holds nothing to charge for.
     const propertyWhere = PROPERTY_TYPE_CATEGORIES.has(category)
-      ? { propertyType: category as never }
+      ? { propertyType: category as never, endedAt: null }
       : {
+          endedAt: null,
           OR: [
             { unitType: category as never },
-            { units: { some: { unitType: category as never } } },
+            { units: { some: { unitType: category as never, endedAt: null } } },
             /*
               And the canonical row, since P2-T8 made it the authority.
 
@@ -1020,7 +1022,7 @@ export class FeesService {
               happily charging for them the moment someone was targeted another
               way.
             */
-            { units: { some: { unit: { unitType: category as never } } } },
+            { units: { some: { endedAt: null, unit: { unitType: category as never } } } },
           ],
         };
 
@@ -1121,6 +1123,14 @@ export class FeesService {
               take: 1,
               select: {
                 properties: {
+                  /*
+                    Current tenancies and holdings only. A card whose tenancy
+                    ended (migration 0046) stays on the file as history, and a
+                    former tenant billed for the flat they left is the failure
+                    this exists to prevent — the same reason occupancies below
+                    are filtered to `toDate: null`.
+                  */
+                  where: { endedAt: null },
                   select: {
                     propertyType: true,
                     propertyNumber: true,
@@ -1162,6 +1172,7 @@ export class FeesService {
                     */
                     buildingId: true,
                     units: {
+                      where: { endedAt: null },
                       select: {
                         unitType: true,
                         unitArea: true,

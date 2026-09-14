@@ -58,6 +58,7 @@ import {
 } from './dropdown-menu';
 import { EmptyState, ErrorState } from './states';
 import { Skeleton } from './skeleton';
+import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn } from '@/lib/utils';
 
 declare module '@tanstack/react-table' {
@@ -467,6 +468,10 @@ export function DataTable<TData, TValue = unknown>({
   // Uncontrolled fallbacks so the table works fully client-side out of
   // the box; callers only need to pass `manual` + the controlled props
   // once pagination/sorting/search are driven by a server.
+  /** The table's own outermost element — the anchor `scrollTableIntoView`
+   *  walks up from, so the page returns to the first row. */
+  const rootRef = React.useRef<HTMLDivElement | null>(null);
+
   const [internalPagination, setInternalPagination] =
     React.useState<PaginationState>({ pageIndex: 0, pageSize: pageSizeOptions[0] ?? 20 });
   const [internalSorting, setInternalSorting] = React.useState<SortingState>([]);
@@ -592,6 +597,26 @@ export function DataTable<TData, TValue = unknown>({
     (updater) => {
       const next =
         typeof updater === 'function' ? updater(pagination) : updater;
+
+      /*
+        «التالي» is at the *bottom* of the table, and the rows it loads start at
+        the top. Pressing it left the reader parked at the foot of a page they
+        had never seen — looking at row 25 of a set whose row 1 is a screen and
+        a half above them, with no indication anything had moved except the page
+        number under their thumb. On a phone, where the whole list is several
+        screens tall, that reads as the button having done nothing.
+
+        Scrolled here rather than in each of the pages that host a table,
+        because every one of them has the same footer and the same problem, and
+        a fix applied per page is one the next table will be written without.
+
+        Both directions, and page-size changes too: each of them replaces every
+        row on screen, and «السابق» strands the reader in exactly the same way.
+      */
+      if (next.pageIndex !== pagination.pageIndex || next.pageSize !== pagination.pageSize) {
+        scrollElementToTop(rootRef.current);
+      }
+
       if (onPaginationChange) {
         onPaginationChange(next);
       } else {
@@ -707,7 +732,7 @@ export function DataTable<TData, TValue = unknown>({
       the table they act on, and a search box floating above an unrelated
       rounded rectangle reads as page furniture instead.
     */
-    <div className={cn('overflow-hidden rounded-lg border bg-card', className)}>
+    <div ref={rootRef} className={cn('overflow-hidden rounded-lg border bg-card', className)}>
       {searchable || toolbar || showColumnsMenu || filterBar ? (
         <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
           {searchable ? (

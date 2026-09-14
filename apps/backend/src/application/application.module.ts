@@ -12,6 +12,7 @@ import { DamageService } from './features/buildings/damage.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
 import { LandlordLinkService } from './features/citizens/landlord-link.service';
+import { TenancyService } from './features/citizens/tenancy.service';
 import { DocumentService } from './features/documents/document.service';
 import { IdentityService } from './features/identity/identity.service';
 import { OtpService } from './features/identity/otp.service';
@@ -52,6 +53,7 @@ import { ZonesService } from './features/zones/zones.service';
     CadastreImportService,
     CitizensService,
     LandlordLinkService,
+    TenancyService,
     FeesService,
     PaymentLedgerService,
     StaffService,
@@ -76,6 +78,7 @@ import { ZonesService } from './features/zones/zones.service';
     CadastreImportService,
     CitizensService,
     LandlordLinkService,
+    TenancyService,
     FeesService,
     PaymentLedgerService,
     StaffService,

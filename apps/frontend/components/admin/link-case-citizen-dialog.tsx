@@ -161,8 +161,10 @@ export function LinkCaseCitizenDialog({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{citizen.fullName}</span>
-                  <span className="block truncate text-xs text-muted-foreground" dir="ltr">
-                    {[citizen.phone, citizen.referenceNumber].filter(Boolean).join(' — ')}
+                  <span className="block truncate text-xs text-muted-foreground text-start">
+                    <bdi dir="ltr">
+                      {[citizen.phone, citizen.referenceNumber].filter(Boolean).join(' — ')}
+                    </bdi>
                   </span>
                 </span>
               </button>

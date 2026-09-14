@@ -157,13 +157,19 @@ export function UnverifiedFieldsDialog({
 
     // Specific, contextual reasons per field — NEVER flag identityDocNumber, civilRecordNumber, or gender!
     const candidateFields: Array<{ path: string; empty: boolean; reason: string }> = [
+      /*
+        اسم الأم is exactly the fact children in the house may not be able to
+        give, which is why the preset covers it: the alternative to a flag here
+        is a clerk writing down a guess at the one field that exists to tell two
+        namesakes apart.
+      */
       {
-        path: 'personal.bloodType',
-        empty: !values.personal.bloodType,
+        path: 'personal.motherName',
+        empty: !values.personal.motherName,
         reason:
           locale === 'en'
-            ? 'Blood type unknown — parents absent during field survey'
-            : 'فصيلة الدم غير معلومة — الأهل غير متواجدين أثناء المسح',
+            ? "Mother's name unconfirmed — parents absent during field survey"
+            : 'اسم الأم غير مؤكد — الأهل غير متواجدين أثناء المسح',
       },
       {
         path: 'personal.residentStatus',

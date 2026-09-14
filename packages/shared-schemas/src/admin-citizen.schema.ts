@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import {
   contactDetailsSchema,
+  nonResidentOwnerContactSchema,
+  nonResidentOwnerPersonalSchema,
   partialContactDetailsSchema,
+  partialNonResidentOwnerContactSchema,
+  partialNonResidentOwnerPersonalSchema,
   partialPersonalDetailsSchema,
   personalDetailsSchema,
 } from './citizen.schema';
@@ -21,7 +25,12 @@ import {
   type FieldFlag,
 } from './field-flag.schema';
 import { uuid } from './primitives';
-import { NON_OWNER_OCCUPANCY } from './enums';
+import {
+  citizenResidenceSchema,
+  isDwellingUnitType,
+  NON_OWNER_OCCUPANCY,
+  type CitizenResidence,
+} from './enums';
 
 /**
  * Staff-entered registrations — the same submission a citizen used to file
@@ -149,7 +158,8 @@ function branchFieldsOnly(card: Record<string, unknown>): Record<string, unknown
   const keep = new Set<string>([
     'occupancyType',
     'propertyType',
-    ...branch,
+    // أسهم are a share of ownership; a tenant's or free occupant's plot has none.
+    ...branch.filter((field) => field !== 'shares' || card.occupancyType === 'OWNER'),
     /*
       Two fields gated on the *occupancy* axis, which `PROPERTY_FIELD_MAP` —
       keyed by property type — has no way to describe. Both are listed here for
@@ -161,7 +171,19 @@ function branchFieldsOnly(card: Record<string, unknown>): Record<string, unknown
       which is the quieter and worse failure.
     */
     ...((NON_OWNER_OCCUPANCY as readonly string[]).includes(card.occupancyType as string)
-      ? ['landlordName', 'landlordPhone']
+      ? [
+          'landlordName',
+          'landlordPhone',
+          /*
+            «نعم، هو المالك» — the officer's answer, riding with the card.
+
+            Kept on the same axis as the two fields above it, and dropped on an
+            OWNER card for a reason stronger than tidiness: `confirm` refuses an
+            OWNER card outright, so an answer surviving here could only ever
+            produce a logged failure on a card that has no landlord to identify.
+          */
+          'landlordCitizenId',
+        ]
       : []),
     ...(card.occupancyType === 'OWNER' ? ['unitStatus'] : []),
     /*
@@ -183,6 +205,7 @@ function branchFieldsOnly(card: Record<string, unknown>): Record<string, unknown
 }
 
 interface SubmissionInput {
+  residence: CitizenResidence;
   personal: Record<string, unknown>;
   contact: Record<string, unknown>;
   properties: Array<Record<string, unknown>>;
@@ -224,9 +247,33 @@ function isAbsent(value: unknown): boolean {
   return value === undefined || value === null || (typeof value === 'string' && !value.trim());
 }
 
+/**
+ * The strict and the shaping schema for each section, by نوع الملف.
+ *
+ * One switch, read by every pass below, so a household file and a non-resident record
+ * can never be validated by one rulebook and shaped by the other — that mismatch
+ * would store fields a strict pass never looked at.
+ */
+function sectionSchemas(residence: CitizenResidence) {
+  return residence === 'NON_RESIDENT_OWNER'
+    ? {
+        personal: nonResidentOwnerPersonalSchema,
+        contact: nonResidentOwnerContactSchema,
+        partialPersonal: partialNonResidentOwnerPersonalSchema,
+        partialContact: partialNonResidentOwnerContactSchema,
+      }
+    : {
+        personal: personalDetailsSchema,
+        contact: contactDetailsSchema,
+        partialPersonal: partialPersonalDetailsSchema,
+        partialContact: partialContactDetailsSchema,
+      };
+}
+
 /** Every path the strict schemas complain about, given what is already excused. */
 function strictIssuePaths(input: SubmissionInput, excused: ReadonlySet<string>): string[] {
   const paths: string[] = [];
+  const schemas = sectionSchemas(input.residence);
 
   const collect = (prefix: string, result: z.SafeParseReturnType<unknown, unknown>) => {
     if (result.success) return;
@@ -235,11 +282,11 @@ function strictIssuePaths(input: SubmissionInput, excused: ReadonlySet<string>):
 
   collect(
     'personal',
-    personalDetailsSchema.safeParse(withoutFlagged(input.personal, 'personal', excused)),
+    schemas.personal.safeParse(withoutFlagged(input.personal, 'personal', excused)),
   );
   collect(
     'contact',
-    contactDetailsSchema.safeParse(withoutFlagged(input.contact, 'contact', excused)),
+    schemas.contact.safeParse(withoutFlagged(input.contact, 'contact', excused)),
   );
   input.properties.forEach((card, index) => {
     const prefix = `properties.${index}`;
@@ -306,6 +353,88 @@ function allFlags(input: SubmissionInput): FieldFlag[] {
   return [...input.flags, ...autoFlags(input, explicit)];
 }
 
+/**
+ * What a non-resident's card may say — «غير مقيم في البلدة».
+ *
+ * A person who lives outside the town may **own** anything here, and may
+ * **rent or occupy only what nobody lives in**: a محل، مكتب، عيادة، مستودع, or a
+ * plot of أرض. Both halves follow from one fact — they do not live here:
+ *
+ *  - a مستأجر or شاغل بتسامح of a شقة or منزل *lives in it*, so they are a
+ *    household in the town and belong on a household file (and in the
+ *    population it counts). If they rent it and do not live in it, the unit is
+ *    being used as an office or a store, and its type is what is wrong — which
+ *    also changes the rental-value rate (Law 60/1988, Art. 12);
+ *  - an owner of a dwelling cannot answer «مشغولة من المالك» for the same
+ *    reason. The true answers for a home its owner visits are «مسكن موسمي»,
+ *    «شاغرة», or who else is in it.
+ *
+ * A خيمة is refused elsewhere (it is for a لاجئ, and this record asks no صفة
+ * الإقامة). Returned as issues rather than reported directly so each lands on
+ * the field that has to change: نوع الإشغال (not flaggable), a unit's نوع الوحدة,
+ * or حالة الوحدة.
+ *
+ * A unit whose type is unknown — its row flagged, or the whole unit list
+ * flagged — cannot be shown to be something nobody lives in, so a non-owner
+ * card needs at least one unit and every unit's type. That is not a dead end:
+ * the officer at a shop can see it is a shop.
+ */
+function nonResidentCardIssues(
+  card: Record<string, unknown>,
+  flagged: ReadonlySet<string>,
+  prefix: string,
+): Array<{ path: Array<string | number>; message: string }> {
+  const issues: Array<{ path: Array<string | number>; message: string }> = [];
+  const owner = card.occupancyType === 'OWNER';
+  const units = Array.isArray(card.units) ? (card.units as Array<Record<string, unknown>>) : [];
+
+  if (owner) {
+    if (card.propertyType === 'HOUSE' && card.unitStatus === 'OWNER_OCCUPIED') {
+      issues.push({ path: ['unitStatus'], message: OWNER_NOT_LIVING_THERE });
+    }
+    if (card.propertyType === 'BUILDING') {
+      units.forEach((unit, unitIndex) => {
+        if (isDwellingUnitType(unit.unitType as string) && unit.unitStatus === 'OWNER_OCCUPIED') {
+          issues.push({ path: ['units', unitIndex, 'unitStatus'], message: OWNER_NOT_LIVING_THERE });
+        }
+      });
+    }
+    return issues;
+  }
+
+  if (card.occupancyType === undefined) return issues;
+
+  switch (card.propertyType) {
+    case 'LAND':
+      return issues;
+    case 'BUILDING': {
+      if (units.length === 0 || flagged.has(`${prefix}.units`)) {
+        issues.push({ path: ['occupancyType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE });
+        return issues;
+      }
+      units.forEach((unit, unitIndex) => {
+        if (unit.unitType === undefined || unit.unitType === null || unit.unitType === '') {
+          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE });
+        } else if (isDwellingUnitType(unit.unitType as string)) {
+          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_DWELLING });
+        }
+      });
+      return issues;
+    }
+    default:
+      // A منزل is a dwelling, and a خيمة is somewhere somebody lives.
+      issues.push({ path: ['occupancyType'], message: NON_RESIDENT_DWELLING });
+      return issues;
+  }
+}
+
+const NON_RESIDENT_DWELLING =
+  'غير المقيم يستأجر أو يشغل ما لا يُسكن فقط (محل، مكتب، عيادة، مستودع، أرض). من يستأجر مسكناً ويسكنه يُسجَّل بملف أسرة، ومن يستعمله لغير السكن تُصحَّح نوع وحدته';
+const NON_RESIDENT_NEEDS_UNIT_TYPE =
+  'حدِّد نوع الوحدة — غير المقيم يُسجَّل مستأجراً أو شاغلاً لوحدة غير سكنية فقط';
+const OWNER_NOT_LIVING_THERE =
+  'غير المقيم لا يسكن هذه الوحدة — اختر «مسكن موسمي» إن كان يحضر في مواسم، أو «شاغرة»، أو حالة من يشغلها';
+
 /** Every issue the strict schemas raise that no flag accounts for. */
 function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
   const flags = allFlags(input);
@@ -332,16 +461,30 @@ function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
     }
   };
 
+  const schemas = sectionSchemas(input.residence);
+
   report(
     'personal',
-    personalDetailsSchema.safeParse(withoutFlagged(input.personal, 'personal', paths)),
+    schemas.personal.safeParse(withoutFlagged(input.personal, 'personal', paths)),
   );
-  report('contact', contactDetailsSchema.safeParse(withoutFlagged(input.contact, 'contact', paths)));
+  report('contact', schemas.contact.safeParse(withoutFlagged(input.contact, 'contact', paths)));
 
   input.properties.forEach((card, index) => {
     const prefix = `properties.${index}`;
     report(prefix, propertyEntrySchema.safeParse(withoutFlagged(card, prefix, paths)));
   });
+
+  if (input.residence === 'NON_RESIDENT_OWNER') {
+    input.properties.forEach((card, index) => {
+      for (const issue of nonResidentCardIssues(card, paths, `properties.${index}`)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['properties', index, ...issue.path],
+          message: issue.message,
+        });
+      }
+    });
+  }
 
   /*
     خيمة is only for a لاجئ — but only answerable while صفة الإقامة is known.
@@ -387,10 +530,26 @@ function shapeSubmission(input: SubmissionInput) {
   */
   const flags = allFlags(input);
   const paths = flaggedPaths(flags);
+  const schemas = sectionSchemas(input.residence);
 
   return {
-    personal: partialPersonalDetailsSchema.parse(withoutFlagged(input.personal, 'personal', paths)),
-    contact: partialContactDetailsSchema.parse(withoutFlagged(input.contact, 'contact', paths)),
+    residence: input.residence,
+    /*
+      Cast to the household shape because every consumer reads the sections by
+      field name and treats each one as possibly absent — which, for an owner
+      record, every household field is. Typing the union out would push a
+      `'residencePlace' in personal` check into every reader for no safety the
+      optional fields do not already give.
+    */
+    personal: schemas.partialPersonal.parse(
+      withoutFlagged(input.personal, 'personal', paths),
+    ) as z.infer<typeof partialPersonalDetailsSchema> & { residencePlace?: string },
+    contact: schemas.partialContact.parse(
+      withoutFlagged(input.contact, 'contact', paths),
+    ) as z.infer<typeof partialContactDetailsSchema> & {
+      localContactName?: string;
+      localContactPhone?: string;
+    },
     properties: input.properties.map((card, index) => {
       const id = typeof card.id === 'string' ? card.id : undefined;
       return {
@@ -442,6 +601,12 @@ function shapeSubmission(input: SubmissionInput) {
  * rather than registering the person a second time.
  */
 const submissionEnvelope = {
+  /**
+   * نوع الملف — a household living in the town, or an owner who lives
+   * elsewhere. Defaulted so every submission already queued on a phone, and
+   * every client that predates the field, keeps meaning what it meant.
+   */
+  residence: citizenResidenceSchema.default('RESIDENT'),
   personal: rawSection,
   contact: rawSection,
   flags: fieldFlagsSchema,

@@ -45,6 +45,40 @@ const card = (
 });
 
 
+/*
+  A rented plot, under an occupant-borne notice reaching أرض.
+
+  Land tenancies became fileable without an invented share count (and fileable
+  at all for somebody living outside the town) on 2026-09-13. Before an owner's
+  plot could say «مؤجرة», that owner and the farmer renting it were both
+  charged for the one plot.
+*/
+describe('a rented plot is billed once', () => {
+  // PER_UNIT: a FLAT notice charges everyone it targets whatever they hold, so
+  // it cannot show which of the two parties to one plot owes for it.
+  const rate = { basis: 'PER_UNIT' as const, amount: 100_000, bearer: 'OCCUPANT' as const, targetCategory: 'LAND' };
+
+  it('does not bill the owner of a plot they have let', () => {
+    const result = assessCitizen([card('LAND', '1553', null, 800, { unitStatus: 'RENTED' })], rate as never);
+    expect(result.kind === 'assessed' && result.amount).toBe(0);
+  });
+
+  it('bills the farmer renting it', () => {
+    const result = assessCitizen(
+      [card('LAND', '1553', null, 800, { occupancyType: 'TENANT' })],
+      rate as never,
+    );
+    expect(result.kind === 'assessed' && result.amount).toBe(100_000);
+  });
+
+  it('still bills an owner who works their own plot, or never said', () => {
+    for (const unitStatus of ['OWNER_OCCUPIED', undefined]) {
+      const result = assessCitizen([card('LAND', '1553', null, 800, { unitStatus })], rate as never);
+      expect(result.kind === 'assessed' && result.amount).toBe(100_000);
+    }
+  });
+});
+
 /**
  * P2-T8 — the authority flip, against both linked and unlinked records.
  *
@@ -565,6 +599,22 @@ describe('assessment', () => {
         occupant: false,
         owner: true,
         why: 'let out — the tenant is billed on their own card',
+      },
+      /*
+        «مسكن موسمي» — an expatriate family's flat used in summer.
+
+        Pinned to the owner on purpose: a building is presumed occupied until a
+        تصريح بالشغور is filed (هيئة التشريع والاستشارات 725/2003), so without
+        one the full year is owed and the owner is the شاغل who owes it. If a
+        later change moves SEASONAL into an exemption list, this fails — which
+        is the point, because that would be a council decision, not a refactor.
+      */
+      {
+        occupancyType: 'OWNER',
+        unitStatus: 'SEASONAL',
+        occupant: true,
+        owner: true,
+        why: 'a seasonal home is still the owner’s to pay for until vacancy is declared',
       },
     ];
 

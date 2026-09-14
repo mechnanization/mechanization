@@ -82,6 +82,8 @@ const key = (tenant: string) => `${KEY_PREFIX}${tenant}`;
  */
 interface StoredDraft {
   savedAt: number;
+  /** نوع الملف — absent on drafts written before owner records existed. */
+  residence?: CitizenFormValues['residence'];
   personal: Record<string, unknown>;
   contact: Record<string, unknown>;
   properties: CitizenFormValues['properties'];
@@ -112,6 +114,7 @@ export function draftWorthKeeping(values: CitizenFormValues): boolean {
     );
 
   return (
+    values.residence === 'NON_RESIDENT_OWNER' ||
     typed(values.personal, ['isLebanese']) ||
     typed(values.contact, ['whatsappSameAsPhone']) ||
     values.properties.length > 0 ||
@@ -128,6 +131,7 @@ export function saveCitizenDraft(tenant: string, values: CitizenFormValues): voi
   try {
     const payload: StoredDraft = {
       savedAt: Date.now(),
+      residence: values.residence,
       personal: values.personal,
       contact: values.contact,
       properties: values.properties,
@@ -162,6 +166,7 @@ export function loadCitizenDraft(
 
     return {
       values: {
+        residence: parsed.residence ?? 'RESIDENT',
         personal: parsed.personal ?? {},
         contact: parsed.contact ?? {},
         properties: parsed.properties ?? [],

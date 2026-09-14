@@ -136,8 +136,10 @@ export default function FullscreenMapPage({
             token={token}
             parcels={parcels}
             citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
-            registerHref={(buildingId, unitId) =>
-              `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}`
+            registerHref={(buildingId, unitId, residence, name) =>
+              `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}${
+                name ? `&name=${encodeURIComponent(name)}` : ''
+              }`
             }
             refreshToken={refreshToken}
             focusParcelNumber={focus?.parcelNumber}

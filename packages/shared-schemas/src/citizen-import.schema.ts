@@ -42,6 +42,7 @@ export const IMPORT_COLUMN_KEYS = [
   'firstName',
   'middleName',
   'lastName',
+  'motherName',
   'gender',
   'bloodType',
   'isLebanese',
@@ -97,6 +98,24 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
   { key: 'firstName', header: 'الاسم الأول', hint: 'إلزامي', always: true },
   { key: 'middleName', header: 'اسم الأب', hint: 'إلزامي', always: true },
   { key: 'lastName', header: 'الشهرة', hint: 'إلزامي', always: true },
+  /*
+    اسم الأم وشهرتها — required like the three names above it, and for a
+    sharper reason than any of them.
+
+    An import is a municipality's whole paper register arriving at once, which
+    is precisely where two «محمد أحمد خليل»s land as two rows nothing can tell
+    apart: no identity document is collected any more, and a household shares
+    its phone. A row lacking it fails and is reported for the clerk to fix, the
+    same as any other incomplete row — a spreadsheet carries no «غير مؤكَّد»
+    flags and nobody stands behind an individual gap in it.
+
+    A sheet built against the older template has no such column and every row
+    will say so. That is the intended outcome: importing thousands of
+    households with the one disambiguating field blank is the state this field
+    exists to prevent, and it is far cheaper to add a column now than to chase
+    the answer household by household afterwards.
+  */
+  { key: 'motherName', header: 'اسم الأم وشهرتها', hint: 'إلزامي — اسمها وشهرتها معاً', always: true },
   {
     key: 'gender',
     header: 'الجنس',
@@ -117,15 +136,23 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
     hint: Object.values(ar.residentStatus).join(' / '),
     always: true,
   },
+  /*
+    The identity-document columns stay so sheets built against the old template
+    keep parsing, but nothing requires them any more: an identity document is no
+    longer collected for a Lebanese citizen, and a non-Lebanese one's passport and
+    residency numbers are «إلزامي إن وجد» — written when the person has one, never
+    invented. See `personalDetailsObject.identityDocType`.
+  */
   {
     key: 'identityDocType',
     header: 'نوع الوثيقة',
-    hint: Object.values(ar.identityDocType).join(' / '),
-    always: true,
+    hint: 'لغير اللبنانيين: جواز سفر — اختياري',
   },
-  { key: 'identityDocNumber', header: 'رقم الوثيقة', hint: 'إلزامي للبنانيين' },
+  // Header text is the column's identity (`HEADER_TO_KEY`), so it keeps its old
+  // wording; only the hint changed.
+  { key: 'identityDocNumber', header: 'رقم الوثيقة', hint: 'رقم جواز السفر لغير اللبنانيين — إلزامي إن وجد' },
   { key: 'civilRecordNumber', header: 'رقم السجل', hint: 'إلزامي للبنانيين، أرقام فقط' },
-  { key: 'residencyNumber', header: 'رقم الإقامة', hint: 'لغير اللبنانيين — يكفي هذا أو رقم الوثيقة' },
+  { key: 'residencyNumber', header: 'رقم الإقامة', hint: 'لغير اللبنانيين — إلزامي إن وجد' },
   {
     key: 'maritalStatus',
     header: 'الحالة الاجتماعية',
@@ -180,7 +207,8 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
     header: 'نوع الأرض',
     hint: `${Object.values(ar.landType).join(' / ')} — للأرض فقط`,
   },
-  { key: 'shares', header: 'الأسهم', hint: 'من أصل 2400 — إلزامي للأرض فقط' },
+  // Header unchanged (it is the column's identity); a tenant of land holds no shares.
+  { key: 'shares', header: 'الأسهم', hint: 'من أصل 2400 — إلزامي لمالك الأرض فقط' },
   { key: 'tentLocation', header: 'موقع الخيمة', hint: 'إلزامي للخيمة فقط' },
   { key: 'sharedRights', header: 'الحقوق المشتركة', hint: 'اختياري — افصل بينها بفاصلة منقوطة ؛' },
   {
@@ -349,6 +377,7 @@ export function buildCitizenPayload(row: ImportRow): unknown {
       firstName: text(row.firstName),
       middleName: text(row.middleName),
       lastName: text(row.lastName),
+      motherName: text(row.motherName),
       gender: toEnum(GENDER, ar.gender, row.gender ?? ''),
       bloodType:
         toEnum(BLOOD_TYPE, ar.bloodType, row.bloodType ?? '') ??

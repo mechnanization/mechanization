@@ -27,6 +27,37 @@ import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
  */
 
 /**
+ * «نعم، هو المالك» — the registered citizen the officer agreed this card names.
+ *
+ * An answer, not a lookup. `LandlordMatchHint` finds at most one citizen on a
+ * given `landlordPhone` and *asks*; this carries what the officer said, so the
+ * link is made with the save instead of waiting for somebody to reach the same
+ * card from «روابط المالكين» weeks later, with neither household in front of
+ * them.
+ *
+ * ## Why the client may state this at all
+ *
+ * It asserts nothing the server takes on trust. `LandlordLinkService.confirm`
+ * re-derives the match from the committed card — it refuses any citizen whose
+ * `phone` and `whatsapp` both differ from the card's `landlordPhone`, refuses
+ * a card naming its own filer, and refuses an OWNER card outright. A forged id
+ * is a validation error, not a link. What the client contributes is the one
+ * thing a query cannot: a person's answer.
+ *
+ * ## Why it rides with the submission
+ *
+ * Because the officer is frequently offline. The save is queued, delivered
+ * hours later, and a confirmation the browser was going to make afterwards
+ * simply never happens — in exactly the settlement where a return trip is most
+ * expensive. Travelling inside the payload, the intent survives the queue and
+ * is applied by whoever delivers it.
+ *
+ * Optional everywhere, and absent is the common case: most landlords are not
+ * registered, and an officer who is not sure leaves the question to the queue.
+ */
+export const landlordCitizenIdField = uuid.optional();
+
+/**
  * `errorMap` on both discriminated unions below because Zod's own message for
  * a missing or unrecognised discriminator — "Invalid discriminator value.
  * Expected 'OWNER' | 'TENANT'" — is English and names the wire value, not the
@@ -42,6 +73,7 @@ const occupancyBranch = z.discriminatedUnion(
       occupancyType: z.literal('TENANT'),
       landlordName: arabicOrLatinName,
       landlordPhone: internationalPhone,
+      landlordCitizenId: landlordCitizenIdField,
     }),
     /**
      * شاغل بتسامح — occupying without paying بدل.
@@ -60,6 +92,7 @@ const occupancyBranch = z.discriminatedUnion(
       occupancyType: z.literal('FREE_OCCUPANT'),
       landlordName: arabicOrLatinName,
       landlordPhone: internationalPhone.optional(),
+      landlordCitizenId: landlordCitizenIdField,
     }),
   ],
   { errorMap: () => ({ message: 'نوع الإشغال مطلوب' }) },
@@ -152,6 +185,14 @@ export const neighborhoodField = z
  * the parcel instead of duplicating it.
  */
 export const buildingUnitSchema = z.object({
+  /**
+   * The stored row this line was loaded from, on an edit. Absent on a new line.
+   *
+   * Lets a save keep each row's identity instead of re-creating the list, and
+   * refuse a line whose flat ended («إنهاء الإيجار») while the form was open —
+   * otherwise re-saving that form would bring the ended flat back as held.
+   */
+  id: uuid.optional(),
   /**
    * The canonical `Unit` this card line describes, when the officer picked one.
    *
@@ -256,7 +297,28 @@ const propertyBranch = z.discriminatedUnion(
       propertyNumber: propertyNumberField,
       landType: landTypeSchema,
       unitArea: areaField,
-      shares: sharesField,
+      /*
+        Optional here, required of an owner below.
+
+        أسهم are a fraction of *ownership* out of the cadastre's 2400. A farmer
+        renting an orchard, or a relative working a plot without بدل, holds none,
+        and demanding the number of them produced exactly what a required field
+        with no true answer produces: an invented one. The requirement is
+        occupancy-dependent, which this branch — keyed on نوع العقار alone —
+        cannot express; see `ownerLandShares`.
+      */
+      shares: sharesField.optional(),
+      /*
+        حالة الأرض, asked of its owner — for the same reason a منزل's is.
+
+        A plot is one billable unit and its card had nowhere to say that
+        somebody else works it. So under an occupant-borne notice reaching أرض,
+        the owner of a rented plot was billed (an unanswered unit is billed) and
+        the farmer renting it was billed again on their own card. «مؤجرة» or
+        «مشغولة بتسامح» here is what exempts the owner, exactly as it does for a
+        منزل. Stripped from a non-owner's card by `PropertyEntry.normalise`.
+      */
+      unitStatus: unitStatusField,
     }),
     z.object({
       propertyType: z.literal('TENT'),
@@ -272,7 +334,27 @@ const propertyBranch = z.discriminatedUnion(
   { errorMap: () => ({ message: 'نوع العقار مطلوب' }) },
 );
 
-export const propertyEntrySchema = z.intersection(occupancyBranch, propertyBranch);
+/**
+ * أسهم on a plot of land, asked of its owner and of nobody else.
+ *
+ * Checked across both branches because it depends on both: an owner of أرض
+ * states their share of it, a tenant or a شاغل بتسامح of the same أرض holds no
+ * share at all. A share count left on a non-owner's card is stripped on the way
+ * in (`PropertyEntry.normalise`), not refused — it is what a card edited from
+ * مالك to مستأجر looks like.
+ */
+function ownerLandShares(
+  card: { occupancyType: string; propertyType: string; shares?: number },
+  ctx: z.RefinementCtx,
+): void {
+  if (card.propertyType === 'LAND' && card.occupancyType === 'OWNER' && card.shares === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['shares'], message: 'عدد الأسهم مطلوب' });
+  }
+}
+
+export const propertyEntrySchema = z
+  .intersection(occupancyBranch, propertyBranch)
+  .superRefine(ownerLandShares);
 export type PropertyEntry = z.infer<typeof propertyEntrySchema>;
 
 /**
@@ -315,6 +397,7 @@ export const partialPropertyEntrySchema = z
     occupancyType: occupancyTypeSchema,
     landlordName: arabicOrLatinName,
     landlordPhone: internationalPhone,
+    landlordCitizenId: landlordCitizenIdField,
     propertyType: propertyTypeSchema,
     neighborhood: neighborhoodField.optional(),
     propertyNumber: propertyNumberField,
@@ -347,6 +430,7 @@ type CardField =
   | 'propertyType'
   | 'landlordName'
   | 'landlordPhone'
+  | 'landlordCitizenId'
   // Gated on occupancy as well as property type, so — like the landlord pair
   // above it — it is not something `PROPERTY_FIELD_MAP` can express.
   | 'unitStatus';

@@ -12,31 +12,34 @@ import {
   DoorClosed,
   Footprints,
   Loader2,
+  Grid2X2,
   Pencil,
   Plus,
   ShieldAlert,
   Trash2,
   UserPlus,
-  UserRound,
-  UserRoundPlus,
 } from 'lucide-react';
 import {
   getLabels,
   defaultUnitTypeFor,
   type DamageLevel,
   type UpsertUnitInput,
+  type VacancyBasis,
+  type VacancyEndReason,
 } from '@mechanization/shared-schemas';
 import {
   addUnit,
   ApiRequestError,
+  confirmVacancy,
   createCase,
   deleteUnit,
   duplicateUnitsOf,
   endOccupancy,
+  endVacancy,
   getBuilding,
   getBuildingDamage,
+  linkOccupancyOwner,
   logApiError,
-  logUnitVisit,
   recordDamage,
   recordOccupancy,
   updateUnit,
@@ -60,15 +63,28 @@ import {
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import {
+  type EndOccupancyAnswer,
+  activeVacancy,
+  AddPersonForm,
   BuildingSummaryBadges,
   CaseForm,
   cellBadge,
+  ConfirmVacancyDialog,
   DamageForm,
+  effectiveUnitStatus,
   floorLabel,
   groupUnitsByFloor,
+  logVisitWithFollowUp,
   occupancyMessage,
-  OccupantForm,
+  OccupantList,
+  ownerLinkMessage,
+  SeasonalHomePanel,
+  UnitStateLegend,
+  unitOwners,
+  vacancyBlocker,
+  VacancyPanel,
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
@@ -180,6 +196,8 @@ export function BuildingUnitMatrixView({
   const [action, setAction] = useState<ActionKind>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** Whether «تأكيد الشغور» is asking its questions. */
+  const [confirmingVacancy, setConfirmingVacancy] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -229,9 +247,14 @@ export function BuildingUnitMatrixView({
     [building, selectedUnitId],
   );
 
-  const liveOccupants = useMemo(
-    () => (selectedUnit?.occupants ?? []).filter((occupant) => occupant.toDate === null),
-    [selectedUnit],
+  /*
+    Why «تأكيد الشغور» cannot be pressed here — a مستأجر or شاغل بتسامح living
+    in the unit, or a seasonal home. Never the owner. See `vacancyBlocker`; the
+    server applies the same rules.
+  */
+  const vacancyBlocked = useMemo(
+    () => (selectedUnit ? vacancyBlocker(selectedUnit, en) : null),
+    [selectedUnit, en],
   );
 
   const [addingFloor, setAddingFloor] = useState<number | null>(null);
@@ -307,29 +330,141 @@ export function BuildingUnitMatrixView({
       en ? 'Could not remove the unit.' : 'تعذّر حذف الوحدة.',
     );
 
-  const markVacant = (unit: UnitWithOccupants) =>
-    run(
-      async () => {
-        if (!token) throw new Error('unauthenticated');
-        await updateUnit(tenant, token, unit.id, {
-          surveyStatus: 'VACANT_CONFIRMED',
-          unitStatus: 'VACANT',
-        });
-        return en ? `Unit ${unit.unitCode} confirmed vacant` : `تم تأكيد شغور الوحدة ${unit.unitCode}`;
-      },
-      en ? 'Could not update the unit.' : 'تعذّر تحديث الوحدة.',
+  /*
+    Both halves of «تأكيد الشغور» are dialogs, so neither goes through `run`: a
+    refusal belongs in the dialog the officer is looking at, and each rethrows
+    for the dialog to show. The drawer does the same.
+  */
+  const saveVacancy = async (
+    unit: UnitWithOccupants,
+    input: { basis: VacancyBasis; observedAt?: string; notes: string },
+  ) => {
+    if (!token) throw new Error('unauthenticated');
+    let result;
+    try {
+      result = await confirmVacancy(tenant, token, unit.id, {
+        basis: input.basis,
+        ...(input.observedAt ? { observedAt: input.observedAt } : {}),
+        ...(input.notes ? { notes: input.notes } : {}),
+      });
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not confirm the vacancy.'
+            : 'تعذّر تأكيد الشغور.',
+      );
+    }
+    await load();
+    toast.success(
+      [
+        en ? `Unit ${unit.unitCode} confirmed vacant` : `تم تأكيد شغور الوحدة ${unit.unitCode}`,
+        result.casesResolved > 0
+          ? en
+            ? `${result.casesResolved} case(s) closed`
+            : `أُغلقت ${result.casesResolved} حالة`
+          : null,
+      ]
+        .filter(Boolean)
+        .join('، '),
     );
+  };
 
-  const closeSpell = (occupant: UnitOccupant) =>
+  const liftVacancy = async (
+    unit: UnitWithOccupants,
+    input: { reason: VacancyEndReason; endedAt?: string; notes: string },
+  ) => {
+    if (!token) throw new Error('unauthenticated');
+    try {
+      await endVacancy(tenant, token, unit.id, {
+        reason: input.reason,
+        ...(input.endedAt ? { endedAt: input.endedAt } : {}),
+        ...(input.notes ? { notes: input.notes } : {}),
+      });
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not lift the vacancy.'
+            : 'تعذّر إلغاء تأكيد الشغور.',
+      );
+    }
+    await load();
+    // «لم تعد شاغرة» leaves somebody unrecorded in the flat; the form for
+    // recording them opens rather than being looked for.
+    if (input.reason === 'NO_LONGER_VACANT') setAction('occupant');
+    toast.success(
+      input.reason === 'NO_LONGER_VACANT'
+        ? en
+          ? 'Vacancy lifted — record whoever lives there now'
+          : 'أُلغي تأكيد الشغور — سجّل من يسكنها الآن'
+        : en
+          ? 'Vacancy lifted and the unit restored'
+          : 'أُلغي تأكيد الشغور وعادت الوحدة إلى حالتها السابقة',
+    );
+  };
+
+  /*
+    Ending a spell, after `EndOccupancyDialog` has asked why.
+
+    Not routed through `run`: a refusal belongs in the dialog the officer is
+    looking at, not in a toast behind it, so the error is rethrown for the
+    dialog to show and the dialog stays open.
+  */
+  const closeSpell = async (occupant: UnitOccupant, input: EndOccupancyAnswer) => {
+    if (!token) throw new Error('unauthenticated');
+    let result: Awaited<ReturnType<typeof endOccupancy>>;
+    try {
+      result = await endOccupancy(tenant, token, occupant.id, input);
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not end the occupancy.'
+            : 'تعذّر إنهاء الإشغال.',
+      );
+    }
+    await load();
+    toast.success(endTenancyMessage(result, locale));
+  };
+
+  /** «ربط بالمالك» — a refusal is rethrown for the dialog to show, as `closeSpell`'s is. */
+  const linkOwner = async (occupant: UnitOccupant, ownerId: string, confirmRecordedAfter: boolean) => {
+    if (!token) throw new Error('unauthenticated');
+    let result: Awaited<ReturnType<typeof linkOccupancyOwner>>;
+    try {
+      result = await linkOccupancyOwner(tenant, token, occupant.id, ownerId, confirmRecordedAfter);
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not link the owner.'
+            : 'تعذّر الربط بالمالك.',
+      );
+    }
+    await load();
+    toast.success(ownerLinkMessage(result, en));
+  };
+
+  const saveSeasonal = (
+    unit: UnitWithOccupants,
+    values: { presenceMonths: number[]; ownerLastStayAt: string | null; vacancyDeclaredAt: string | null },
+  ) =>
     run(
       async () => {
         if (!token) throw new Error('unauthenticated');
-        await endOccupancy(tenant, token, occupant.id);
-        return en
-          ? 'Occupancy ended, and the property released from their file'
-          : 'تم إنهاء الإشغال وفصل العقار عن ملف المواطن';
+        await updateUnit(tenant, token, unit.id, values);
+        return en ? 'Seasonal details saved' : 'تم حفظ بيانات السكن الموسمي';
       },
-      en ? 'Could not end the occupancy.' : 'تعذّر إنهاء الإشغال.',
+      en ? 'Could not save the seasonal details.' : 'تعذّر حفظ بيانات السكن الموسمي.',
     );
 
   const cancelHref = `${base}/buildings`;
@@ -405,13 +540,36 @@ export function BuildingUnitMatrixView({
                   <ShieldAlert className="size-4" aria-hidden />
                   {en ? 'Assess the building' : 'كشف ضرر على المبنى'}
                 </Button>
+                {/*
+                  Two buttons where there was one, because they were two jobs
+                  behind a single label. «تعديل معلومات المبنى» corrects the
+                  shell and never opens the matrix; «تعديل مصفوفة الوحدات»
+                  lands directly on the grid, which is what someone reading
+                  this screen usually came to change.
+                */}
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => router.push(`${base}/buildings/${encodeURIComponent(building.id)}/edit`)}
+                  onClick={() =>
+                    router.push(
+                      `${base}/buildings/${encodeURIComponent(building.id)}/edit?step=units`,
+                    )
+                  }
+                >
+                  <Grid2X2 className="size-4" aria-hidden />
+                  {en ? 'Edit unit matrix' : 'تعديل مصفوفة الوحدات'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    router.push(
+                      `${base}/buildings/${encodeURIComponent(building.id)}/edit?scope=info`,
+                    )
+                  }
                 >
                   <Pencil className="size-4" aria-hidden />
-                  {en ? 'Edit building' : 'تعديل المبنى'}
+                  {en ? 'Edit building details' : 'تعديل معلومات المبنى'}
                 </Button>
               </div>
             ) : null}
@@ -474,6 +632,21 @@ export function BuildingUnitMatrixView({
                           )}
                         >
                           <span className="font-mono text-xs font-bold">{unit.unitCode}</span>
+                          {/*
+                            The state is written on the tile, not only in its
+                            tooltip: a phone has no hover, and «شاغرة» beside an
+                            owner's name was the one thing the matrix could
+                            not show. Truncated rather than wrapped so a
+                            narrow block keeps its height.
+                          */}
+                          <span className="block max-w-full truncate text-[10px] font-medium leading-tight">
+                            {badge.short}
+                          </span>
+                          {badge.detail ? (
+                            <span className="hidden max-w-full truncate text-[10px] leading-tight opacity-80 sm:block">
+                              {badge.detail}
+                            </span>
+                          ) : null}
                           {unit.visitCount > 0 ? (
                             <span className="flex items-center gap-0.5 text-[10px] opacity-80">
                               <Footprints className="size-2.5 shrink-0" aria-hidden />
@@ -505,6 +678,8 @@ export function BuildingUnitMatrixView({
               ))}
             </div>
           )}
+
+          {building.units.length > 0 ? <UnitStateLegend locale={locale} /> : null}
 
           {/* ── Add-unit inline flow, open for at most one floor ─────── */}
           {addingFloor !== null ? (
@@ -629,7 +804,7 @@ export function BuildingUnitMatrixView({
             </div>
           ) : null}
 
-          {/* ── The selected unit, and the four things to do with it ─ */}
+          {/* ── The selected unit, and what can be done with it ─ */}
           {selectedUnit ? (
             <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/[0.03] p-4">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -646,85 +821,44 @@ export function BuildingUnitMatrixView({
                 </p>
               </div>
 
-              {selectedUnit.occupants.length > 0 ? (
-                <ul className="space-y-1.5">
-                  {selectedUnit.occupants.map((occupant) => {
-                    const current = occupant.toDate === null;
-                    /*
-                      No card on their file claims this flat — so billing,
-                      which reads the file, has nothing to charge for it.
+              <OccupantList
+                unit={selectedUnit}
+                locale={locale}
+                canWrite={canWrite}
+                busy={busy}
+                citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
+                onEnd={closeSpell}
+                onLinkOwner={linkOwner}
+              />
 
-                      This used to fire on every occupant «تسجيل شاغل»
-                      created, because that path wrote the matrix half of
-                      the record and never the file half. It writes both now
-                      (`BuildingsService.claimOnFile`), which leaves the one
-                      case no write can fix: a person with no registration to
-                      hang a property card on. The copy below says that, and
-                      says what to do about it, rather than describing a gap
-                      the officer had no way to close from here.
+              {/* Why the flat reads «شاغرة», and the control that lifts it. */}
+              <VacancyPanel
+                unit={selectedUnit}
+                unitCode={`${building.code}-${selectedUnit.unitCode}`}
+                locale={locale}
+                busy={busy}
+                canWrite={canWrite}
+                onEnd={(values) => liftVacancy(selectedUnit, values)}
+              />
 
-                      Only said of a *current* occupant. A former spell whose
-                      link was released on the way out is missing nothing.
-                    */
-                    const unbacked = current && occupant.backedByFile === false;
-                    return (
-                      <li
-                        key={occupant.id}
-                        className={cn(
-                          'flex flex-wrap items-center gap-2 rounded-md px-2.5 py-1.5 text-xs',
-                          current ? 'bg-background' : 'bg-muted/40 text-muted-foreground',
-                        )}
-                      >
-                        <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                        <Link
-                          href={`${base}/citizens/${occupant.citizenId}`}
-                          className={cn(
-                            'underline-offset-2 hover:underline',
-                            current ? 'font-medium' : 'font-normal line-through',
-                          )}
-                        >
-                          {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
-                        </Link>
-                        <Badge variant="soft-muted">{labels.occupancyRole[occupant.role]}</Badge>
-                        {!current ? <Badge variant="outline">{en ? 'Former' : 'سابق'}</Badge> : null}
-                        {occupant.shares ? (
-                          <span className="text-muted-foreground">
-                            {en ? `${occupant.shares}/2400 shares` : `${occupant.shares}/٢٤٠٠ سهم`}
-                          </span>
-                        ) : null}
-                        <span className="text-muted-foreground">
-                          {occupant.toDate
-                            ? `${formatDate(occupant.fromDate)} — ${formatDate(occupant.toDate)}`
-                            : `${en ? 'since' : 'منذ'} ${formatDate(occupant.fromDate)}`}
-                        </span>
-                        {unbacked ? (
-                          <span
-                            className="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-500"
-                            title={
-                              en
-                                ? 'This citizen has no registration, so nothing on their file claims this unit and it cannot be billed. Register them to link it.'
-                                : 'لا يوجد ملف لهذا المواطن، فلا شيء يربطه بالوحدة ولن تُحتسب الرسوم. سجّله ليُربط العقار.'
-                            }
-                          >
-                            <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
-                            {en ? 'No file yet' : 'لا ملف له بعد'}
-                          </span>
-                        ) : null}
-                        {canWrite && current ? (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void closeSpell(occupant)}
-                            className="ms-auto text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
-                          >
-                            {en ? 'End tenancy' : 'إنهاء الإشغال'}
-                          </button>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ul>
+              {effectiveUnitStatus(selectedUnit) === 'SEASONAL' ? (
+                <SeasonalHomePanel
+                  unit={selectedUnit}
+                  locale={locale}
+                  busy={busy}
+                  canWrite={canWrite}
+                  onSave={(values) => void saveSeasonal(selectedUnit, values)}
+                />
               ) : null}
+
+              <ConfirmVacancyDialog
+                unit={selectedUnit}
+                unitCode={`${building.code}-${selectedUnit.unitCode}`}
+                locale={locale}
+                open={confirmingVacancy}
+                onOpenChange={setConfirmingVacancy}
+                onConfirm={(values) => saveVacancy(selectedUnit, values)}
+              />
 
               {canWrite ? (
                 <div className="flex flex-wrap gap-2">
@@ -738,51 +872,7 @@ export function BuildingUnitMatrixView({
                     }}
                   >
                     <UserPlus className="size-4" aria-hidden />
-                    {en ? 'Register occupant' : 'تسجيل شاغل'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={action === 'case' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'case' ? null : 'case');
-                    }}
-                  >
-                    <ClipboardList className="size-4" aria-hidden />
-                    {en ? 'Log a case' : 'تسجيل حالة'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      busy ||
-                      selectedUnit.surveyStatus === 'VACANT_CONFIRMED' ||
-                      liveOccupants.length > 0
-                    }
-                    title={
-                      liveOccupants.length > 0
-                        ? en
-                          ? 'End the occupancies first — this unit has people recorded in it'
-                          : 'أنهِ الإشغال أولاً — يوجد شاغل مسجَّل في هذه الوحدة'
-                        : undefined
-                    }
-                    onClick={() => void markVacant(selectedUnit)}
-                  >
-                    <DoorClosed className="size-4" aria-hidden />
-                    {en ? 'Mark vacant' : 'تأكيد الشغور'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={action === 'damage' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'damage' ? null : 'damage');
-                    }}
-                  >
-                    <ShieldAlert className="size-4" aria-hidden />
-                    {en ? 'Assess damage' : 'كشف ضرر'}
+                    {en ? 'Add a person to this unit' : 'إضافة شخص إلى الوحدة'}
                   </Button>
                   <Button
                     size="sm"
@@ -796,13 +886,51 @@ export function BuildingUnitMatrixView({
                     <Footprints className="size-4" aria-hidden />
                     {en ? 'Log a visit' : 'تسجيل زيارة'}
                   </Button>
-                  <Link
-                    href={`${base}/citizens/new?buildingId=${encodeURIComponent(building.id)}&unitId=${encodeURIComponent(selectedUnit.id)}`}
-                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                  {/*
+                    Hidden once a confirmation is standing: the panel above
+                    carries it and the control that lifts it, and a greyed-out
+                    «تأكيد الشغور» beside it would read as unavailable rather
+                    than already done.
+                  */}
+                  {activeVacancy(selectedUnit) ? null : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || vacancyBlocked !== null}
+                      title={vacancyBlocked ?? undefined}
+                      onClick={() => {
+                        setActionError(null);
+                        setConfirmingVacancy(true);
+                      }}
+                    >
+                      <DoorClosed className="size-4" aria-hidden />
+                      {en ? 'Confirm vacant…' : 'تأكيد الشغور…'}
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant={action === 'damage' ? 'default' : 'outline'}
+                    disabled={busy}
+                    onClick={() => {
+                      setActionError(null);
+                      setAction(action === 'damage' ? null : 'damage');
+                    }}
                   >
-                    <UserRoundPlus className="size-4" aria-hidden />
-                    {en ? 'Register a household here' : 'تسجيل أسرة في هذه الوحدة'}
-                  </Link>
+                    <ShieldAlert className="size-4" aria-hidden />
+                    {en ? 'Assess this unit' : 'كشف ضرر على الوحدة'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={action === 'case' ? 'default' : 'outline'}
+                    disabled={busy}
+                    onClick={() => {
+                      setActionError(null);
+                      setAction(action === 'case' ? null : 'case');
+                    }}
+                  >
+                    <ClipboardList className="size-4" aria-hidden />
+                    {en ? 'Open a follow-up case' : 'فتح حالة متابعة'}
+                  </Button>
                   {canWrite &&
                   selectedUnit.occupants.length === 0 &&
                   selectedUnit.visitCount === 0 ? (
@@ -821,12 +949,19 @@ export function BuildingUnitMatrixView({
               ) : null}
 
               {action === 'occupant' && token ? (
-                <OccupantForm
+                <AddPersonForm
                   tenant={tenant}
                   token={token}
                   busy={busy}
                   locale={locale}
-                  onSubmit={(citizen, occRole, shares, unitStatus) =>
+                  newFileHref={(residence, name) =>
+                    `${base}/citizens/new?buildingId=${encodeURIComponent(building.id)}&unitId=${encodeURIComponent(selectedUnit.id)}&residence=${residence}${
+                      name ? `&name=${encodeURIComponent(name)}` : ''
+                    }`
+                  }
+                  vacancy={activeVacancy(selectedUnit)}
+                  owners={unitOwners(selectedUnit)}
+                  onSubmit={({ citizen, role: occRole, endsVacancy, ...rest }) =>
                     void run(
                       async () => {
                         if (!token) throw new Error('unauthenticated');
@@ -834,14 +969,16 @@ export function BuildingUnitMatrixView({
                           unitId: selectedUnit.id,
                           citizenId: citizen.id,
                           role: occRole,
-                          shares,
-                          unitStatus,
+                          ...rest,
+                          ...(endsVacancy ? { endsVacancy } : {}),
                         });
                         return occupancyMessage(
                           citizen.fullName,
                           selectedUnit.unitCode,
                           result,
                           en,
+                          unitOwners(selectedUnit).find((owner) => owner.citizenId === rest.landlordCitizenId)
+                            ?.citizenName,
                         );
                       },
                       en ? 'Could not record the occupancy.' : 'تعذّر تسجيل الإشغال.',
@@ -867,17 +1004,9 @@ export function BuildingUnitMatrixView({
                           buildingName: building.name ?? undefined,
                           scheduledRevisitAt: values.revisitAt || undefined,
                         });
-                        if (
-                          selectedUnit.surveyStatus === 'NOT_SURVEYED' &&
-                          values.caseType === 'UNIT_UNREACHABLE'
-                        ) {
-                          await updateUnit(tenant, token, selectedUnit.id, {
-                            surveyStatus: 'VISITED_NO_ANSWER',
-                          });
-                        }
-                        return en ? 'Case logged' : 'تم تسجيل الحالة';
+                        return en ? 'Follow-up case opened' : 'تم فتح حالة المتابعة';
                       },
-                      en ? 'Could not log the case.' : 'تعذّر تسجيل الحالة.',
+                      en ? 'Could not open the case.' : 'تعذّر فتح الحالة.',
                     )
                   }
                 />
@@ -893,15 +1022,18 @@ export function BuildingUnitMatrixView({
                     void run(
                       async () => {
                         if (!token) throw new Error('unauthenticated');
-                        const result = await logUnitVisit(tenant, token, {
-                          unitId: selectedUnit.id,
-                          outcome: values.outcome,
-                          visitedAt: values.visitedAt || undefined,
-                          notes: values.notes || undefined,
-                        });
-                        return en
-                          ? `Visit logged — ${result.visitCount} attempt(s) on this unit`
-                          : `تم تسجيل الزيارة — ${result.visitCount} محاولة على هذه الوحدة`;
+                        return logVisitWithFollowUp(
+                          tenant,
+                          token,
+                          {
+                            unitId: selectedUnit.id,
+                            buildingId: building.id,
+                            parcelNumber: building.parcelNumber,
+                            buildingName: building.name,
+                          },
+                          values,
+                          en,
+                        );
                       },
                       en ? 'Could not log the visit.' : 'تعذّر تسجيل الزيارة.',
                     )

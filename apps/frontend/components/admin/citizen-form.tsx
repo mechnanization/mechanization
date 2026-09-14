@@ -21,12 +21,20 @@ import {
   allowedPropertyTypesFor,
   getLabels,
   PROPERTY_FIELD_MAP,
+  type CitizenResidence,
 } from '@mechanization/shared-schemas';
 import type { PublicTenantConfig } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { ContactStep, PersonalStep } from '@/components/citizen/steps';
+import {
+  ContactStep,
+  OwnerContactStep,
+  OwnerPersonalStep,
+  PersonalStep,
+} from '@/components/citizen/steps';
+import { SegmentedControl } from '@/components/ui/segmented-control';
+import { PossibleDuplicates } from './possible-duplicates';
 import {
   PropertyCard,
   type PropertyDraft,
@@ -37,10 +45,17 @@ import { UnverifiedFieldsDialog } from './unverified-fields-dialog';
 import { QuickSaveDialog } from './quick-save-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
+import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
 import { useSectionNav } from '@/lib/use-section-nav';
 
 export interface CitizenFormValues {
+  /**
+   * نوع الملف — a household living in the town, or «غير مقيم في البلدة». Decides
+   * which questions the first two sections ask. Absent reads as a household,
+   * which is what every draft and queued record from before it meant.
+   */
+  residence?: CitizenResidence;
   personal: Record<string, unknown>;
   contact: Record<string, unknown>;
   properties: PropertyDraft[];
@@ -118,6 +133,7 @@ const SECTION_IDS = SECTIONS.map((section) => section.id) as readonly SectionId[
  */
 export function emptyCitizen(): CitizenFormValues {
   return {
+    residence: 'RESIDENT',
     personal: { isLebanese: true },
     contact: { whatsappSameAsPhone: true },
     // Empty, not one blank card — a citizen who owns nothing and only rents
@@ -126,6 +142,82 @@ export function emptyCitizen(): CitizenFormValues {
     properties: [],
     flags: new Map(),
     unverified: new Map(),
+  };
+}
+
+/**
+ * Switching نوع الملف, as a value rather than a state update.
+ *
+ * Nothing typed is thrown away — a clerk who picks the wrong kind and back
+ * again gets their answers back, cards included.
+ *
+ * It used to turn every card into «مالك» on the way to a non-resident record,
+ * when that record held owners only. It now also holds a person who rents or
+ * runs a shop, an office, a clinic, a warehouse or a plot here while living
+ * elsewhere, so a tenant's card is left exactly as it was: whether a card fits
+ * a non-resident is the schema's question (`nonResidentCardIssues`), and it is
+ * answered on the field that has to change rather than by silently rewriting
+ * what the officer entered.
+ *
+ * Pure so the two ways a record becomes non-resident agree: the chooser at the
+ * top of the form, and a unit link that arrives already carrying
+ * `?residence=NON_RESIDENT_OWNER` on `citizens/new`.
+ */
+export function withResidence(
+  values: CitizenFormValues,
+  residence: CitizenResidence,
+): CitizenFormValues {
+  return { ...values, residence };
+}
+
+/**
+ * Seeds the name block from whatever the officer had typed into the search
+ * that sent them here.
+ *
+ * The unit panel's «ملف جديد» links carry their search term across, so a
+ * search that found nobody is not retyped into the form immediately after. It
+ * also gives the duplicate check something to check on the first render, which
+ * is the half that matters: the panel used to withhold those links until a
+ * search had run, and officers learned to type «asdfgh» to reveal them.
+ *
+ * ## What it refuses to seed
+ *
+ * A term holding a digit. The same box searches by phone and by رقم القيد, and
+ * «03 123456» split across الاسم الأول and الشهرة is worse than an empty form —
+ * it is a name nobody will read closely before saving, and `arabicOrLatinName`
+ * would reject it at the point where the officer has stopped looking at it.
+ *
+ * ## How it splits
+ *
+ * A single word is a first name. Two are الاسم الأول and الشهرة, because that
+ * is how a person is addressed and therefore how they are searched for. Three
+ * or more fill اسم الأب with everything in between, which is the one reading
+ * that never loses a word the officer typed. None of it is authoritative — it
+ * is a first draft of three fields the officer is looking straight at.
+ */
+export function withSeededName(
+  values: CitizenFormValues,
+  term: string,
+): CitizenFormValues {
+  const trimmed = term.trim();
+  // Arabic-Indic and Extended digits alongside the Latin ones: an Arabic
+  // keyboard produces «٠٣» by default, and a phone typed that way is no more a
+  // name than «03» is.
+  if (!trimmed || /[\d٠-٩۰-۹]/u.test(trimmed)) return values;
+
+  const parts = trimmed.split(/\s+/);
+  const [firstName, ...rest] = parts;
+  const lastName = rest.length > 0 ? rest[rest.length - 1] : undefined;
+  const middleName = rest.length > 1 ? rest.slice(0, -1).join(' ') : undefined;
+
+  return {
+    ...values,
+    personal: {
+      ...values.personal,
+      firstName,
+      ...(middleName ? { middleName } : {}),
+      ...(lastName ? { lastName } : {}),
+    },
   };
 }
 
@@ -168,19 +260,45 @@ export interface AskableField {
  * ticked six boxes and came back to five. One list, read by both.
  */
 export function askableFields(values: CitizenFormValues): AskableField[] {
+  /*
+    A non-resident record asks five things and nothing a household file asks —
+    so a flag left on a household field by an officer who then switched the
+    record to «غير مقيم في البلدة» is pruned rather than holding it at
+    «يتطلب مراجعة» over a question the form no longer puts.
+  */
+  if (values.residence === 'NON_RESIDENT_OWNER') {
+    const owner: AskableField[] = [
+      { path: 'personal.firstName', field: 'firstName', section: 'personal' },
+      { path: 'personal.middleName', field: 'middleName', section: 'personal' },
+      { path: 'personal.lastName', field: 'lastName', section: 'personal' },
+      { path: 'personal.residencePlace', field: 'residencePlace', section: 'personal' },
+      { path: 'contact.phone', field: 'phone', section: 'contact' },
+    ];
+    if (values.contact.whatsappSameAsPhone === false) {
+      owner.push({ path: 'contact.whatsapp', field: 'whatsapp', section: 'contact' });
+    }
+    return [...owner, ...propertyAskableFields(values)];
+  }
+
   const fields: AskableField[] = [
     { path: 'personal.firstName', field: 'firstName', section: 'personal' },
     { path: 'personal.middleName', field: 'middleName', section: 'personal' },
     { path: 'personal.lastName', field: 'lastName', section: 'personal' },
+    { path: 'personal.motherName', field: 'motherName', section: 'personal' },
     { path: 'personal.gender', field: 'gender', section: 'personal' },
-    { path: 'personal.bloodType', field: 'bloodType', section: 'personal' },
+    /*
+      No «فئة الدم» here, deliberately. It is optional on the form now
+      (`personalDetailsObject.bloodType`), and a flag is an excuse for an
+      answer the register needs — offering one for a field that may simply be
+      left blank sent records to «يتطلب مراجعة» over a question a reviewer
+      cannot answer either.
+    */
     { path: 'personal.residentStatus', field: 'residentStatus', section: 'personal' },
   ];
 
+  // No identity document is asked of a Lebanese citizen — see `PersonalStep`.
   if (values.personal.isLebanese !== false) {
     fields.push(
-      { path: 'personal.identityDocType', field: 'identityDocType', section: 'personal' },
-      { path: 'personal.identityDocNumber', field: 'identityDocNumber', section: 'personal' },
       { path: 'personal.civilRecordNumber', field: 'civilRecordNumber', section: 'personal' },
     );
   } else {
@@ -202,10 +320,27 @@ export function askableFields(values: CitizenFormValues): AskableField[] {
     fields.push({ path: 'contact.whatsapp', field: 'whatsapp', section: 'contact' });
   }
 
+  fields.push(...propertyAskableFields(values));
+
+  return fields;
+}
+
+/**
+ * The fields each property card is asking about — the same for a household file
+ * and a non-resident record, because a card's questions depend on the card.
+ */
+function propertyAskableFields(values: CitizenFormValues): AskableField[] {
+  const fields: AskableField[] = [];
+
   values.properties.forEach((property, propertyIndex) => {
     const branch = PROPERTY_FIELD_MAP[property.propertyType as keyof typeof PROPERTY_FIELD_MAP];
 
+    /*
+      أسهم are a share of *ownership*: asked of an owner of أرض, never of a tenant
+      or a شاغل بتسامح farming it — and so never flaggable on their card either.
+    */
     for (const field of branch ?? []) {
+      if (field === 'shares' && property.occupancyType !== 'OWNER') continue;
       fields.push({
         path: `properties.${propertyIndex}.${field}`,
         field,
@@ -228,8 +363,16 @@ export function askableFields(values: CitizenFormValues): AskableField[] {
       حالة الوحدة is absent here for the same reason and more strongly: it is
       optional on every card that shows it, so it can never hold a record up.
     */
-    const nonOwnerFields =
-      property.occupancyType === 'TENANT'
+    /*
+      Neither is asked of a card whose owner is a confirmed or agreed link: the
+      register established both, the fields are locked, and a «غير مؤكَّد» on
+      them would say the opposite of what the card shows. The server drops such
+      a flag anyway; not offering it keeps quick-save from raising one.
+    */
+    const linked = Boolean(property.landlordLink || property.landlordCitizenId);
+    const nonOwnerFields = linked
+      ? []
+      : property.occupancyType === 'TENANT'
         ? (['landlordName', 'landlordPhone'] as const)
         : property.occupancyType === 'FREE_OCCUPANT'
           ? (['landlordName'] as const)
@@ -281,6 +424,33 @@ function reindexFlags(flags: ReadonlyMap<string, string>, removed: number): Map<
   return next;
 }
 
+/**
+ * The same renumbering one level down, after row `rowIndex` of card `cardIndex`
+ * leaves the form — ended from the file while the form is open. That row's own
+ * flags go with it and the rows after it move up, as the server does.
+ */
+function reindexRowFlags(
+  flags: ReadonlyMap<string, string>,
+  cardIndex: number,
+  rowIndex: number,
+): Map<string, string> {
+  const next = new Map<string, string>();
+
+  for (const [path, reason] of flags) {
+    const match = /^properties\.(\d+)\.units\.(\d+)\.(.+)$/.exec(path);
+    if (!match || Number(match[1]) !== cardIndex) {
+      next.set(path, reason);
+      continue;
+    }
+
+    const row = Number(match[2]);
+    if (row === rowIndex) continue;
+    next.set(`properties.${cardIndex}.units.${row > rowIndex ? row - 1 : row}.${match[3]}`, reason);
+  }
+
+  return next;
+}
+
 /** Drops UI-only fields and coerces the numeric strings the inputs produce. */
 export function toPayloadProperty(property: PropertyDraft): Record<string, unknown> {
   /*
@@ -293,7 +463,33 @@ export function toPayloadProperty(property: PropertyDraft): Record<string, unkno
     rather than left to `branchFieldsOnly`, which would discard it silently and
     give the next reader no reason to think it was deliberate.
   */
-  const { unitArea, shares, units, id, buildingId, pendingBuilding: _pending, ...rest } = property;
+  const {
+    unitArea,
+    shares,
+    units,
+    id,
+    buildingId,
+    pendingBuilding: _pending,
+    landlordLink,
+    landlordAgreedName,
+    ...rest
+  } = property;
+
+  /*
+    The owner's name, as the tenant gave it.
+
+    `landlordLink` and `landlordAgreedName` are what the locked field *shows*
+    and never travel: the server keeps a linked card's own name as it was, and
+    resolves the owner's registered name on every read. The registered name is
+    sent only where the tenant's own is empty — a card whose name was flagged
+    unknown before the owner was identified — because the schema requires one
+    of a مستأجر and the field cannot be typed into while locked.
+  */
+  const isNonOwner = property.occupancyType === 'TENANT' || property.occupancyType === 'FREE_OCCUPANT';
+  const landlordName =
+    isNonOwner && !rest.landlordName?.trim()
+      ? (landlordLink?.name ?? landlordAgreedName ?? rest.landlordName)
+      : rest.landlordName;
 
   return {
     // Present only when this card is editing a stored row; the create endpoint
@@ -304,16 +500,23 @@ export function toPayloadProperty(property: PropertyDraft): Record<string, unkno
     // as a value it has no rule for.
     ...(buildingId ? { buildingId } : {}),
     ...rest,
+    ...(landlordName !== undefined ? { landlordName } : {}),
     ...(unitArea !== undefined && unitArea !== '' ? { unitArea: Number(unitArea) } : {}),
-    ...(shares !== undefined && shares !== '' ? { shares: Number(shares) } : {}),
+    // أسهم are a share of ownership — never sent on a tenant's or free occupant's card.
+    ...(shares !== undefined && shares !== '' && property.occupancyType === 'OWNER'
+      ? { shares: Number(shares) }
+      : {}),
     ...(units ? { units: units.map(toPayloadUnit) } : {}),
   };
 }
 
 /** Coerces one building unit's numeric strings for the wire. */
 function toPayloadUnit(unit: UnitDraft): Record<string, unknown> {
-  const { unitArea, unitId, ...rest } = unit;
+  const { unitArea, unitId, id, ...rest } = unit;
   return {
+    // The stored row this line was loaded from: the server keeps it by identity
+    // and refuses it if its flat ended while the form was open.
+    ...(id ? { id } : {}),
     ...(unitId ? { unitId } : {}),
     ...rest,
     ...(unitArea !== undefined && unitArea !== '' ? { unitArea: Number(unitArea) } : {}),
@@ -323,8 +526,9 @@ function toPayloadUnit(unit: UnitDraft): Record<string, unknown> {
 /** The submission exactly as the server will receive it. */
 export function toSubmission(values: CitizenFormValues) {
   return {
-    personal: values.personal,
-    contact: values.contact,
+    residence: values.residence ?? 'RESIDENT',
+    personal: submittedPersonal(values),
+    contact: submittedContact(values),
     properties: values.properties.map(toPayloadProperty),
     flags: flagsToArray(values.flags),
     // Absent unless quick-save was used. `undefined` rather than `''`: the
@@ -340,6 +544,38 @@ export function toSubmission(values: CitizenFormValues) {
     */
     ...(values.notes?.trim() ? { notes: values.notes.trim() } : {}),
   };
+}
+
+/**
+ * The personal section as it goes on the wire — only what this kind of file asks.
+ *
+ * Two things are left behind, and neither is erased on the server by being
+ * left behind (an edit never writes what it is not sent):
+ *
+ *  - a Lebanese citizen's identity document. The edit form still *loads* the
+ *    real number stored on an older record; sending it back would put a field
+ *    nobody can see through validation, and a legacy value that no longer fits
+ *    the rules would fail a save with no box to correct it in;
+ *  - a household file's fields, on a non-resident record.
+ */
+function submittedPersonal(values: CitizenFormValues): Record<string, unknown> {
+  const personal = values.personal;
+  if (values.residence === 'NON_RESIDENT_OWNER') {
+    const { firstName, middleName, lastName, residencePlace } = personal;
+    return { firstName, middleName, lastName, residencePlace };
+  }
+  if (personal.isLebanese !== false) {
+    const { identityDocType: _type, identityDocNumber: _number, residencyNumber: _residency, ...rest } =
+      personal;
+    return rest;
+  }
+  return personal;
+}
+
+function submittedContact(values: CitizenFormValues): Record<string, unknown> {
+  if (values.residence !== 'NON_RESIDENT_OWNER') return values.contact;
+  const { phone, whatsapp, whatsappSameAsPhone, localContactName, localContactPhone } = values.contact;
+  return { phone, whatsapp, whatsappSameAsPhone, localContactName, localContactPhone };
 }
 
 /**
@@ -748,6 +984,11 @@ export function CitizenForm({
             onAddOnSameParcel={() => addProperty(index)}
             onViewParcel={token ? setRosterParcel : undefined}
             onRemove={() => removeProperty(index)}
+            // Ended on the server, kept there as history — no longer this form's.
+            // A partial end leaves the card here without the rows that ended.
+            onEnded={(result, cardEnded) =>
+              cardEnded ? removeProperty(index) : removeEndedRows(index, result.endedRowIds ?? [])
+            }
             // Zero properties is a valid registration, so the last remaining
             // card is removable too — not just every card after the first.
             canRemove
@@ -755,6 +996,7 @@ export function CitizenForm({
             locale={locale}
             token={token}
             censusPicker
+            nonResident={isNonResident}
             // Only the first card inherits a matrix launch: the officer opened
             // one flat, and pinning every card they go on to add to it would
             // link properties they never said were in that building.
@@ -792,11 +1034,15 @@ export function CitizenForm({
                 onChange={(update) => setProperty(index, update)}
                 onViewParcel={token ? setRosterParcel : undefined}
                 onRemove={() => removeProperty(index)}
+                onEnded={(result, cardEnded) =>
+                  cardEnded ? removeProperty(index) : removeEndedRows(index, result.endedRowIds ?? [])
+                }
                 canRemove
                 errors={scopeErrors(shown, `properties.${index}`)}
                 locale={locale}
                 token={token}
                 censusPicker
+                nonResident={isNonResident}
                 lockedCensusTarget={index === 0 ? (lockedCensusTarget ?? null) : null}
                 title={locale === 'en' ? `Unit ${unitPosition + 1}` : `الملكية ${unitPosition + 1}`}
               />
@@ -846,6 +1092,44 @@ export function CitizenForm({
         else if (i > index) next.add(i - 1);
       }
       return next;
+    });
+  }, []);
+
+  /**
+   * Rows of card `index` that «إنهاء الإيجار» just ended while the card goes on.
+   *
+   * Taken out of the form by id rather than left for the officer to notice: a
+   * save carrying them would name rows that have ended, which the server refuses
+   * so an ended flat is never written back as held. Flags on those rows go with
+   * them; later rows' flags move up.
+   */
+  const removeEndedRows = useCallback((index: number, rowIds: readonly string[]) => {
+    if (rowIds.length === 0) return;
+    setValues((current) => {
+      const card = current.properties[index];
+      const units = card?.units ?? [];
+      const positions = units
+        .map((unit, position) => (unit.id && rowIds.includes(unit.id) ? position : -1))
+        .filter((position) => position >= 0)
+        .sort((a, b) => b - a);
+      if (!card || positions.length === 0) return current;
+
+      let flags: Map<string, string> = new Map(current.flags);
+      let unverified: Map<string, string> = new Map(current.unverified);
+      for (const position of positions) {
+        flags = reindexRowFlags(flags, index, position);
+        unverified = reindexRowFlags(unverified, index, position);
+      }
+      return {
+        ...current,
+        properties: current.properties.map((property, i) =>
+          i === index
+            ? { ...property, units: units.filter((unit) => !(unit.id && rowIds.includes(unit.id))) }
+            : property,
+        ),
+        flags,
+        unverified,
+      };
     });
   }, []);
 
@@ -946,25 +1230,76 @@ export function CitizenForm({
     });
   }, [values.flags, locale]);
 
+  /** «غير مقيم في البلدة» — the stored value still reads OWNER; see `CITIZEN_RESIDENCE`. */
+  const isNonResident = values.residence === 'NON_RESIDENT_OWNER';
+
+  /** Switching نوع الملف. See `withResidence`. */
+  const setResidence = useCallback((residence: CitizenResidence) => {
+    setValues((current) => withResidence(current, residence));
+  }, []);
+
+  /**
+   * «قد يكون مسجَّلاً مسبقاً», built once and handed to whichever contact step
+   * is on screen — the mobile view and the desktop view each render one.
+   *
+   * It lives under the phone number rather than at the foot of the personal
+   * step, where it used to sit. The panel matches on the name *and* the phone,
+   * and the phone is by far the stronger of the two — so the old placement put
+   * an orange warning about a number one section above the field that asks for
+   * it, reading as a complaint about the name the officer had just typed.
+   *
+   * Creates only. On an edit the record being looked at is itself on the
+   * register, so every match is a match with the open file or its household.
+   */
+  const duplicatesPanel =
+    mode === 'create' ? (
+      <PossibleDuplicates
+        tenant={tenant}
+        token={token}
+        firstName={values.personal.firstName}
+        lastName={values.personal.lastName}
+        phone={values.contact.phone}
+        locale={locale}
+      />
+    ) : null;
+
   const sections = useMemo(
     () => [
       {
         id: 'personal',
         step: locale === 'en' ? '1' : '١',
         icon: IdCard,
-        title: locale === 'en' ? 'Personal Info' : 'البيانات الشخصية',
-        description:
-          locale === 'en'
-            ? 'Name as written on ID document, nationality, and residency status'
-            : 'الاسم كما هو مدوّن على وثيقة الإثبات، والجنسية وصفة الإقامة',
+        title: isNonResident
+          ? locale === 'en'
+            ? 'Basic details'
+            : 'البيانات الأساسية'
+          : locale === 'en'
+            ? 'Personal Info'
+            : 'البيانات الشخصية',
+        description: isNonResident
+          ? locale === 'en'
+            ? 'Name, and where the person lives'
+            : 'الاسم ومكان الإقامة'
+          : locale === 'en'
+            ? 'Full name, nationality and residency status'
+            : 'الاسم الكامل والجنسية وصفة الإقامة',
       },
       {
         id: 'contact',
         step: locale === 'en' ? '2' : '٢',
         icon: UsersRound,
-        title: locale === 'en' ? 'Contact & Family' : 'التواصل والأسرة',
-        description:
-          locale === 'en'
+        title: isNonResident
+          ? locale === 'en'
+            ? 'Contact'
+            : 'التواصل'
+          : locale === 'en'
+            ? 'Contact & Family'
+            : 'التواصل والأسرة',
+        description: isNonResident
+          ? locale === 'en'
+            ? 'How to reach them, and who can be contacted locally'
+            : 'وسيلة التواصل، ومن يمكن الرجوع إليه محلياً'
+          : locale === 'en'
             ? 'Phone number used by citizen for login and tracking submissions'
             : 'رقم الهاتف الذي يستخدمه المواطن للدخول ومتابعة طلبه',
       },
@@ -979,10 +1314,15 @@ export function CitizenForm({
             : 'رقم العقار يُطابَق مع السجل العقاري للبلدية أثناء الكتابة',
       },
     ],
-    [locale],
+    [locale, isNonResident],
   );
 
   const [mobileStep, setMobileStep] = useState<SectionId>('personal');
+
+  /** The form's outermost element — what a mobile step change scrolls back
+   *  to. `window.scrollTo` was used here and did nothing: inside the admin
+   *  shell the scroller is an inner `<main>`, not the document. */
+  const formRootRef = useRef<HTMLDivElement | null>(null);
 
   const stepIndex = useMemo(
     () => sections.findIndex((s) => s.id === mobileStep),
@@ -993,7 +1333,7 @@ export function CitizenForm({
     const nextIdx = stepIndex + 1;
     if (nextIdx < sections.length) {
       setMobileStep(sections[nextIdx].id as SectionId);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      scrollElementToTop(formRootRef.current);
     }
   }, [stepIndex, sections]);
 
@@ -1001,7 +1341,7 @@ export function CitizenForm({
     const prevIdx = stepIndex - 1;
     if (prevIdx >= 0) {
       setMobileStep(sections[prevIdx].id as SectionId);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      scrollElementToTop(formRootRef.current);
     }
   }, [stepIndex, sections]);
 
@@ -1058,7 +1398,7 @@ export function CitizenForm({
 
   return (
     <FieldFlagProvider value={flagging}>
-    <div className="space-y-4 pb-20 sm:space-y-5 sm:pb-0">
+    <div ref={formRootRef} className="space-y-4 pb-20 sm:space-y-5 sm:pb-0">
       {/* ── Desktop Section Nav (hidden on mobile) ── */}
       <nav
         aria-label={locale === 'en' ? 'Form sections' : 'أقسام النموذج'}
@@ -1182,54 +1522,61 @@ export function CitizenForm({
       </div>
 
       {/* ── Mobile View: Active Step Only ── */}
-      <div className="block sm:hidden">
+      <div className="block space-y-4 sm:hidden">
         {mobileStep === 'personal' && (
           <FormSection
-            id="personal"
+            /*
+              `-step`, so this copy and the desktop one below do not both
+              answer to `personal`.
+
+              Both layouts are in the DOM at once — `sm:hidden` and
+              `hidden sm:block` are CSS, not removal — and this block comes
+              first, so `document.getElementById('personal')` was returning
+              *this* element on a desktop screen, where it has no layout box.
+              That is why the jump bar's first pill never highlighted and never
+              scrolled: the observer was watching, and `jumpTo` was scrolling
+              to, an element that is `display:none` on the only layout that has
+              a jump bar. The canonical ids now belong to the desktop column,
+              which is the column that uses them.
+            */
+            id="personal-step"
             step={locale === 'en' ? '1' : '١'}
             icon={IdCard}
-            title={locale === 'en' ? 'Personal Information' : 'البيانات الشخصية'}
-            description={
-              locale === 'en'
-                ? 'Name as written on ID document, nationality, and residency status'
-                : 'الاسم كما هو مدوّن على وثيقة الإثبات، والجنسية وصفة الإقامة'
-            }
+            title={sections[0].title}
+            description={sections[0].description}
             invalid={sectionInvalid('personal')}
           >
-            <PersonalStep
-              value={values.personal}
-              errors={shown}
-              onChange={(personal) => update({ personal })}
-              locale={locale}
-            />
+            <ResidenceChooser value={values.residence ?? 'RESIDENT'} onChange={setResidence} locale={locale} />
+            {isNonResident ? (
+              <OwnerPersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
+            ) : (
+              <PersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
+            )}
           </FormSection>
         )}
 
         {mobileStep === 'contact' && (
           <FormSection
-            id="contact"
+            // `-step` — see the personal section above.
+            id="contact-step"
             step={locale === 'en' ? '2' : '٢'}
             icon={UsersRound}
-            title={locale === 'en' ? 'Contact & Household' : 'التواصل والأسرة'}
-            description={
-              locale === 'en'
-                ? 'Phone number used by citizen for login and tracking submissions'
-                : 'رقم الهاتف الذي يستخدمه المواطن للدخول ومتابعة طلبه'
-            }
+            title={sections[1].title}
+            description={sections[1].description}
             invalid={sectionInvalid('contact')}
           >
-            <ContactStep
-              value={values.contact}
-              errors={shown}
-              onChange={(contact) => update({ contact })}
-              locale={locale}
-            />
+            {isNonResident ? (
+              <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
+            ) : (
+              <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
+            )}
           </FormSection>
         )}
 
         {mobileStep === 'properties' && (
           <FormSection
-            id="properties"
+            // `-step` — see the personal section above.
+            id="properties-step"
             step={locale === 'en' ? '3' : '٣'}
             icon={Building2}
             title={
@@ -1281,6 +1628,20 @@ export function CitizenForm({
             </div>
           </FormSection>
         )}
+
+        {/*
+          Outside the step switch on purpose — this is what puts «ملاحظات»
+          under all three steps rather than only after the last one. One
+          instance, so the three steps share a single box and a note typed in
+          العقارات is still there when the officer steps back to البيانات
+          الشخصية to fix a surname.
+        */}
+        <StepNotesField
+          value={values.notes ?? ''}
+          error={shown['notes']}
+          onChange={(notes) => update({ notes })}
+          locale={locale}
+        />
       </div>
 
       {/* ── Desktop View: All Sections Sequentially ── */}
@@ -1289,40 +1650,31 @@ export function CitizenForm({
           id="personal"
           step={locale === 'en' ? '1' : '١'}
           icon={IdCard}
-          title={locale === 'en' ? 'Personal Information' : 'البيانات الشخصية'}
-          description={
-            locale === 'en'
-              ? 'Name as written on ID document, nationality, and residency status'
-              : 'الاسم كما هو مدوّن على وثيقة الإثبات، والجنسية وصفة الإقامة'
-          }
+          title={sections[0].title}
+          description={sections[0].description}
           invalid={sectionInvalid('personal')}
         >
-          <PersonalStep
-            value={values.personal}
-            errors={shown}
-            onChange={(personal) => update({ personal })}
-            locale={locale}
-          />
+          <ResidenceChooser value={values.residence ?? 'RESIDENT'} onChange={setResidence} locale={locale} />
+          {isNonResident ? (
+            <OwnerPersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
+          ) : (
+            <PersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
+          )}
         </FormSection>
 
         <FormSection
           id="contact"
           step={locale === 'en' ? '2' : '٢'}
           icon={UsersRound}
-          title={locale === 'en' ? 'Contact & Household' : 'التواصل والأسرة'}
-          description={
-            locale === 'en'
-              ? 'Phone number used by citizen for login and tracking submissions'
-              : 'رقم الهاتف الذي يستخدمه المواطن للدخول ومتابعة طلبه'
-          }
+          title={sections[1].title}
+          description={sections[1].description}
           invalid={sectionInvalid('contact')}
         >
-          <ContactStep
-            value={values.contact}
-            errors={shown}
-            onChange={(contact) => update({ contact })}
-            locale={locale}
-          />
+          {isNonResident ? (
+            <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
+          ) : (
+            <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
+          )}
         </FormSection>
 
         <FormSection
@@ -1408,7 +1760,13 @@ export function CitizenForm({
         >
           <Field
             label={locale === 'en' ? 'Notes' : 'ملاحظات'}
-            htmlFor="notes"
+            /*
+              `notes-input`, not `notes`. The `FormSection` card above already
+              carries `id="notes"` as the page's scroll anchor, so the textarea
+              was a second element with the same id and `htmlFor="notes"`
+              resolved to the card — meaning tapping the label focused nothing.
+            */
+            htmlFor="notes-input"
             error={shown['notes']}
             hint={
               locale === 'en'
@@ -1417,7 +1775,7 @@ export function CitizenForm({
             }
           >
             <Textarea
-              id="notes"
+              id="notes-input"
               rows={3}
               maxLength={2000}
               placeholder={
@@ -1722,6 +2080,146 @@ export function CitizenForm({
       locale={locale}
     />
     </FieldFlagProvider>
+  );
+}
+
+/**
+ * «من يُسجَّل؟» — a household that lives in the town, or an owner who does not.
+ *
+ * Asked as a question about **where the person lives most of the year**, never
+ * about محل القيد: plenty of people registered in the town live in Beirut, and
+ * an expatriate whose family is on the civil register here still lives abroad.
+ * Somebody who lives in someone else's property is always a household — the
+ * non-resident record holds what they own, and what they rent or occupy that
+ * nobody lives in (`nonResidentCardIssues`).
+ */
+function ResidenceChooser({
+  value,
+  onChange,
+  locale,
+}: {
+  value: CitizenResidence;
+  onChange: (next: CitizenResidence) => void;
+  locale: string;
+}) {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+  return (
+    <div className="mb-4 space-y-2 rounded-lg border border-border/70 bg-muted/10 p-3">
+      <Field
+        label={en ? 'Does this person live in the town most of the year?' : 'هل يقيم هذا الشخص في البلدة معظم السنة؟'}
+        htmlFor="residence"
+        required
+      >
+        <SegmentedControl
+          value={value}
+          onChange={(next) => onChange(next as CitizenResidence)}
+          options={[
+            { value: 'RESIDENT', label: labels.citizenResidence.RESIDENT },
+            { value: 'NON_RESIDENT_OWNER', label: labels.citizenResidence.NON_RESIDENT_OWNER },
+          ]}
+        />
+      </Field>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {value === 'NON_RESIDENT_OWNER'
+          ? en
+            ? 'Lives elsewhere, and owns something here or rents a shop, office, clinic, warehouse or land here. Name, contact and place of residence only — no ID, household or blood type. Someone who rents a home here and lives in it is a household file.'
+            : 'يقيم خارج البلدة، ويملك فيها عقاراً أو يستأجر فيها محلاً أو مكتباً أو عيادة أو مستودعاً أو أرضاً. الاسم ووسيلة التواصل ومكان الإقامة فقط — دون وثيقة أو بيانات أسرة أو فئة دم. من يستأجر مسكناً في البلدة ويسكنه يُسجَّل بملف أسرة.'
+          : en
+            ? 'A household file. Choose «Lives outside the town» for an owner who only visits, or someone who only works or farms here.'
+            : 'ملف أسرة كامل. اختر «غير مقيم في البلدة» لمالك لا يأتي إلا زائراً، أو لمن يعمل أو يزرع في البلدة ويسكن خارجها.'}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * «ملاحظات» on a phone — under every step, not parked after the last one.
+ *
+ * The desktop layout can afford to put this at the bottom of a long page: the
+ * whole record is on one scroll, so "after العقارات" is somewhere an officer
+ * passes anyway. A phone shows one step at a time, and the notes card lived
+ * inside the `hidden sm:block` column — so on the device this form is actually
+ * used on, in a stairwell, there was **no way to write a note at all**.
+ *
+ * What makes that expensive is *when* the note occurs to someone. It is never
+ * at the end: it is «الدرج مكسور» while they are standing on the stairs, and
+ * «الأسرة تنتقل نهاية الشهر» while the person is saying it, halfway through
+ * البيانات الشخصية. A box reachable only from the last step asks them to hold
+ * the sentence in their head across two «التالي» presses, and what actually
+ * happened instead is that officers typed it into «سبب عام لنقص البيانات» —
+ * the one free-text box that *was* reachable — which flags a clean record for
+ * review and attaches the sentence to fields it does not describe.
+ *
+ * So it is rendered once, outside the step switch, and every step has it.
+ *
+ * ## Why it is not collapsed behind a tap
+ *
+ * A fold would buy back about 100px on a screen that already scrolls, and it
+ * would cost the one property that makes this worth doing: that the box is
+ * *there*, needing nothing, at the moment the sentence occurs. It is also the
+ * last thing in the step, so the height it takes displaces nothing — an
+ * officer reaches it after the step's own fields, on the way to «التالي».
+ *
+ * It stays visually quiet while empty — dashed, on the page's own tone — so
+ * that being present on all three steps does not make it loud on all three.
+ */
+function StepNotesField({
+  value,
+  error,
+  onChange,
+  locale,
+}: {
+  value: string;
+  error?: string;
+  onChange: (notes: string) => void;
+  locale: string;
+}) {
+  const en = locale === 'en';
+  const written = value.trim().length > 0;
+
+  return (
+    <div
+      /*
+        Not `id="notes"`. The desktop card owns that, it comes *second* in the
+        document, and `getElementById` returns the first match — so sharing the
+        id would point the page's `notes` anchor at this element on desktop,
+        where it is `display:none` and `scrollIntoView` is a silent no-op.
+      */
+      id="notes-mobile"
+      className={cn(
+        'scroll-mt-28 rounded-xl border p-3 transition-colors',
+        error
+          ? 'border-destructive/50 bg-destructive/5'
+          : written
+            ? 'border-border/80 bg-card shadow-2xs'
+            : 'border-dashed border-border/70 bg-muted/10',
+      )}
+    >
+      <Field
+        label={en ? 'Notes' : 'ملاحظات'}
+        htmlFor="notes-mobile-input"
+        error={error}
+        hint={
+          en
+            ? 'Anything this visit showed that no field above asks for. Does not flag the record.'
+            : 'أي ما أظهرته هذه الزيارة ولا يسأل عنه أي حقل. لا يضع علامة على السجل.'
+        }
+      >
+        <Textarea
+          id="notes-mobile-input"
+          rows={2}
+          maxLength={2000}
+          placeholder={
+            en
+              ? 'e.g. the stairs are broken — use the back entrance next time.'
+              : 'مثال: الدرج مكسور، الزيارة القادمة من الخلف.'
+          }
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </Field>
+    </div>
   );
 }
 

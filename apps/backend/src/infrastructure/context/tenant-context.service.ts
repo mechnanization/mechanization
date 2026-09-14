@@ -8,6 +8,15 @@ export interface TenantScope {
   schemaName: string;
   /** The client bound to this municipality's schema. Repositories read it here. */
   prisma: TenantPrismaClient;
+  /**
+   * Set while `runInTenantTransaction` is running `prisma` as a transaction.
+   *
+   * Side effects that must not happen for writes that may yet roll back — an
+   * audit row, a cache invalidation — queue themselves here instead of running
+   * against a transaction client that may already be closed by the time they
+   * reach the database. See `tenant-transaction.ts`.
+   */
+  transaction?: { afterCommit: Array<() => unknown> };
 }
 
 /**

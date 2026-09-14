@@ -34,7 +34,7 @@ import {
   type RegisteredParcel,
   type ZoneSummary,
 } from '@/lib/api-client';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, type CitizenResidence } from '@mechanization/shared-schemas';
 import {
   BUILDING_LAYER,
   BUILDING_SOURCE,
@@ -122,14 +122,35 @@ const DOT = {
  */
 const DOT_LIFT: [number, number] = [0, -12];
 
+/** Fill strength of a drawn sector — the same whether or not one is picked. */
+const ZONE_FILL_OPACITY = 0.25;
+const ZONE_LINE_OPACITY = 0.9;
+
 /**
- * Translucency for the sector fills. Drops every non-selected sector right
- * down when one is picked so the active one stands out without hiding the rest
- * of the municipality's geometry.
+ * Shows every sector at `opacity`, or — once one is picked — only that one,
+ * with the rest fully transparent so their colours cannot be mistaken for it.
+ *
+ * Keyed on `zoneId`, the property `ZonesService.buildGeoJson` writes; the
+ * features carry no `id`, and matching on one silently faded every sector.
  */
-function zoneFillOpacity(activeZoneId: string | null | undefined): number | mapboxgl.ExpressionSpecification {
-  if (!activeZoneId) return 0.25;
-  return ['case', ['==', ['get', 'id'], activeZoneId], 0.45, 0.08];
+function zoneOpacity(
+  activeZoneId: string | null | undefined,
+  opacity: number,
+): number | mapboxgl.ExpressionSpecification {
+  if (!activeZoneId) return opacity;
+  return ['case', ['==', ['get', 'zoneId'], activeZoneId], opacity, 0];
+}
+
+function applyZoneOpacity(map: mapboxgl.Map, activeZoneId: string | null | undefined): void {
+  if (map.getLayer(LAYER.zoneFills)) {
+    map.setPaintProperty(LAYER.zoneFills, 'fill-opacity', zoneOpacity(activeZoneId, ZONE_FILL_OPACITY));
+  }
+  if (map.getLayer(LAYER.zoneLines)) {
+    map.setPaintProperty(LAYER.zoneLines, 'line-opacity', zoneOpacity(activeZoneId, ZONE_LINE_OPACITY));
+  }
+  if (map.getLayer(LAYER.zoneLabels)) {
+    map.setPaintProperty(LAYER.zoneLabels, 'text-opacity', zoneOpacity(activeZoneId, 1));
+  }
 }
 
 /**
@@ -308,12 +329,19 @@ export function FullscreenMap({
   focusLat?: number;
   focusLng?: number;
   /**
-   * Where «تسجيل أسرة في هذه الوحدة» goes from the census drawer.
+   * Where the census drawer's «ملف جديد» choices go — see the drawer's own
+   * `registerHref`.
    *
    * Built by the page, like `citizenHref` beside it: this component is handed
    * links rather than reconstructing `/{tenant}/{locale}/{adminPath}` itself.
    */
-  registerHref?: (buildingId: string, unitId: string) => string;
+  registerHref?: (
+    buildingId: string,
+    unitId: string,
+    residence: CitizenResidence,
+    /** Whatever the officer typed into the occupant search — seeds the name. */
+    name: string,
+  ) => string;
   locale?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -486,7 +514,7 @@ export function FullscreenMap({
           id: LAYER.zoneFills,
           type: 'fill',
           source: SOURCE.zones,
-          paint: { 'fill-color': ['to-color', ['get', 'color']], 'fill-opacity': 0.25 },
+          paint: { 'fill-color': ['to-color', ['get', 'color']], 'fill-opacity': ZONE_FILL_OPACITY },
         },
         beneathLabels,
       );
@@ -499,7 +527,7 @@ export function FullscreenMap({
           paint: {
             'line-color': ['to-color', ['get', 'color']],
             'line-width': ['interpolate', ['linear'], ['zoom'], 11, 1.2, 17, 3],
-            'line-opacity': 0.9,
+            'line-opacity': ZONE_LINE_OPACITY,
           },
         },
         beneathLabels,
@@ -526,7 +554,7 @@ export function FullscreenMap({
       for (const id of [LAYER.zoneFills, LAYER.zoneLines, LAYER.zoneLabels]) {
         map.setLayoutProperty(id, 'visibility', visibility);
       }
-      map.setPaintProperty(LAYER.zoneFills, 'fill-opacity', zoneFillOpacity(activeZoneIdRef.current));
+      applyZoneOpacity(map, activeZoneIdRef.current);
 
       raiseRegistered(map);
       attachMeasureLayers(map);
@@ -927,7 +955,7 @@ export function FullscreenMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.getLayer(LAYER.zoneFills)) return;
-    map.setPaintProperty(LAYER.zoneFills, 'fill-opacity', zoneFillOpacity(activeZoneId));
+    applyZoneOpacity(map, activeZoneId);
   }, [activeZoneId, zonesGeoJson, cadastreReady]);
 
   useEffect(() => {
@@ -2319,11 +2347,7 @@ export function FullscreenMap({
           token={token}
           buildingId={openBuildingId}
           canWrite
-          registerHref={
-            registerHref
-              ? (buildingId, unitId) => registerHref(buildingId, unitId)
-              : undefined
-          }
+          registerHref={registerHref}
           // The same builder the parcel popups already use, so an occupant's
           // name leads to the same record from either layer.
           citizenHref={citizenHref}

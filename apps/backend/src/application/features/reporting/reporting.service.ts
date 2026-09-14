@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
+import type { FeeAssessment } from '@mechanization/shared-schemas';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
@@ -186,9 +187,29 @@ export interface RegisteredParcel {
   structureCount: number;
 }
 
+/**
+ * One «تأكيد الشغور» still standing on a unit, as a citizen's file reports it.
+ *
+ * A summary of `UnitVacancyConfirmation`, not the row: what a reader of this
+ * file needs is that the municipality has called this flat empty, since when,
+ * and on what — which is precisely what a resident or owner disputing the
+ * absence of an occupancy fee is entitled to read (see the model's own note).
+ * The officer's free-text `notes` stay out, because this shape is also what
+ * the citizen's own portal renders.
+ */
+export interface CitizenProfileVacancy {
+  id: string;
+  /** Null only on a row migration 0043 backfilled — the question did not exist. */
+  basis: string | null;
+  observedAt: string;
+}
+
 /** One unit inside a BUILDING — شقة, عيادة or محل. */
 export interface CitizenProfileUnit {
   id: string;
+  /** This flat left the tenancy (migration 0046) — shown as history, billed for nothing. */
+  endedAt: string | null;
+  endReason: string | null;
   /**
    * Nullable since migration 0031 — a per-unit «غير مؤكَّد» flag blanks the
    * field it excuses, so the review screen has to be able to render a flat the
@@ -202,6 +223,45 @@ export interface CitizenProfileUnit {
   sharedRights: string[];
   /** حالة الوحدة — set by the building's owner. Null on a tenant's own card. */
   unitStatus: string | null;
+
+  /** The censused `Unit` this line was linked to, when one was. */
+  unitId: string | null;
+  unitCode: string | null;
+  unitPostedNumber: string | null;
+  /**
+   * حالة الوحدة as **سجل المباني** holds it, which is not always what the
+   * owner's card says.
+   *
+   * Both are reported because billing reads the census first and the card
+   * second, so where the two disagree the disagreement *is* the finding: a
+   * card saying «مشغولة من المالك» over a census row saying «شاغرة» is either a
+   * vacancy to lift or a card to correct, and a page showing one number cannot
+   * say which. Null when the line was never linked to a censused unit.
+   */
+  censusUnitStatus: string | null;
+  /**
+   * «مسكن موسمي» — the months (1–12) its owners are usually present, when they
+   * last stayed, and when a تصريح بالشغور was filed (migration 0040).
+   *
+   * Reported because the owner still bears the occupancy fee on a seasonal home
+   * (`OWNER_BILLED_WHILE_ABSENT`) and these are the facts the council's decision
+   * to shorten that rests on. Empty and null on every other unit.
+   */
+  presenceMonths: number[];
+  ownerLastStayAt: string | null;
+  vacancyDeclaredAt: string | null;
+  /** The «تأكيد الشغور» standing on the censused unit, if one is. */
+  vacancy: CitizenProfileVacancy | null;
+  /**
+   * Everyone سجل المباني records as a current owner of the linked flat, oldest
+   * first, with their أسهم.
+   *
+   * On a tenancy card this is the flat's full ownership beside the one owner
+   * the card is linked to: among co-owners the link names whoever the tenant
+   * deals with, and the rest are read from here rather than hidden. Empty when
+   * the line is not linked to a flat, or nobody is recorded owning it.
+   */
+  owners: Array<{ citizenId: string; name: string; phone: string | null; shares: number | null }>;
 }
 
 /**
@@ -215,6 +275,13 @@ export interface CitizenProfileUnit {
  */
 export interface CitizenProfileProperty {
   id: string;
+  /**
+   * When this tenancy ended, and why (migration 0046). Null on a current card.
+   * An ended card is kept on the file as history — with its lease — and bills
+   * nothing.
+   */
+  endedAt: string | null;
+  endReason: string | null;
   /**
    * Null when the officer recorded الحي or رقم العقار as «غير مؤكَّد».
    *
@@ -230,8 +297,29 @@ export interface CitizenProfileProperty {
    * Non-owner occupancies only. The name is required of both a مستأجر and a
    * شاغل بتسامح; the phone only of the first — see `occupancyBranch`.
    */
+  /**
+   * The owner's name as every screen should show it: the registered citizen's
+   * own name while a link stands, what the tenant said otherwise.
+   *
+   * Resolved here, once, so the receipt, ملفّي and the review dialog — which all
+   * print this field — show the confirmed owner without each learning about
+   * links. What the tenant actually typed is kept in `landlordNameAsTyped`.
+   */
   landlordName: string | null;
+  /** The name as the tenant gave it, whatever the link says. */
+  landlordNameAsTyped: string | null;
   landlordPhone: string | null;
+  /**
+   * The registered citizen this card's owner was confirmed to be, if anyone.
+   *
+   * Reported so the profile can link to that person's own file instead of
+   * printing their name as loose text — «هذا المالك مسجّل عندنا» is a fact the
+   * register already established (`confirmLandlordLink`) and the only page that
+   * could show it was the queue where it was decided.
+   */
+  landlordCitizenId: string | null;
+  /** That citizen's reference number, beside the name the card now shows. */
+  landlordReferenceNumber: string | null;
   /** HOUSE only, owner only, and null wherever nobody was asked. */
   unitStatus: string | null;
   buildingName: string | null;
@@ -242,9 +330,42 @@ export interface CitizenProfileProperty {
   side: string | null;
   tentLocation: string | null;
   unitArea: number | null;
+  /**
+   * أسهم out of the cadastre's standard 2400 — a share of *ownership*, so it
+   * is carried on an owner's card and is null on a tenant's or a free
+   * occupant's (`branchFieldsOnly`).
+   *
+   * Selected here since it was stored: the column has been written by the form
+   * since the LAND branch existed and never read back, so «الأسهم» was a row
+   * the profile drew from a value that never arrived and therefore never drew
+   * at all.
+   */
+  shares: number | null;
   sharedRights: string[];
   latitude: number | null;
   longitude: number | null;
+  /**
+   * The censused structure behind this card, when one was linked.
+   *
+   * Two codes, and they are not interchangeable (D14): `buildingCode` is the
+   * municipality's own `ZONE-PARCEL-SUFFIX`, `buildingPostedNumber` is what is
+   * painted on the wall. Where they disagree the collector in the street
+   * trusts the paint, so a page that shows only one of them is showing the
+   * wrong one half the time.
+   */
+  buildingId: string | null;
+  buildingCode: string | null;
+  buildingPostedNumber: string | null;
+  /**
+   * حالة المبنى — and the value this exists for is `WAR_DAMAGED_UNINHABITED`.
+   *
+   * A structure still standing, war-damaged, and established as empty. Its
+   * units are recorded exactly as any building's are, so nothing else on this
+   * card distinguishes a flat in it from a flat anybody lives in — which is a
+   * gap on the page where a household's file and its invoices are read side by
+   * side. Null on a card never linked to a censused building.
+   */
+  buildingLifecycleStatus: string | null;
   unitCount: number;
   units: CitizenProfileUnit[];
 }
@@ -265,6 +386,8 @@ export interface CitizenProfileRegistration {
   /** `REQUIRES_REVIEW` when `flags` is non-empty; `PENDING` otherwise. */
   status: string;
   flags: Array<{ path: string; reason: string }>;
+  /** «ملاحظات» — what the last officer learned by standing there, or null. */
+  notes: string | null;
   properties: CitizenProfileProperty[];
   documents: CitizenProfileDocument[];
 }
@@ -307,6 +430,20 @@ export interface CitizenProfilePayment {
   paidAt: string | null;
   reviewNote: string | null;
   frequency: string | null;
+  /**
+   * How this amount was arrived at, when it was not simply the notice's own.
+   *
+   * The answer to «ليش عليّ هالمبلغ؟», and the reason the breakdown is stored
+   * on the payment at all. `FeesService.listForCitizen` has carried it to the
+   * portal's bill list since per-unit billing existed; this response — the one
+   * behind both the staff profile and ملفّي — did not, so the single page that
+   * shows a citizen's bills beside the properties they were assessed from was
+   * the one page that could not explain them.
+   *
+   * Null on a flat charge, which explains itself, and on every invoice raised
+   * before per-unit billing existed.
+   */
+  assessment: FeeAssessment | null;
 }
 
 /**
@@ -327,9 +464,26 @@ export interface CitizenFeeTotals {
 }
 
 /** The staff-facing view of one citizen and everything they have filed. */
+/** One card naming this citizen as its confirmed landlord. */
+export interface CitizenProfileLandlordOf {
+  propertyEntryId: string;
+  occupancyType: string;
+  tenant: { id: string; name: string; referenceNumber: string | null };
+  buildingName: string | null;
+  buildingCode: string | null;
+  propertyNumber: string | null;
+  unitCodes: string[];
+  /** Null on a link confirmed before migration 0045 recorded when. */
+  linkedAt: string | null;
+  /** Set when the tenancy has ended — the link is then history, not a live claim. */
+  endedAt: string | null;
+}
+
 export interface CitizenProfile {
   id: string;
   fullName: string;
+  /** اسم الأم وشهرتها. Null on records filed before migration 0044 — «لم يُسأل». */
+  motherName: string | null;
   phone: string | null;
   whatsapp: string | null;
   gender: string | null;
@@ -346,10 +500,24 @@ export interface CitizenProfile {
   maritalStatus: string | null;
   bloodType: string | null;
   referenceNumber: string | null;
+  /** نوع الملف — a household, or «غير مقيم في البلدة» (stored as NON_RESIDENT_OWNER). */
+  residence: string;
+  residencePlace: string | null;
+  localContactName: string | null;
+  localContactPhone: string | null;
   registeredAt: string;
   /** False for a deactivated record — kept for its history, refused a session. */
   isActive: boolean;
   registrations: CitizenProfileRegistration[];
+  /**
+   * Tenancy cards other households filed that were confirmed as naming this
+   * citizen as their landlord.
+   *
+   * The owner's half of the link. Until it was listed here the only place a
+   * confirmed link could be seen, or undone, was the tenant's file — so the
+   * person billed because of it had no way to see why from their own page.
+   */
+  landlordOf: CitizenProfileLandlordOf[];
   payments: CitizenProfilePayment[];
   fees: CitizenFeeTotals;
 }
@@ -441,12 +609,12 @@ export class ReportingService {
           (SELECT count(*)::int FROM ${this.S}registrations) AS total,
           (SELECT count(*)::int FROM ${this.S}registrations WHERE "submittedAt" >= ${sevenDaysAgo}) AS recent,
           (SELECT COALESCE(json_object_agg("propertyType", cnt), '{}'::json)
-             FROM (SELECT "propertyType", count(*)::int AS cnt FROM ${this.S}property_entries GROUP BY "propertyType") p
+             FROM (SELECT "propertyType", count(*)::int AS cnt FROM ${this.S}property_entries WHERE "endedAt" IS NULL GROUP BY "propertyType") p
           ) AS "byPropertyType",
           (SELECT COALESCE(json_object_agg("residentStatus", cnt), '{}'::json)
              FROM (
                SELECT "residentStatus", count(*)::int AS cnt FROM ${this.S}users
-               WHERE kind = 'CITIZEN' AND "residentStatus" IS NOT NULL
+               WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND "residentStatus" IS NOT NULL
                GROUP BY "residentStatus"
              ) u
           ) AS "byResidentStatus"
@@ -497,7 +665,7 @@ export class ReportingService {
       this.db.$queryRaw<AnalyticsRow[]>`
         WITH owned_parcels AS (
           SELECT DISTINCT "propertyNumber" FROM ${this.S}property_entries
-           WHERE "occupancyType" = 'OWNER' AND "propertyNumber" IS NOT NULL
+           WHERE "occupancyType" = 'OWNER' AND "propertyNumber" IS NOT NULL AND "endedAt" IS NULL
         ),
         -- A TENANT/FREE_OCCUPANT filing of a unit whose رقم العقار some OWNER
         -- already registered under: the same apartment, filed twice — once by
@@ -506,34 +674,46 @@ export class ReportingService {
         excluded_entries AS (
           SELECT pe.* FROM ${this.S}property_entries pe
            WHERE pe."occupancyType" <> 'OWNER'
+             AND pe."endedAt" IS NULL
              AND pe."propertyNumber" IS NOT NULL
              AND EXISTS (SELECT 1 FROM owned_parcels op WHERE op."propertyNumber" = pe."propertyNumber")
         ),
         countable_entries AS (
           SELECT pe.* FROM ${this.S}property_entries pe
            WHERE pe.id NOT IN (SELECT id FROM excluded_entries)
+             -- An ended tenancy (migration 0046) is history, not a property held.
+             AND pe."endedAt" IS NULL
         )
         SELECT
-          (SELECT count(*)::int FROM ${this.S}users WHERE kind = 'CITIZEN')
+          -- Households only. A non-resident record («غير مقيم في البلدة», migration 0040)
+          -- is somebody who lives elsewhere: counting them — or whatever
+          -- household size a file converted to a non-resident record still carries —
+          -- would put people in the town's population who are not in the town.
+          -- The residence column is NOT NULL, so this comparison drops no existing row.
+          (SELECT count(*)::int FROM ${this.S}users WHERE kind = 'CITIZEN' AND residence = 'RESIDENT')
             AS "citizenRecords",
-          (SELECT COALESCE(sum("actualHouseholdMembers"), 0)::int FROM ${this.S}users WHERE kind = 'CITIZEN')
+          (SELECT COALESCE(sum("actualHouseholdMembers"), 0)::int FROM ${this.S}users
+            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT')
             AS "populationTotal",
-          (SELECT COALESCE(sum("totalRegisteredMembers"), 0)::int FROM ${this.S}users WHERE kind = 'CITIZEN')
+          (SELECT COALESCE(sum("totalRegisteredMembers"), 0)::int FROM ${this.S}users
+            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT')
             AS "grossRegisteredTotal",
           (SELECT COALESCE(sum("totalRegisteredMembers" - "actualHouseholdMembers"), 0)::int
              FROM ${this.S}users
             WHERE kind = 'CITIZEN'
+              AND residence = 'RESIDENT'
               AND "totalRegisteredMembers" IS NOT NULL
               AND "actualHouseholdMembers" IS NOT NULL)
             AS "marriedOffspringTotal",
-          (SELECT count(*)::int FROM ${this.S}users WHERE kind = 'CITIZEN' AND "actualHouseholdMembers" IS NULL)
+          (SELECT count(*)::int FROM ${this.S}users
+            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND "actualHouseholdMembers" IS NULL)
             AS "householdsWithoutSize",
           (SELECT COALESCE(
                     json_agg(json_build_object('size', size, 'households', c) ORDER BY size),
                     '[]'::json)
              FROM (SELECT "actualHouseholdMembers" AS size, count(*)::int AS c
                      FROM ${this.S}users
-                    WHERE kind = 'CITIZEN' AND "actualHouseholdMembers" IS NOT NULL
+                    WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND "actualHouseholdMembers" IS NOT NULL
                     GROUP BY 1) f)
             AS "familySizes",
           (SELECT COALESCE(json_object_agg("propertyType", cnt), '{}'::json)
@@ -553,6 +733,7 @@ export class ReportingService {
                      FROM (SELECT bu."unitType"::text AS type, count(*)::int AS n
                              FROM ${this.S}building_units bu
                              JOIN countable_entries ce ON ce.id = bu."propertyEntryId"
+                            WHERE bu."endedAt" IS NULL
                             GROUP BY 1
                            UNION ALL
                            SELECT "unitType"::text, count(*)::int
@@ -560,14 +741,16 @@ export class ReportingService {
                     GROUP BY 1) x)
             AS "unitsByType",
           (SELECT ((SELECT count(*) FROM ${this.S}building_units bu
-                      JOIN countable_entries ce ON ce.id = bu."propertyEntryId")
+                      JOIN countable_entries ce ON ce.id = bu."propertyEntryId"
+                     WHERE bu."endedAt" IS NULL)
                  + (SELECT count(*) FROM countable_entries WHERE "unitType" IS NOT NULL))::int)
             AS "unitTotal",
           (SELECT count(*)::int FROM excluded_entries)
             AS "duplicatePropertiesExcluded",
           (SELECT (SELECT count(*)::int FROM excluded_entries WHERE "unitType" IS NOT NULL)
                 + (SELECT count(*)::int FROM ${this.S}building_units bu
-                     JOIN excluded_entries ee ON ee.id = bu."propertyEntryId"))
+                     JOIN excluded_entries ee ON ee.id = bu."propertyEntryId"
+                    WHERE bu."endedAt" IS NULL))
             AS "duplicateUnitsExcluded",
           COALESCE((SELECT sum(amount) FROM ${this.S}citizen_payments), 0)::float8
             AS "billedTotal",
@@ -653,6 +836,8 @@ export class ReportingService {
           latitude: { not: null },
           longitude: { not: null },
           propertyNumber: { not: null },
+          // A tenant who left is not on the map (migration 0046).
+          endedAt: null,
         },
         select: {
           id: true,
@@ -714,6 +899,7 @@ export class ReportingService {
         firstName: true,
         middleName: true,
         lastName: true,
+        motherName: true,
         phone: true,
         whatsapp: true,
         gender: true,
@@ -729,6 +915,37 @@ export class ReportingService {
         maritalStatus: true,
         bloodType: true,
         referenceNumber: true,
+        residence: true,
+        residencePlace: true,
+        localContactName: true,
+        localContactPhone: true,
+        // The owner's side of every confirmed link — see `landlordOf`.
+        namedAsLandlordOn: {
+          orderBy: [{ endedAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }],
+          select: {
+            id: true,
+            endedAt: true,
+            occupancyType: true,
+            buildingName: true,
+            propertyNumber: true,
+            landlordLinkFootprint: true,
+            building: { select: { code: true } },
+            units: { select: { unit: { select: { unitCode: true } } } },
+            registration: {
+              select: {
+                citizen: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    middleName: true,
+                    lastName: true,
+                    referenceNumber: true,
+                  },
+                },
+              },
+            },
+          },
+        },
         isActive: true,
         createdAt: true,
         /**
@@ -751,6 +968,8 @@ export class ReportingService {
             whishTransactionRef: true,
             paidAt: true,
             reviewNote: true,
+            // «ليش عليّ هالمبلغ؟» — see `CitizenProfilePayment.assessment`.
+            assessment: true,
             feeNotice: { select: { frequency: true } },
           },
         },
@@ -764,14 +983,28 @@ export class ReportingService {
             flaggedFields: true,
             notes: true,
             properties: {
+              /*
+                Current cards first, in the order the edit form lists them — the
+                order «غير مؤكَّد» flags count positions in — and ended tenancies
+                after them, as the history they are.
+              */
+              orderBy: [{ endedAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }],
               select: {
                 id: true,
+                endedAt: true,
+                endReason: true,
                 neighborhood: true,
                 propertyNumber: true,
                 propertyType: true,
                 occupancyType: true,
                 landlordName: true,
                 landlordPhone: true,
+                // The registered citizen an officer confirmed this owner to be,
+                // so the card can link to their file instead of naming them.
+                landlordCitizenId: true,
+                landlordCitizen: {
+                  select: { firstName: true, middleName: true, lastName: true, referenceNumber: true },
+                },
                 unitStatus: true,
                 buildingName: true,
                 unitType: true,
@@ -780,6 +1013,8 @@ export class ReportingService {
                 side: true,
                 tentLocation: true,
                 unitArea: true,
+                // أسهم — stored since the LAND branch existed, never read back.
+                shares: true,
                 sharedRights: true,
                 latitude: true,
                 longitude: true,
@@ -793,7 +1028,18 @@ export class ReportingService {
                   collector standing in the street trusts the paint.
                 */
                 buildingId: true,
-                building: { select: { code: true, postedNumber: true } },
+                /*
+                  `lifecycleStatus` alongside the two codes, because it can now
+                  say «متضررة من الحرب وغير مسكونة» — a structure still standing
+                  and established as empty (migration 0041). That is a fact
+                  about every card attached to it: somebody reading a household
+                  file, or an invoice raised against a flat in it, is reading
+                  about a building nobody is living in, and no other field on
+                  this response says so.
+                */
+                building: {
+                  select: { code: true, postedNumber: true, lifecycleStatus: true },
+                },
                 // The units themselves, not just how many: a landlord's claim
                 // over a building *is* the unit list, and a bare count told a
                 // reviewer nothing about which floors were being claimed.
@@ -801,6 +1047,8 @@ export class ReportingService {
                   orderBy: { createdAt: 'asc' },
                   select: {
                     id: true,
+                    endedAt: true,
+                    endReason: true,
                     unitType: true,
                     floor: true,
                     side: true,
@@ -808,7 +1056,53 @@ export class ReportingService {
                     sharedRights: true,
                     unitStatus: true,
                     unitId: true,
-                    unit: { select: { unitCode: true, postedNumber: true } },
+                    /*
+                      The censused unit behind the line, not just its code.
+
+                      Three things on it change what this flat is billed, and
+                      none of them is knowable from the owner's card: سجل
+                      المباني's own حالة الوحدة (which billing reads first), a
+                      «تأكيد الشغور» standing on it (which exempts the owner),
+                      and the مسكن موسمي facts (which are why an owner who is
+                      away all year is billed anyway). A file that shows the
+                      bill and not these cannot answer the one question asked
+                      about it.
+                    */
+                    unit: {
+                      select: {
+                        unitCode: true,
+                        postedNumber: true,
+                        unitStatus: true,
+                        presenceMonths: true,
+                        ownerLastStayAt: true,
+                        vacancyDeclaredAt: true,
+                        /*
+                          At most one row comes back: a partial unique index
+                          (migration 0041) allows a single confirmation with a
+                          null `endedAt` per unit. `take: 1` states that here
+                          too, so a future index change degrades to "the newest
+                          one" rather than to an unbounded list on a page.
+                        */
+                        vacancies: {
+                          where: { endedAt: null },
+                          orderBy: { observedAt: 'desc' },
+                          take: 1,
+                          select: { id: true, basis: true, observedAt: true },
+                        },
+                        // The flat's current owners — see `CitizenProfileUnit.owners`.
+                        occupancies: {
+                          where: { toDate: null, role: 'OWNER' },
+                          orderBy: { createdAt: 'asc' },
+                          select: {
+                            citizenId: true,
+                            shares: true,
+                            citizen: {
+                              select: { firstName: true, middleName: true, lastName: true, phone: true },
+                            },
+                          },
+                        },
+                      },
+                    },
                   },
                 },
               },
@@ -856,6 +1150,7 @@ export class ReportingService {
       paidAt: payment.paidAt?.toISOString() ?? null,
       reviewNote: payment.reviewNote,
       frequency: payment.feeNotice?.frequency ?? null,
+      assessment: (payment.assessment as FeeAssessment | null) ?? null,
     }));
 
     // Summed from the rows just mapped rather than by a second set of
@@ -874,6 +1169,7 @@ export class ReportingService {
       fullName: [citizen.firstName, citizen.middleName, citizen.lastName]
         .filter(Boolean)
         .join(' '),
+      motherName: citizen.motherName,
       phone: citizen.phone,
       whatsapp: citizen.whatsapp,
       gender: citizen.gender,
@@ -893,6 +1189,10 @@ export class ReportingService {
       maritalStatus: citizen.maritalStatus,
       bloodType: citizen.bloodType,
       referenceNumber: citizen.referenceNumber,
+      residence: citizen.residence,
+      residencePlace: citizen.residencePlace,
+      localContactName: citizen.localContactName,
+      localContactPhone: citizen.localContactPhone,
       registeredAt: citizen.createdAt.toISOString(),
       isActive: citizen.isActive,
       payments,
@@ -913,6 +1213,26 @@ export class ReportingService {
           (payment) => payment.paymentStatus === 'PENDING_REVIEW',
         ).length,
       },
+      landlordOf: citizen.namedAsLandlordOn.map((card) => {
+        const footprint = card.landlordLinkFootprint as { linkedAt?: unknown } | null;
+        return {
+          propertyEntryId: card.id,
+          occupancyType: card.occupancyType,
+          tenant: {
+            id: card.registration.citizen.id,
+            name: personName(card.registration.citizen),
+            referenceNumber: card.registration.citizen.referenceNumber,
+          },
+          buildingName: card.buildingName,
+          buildingCode: card.building?.code ?? null,
+          propertyNumber: card.propertyNumber,
+          unitCodes: card.units
+            .map((row) => row.unit?.unitCode)
+            .filter((code): code is string => Boolean(code)),
+          linkedAt: typeof footprint?.linkedAt === 'string' ? footprint.linkedAt : null,
+          endedAt: card.endedAt?.toISOString() ?? null,
+        };
+      }),
       registrations: citizen.registrations.map((registration) => ({
         id: registration.id,
         referenceNumber: registration.referenceNumber,
@@ -940,12 +1260,19 @@ export class ReportingService {
         notes: registration.notes,
         properties: registration.properties.map((property) => ({
           id: property.id,
+          endedAt: property.endedAt?.toISOString() ?? null,
+          endReason: property.endReason,
           neighborhood: property.neighborhood,
           propertyNumber: property.propertyNumber,
           propertyType: property.propertyType,
           occupancyType: property.occupancyType,
-          landlordName: property.landlordName,
+          landlordName: property.landlordCitizen
+            ? personName(property.landlordCitizen)
+            : property.landlordName,
+          landlordNameAsTyped: property.landlordName,
           landlordPhone: property.landlordPhone,
+          landlordCitizenId: property.landlordCitizenId,
+          landlordReferenceNumber: property.landlordCitizen?.referenceNumber ?? null,
           unitStatus: property.unitStatus,
           buildingName: property.buildingName,
           unitType: property.unitType,
@@ -956,25 +1283,50 @@ export class ReportingService {
           // Decimal → number at the edge; `Decimal` serialises as an object,
           // which the client would render as "[object Object]".
           unitArea: property.unitArea == null ? null : Number(property.unitArea),
+          shares: property.shares,
           sharedRights: property.sharedRights,
           latitude: property.latitude,
           longitude: property.longitude,
           buildingId: property.buildingId,
           buildingCode: property.building?.code ?? null,
           buildingPostedNumber: property.building?.postedNumber ?? null,
-          unitCount: property.units.length,
-          units: property.units.map((unit) => ({
-            id: unit.id,
-            unitType: unit.unitType,
-            floor: unit.floor,
-            side: unit.side,
-            unitArea: unit.unitArea == null ? null : Number(unit.unitArea),
-            sharedRights: unit.sharedRights,
-            unitStatus: unit.unitStatus,
-            unitId: unit.unitId,
-            unitCode: unit.unit?.unitCode ?? null,
-            unitPostedNumber: unit.unit?.postedNumber ?? null,
-          })),
+          buildingLifecycleStatus: property.building?.lifecycleStatus ?? null,
+          unitCount: property.units.filter((unit) => !unit.endedAt).length,
+          units: property.units.map((unit) => {
+            // At most one by the partial unique index; see the select above.
+            const vacancy = unit.unit?.vacancies[0];
+            return {
+              id: unit.id,
+              endedAt: unit.endedAt?.toISOString() ?? null,
+              endReason: unit.endReason,
+              unitType: unit.unitType,
+              floor: unit.floor,
+              side: unit.side,
+              unitArea: unit.unitArea == null ? null : Number(unit.unitArea),
+              sharedRights: unit.sharedRights,
+              unitStatus: unit.unitStatus,
+              unitId: unit.unitId,
+              unitCode: unit.unit?.unitCode ?? null,
+              unitPostedNumber: unit.unit?.postedNumber ?? null,
+              censusUnitStatus: unit.unit?.unitStatus ?? null,
+              presenceMonths: unit.unit?.presenceMonths ?? [],
+              ownerLastStayAt: unit.unit?.ownerLastStayAt?.toISOString() ?? null,
+              vacancyDeclaredAt: unit.unit?.vacancyDeclaredAt?.toISOString() ?? null,
+              vacancy: vacancy
+                ? {
+                    id: vacancy.id,
+                    basis: vacancy.basis,
+                    observedAt: vacancy.observedAt.toISOString(),
+                  }
+                : null,
+              owners: (unit.unit?.occupancies ?? []).map((owner) => ({
+                citizenId: owner.citizenId,
+                name: personName(owner.citizen),
+                phone: owner.citizen.phone,
+                shares: owner.shares,
+              })),
+            };
+          }),
         })),
         documents: registration.documents.map((document) => ({
           id: document.id,
@@ -1020,6 +1372,7 @@ export class ReportingService {
           latitude: { not: null },
           longitude: { not: null },
           propertyNumber: { not: null },
+          endedAt: null,
         },
         select: {
           id: true,
@@ -1032,7 +1385,7 @@ export class ReportingService {
           latitude: true,
           longitude: true,
           createdAt: true,
-          _count: { select: { units: true } },
+          _count: { select: { units: { where: { endedAt: null } } } },
           registration: {
             select: {
               id: true,
@@ -1277,6 +1630,9 @@ export class ReportingService {
       // A reader summing this column has to treat blank as "not asked", the
       // same way the assessment does.
       'unit_status',
+      // When the tenancy on this line ended (migration 0046). Blank is current;
+      // a line with a date is history and holds nothing today.
+      'ended_at',
     ];
 
     const lines = [header.join(',')];
@@ -1308,8 +1664,9 @@ export class ReportingService {
               unitArea: true,
               unitStatus: true,
               buildingName: true,
+              endedAt: true,
               units: {
-                select: { unitType: true, floor: true, unitArea: true, unitStatus: true },
+                select: { unitType: true, floor: true, unitArea: true, unitStatus: true, endedAt: true },
               },
             },
           },
@@ -1359,6 +1716,7 @@ export class ReportingService {
                 (unit?.unitArea ?? property?.unitArea)?.toString() ?? '',
                 // Same split, same reason — a building states it per unit.
                 unit?.unitStatus ?? property?.unitStatus ?? '',
+                (unit?.endedAt ?? property?.endedAt)?.toISOString() ?? '',
               ]
                 .map(csvCell)
                 .join(','),
@@ -1427,8 +1785,28 @@ export class ReportingService {
    */
   @OnEvent('damage.recorded')
   async onDashboardDataChanged(): Promise<void> {
-    await this.cache.invalidatePrefix(`dashboard:${this.tenantContext.tenantSlug}:`);
+    /*
+      From inside a transaction, cleared once it commits. Cleared before, a read
+      in between re-caches the state the transaction is about to replace, and
+      serves it for the whole TTL.
+    */
+    const prefix = `dashboard:${this.tenantContext.tenantSlug}:`;
+    const transaction = this.tenantContext.peek()?.transaction;
+    if (transaction) {
+      transaction.afterCommit.push(() => this.cache.invalidatePrefix(prefix));
+      return;
+    }
+    await this.cache.invalidatePrefix(prefix);
   }
+}
+
+/** «الاسم الأول اسم الأب الشهرة», skipping whichever part is missing. */
+function personName(person: {
+  firstName: string;
+  middleName: string | null;
+  lastName: string;
+}): string {
+  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ');
 }
 
 /**

@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import {
   AlertTriangle,
   Building2,
@@ -13,27 +12,30 @@ import {
   ShieldAlert,
   Trash2,
   UserPlus,
-  UserRound,
-  UserRoundPlus,
 } from 'lucide-react';
 import {
   getLabels,
   defaultUnitTypeFor,
+  type CitizenResidence,
   type DamageLevel,
   type UpsertUnitInput,
+  type VacancyBasis,
+  type VacancyEndReason,
 } from '@mechanization/shared-schemas';
 import {
   addUnit,
   ApiRequestError,
+  confirmVacancy,
   createCase,
   deleteUnit,
   duplicateUnitsOf,
   type DuplicateUnitCandidate,
   endOccupancy,
+  endVacancy,
   getBuilding,
   getBuildingDamage,
+  linkOccupancyOwner,
   logApiError,
-  logUnitVisit,
   recordDamage,
   recordOccupancy,
   updateUnit,
@@ -56,22 +58,35 @@ import { Sheet } from '@/components/ui/sheet';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import {
+  type EndOccupancyAnswer,
+  activeVacancy,
+  AddPersonForm,
   BuildingSummaryBadges,
   CaseForm,
   cellBadge,
+  ConfirmVacancyDialog,
   DamageForm,
+  effectiveUnitStatus,
   floorLabel,
   groupUnitsByFloor,
+  logVisitWithFollowUp,
   occupancyMessage,
-  OccupantForm,
+  OccupantList,
+  ownerLinkMessage,
+  SeasonalHomePanel,
+  UnitStateLegend,
+  unitOwners,
+  vacancyBlocker,
+  VacancyPanel,
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
 
 /**
- * One building's units, floor by floor, with the four things an officer
- * standing in its stairwell actually does.
+ * One building's units, floor by floor, with the things an officer standing in
+ * its stairwell actually does.
  *
  * The grid is the point. A list of units sorted by code tells you nothing you
  * could not get from a table; a floor-by-floor elevation tells you *where the
@@ -83,7 +98,7 @@ import {
  * «غير ممسوحة» flat is not an absence of data, it is a datum: nobody has been,
  * and somebody should go.
  *
- * The four actions are here rather than on their own pages because each one is
+ * The actions are here rather than on their own pages because each one is
  * something learned at the door and lost by the time a form is found: who
  * answered, why nobody did, that the flat is empty, that the ceiling is down.
  */
@@ -131,13 +146,20 @@ export function BuildingUnitMatrixDrawer({
   /** Opens the building editor — the only route to a matrix for an empty shell. */
   onEditBuilding?: (building: BuildingDetail) => void;
   /**
-   * Where «تسجيل أسرة في هذه الوحدة» goes.
+   * Where «إضافة شخص إلى الوحدة» sends a person who is not on file yet — the
+   * registration form, pointed at this unit, with نوع الملف preset.
    *
    * A URL the caller builds, rather than a router push from in here: this
    * drawer is opened from two different routes (the ledger and the map) whose
    * admin base paths it has no business reconstructing.
    */
-  registerHref?: (buildingId: string, unitId: string) => string;
+  registerHref?: (
+    buildingId: string,
+    unitId: string,
+    residence: CitizenResidence,
+    /** Whatever the officer typed into the occupant search — seeds the name. */
+    name: string,
+  ) => string;
   /**
    * Where an occupant's name goes — their own record.
    *
@@ -169,6 +191,8 @@ export function BuildingUnitMatrixDrawer({
   const [action, setAction] = useState<ActionKind>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** Whether «تأكيد الشغور» is asking its questions. */
+  const [confirmingVacancy, setConfirmingVacancy] = useState(false);
 
   const load = useCallback(async () => {
     if (!buildingId) return;
@@ -204,6 +228,7 @@ export function BuildingUnitMatrixDrawer({
       setSelectedUnitId(null);
       setAction(null);
       setActionError(null);
+      setConfirmingVacancy(false);
       return;
     }
     void load();
@@ -236,11 +261,15 @@ export function BuildingUnitMatrixDrawer({
    * server will refuse to delete.
    *
    * «تأكيد الشغور» is the opposite: a flat whose last tenant moved out *is*
-   * empty and may be marked so. Only a live spell contradicts it.
+   * empty and may be marked so. Only somebody *living* there contradicts it —
+   * a مستأجر or شاغل بتسامح — or a seasonal home, whose owners being away is
+   * what the state means. An owner does not: refusing over the owner is what
+   * taught inspectors to end an ownership just to record an empty flat. See
+   * `vacancyBlocker`.
    */
-  const liveOccupants = useMemo(
-    () => (selectedUnit?.occupants ?? []).filter((occupant) => occupant.toDate === null),
-    [selectedUnit],
+  const vacancyBlocked = useMemo(
+    () => (selectedUnit ? vacancyBlocker(selectedUnit, en) : null),
+    [selectedUnit, en],
   );
 
   /** Which floor's «إضافة وحدة» row is open, and the type chosen in it. */
@@ -372,33 +401,144 @@ export function BuildingUnitMatrixDrawer({
       en ? 'Could not remove the unit.' : 'تعذّر حذف الوحدة.',
     );
 
-  const markVacant = (unit: UnitWithOccupants) =>
-    run(
-      async () => {
-        await updateUnit(tenant, token, unit.id, {
-          surveyStatus: 'VACANT_CONFIRMED',
-          unitStatus: 'VACANT',
-        });
-        return en ? `Unit ${unit.unitCode} confirmed vacant` : `تم تأكيد شغور الوحدة ${unit.unitCode}`;
-      },
-      en ? 'Could not update the unit.' : 'تعذّر تحديث الوحدة.',
+  /*
+    Both halves of «تأكيد الشغور» are dialogs, so neither goes through `run`:
+    a refusal belongs in the dialog the officer is looking at — «يسكنها مستأجر
+    مسجَّل» is a thing to act on, not a toast behind a closed dialog — and each
+    rethrows for the dialog to show.
+  */
+  const saveVacancy = async (
+    unit: UnitWithOccupants,
+    input: { basis: VacancyBasis; observedAt?: string; notes: string },
+  ) => {
+    let result;
+    try {
+      result = await confirmVacancy(tenant, token, unit.id, {
+        basis: input.basis,
+        ...(input.observedAt ? { observedAt: input.observedAt } : {}),
+        ...(input.notes ? { notes: input.notes } : {}),
+      });
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not confirm the vacancy.'
+            : 'تعذّر تأكيد الشغور.',
+      );
+    }
+    await load();
+    onChanged?.();
+    toast.success(
+      [
+        en ? `Unit ${unit.unitCode} confirmed vacant` : `تم تأكيد شغور الوحدة ${unit.unitCode}`,
+        result.casesResolved > 0
+          ? en
+            ? `${result.casesResolved} case(s) closed`
+            : `أُغلقت ${result.casesResolved} حالة`
+          : null,
+      ]
+        .filter(Boolean)
+        .join('، '),
     );
+  };
+
+  const liftVacancy = async (
+    unit: UnitWithOccupants,
+    input: { reason: VacancyEndReason; endedAt?: string; notes: string },
+  ) => {
+    try {
+      await endVacancy(tenant, token, unit.id, {
+        reason: input.reason,
+        ...(input.endedAt ? { endedAt: input.endedAt } : {}),
+        ...(input.notes ? { notes: input.notes } : {}),
+      });
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not lift the vacancy.'
+            : 'تعذّر إلغاء تأكيد الشغور.',
+      );
+    }
+    await load();
+    onChanged?.();
+    /*
+      «لم تعد شاغرة» leaves the flat occupied by somebody unrecorded, so the
+      next step is to record them — the form opens rather than being looked for.
+    */
+    if (input.reason === 'NO_LONGER_VACANT') setAction('occupant');
+    toast.success(
+      input.reason === 'NO_LONGER_VACANT'
+        ? en
+          ? 'Vacancy lifted — record whoever lives there now'
+          : 'أُلغي تأكيد الشغور — سجّل من يسكنها الآن'
+        : en
+          ? 'Vacancy lifted and the unit restored'
+          : 'أُلغي تأكيد الشغور وعادت الوحدة إلى حالتها السابقة',
+    );
+  };
 
   /*
-    Ending a spell also releases the citizen's own claim on the flat — see
-    `BuildingsService.endOccupancy` — and the message says so, because that
-    half happens inside a file the officer is not looking at. Told plainly
-    rather than left to be discovered from a bill that stopped arriving.
+    Ending a spell also changes the citizen's own file — an owner's claim is
+    released, a tenant's card is kept as an ended tenancy — see
+    `TenancyService.endOccupancy`, and the message says so, because that half
+    happens inside a file the officer is not looking at.
   */
-  const closeSpell = (occupant: UnitOccupant) =>
+  const closeSpell = async (occupant: UnitOccupant, input: EndOccupancyAnswer) => {
+    // Not through `run`: a refusal belongs in the dialog the officer is
+    // looking at, so it is rethrown for `EndOccupancyDialog` to show.
+    let result: Awaited<ReturnType<typeof endOccupancy>>;
+    try {
+      result = await endOccupancy(tenant, token, occupant.id, input);
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not end the occupancy.'
+            : 'تعذّر إنهاء الإشغال.',
+      );
+    }
+    await load();
+    onChanged?.();
+    toast.success(endTenancyMessage(result, locale));
+  };
+
+  /** «ربط بالمالك» — a refusal is rethrown for the dialog to show, as `closeSpell`'s is. */
+  const linkOwner = async (occupant: UnitOccupant, ownerId: string, confirmRecordedAfter: boolean) => {
+    let result: Awaited<ReturnType<typeof linkOccupancyOwner>>;
+    try {
+      result = await linkOccupancyOwner(tenant, token, occupant.id, ownerId, confirmRecordedAfter);
+    } catch (caught) {
+      logApiError(caught);
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'Could not link the owner.'
+            : 'تعذّر الربط بالمالك.',
+      );
+    }
+    await load();
+    onChanged?.();
+    toast.success(ownerLinkMessage(result, en));
+  };
+
+  const saveSeasonal = (
+    unit: UnitWithOccupants,
+    values: { presenceMonths: number[]; ownerLastStayAt: string | null; vacancyDeclaredAt: string | null },
+  ) =>
     run(
       async () => {
-        await endOccupancy(tenant, token, occupant.id);
-        return en
-          ? "Occupancy ended, and the property released from their file"
-          : 'تم إنهاء الإشغال وفصل العقار عن ملف المواطن';
+        await updateUnit(tenant, token, unit.id, values);
+        return en ? 'Seasonal details saved' : 'تم حفظ بيانات السكن الموسمي';
       },
-      en ? 'Could not end the occupancy.' : 'تعذّر إنهاء الإشغال.',
+      en ? 'Could not save the seasonal details.' : 'تعذّر حفظ بيانات السكن الموسمي.',
     );
 
   return (
@@ -459,7 +599,11 @@ export function BuildingUnitMatrixDrawer({
               {onEditBuilding ? (
                 <Button variant="outline" size="sm" onClick={() => onEditBuilding(building)}>
                   <Pencil className="size-4" aria-hidden />
-                  {en ? 'Edit building' : 'تعديل المبنى'}
+                  {/* Matches the page view's wording. The drawer's host decides
+                      where this goes, so it does not promise info-only here —
+                      it promises the building rather than its units, which is
+                      what every current caller opens. */}
+                  {en ? 'Edit building details' : 'تعديل معلومات المبنى'}
                 </Button>
               ) : null}
             </div>
@@ -705,8 +849,13 @@ export function BuildingUnitMatrixDrawer({
                               </span>
                             </div>
                             <Badge variant={badge.variant} className="mt-1.5 max-w-full truncate">
-                              {badge.text}
+                              {badge.short}
                             </Badge>
+                            {badge.detail ? (
+                              <span className="mt-1 block truncate text-[11px] text-muted-foreground">
+                                {badge.detail}
+                              </span>
+                            ) : null}
                             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
                               {unit.postedNumber ? (
                                 <span>
@@ -740,7 +889,9 @@ export function BuildingUnitMatrixDrawer({
             </div>
           )}
 
-          {/* ── The selected unit, and the four things to do with it ─ */}
+          {building.units.length > 0 ? <UnitStateLegend locale={locale} /> : null}
+
+          {/* ── The selected unit, and what can be done with it ─ */}
           {selectedUnit ? (
             <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/[0.03] p-3">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -757,121 +908,44 @@ export function BuildingUnitMatrixDrawer({
                 </p>
               </div>
 
-              {/*
-                Current occupants and past ones, told apart at a glance.
+              <OccupantList
+                unit={selectedUnit}
+                locale={locale}
+                canWrite={canWrite}
+                busy={busy}
+                citizenHref={citizenHref}
+                onEnd={closeSpell}
+                onLinkOwner={linkOwner}
+              />
 
-                They used to render identically — same weight, same badge, the
-                only difference a date range instead of «منذ». So a flat whose
-                owner had been moved out and replaced showed two rows that
-                looked equally live, and the honest reading of the panel was
-                that both people held the unit. Naming a former spell «سابق»
-                and dimming it makes the answer to «من في هذه الوحدة الآن؟» the
-                thing the eye lands on.
-              */}
-              {selectedUnit.occupants.length > 0 ? (
-                <ul className="space-y-1.5">
-                  {selectedUnit.occupants.map((occupant) => {
-                    const current = occupant.toDate === null;
-                    /*
-                      The census has them here; their own registration does not
-                      name the property — so billing, which reads the file, has
-                      nothing to charge, and their card still names whatever it
-                      did name, possibly a different building entirely.
+              {/* Why the flat reads «شاغرة», and the control that lifts it. */}
+              <VacancyPanel
+                unit={selectedUnit}
+                unitCode={`${building.code}-${selectedUnit.unitCode}`}
+                locale={locale}
+                busy={busy}
+                canWrite={canWrite}
+                onEnd={(values) => liftVacancy(selectedUnit, values)}
+              />
 
-                      This used to fire on every occupant «تسجيل شاغل» created,
-                      because that path wrote the matrix half of the record and
-                      not the file half. It now writes both (
-                      `BuildingsService.claimOnFile`), so what is left is the one
-                      case a write cannot fix: a person with no registration to
-                      hang a property card on. The copy says that, and says what
-                      to do about it, rather than describing a gap the officer
-                      has no way to close from here.
-
-                      Only said of a *current* occupant. A former spell whose
-                      link was released on the way out is not missing anything.
-                    */
-                    const unbacked = current && occupant.backedByFile === false;
-
-                    return (
-                      <li
-                        key={occupant.id}
-                        className={cn(
-                          'flex flex-wrap items-center gap-2 rounded-md px-2.5 py-1.5 text-xs',
-                          current ? 'bg-background' : 'bg-muted/40 text-muted-foreground',
-                        )}
-                      >
-                        <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                        {/*
-                          The name opens their record.
-
-                          This list is the one place the census names a person,
-                          and it was a dead end: «مستأجر: فلان» with no way
-                          through meant memorising the name, leaving the matrix
-                          and searching the citizens page for it — which is also
-                          how an officer ends up filing a second record for
-                          somebody already registered.
-
-                          A former occupant's name is a link too. Their spell
-                          ended; their file did not, and it is frequently the
-                          record somebody is looking for.
-                        */}
-                        {citizenHref ? (
-                          <Link
-                            href={citizenHref(occupant.citizenId)}
-                            className={cn(
-                              'underline-offset-2 hover:underline',
-                              current ? 'font-medium' : 'font-normal line-through',
-                            )}
-                          >
-                            {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
-                          </Link>
-                        ) : (
-                          <span className={cn(current ? 'font-medium' : 'font-normal line-through')}>
-                            {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
-                          </span>
-                        )}
-                        <Badge variant="soft-muted">{labels.occupancyRole[occupant.role]}</Badge>
-                        {!current ? (
-                          <Badge variant="outline">{en ? 'Former' : 'سابق'}</Badge>
-                        ) : null}
-                        {occupant.shares ? (
-                          <span className="text-muted-foreground">
-                            {en ? `${occupant.shares}/2400 shares` : `${occupant.shares}/٢٤٠٠ سهم`}
-                          </span>
-                        ) : null}
-                        <span className="text-muted-foreground">
-                          {occupant.toDate
-                            ? `${formatDate(occupant.fromDate)} — ${formatDate(occupant.toDate)}`
-                            : `${en ? 'since' : 'منذ'} ${formatDate(occupant.fromDate)}`}
-                        </span>
-                        {unbacked ? (
-                          <span
-                            className="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-500"
-                            title={
-                              en
-                                ? 'This citizen has no registration, so nothing on their file claims this unit and it cannot be billed. Register them to link it.'
-                                : 'لا يوجد ملف لهذا المواطن، فلا شيء يربطه بالوحدة ولن تُحتسب الرسوم. سجّله ليُربط العقار.'
-                            }
-                          >
-                            <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
-                            {en ? 'No file yet' : 'لا ملف له بعد'}
-                          </span>
-                        ) : null}
-                        {canWrite && current ? (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void closeSpell(occupant)}
-                            className="ms-auto text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
-                          >
-                            {en ? 'End tenancy' : 'إنهاء الإشغال'}
-                          </button>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ul>
+              {effectiveUnitStatus(selectedUnit) === 'SEASONAL' ? (
+                <SeasonalHomePanel
+                  unit={selectedUnit}
+                  locale={locale}
+                  busy={busy}
+                  canWrite={canWrite}
+                  onSave={(values) => void saveSeasonal(selectedUnit, values)}
+                />
               ) : null}
+
+              <ConfirmVacancyDialog
+                unit={selectedUnit}
+                unitCode={`${building.code}-${selectedUnit.unitCode}`}
+                locale={locale}
+                open={confirmingVacancy}
+                onOpenChange={setConfirmingVacancy}
+                onConfirm={(values) => saveVacancy(selectedUnit, values)}
+              />
 
               {canWrite ? (
                 <div className="flex flex-wrap gap-2">
@@ -885,63 +959,7 @@ export function BuildingUnitMatrixDrawer({
                     }}
                   >
                     <UserPlus className="size-4" aria-hidden />
-                    {en ? 'Register occupant' : 'تسجيل شاغل'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={action === 'case' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'case' ? null : 'case');
-                    }}
-                  >
-                    <ClipboardList className="size-4" aria-hidden />
-                    {en ? 'Log a case' : 'تسجيل حالة'}
-                  </Button>
-                  {/*
-                    A flat cannot be empty and lived in at the same time.
-
-                    This was enabled over live occupancies and wrote «شاغرة»
-                    straight across them — leaving a unit that says nobody is
-                    there beside the rows naming who is, and quietly dropping
-                    the owner's occupancy fee, because `isUnoccupied` exempts a
-                    vacant flat. `updateUnit` now refuses it outright; the
-                    button says why rather than letting an officer discover it
-                    from an error, and «إنهاء الإشغال» directly above is the
-                    action that actually means what they want.
-                  */}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      busy ||
-                      selectedUnit.surveyStatus === 'VACANT_CONFIRMED' ||
-                      liveOccupants.length > 0
-                    }
-                    title={
-                      liveOccupants.length > 0
-                        ? en
-                          ? 'End the occupancies first — this unit has people recorded in it'
-                          : 'أنهِ الإشغال أولاً — يوجد شاغل مسجَّل في هذه الوحدة'
-                        : undefined
-                    }
-                    onClick={() => void markVacant(selectedUnit)}
-                  >
-                    <DoorClosed className="size-4" aria-hidden />
-                    {en ? 'Mark vacant' : 'تأكيد الشغور'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={action === 'damage' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'damage' ? null : 'damage');
-                    }}
-                  >
-                    <ShieldAlert className="size-4" aria-hidden />
-                    {en ? 'Assess damage' : 'كشف ضرر'}
+                    {en ? 'Add a person to this unit' : 'إضافة شخص إلى الوحدة'}
                   </Button>
                   <Button
                     size="sm"
@@ -956,26 +974,60 @@ export function BuildingUnitMatrixDrawer({
                     {en ? 'Log a visit' : 'تسجيل زيارة'}
                   </Button>
                   {/*
-                    The full registration form, pre-pointed at this flat.
+                    A flat cannot be empty and lived in at the same time.
 
-                    A link rather than a fifth inline form: registering a
-                    household is the citizen form's whole job — identity,
-                    contact, household size, documents — and reproducing any of
-                    it here would be a second, thinner version of the one screen
-                    that must not drift. `registerHref` carries the building and
-                    the unit so the officer does not re-find them.
+                    This was enabled over live occupancies and wrote «شاغرة»
+                    straight across them — leaving a unit that says nobody is
+                    there beside the rows naming who is, and quietly dropping
+                    the owner's occupancy fee, because `isUnoccupied` exempts a
+                    vacant flat. The server refuses that outright now, and a
+                    seasonal home as well; the button says why rather than
+                    letting an officer discover it from an error.
+
+                    Hidden entirely once a confirmation is standing: the panel
+                    above carries the vacancy and the control that lifts it, and
+                    a greyed-out «تأكيد الشغور» beside it would read as the
+                    action being unavailable rather than already done.
                   */}
-                  {registerHref ? (
-                    <a
-                      href={registerHref(building.id, selectedUnit.id)}
-                      className={cn(
-                        'inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-accent',
-                      )}
+                  {activeVacancy(selectedUnit) ? null : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || vacancyBlocked !== null}
+                      title={vacancyBlocked ?? undefined}
+                      onClick={() => {
+                        setActionError(null);
+                        setConfirmingVacancy(true);
+                      }}
                     >
-                      <UserRoundPlus className="size-4" aria-hidden />
-                      {en ? 'Register a household here' : 'تسجيل أسرة في هذه الوحدة'}
-                    </a>
-                  ) : null}
+                      <DoorClosed className="size-4" aria-hidden />
+                      {en ? 'Confirm vacant…' : 'تأكيد الشغور…'}
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant={action === 'damage' ? 'default' : 'outline'}
+                    disabled={busy}
+                    onClick={() => {
+                      setActionError(null);
+                      setAction(action === 'damage' ? null : 'damage');
+                    }}
+                  >
+                    <ShieldAlert className="size-4" aria-hidden />
+                    {en ? 'Assess this unit' : 'كشف ضرر على الوحدة'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={action === 'case' ? 'default' : 'outline'}
+                    disabled={busy}
+                    onClick={() => {
+                      setActionError(null);
+                      setAction(action === 'case' ? null : 'case');
+                    }}
+                  >
+                    <ClipboardList className="size-4" aria-hidden />
+                    {en ? 'Open a follow-up case' : 'فتح حالة متابعة'}
+                  </Button>
 
                   {/*
                     Offered only for a flat nothing has been recorded against.
@@ -1010,26 +1062,36 @@ export function BuildingUnitMatrixDrawer({
               ) : null}
 
               {action === 'occupant' ? (
-                <OccupantForm
+                <AddPersonForm
                   tenant={tenant}
                   token={token}
                   busy={busy}
                   locale={locale}
-                  onSubmit={(citizen, role, shares, unitStatus) =>
+                  newFileHref={
+                    registerHref
+                      ? (residence, name) =>
+                          registerHref(building.id, selectedUnit.id, residence, name)
+                      : undefined
+                  }
+                  vacancy={activeVacancy(selectedUnit)}
+                  owners={unitOwners(selectedUnit)}
+                  onSubmit={({ citizen, role, endsVacancy, ...rest }) =>
                     void run(
                       async () => {
                         const result = await recordOccupancy(tenant, token, {
                           unitId: selectedUnit.id,
                           citizenId: citizen.id,
                           role,
-                          shares,
-                          unitStatus,
+                          ...rest,
+                          ...(endsVacancy ? { endsVacancy } : {}),
                         });
                         return occupancyMessage(
                           citizen.fullName,
                           selectedUnit.unitCode,
                           result,
                           en,
+                          unitOwners(selectedUnit).find((owner) => owner.citizenId === rest.landlordCitizenId)
+                            ?.citizenName,
                         );
                       },
                       en ? 'Could not record the occupancy.' : 'تعذّر تسجيل الإشغال.',
@@ -1054,23 +1116,12 @@ export function BuildingUnitMatrixDrawer({
                           buildingName: building.name ?? undefined,
                           scheduledRevisitAt: values.revisitAt || undefined,
                         });
-                        /*
-                          A logged case is a promise to come back, so the unit
-                          says so too. Only from the two states that mean "we
-                          still do not know" — a flat already marked vacant or
-                          demolished carries a finding this must not overwrite.
-                        */
-                        if (
-                          selectedUnit.surveyStatus === 'NOT_SURVEYED' &&
-                          values.caseType === 'UNIT_UNREACHABLE'
-                        ) {
-                          await updateUnit(tenant, token, selectedUnit.id, {
-                            surveyStatus: 'VISITED_NO_ANSWER',
-                          });
-                        }
-                        return en ? 'Case logged' : 'تم تسجيل الحالة';
+                        // No survey-status side effect any more: the door that
+                        // did not open is a visit, and `VisitForm` records it
+                        // with its attempt. See `FOLLOW_UP_CASE`.
+                        return en ? 'Follow-up case opened' : 'تم فتح حالة المتابعة';
                       },
-                      en ? 'Could not log the case.' : 'تعذّر تسجيل الحالة.',
+                      en ? 'Could not open the case.' : 'تعذّر فتح الحالة.',
                     )
                   }
                 />
@@ -1084,17 +1135,19 @@ export function BuildingUnitMatrixDrawer({
                   visits={selectedUnit.visits}
                   onSubmit={(values) =>
                     void run(
-                      async () => {
-                        const result = await logUnitVisit(tenant, token, {
-                          unitId: selectedUnit.id,
-                          outcome: values.outcome,
-                          visitedAt: values.visitedAt || undefined,
-                          notes: values.notes || undefined,
-                        });
-                        return en
-                          ? `Visit logged — ${result.visitCount} attempt(s) on this unit`
-                          : `تم تسجيل الزيارة — ${result.visitCount} محاولة على هذه الوحدة`;
-                      },
+                      () =>
+                        logVisitWithFollowUp(
+                          tenant,
+                          token,
+                          {
+                            unitId: selectedUnit.id,
+                            buildingId: building.id,
+                            parcelNumber: building.parcelNumber,
+                            buildingName: building.name,
+                          },
+                          values,
+                          en,
+                        ),
                       en ? 'Could not log the visit.' : 'تعذّر تسجيل الزيارة.',
                     )
                   }

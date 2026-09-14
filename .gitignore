@@ -35,3 +35,5 @@ apps/backend/backups/*.json
 _to_delete/
 .agents/
 supabase/.temp/
+
+/graphify-out/cache/*

@@ -57,6 +57,12 @@ export interface UnitRow {
   unitArea: number | null;
   unitStatus: string | null;
   surveyStatus: string;
+  /** «مسكن موسمي» — months (1–12) its owners are usually present. Empty otherwise. */
+  presenceMonths: number[];
+  /** When the owners last stayed. */
+  ownerLastStayAt: Date | null;
+  /** When a تصريح بالشغور was filed for the months they are away. */
+  vacancyDeclaredAt: Date | null;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -67,10 +73,21 @@ export interface OccupancyRow {
   unitId: string;
   citizenId: string;
   citizenName: string | null;
+  /**
+   * The occupant's phone, so whoever is standing at the unit can reach the owner,
+   * tenant or شاغل بتسامح recorded there without opening each file.
+   */
+  citizenPhone: string | null;
   role: string;
   shares: number | null;
   fromDate: Date;
   toDate: Date | null;
+  /**
+   * Why the spell ended, when an officer said so — see `OCCUPANCY_END_REASON`.
+   * Null on a current spell and on every spell ended before the question was
+   * asked.
+   */
+  endReason: string | null;
   registrationId: string | null;
   /**
    * Whether the citizen's own file claims this flat — i.e. whether the other
@@ -94,6 +111,52 @@ export interface OccupancyRow {
    * the register.
    */
   backedByFile: boolean;
+  /**
+   * When this spell was entered in the register — not `fromDate`, which an
+   * officer may back-date. «Recorded before the tenant» is decided on this: a
+   * tenant may be linked by picking only to an owner recorded on the flat first.
+   */
+  recordedAt: Date;
+  /**
+   * Who a current مستأجر or شاغل بتسامح holds the flat from, as their own card
+   * says. Null on an owner's spell, a former spell, and on the write paths —
+   * like `backedByFile`, only `get` has the reads in hand to answer it.
+   */
+  ownerLink: OccupancyOwnerLink | null;
+}
+
+/**
+ * The tenancy card behind a non-owner's spell, and whether the owner it names
+ * is an owner of this flat.
+ *
+ *   • `LINKED` — linked to one of the flat's current owners. Among co-owners
+ *     that is the one the tenant deals with; the rest are listed on the unit.
+ *   • `LINKED_ELSEWHERE` — linked to somebody who is not a current owner of
+ *     this flat: the ownership changed since, or the flat was put on a card
+ *     that belongs to another owner's tenancy. Shown, never silently fixed.
+ *   • `UNLINKED` — the card names no registered owner (perhaps a typed name).
+ *   • `NO_CARD` — nothing on the tenant's file claims this flat.
+ */
+export interface OccupancyOwnerLink {
+  state: 'LINKED' | 'LINKED_ELSEWHERE' | 'UNLINKED' | 'NO_CARD';
+  propertyEntryId: string | null;
+  ownerId: string | null;
+  ownerName: string | null;
+  /** The owner as the tenant named them on the card, when not linked. */
+  typedName: string | null;
+}
+
+/**
+ * Who a non-owner holds the flat from, as `claimOnFile` needs it to choose the
+ * card: one tenancy card per owner, so a flat is never filed under a card
+ * that names someone else.
+ */
+export interface LandlordSpec {
+  /** A registered owner recorded on the unit. */
+  citizenId?: string | null;
+  /** Or the owner as the tenant names them. */
+  name?: string | null;
+  phone?: string | null;
 }
 
 /**
@@ -123,6 +186,16 @@ export interface FileLinkResult {
     | 'NO_FILE'
     | 'UNLINKABLE_STRUCTURE'
     | 'NO_BUILDING';
+  /**
+   * The card that backs the flat, when one does — the card minted, the card
+   * that gained the row, or the card that already claimed it.
+   *
+   * An owner link records which rows it created so «إلغاء الربط» can revert
+   * exactly those (`LinkFootprint`), and an outcome with no id would leave it
+   * to infer the card afterwards from a building and a citizen — which picks
+   * the wrong one the moment somebody holds two cards on one structure.
+   */
+  propertyEntryId?: string | null;
 }
 
 /** One logged attempt to survey a unit — P4-T1, D10. */
@@ -135,6 +208,33 @@ export interface VisitRow {
   /** A `SurveyStatus`, never `NOT_SURVEYED` — see the model comment. */
   outcome: string;
   notes: string | null;
+  createdAt: Date;
+}
+
+/**
+ * One «تأكيد الشغور» — see the `UnitVacancyConfirmation` model.
+ *
+ * `endedAt` null is the one standing on the unit now. The snapshot pair is
+ * carried to the client so the undo can say what the flat will go back to
+ * *before* it is pressed, rather than reporting it afterwards.
+ */
+export interface VacancyRow {
+  id: string;
+  unitId: string;
+  /** A `VacancyBasis`, or null on a row backfilled by migration 0043. */
+  basis: string | null;
+  observedAt: Date;
+  notes: string | null;
+  confirmedById: string | null;
+  confirmedByName: string | null;
+  previousUnitStatus: string | null;
+  previousSurveyStatus: string | null;
+  endedAt: Date | null;
+  /** A `VacancyEndReason`, set with `endedAt` and never without it. */
+  endReason: string | null;
+  endNotes: string | null;
+  endedById: string | null;
+  endedByName: string | null;
   createdAt: Date;
 }
 

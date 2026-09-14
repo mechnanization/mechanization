@@ -39,7 +39,7 @@ export function ZoneInfoDialog({
 
   const zoneFeature = useMemo(() => {
     if (!zone || !zonesGeoJson) return null;
-    return zonesGeoJson.features.find((f) => f.properties?.id === zone.id) ?? null;
+    return zonesGeoJson.features.find((f) => f.properties?.zoneId === zone.id) ?? null;
   }, [zone, zonesGeoJson]);
 
   const area = useMemo(() => {

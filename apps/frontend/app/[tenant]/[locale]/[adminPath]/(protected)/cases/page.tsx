@@ -640,7 +640,7 @@ export default function CasesPage({
         {canWrite ? (
           <Button onClick={() => router.push(`${base}/cases/new`)}>
             <Plus className="size-4" aria-hidden />
-            {locale === 'en' ? 'Log a Case' : 'تسجيل حالة'}
+            {locale === 'en' ? 'Open a follow-up case' : 'فتح حالة متابعة'}
           </Button>
         ) : null}
       </div>
@@ -825,8 +825,10 @@ export default function CasesPage({
           // A visit or an occupancy logged from here can auto-resolve the very
           // case the drawer was opened from, so the list is re-read on close.
           onChanged={() => void load()}
-          registerHref={(buildingId, unitId) =>
-            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}`
+          registerHref={(buildingId, unitId, residence, name) =>
+            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}${
+              name ? `&name=${encodeURIComponent(name)}` : ''
+            }`
           }
           citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
           locale={locale}

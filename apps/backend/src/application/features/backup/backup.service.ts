@@ -105,6 +105,12 @@ const TABLE_ORDER = [
   // evidence that a door was tried — which is exactly what a resident
   // disputing a notice asks to see.
   'unitVisit',
+  // Beside `unitVisit`, and for the same reason plus one: a confirmation is why
+  // a unit reads «شاغرة» and why its owner is exempt from the occupancy fee, so
+  // a restore that dropped these would leave flats empty on the matrix with
+  // nothing saying who decided that, when, or on what basis — and no way to
+  // lift it. References `units` and `users`, both restored before this.
+  'unitVacancyConfirmation',
   'damageAssessment',
   // Last of the census block: a case may point at a building, a unit and the
   // damage assessment that prompted it.

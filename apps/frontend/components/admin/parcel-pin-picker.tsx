@@ -311,8 +311,20 @@ export function ParcelPinPicker({
         </div>
       ) : null}
 
+      {/*
+        Both overlays below clear the bottom-left corner with *physical*
+        offsets, not `start`/`end`.
+
+        Mapbox's wordmark is pinned bottom-left by the library and stays there
+        whichever way the page reads, so on this RTL form `end-2` put the
+        recentre button directly on top of it — the officer's only way back to
+        the parcel, sitting under the one control that may not be covered.
+        `right-*` / `left-*` are the only offsets that mean the same thing in
+        both directions, which is exactly what is needed against a logo that
+        does not flip.
+      */}
       {ready && !failure && outlineChecked && !outline ? (
-        <p className="absolute inset-x-2 bottom-2 rounded-md bg-background/90 px-2.5 py-1.5 text-[11px] leading-relaxed text-muted-foreground shadow-sm backdrop-blur-sm">
+        <p className="absolute bottom-2 left-24 right-2 rounded-md bg-background/90 px-2.5 py-1.5 text-[11px] leading-relaxed text-muted-foreground shadow-sm backdrop-blur-sm">
           <Crosshair className="me-1 inline size-3" aria-hidden />
           {en
             ? 'This parcel has no traced outline, so the pin cannot be checked against it.'
@@ -324,7 +336,7 @@ export function ParcelPinPicker({
         <button
           type="button"
           onClick={recentre}
-          className="absolute bottom-2 end-2 inline-flex items-center gap-1.5 rounded-md bg-background/90 px-2 py-1.5 text-[11px] font-medium text-foreground shadow-sm ring-1 ring-border backdrop-blur-sm transition-colors hover:bg-background"
+          className="absolute bottom-2 right-2 inline-flex items-center gap-1.5 rounded-md bg-background/90 px-2 py-1.5 text-[11px] font-medium text-foreground shadow-sm ring-1 ring-border backdrop-blur-sm transition-colors hover:bg-background"
         >
           <Crosshair className="size-3.5" aria-hidden />
           {en ? 'Recentre on parcel' : 'إعادة التوسيط على العقار'}
