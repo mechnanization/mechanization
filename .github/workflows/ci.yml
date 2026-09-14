@@ -33,8 +33,12 @@ jobs:
       # Prisma client has no triggers. Without this service that suite skips,
       # and a skipped suite is one nobody notices has stopped protecting
       # anything.
+      #
+      # 17, not 16: migration 0044 amends a generated column with
+      # `ALTER COLUMN … SET EXPRESSION`, which Postgres added in 17. On 16 the
+      # migration chain fails before the first test runs.
       postgres:
-        image: postgres:16-alpine
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
