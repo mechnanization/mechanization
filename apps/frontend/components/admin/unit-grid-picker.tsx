@@ -656,17 +656,22 @@ export function UnitGridPicker({
           aimed at «زيادة الطوابق» hit «تحت الأرض» instead, and the two adjacent
           rounded corners read as one control that had gone wrong.
 
-          Now: one group per row until `sm`, three equal columns above it. Each
-          group owns a full-width box, so its parts can never sit beside another
-          group's, and the gap between boxes is never smaller than the gap
-          inside one.
+          Now: one group per row, at every width. Each owns a full-width box, so
+          its parts can never sit beside another group's, and the gap between
+          boxes is never smaller than the gap inside one.
+
+          Stacked rather than three-across even where there is room, because the
+          three are read as a list — height, depth, width — and a row of three
+          identical «[−] n [+]» clusters gives the eye nothing to tell them apart
+          but a label it has to read twice. One per line, each label at the start
+          of its own row, is scannable at a glance.
 
           The targets themselves go from `size-6` (24px) to 40px on touch
           widths, dropping back to 32px only from `lg` where a pointer is doing
           the aiming. 24px is below every touch-target guideline there is, and
           these are the controls an officer uses while standing up.
         */}
-        <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 lg:w-auto lg:gap-3">
+        <div className="grid w-full grid-cols-1 gap-2 lg:w-80 lg:shrink-0">
           {/* Vertical / Floors */}
           <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
             <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
