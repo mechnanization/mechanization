@@ -123,7 +123,6 @@ if (await ensureDockerRunning()) {
 // dump through behind it.
 let errorTailLinesRemaining = 0;
 const ERROR_TAIL_LINES = 30;
-const ERROR_PATTERN = /\bERROR\b|Error:|error TS\d+:|EADDRINUSE|EPERM|Cannot find module|Failed to compile|Failed to start/i;
 const ERROR_PATTERN =
   /\bERROR\b|Error:|error TS\d+:|EADDRINUSE|EPERM|Cannot find module|Failed to compile|Failed to start|Invalid environment configuration/i;
 const WARN_PATTERN = /\bWARN\b/;
