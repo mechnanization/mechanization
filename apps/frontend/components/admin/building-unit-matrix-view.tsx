@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
-  ArrowLeft,
   Building2,
   ChevronRight,
   ClipboardList,
@@ -51,6 +50,9 @@ import {
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatDate } from '@/lib/dates';
+import { ActivityTrail } from '@/components/admin/activity-trail';
+import { AUDIT_ENTITY } from '@/lib/audit-labels';
+import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -122,6 +124,24 @@ interface LaidOutUnit {
   startCol: number;
   endCol: number;
 }
+
+/**
+ * The height of one floor's row, in all three of the matrix's columns.
+ *
+ * Stated once and applied identically to the floor label, the unit blocks and
+ * the «+», because those three live in separate columns now and nothing else
+ * would keep them aligned. An intrinsic height would not: a floor holding a
+ * unit with a visit count is taller than one that does not, so the columns
+ * would drift apart by one visit badge at a time until the «+» beside «الثالث»
+ * belonged to the second floor.
+ *
+ * 5rem, because a tile carries up to four lines: the unit code, its state
+ * («شاغرة»), who is recorded on it, and the visit count. The old `min-h-14`
+ * (3.5rem) grew with its content, and 4rem held the code and the count but
+ * clipped the two state lines — a fixed height has to fit the fullest tile, or
+ * the fullest tile is the one whose state disappears.
+ */
+const MATRIX_ROW_HEIGHT = 'h-20';
 
 /**
  * Reconstructs the floor plan a unit was painted on. Units carrying a stored
@@ -471,12 +491,19 @@ export function BuildingUnitMatrixView({
 
   return (
     <div className="w-full max-w-5xl mx-auto space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
+      {/*
+        Wraps rather than overflows. On a phone this row can carry «رجوع», the
+        section, a building code and the current step at once — more than 343px
+        of gutter-less screen holds — and a breadcrumb that runs off the edge
+        takes the page's horizontal scroll with it.
+      */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-muted-foreground">
+        <BackLink fallbackHref={cancelHref} label={en ? 'Back' : 'رجوع'} />
+        <span aria-hidden className="h-4 w-px shrink-0 bg-border" />
         <Link
           href={cancelHref}
-          className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground font-medium"
+          className="transition-colors hover:text-foreground font-medium"
         >
-          <ArrowLeft className="size-3.5 sm:size-4 rtl:rotate-180" aria-hidden />
           <span>{en ? 'Building Census' : 'سجل المباني'}</span>
         </Link>
         <ChevronRight className="size-3.5 rtl:rotate-180 text-muted-foreground/60" aria-hidden />
@@ -516,9 +543,52 @@ export function BuildingUnitMatrixView({
                 locale={locale}
                 damageLevel={damage?.current ?? null}
               />
+              {/*
+                Where the structure stands, cadastrally — all of it.
+
+                The two facts added beside the parcel are the two the wizard now
+                asks for, and a field somebody fills in and can never see again
+                is a field they stop filling in. Both are stated only when there
+                is something to state:
+
+                  • فرز is three-valued, and «لم يُسأل» is the default answer for
+                    every building recorded before the column existed. Printing
+                    «غير مفروزة» for those would be asserting a finding nobody
+                    made — see `Building.isPartitioned`.
+                  • The shared parcels are empty for the overwhelming majority,
+                    which stand on exactly one عقار, and «— لا عقارات أخرى» on
+                    every building in the register would be noise.
+              */}
               <p className="text-xs text-muted-foreground">
                 {[
                   en ? `Parcel ${building.parcelNumber}` : `عقار ${building.parcelNumber}`,
+                  building.sharedParcelNumbers?.length
+                    ? en
+                      ? `also on ${building.sharedParcelNumbers.join(', ')}`
+                      : `وعلى العقارات ${building.sharedParcelNumbers.join('، ')}`
+                    : null,
+                  /*
+                    The فرز, with its أقسام where they have been collected.
+
+                    «مفروزة» on its own does not answer the question anybody
+                    asks it — «which قسم?» — so the numbers are printed beside
+                    it rather than left to the editor. A ticked فرز with no
+                    numbers yet is still stated: a block is visibly مفروزة long
+                    before somebody has the صحيفة in front of them.
+                  */
+                  building.isPartitioned == null
+                    ? null
+                    : building.isPartitioned
+                      ? building.partitionNumbers?.length
+                        ? en
+                          ? `Partitioned — parts ${building.partitionNumbers.join(', ')}`
+                          : `مفروزة — الأقسام ${building.partitionNumbers.join('، ')}`
+                        : en
+                          ? 'Partitioned'
+                          : 'مفروزة'
+                      : en
+                        ? 'Not partitioned'
+                        : 'غير مفروزة',
                   building.zoneName,
                 ]
                   .filter(Boolean)
@@ -600,66 +670,167 @@ export function BuildingUnitMatrixView({
               ) : null}
             </div>
           ) : (
-            <div dir="ltr" className="space-y-2 overflow-x-auto rounded-xl border border-border/80 bg-muted/10 p-3">
-              {floors.map(({ floor, blocks, width }) => (
-                <div key={floor} className="flex items-stretch gap-2">
-                  <span className="w-20 shrink-0 self-center text-end text-[11px] font-medium text-muted-foreground">
-                    {floorLabel(floor, en)}
-                  </span>
+            <div
+              dir="ltr"
+              className="flex items-stretch gap-2 rounded-xl border border-border/80 bg-muted/10 p-2 sm:gap-3 sm:p-3"
+            >
+              {/*
+                ── Three columns, and only the middle one scrolls ─────────
+
+                The matrix used to be one scroll container holding rows of
+                «label · blocks · add», which put both the floor label and the
+                «+» *inside* the scrollable area. On a tablet that had two
+                consequences and neither was survivable:
+
+                  • A twelve-flat floor is wider than the viewport, so the «+»
+                    sat past the right-hand edge — the officer scrolled to find
+                    it, and by the time it was on screen the floor label had
+                    scrolled off the left, so they were adding a unit to a floor
+                    they could no longer identify.
+                  • The row could not shrink below its own content, so the
+                    label, the last block and the «+» ended up abutting with no
+                    gutter between them at all — a 36px «+» pressed against a
+                    unit block, both of them tap targets, doing entirely
+                    different things.
+
+                So the label column and the «+» column are lifted out of the
+                scroll container and pinned either side of it. Nothing overlaps
+                anything, because nothing shares a stacking context with
+                anything: the three columns are siblings, and the only one that
+                scrolls carries only unit blocks.
+
+                The rows of all three columns are given the same fixed height
+                rather than an intrinsic one — see `MATRIX_ROW_HEIGHT`. That is
+                what keeps them aligned, and it is not optional: a floor whose
+                units carry a visit count is taller than one whose units do not,
+                and three columns measuring themselves independently would drift
+                apart by exactly that much, one floor at a time.
+              */}
+
+              {/* Floor labels — outside the scroll, so they never leave */}
+              <div className="flex shrink-0 flex-col gap-1.5 sm:gap-2">
+                {floors.map(({ floor }) => (
                   <div
-                    className="grid flex-1 gap-1"
-                    style={{ gridTemplateColumns: `repeat(${width}, minmax(2.5rem, 1fr))` }}
+                    key={floor}
+                    className={cn(
+                      MATRIX_ROW_HEIGHT,
+                      'flex w-12 items-center justify-end text-[11px] font-medium tabular-nums text-muted-foreground sm:w-20',
+                      floor < 0 && 'font-mono text-foreground/70',
+                    )}
                   >
-                    {blocks.map(({ unit, startCol, endCol }) => {
-                      const badge = cellBadge(unit, labels, en);
-                      const selected = unit.id === selectedUnitId;
-                      return (
-                        <button
-                          key={unit.id}
-                          type="button"
-                          style={{ gridColumn: `${startCol} / ${endCol + 1}` }}
-                          onClick={() => {
-                            setSelectedUnitId(selected ? null : unit.id);
-                            setAction(null);
-                            setActionError(null);
-                          }}
-                          aria-pressed={selected}
-                          title={`${unit.unitCode} — ${badge.text}`}
-                          className={cn(
-                            'flex min-h-14 flex-col items-center justify-center gap-0.5 rounded-md px-1 py-1.5 text-center ring-1 transition-transform',
-                            STATUS_BLOCK_CLASSES[badge.variant],
-                            selected && 'scale-[1.03] ring-2 ring-primary',
-                          )}
-                        >
-                          <span className="font-mono text-xs font-bold">{unit.unitCode}</span>
-                          {/*
-                            The state is written on the tile, not only in its
-                            tooltip: a phone has no hover, and «شاغرة» beside an
-                            owner's name was the one thing the matrix could
-                            not show. Truncated rather than wrapped so a
-                            narrow block keeps its height.
-                          */}
-                          <span className="block max-w-full truncate text-[10px] font-medium leading-tight">
-                            {badge.short}
-                          </span>
-                          {badge.detail ? (
-                            <span className="hidden max-w-full truncate text-[10px] leading-tight opacity-80 sm:block">
-                              {badge.detail}
-                            </span>
-                          ) : null}
-                          {unit.visitCount > 0 ? (
-                            <span className="flex items-center gap-0.5 text-[10px] opacity-80">
-                              <Footprints className="size-2.5 shrink-0" aria-hidden />
-                              {unit.visitCount}
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
+                    {floorLabel(floor, en)}
                   </div>
-                  {canWrite ? (
-                    addingFloor === floor ? null : (
+                ))}
+              </div>
+
+              {/*
+                The units themselves — the only thing that scrolls, and only
+                sideways.
+
+                `overflow-y-hidden` is not a default being restated. CSS turns
+                the other axis of an `overflow-x-auto` box into `auto` as well,
+                so this strip was a scroll container in both directions, and any
+                pixel of vertical overflow grew a vertical scrollbar — which on
+                Windows then took 17px of width and forced a horizontal one
+                beside it. The rows have a fixed height; there is nothing below
+                them to scroll to.
+
+                `pb-1` keeps a real scrollbar, where a floor is wide enough to
+                need one, off the bottom row of tiles.
+              */}
+              <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain pb-1 [scrollbar-width:thin]">
+                <div className="flex flex-col gap-1.5 sm:gap-2">
+                  {floors.map(({ floor, blocks, width }) => (
+                    <div
+                      key={floor}
+                      className={cn(MATRIX_ROW_HEIGHT, 'grid gap-1.5 sm:gap-2')}
+                      style={{
+                        // 2.75rem = 44px, the smallest block an officer can hit
+                        // reliably while holding a tablet in one hand.
+                        gridTemplateColumns: `repeat(${width}, minmax(2.75rem, 1fr))`,
+                      }}
+                    >
+                      {blocks.map(({ unit, startCol, endCol }) => {
+                        const badge = cellBadge(unit, labels, en);
+                        const selected = unit.id === selectedUnitId;
+                        return (
+                          <button
+                            key={unit.id}
+                            type="button"
+                            style={{ gridColumn: `${startCol} / ${endCol + 1}` }}
+                            onClick={() => {
+                              setSelectedUnitId(selected ? null : unit.id);
+                              setAction(null);
+                              setActionError(null);
+                            }}
+                            aria-pressed={selected}
+                            title={`${unit.unitCode} — ${badge.text}`}
+                            /*
+                              Every ring inset, and the selected tile no longer
+                              scaled up.
+
+                              `scale-[1.03]` pushed the chosen tile a few pixels
+                              past its row on every side. Inside a scroll
+                              container that is overflow, so selecting a flat
+                              was what made the scrollbars appear, and the ring
+                              around it was clipped to one blue line between
+                              two floors. An inset ring is drawn inside the tile
+                              and can be neither; the keyboard focus ring is
+                              inset for the same reason.
+                            */
+                            className={cn(
+                              'flex h-full flex-col items-center justify-center gap-0.5 rounded-md px-1 py-1.5 text-center ring-1 ring-inset transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                              STATUS_BLOCK_CLASSES[badge.variant],
+                              selected && 'ring-2 ring-primary',
+                            )}
+                          >
+                            <span className="font-mono text-xs font-bold">{unit.unitCode}</span>
+                            {/*
+                              The state is written on the tile, not only in its
+                              tooltip: a phone has no hover, and «شاغرة» beside an
+                              owner's name was the one thing the matrix could
+                              not show. Truncated rather than wrapped so a
+                              narrow block keeps its height.
+                            */}
+                            <span className="block max-w-full truncate text-[10px] font-medium leading-tight">
+                              {badge.short}
+                            </span>
+                            {badge.detail ? (
+                              <span className="hidden max-w-full truncate text-[10px] leading-tight opacity-80 sm:block">
+                                {badge.detail}
+                              </span>
+                            ) : null}
+                            {unit.visitCount > 0 ? (
+                              <span className="flex items-center gap-0.5 text-[10px] opacity-80">
+                                <Footprints className="size-2.5 shrink-0" aria-hidden />
+                                {unit.visitCount}
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* «+» per floor — outside the scroll, so it is always reachable */}
+              {canWrite ? (
+                <div className="flex shrink-0 flex-col gap-1.5 sm:gap-2">
+                  {floors.map(({ floor }) =>
+                    addingFloor === floor ? (
+                      /*
+                        A spacer, not nothing.
+
+                        The inline add-form for this floor is open below, so the
+                        button is withdrawn — but removing the row outright
+                        would shorten this column by one and slide every floor
+                        beneath it up against the wrong label.
+                      */
+                      <div key={floor} className={cn(MATRIX_ROW_HEIGHT, 'w-11')} aria-hidden />
+                    ) : (
                       <button
+                        key={floor}
                         type="button"
                         disabled={busy}
                         onClick={() => {
@@ -667,15 +838,22 @@ export function BuildingUnitMatrixView({
                           setAddingType(defaultUnitTypeFor(building.structureType, floor));
                           setActionError(null);
                         }}
-                        aria-label={en ? 'Add unit on this floor' : 'إضافة وحدة على هذا الطابق'}
-                        className="flex w-9 shrink-0 items-center justify-center self-stretch rounded-md border border-dashed border-border/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        aria-label={
+                          en
+                            ? `Add unit on floor ${floorLabel(floor, en)}`
+                            : `إضافة وحدة على الطابق ${floorLabel(floor, en)}`
+                        }
+                        className={cn(
+                          MATRIX_ROW_HEIGHT,
+                          'flex w-11 items-center justify-center rounded-md border border-dashed border-border/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50',
+                        )}
                       >
                         <Plus className="size-4" aria-hidden />
                       </button>
-                    )
-                  ) : null}
+                    ),
+                  )}
                 </div>
-              ))}
+              ) : null}
             </div>
           )}
 
@@ -961,6 +1139,10 @@ export function BuildingUnitMatrixView({
                   }
                   vacancy={activeVacancy(selectedUnit)}
                   owners={unitOwners(selectedUnit)}
+                  // Opens «مساحة الوحدة» when the census holds none — a matrix
+                  // painted from the street records that a flat exists, not
+                  // that anyone has measured it.
+                  unitArea={selectedUnit.unitArea}
                   onSubmit={({ citizen, role: occRole, endsVacancy, ...rest }) =>
                     void run(
                       async () => {
@@ -1178,6 +1360,16 @@ export function BuildingUnitMatrixView({
           ) : null}
         </div>
       ) : null}
+
+      {/* «إنشاء مبنى», «تسجيل إشغال», «تعديل وحدة» — every step taken on this
+          building, by whom. Renders nothing for roles that may not read it. */}
+      <ActivityTrail
+        tenant={tenant}
+        locale={locale}
+        base={base}
+        entityType={AUDIT_ENTITY.building}
+        entityId={buildingId}
+      />
     </div>
   );
 }

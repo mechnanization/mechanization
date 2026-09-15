@@ -381,7 +381,11 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
             unitType: unit.unitType as never,
             floor: unit.floor as string,
             side: unit.side as string | null,
-            unitArea: Number(unit.unitArea),
+            // Null-guarded like the card's own area three lines up, and for the
+            // same reason: `BuildingUnit.unitArea` is nullable, `Number(null)`
+            // is `0`, and a rehydrated aggregate carrying a fabricated zero is
+            // one that would write that zero back on the next save.
+            unitArea: unit.unitArea == null ? null : Number(unit.unitArea),
             sharedRights: (unit.sharedRights as string[]) ?? [],
             unitStatus: unit.unitStatus as never,
             unitId: (unit.unitId as string | undefined) ?? null,

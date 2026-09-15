@@ -407,6 +407,7 @@ export default function BuildingsPage({
             'Name',
             'Posted number',
             'Parcel',
+            'Shared parcels',
             'Sector',
             'Structure',
             'Construction status',
@@ -424,6 +425,7 @@ export default function BuildingsPage({
             'الاسم',
             'الرقم المكتوب',
             'رقم العقار',
+            'العقارات المشتركة',
             'القطاع',
             'نوع المنشأة',
             'الحالة الإنشائية',
@@ -451,6 +453,7 @@ export default function BuildingsPage({
         row.name ?? '',
         row.postedNumber ?? '',
         row.parcelNumber,
+        (row.sharedParcelNumbers ?? []).join(' / '),
         row.zoneName ?? '',
         labels.structureType[row.structureType] ?? row.structureType,
         labels.buildingLifecycle[row.lifecycleStatus] ?? row.lifecycleStatus,
@@ -529,9 +532,20 @@ export default function BuildingsPage({
       {
         accessorKey: 'parcelNumber',
         header: en ? 'Parcel' : 'العقار',
+        /*
+          The shared parcels beside the own one. A parcel search now returns a
+          building filed under a neighbouring عقار that covers the one searched
+          for, and a row reading only «10» under a search for 25 would look like
+          a wrong result.
+        */
         cell: ({ row }) => (
           <span dir="ltr" className="font-mono text-xs">
             {row.original.parcelNumber}
+            {row.original.sharedParcelNumbers?.length ? (
+              <span className="ms-1 text-muted-foreground">
+                +{row.original.sharedParcelNumbers.join(', ')}
+              </span>
+            ) : null}
           </span>
         ),
       },

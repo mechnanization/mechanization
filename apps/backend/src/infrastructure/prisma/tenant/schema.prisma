@@ -931,6 +931,52 @@ model Building {
   /// printed on notices.
   postedNumber String?
 
+  /// «هل الوحدة مفروزة على عقار؟» — whether the structure has been legally
+  /// partitioned (فرز) into separately titled units.
+  ///
+  /// Nullable, and the null is the third answer rather than a missing one:
+  /// `true` مفروزة, `false` غير مفروزة, `null` nobody asked. A boolean
+  /// defaulting to false would have every building created before this column
+  /// existed asserting a finding no officer made — and فرز decides whether a
+  /// flat inside can carry a deed of its own, so a guess here is a guess about
+  /// title.
+  ///
+  /// The building wizard offers a single «مفروزة» checkbox, so it writes `true`
+  /// or `null` and never `false`: a tick is an assertion, an untouched box is
+  /// silence. `false` stays representable for a form that one day records
+  /// «we read the صحيفة and there is no فرز», which is a finding and not the
+  /// same as never having looked.
+  isPartitioned Boolean?
+
+  /// أرقام الأقسام — the numbered units a فرز produced, each with its own
+  /// صحيفة عقارية.
+  ///
+  /// The half of a فرز that anyone actually needs. «This building is مفروزة» is
+  /// not an answer to «which قسم is flat 4?» — a transfer, a deed search and a
+  /// resident at the counter all want the number, and without it they are sent
+  /// to the survey office anyway.
+  ///
+  /// Only ever populated where `isPartitioned` is true; `BuildingsService`
+  /// clears it otherwise, because أقسام on a structure nobody recorded a فرز
+  /// for is a contradiction rather than a finding. Free text for the reason
+  /// `parcelNumber` is: these are somebody else's identifiers and our own
+  /// format has no business being imposed on them.
+  partitionNumbers String[] @default([])
+
+  /// «إن كانت الوحدة مشتركة على أكثر من عقار» — the *other* عقارات the
+  /// structure stands on.
+  ///
+  /// `parcelNumber` above names one parcel and cannot name more: the code is
+  /// derived from it and the suffix was allocated against it (D9), so widening
+  /// it to a list would change what a building code means. A building
+  /// straddling two or three cadastral parcels is ordinary here, and these are
+  /// the additional ones.
+  ///
+  /// Bare strings and not a relation, for the same reason `parcelNumber` is
+  /// one: `cadastre:import` rebuilds the parcel table wholesale, and a routine
+  /// survey correction must not cascade a municipality's buildings away.
+  sharedParcelNumbers String[] @default([])
+
   structureType StructureType
 
   /// Where the structure is in its own life. `IN_USE` for everything created

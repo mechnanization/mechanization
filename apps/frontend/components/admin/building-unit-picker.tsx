@@ -506,12 +506,23 @@ export function BuildingUnitPicker({
     A *pending* structure is deliberately not mirrored. It has no parcel of its
     own yet; it takes the card's. See the re-point in the parcel effect above.
   */
+  /*
+    A card on one of the building's *shared* parcels is already consistent, and
+    is left alone. A structure filed under 10 that also covers 25 is the building
+    a household on 25 lives in, and 25 is the number on their deed — rewriting
+    it to 10 would put the building's filing number on somebody's title in
+    place of their own. Only a parcel the building does not stand on at all is
+    corrected, which is the corruption the mirror exists for.
+  */
+  const sharedParcelKey = (detail?.sharedParcelNumbers ?? []).join(',');
   useEffect(() => {
     const parcel = detail?.parcelNumber?.trim();
-    if (!parcel || draft.propertyNumber?.trim() === parcel) return;
+    const onCard = draft.propertyNumber?.trim();
+    if (!parcel || onCard === parcel) return;
+    if (onCard && (detail?.sharedParcelNumbers ?? []).includes(onCard)) return;
     onChange((current) => ({ ...current, propertyNumber: parcel }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail?.parcelNumber, draft.propertyNumber]);
+  }, [detail?.parcelNumber, sharedParcelKey, draft.propertyNumber]);
 
   const linkedUnitIds = useMemo(
     () => new Set((draft.units ?? []).map((unit) => unit.unitId).filter(Boolean) as string[]),
@@ -896,6 +907,7 @@ export function BuildingUnitPicker({
     id: string;
     code: string;
     name: string | null;
+    parcelNumber: string;
     structureType: BuildingLedgerRow['structureType'];
   }> = candidates.length > 0 ? candidates : chosen ? [chosen] : [];
 
@@ -1039,6 +1051,15 @@ export function BuildingUnitPicker({
                     <span className="text-muted-foreground">
                       {labels.structureType[row.structureType]}
                     </span>
+                    {/* Filed under a neighbouring parcel and covering this one —
+                        said, because its code names a different عقار. */}
+                    {parcelNumber && row.parcelNumber !== parcelNumber ? (
+                      <span className="text-[10px] text-sky-700 dark:text-sky-400">
+                        {en
+                          ? `shared — filed under ${row.parcelNumber}`
+                          : `مشترك — عقاره الأساسي ${row.parcelNumber}`}
+                      </span>
+                    ) : null}
                   </button>
                 </li>
               );

@@ -46,7 +46,14 @@ import type { GridUnitDraft } from '@/components/admin/unit-grid-picker';
  * is already fetching.
  */
 
-const KEY_PREFIX = 'mechanization.building-draft.v1.';
+/**
+ * `v2` since the wizard's first step gained a sector, «مفروزة» with its أقسام,
+ * and the shared parcels. A `v1` draft has none of them, and restoring one on
+ * an edit would reset all three to empty — which the next save then writes,
+ * erasing what was on file. Abandoning drafts that are at most an hour old and
+ * scoped to one tab costs nothing by comparison.
+ */
+const KEY_PREFIX = 'mechanization.building-draft.v2.';
 
 /**
  * Drafts older than this are ignored.
@@ -67,6 +74,14 @@ export interface BuildingDraft {
   parcelNumber: string;
   name: string;
   postedNumber: string;
+  /** The sector the officer chose to look in — a map filter, never stored on the building. */
+  zoneId: string;
+  /** «مفروزة» as ticked; see `BuildingEditor`'s `isPartitioned`. */
+  isPartitioned: boolean;
+  /** أرقام الأقسام as typed, blanks included. */
+  partitionNumbers: string[];
+  /** The other عقارات, as typed, blanks included. */
+  sharedParcels: string[];
   structureType: StructureType;
   lifecycleStatus: BuildingLifecycle;
   floorsCount: string;
@@ -101,6 +116,9 @@ export function buildingDraftWorthKeeping(draft: BuildingDraft): boolean {
       draft.postedNumber.trim() ||
       draft.notes.trim() ||
       draft.pin ||
+      draft.isPartitioned ||
+      draft.partitionNumbers.some((value) => value.trim()) ||
+      draft.sharedParcels.some((value) => value.trim()) ||
       draft.gridUnits.length > 0,
   );
 }

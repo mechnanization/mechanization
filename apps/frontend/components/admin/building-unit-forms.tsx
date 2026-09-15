@@ -11,6 +11,7 @@ import {
   Footprints,
   Loader2,
   MapPin,
+  Ruler,
   Search,
   ShieldAlert,
   Undo2,
@@ -697,6 +698,26 @@ export function ownerLinkMessage(result: RecordedOwnerLink, en: boolean): string
  * The capacity itself starts unanswered, for the reason «ومن يشغلها؟» does: it
  * used to open on «مالك», and a pre-filled select is indistinguishable from an
  * answered one.
+ *
+ * ## The third question, and why it is conditional
+ *
+ * «مساحة الوحدة» is asked only when the census has no answer, and that is the
+ * whole point of it. The matrix is painted from the street — `generateUnits`
+ * and the grid picker both assert that a flat *exists*, not that anyone has
+ * measured it — so `Unit.unitArea` is routinely null. Linking a citizen is the
+ * first moment somebody is actually inside, and this form had nowhere to put
+ * the tape measure's answer.
+ *
+ * What that cost: `claimOnFile` mints the citizen's property card from the
+ * canonical unit, so the card inherited the null; a PER_AREA notice cannot be
+ * priced against a unit with no area, and the citizen's own edit form rendered
+ * the absence as «0». One missing question, three symptoms, none of them
+ * visible from here.
+ *
+ * Where the register *does* hold an area it is stated rather than asked — the
+ * rule every lock in `UnitFields` follows. Re-asking a measured flat would
+ * invite two officers to record two different sizes for one room, and the
+ * server refuses the overwrite anyway.
  */
 export interface AddPersonValues {
   citizen: CitizenListItem;
@@ -710,6 +731,8 @@ export interface AddPersonValues {
   /** Non-owners: the owner as named, when not recorded on the unit. */
   landlordName?: string;
   landlordPhone?: string;
+  /** م² — sent only where the census has no area for the unit. See `recordOccupancy`. */
+  unitArea?: number;
 }
 
 export function AddPersonForm({
@@ -720,6 +743,7 @@ export function AddPersonForm({
   newFileHref,
   vacancy,
   owners = [],
+  unitArea: recordedArea,
   onSubmit,
 }: {
   tenant: string;
@@ -748,6 +772,15 @@ export function AddPersonForm({
    * بتسامح. See `unitOwners`.
    */
   owners?: UnitOccupant[];
+  /**
+   * The area the census already holds for this flat, or null if it holds none.
+   *
+   * Null is what opens the field. Passing `undefined` — a caller that has not
+   * been updated — is treated the same as null rather than as "measured", so a
+   * surface that forgets to wire it asks a redundant question instead of
+   * silently dropping the only one that can fill the gap.
+   */
+  unitArea: number | null | undefined;
   onSubmit: (values: AddPersonValues) => void;
 }) {
   const en = locale === 'en';
@@ -805,6 +838,16 @@ export function AddPersonForm({
    * a guess nobody made.
    */
   const [unitStatus, setUnitStatus] = useState<UnitStatus | ''>('');
+  /**
+   * م², typed only when the census has none. Empty means «لم تُقَس» and sends
+   * nothing at all — the unit keeps its null and the matrix goes on showing it
+   * as unmeasured, which is honest. An invented number here would be priced.
+   */
+  const [unitArea, setUnitArea] = useState('');
+  /** The register has an answer, so the field states it rather than asks. */
+  const areaFromCensus = recordedArea != null;
+  const parsedArea = Number(unitArea.trim());
+  const areaIsValid = unitArea.trim() === '' || (Number.isFinite(parsedArea) && parsedArea > 0);
 
   /**
    * Whether what is about to be recorded contradicts the standing vacancy.
@@ -1047,6 +1090,51 @@ export function AddPersonForm({
       </div>
 
       {/*
+        مساحة الوحدة — asked of everyone, and only where the census is silent.
+
+        Not gated on capacity, unlike the two questions around it: the size of a
+        room is not a fact about who is standing in it, and a مستأجر with a tape
+        measure knows it as well as the owner does. Gated on the *register*
+        instead, which is the rule every lock in `UnitFields` follows: a field
+        is stated rather than asked if, and only if, the register has an answer.
+      */}
+      {areaFromCensus ? (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Ruler className="size-3.5 shrink-0" aria-hidden />
+          {en
+            ? `Recorded area: ${recordedArea} m². Correct it from the unit itself.`
+            : `المساحة المسجَّلة: ${recordedArea} م². التعديل يتم على الوحدة نفسها.`}
+        </p>
+      ) : (
+        <Field
+          label={en ? 'Unit Area (sq. meters)' : 'مساحة الوحدة (متر مربع)'}
+          htmlFor="occupant-unit-area"
+          error={
+            areaIsValid
+              ? undefined
+              : en
+                ? 'The area must be greater than zero.'
+                : 'المساحة يجب أن تكون أكبر من صفر.'
+          }
+          hint={
+            en
+              ? 'The census has no area for this unit. Leave it empty if it has not been measured — a guess would be billed.'
+              : 'لا توجد مساحة مسجَّلة لهذه الوحدة. اتركه فارغاً إن لم تُقَس — الرقم المُقدَّر تُحتسب عليه الرسوم.'
+          }
+        >
+          <Input
+            id="occupant-unit-area"
+            inputMode="decimal"
+            dir="ltr"
+            className="text-start"
+            invalid={!areaIsValid}
+            value={unitArea}
+            onChange={(event) => setUnitArea(event.target.value)}
+          />
+        </Field>
+      )}
+
+      {/*
         Asked of an owner alone, and asked plainly: «ومن يشغلها؟». A مستأجر or
         a شاغل بتسامح has already answered it by being recorded, and is shown
         the answer instead of a second question — see the docblock.
@@ -1230,10 +1318,11 @@ export function AddPersonForm({
           !role ||
           (endsStandingVacancy && !acknowledgedVacancy) ||
           // A non-owner on a flat with recorded owners says which one, or that it is none of them.
-          (role !== 'OWNER' && owners.length > 0 && !landlordChoice)
+          (role !== 'OWNER' && owners.length > 0 && !landlordChoice) ||
+          !areaIsValid
         }
         onClick={() => {
-          if (!chosen || !role) return;
+          if (!chosen || !role || !areaIsValid) return;
           const parsed = Number(shares);
           const nonOwner = role !== 'OWNER';
           const recordedOwner =
@@ -1251,6 +1340,17 @@ export function AddPersonForm({
             landlordCitizenId: recordedOwner,
             landlordName: typed && typedLandlordName.trim() ? typedLandlordName.trim() : undefined,
             landlordPhone: typed && typedLandlordPhone.trim() ? typedLandlordPhone.trim() : undefined,
+            /*
+              Omitted rather than sent as 0 when the box is empty, and never
+              sent at all when the census already has an answer.
+
+              An empty box means «لم تُقَس», which the unit already records as
+              null; sending a zero would replace "unmeasured" with a
+              measurement of zero, and the difference between those two is
+              whether a PER_AREA notice refuses to price the flat or prices it
+              at nothing.
+            */
+            unitArea: !areaFromCensus && unitArea.trim() ? parsedArea : undefined,
           });
         }}
       >

@@ -48,6 +48,7 @@ import type { StaffSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate, formatDateTime } from '@/lib/dates';
+import { useGoBack } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -79,6 +80,7 @@ export default function InspectorProfilePage({
   const inspectorIdParam = resolvedSearchParams?.inspectorId;
 
   const router = useRouter();
+  const goBack = useGoBack();
   const base = `/${tenant}/${locale}/${adminPath}`;
   const isAr = locale !== 'en';
   const labels = getLabels(locale);
@@ -115,6 +117,9 @@ export default function InspectorProfilePage({
   }, [tenant, base, router]);
 
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+  /** One spelling of a dollar figure, rather than the five this page had. */
+  const money = (n: number) =>
+    `${n.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const targetInspectorId = inspectorIdParam || (isSuperAdmin ? undefined : currentUser?.id);
 
   const queryKey = ['staff', tenant, 'inspector-profile', targetInspectorId || currentUser?.id || 'me'] as const;
@@ -249,8 +254,8 @@ export default function InspectorProfilePage({
         }
         subtitle={
           isAr
-            ? 'متابعة إحصاءات كل مفتش ميداني على حدة، عدد المواطنين والعقارات المسجلة، واحتساب العمولات ($1 لكل عقار)'
-            : 'Track individual performance per inspector, total citizens & properties registered, and commission earnings'
+            ? 'إحصاءات كل مفتش ميداني على حدة، والعمولات المستحقة له'
+            : 'Per-inspector field activity and the commission owed against it'
         }
         actions={
           <div className="flex items-center gap-2">
@@ -259,7 +264,7 @@ export default function InspectorProfilePage({
                 variant="outline"
                 size="sm"
                 className="gap-1.5"
-                onClick={() => router.push(`${base}/staff`)}
+                onClick={() => goBack(`${base}/staff`)}
               >
                 {isAr ? <ArrowRight className="size-4" /> : <ArrowLeft className="size-4" />}
                 {isAr ? 'العودة للموظفين' : 'Back to Staff'}
@@ -300,7 +305,7 @@ export default function InspectorProfilePage({
 
       {/* Super Admin Inspector Switcher */}
       {isSuperAdmin && fieldInspectors.length > 0 && (
-        <Card className="border-primary/20 bg-primary/5">
+        <Card>
           <CardContent className="p-3 sm:p-4">
             <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-xs font-bold text-primary flex items-center gap-1.5">
@@ -338,7 +343,7 @@ export default function InspectorProfilePage({
       )}
 
       {/* Inspector Info Banner */}
-      <Card className="border-border/60 bg-card/60 backdrop-blur-sm">
+      <Card>
         <CardContent className="p-4 sm:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3.5">
@@ -394,121 +399,49 @@ export default function InspectorProfilePage({
         </CardContent>
       </Card>
 
-      {/* 5 Distinct Financial & Activity Stat KPI Cards */}
-      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-5">
-        {/* Card 1: Total Registered Citizens by this inspector */}
-        <Card className="relative overflow-hidden border-border/70 hover:shadow-md transition-shadow">
-          <CardContent className="p-4 sm:p-5">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {isAr ? 'المواطنون المسجلون' : 'Citizens Registered'}
-                </p>
-                <div className="text-3xl font-extrabold tracking-tight text-emerald-600 dark:text-emerald-400">
-                  {data.totalCitizens.toLocaleString(locale)}
-                </div>
-              </div>
-              <div className="flex size-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400">
-                <Users className="size-6" />
-              </div>
-            </div>
-            <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span>{isAr ? 'مواطن تم تسجيلهم بواسطة هذا المفتش' : 'citizens registered by this inspector'}</span>
-            </div>
-          </CardContent>
-        </Card>
+      {/*
+        Five figures, one row, plain tiles.
 
-        {/* Card 2: Total Registered Properties by this inspector */}
-        <Card className="relative overflow-hidden border-border/70 hover:shadow-md transition-shadow">
-          <CardContent className="p-4 sm:p-5">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {isAr ? 'العقارات والوحدات المسجلة' : 'Properties Registered'}
-                </p>
-                <div className="text-3xl font-extrabold tracking-tight text-blue-600 dark:text-blue-400">
-                  {data.totalProperties.toLocaleString(locale)}
-                </div>
-              </div>
-              <div className="flex size-11 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400">
-                <Home className="size-6" />
-              </div>
-            </div>
-            <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="font-semibold text-blue-600 dark:text-blue-400">1.00$</span>
-              <span>{isAr ? 'عمولة لكل عقار مسجل' : 'commission per property'}</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Card 3: Total Commission Earnings */}
-        <Card className="relative overflow-hidden border-border/70 hover:shadow-md transition-shadow">
-          <CardContent className="p-4 sm:p-5">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {isAr ? 'إجمالي الأرباح المستحقة' : 'Total Commission Earned'}
-                </p>
-                <div className="text-3xl font-extrabold tracking-tight text-purple-600 dark:text-purple-400" dir="ltr">
-                  ${data.totalEarnings.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </div>
-              </div>
-              <div className="flex size-11 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400">
-                <TrendingUp className="size-6" />
-              </div>
-            </div>
-            <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span>{data.totalProperties} {isAr ? 'عقار × $1.00' : 'prop. × $1.00'}</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Card 4: Paid Balance */}
-        <Card className="relative overflow-hidden border-border/70 hover:shadow-md transition-shadow">
-          <CardContent className="p-4 sm:p-5">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {isAr ? 'الرصيد المدفوع / المستلم' : 'Paid Balance'}
-                </p>
-                <div className="text-3xl font-extrabold tracking-tight text-cyan-600 dark:text-cyan-400" dir="ltr">
-                  ${data.paidBalance.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </div>
-              </div>
-              <div className="flex size-11 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-600 dark:bg-cyan-500/20 dark:text-cyan-400">
-                <Wallet className="size-6" />
-              </div>
-            </div>
-            <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="font-semibold text-cyan-600 dark:text-cyan-400">
-                {data.payouts.length}
-              </span>
-              <span>{isAr ? 'دفعات مسجلة' : 'payouts'}</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Card 5: Pending Balance */}
-        <Card className="relative overflow-hidden border-border/70 hover:shadow-md transition-shadow">
-          <CardContent className="p-4 sm:p-5">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {isAr ? 'الرصيد المتبقي المستحق' : 'Pending Balance'}
-                </p>
-                <div className="text-3xl font-extrabold tracking-tight text-amber-600 dark:text-amber-400" dir="ltr">
-                  ${data.pendingBalance.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </div>
-              </div>
-              <div className="flex size-11 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400">
-                <Clock className="size-6" />
-              </div>
-            </div>
-            <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span>{isAr ? 'المتبقي قيد الصرف' : 'Awaiting payout'}</span>
-            </div>
-          </CardContent>
-        </Card>
+        Each of these carried a 44px colour-filled icon chip and a caption under
+        the number, and four of the five captions restated the label directly
+        above it — «عمولة لكل عقار مسجل» sat under «العقارات والوحدات المسجلة».
+        Five different accent colours across five adjacent tiles meant the
+        colour carried no information either: it varied because each tile was
+        written separately, not because the numbers differ in kind. One accent
+        is left, on the balance still owed, which is the only figure here that
+        asks somebody to do something.
+      */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <Stat
+          icon={Users}
+          label={isAr ? 'المواطنون المسجلون' : 'Citizens registered'}
+          value={data.totalCitizens.toLocaleString(locale)}
+        />
+        <Stat
+          icon={Home}
+          label={isAr ? 'العقارات والوحدات' : 'Properties & units'}
+          value={data.totalProperties.toLocaleString(locale)}
+        />
+        <Stat
+          icon={TrendingUp}
+          label={isAr ? 'إجمالي الأرباح' : 'Total earned'}
+          value={money(data.totalEarnings)}
+          ltr
+        />
+        <Stat
+          icon={Wallet}
+          label={isAr ? 'المدفوع' : 'Paid'}
+          value={money(data.paidBalance)}
+          note={`${data.payouts.length} ${isAr ? 'دفعة مسجلة' : 'payouts'}`}
+          ltr
+        />
+        <Stat
+          icon={Clock}
+          label={isAr ? 'المتبقي المستحق' : 'Pending'}
+          value={money(data.pendingBalance)}
+          ltr
+          emphasis
+        />
       </div>
 
       {/* Property Types Breakdown Grid */}
@@ -648,8 +581,8 @@ export default function InspectorProfilePage({
                   </CardTitle>
                   <CardDescription>
                     {isAr
-                      ? 'جميع المواطنين والعقارات التي تم تسجيلها بواسطة هذا المفتش مع العمولات المكتسبة (+1$ لكل عقار)'
-                      : 'All registrations submitted by this inspector with commissions earned (+$1/property)'}
+                      ? 'كل ما سجّله هذا المفتش، والعمولة المستحقة عن كل تسجيل'
+                      : 'Everything this inspector registered, and the commission owed on each'}
                   </CardDescription>
                 </div>
               </div>
@@ -935,6 +868,49 @@ export default function InspectorProfilePage({
           </form>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/**
+ * One figure: a label, a number, and an optional line under it.
+ *
+ * Deliberately not a `Card`. A card is a container for a section with a
+ * heading and its own contents; five of them in a row holding one number each
+ * is the chrome of a section applied to a single value.
+ */
+function Stat({
+  icon: Icon,
+  label,
+  value,
+  note,
+  ltr,
+  emphasis,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  note?: string;
+  /** Latin numerals and a leading $ read left-to-right inside an RTL page. */
+  ltr?: boolean;
+  emphasis?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Icon className="size-4 shrink-0" />
+        <span className="min-w-0 truncate">{label}</span>
+      </div>
+      <div
+        className={
+          'mt-2 text-2xl font-bold tabular-nums ' +
+          (emphasis ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')
+        }
+        dir={ltr ? 'ltr' : undefined}
+      >
+        {value}
+      </div>
+      {note ? <p className="mt-1 text-xs text-muted-foreground">{note}</p> : null}
     </div>
   );
 }

@@ -694,7 +694,29 @@ export class CitizensService {
           unitType: unit.unitType,
           floor: unit.floor,
           side: unit.side,
-          unitArea: Number(unit.unitArea),
+          /*
+            Null-guarded, exactly like the card's own `unitArea` above it.
+
+            `Number(null)` is `0`, and this line was the bare form of it. Since
+            migration 0031 `BuildingUnit.unitArea` is nullable, and two ordinary
+            paths produce a null there: a field flag saying the area could not be
+            established, and — far more often — `claimOnFile`, which mints a card
+            line from the canonical `Unit` and copies whatever area the census
+            holds, which for a flat painted on the matrix and never measured is
+            nothing.
+
+            So linking an existing owner to a flat from the unit matrix put a
+            `null` in the column, and this line handed the edit form a `0`. The
+            officer opened the record and saw «المساحة: 0» for a flat nobody had
+            measured — indistinguishable from a measurement of zero, and a
+            number `areaField` then refuses on the next save («المساحة يجب أن
+            تكون أكبر من صفر»), so the card could not be re-saved at all until
+            someone typed an area they may not have had.
+
+            Null travels instead, the form renders an empty box, and the officer
+            standing in the flat is asked for the one thing they can answer.
+          */
+          unitArea: unit.unitArea == null ? null : Number(unit.unitArea),
           sharedRights: unit.sharedRights,
           unitStatus: unit.unitStatus,
           unitId: unit.unitId,

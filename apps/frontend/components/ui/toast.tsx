@@ -152,7 +152,7 @@ function ToastViewport({
      * row.
      */
     <div
-      className="pointer-events-none fixed inset-x-0 bottom-0 z-[100] flex flex-col items-stretch gap-2 p-3 sm:inset-x-auto sm:bottom-4 sm:end-4 sm:w-[380px] sm:max-w-[calc(100vw-2rem)] sm:p-0"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-[100] flex flex-col items-stretch gap-2 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:inset-x-auto sm:bottom-4 sm:end-4 sm:w-[380px] sm:max-w-[calc(100vw-2rem)] sm:p-0 sm:pb-0"
       // Polite, not assertive: these report completed work, and an assertive
       // region interrupts a screen reader mid-word on every saved row.
       aria-live="polite"

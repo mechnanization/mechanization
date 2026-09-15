@@ -300,26 +300,6 @@ export class PrismaUserRepository implements UserRepository {
       auditCounts.map((entry) => [entry.actorId, entry._count._all]),
     );
 
-    return rows.map((row) => ({
-      id: row.id,
-      email: row.email ?? '',
-      fullName: `${row.firstName} ${row.lastName}`,
-      firstName: row.firstName,
-      lastName: row.lastName,
-      role: row.role as StaffRole,
-      isActive: row.isActive,
-      hasConfirmedTotp: Boolean(row.totpConfirmedAt),
-      historyCount:
-        row._count.reviewedRegistrations +
-        row._count.reviewedPayments +
-        row._count.collectedPayments +
-        row._count.collectedTransactions +
-        row._count.recordedTransactions +
-        row._count.issuedFeeNotices +
-        (auditByActor.get(row.id) ?? 0),
-      createdAt: row.createdAt.toISOString(),
-      lastLoginAt: row.lastLoginAt?.toISOString() ?? null,
-    }));
     const staffIds = rows.map((r) => r.id);
 
     // Query registrations created by each staff member (field inspector)

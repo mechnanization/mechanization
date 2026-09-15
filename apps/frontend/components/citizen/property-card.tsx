@@ -1074,13 +1074,30 @@ export function PropertyCard({
               <Field
                 label={
                   isBuilding
-                    ? (locale === 'en' ? 'Building Name' : 'اسم المبنى')
-                    : (locale === 'en' ? 'Building / House Name' : 'اسم المبنى/المنزل')
+                    ? (locale === 'en' ? 'Building Name (Optional)' : 'اسم المبنى (اختياري)')
+                    : (locale === 'en'
+                        ? 'Building / House Name (Optional)'
+                        : 'اسم المبنى/المنزل (اختياري)')
                 }
                 htmlFor={`bn-${index}`}
+                /*
+                  Offered, never demanded — see `buildingNameField`.
 
-                path={flagPath(index, 'buildingName')}
-                required
+                  Most blocks here have no name, and a required field standing
+                  between an officer and the household they came to record is
+                  answered with «بناية» or the street rather than left alone.
+                  The column then holds a different invented name per card for
+                  one building, which is the exact collision the census link
+                  exists to end.
+
+                  No `path`, and therefore no «غير مؤكَّد» control: a flag
+                  excuses a field that would otherwise hold the record at
+                  «يتطلب مراجعة», and this one no longer can. `askableFields`
+                  drops it for the same reason, and the form's own pruning
+                  effect clears any flag an older record still carries on it —
+                  so a control here would raise a flag that vanished on the next
+                  render.
+                */
                 error={errors.buildingName}
                 /*
                   Where the register has a name, this field states it rather

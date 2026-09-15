@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
   Archive,
-  ArrowRight,
   Banknote,
   Building2,
   Calendar,
@@ -71,6 +70,9 @@ import { useToast } from '@/components/ui/toast';
 import { describeAssessment } from '@/lib/fee-assessment';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { findLocatedProperty, mapHref } from '@/lib/map-link';
+import { ActivityTrail } from '@/components/admin/activity-trail';
+import { AUDIT_ENTITY } from '@/lib/audit-labels';
+import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
@@ -535,13 +537,11 @@ export default function CitizenProfilePage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <Link
-        href={`${base}/citizens`}
-        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
-        {locale === 'en' ? 'Back to Citizens Registry' : 'رجوع إلى سجل المواطنين'}
-      </Link>
+      <BackLink
+        fallbackHref={`${base}/citizens`}
+        label={locale === 'en' ? 'Back' : 'رجوع'}
+        className="text-sm"
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-6">
         <div className="flex min-w-0 items-center gap-4">
@@ -651,6 +651,7 @@ export default function CitizenProfilePage({
 
       <CollapsibleSection
         id="personal"
+        defaultOpen={false}
         title={locale === 'en' ? 'Personal Details' : 'البيانات الشخصية'}
         icon={IdCard}
         className="[&_summary]:pb-4"
@@ -1077,6 +1078,16 @@ export default function CitizenProfilePage({
           locale={locale}
         />
       ) : null}
+
+      {/* «ربط مالك بمستأجر», «تسجيل مواطن» and the rest are filed against the
+          `User` row this page is showing — see AUDIT_ENTITY.citizen. */}
+      <ActivityTrail
+        tenant={tenant}
+        locale={locale}
+        base={base}
+        entityType={AUDIT_ENTITY.citizen}
+        entityId={citizenId}
+      />
     </div>
   );
 }
@@ -1303,6 +1314,7 @@ function FeesPanel({
     <>
       <CollapsibleSection
         id="fees"
+        defaultOpen={false}
         title={locale === 'en' ? 'Fees & Ledger' : 'الرسوم والمدفوعات'}
         icon={Wallet}
         summary={
@@ -2049,12 +2061,23 @@ function UnitRow({
           </span>
         ) : null}
 
+        {/*
+          Said rather than left out when nobody has measured the flat. A clerk
+          reads this row to decide whether a PER_AREA notice can be priced — it
+          cannot, against an unmeasured unit (see `assessCitizen`) — and a row
+          that simply has no area on it looks like one the page forgot.
+        */}
         {unit.unitArea != null ? (
           <span className="inline-flex items-center gap-1.5 text-muted-foreground">
             <Ruler className="size-3.5 shrink-0" aria-hidden />
             {unit.unitArea} {en ? 'm²' : 'م²'}
           </span>
-        ) : null}
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-muted-foreground/70">
+            <Ruler className="size-3.5 shrink-0" aria-hidden />
+            {en ? 'Area not recorded' : 'المساحة غير مسجَّلة'}
+          </span>
+        )}
 
         {unit.side ? (
           <span className="inline-flex items-center gap-1.5 text-muted-foreground">
