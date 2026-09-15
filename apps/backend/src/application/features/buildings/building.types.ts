@@ -22,6 +22,21 @@ export interface BuildingRow {
   code: string;
   name: string | null;
   postedNumber: string | null;
+  /**
+   * «هل الوحدة مفروزة على عقار» — `null` means nobody asked, which is a
+   * different answer from `false`. See the column.
+   */
+  isPartitioned: boolean | null;
+  /**
+   * أرقام الأقسام a فرز produced. Empty unless `isPartitioned` is true — the
+   * two are one fact, and the service keeps them in step.
+   */
+  partitionNumbers: string[];
+  /**
+   * The *other* عقارات this structure stands on, beside `parcelNumber`.
+   * Empty for the overwhelming majority, which stand on exactly one.
+   */
+  sharedParcelNumbers: string[];
   structureType: string;
   /**
    * Where the structure is in its own life — permitted, going up, standing,
@@ -252,7 +267,9 @@ export interface DamageRow {
 }
 
 export interface BuildingListFilter {
+  /** Standing on this عقار, as its own or a shared parcel — see `standsOnParcels`. */
   parcelNumber?: string;
+  /** Standing on any of these, the same way. */
   parcelNumbers?: readonly string[];
   /**
    * A sector, resolved to its parcels at query time.

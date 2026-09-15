@@ -58,6 +58,116 @@ import { activeVacancy, closeActiveVacancy, toVacancyRow } from './unit-vacancy'
 const MAX_GENERATED_UNITS = 400;
 
 /**
+ * «العقارات المشتركة», minus the building's own — the list as it is stored.
+ *
+ * A structure standing on two or three adjacent عقارات is ordinary here, and
+ * `parcelNumber` can name only one of them: the display code and the per-parcel
+ * suffix are both derived from it (D9), so widening it to a list would change
+ * what a building code means and break the `(parcelNumber, codeSuffix)`
+ * uniqueness the allocation turns on.
+ *
+ * The one rule this enforces is that the building's own parcel is never in it.
+ * An officer who types it there has repeated themselves rather than recorded a
+ * second parcel, and storing it would make the structure appear to straddle
+ * itself — which is then *counted*, in a figure nobody would think to check
+ * against the parcel it is already filed under.
+ *
+ * Exported for the same reason `rollupOf` is: it decides what gets written and
+ * it is decidable without a database, so it is pinned by a test rather than
+ * left to the integration suite that only runs where there is a Postgres.
+ *
+ * Duplicates within the list are already collapsed by
+ * `createBuildingSchema`'s own transform; this is the one member the schema
+ * cannot know about, because the schema does not know which parcel is being
+ * edited.
+ */
+export function sharedParcelsExcluding(
+  values: readonly string[] | undefined,
+  own: string,
+): string[] {
+  const ownTrimmed = own.trim();
+  return cleanList(values).filter((value) => value !== ownTrimmed);
+}
+
+/**
+ * أرقام الأقسام, kept only where a فرز was actually recorded.
+ *
+ * The pairing rule for migration 0047's two partition columns, and it is here
+ * rather than in a Zod refinement because a PATCH may legitimately send the
+ * numbers without restating the flag — resolving that needs the stored row,
+ * which a schema cannot see. The caller passes whichever answer now applies.
+ *
+ * Cleared rather than refused, which is the same judgement `PropertyEntry.
+ * normalise` makes about an out-of-branch leftover: a form whose checkbox was
+ * ticked, filled in and then cleared is a correction somebody got right, and
+ * failing their save over the rows they just abandoned would be punishing them
+ * for changing their mind. What must not survive is the leftover — أقسام under
+ * a structure nobody has recorded a فرز for is a contradiction, and one a deed
+ * search would later read as fact.
+ */
+export function partitionNumbersFor(
+  isPartitioned: boolean | null | undefined,
+  values: readonly string[] | undefined,
+): string[] {
+  return isPartitioned === true ? cleanList(values) : [];
+}
+
+/** Trimmed, de-duplicated, blanks dropped — the shape both lists are stored in. */
+function cleanList(values: readonly string[] | undefined): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const raw of values ?? []) {
+    const value = raw.trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+
+  return out;
+}
+
+/**
+ * The buildings standing on any of these عقارات — on them as their own parcel,
+ * or across them as a shared one.
+ *
+ * ## Where this is the right question, and where it is not
+ *
+ * «What stands on عقار 25» has to find a building filed under 10 that also
+ * covers 25: the ledger's parcel search, the registration form's building
+ * picker and the duplicate-structure guard are all asking where a structure
+ * *is*, and a building recorded on two parcels is on both. Leaving the shared
+ * ones out sends an officer standing on 25 to create a second building for a
+ * structure the census already holds — the duplicate D18 exists to stop.
+ *
+ * It is deliberately **not** used for the two questions that are about the
+ * building's *own* parcel, and both stay on `parcelNumber` alone:
+ *
+ *  - the code suffix, which is allocated per own parcel and forms the code
+ *    `ZONE-PARCEL-SUFFIX` (D7, D9) — a building on 10 sharing 25 takes no
+ *    letter from 25's sequence;
+ *  - the sector filter, because a building's sector is derived from its own
+ *    parcel (D13). Listing it under a second sector would put one building on
+ *    two dispatch lists.
+ *
+ * ## Why no index backs `sharedParcelNumbers`
+ *
+ * Prisma renders `hasSome` as the array-overlap operator `&&`, which a GIN index
+ * can serve and a B-tree cannot. None is created, on purpose: a municipality has
+ * at most about one building per parcel (1,825 in Albazourieh, 16 surveyed when
+ * this was written), and at that size the planner reads the whole table faster
+ * than it would read an index. Add `USING gin ("sharedParcelNumbers")` if a
+ * tenant's `buildings` table ever reaches the tens of thousands — in a migration
+ * of its own, and see AGENTS.md §3 on `CONCURRENTLY` under the tenant migrator.
+ */
+export function standsOnParcels(parcelNumbers: readonly string[]): Prisma.BuildingWhereInput {
+  const wanted = cleanList(parcelNumbers);
+  return {
+    OR: [{ parcelNumber: { in: wanted } }, { sharedParcelNumbers: { hasSome: wanted } }],
+  };
+}
+
+/**
  * What «متضرر» counts as on the census tiles.
  *
  * The three levels that mean the structure's use is impaired. `NOT_AFFECTED`
@@ -368,8 +478,23 @@ export class BuildingsService {
   private async buildWhere(filter: BuildingListFilter): Promise<Prisma.BuildingWhereInput> {
     const where: Prisma.BuildingWhereInput = {};
 
-    if (filter.parcelNumber) where.parcelNumber = filter.parcelNumber.trim();
-    if (filter.parcelNumbers) where.parcelNumber = { in: [...filter.parcelNumbers] };
+    /*
+      «على العقار» means standing on it — as its own parcel or as a shared one.
+      See `standsOnParcels`. ANDed rather than assigned, because the predicate is
+      an OR and the survey-status filter below assigns `where.OR` of its own.
+    */
+    if (filter.parcelNumber) {
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : []),
+        standsOnParcels([filter.parcelNumber]),
+      ];
+    }
+    if (filter.parcelNumbers) {
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : []),
+        standsOnParcels(filter.parcelNumbers),
+      ];
+    }
     if (filter.structureType) where.structureType = filter.structureType as never;
     if (filter.lifecycleStatus) where.lifecycleStatus = filter.lifecycleStatus as never;
 
@@ -386,6 +511,11 @@ export class BuildingsService {
 
     /*
       A sector filter, expanded to the parcels the sector owns.
+
+      Matched against the building's *own* parcel only, never a shared one: the
+      sector is derived from that parcel (D13) and is what the code carries, so
+      a building on 10 that also covers a parcel in the next sector is still
+      that one sector's building — see `standsOnParcels`.
 
       There is no column to filter on — D13 keeps membership in
       `Zone.parcelNumbers` so it cannot drift — so the expansion happens here.
@@ -470,6 +600,9 @@ export class BuildingsService {
         { name: match },
         { postedNumber: match },
         { parcelNumber: match },
+        // Exact rather than `contains`: an array element cannot be matched by
+        // substring, and a whole parcel number is what somebody searching one types.
+        { sharedParcelNumbers: { has: term } },
       ];
       // ANDed with the survey filter above rather than merged into one OR,
       // which would have a search term widening the status filter instead of
@@ -937,12 +1070,20 @@ export class BuildingsService {
       costs a phone with no signal nothing.
     */
     if (!input.acknowledgedDuplicates) {
-      const neighbours = await this.db.building.findMany({
-        where: { parcelNumber },
-        orderBy: { codeSuffix: 'asc' },
+      /*
+        Every structure standing on this عقار, including one filed under a
+        neighbouring parcel that also covers this one — see `standsOnParcels`.
+        That second kind is the likelier duplicate of the two: an officer on 25
+        who does not know Z-2-10-A reaches over the boundary will create it again.
+        Own-parcel rows first, so the dialog leads with the plainest candidates.
+      */
+      const found = await this.db.building.findMany({
+        where: standsOnParcels([parcelNumber]),
+        orderBy: [{ code: 'asc' }],
         select: {
           id: true,
           code: true,
+          parcelNumber: true,
           name: true,
           postedNumber: true,
           structureType: true,
@@ -952,6 +1093,10 @@ export class BuildingsService {
           longitude: true,
         },
       });
+      const neighbours = [
+        ...found.filter((row) => row.parcelNumber === parcelNumber),
+        ...found.filter((row) => row.parcelNumber !== parcelNumber),
+      ];
 
       if (neighbours.length > 0) {
         throw new ConflictError(
@@ -968,8 +1113,15 @@ export class BuildingsService {
               second is the one that would talk somebody out of a real building.
             */
             parcelNumber,
-            candidates: neighbours.map((row) => ({
+            candidates: neighbours.map(({ parcelNumber: ownParcel, ...row }) => ({
               ...row,
+              /*
+                Named so the dialog can say «يمتد على هذا العقار — عقاره
+                الأساسي 10» instead of listing a building whose code names a
+                different parcel with no explanation.
+              */
+              ownParcelNumber: ownParcel,
+              sharesParcel: ownParcel !== parcelNumber,
               distanceMetres:
                 input.latitude != null &&
                 input.longitude != null &&
@@ -1017,6 +1169,15 @@ export class BuildingsService {
           code: formatBuildingCode({ zoneCode: zone?.code, parcelNumber, codeSuffix }),
           name: input.name?.trim() || null,
           postedNumber: input.postedNumber?.trim() || null,
+          /*
+            `?? null` rather than `|| null`: `false` is «غير مفروزة», a finding
+            an officer made, and it must not be flattened into «لم يُسأل».
+          */
+          isPartitioned: input.isPartitioned ?? null,
+          // Dropped unless a فرز was actually asserted — see `partitionNumbersFor`.
+          partitionNumbers: partitionNumbersFor(input.isPartitioned, input.partitionNumbers),
+          // Never the parcel the code derives from — see `sharedParcelsExcluding`.
+          sharedParcelNumbers: sharedParcelsExcluding(input.sharedParcelNumbers, parcelNumber),
           structureType: input.structureType as never,
           lifecycleStatus: input.lifecycleStatus as never,
           latitude: input.latitude ?? null,
@@ -1167,6 +1328,39 @@ export class BuildingsService {
         ...(input.name !== undefined ? { name: input.name?.trim() || null } : {}),
         ...(input.postedNumber !== undefined
           ? { postedNumber: input.postedNumber?.trim() || null }
+          : {}),
+        // `null` is «غير محدد» and is storable, so the presence check is on
+        // `undefined` alone — an absent key leaves the column as it is.
+        ...(input.isPartitioned !== undefined ? { isPartitioned: input.isPartitioned } : {}),
+        /*
+          The أقسام follow the flag, whichever of the two this request restates.
+
+          Written whenever *either* field is present, because they are one fact:
+          a PATCH that unsets `isPartitioned` and says nothing about the numbers
+          must still clear them, or the building keeps أقسام under a فرز it no
+          longer records. `partitioned` resolves the flag against the stored row
+          so a request carrying only the numbers is judged against the فرز the
+          building actually has.
+        */
+        ...(input.partitionNumbers !== undefined || input.isPartitioned !== undefined
+          ? {
+              partitionNumbers: partitionNumbersFor(
+                input.isPartitioned !== undefined ? input.isPartitioned : before.isPartitioned,
+                input.partitionNumbers !== undefined
+                  ? input.partitionNumbers
+                  : before.partitionNumbers,
+              ),
+            }
+          : {}),
+        ...(input.sharedParcelNumbers !== undefined
+          ? {
+              // `parcelNumber` cannot be edited, so `before` is the authority
+              // on which one this list may not contain.
+              sharedParcelNumbers: sharedParcelsExcluding(
+                input.sharedParcelNumbers,
+                before.parcelNumber,
+              ),
+            }
           : {}),
         ...(input.structureType !== undefined
           ? { structureType: input.structureType as never }
@@ -2234,6 +2428,7 @@ export class BuildingsService {
         unitType: true,
         unitStatus: true,
         surveyStatus: true,
+        unitArea: true,
       },
     });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
@@ -2432,6 +2627,34 @@ export class BuildingsService {
       });
     }
 
+    /*
+      مساحة الوحدة, filled in from the doorstep — and only where it is missing.
+
+      The gap this closes: `generateUnits` and the grid painter both create
+      flats with no area, because they assert that a flat exists rather than
+      that anyone has measured it. Recording an occupant was the first moment
+      somebody had actually been inside, and the form had nowhere to put the
+      number — so `claimOnFile` below minted the citizen's property card from a
+      unit with `unitArea` null, billing could not price a PER_AREA notice
+      against it, and the edit form rendered the absence as «0».
+
+      Narrowed to `unitArea: null` for the same reason the survey-status lift
+      and the implied حالة are narrowed: only "nobody established this" may be
+      answered by a side effect of recording who lives here. A flat the census
+      has already measured keeps its measurement — correcting a surveyed area is
+      the unit editor's job, and silently overwriting it while filing a tenant
+      would be a change nobody asked for and nobody would see.
+
+      Written before `claimOnFile` so the card it mints copies the new area
+      rather than the null it replaced.
+    */
+    if (input.unitArea !== undefined) {
+      await this.db.unit.updateMany({
+        where: { id: input.unitId, unitArea: null },
+        data: { unitArea: input.unitArea },
+      });
+    }
+
     const casesResolved = await this.cases.resolveForUnit(input.unitId, input.citizenId, actor);
 
     const landlord: LandlordSpec | null =
@@ -2462,6 +2685,15 @@ export class BuildingsService {
         role: input.role,
         unitStatus: input.unitStatus ?? null,
         ...(input.landlordCitizenId ? { landlordCitizenId: input.landlordCitizenId } : {}),
+        /*
+          Logged only where it was actually written — i.e. where the unit had
+          no area and this request supplied one. An audit row saying an area
+          was recorded when the update matched nothing would be a lie about the
+          one field on this form that decides a PER_AREA bill.
+        */
+        ...(input.unitArea !== undefined && unit.unitArea == null
+          ? { unitArea: input.unitArea }
+          : {}),
         casesResolved,
         /*
           Named in the audit row for the reason `endOccupancy` names its release:
@@ -3518,6 +3750,9 @@ function toBuildingRow(row: {
   code: string;
   name: string | null;
   postedNumber: string | null;
+  isPartitioned: boolean | null;
+  partitionNumbers: string[];
+  sharedParcelNumbers: string[];
   structureType: string;
   lifecycleStatus: string;
   latitude: number | null;
@@ -3538,6 +3773,9 @@ function toBuildingRow(row: {
     code: row.code,
     name: row.name,
     postedNumber: row.postedNumber,
+    isPartitioned: row.isPartitioned,
+    partitionNumbers: row.partitionNumbers,
+    sharedParcelNumbers: row.sharedParcelNumbers,
     structureType: row.structureType,
     lifecycleStatus: row.lifecycleStatus,
     latitude: row.latitude,

@@ -356,6 +356,18 @@ export interface QueuedBuilding {
     floorsCount?: number;
     /** Levels below ground, as a depth: 2 means B1 and B2. */
     basementsCount?: number;
+    /**
+     * «هل الوحدة مفروزة على عقار» — omitted entirely when «غير محدد».
+     *
+     * Absent and `null` are the same answer on a *creation*, which is what this
+     * payload is replayed as, so the queue carries the key only when the
+     * officer actually answered.
+     */
+    isPartitioned?: boolean;
+    /** أرقام الأقسام, carried only where the فرز box was actually ticked. */
+    partitionNumbers?: string[];
+    /** The other عقارات the structure stands on, if it straddles more than one. */
+    sharedParcelNumbers?: string[];
     notes?: string;
     /**
      * Carried because the officer was shown the parcel's existing structures

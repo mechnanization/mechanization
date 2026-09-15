@@ -328,6 +328,7 @@ export class LandlordLinkService {
           select: {
             id: true,
             parcelNumber: true,
+            sharedParcelNumbers: true,
             structureType: true,
             // Two is enough to tell "exactly one unit" from "more than one" —
             // the single-unit منزل inference `CensusSyncService` makes.
@@ -347,8 +348,18 @@ export class LandlordLinkService {
         ]),
       ),
     ];
+    /*
+      Every عقار these buildings stand on, shared ones included: an owner's
+      unlinked card for parcel 25 describes the same property as a building on
+      10 that covers 25, and it has to be found for the double-billing block in
+      `planFor` to see it.
+    */
     const parcels = [
-      ...new Set(buildings.map((building) => building.parcelNumber).filter(Boolean)),
+      ...new Set(
+        buildings
+          .flatMap((building) => [building.parcelNumber, ...building.sharedParcelNumbers])
+          .filter(Boolean),
+      ),
     ] as string[];
 
     const [vacancies, citizens, cards, occupancies, owners] = await Promise.all([
@@ -507,8 +518,9 @@ export class LandlordLinkService {
       (card) =>
         card.buildingId === null &&
         card.occupancyType === 'OWNER' &&
-        building.parcelNumber &&
-        card.propertyNumber === building.parcelNumber,
+        card.propertyNumber != null &&
+        (card.propertyNumber === building.parcelNumber ||
+          building.sharedParcelNumbers.includes(card.propertyNumber)),
     );
     if (unlinked) return { block: block('OWNER_CARD_UNLINKED'), outcome: null };
 
@@ -2453,6 +2465,8 @@ interface PlanCitizen {
 interface PlanBuilding {
   id: string;
   parcelNumber: string;
+  /** The other عقارات it stands on — an owner's card may name any of them. */
+  sharedParcelNumbers: string[];
   structureType: string;
   units: Array<{ id: string; unitCode: string }>;
 }

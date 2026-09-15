@@ -1,0 +1,80 @@
+-- 0047_building_parcel_partitioning
+--
+-- «هل الوحدة مفروزة على عقار» and «إن كانت الوحدة مشتركة على أكثر من عقار» —
+-- two facts about a structure's relationship to the cadastre that the census
+-- could hold nowhere.
+--
+-- == What could not be recorded ===========================================
+--
+-- **فرز.** Partitioning is the cadastral act that splits one عقار into
+-- separately titled units. It decides whether the flat an officer is standing
+-- in can carry a deed of its own or only a share of the whole building, which
+-- is the first question asked of any transfer and the one a resident asks at
+-- the counter. The census had no column for it, so the answer lived in
+-- «ملاحظات» where nothing could count it, filter on it, or put it on a notice.
+--
+-- **Straddling.** `buildings.parcelNumber` names exactly one عقار and cannot be
+-- widened to name more: the display code is derived from it and the per-parcel
+-- suffix was allocated against it (D9), so a list there would change what a
+-- building code means and break the `(parcelNumber, codeSuffix)` uniqueness the
+-- allocation turns on. A building standing on two or three adjacent parcels is
+-- ordinary here, and until now the second and third simply went unrecorded —
+-- or were entered as a *second building*, which is the duplicate the
+-- acknowledgement guard in §4.4 exists to catch.
+--
+-- == Why the partition flag is nullable ===================================
+--
+-- Three states, not two: `true` مفروزة, `false` غير مفروزة, and NULL — nobody
+-- asked, or the officer could not find out. A `BOOLEAN NOT NULL DEFAULT false`
+-- would have every building that already exists asserting a finding no officer
+-- ever made, and «we did not check» would be indistinguishable from «we checked
+-- and it is not». Only one of those is a finding, and this one decides title.
+--
+-- That is the same rule `units.unitStatus` follows, and for the same reason.
+--
+-- The wizard's control is a single «مفروزة» checkbox, so in practice it writes
+-- `true` or NULL and never `false`: ticking the box is an officer asserting a
+-- فرز, and leaving it alone is silence rather than a denial. The column keeps
+-- room for `false` because a later surveyor's form may well want to record
+-- «we checked the صحيفة عقارية and there is no فرز», which is a finding worth
+-- having and is not the same as never having looked.
+--
+-- == Why the أقسام are a list beside the flag =============================
+--
+-- A فرز is not a yes on its own — it produces numbered أقسام, each with its own
+-- صحيفة عقارية, and those numbers are what a transfer, a deed search and a
+-- resident at the counter are all actually asking about. A boolean that
+-- recorded only that a فرز exists would send whoever needs a قسم number back to
+-- the survey office, which is the trip the census exists to save.
+--
+-- Empty for every building already on file, which is honest: nothing could
+-- record a قسم number before this column, so nobody did. Non-empty only where
+-- `isPartitioned` is true — the service clears it otherwise, because أقسام on a
+-- structure nobody has recorded a فرز for is a contradiction rather than a
+-- finding.
+--
+-- == Why the parcel list defaults to empty rather than NULL ===============
+--
+-- The opposite case, and the asymmetry is deliberate. «Which *other* parcels
+-- does this stand on» has a true and knowable answer for every building already
+-- on file — none of them was recorded as straddling, and a structure on one
+-- parcel is the overwhelming majority — so an empty array is the honest
+-- backfill rather than a guess. A nullable array would add a third state that
+-- means nothing different from the empty one, and every reader would have to
+-- coalesce it.
+--
+-- == Additive only ========================================================
+--
+-- Three ADD COLUMNs, no backfill, no constraint on existing rows, nothing
+-- dropped. Every build already deployed goes on reading and writing the table
+-- exactly as before — neither column is referenced by anything that predates
+-- this migration — so this is an expand step that needs no contract to follow
+-- it.
+--
+-- Written unqualified: the migrator sets `search_path` to the target tenant
+-- schema before running this.
+
+ALTER TABLE "buildings"
+  ADD COLUMN IF NOT EXISTS "isPartitioned" BOOLEAN,
+  ADD COLUMN IF NOT EXISTS "partitionNumbers" TEXT[] NOT NULL DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS "sharedParcelNumbers" TEXT[] NOT NULL DEFAULT '{}';

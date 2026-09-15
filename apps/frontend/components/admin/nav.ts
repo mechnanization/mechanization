@@ -61,8 +61,16 @@ export interface NavItem {
 }
 
 export interface NavGroup {
-  /** Shown as a small caps heading; hidden when the rail is folded. */
-  label: string;
+  /**
+   * Shown as a small caps heading; hidden when the rail is folded.
+   *
+   * Omitted for the leading group, whose rows are where a role lands rather
+   * than a section of the portal. A heading there would have to be named
+   * something like «عام», which says nothing, and it would be foldable — and a
+   * clerk who folds away the row they land on every morning has hidden their
+   * own front door.
+   */
+  label?: string;
   labelEn?: string;
   /** Omitted = the group itself gates nothing; its rows still do. */
   roles?: readonly string[];
@@ -70,18 +78,37 @@ export interface NavGroup {
 }
 
 /**
- * Three groups, in the order a clerk's day runs: the register and the money it
- * generates, then the land those records describe, then the portal's own
- * administration.
+ * An unlabelled landing pair, then four groups in the order a clerk's day runs:
+ * the register, the money raised against it, the land those records describe,
+ * and the portal's own administration.
  *
  * A flat list of ten was past scannable — «القطاعات» and «الموظفون» read as
  * equally likely neighbours of «المواطنون» when they belong to different jobs
  * entirely.
+ *
+ * Money used to sit inside «السجل», on the reasoning that a fee is issued
+ * against the register rather than configured apart from it. That reasoning is
+ * still true and it stopped being the useful cut: «السجل» had grown to eight of
+ * the fifteen rows, which is the flat list again wearing a heading. «المالية»
+ * is also a job rather than a subject — the COLLECTOR and the ACCOUNTANT work
+ * there and almost nowhere else, and giving them one heading to fold to is
+ * worth more than keeping the fee beside the citizen it is owed by.
+ *
+ * `defaultPathFor` reads this order, so the landing pair stays first and
+ * keeps `/dashboard` ahead of `/inspector/profile`: every role's
+ * first visible row is the same one it was before the split.
  */
 export const NAV_GROUPS: NavGroup[] = [
+  /*
+    Where each role lands, and nothing else.
+
+    These two answer the same question for different people — «what is mine to
+    look at» — and neither is a section of the register. The dashboard is the
+    municipality's figures for whoever answers for them; «أرباحي» is one
+    inspector's own work. They are disjoint in practice, so most roles see a
+    single row here.
+  */
   {
-    label: 'السجل',
-    labelEn: 'Registry',
     items: [
       /*
         Oversight only.
@@ -116,6 +143,12 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: EVERY_STAFF_ROLE,
         keywords: ['أرباح', 'عمولة', 'مفتش', 'مسح', 'عقارات', 'inspector', 'earnings'],
       },
+    ],
+  },
+  {
+    label: 'السجل',
+    labelEn: 'Registry',
+    items: [
       // The register itself — one row per person. Readable by every role;
       // writing is narrower, which is «تسجيل مواطن جديد» below.
       {
@@ -192,8 +225,14 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: EVERY_STAFF_ROLE,
         keywords: ['زيارة', 'لا أحد في المنزل', 'متابعة', 'cases', 'follow-up', 'visit'],
       },
+    ],
+  },
+  {
+    label: 'المالية',
+    labelEn: 'Finance',
+    items: [
       /*
-        Next to the registry rather than under settings: a fee is issued
+        Beside the registry rather than under settings: a fee is issued
         against the citizens in it, not configured in isolation.
 
         `FIELD_INSPECTOR` is absent, and that is not a new restriction — it is
@@ -415,5 +454,7 @@ export function localizedLabel(item: NavItem, locale: string = 'ar'): string {
 }
 
 export function localizedGroupLabel(group: NavGroup, locale: string = 'ar'): string {
-  return locale === 'en' && group.labelEn ? group.labelEn : group.label;
+  // '' for the unlabelled landing group. Callers render a heading only when
+  // there is one, so this never reaches the screen.
+  return (locale === 'en' && group.labelEn ? group.labelEn : group.label) ?? '';
 }

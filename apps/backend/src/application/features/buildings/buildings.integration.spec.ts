@@ -233,6 +233,254 @@ describeIfDb('BuildingsService', () => {
     expect(new Set(results.map((r) => r.building.code)).size).toBe(6);
   });
 
+  // ──────────────  فرز and the parcels a structure straddles  ──────────────
+
+  /*
+    Migration 0040's two columns, read back through a real round trip.
+
+    Both are here rather than in the unit suite because what is being checked is
+    that the column *holds what was written* — that the nullable boolean comes
+    back as `null` and not as `false`, and that a Postgres `TEXT[]` with a
+    `'{}'` default comes back as an empty array and not as `null`. Those are
+    claims about the database, and a mocked client would echo whatever the
+    service handed it.
+  */
+  it('keeps «not established» distinct from «not partitioned» through storage', async () => {
+    const unasked = await createBuilding(
+      { parcelNumber: '4001', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const answeredNo = await createBuilding(
+      {
+        parcelNumber: '4002',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        isPartitioned: false,
+      },
+      actor(),
+    );
+    const answeredYes = await createBuilding(
+      {
+        parcelNumber: '4003',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        isPartitioned: true,
+      },
+      actor(),
+    );
+
+    expect(unasked.building.isPartitioned).toBeNull();
+    expect(answeredNo.building.isPartitioned).toBe(false);
+    expect(answeredYes.building.isPartitioned).toBe(true);
+  });
+
+  it('lets a correction withdraw a فرز that was ticked by mistake', async () => {
+    const created = await createBuilding(
+      {
+        parcelNumber: '4004',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        isPartitioned: true,
+      },
+      actor(),
+    );
+
+    const back = await buildings.update(created.building.id, { isPartitioned: null }, actor());
+
+    // `null` is «غير محدد» and is storable, which is what makes the answer
+    // two-way. An update that could only ever set it would leave an officer
+    // unable to undo a tap.
+    expect(back.isPartitioned).toBeNull();
+  });
+
+  it('stores the أقسام a فرز produced, and clears them when the فرز is withdrawn', async () => {
+    /*
+      The pairing, through a real round trip — because what is being checked is
+      that the `TEXT[]` comes back as an array and that an update which unsets
+      the flag actually empties the column rather than leaving أقسام under a
+      building that no longer records a partition.
+    */
+    const created = await createBuilding(
+      {
+        parcelNumber: '4009',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        isPartitioned: true,
+        partitionNumbers: ['12', '13'],
+      },
+      actor(),
+    );
+    expect(created.building.partitionNumbers).toEqual(['12', '13']);
+
+    // Unsetting the flag alone must take the numbers with it: the PATCH says
+    // nothing about them, and they are only meaningful beside a فرز.
+    const withdrawn = await buildings.update(
+      created.building.id,
+      { isPartitioned: null },
+      actor(),
+    );
+    expect(withdrawn.isPartitioned).toBeNull();
+    expect(withdrawn.partitionNumbers).toEqual([]);
+  });
+
+  it('refuses to store أقسام under a structure with no recorded فرز', async () => {
+    const created = await createBuilding(
+      {
+        parcelNumber: '4010',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        partitionNumbers: ['12'],
+      },
+      actor(),
+    );
+
+    // Dropped rather than refused — a ticked-then-cleared checkbox is a
+    // correction, not a bad request. See `partitionNumbersFor`.
+    expect(created.building.isPartitioned).toBeNull();
+    expect(created.building.partitionNumbers).toEqual([]);
+  });
+
+  it('records the other parcels a structure stands on, never its own', async () => {
+    const created = await createBuilding(
+      {
+        parcelNumber: '4005',
+        structureType: 'RESIDENTIAL_BUILDING',
+        floorsCount: 1,
+        sharedParcelNumbers: ['4006', '4005', '4007'],
+      },
+      actor(),
+    );
+
+    // Its own عقار is filtered out — a building that straddles itself would be
+    // counted as straddling. See `sharedParcelsExcluding`.
+    expect(created.building.sharedParcelNumbers).toEqual(['4006', '4007']);
+  });
+
+  it('reads a structure on one parcel back as an empty list, not a null', async () => {
+    const created = await createBuilding(
+      { parcelNumber: '4008', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+
+    // The column defaults to `'{}'`, so "stands on one parcel" is an empty
+    // array everywhere — there is no third state for a caller to handle.
+    expect(created.building.sharedParcelNumbers).toEqual([]);
+  });
+
+  describe('a structure standing on more than one parcel', () => {
+    /*
+      Z-2-10-A is filed under 10 and also stands on 25. Everything that asks
+      *where* a structure is has to find it from 25; everything that asks about
+      the parcel it is *filed* under — its code suffix, its sector — must not.
+      See `standsOnParcels`.
+    */
+    it('is found from a shared parcel by the ledger filter and by search', async () => {
+      const straddling = await createBuilding(
+        {
+          parcelNumber: '9600',
+          structureType: 'RESIDENTIAL_BUILDING',
+          floorsCount: 1,
+          sharedParcelNumbers: ['9601'],
+        },
+        actor(),
+      );
+      const unrelated = await createBuilding(
+        { parcelNumber: '9602', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+        actor(),
+      );
+
+      const onShared = (await buildings.list({ parcelNumber: '9601', limit: 500 })).buildings;
+      expect(onShared.map((row) => row.id)).toEqual([straddling.building.id]);
+
+      const onOwn = (await buildings.list({ parcelNumber: '9600', limit: 500 })).buildings;
+      expect(onOwn.map((row) => row.id)).toEqual([straddling.building.id]);
+
+      const searched = (await buildings.list({ search: '9601', limit: 500 })).buildings;
+      expect(searched.map((row) => row.id)).toContain(straddling.building.id);
+      expect(searched.map((row) => row.id)).not.toContain(unrelated.building.id);
+    });
+
+    it('keeps the sector filter on the parcel the building is filed under', async () => {
+      await db.zone.create({
+        data: { name: 'قطاع المشترك', code: 'SHRD', color: '#0EA5E9', parcelNumbers: ['9611'] },
+      });
+      const straddling = await createBuilding(
+        {
+          parcelNumber: '9610',
+          structureType: 'RESIDENTIAL_BUILDING',
+          floorsCount: 1,
+          sharedParcelNumbers: ['9611'],
+        },
+        actor(),
+      );
+      const zone = await db.zone.findFirstOrThrow({ where: { code: 'SHRD' } });
+
+      // Its sector — and its code — come from 9610 (D13), so a sector that owns
+      // only its shared parcel does not list it: one building, one dispatch list.
+      const listed = await buildings.list({ zoneId: zone.id, limit: 500 });
+      expect(listed.buildings.map((row) => row.id)).not.toContain(straddling.building.id);
+    });
+
+    it('is named when somebody starts a new structure on its shared parcel', async () => {
+      await createBuilding(
+        {
+          parcelNumber: '9620',
+          structureType: 'RESIDENTIAL_BUILDING',
+          floorsCount: 1,
+          name: 'بناية المفرق',
+          sharedParcelNumbers: ['9621'],
+        },
+        actor(),
+      );
+
+      const refusal = await buildings
+        .create(
+          {
+            parcelNumber: '9621',
+            structureType: 'RESIDENTIAL_BUILDING',
+            lifecycleStatus: 'IN_USE',
+            floorsCount: 1,
+          },
+          actor(),
+        )
+        .then(
+          () => null,
+          (error: unknown) => error as { details: { candidates: Array<Record<string, unknown>> } },
+        );
+
+      expect(refusal).not.toBeNull();
+      expect(refusal!.details.candidates).toHaveLength(1);
+      expect(refusal!.details.candidates[0]).toMatchObject({
+        name: 'بناية المفرق',
+        ownParcelNumber: '9620',
+        sharesParcel: true,
+      });
+      expect(await db.building.count({ where: { parcelNumber: '9621' } })).toBe(0);
+    });
+
+    it('takes no code letter from a parcel it only shares', async () => {
+      const straddling = await createBuilding(
+        {
+          parcelNumber: '9630',
+          structureType: 'RESIDENTIAL_BUILDING',
+          floorsCount: 1,
+          sharedParcelNumbers: ['9631'],
+        },
+        actor(),
+      );
+      // Acknowledged: a genuinely separate structure filed under 9631.
+      const filedThere = await createBuilding(
+        { parcelNumber: '9631', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+        actor(),
+      );
+
+      expect(straddling.building.codeSuffix).toBe('A');
+      // The first structure *filed* under 9631 is its A — the neighbour covering
+      // it belongs to 9630's sequence (D9).
+      expect(filedThere.building.codeSuffix).toBe('A');
+    });
+  });
+
   it('does not reuse a suffix across different parcels', async () => {
     const one = await createBuilding({ parcelNumber: '10', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 }, actor());
     const two = await createBuilding({ parcelNumber: '11', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 }, actor());

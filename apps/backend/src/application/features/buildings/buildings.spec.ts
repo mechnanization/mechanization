@@ -5,7 +5,7 @@ import {
   unitBlueprintSchema,
   upsertOccupancySchema,
 } from '@mechanization/shared-schemas';
-import { rollupOf } from './buildings.service';
+import { partitionNumbersFor, rollupOf, sharedParcelsExcluding } from './buildings.service';
 import { damageSeverity, worstDamage } from './damage.service';
 
 /**
@@ -59,6 +59,64 @@ describe('survey rollup — the worst status, never the majority (D11)', () => {
 
   it('does not take a map down over a status nobody added to the ladder', () => {
     expect(rollupOf(['COMPLETE', 'SOMETHING_NEW'])).toBe('COMPLETE');
+  });
+});
+
+describe('الفرز — the أقسام a partition produced, and when they may exist', () => {
+  /*
+    The two columns migration 0047 adds are one fact, and this is the rule that
+    keeps them in step. أقسام under a structure nobody has recorded a فرز for is
+    not a partial record — it is a contradiction, and one a later deed search
+    would read as fact.
+  */
+  it('keeps the أقسام only where a فرز was actually recorded', () => {
+    expect(partitionNumbersFor(true, ['12', '13'])).toEqual(['12', '13']);
+    expect(partitionNumbersFor(false, ['12', '13'])).toEqual([]);
+    expect(partitionNumbersFor(null, ['12', '13'])).toEqual([]);
+    expect(partitionNumbersFor(undefined, ['12', '13'])).toEqual([]);
+  });
+
+  it('allows a فرز nobody has the numbers for yet', () => {
+    /*
+      Ordinary, not incomplete. A block is visibly مفروزة from the street long
+      before anyone has the صحيفة عقارية in front of them, and refusing the
+      flag without its numbers would mean the officer who can see the first
+      fact has to withhold it until somebody establishes the second.
+    */
+    expect(partitionNumbersFor(true, [])).toEqual([]);
+    expect(partitionNumbersFor(true, undefined)).toEqual([]);
+  });
+
+  it('collapses repeats and drops blanks rather than refusing the save', () => {
+    expect(partitionNumbersFor(true, ['12', ' 12 ', '', '  ', '13'])).toEqual(['12', '13']);
+  });
+});
+
+describe('العقارات المشتركة — the parcels beside the one the code comes from', () => {
+  it('never lets a building straddle itself', () => {
+    /*
+      The building's own عقار in its "also stands on" list is a repetition, not
+      a second parcel — and stored, it becomes a straddling structure in a
+      figure nobody would think to check against the parcel it is already filed
+      under. Trimmed before comparing, because the field it comes from is typed.
+    */
+    expect(sharedParcelsExcluding(['1042', '1043'], '1042')).toEqual(['1043']);
+    expect(sharedParcelsExcluding([' 1042 '], '1042')).toEqual([]);
+    expect(sharedParcelsExcluding(['1043'], ' 1042 ')).toEqual(['1043']);
+  });
+
+  it('collapses repeats and drops blanks rather than refusing the save', () => {
+    // The officer adding a row twice expressed the right intent, and a blank row
+    // is one they opened and did not fill in. Neither is worth a refusal.
+    expect(sharedParcelsExcluding(['1043', '1043', '', '  ', '1044'], '1042')).toEqual([
+      '1043',
+      '1044',
+    ]);
+  });
+
+  it('reads an absent list as "stands on one parcel"', () => {
+    expect(sharedParcelsExcluding(undefined, '1042')).toEqual([]);
+    expect(sharedParcelsExcluding([], '1042')).toEqual([]);
   });
 });
 
@@ -130,6 +188,72 @@ describe('createBuildingSchema', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.data.provisionalSuffix).toBe('A');
+  });
+
+  /*
+    «هل الوحدة مفروزة على عقار» — three answers, and the third is silence.
+
+    فرز decides whether a flat inside can carry a deed of its own. A boolean
+    that defaulted to `false` would have every building ever recorded asserting
+    «غير مفروزة» — a statement about title that no officer made — so the absence
+    has to survive the parse rather than being filled in.
+  */
+  it('keeps «not established» distinct from «not partitioned»', () => {
+    /*
+      The wizard's control is a single checkbox and sends `true` or nothing, so
+      `false` is currently unreachable from the UI. The schema keeps it anyway:
+      «we read the صحيفة and there is no فرز» is a finding, and it is not the
+      same as never having looked. A schema that collapsed the two would make
+      the distinction unrecoverable the day a form wants to record it.
+    */
+    const unasked = createBuildingSchema.safeParse(valid);
+    expect(unasked.success).toBe(true);
+    if (!unasked.success) return;
+    expect(unasked.data.isPartitioned).toBeUndefined();
+
+    const answeredNo = createBuildingSchema.safeParse({ ...valid, isPartitioned: false });
+    expect(answeredNo.success).toBe(true);
+    if (!answeredNo.success) return;
+    expect(answeredNo.data.isPartitioned).toBe(false);
+  });
+
+  it('carries أرقام الأقسام beside the فرز flag', () => {
+    const result = createBuildingSchema.safeParse({
+      ...valid,
+      isPartitioned: true,
+      partitionNumbers: ['12', ' 12 ', '13'],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    // De-duplicated on the way in, like every other list on this shape. The
+    // *pairing* with the flag is the service's rule — see `partitionNumbersFor`.
+    expect(result.data.partitionNumbers).toEqual(['12', '13']);
+  });
+
+  /*
+    «إن كانت الوحدة مشتركة على أكثر من عقار».
+
+    `parcelNumber` names the one عقار the code and the per-parcel suffix derive
+    from (D9) and cannot be widened to a list. These are the others, and the
+    officer adding the same row twice expressed the right intent — the same
+    judgement `parcelNumbersField` makes on a zone — so a repeat is collapsed
+    rather than refused.
+  */
+  it('collapses a repeated shared parcel rather than refusing the save', () => {
+    const result = createBuildingSchema.safeParse({
+      ...valid,
+      sharedParcelNumbers: ['1043', ' 1043 ', '1044'],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.sharedParcelNumbers).toEqual(['1043', '1044']);
+  });
+
+  it('defaults to standing on exactly one parcel', () => {
+    const result = createBuildingSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.sharedParcelNumbers).toBeUndefined();
   });
 
   /*
@@ -366,6 +490,45 @@ describe('upsertOccupancySchema', () => {
       toDate: '2026-01-01',
     });
     expect(result.success).toBe(false);
+  });
+
+  /*
+    مساحة الوحدة, accepted here because this is where it is first knowable.
+
+    The matrix is painted from the street — `generateUnits` and the grid picker
+    both assert that a flat exists, not that anyone has measured it — so
+    `Unit.unitArea` is routinely null, and the card `claimOnFile` mints for the
+    citizen inherited that null. Recording an occupant is the first moment
+    somebody is actually inside, and the form had nowhere to put the number.
+
+    Accepted of *any* capacity, unlike the two fields above it: a room is the
+    same size whoever is standing in it, and a مستأجر with a tape measure knows
+    it as well as the owner does.
+  */
+  it('accepts the flat’s area from whoever is recording the spell', () => {
+    for (const role of ['OWNER', 'TENANT', 'FREE_OCCUPANT']) {
+      const result = upsertOccupancySchema.safeParse({ ...ids, role, unitArea: 96.5 });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data.unitArea).toBe(96.5);
+    }
+  });
+
+  it('refuses an area of zero, which is a measurement and not an absence', () => {
+    /*
+      «لم تُقَس» is the omitted field, and the form omits it for an empty box.
+      A zero would be stored as a measurement — and then priced at nothing by a
+      PER_AREA notice, silently, where a null makes `assessCitizen` refuse to
+      price the flat at all and say so.
+    */
+    expect(upsertOccupancySchema.safeParse({ ...ids, role: 'OWNER', unitArea: 0 }).success).toBe(
+      false,
+    );
+
+    const omitted = upsertOccupancySchema.safeParse({ ...ids, role: 'OWNER' });
+    expect(omitted.success).toBe(true);
+    if (!omitted.success) return;
+    expect(omitted.data.unitArea).toBeUndefined();
   });
 });
 

@@ -20,10 +20,15 @@ import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
  *               TENANT         -> landlord name + phone required
  *               FREE_OCCUPANT  -> landlord name required, phone optional
  *
- *   propertyType BUILDING -> buildingName + one-or-more units
- *                HOUSE    -> buildingName + side + area + sharedRights (no floor/unitType)
+ *   propertyType BUILDING -> one-or-more units (buildingName optional)
+ *                HOUSE    -> side + area + sharedRights, no floor/unitType
+ *                            (buildingName optional)
  *                LAND     -> landType + area only
  *                TENT     -> location description only
+ *
+ * «اسم المبنى» is offered on the two structure branches and demanded on
+ * neither — see `buildingNameField` for why a required name produced worse
+ * data than an empty column.
  */
 
 /**
@@ -177,6 +182,40 @@ export const neighborhoodField = z
   .max(80, 'اسم الحي طويل جداً');
 
 /**
+ * «اسم المبنى» — what residents call the block, or nothing.
+ *
+ * **Optional on every branch that carries it**, and applied with `.optional()`
+ * at each one for the same reason `neighborhoodField` is: the constant also
+ * shapes an existing value, so a schema that accepted `undefined` everywhere
+ * would stop reporting a genuinely malformed one.
+ *
+ * It used to be required of a مبنى and of a منزل, and that demand produced
+ * nothing a register could use. Most blocks here have no name at all — an
+ * officer standing in front of an unnamed one, with a required field between
+ * them and the household they came to record, types «بناية» or the street or
+ * the owner's surname, and the column fills with values that name no building.
+ * Worse, it fills them *differently* every time, which is the whole reason
+ * `Building.name` on the census outranks this field wherever a card is linked:
+ * two tenants of one block produced «بناية النور» and «بنايه الن‍ور» and
+ * nothing could recognise them as the same structure.
+ *
+ * Nothing downstream depended on its presence. A card is identified by its
+ * رقم العقار and, once linked, by the building's own derived code (D9) — both
+ * of which are still required. The name is a convenience for a human reading a
+ * notice, and an empty one costs a notice one line.
+ *
+ * The census side has always agreed: `Building.name` is optional in
+ * `building.schema.ts` and nullable in the column. `PropertyEntry`'s taxonomy
+ * rules were the half that disagreed, and no longer refuse a card for the lack
+ * of a name.
+ */
+export const buildingNameField = z
+  .string()
+  .trim()
+  .min(1, 'اسم المبنى قصير جداً')
+  .max(120, 'اسم المبنى طويل جداً');
+
+/**
  * One unit inside a building — شقة, عيادة or محل.
  *
  * A citizen who owns the whole building registers one عقار containing many of
@@ -269,11 +308,7 @@ const propertyBranch = z.discriminatedUnion(
        * would invite a link the census deliberately does not model.
        */
       buildingId: uuid.optional(),
-      buildingName: z
-        .string({ required_error: 'اسم المبنى مطلوب' })
-        .trim()
-        .min(1, 'اسم المبنى مطلوب')
-        .max(120),
+      buildingName: buildingNameField.optional(),
       units: buildingUnitsSchema,
     }),
     z.object({
@@ -281,11 +316,7 @@ const propertyBranch = z.discriminatedUnion(
       neighborhood: neighborhoodField.optional(),
       propertyNumber: propertyNumberField,
       buildingId: uuid.optional(),
-      buildingName: z
-        .string({ required_error: 'اسم المبنى/المنزل مطلوب' })
-        .trim()
-        .min(1, 'اسم المبنى/المنزل مطلوب')
-        .max(120),
+      buildingName: buildingNameField.optional(),
       side: z.string().trim().max(60).optional(),
       unitArea: areaField,
       sharedRights: sharedRightsField,
@@ -402,7 +433,7 @@ export const partialPropertyEntrySchema = z
     neighborhood: neighborhoodField.optional(),
     propertyNumber: propertyNumberField,
     buildingId: uuid,
-    buildingName: z.string().trim().min(1).max(120),
+    buildingName: buildingNameField,
     side: z.string().trim().max(60),
     landType: landTypeSchema,
     tentLocation: z.string().trim().min(3).max(200),

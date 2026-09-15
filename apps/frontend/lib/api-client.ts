@@ -78,6 +78,14 @@ export interface DuplicateBuildingCandidate {
    * out of recording a structure that really exists.
    */
   distanceMetres: number | null;
+  /** The عقار this building is filed under — the one its code names. */
+  ownParcelNumber?: string;
+  /**
+   * The building is on the parcel being checked as a *shared* one: filed under
+   * `ownParcelNumber`, and covering this parcel too. Said in the dialog, because
+   * a candidate whose code names a different parcel reads as a mistake otherwise.
+   */
+  sharesParcel?: boolean;
 }
 
 /**
@@ -823,6 +831,30 @@ export interface BuildingSummary {
   name: string | null;
   /** What is painted on the building. Trusted over `code` in the field (D14). */
   postedNumber: string | null;
+  /**
+   * «هل الوحدة مفروزة على عقار» — whether the structure is legally partitioned.
+   *
+   * Three states: `true` مفروزة, `false` غير مفروزة, `null` nobody asked.
+   * Optional on the wire as well, so a response cached from a build before the
+   * column existed reads as «لم يُسأل» rather than leaking `undefined` into a
+   * control that would render it as a definite «لا».
+   */
+  isPartitioned?: boolean | null;
+  /**
+   * أرقام الأقسام the فرز produced, each with its own صحيفة عقارية.
+   *
+   * Empty unless `isPartitioned` is true — the server keeps the two in step,
+   * because أقسام under a structure with no recorded فرز is a contradiction a
+   * deed search would later read as fact.
+   */
+  partitionNumbers?: string[];
+  /**
+   * The *other* عقارات this structure stands on, beside `parcelNumber`.
+   *
+   * Optional for the same reason, and empty for the overwhelming majority of
+   * buildings, which stand on exactly one parcel.
+   */
+  sharedParcelNumbers?: string[];
   structureType: StructureType;
   /**
    * Where the structure is in its own life — permitted, going up, standing,
@@ -1102,6 +1134,32 @@ export interface CreateBuildingInput {
   parcelNumber: string;
   name?: string;
   postedNumber?: string;
+  /**
+   * «هل الوحدة مفروزة على عقار» — omitted entirely when nobody established it.
+   *
+   * Absent and `null` are the same answer on a creation, so the wizard sends
+   * the key only when the officer actually answered. The column is nullable and
+   * the absence is the third state — see the schema.
+   */
+  isPartitioned?: boolean;
+  /**
+   * أرقام الأقسام, sent only alongside `isPartitioned: true`.
+   *
+   * The server drops them otherwise rather than refusing the request — a form
+   * whose checkbox was ticked, filled in and then cleared is a correction, and
+   * failing the save over the rows somebody abandoned would punish them for
+   * changing their mind.
+   */
+  partitionNumbers?: string[];
+  /**
+   * The *other* عقارات this structure stands on.
+   *
+   * `parcelNumber` above names one and cannot name more: the code and the
+   * per-parcel suffix derive from it (D9). The server drops the building's own
+   * parcel from this list if it appears, so a structure can never be recorded
+   * as straddling itself.
+   */
+  sharedParcelNumbers?: string[];
   structureType: StructureType;
   /** Defaults to `IN_USE` server-side — what an officer is looking at most days. */
   lifecycleStatus?: BuildingLifecycle;
@@ -1160,6 +1218,23 @@ export interface CreateBuildingInput {
 export type UpdateBuildingInput = Partial<{
   name: string | null;
   postedNumber: string | null;
+  /**
+   * «هل الوحدة مفروزة على عقار» — nullable here, unlike on a creation.
+   *
+   * An absent key leaves the column as it is; `null` unsets it back to
+   * «غير محدد». Both are needed: an officer has to be able to withdraw a فرز
+   * they ticked by mistake, and an edit that could only ever set it would make
+   * the answer one-way.
+   */
+  isPartitioned: boolean | null;
+  /**
+   * Replaces the stored أقسام wholesale, and is cleared outright whenever the
+   * فرز flag is not `true` — sending either field makes the server re-resolve
+   * both, so a PATCH that unsets the flag cannot leave the numbers behind.
+   */
+  partitionNumbers: string[];
+  /** Replaces the stored list wholesale — an empty array clears it. */
+  sharedParcelNumbers: string[];
   structureType: StructureType;
   lifecycleStatus: BuildingLifecycle;
   latitude: number | null;
@@ -1234,6 +1309,18 @@ export interface RecordOccupancyInput {
    * Not needed to record an owner, who contradicts nothing by holding a deed.
    */
   endsVacancy?: boolean;
+  /**
+   * مساحة الوحدة — offered only where the census has none.
+   *
+   * The area belongs to the unit, not to the spell, and the server writes it
+   * onto the `Unit` and only where that column is still null: a measured flat
+   * is never overwritten by a side effect of recording who lives in it. It is
+   * accepted *here* because this is the first moment anyone has been inside —
+   * the matrix is painted from the street, so `generateUnits` and the grid both
+   * create flats with no area at all, and the card `claimOnFile` then mints for
+   * the citizen inherited that absence.
+   */
+  unitArea?: number;
   fromDate?: string;
   toDate?: string;
   /**
@@ -1359,7 +1446,14 @@ function invalidateCensus(tenant: string): void {
   invalidateRequests(`census:${tenant}:`);
 }
 
-/** Structures standing on one عقار, remembered for the life of the tab. */
+/**
+ * Structures standing on one عقار, remembered for the life of the tab.
+ *
+ * «Standing on» includes a building filed under another parcel that lists this
+ * one among its `sharedParcelNumbers` — the server matches both. A caller that
+ * needs only the buildings *filed* here (the code-suffix preview) filters on
+ * `row.parcelNumber` itself.
+ */
 export function getParcelBuildings(tenant: string, token: string, parcelNumber: string) {
   return cachedRequest(parcelKey(tenant, parcelNumber), CENSUS_TTL_MS, () =>
     getBuildings(tenant, token, { parcelNumber, limit: 50 }),
@@ -1944,6 +2038,17 @@ export interface CitizenProfileUnit {
   unitType: string | null;
   floor: string | null;
   side: string | null;
+  /**
+   * م², or null where nobody has measured the flat.
+   *
+   * Nullable since `BuildingUnit.unitArea` became nullable (migration 0031),
+   * and typed `number` here long after it stopped being one — the server was
+   * coercing with `Number()`, which turns `null` into `0`, so an unmeasured
+   * flat arrived claiming a measurement of zero. The commonest way to get one
+   * is `claimOnFile`: linking an existing owner to a flat from the unit matrix
+   * mints a card line from the canonical unit, which for a matrix painted from
+   * the street has no area either.
+   */
   unitArea: number | null;
   sharedRights: string[];
   /** حالة الوحدة as the owner's card states it. Null means nobody was asked. */
@@ -2998,6 +3103,8 @@ export function getAuditLog(
   filter: {
     actorId?: string;
     entityType?: string;
+    /** One record's own trail. Pairs with `entityType`; the server indexes both. */
+    entityId?: string;
     from?: string;
     to?: string;
     limit?: number;
@@ -3009,6 +3116,7 @@ export function getAuditLog(
   const query = new URLSearchParams();
   if (filter.actorId) query.set('actorId', filter.actorId);
   if (filter.entityType) query.set('entityType', filter.entityType);
+  if (filter.entityId) query.set('entityId', filter.entityId);
   if (filter.from) query.set('from', filter.from);
   if (filter.to) query.set('to', filter.to);
   query.set('limit', String(filter.limit ?? 50));

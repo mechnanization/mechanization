@@ -264,9 +264,32 @@ describe('PropertyEntry — unit status', () => {
 });
 
 describe('PropertyEntry — taxonomy rules', () => {
-  it('requires a building name and at least one unit for a building', () => {
-    expect(() => PropertyEntry.create(building({ buildingName: '' }))).toThrow(/building name/);
+  it('requires at least one unit for a building', () => {
     expect(() => PropertyEntry.create(building({ units: [] }))).toThrow(/at least one unit/);
+  });
+
+  /*
+    «اسم المبنى» is offered and never demanded, on either structure branch.
+
+    Asserted rather than merely no longer asserted the other way, because the
+    rule it replaced was load-bearing for two years and the reason it went is
+    not obvious from its absence: most blocks here are unnamed, and a required
+    field in front of an officer produced «بناية» in the column rather than a
+    name. See `buildingNameField`, which is the validator half of the same
+    rule — if the two ever disagree, a card the form accepts is one this
+    entity throws on.
+  */
+  it('accepts a building and a house with no name at all', () => {
+    expect(PropertyEntry.create(building({ buildingName: '' })).props.buildingName).toBeNull();
+    expect(PropertyEntry.create(building({ buildingName: undefined })).props.buildingName).toBeNull();
+    expect(
+      PropertyEntry.create({
+        occupancyType: 'OWNER',
+        propertyType: 'HOUSE',
+        propertyNumber: 'H-9',
+        unitArea: 140,
+      }).props.buildingName,
+    ).toBeNull();
   });
 
   it('validates every unit in a building, not just the first', () => {
@@ -438,10 +461,19 @@ describe('PropertyEntry — coordinates', () => {
  */
 describe('PropertyEntry — unestablished fields', () => {
   it('waives only the field named, not the one beside it', () => {
-    // Both the name and the units are missing; only the name is excused.
+    // Both the land type and the area are missing; only the land type is
+    // excused, so the card still fails — on the area, by name.
     expect(() =>
-      PropertyEntry.create(building({ buildingName: '', units: [] }), new Set(['buildingName'])),
-    ).toThrow(/at least one unit/);
+      PropertyEntry.create(
+        {
+          occupancyType: 'OWNER',
+          propertyType: 'LAND',
+          propertyNumber: 'L-4',
+          shares: 400,
+        },
+        new Set(['landType']),
+      ),
+    ).toThrow(/requires an area/);
   });
 
   it('accepts a building whose units were never surveyed', () => {
@@ -508,6 +540,6 @@ describe('PropertyEntry — unestablished fields', () => {
   });
 
   it('validates exactly as before when nothing is flagged', () => {
-    expect(() => PropertyEntry.create(building({ buildingName: '' }))).toThrow(/building name/);
+    expect(() => PropertyEntry.create(building({ units: [] }))).toThrow(/at least one unit/);
   });
 });

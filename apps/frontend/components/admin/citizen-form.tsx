@@ -341,6 +341,24 @@ function propertyAskableFields(values: CitizenFormValues): AskableField[] {
     */
     for (const field of branch ?? []) {
       if (field === 'shares' && property.occupancyType !== 'OWNER') continue;
+      /*
+        «اسم المبنى» is no longer required of either structure branch, so it can
+        no longer be the reason a record is incomplete — and a flag that cannot
+        excuse anything is the failure this list's docblock names: it puts a
+        «غير مؤكَّد» box under a field that was never going to fail, until the
+        flags stop meaning "this record is missing something".
+
+        Excluded here and *not* from `PROPERTY_FIELD_MAP`, which is a different
+        question with a different answer. That map says which fields a card
+        carries, and `branchFieldsOnly` reads it to decide what survives the
+        trip to the server — dropping the name from it would stop storing the
+        names officers do supply.
+
+        See `buildingNameField`, and the note below about حالة الوحدة, which is
+        absent from this list for exactly the same reason.
+      */
+      if (field === 'buildingName') continue;
+
       fields.push({
         path: `properties.${propertyIndex}.${field}`,
         field,
@@ -1791,7 +1809,10 @@ export function CitizenForm({
       </div>
 
       {/* ── Mobile Sticky Bottom Action Bar ── */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 block sm:hidden border-t border-border/80 bg-background/95 p-2.5 shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-background/90">
+      {/* Padded past the home indicator: without it the save row is the strip
+          of screen iOS reserves for its own gesture, and every tap there is a
+          swipe up instead. */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 block sm:hidden border-t border-border/80 bg-background/95 p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-background/90">
         <div className="flex items-center justify-between gap-2">
           {stepIndex > 0 ? (
             <Button

@@ -199,7 +199,12 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
   */
   { key: 'neighborhood', header: 'الحي', hint: 'اختياري', always: true },
   { key: 'propertyNumber', header: 'رقم العقار', hint: 'يُطابَق مع السجل العقاري', always: true },
-  { key: 'buildingName', header: 'اسم المبنى', hint: 'إلزامي للمبنى والمنزل' },
+  /*
+    Kept in the template and no longer required — see `buildingNameField`. A
+    hint still reading «إلزامي» would have someone inventing a name for every
+    unnamed block in the sheet, which is the same failure the form had.
+  */
+  { key: 'buildingName', header: 'اسم المبنى', hint: 'اختياري — للمبنى والمنزل' },
   { key: 'side', header: 'الجهة', hint: 'اختياري — للمنزل والوحدة' },
   { key: 'unitArea', header: 'المساحة', hint: 'م² — إلزامي للمنزل والأرض والوحدة' },
   {
