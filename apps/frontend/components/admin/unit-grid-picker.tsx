@@ -56,7 +56,17 @@ export const MIN_HORIZONTAL_BLOCKS = 1;
 /** The column ceiling `upsertUnitSchema` stores — a painted span above it
  *  would be refused server-side, so the grid never offers one. */
 export const MAX_HORIZONTAL_BLOCKS = 20;
-export const DEFAULT_HORIZONTAL_BLOCKS = 6;
+/**
+ * The matrix opens 3×3, and the two halves of that are set here and in
+ * `DEFAULT_VERTICAL_BLOCKS` below.
+ *
+ * Six columns was a guess at a wide block, and it made the common case worse:
+ * a three-flat floor opened with three empty cells trailing it, which reads as
+ * three flats somebody forgot to paint rather than as spare grid. A square
+ * default reads as a blank canvas, which is what it is — and both dimensions
+ * are one tap from anything else.
+ */
+export const DEFAULT_HORIZONTAL_BLOCKS = 3;
 
 export const MIN_VERTICAL_BLOCKS = 1;
 export const MAX_VERTICAL_BLOCKS = 100;
@@ -359,23 +369,24 @@ export function UnitGridPicker({
   };
 
   /**
-   * Keeps `structureType` honest about what is painted on the grid.
+   * Keeps `structureType` honest about what is painted on the grid — in the
+   * one direction that is safe to take without asking.
    *
-   * Both directions, because both are reachable now that a lone block can be
-   * typed «منزل مستقل»:
+   * One block, typed as a house → the structure *is* that house. A matrix
+   * holding a single منزل مستقل inside a «مبنى سكني» contradicts itself, and the
+   * fee category and the census figures read the structure type, not the unit.
+   * Converted and announced: the officer has just chosen «منزل مستقل» for the
+   * only thing on the grid, so the classification follows their own answer.
    *
-   * - One block, typed as a house → the structure *is* that house. A matrix
-   *   holding a single منزل مستقل inside a «مبنى سكني» contradicts itself, and
-   *   the fee category and the census figures read the structure type, not the
-   *   unit.
-   * - A second block appears → whatever it is, a flat upstairs or a كراج
-   *   beside it, the thing on the parcel is no longer a house. Leaving it as
-   *   INDEPENDENT_HOUSE files a two-unit structure as a single-family home.
-   *
-   * Converted rather than refused, in both directions. The officer is looking
-   * at the building and we are not; a form that blocked the second unit would
-   * be telling them they are wrong about what they can see. Announced rather
-   * than silent, for the same reason — it changes a classification they chose.
+   * The other direction — a second block on a house — is deliberately *not*
+   * here. It used to switch the structure to a building on the spot, with a
+   * toast. That is now a question the host asks before the change lands
+   * («هل تريد تحويلها من منزل إلى بناية؟», `requestUnits` in the building
+   * editor), because a yes has to do more than flip the type: the seeded
+   * «منزل مستقل» block must be re-typed, or the building contains a
+   * standalone-house unit its own cards refuse. Doing both here as well would
+   * change the type before the officer had answered, and the editor's reset
+   * would then discard the grid they were being asked about.
    */
   const reconcileStructureType = (next: GridUnitDraft[]) => {
     const sole = next.length === 1 ? next[0] : null;
@@ -386,16 +397,6 @@ export function UnitGridPicker({
         description: en
           ? 'The matrix holds one unit and it is an independent house, so the structure type was updated to match.'
           : 'المصفوفة تضم وحدة واحدة نوعها منزل مستقل، فحُدِّث نوع المنشأة ليطابقها.',
-      });
-      return;
-    }
-
-    if (next.length > 1 && structureType === 'INDEPENDENT_HOUSE') {
-      onStructureTypeChange?.('RESIDENTIAL_BUILDING');
-      toast.info(en ? 'Reclassified as a building' : 'أُعيد تصنيف المنشأة إلى مبنى', {
-        description: en
-          ? 'An independent house holds one unit. A second one makes this a building, so its structure type was updated.'
-          : 'المنزل المستقل وحدة واحدة. بإضافة وحدة ثانية أصبحت المنشأة مبنى، وحُدِّث نوعها تلقائياً.',
       });
     }
   };
@@ -457,8 +458,8 @@ export function UnitGridPicker({
    * census figures and the fee category all then read.
    *
    * So the type appears exactly while it is true, and disappears the moment a
-   * second unit makes it false — at which point `confirmPanel` has already
-   * reclassified the structure to a building.
+   * second unit makes it false — at which point the host has asked whether the
+   * structure is now a building (see `reconcileStructureType`).
    */
   const panelUnitTypes: readonly UnitType[] = panelIsSoleUnit
     ? ['INDEPENDENT_HOUSE', ...BUILDING_UNIT_TYPES]
@@ -713,13 +714,39 @@ export function UnitGridPicker({
 
   return (
     <div className="space-y-3">
-      {/* ── Header with Matrix Dimensions ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+      {/*
+        ── Header with Matrix Dimensions ──────────────────────────────────
+
+        Stacked until `lg` rather than until `sm`.
+
+        A tablet is the width where the old breakpoint did the most damage: the
+        row went horizontal at 640px, which left the three stepper groups
+        competing with a paragraph of instructions for about 300px and wrapping
+        into each other. The controls now get the full width of the panel until
+        there is genuinely room beside the text, which is around 1024px.
+      */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
         <div className="max-w-sm space-y-1">
           <p className="text-xs text-muted-foreground leading-snug">
             {en
               ? 'Drag across blocks to paint a unit, or tap to place and adjust its size. Click any unit to edit or delete.'
               : 'اسحب عبر الخانات لتحديد وحدة، أو انقر لإضافتها وتعديل حجمها. انقر أي وحدة لتعديلها أو حذفها.'}
+          </p>
+          {/*
+            The height and the depth are asked *here* and nowhere else.
+
+            They used to be two number inputs on the previous step as well, and
+            the duplication was the problem rather than the wording: an officer
+            typed «٦» into a box on one screen and then painted five floors on
+            another, and the two disagreed with nothing on either screen to say
+            so. The count is a fact about the matrix, so it is asked where the
+            matrix is — the steppers beside this text move the grid itself, and
+            what the grid shows is what gets saved.
+          */}
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            {en
+              ? 'The floor and basement counts are set here — the grid is what gets saved.'
+              : 'عدد الطوابق وعدد الطوابق تحت الأرض يُحدَّدان من هنا — والمصفوفة هي ما يُحفظ.'}
           </p>
           {existingCount > 0 ? (
             <p className="text-[11px] leading-snug text-muted-foreground">
@@ -731,35 +758,50 @@ export function UnitGridPicker({
         </div>
 
         {/*
-          Matrix Dimensions Controls.
+          ── Matrix Dimensions Controls ──────────────────────────────────
 
-          A grid with equal columns rather than a wrapping flex row, so the
-          three boxes are the same width instead of each shrinking to its own
-          label — «تحت الأرض (B):» is shorter than «عمودي (الطوابق):», and
-          content-sized boxes made three controls that do the same kind of job
-          look like three unrelated ones. Each is `justify-between` inside, so
-          the steppers line up in a column too.
+          A responsive grid rather than a wrapping flex row, and the difference
+          is the whole of this fix.
 
-          `sm:grid-cols-3` only: below that they stack, and a stacked full-width
-          row is already uniform.
+          Three groups of «[−] number [+]» used to wrap at whatever width ran
+          out. On a tablet that produced two groups on one line and the third
+          orphaned below, with the 24px steppers of one group sitting a few
+          pixels from the numeric input of the next — near enough that a thumb
+          aimed at «زيادة الطوابق» hit «تحت الأرض» instead, and the two adjacent
+          rounded corners read as one control that had gone wrong.
+
+          Now: one group per row, at every width. Each owns a full-width box, so
+          its parts can never sit beside another group's, and the gap between
+          boxes is never smaller than the gap inside one.
+
+          Stacked rather than three-across even where there is room, because the
+          three are read as a list — height, depth, width — and a row of three
+          identical «[−] n [+]» clusters gives the eye nothing to tell them apart
+          but a label it has to read twice. One per line, each label at the start
+          of its own row, is scannable at a glance.
+
+          The targets themselves go from `size-6` (24px) to 40px on touch
+          widths, dropping back to 32px only from `lg` where a pointer is doing
+          the aiming. 24px is below every touch-target guideline there is, and
+          these are the controls an officer uses while standing up.
         */}
-        <div className="grid gap-2 sm:grid-cols-3 sm:gap-3">
+        <div className="grid w-full grid-cols-1 gap-2 lg:w-80 lg:shrink-0">
           {/* Vertical / Floors */}
-          <div className="flex items-center justify-between gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
-            <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
-              {en ? 'Vertical (Floors):' : 'عمودي (الطوابق):'}
+          <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
+            <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
+              {en ? 'Vertical (Floors)' : 'عمودي (الطوابق)'}
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1.5">
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestVerticalChange(safeFloorsCount - 1)}
                 disabled={safeFloorsCount <= MIN_VERTICAL_BLOCKS || safeFloorsCount <= minFloorsAllowed}
                 aria-label={en ? 'Fewer floors' : 'إنقاص الطوابق'}
               >
-                <Minus className="size-3" />
+                <Minus className="size-4" />
               </Button>
               <Input
                 type="number"
@@ -771,34 +813,35 @@ export function UnitGridPicker({
                 value={verticalInput}
                 onChange={(e) => handleVerticalInputChange(e.target.value)}
                 onBlur={handleVerticalInputBlur}
-                className="h-6 w-11 text-center font-mono text-xs font-semibold px-1 py-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label={en ? 'Number of floors' : 'عدد الطوابق'}
+                className="h-10 w-12 shrink-0 px-1 py-0 text-center font-mono text-sm font-semibold [appearance:textfield] lg:h-8 lg:text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 dir="ltr"
               />
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestVerticalChange(safeFloorsCount + 1)}
                 disabled={safeFloorsCount >= MAX_VERTICAL_BLOCKS}
                 aria-label={en ? 'More floors' : 'زيادة الطوابق'}
               >
-                <Plus className="size-3" />
+                <Plus className="size-4" />
               </Button>
             </div>
           </div>
 
           {/* Below ground / Basements */}
-          <div className="flex items-center justify-between gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
-            <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
-              {en ? 'Below ground (B):' : 'تحت الأرض (B):'}
+          <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
+            <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
+              {en ? 'Below ground (B)' : 'تحت الأرض (B)'}
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1.5">
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestBasementChange(safeBasementsCount - 1)}
                 disabled={
                   safeBasementsCount <= MIN_BASEMENT_BLOCKS ||
@@ -806,7 +849,7 @@ export function UnitGridPicker({
                 }
                 aria-label={en ? 'Fewer basements' : 'إنقاص الطوابق تحت الأرض'}
               >
-                <Minus className="size-3" />
+                <Minus className="size-4" />
               </Button>
               <Input
                 type="number"
@@ -818,39 +861,40 @@ export function UnitGridPicker({
                 value={basementInput}
                 onChange={(e) => handleBasementInputChange(e.target.value)}
                 onBlur={handleBasementInputBlur}
-                className="h-6 w-11 text-center font-mono text-xs font-semibold px-1 py-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label={en ? 'Levels below ground' : 'عدد الطوابق تحت الأرض'}
+                className="h-10 w-12 shrink-0 px-1 py-0 text-center font-mono text-sm font-semibold [appearance:textfield] lg:h-8 lg:text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 dir="ltr"
               />
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestBasementChange(safeBasementsCount + 1)}
                 disabled={safeBasementsCount >= MAX_BASEMENT_BLOCKS}
                 aria-label={en ? 'More basements' : 'زيادة الطوابق تحت الأرض'}
               >
-                <Plus className="size-3" />
+                <Plus className="size-4" />
               </Button>
             </div>
           </div>
 
           {/* Horizontal / Columns */}
-          <div className="flex items-center justify-between gap-1.5 rounded-lg border bg-background/80 p-1 px-2 shadow-2xs">
-            <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
-              {en ? 'Horizontal (Cols):' : 'أفقي (الأعمدة):'}
+          <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
+            <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
+              {en ? 'Horizontal (Cols)' : 'أفقي (الأعمدة)'}
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1.5">
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestHorizontalChange(colsCount - 1)}
                 disabled={colsCount <= MIN_HORIZONTAL_BLOCKS || colsCount <= minColsAllowed}
                 aria-label={en ? 'Fewer columns' : 'إنقاص الأعمدة'}
               >
-                <Minus className="size-3" />
+                <Minus className="size-4" />
               </Button>
               <Input
                 type="number"
@@ -862,19 +906,20 @@ export function UnitGridPicker({
                 value={horizontalInput}
                 onChange={(e) => handleHorizontalInputChange(e.target.value)}
                 onBlur={handleHorizontalInputBlur}
-                className="h-6 w-11 text-center font-mono text-xs font-semibold px-1 py-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label={en ? 'Number of columns' : 'عدد الأعمدة'}
+                className="h-10 w-12 shrink-0 px-1 py-0 text-center font-mono text-sm font-semibold [appearance:textfield] lg:h-8 lg:text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 dir="ltr"
               />
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
-                className="size-6 text-muted-foreground hover:text-foreground"
+                className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestHorizontalChange(colsCount + 1)}
                 disabled={colsCount >= MAX_HORIZONTAL_BLOCKS}
                 aria-label={en ? 'More columns' : 'زيادة الأعمدة'}
               >
-                <Plus className="size-3" />
+                <Plus className="size-4" />
               </Button>
             </div>
           </div>
@@ -898,8 +943,8 @@ export function UnitGridPicker({
 
         Shown only while the grid holds exactly one unit, which is what makes it
         unambiguous where "beside" is: there is one block, and the new one goes
-        to its right. Painting it triggers the reclassification in
-        `confirmPanel` like any other second unit.
+        to its right. On a house, painting it raises the same «هل تريد
+        تحويلها من منزل إلى بناية؟» question as any other second unit.
       */}
       {soleUnit ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border bg-muted/20 p-2.5 text-xs">
@@ -921,9 +966,31 @@ export function UnitGridPicker({
         <span className="font-mono">{units.length} {en ? 'units' : 'وحدة'}</span>
       </div>
 
-      {/* ── Compact Grid Container with Fixed/Max Height ── */}
-      <div dir="ltr" className="overflow-x-auto max-h-[360px] sm:max-h-[420px] overflow-y-auto rounded-xl border border-border/80 bg-muted/10 p-2 sm:p-2.5">
-        <div className="inline-flex flex-col gap-1 min-w-full">
+      {/*
+        ── Compact Grid Container with Fixed/Max Height ──────────────────
+
+        `overscroll-x-contain` so a horizontal swipe that runs out of grid does
+        not turn into a back-navigation gesture on the tablet browsers that map
+        one to the other. Painting a unit is a drag, and a drag that overshoots
+        the last column used to leave the page.
+      */}
+      <div dir="ltr" className="overflow-x-auto overscroll-x-contain max-h-[360px] sm:max-h-[420px] overflow-y-auto rounded-xl border border-border/80 bg-muted/10 p-2 sm:p-2.5">
+        {/*
+          `inline-flex` with `min-w-full`, and both halves are load-bearing.
+
+          `min-w-full` is what makes the matrix fill the panel when it is
+          narrower than the box — so this is already the "fill the width" half,
+          without stretching any cell beyond its share.
+
+          `inline-flex` is what lets it grow *past* the box when twenty columns
+          do not fit, so the rows span the whole scrollable width rather than
+          being clipped at the viewport edge. A plain `flex` would cap every row
+          at 100% of the scroll port, and the ground floor's pavement rule —
+          the dashed border that separates the basements from everything above
+          them — would stop dead in the middle of the grid on any building wide
+          enough to scroll.
+        */}
+        <div className="inline-flex min-w-full flex-col gap-1.5">
           {rows.map((floor) => {
             /*
               One grid item per *unit*, not per column.
@@ -964,7 +1031,12 @@ export function UnitGridPicker({
                       startSelection(floor, thisCol);
                     }}
                     className={cn(
-                      'relative h-9 sm:h-10 touch-none select-none rounded-[4px] border text-[9px] font-semibold leading-none transition-colors',
+                      // A fixed height, not `aspect-square`: `1fr` columns on a
+                      // wide screen made square cells hundreds of pixels tall, so
+                      // three floors overflowed their box. 44px is the tablet
+                      // touch-target floor, and the same strip the ledger's
+                      // read-only matrix draws (`MATRIX_ROW_HEIGHT`).
+                      'relative h-11 sm:h-12 touch-none select-none rounded-[4px] border text-[9px] font-semibold leading-none transition-colors',
                       isPendingCell
                         ? 'border-primary bg-primary/15'
                         : 'border-border/70 bg-background hover:bg-muted/60 cursor-pointer',
@@ -1000,7 +1072,7 @@ export function UnitGridPicker({
                   }}
                   onClick={() => openEdit(unit)}
                   className={cn(
-                    'relative h-9 sm:h-10 touch-none select-none cursor-pointer rounded-[4px] border border-transparent ring-1 px-1 transition-colors',
+                    'relative h-11 sm:h-12 touch-none select-none cursor-pointer rounded-[4px] border border-transparent ring-1 px-1 transition-colors',
                     palette?.bg,
                     palette?.text,
                     palette?.ring,
@@ -1030,29 +1102,72 @@ export function UnitGridPicker({
               <div
                 key={floor}
                 className={cn(
-                  'flex items-center gap-1.5',
-                  // The pavement, and it is red on purpose.
-                  //
-                  // It is the one line on the matrix that changes what a row
-                  // *means* — everything below it is B1, B2, and a unit painted
-                  // one row too low is a flat recorded in a basement. A dashed
-                  // grey rule read as another gridline; this does not.
+                  'flex items-center gap-2',
+                  /*
+                    The pavement. Drawn under the ground-floor row so the
+                    basements below it read as below it, rather than as three
+                    more storeys whose labels happen to start with a B.
+
+                    Red, and `red-500` rather than `border-destructive`: this is
+                    a datum line, not a failure. Every other red in this app
+                    means something is wrong — a refused save, a flat that
+                    cannot be deleted — and borrowing that token here would make
+                    ground level read as an error state on every building with a
+                    basement. A literal colour says "this is the line" and
+                    claims nothing else.
+
+                    The same hue in both themes, which is why it is not
+                    theme-scoped: it sits on `bg-muted/10` either way, and the
+                    500 weight carries against both.
+                  */
                   floor === 0 &&
                     safeBasementsCount > 0 &&
-                    'border-b-2 border-destructive pb-1.5',
+                    'border-b-2 border-dashed border-red-500 pb-1.5',
                 )}
               >
+                {/*
+                  The frozen floor gutter — and `pointer-events-none` on it.
+
+                  It is `sticky`, so on a grid wider than the viewport it slides
+                  over the leftmost cells as the officer scrolls. That is the
+                  standard frozen-column behaviour and it is wanted: a matrix
+                  whose floor labels scroll away is a matrix you cannot read.
+                  What was not wanted is that a `<span>` sitting on top of a
+                  column of buttons *swallowed their taps* — an officer trying to
+                  paint the first column of a scrolled grid tapped the label,
+                  nothing happened, and nothing on screen explained why.
+
+                  A label has no behaviour of its own, so it has no business
+                  intercepting a pointer. With this, the only thing it does is
+                  be legible.
+
+                  Opaque rather than `/95` + blur for the same reason: a cell
+                  half-visible through a translucent label reads as two controls
+                  overlapping, which is exactly what it must not look like now
+                  that one of them is unreachable there.
+                */}
                 <span
                   className={cn(
-                    'sticky left-0 z-10 w-16 sm:w-20 shrink-0 text-end text-[10px] sm:text-[11px] font-medium tabular-nums px-1.5 py-0.5 rounded shadow-2xs select-none bg-card/95 dark:bg-muted/95 backdrop-blur-xs',
-                    floor < 0 ? 'font-mono text-destructive/80' : 'text-muted-foreground',
+                    'pointer-events-none sticky left-0 z-10 w-14 sm:w-20 shrink-0 text-end text-[10px] sm:text-[11px] font-medium tabular-nums px-1.5 py-1 rounded shadow-2xs select-none bg-card dark:bg-muted',
+                    floor < 0 ? 'font-mono text-foreground/70' : 'text-muted-foreground',
                   )}
                 >
                   {floorLabel(floor, en)}
                 </span>
+                {/*
+                  `minmax(2.25rem, 1fr)` rather than `1.5rem`.
+
+                  24px was below every touch-target guideline there is, and these
+                  cells are dragged across by somebody standing in a stairwell
+                  with a tablet. 36px is the smallest that can be hit reliably;
+                  twenty of them still fit inside 800px, so the widest grid the
+                  picker can produce is no more scroll-bound on a tablet than it
+                  was before. `gap-1.5` separates them by 6px so two adjacent
+                  cells cannot be caught by one thumb.
+                */}
                 <div
-                  className="grid flex-1 gap-1"
-                  style={{ gridTemplateColumns: `repeat(${colsCount}, minmax(1.5rem, 1fr))` }}
+                  className="grid flex-1 gap-1.5"
+                  style={{ gridTemplateColumns: `repeat(${colsCount}, minmax(2.25rem, 1fr))` }}
                 >
                   {cells}
                 </div>

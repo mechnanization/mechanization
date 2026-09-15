@@ -233,8 +233,6 @@ export function Field({
         ) : null}
       </div>
 
-      {hint ? <p className="text-xs text-muted-foreground leading-normal">{hint}</p> : null}
-
       {/*
         A flagged field's input is replaced by the reason input.
       */}
@@ -278,6 +276,28 @@ export function Field({
         </p>
       ) : null}
 
+      {/*
+        The hint sits *under* the control, and that position is load-bearing
+        rather than cosmetic.
+
+        Above it, a hint pushed its own control down by a line — so two fields
+        side by side in a `sm:grid-cols-2` row, one with a hint and one without,
+        put their two inputs at different heights. That is not a quirk of one
+        screen: there are some sixty-odd hints across two dozen such rows, and
+        the mismatch appeared wherever the two happened not to agree. Worse, it
+        was unfixable from the outside — the row cannot align what it cannot
+        measure, and `items-end` only works while neither field is showing an
+        error.
+
+        Below, every field has the same shape whatever it carries: a one-line
+        label, then the control. Two of them in a grid align by construction,
+        and nothing the parent does has to know about it.
+
+        After the error rather than before, because an error is the thing that
+        has to be adjacent to the control the moment it appears; a hint is
+        standing guidance and can sit at the foot of the block. With no error —
+        the ordinary case — it is directly under the control anyway.
+      */}
       {error ? (
         <p
           role="alert"
@@ -286,6 +306,8 @@ export function Field({
           {error}
         </p>
       ) : null}
+
+      {hint ? <p className="text-xs leading-normal text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }

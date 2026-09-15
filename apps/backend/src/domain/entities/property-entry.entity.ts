@@ -35,7 +35,22 @@ export interface BuildingUnitProps {
   unitType: UnitType;
   floor: string;
   side?: string | null;
-  unitArea: number;
+  /**
+   * م² — required of a card being *created* and nullable on one being read back.
+   *
+   * `assertTaxonomyConsistent` still refuses a submitted unit without one, so
+   * nothing a citizen or an officer fills in reaches storage unmeasured. What
+   * is nullable is the column behind it (migration 0031), and two paths
+   * legitimately leave it empty: a field flag recording that the area could not
+   * be established, and `claimOnFile`, which copies the canonical `Unit`'s area
+   * onto a freshly minted card line and finds none for a flat that was painted
+   * on the matrix and never measured.
+   *
+   * Typed `number | null` so `rehydrate` can carry that absence honestly. It
+   * used to be `number`, which forced every reader to coerce — and `Number(null)`
+   * is `0`, so an unmeasured flat came back claiming a measurement of zero.
+   */
+  unitArea: number | null;
   sharedRights?: string[];
   /** Owner cards only; `normalise` clears it on anyone else's. */
   unitStatus?: UnitStatus | null;
@@ -201,9 +216,22 @@ export class PropertyEntry {
 
     switch (props.propertyType) {
       case 'BUILDING': {
-        if (!required('buildingName', Boolean(props.buildingName?.trim()))) {
-          throw fail('A building requires a building name');
-        }
+        /*
+          «اسم المبنى» is not required, of either structure branch.
+
+          It was, and the demand produced values that named no building: most
+          blocks here are unnamed, and a required field in front of an officer
+          who came to record a household is answered with «بناية», or the
+          street, or the owner's surname — differently each time, which is
+          precisely why `Building.name` on the census outranks this column
+          wherever a card is linked to a structure.
+
+          Nothing identifies a card by it. رقم العقار is still required, and a
+          linked card additionally carries the building's derived code (D9).
+          See `buildingNameField` in `property.schema.ts`, which is the other
+          half of this rule — the two have to agree, or a card the form accepts
+          is one the entity throws on.
+        */
 
         // The units carry نوع الوحدة / الطابق / المساحة now, so a building with
         // none of them describes nothing at all — unless the officer has said
@@ -227,9 +255,7 @@ export class PropertyEntry {
         break;
       }
       case 'HOUSE':
-        if (!required('buildingName', Boolean(props.buildingName?.trim()))) {
-          throw fail('A house requires a name or description');
-        }
+        // No name demanded here either — see the BUILDING branch above.
         if (!required('unitArea', Boolean(props.unitArea && props.unitArea > 0))) {
           throw fail('A house requires an area');
         }
@@ -345,7 +371,17 @@ export class PropertyEntry {
       */
       unitType: props.propertyType === 'HOUSE' ? 'INDEPENDENT_HOUSE' : null,
       landType: props.propertyType === 'LAND' ? (props.landType ?? null) : null,
-      buildingName: hasStructure ? (props.buildingName?.trim() ?? null) : null,
+      /*
+        `|| null` rather than `?? null`, for the reason `landlordPhone` above
+        gives: now that a name is optional, an empty string is a shape a
+        complete card legitimately arrives in, and storing `''` would make
+        "unnamed" two different values in the column. Every reader already
+        tests it with `?.trim()` — `CensusSyncService.nameBuildings` is the one
+        that matters, since it promotes a card's name onto the census building
+        — so a stray `''` would not be *read* as a name; it would simply be a
+        second way of saying nothing, and only one of the two is greppable.
+      */
+      buildingName: hasStructure ? (props.buildingName?.trim() || null) : null,
       floor: null,
       side: props.propertyType === 'HOUSE' ? (props.side?.trim() ?? null) : null,
       tentLocation: props.propertyType === 'TENT' ? (props.tentLocation?.trim() ?? null) : null,

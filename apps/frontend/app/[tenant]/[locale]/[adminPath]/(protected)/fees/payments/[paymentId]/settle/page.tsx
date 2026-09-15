@@ -33,6 +33,7 @@ import { formatLbp } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
 import { tafqeet } from '@/lib/tafqeet';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
+import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ChoiceCard, Field } from '@/components/ui/field';
@@ -225,13 +226,11 @@ export default function SettlePaymentPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       {/* Back link */}
       <div>
-        <Link
-          href={`${base}/fees`}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
-          {locale === 'en' ? 'Back to Fees & Payments' : 'الرجوع إلى الرسوم والمدفوعات'}
-        </Link>
+        <BackLink
+          fallbackHref={`${base}/fees`}
+          label={locale === 'en' ? 'Back' : 'رجوع'}
+          className="text-sm"
+        />
       </div>
 
       {/* Header */}

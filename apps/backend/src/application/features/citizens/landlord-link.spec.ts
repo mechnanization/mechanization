@@ -113,6 +113,7 @@ function harness(options: HarnessOptions = {}) {
               {
                 id: BUILDING,
                 parcelNumber: '1042',
+                sharedParcelNumbers: [],
                 structureType: 'RESIDENTIAL_BUILDING',
                 units: [
                   { id: 'unit-1', unitCode: '0101' },
@@ -336,6 +337,30 @@ describe('confirm — blocked until the property can reach the owner’s file', 
             propertyType: 'BUILDING',
             buildingId: null,
             propertyNumber: '1042',
+            units: [],
+            registration: { citizenId: OWNER },
+          },
+        ],
+      }),
+    ).toBe('OWNER_CARD_UNLINKED');
+  });
+
+  it('an owner who filed a parcel the building shares, without linking it — billed twice too', async () => {
+    /*
+      The building is filed under 1042 and also stands on 1043. The owner's own
+      card says 1043: the same property, so a link would bill the flat on two
+      cards exactly as it would for 1042.
+    */
+    expect(
+      await blockOf({
+        building: { sharedParcelNumbers: ['1043'] },
+        ownerCards: [
+          {
+            id: 'own-card',
+            occupancyType: 'OWNER',
+            propertyType: 'BUILDING',
+            buildingId: null,
+            propertyNumber: '1043',
             units: [],
             registration: { citizenId: OWNER },
           },

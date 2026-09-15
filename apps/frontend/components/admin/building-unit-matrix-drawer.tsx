@@ -634,9 +634,9 @@ export function BuildingUnitMatrixDrawer({
             <div className="space-y-2">
               {floors.map(({ floor, units }) => (
                 <div key={floor} className="rounded-lg border">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b bg-muted/30 px-3 py-1.5">
                     <p className="text-xs font-semibold">{floorLabel(floor, en)}</p>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
                       <p className="text-[11px] text-muted-foreground">
                         {en ? `${units.length} units` : `${units.length} وحدة`}
                       </p>
@@ -660,9 +660,16 @@ export function BuildingUnitMatrixDrawer({
                             setAddingType(defaultUnitTypeFor(building.structureType, floor));
                             setActionError(null);
                           }}
-                          className="inline-flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                          // A real target, and a gutter in front of it. It was
+                          // 11px text in 2px of padding sitting beside the unit
+                          // count — on a tablet, one thumb covering both. The
+                          // floor header is the only place a unit can be added
+                          // from in this drawer, so a mis-tap here is the
+                          // difference between recording a flat and reading a
+                          // number.
+                          className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-dashed px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
                         >
-                          <UserPlus className="size-3" aria-hidden />
+                          <UserPlus className="size-3.5 shrink-0" aria-hidden />
                           {en ? 'Add unit' : 'إضافة وحدة'}
                         </button>
                       ) : null}
@@ -1075,6 +1082,9 @@ export function BuildingUnitMatrixDrawer({
                   }
                   vacancy={activeVacancy(selectedUnit)}
                   owners={unitOwners(selectedUnit)}
+                  // See the matrix page's own call — the field opens only where
+                  // the census has no area for this flat.
+                  unitArea={selectedUnit.unitArea}
                   onSubmit={({ citizen, role, endsVacancy, ...rest }) =>
                     void run(
                       async () => {
