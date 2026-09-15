@@ -276,14 +276,33 @@ export function SidebarNav({
            fold against, so the group stays open. */
         if (collapsed) {
           return (
-            <div key={group.label}>
+            <div key={group.label ?? 'landing'}>
               <div aria-hidden className="mx-auto mb-2 h-px w-6 bg-border first:hidden" />
               {renderItems(group.items)}
             </div>
           );
         }
 
-        const isFolded = folded.has(group.label);
+        /*
+          The landing rows carry no heading, so there is nothing to fold them
+          against and no <details> around them — just the rows, then a rule
+          separating them from the first real section. A group that cannot be
+          folded is the point here: these are where the role lands, and a clerk
+          who folded them away would have hidden their own front door.
+        */
+        if (!group.label) {
+          return (
+            <div key="landing">
+              {renderItems(group.items)}
+              <div aria-hidden className="mx-2 mt-3 h-px bg-border" />
+            </div>
+          );
+        }
+
+        // Captured: the guard above narrows 'group.label' here, but that
+        // narrowing does not survive into the toggle handler's closure.
+        const label = group.label;
+        const isFolded = folded.has(label);
         const holdsActive = group.items.some((item) => item.path === active?.path);
 
         return (
@@ -296,9 +315,9 @@ export function SidebarNav({
            * leave the tab order without us tracking `inert` by hand.
            */
           <details
-            key={group.label}
+            key={label}
             open={!isFolded}
-            onToggle={(event) => setGroupFolded(group.label, !event.currentTarget.open)}
+            onToggle={(event) => setGroupFolded(label, !event.currentTarget.open)}
             className="group/nav"
           >
             <summary

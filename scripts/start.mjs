@@ -10,9 +10,7 @@
 // one "running on" line per service, and let real errors/warnings through
 // unfiltered so problems are never hidden.
 import { execSync, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
 
-const DOCKER_DESKTOP_PATH = 'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe';
 const BACKEND_URL = 'http://localhost:4000/api/v1';
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
@@ -37,7 +35,6 @@ function cleanupStaleProcesses() {
     const currentPid = process.pid;
     execSync(
       `powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 4000, 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Get-CimInstance Win32_Process -Filter \\"Name = 'node.exe'\\" | Where-Object { $_.ProcessId -ne ${currentPid} -and ($_.CommandLine -like '*@mechanization*' -or $_.CommandLine -like '*presentation*main*' -or $_.CommandLine -like '*nest*' -or $_.CommandLine -like '*apps*backend*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`,
-      { stdio: 'ignore' },
       { stdio: 'ignore', timeout: 10_000 },
     );
   } catch {
@@ -57,7 +54,6 @@ try {
 
 // Ensure shared packages are built before apps start
 try {
-  execSync('pnpm --filter "./packages/*" build', { stdio: 'ignore' });
   execSync('pnpm --filter "./packages/*" build', { stdio: 'ignore', timeout: 60_000 });
 } catch {
   // Continue even if package build fails; dev watch will surface issues
@@ -65,7 +61,6 @@ try {
 
 function dockerAvailable() {
   try {
-    execSync('docker info', { stdio: 'ignore' });
     execSync('docker info', { stdio: 'ignore', timeout: 2_500 });
     return true;
   } catch {
@@ -73,30 +68,22 @@ function dockerAvailable() {
   }
 }
 
-async function ensureDockerRunning() {
+// Redis is a cache, not a dependency — without it the app falls through to
+// Postgres. So probe once, bounded, and move on: never launch Docker Desktop,
+// never wait for it. Waiting cost 90s of dead time on every start for a
+// service the app does not need in order to run. Start Docker yourself if you
+// want the cache; SKIP_DOCKER=1 skips even the probe.
+function ensureDockerRunning() {
+  if (process.env.SKIP_DOCKER === '1') {
+    console.warn(colorize('! SKIP_DOCKER=1 — skipping redis, app will fall through to Postgres', YELLOW));
+    return false;
+  }
+
   if (dockerAvailable()) {
     console.log(statusLine('docker', 'running on', 'Docker Desktop'));
     return true;
   }
 
-  if (process.platform !== 'win32' || !existsSync(DOCKER_DESKTOP_PATH)) {
-    console.warn(colorize('! docker not running — skipping redis, app will fall through to Postgres', YELLOW));
-    return false;
-  }
-
-  spawn(DOCKER_DESKTOP_PATH, { detached: true, stdio: 'ignore' }).unref();
-
-  const timeoutMs = 90_000;
-  const intervalMs = 3_000;
-  for (let waited = 0; waited < timeoutMs; waited += intervalMs) {
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    if (dockerAvailable()) {
-      console.log(statusLine('docker', 'running on', 'Docker Desktop'));
-      return true;
-    }
-  }
-
-  console.warn(colorize('! docker took too long to start — skipping redis, app will fall through to Postgres', YELLOW));
   console.warn(
     colorize(
       '! docker not running or unresponsive — skipping redis, app will fall through to Postgres',
@@ -106,9 +93,11 @@ async function ensureDockerRunning() {
   return false;
 }
 
-if (await ensureDockerRunning()) {
+if (ensureDockerRunning()) {
   try {
-    execSync('docker compose up -d redis', { stdio: 'ignore' });
+    // Bounded for the same reason the probe is: a half-wedged engine can
+    // accept the connection and then never answer.
+    execSync('docker compose up -d redis', { stdio: 'ignore', timeout: 30_000 });
     console.log(statusLine('redis', 'running on', 'redis://localhost:6379'));
   } catch {
     console.warn(colorize('! failed to start redis — continuing without cache (falls through to Postgres)', YELLOW));

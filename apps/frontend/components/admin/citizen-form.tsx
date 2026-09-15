@@ -1451,7 +1451,10 @@ export function CitizenForm({
       </div>
 
       {/* ── Mobile Sticky Bottom Action Bar ── */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 block sm:hidden border-t border-border/80 bg-background/95 p-2.5 shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-background/90">
+      {/* Padded past the home indicator: without it the save row is the strip
+          of screen iOS reserves for its own gesture, and every tap there is a
+          swipe up instead. */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 block sm:hidden border-t border-border/80 bg-background/95 p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-background/90">
         <div className="flex items-center justify-between gap-2">
           {stepIndex > 0 ? (
             <Button

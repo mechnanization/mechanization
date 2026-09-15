@@ -358,6 +358,10 @@ enum UnitStatus {
   /// See `OCCUPIED_BY_OTHERS` in shared-schemas, which is what the exemption
   /// now reads instead of comparing against RENTED alone.
   FREE_OCCUPIED
+  /// مسكن موسمي — kept by owners who live elsewhere and use it on visits.
+  /// Added by migration 0040. The owner still bears the occupancy fee unless a
+  /// تصريح بالشغور says otherwise; see `OWNER_BILLED_WHILE_ABSENT`.
+  SEASONAL
   VACANT
   UNDER_CONSTRUCTION
 }

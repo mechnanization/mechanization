@@ -2479,6 +2479,8 @@ export function getAuditLog(
   filter: {
     actorId?: string;
     entityType?: string;
+    /** One record's own trail. Pairs with `entityType`; the server indexes both. */
+    entityId?: string;
     from?: string;
     to?: string;
     limit?: number;
@@ -2490,6 +2492,7 @@ export function getAuditLog(
   const query = new URLSearchParams();
   if (filter.actorId) query.set('actorId', filter.actorId);
   if (filter.entityType) query.set('entityType', filter.entityType);
+  if (filter.entityId) query.set('entityId', filter.entityId);
   if (filter.from) query.set('from', filter.from);
   if (filter.to) query.set('to', filter.to);
   query.set('limit', String(filter.limit ?? 50));

@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
-  ArrowLeft,
   Building2,
   ChevronRight,
   ClipboardList,
@@ -48,6 +47,9 @@ import {
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatDate } from '@/lib/dates';
+import { ActivityTrail } from '@/components/admin/activity-trail';
+import { AUDIT_ENTITY } from '@/lib/audit-labels';
+import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -352,12 +354,19 @@ export function BuildingUnitMatrixView({
 
   return (
     <div className="w-full max-w-5xl mx-auto space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
+      {/*
+        Wraps rather than overflows. On a phone this row can carry «رجوع», the
+        section, a building code and the current step at once — more than 343px
+        of gutter-less screen holds — and a breadcrumb that runs off the edge
+        takes the page's horizontal scroll with it.
+      */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-muted-foreground">
+        <BackLink fallbackHref={cancelHref} label={en ? 'Back' : 'رجوع'} />
+        <span aria-hidden className="h-4 w-px shrink-0 bg-border" />
         <Link
           href={cancelHref}
-          className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground font-medium"
+          className="transition-colors hover:text-foreground font-medium"
         >
-          <ArrowLeft className="size-3.5 sm:size-4 rtl:rotate-180" aria-hidden />
           <span>{en ? 'Building Census' : 'سجل المباني'}</span>
         </Link>
         <ChevronRight className="size-3.5 rtl:rotate-180 text-muted-foreground/60" aria-hidden />
@@ -1191,6 +1200,16 @@ export function BuildingUnitMatrixView({
           ) : null}
         </div>
       ) : null}
+
+      {/* «إنشاء مبنى», «تسجيل إشغال», «تعديل وحدة» — every step taken on this
+          building, by whom. Renders nothing for roles that may not read it. */}
+      <ActivityTrail
+        tenant={tenant}
+        locale={locale}
+        base={base}
+        entityType={AUDIT_ENTITY.building}
+        entityId={buildingId}
+      />
     </div>
   );
 }

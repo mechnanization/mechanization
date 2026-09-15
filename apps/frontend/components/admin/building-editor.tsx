@@ -74,6 +74,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
+import { BackLink } from '@/components/ui/back-link';
 import { cn } from '@/lib/utils';
 import {
   footprintOf,
@@ -567,14 +568,23 @@ export function BuildingEditor({
     making somebody select the one their building is already in would be asking
     a question whose answer is on the screen.
 
-    Only ever fills an empty selection. An officer who has chosen a sector and
-    is typing a parcel from a different one gets the mismatch note below, not a
-    silently switched map.
+    Only that parcel, though — the one the editor opened with. A parcel the
+    officer *types*, or reads off the map, no longer fills the select: doing so
+    moved the map out from under somebody in the middle of entering a building,
+    which is a worse answer than leaving the sector blank. Nothing is lost by
+    staying quiet, because the select only narrows the map (see `zoneId`) and
+    the code's sector half is read off the parcel itself either way — so the
+    sector that ends up on the record is identical whether this fires or not.
+
+    Still only ever fills an empty selection. An officer who has chosen a sector
+    and is typing a parcel from a different one gets the mismatch note below,
+    not a silently switched map.
   */
   useEffect(() => {
     if (!parcelZone) return;
+    if (trimmedParcel !== (initialParcelNumber ?? '').trim()) return;
     setZoneId((current) => current || parcelZone.id);
-  }, [parcelZone]);
+  }, [parcelZone, trimmedParcel, initialParcelNumber]);
 
   /**
    * The selected sector and the parcel's own sector disagree.
@@ -1325,12 +1335,19 @@ export function BuildingEditor({
   return (
     <div className="w-full max-w-7xl mx-auto space-y-6 px-4 py-6 sm:px-6 lg:px-8 pb-28 sm:pb-12">
       {/* ── Breadcrumb & Navigation ── */}
-      <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
+      {/*
+        Wraps rather than overflows. On a phone this row can carry «رجوع», the
+        section, a building code and the current step at once — more than 343px
+        of gutter-less screen holds — and a breadcrumb that runs off the edge
+        takes the page's horizontal scroll with it.
+      */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-muted-foreground">
+        <BackLink fallbackHref={cancelHref} label={en ? 'Back' : 'رجوع'} />
+        <span aria-hidden className="h-4 w-px shrink-0 bg-border" />
         <Link
           href={cancelHref}
-          className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground font-medium"
+          className="transition-colors hover:text-foreground font-medium"
         >
-          <ArrowLeft className="size-3.5 sm:size-4 rtl:rotate-180" aria-hidden />
           <span>{en ? 'Building Census' : 'سجل المباني'}</span>
         </Link>
         <ChevronRight className="size-3.5 rtl:rotate-180 text-muted-foreground/60" aria-hidden />
