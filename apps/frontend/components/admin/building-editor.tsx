@@ -85,6 +85,7 @@ import { BackLink } from '@/components/ui/back-link';
 import { cn } from '@/lib/utils';
 import {
   footprintOf,
+  loadParcelLabelPoints,
   loadParcelOutlines,
   outlineOf,
   parcelAt,
@@ -333,6 +334,8 @@ export function BuildingEditor({
   const [zones, setZones] = useState<ZoneSummary[]>([]);
   /** Every traced parcel, held so a dropped pin can be resolved to one. */
   const [parcelOutlines, setParcelOutlines] = useState<FeatureCollection | null>(null);
+  /** Where the cadastre prints each parcel's number — what the map labels. */
+  const [parcelLabelPoints, setParcelLabelPoints] = useState<FeatureCollection | null>(null);
   /** parcel number → its sector, from the same five-minute cache the code preview uses. */
   const [zoneIndex, setZoneIndex] = useState<
     Record<string, { id: string; code: string; name: string; color: string }>
@@ -409,6 +412,15 @@ export function BuildingEditor({
   const [duplicates, setDuplicates] = useState<DuplicateBuildingCandidate[] | null>(null);
   const [acknowledgedDuplicates, setAcknowledgedDuplicates] = useState(false);
   const [outline, setOutline] = useState<Geometry | null>(null);
+  /**
+   * The parcel `outline` was looked up for.
+   *
+   * Not `trimmedParcel`: that changes on every keystroke, and the lookup runs
+   * after a debounce. Numbering the map from the field would move the
+   * highlighted number through «1», «12», «125» while the outline still showed
+   * the parcel before — this changes in the same render as the outline does.
+   */
+  const [resolvedParcel, setResolvedParcel] = useState<string | null>(null);
   const [fallbackCentre, setFallbackCentre] = useState<[number, number] | null>(null);
   const [outlineChecked, setOutlineChecked] = useState(false);
   const [cadastreHint, setCadastreHint] = useState<string | null>(null);
@@ -639,6 +651,10 @@ export function BuildingEditor({
       if (!cancelled) setParcelOutlines(collection);
     });
 
+    void loadParcelLabelPoints(tenant).then((collection) => {
+      if (!cancelled) setParcelLabelPoints(collection);
+    });
+
     if (!token) return () => { cancelled = true; };
 
     void getZones(tenant, token)
@@ -684,6 +700,25 @@ export function BuildingEditor({
   );
 
   const zoneFootprint = useMemo(() => footprintOf(zoneParcelFeatures), [zoneParcelFeatures]);
+
+  /**
+   * The numbers the map prints: the sector's parcels, and the resolved one
+   * wherever it is.
+   *
+   * From the sector's membership rather than from its drawn outlines, so the
+   * few parcels the tracer could not close still show their number where the
+   * cadastre printed it — with no outline to tap, that number is what the
+   * officer types instead. The resolved parcel is added because it is numbered
+   * even when it lies outside the sector, or when there is no sector at all.
+   */
+  const mapParcelLabels = useMemo(
+    () =>
+      parcelsOf(
+        parcelLabelPoints,
+        resolvedParcel ? [...zoneParcelNumbers, resolvedParcel] : zoneParcelNumbers,
+      ),
+    [parcelLabelPoints, zoneParcelNumbers, resolvedParcel],
+  );
 
   const selectedZone = useMemo(
     () => zones.find((zone) => zone.id === zoneId) ?? null,
@@ -772,6 +807,7 @@ export function BuildingEditor({
   useEffect(() => {
     if (!trimmedParcel) {
       setOutline(null);
+      setResolvedParcel(null);
       setFallbackCentre(null);
       setOutlineChecked(false);
       setZoneCode(null);
@@ -813,6 +849,7 @@ export function BuildingEditor({
 
           const geometry = outlineOf(outlines, trimmedParcel);
           setOutline(geometry);
+          setResolvedParcel(trimmedParcel);
           setOutlineChecked(true);
 
           const zone = zoneIndex[trimmedParcel];
@@ -1933,6 +1970,8 @@ export function BuildingEditor({
                   zoneOutline={zoneFootprint}
                   zoneParcels={zoneParcelFeatures}
                   zoneColor={selectedZone?.color}
+                  parcelLabels={mapParcelLabels}
+                  parcelNumber={resolvedParcel}
                   pin={pin}
                   onPick={applyPin}
                   locale={locale}

@@ -723,8 +723,22 @@ export function BuildingUnitMatrixView({
                 ))}
               </div>
 
-              {/* The units themselves — the only thing that scrolls */}
-              <div className="min-w-0 flex-1 overflow-x-auto overscroll-x-contain">
+              {/*
+                The units themselves — the only thing that scrolls, and only
+                sideways.
+
+                `overflow-y-hidden` is not a default being restated. CSS turns
+                the other axis of an `overflow-x-auto` box into `auto` as well,
+                so this strip was a scroll container in both directions, and any
+                pixel of vertical overflow grew a vertical scrollbar — which on
+                Windows then took 17px of width and forced a horizontal one
+                beside it. The rows have a fixed height; there is nothing below
+                them to scroll to.
+
+                `pb-1` keeps a real scrollbar, where a floor is wide enough to
+                need one, off the bottom row of tiles.
+              */}
+              <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain pb-1 [scrollbar-width:thin]">
                 <div className="flex flex-col gap-1.5 sm:gap-2">
                   {floors.map(({ floor, blocks, width }) => (
                     <div
@@ -751,10 +765,23 @@ export function BuildingUnitMatrixView({
                             }}
                             aria-pressed={selected}
                             title={`${unit.unitCode} — ${badge.text}`}
+                            /*
+                              Every ring inset, and the selected tile no longer
+                              scaled up.
+
+                              `scale-[1.03]` pushed the chosen tile a few pixels
+                              past its row on every side. Inside a scroll
+                              container that is overflow, so selecting a flat
+                              was what made the scrollbars appear, and the ring
+                              around it was clipped to one blue line between
+                              two floors. An inset ring is drawn inside the tile
+                              and can be neither; the keyboard focus ring is
+                              inset for the same reason.
+                            */
                             className={cn(
-                              'flex h-full flex-col items-center justify-center gap-0.5 rounded-md px-1 py-1.5 text-center ring-1 transition-transform',
+                              'flex h-full flex-col items-center justify-center gap-0.5 rounded-md px-1 py-1.5 text-center ring-1 ring-inset transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                               STATUS_BLOCK_CLASSES[badge.variant],
-                              selected && 'scale-[1.03] ring-2 ring-primary',
+                              selected && 'ring-2 ring-primary',
                             )}
                           >
                             <span className="font-mono text-xs font-bold">{unit.unitCode}</span>

@@ -343,11 +343,18 @@ export function UnitGridPicker({
       }
     };
 
+    // A cancelled pointer — the system claimed the touch for a gesture of its
+    // own — selected nothing. Left pending, the highlight stayed and the next
+    // pointerup anywhere on the page opened the panel for the cancelled cell.
+    const onPointerCancel = () => setPending(null);
+
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
     return () => {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [Boolean(pending), structureType, unitAt]);

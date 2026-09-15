@@ -115,12 +115,32 @@ const DOT = {
 } as const;
 
 /**
- * Lifts the GPU dots 12px straight up so their anchor matches the historic DOM
+ * Lifts the GPU dots straight up so their anchor matches the historic DOM
  * markers: on a point-pin the *tip* touches the coordinate, but a circle's
  * centre sits right on top of it. Pulling it up lets the parcel number behind
  * it stay readable instead of being covered by the dot.
+ *
+ * A zoom ramp rather than a flat 12px, because 12px stopped doing that job once
+ * the numbers appear (`PARCEL_LABEL_MIN_ZOOM`). The dot and the number both
+ * grow as the map zooms in, and at 18 a dot's lower edge reached the middle of
+ * the number, and a several-registrant dot hid it entirely. Each stop clears
+ * the larger dot — radius plus stroke, half the number's height, and a 2px gap
+ * — since `circle-translate` cannot differ per feature. Below 15 there are no
+ * numbers to clear, so the dots stay where they always were.
  */
-const DOT_LIFT: [number, number] = [0, -12];
+const DOT_LIFT: mapboxgl.ExpressionSpecification = [
+  'interpolate',
+  ['linear'],
+  ['zoom'],
+  15,
+  ['literal', [0, -12]],
+  16,
+  ['literal', [0, -22]],
+  18,
+  ['literal', [0, -26]],
+  19,
+  ['literal', [0, -27]],
+];
 
 /** Fill strength of a drawn sector — the same whether or not one is picked. */
 const ZONE_FILL_OPACITY = 0.25;

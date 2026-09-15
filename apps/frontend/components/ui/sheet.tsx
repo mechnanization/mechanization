@@ -42,6 +42,31 @@ export function Sheet({
   className,
   children,
 }: SheetProps): React.JSX.Element | null {
+  /**
+   * Whether a press has begun inside the sheet since it opened.
+   *
+   * A tap's `click` arrives after its `pointerup`, and on touch the browser
+   * hit-tests it again at that moment. An opener that acts on `pointerup` — the
+   * unit matrix's drag-to-select does — has mounted the sheet by then, so the
+   * very tap that opened it landed on the scrim and closed it again, and on a
+   * phone, where the panel covers the screen, on whichever control sat under
+   * the finger. That is why a matrix cell took several taps to open.
+   *
+   * A click that no press inside the sheet started is that tap finishing, and
+   * is dropped. Keyboard and assistive-technology activation report `detail`
+   * 0 and have no press to find, so they are never dropped.
+   */
+  const pressedInside = React.useRef(false);
+
+  // Its own effect, keyed on `open` alone: the one below re-runs whenever the
+  // caller passes a new `onClose`, which can land between a press and its click.
+  React.useEffect(() => {
+    if (!open) return;
+    return () => {
+      pressedInside.current = false;
+    };
+  }, [open]);
+
   React.useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -66,6 +91,15 @@ export function Sheet({
       )}
       role="dialog"
       aria-modal="true"
+      onPointerDownCapture={() => {
+        pressedInside.current = true;
+      }}
+      onClickCapture={(event) => {
+        if (event.detail > 0 && !pressedInside.current) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
     >
       {/* The scrim stays a bare <button>: it is a backdrop, not a control, and
           Button's variants all carry a hover treatment that would light the

@@ -4,10 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import type mapboxgl from 'mapbox-gl';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
-import { AlertTriangle, Crosshair, Loader2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Crosshair, Loader2, Pointer, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { geometryBounds, pointInGeometry } from '@/lib/map-geometry';
-import { cn } from '@/lib/utils';
 
 export const FALLBACK_CENTER: [number, number] = [35.2654, 33.2539];
 export const SATELLITE_STYLE = 'mapbox://styles/mapbox/satellite-v9';
@@ -15,22 +14,70 @@ export const PIN_COLOR = '#F59E0B';
 export const MAP_LOAD_TIMEOUT_MS = 12_000;
 
 /**
+ * Below this a sector's numbers mostly collide, and Mapbox drops the losers.
+ *
+ * One level lower than the staff map's 16, because that map numbers the whole
+ * cadastre and this one only the sector being searched: a large قطاع can be
+ * framed below 16, and the staff map's threshold would open it unnumbered.
+ */
+const PARCEL_LABEL_MIN_ZOOM = 15;
+
+/**
+ * The map's two notes — compact, and never in the way of a tap. See where they
+ * are rendered for why they sit top-right.
+ */
+const MAP_NOTE_CLASS =
+  'pointer-events-none absolute right-2 top-2 inline-flex max-w-[calc(100%-3.75rem)] items-center gap-1.5 rounded-full bg-background/90 px-2.5 py-1 text-[11px] font-medium leading-snug text-foreground shadow-sm ring-1 ring-border backdrop-blur-sm animate-in fade-in';
+
+/**
+ * Every layer this map draws, bottom to top.
+ *
+ * Three effects own them and re-run on unrelated schedules — the sector when
+ * one is chosen, the parcel on every lookup, the numbers on both — and
+ * `addLayer` with no `beforeId` stacks on top of whatever is there already. So
+ * the order is stated once here rather than left to whichever effect ran last:
+ * re-resolving a parcel would otherwise bury every number under its fill, and a
+ * sector chosen after the parcel would draw its lines across the chosen outline.
+ */
+const LAYER_ORDER = [
+  'zone-outline-fill',
+  'zone-parcels-line',
+  'parcel-outline-fill',
+  'parcel-outline-line',
+  'parcel-labels',
+  'parcel-label-selected',
+] as const;
+
+/** `map.addLayer`, slotted beneath whichever of the layers above it is already drawn. */
+function addLayerInOrder(
+  map: mapboxgl.Map,
+  layer: Parameters<mapboxgl.Map['addLayer']>[0] & { id: (typeof LAYER_ORDER)[number] },
+): void {
+  const above = LAYER_ORDER.slice(LAYER_ORDER.indexOf(layer.id) + 1);
+  map.addLayer(layer, above.find((id) => map.getLayer(id)));
+}
+
+/**
  * The parcel outlines, fetched once per tenant and shared by every dialog/page open.
  */
 export const outlineCache = new Map<string, Promise<FeatureCollection | null>>();
 
-export function loadParcelOutlines(tenant: string): Promise<FeatureCollection | null> {
-  const cached = outlineCache.get(tenant);
+/** The parcel label points, cached the same way. */
+export const labelPointCache = new Map<string, Promise<FeatureCollection | null>>();
+
+function loadCadastreAsset(
+  cache: Map<string, Promise<FeatureCollection | null>>,
+  tenant: string,
+  file: string,
+): Promise<FeatureCollection | null> {
+  const cached = cache.get(tenant);
   if (cached) return cached;
 
   const slug = encodeURIComponent(tenant);
   const apiBase = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1'}/t/${slug}/cadastre/assets`;
 
   const request = (async (): Promise<FeatureCollection | null> => {
-    for (const url of [
-      `/tenants/${slug}/parcel-polygons.geojson`,
-      `${apiBase}/parcel-polygons.geojson`,
-    ]) {
+    for (const url of [`/tenants/${slug}/${file}`, `${apiBase}/${file}`]) {
       try {
         const response = await fetch(url);
         if (response.ok) return (await response.json()) as FeatureCollection;
@@ -41,8 +88,27 @@ export function loadParcelOutlines(tenant: string): Promise<FeatureCollection | 
     return null;
   })();
 
-  outlineCache.set(tenant, request);
+  cache.set(tenant, request);
   return request;
+}
+
+export function loadParcelOutlines(tenant: string): Promise<FeatureCollection | null> {
+  return loadCadastreAsset(outlineCache, tenant, 'parcel-polygons.geojson');
+}
+
+/**
+ * Where each parcel's number is printed — one point per عقار, from the same
+ * cadastre import as the outlines.
+ *
+ * The cadastre's own positions rather than a centre computed from the outline.
+ * They are what the staff map and the zone editor draw, so a number sits in the
+ * same spot on all three; and in this import every one of the 1,800 that has an
+ * outline falls inside it. A bounding-box centre can land outside an L-shaped
+ * parcel, and a polygon labelled by Mapbox itself can repeat its number where
+ * the parcel crosses a tile edge.
+ */
+export function loadParcelLabelPoints(tenant: string): Promise<FeatureCollection | null> {
+  return loadCadastreAsset(labelPointCache, tenant, 'parcels.geojson');
 }
 
 export function outlineOf(
@@ -175,6 +241,8 @@ export function ParcelPinPicker({
   zoneOutline = null,
   zoneParcels = null,
   zoneColor,
+  parcelLabels = null,
+  parcelNumber = null,
   pin,
   onPick,
   locale,
@@ -206,6 +274,17 @@ export function ParcelPinPicker({
   zoneParcels?: FeatureCollection | null;
   /** The sector's own colour, so the map and the zone legend agree. */
   zoneColor?: string;
+  /**
+   * The label points of the parcels worth numbering — `loadParcelLabelPoints`,
+   * narrowed by the caller to the sector and the resolved parcel.
+   *
+   * The outlines alone say where the boundaries are; the numbers are what let
+   * an officer check the parcel under their finger against the deed in their
+   * hand before they tap, rather than reading the answer back afterwards.
+   */
+  parcelLabels?: FeatureCollection | null;
+  /** The parcel the outline belongs to, whose number is drawn over the rest. */
+  parcelNumber?: string | null;
   pin: [number, number] | null;
   onPick: (point: [number, number]) => boolean;
   locale: string;
@@ -348,8 +427,9 @@ export function ParcelPinPicker({
     Folded together, every parcel lookup would tear down and rebuild hundreds of
     zone polygons.
 
-    Added *before* the parcel layers in z-order for the same reason it is drawn
-    faintly: the selected parcel has to stay legible on top of its neighbours.
+    Kept *below* the parcel layers in z-order (see `LAYER_ORDER`) for the same
+    reason it is drawn faintly: the selected parcel has to stay legible on top of
+    its neighbours.
   */
   useEffect(() => {
     const handle = mapRef.current;
@@ -378,7 +458,7 @@ export function ParcelPinPicker({
         `zone-parcels-line` already draws, doubled and heavier. The wash says
         "inside the sector"; the thin lines say "and these are the parcels".
       */
-      map.addLayer({
+      addLayerInOrder(map, {
         id: 'zone-outline-fill',
         type: 'fill',
         source: 'zone-outline',
@@ -388,7 +468,7 @@ export function ParcelPinPicker({
 
     if (zoneParcels) {
       map.addSource('zone-parcels', { type: 'geojson', data: zoneParcels });
-      map.addLayer({
+      addLayerInOrder(map, {
         id: 'zone-parcels-line',
         type: 'line',
         source: 'zone-parcels',
@@ -412,13 +492,13 @@ export function ParcelPinPicker({
         type: 'geojson',
         data: { type: 'Feature', geometry: outline, properties: {} },
       });
-      map.addLayer({
+      addLayerInOrder(map, {
         id: 'parcel-outline-fill',
         type: 'fill',
         source: 'parcel-outline',
         paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.18 },
       });
-      map.addLayer({
+      addLayerInOrder(map, {
         id: 'parcel-outline-line',
         type: 'line',
         source: 'parcel-outline',
@@ -452,6 +532,76 @@ export function ParcelPinPicker({
       map.fitBounds(zoneBounds, { padding: 24, duration: 500, maxZoom: 17 });
     }
   }, [outline, ready, fallbackCentre, zoneOutline, zoneKey]);
+
+  /*
+    The parcel numbers — every numbered parcel's, and the resolved one's above
+    the rest.
+
+    One source split into two layers by filter, so resolving a parcel changes a
+    filter rather than rebuilding the source: the other numbers keep their
+    placement instead of fading out and back in on every pin drop.
+
+    The resolved number is a layer of its own so it can be larger and cannot
+    lose a collision. Mapbox places the topmost symbol layer first, and
+    `text-allow-overlap` keeps it even where a neighbour's number was about to
+    sit — the neighbour is the one dropped.
+
+    White on a dark halo, the staff map's satellite treatment; the resolved one
+    takes its halo from the sky of its own outline.
+  */
+  useEffect(() => {
+    const handle = mapRef.current;
+    if (!handle || !ready) return;
+    const { map } = handle;
+
+    const data: FeatureCollection = parcelLabels ?? { type: 'FeatureCollection', features: [] };
+    const source = map.getSource('parcel-labels') as mapboxgl.GeoJSONSource | undefined;
+
+    if (source) {
+      source.setData(data);
+    } else {
+      map.addSource('parcel-labels', { type: 'geojson', data });
+      addLayerInOrder(map, {
+        id: 'parcel-labels',
+        type: 'symbol',
+        source: 'parcel-labels',
+        minzoom: PARCEL_LABEL_MIN_ZOOM,
+        layout: {
+          'text-field': ['to-string', ['get', 'parcelNumber']],
+          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 15, 10, 19, 14],
+          'text-padding': 1,
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': 'rgba(0, 0, 0, 0.8)',
+          'text-halo-width': 1.5,
+        },
+      });
+      addLayerInOrder(map, {
+        id: 'parcel-label-selected',
+        type: 'symbol',
+        source: 'parcel-labels',
+        layout: {
+          'text-field': ['to-string', ['get', 'parcelNumber']],
+          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 15, 12, 19, 18],
+          'text-allow-overlap': true,
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': '#0369a1',
+          'text-halo-width': 2,
+        },
+      });
+    }
+
+    // `to-string` because a cadastre export may carry the number as a JSON
+    // number, and an expression comparing a number to a string is simply false.
+    const selected = parcelNumber?.trim() ?? '';
+    map.setFilter('parcel-labels', ['!=', ['to-string', ['get', 'parcelNumber']], selected]);
+    map.setFilter('parcel-label-selected', ['==', ['to-string', ['get', 'parcelNumber']], selected]);
+  }, [parcelLabels, parcelNumber, ready]);
 
   // The pin follows the form's state
   useEffect(() => {
@@ -530,47 +680,39 @@ export function ParcelPinPicker({
       ) : null}
 
       {/*
-        Two different absences, two different sentences.
+        Two different absences, two different notes.
 
         «لا يوجد مخطط» is about a parcel the officer has already named, and it
         is a caveat: the pin will be accepted but nothing can check it. The
-        sector prompt below is about a parcel they have *not* named yet, and it
-        is an instruction. Saying either in the other's situation would be
-        confusing in the way that makes people stop reading map captions.
+        sector prompt is about a parcel they have *not* named yet, and it is an
+        instruction — so it goes the moment there is a pin, because an
+        instruction for a step already taken is the kind of caption people learn
+        to stop reading. The step's own hint above the map carries the long form.
 
-        Every overlay here clears the bottom-left corner with *physical*
-        offsets, not `start`/`end`.
+        A pill in the top-right corner rather than a bar across the bottom. The
+        bar spanned the whole map and covered the same strip of parcels the
+        officer was trying to tap; the pill is as wide as its words, and
+        `pointer-events-none` so a tap on the ground beneath it still lands.
 
-        Mapbox's wordmark is pinned bottom-left by the library and stays there
+        Every overlay here is placed with *physical* offsets, not `start`/`end`.
+        Mapbox pins its wordmark bottom-left and its zoom buttons top-left
         whichever way the page reads, so on this RTL form `end-2` put the
-        recentre button directly on top of it — the officer's only way back to
-        the parcel, sitting under the one control that may not be covered.
-        `right-*` / `left-*` are the only offsets that mean the same thing in
-        both directions, which is exactly what is needed against a logo that
-        does not flip.
-
-        A caption shares the bottom edge with that button whenever a sector
-        outline is drawn — the button recentres on the sector too — so there it
-        sits one row higher, clear of both the button and the wordmark.
+        recentre button directly on the wordmark. `right-*` / `left-*` are the
+        only offsets that mean the same thing in both directions, which is what
+        is needed against controls that do not flip. Top-right is the one corner
+        the library leaves free.
       */}
       {ready && !failure && outlineChecked && !outline ? (
-        <p
-          className={cn(
-            'absolute rounded-md bg-background/90 px-2.5 py-1.5 text-[11px] leading-relaxed text-muted-foreground shadow-sm backdrop-blur-sm',
-            zoneOutline ? 'bottom-11 left-2 right-2' : 'bottom-2 left-24 right-2',
-          )}
-        >
-          <Crosshair className="me-1 inline size-3" aria-hidden />
+        <p role="status" className={MAP_NOTE_CLASS}>
+          <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden />
           {en
-            ? 'This parcel has no traced outline, so the pin cannot be checked against it.'
-            : 'لا يوجد مخطط مرسوم لهذا العقار، لذا يتعذّر التحقق من موقع الدبوس ضمنه.'}
+            ? 'No outline for this parcel — the pin can’t be checked'
+            : 'لا مخطط لهذا العقار — يتعذّر التحقق من الدبوس'}
         </p>
-      ) : ready && !failure && !outline && zoneOutline ? (
-        <p className="absolute bottom-11 left-2 right-2 rounded-md bg-background/90 px-2.5 py-1.5 text-[11px] leading-relaxed text-muted-foreground shadow-sm backdrop-blur-sm">
-          <Crosshair className="me-1 inline size-3" aria-hidden />
-          {en
-            ? 'Tap the building’s location inside the sector — the parcel number is read off the map.'
-            : 'انقر على موقع المبنى داخل القطاع — ويُقرأ رقم العقار من الخريطة.'}
+      ) : ready && !failure && !outline && zoneOutline && !pin ? (
+        <p role="status" className={MAP_NOTE_CLASS}>
+          <Pointer className="size-3.5 shrink-0 text-primary" aria-hidden />
+          {en ? 'Tap the building inside the sector' : 'انقر على المبنى داخل القطاع'}
         </p>
       ) : null}
 
