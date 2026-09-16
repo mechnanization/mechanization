@@ -136,7 +136,7 @@ jobs:
             if [ "$POST_HEALTHY" = "true" ]; then
               echo "Production healthy after cutover"
               cd /var/www/municipality-app-releases/releases
-              ls -t | tail -n +4 | xargs -r rm -rf
+              ls -t | tail -n +6 | xargs -r rm -rf
             else
               echo "Production unhealthy after cutover — investigate immediately"
               exit 1
