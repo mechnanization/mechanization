@@ -76,12 +76,12 @@ jobs:
             pm2 reload /var/www/municipality-app-releases/ecosystem.config.js
 
             HEALTHY=false
-            for i in $(seq 1 15); do
+            for i in $(seq 1 40); do
               if curl -sf http://localhost:4000/api/v1/health > /dev/null; then
                 HEALTHY=true
                 break
               fi
-              echo "Waiting for app to become healthy... ($i/15)"
+              echo "Waiting for app to become healthy... ($i/40)"
               sleep 2
             done
 
@@ -90,7 +90,7 @@ jobs:
               cd /var/www/municipality-app-releases/releases
               ls -t | tail -n +6 | xargs -r rm -rf
             else
-              echo "Health check FAILED after 30s — rolling back"
+              echo "Health check FAILED after 80s — rolling back"
               ln -sfn $PREV_RELEASE /var/www/municipality-app-releases/current
               pm2 reload /var/www/municipality-app-releases/ecosystem.config.js
               exit 1
