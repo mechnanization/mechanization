@@ -164,16 +164,174 @@ never run, being asked to work on the worst day. The rollback plan is:
 
 ## 5. Backups
 
-Supabase takes daily backups on Pro and above; Point-in-Time Recovery is a paid
-add-on that lets you restore to a specific second. **Check which of these the
-production project actually has before the first production deploy** — the
-difference between "yesterday" and "thirty seconds before the migration" is the
-difference between a bad afternoon and a lost day of municipal records.
+**The production project is on the Supabase free plan, so the platform provides
+nothing here.** Not daily backups, not Point-in-Time Recovery, and no
+downloadable backup in the dashboard. That was checked on 2026-09-16; an earlier
+version of this section told you to go and check it, and nobody had. Until the
+plan changes, [`.github/workflows/backup.yml`](../.github/workflows/backup.yml)
+is the only copy of the register that exists anywhere.
 
-Dashboard → `thbgwfbcqdougbjvgvyw` → Database → Backups.
+Upgrading to Pro ($25/mo) restores a floor under all of this — daily backups
+with 7-day retention, and no pausing for inactivity. PITR is a further add-on
+(~$100/mo at 7 days' retention) and is the only thing that actually delivers
+"restore to the second". A nightly backup's honest promise is **at most 24 hours
+of registrations lost**. Do not let anyone round that up to "we have backups, so
+we're covered".
 
-For a migration that rewrites data rather than only adding to the schema, take a
-manual backup immediately before, regardless of what the plan provides.
+### What runs nightly
+
+22:00 UTC, in GitHub Actions rather than Vercel Cron — the backend function is
+capped at 60s and 1 GB, and the team is on the Vercel Hobby plan. The order of
+the steps is the design:
+
+```
+dump → prove it restores → encrypt → upload → prove the upload arrived
+```
+
+The restore rehearsal runs against a throwaway Postgres 17 container, on the
+real dump, **before** anything is uploaded. So a dump that cannot be restored
+never becomes your stored backup: the job fails, nothing is uploaded, and the
+previous good backup is still in the bucket. This repository has already been
+bitten by the other arrangement — `BackupService`'s restore was broken for every
+municipality while its rehearsal reported success, because the rehearsal counted
+rows instead of writing them.
+
+Three properties worth keeping if you change this workflow:
+
+- **It cannot write to production.** `scripts/db/backup.mjs` opens every
+  connection — its own and `pg_dump`'s — with `default_transaction_read_only=on`
+  and aborts if the server does not confirm it. The server refuses writes; it is
+  not a convention in a comment.
+- **It cannot restore onto anything real.** `scripts/db/verify-restore.mjs`
+  refuses any `--into` that resolves to a known Supabase ref or to a non-loopback
+  host. There is no override flag.
+- **It never deletes.** Uploads use `rclone copy`, never `sync` — `sync` makes
+  the destination match the source, which means it propagates a deletion into
+  your backup. Retention is a bucket lifecycle rule (below), which is what lets
+  the upload token be write-only.
+
+### What is backed up, and what is not
+
+| | Covered by | |
+| --- | --- | --- |
+| Registry schema (`public`) and every `tenant_*` schema | `pg_dump` → `<base>.dump`, schemas discovered at run time | ✅ |
+| Sequences, triggers, the audit trail | same | ✅ |
+| `auth.users`, `auth.identities` — staff logins and password hashes | `pg_dump` of `auth` → `<base>.auth-storage.dump` | ✅ |
+| `storage.objects`, `storage.buckets` — the rows naming each document | same second archive | ✅ |
+| `documents` and `cadastre` object **bytes** | `rclone copy` of the Supabase S3 endpoint | ✅ |
+| Postgres roles and passwords | nothing — platform-managed, recreated by Supabase | ❌ |
+| Auth providers, redirect URLs, Vercel and GitHub env vars | nothing — see §6 and §7 | ❌ |
+
+A complete backup is **three** things, not one: the register, the `auth` archive,
+and the object bytes. Staff rows in `tenant_*.users` link to `auth.users` by
+**email**, not by id — the ids do not match — and every password hash lives in
+`auth`. A recovery from the register alone returns the municipality's data with
+nobody able to sign in to it, which is why the second archive exists and why the
+restore rehearsal fails if it is not handed both.
+
+Session state (`auth.sessions`, `auth.refresh_tokens`) *is* dumped, because a
+backup that decides for you is a backup with rows missing — but you almost
+certainly do not replay it into a recovered project. That choice belongs to the
+restore, below.
+
+Schemas are **discovered**, not listed. This is the one place the "allowlist,
+never discover" rule in [AGENTS.md](../AGENTS.md) §4 inverts: that rule governs
+data *leaving*, where a discovered table is incident §8.4. A backup's failure
+mode is the opposite — a table nobody remembered to add, found missing on the
+day it was needed.
+
+### One-time setup
+
+Secrets go in the `db-production` GitHub Environment, beside the existing four:
+
+| Secret | Where it comes from |
+| --- | --- |
+| `BACKUP_AGE_PUBLIC_KEY` | `age-keygen` — see below |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Cloudflare → R2 → Manage API tokens |
+| `B2_KEY_ID`, `B2_APPLICATION_KEY`, `B2_BUCKET` | Backblaze → Application Keys |
+| `SUPABASE_S3_ACCESS_KEY_ID`, `SUPABASE_S3_SECRET_ACCESS_KEY` | Supabase → Storage → S3 Access Keys |
+
+**The age key.** Generate it on a machine that is not CI and not a laptop that
+travels:
+
+```bash
+age-keygen -o backup-key.txt      # prints the public key to stderr
+```
+
+The **public** key goes in `BACKUP_AGE_PUBLIC_KEY`. The **private** half never
+goes into GitHub, Vercel, or this repository — it lives offline with the
+municipality, and a copy in a sealed envelope somewhere else. CI can encrypt and
+cannot decrypt, which is the entire reason it is acceptable to store a register
+of national ID numbers, addresses and residency status on infrastructure outside
+Lebanon: Cloudflare holds ciphertext, and the question becomes who holds one key.
+
+**Losing the private key loses every backup.** There is no recovery path. Treat
+it the way the municipality treats its seal.
+
+**The R2 token must not be able to delete.** Scope it to object writes only, and
+set the retention rule as a bucket lifecycle policy in Cloudflare rather than as
+a prune step in CI. A token that can delete your backups is how a compromise
+takes the backups too — which is the usual way people find out. Suggested
+lifecycle: expire `db/daily/` after 35 days, keep `storage/` indefinitely.
+
+### Before a data-rewriting migration
+
+Run the workflow manually first — Actions → *Backup production* → Run workflow —
+and wait for it to go green. `workflow_dispatch` takes a `skip_upload` input if
+you only want the restore rehearsal. Do not run a production migration while the
+nightly backup is running: `pg_dump` holds `ACCESS SHARE` on every table for its
+duration, so an `ALTER TABLE` starting mid-dump queues behind it, and every
+query arriving after that queues behind the `ALTER`.
+
+### Restoring
+
+Restoring is deliberately not automated. Decrypt with the offline private key,
+then `pg_restore` the schemas you actually need — usually one municipality, not
+the cluster:
+
+```bash
+age -d -i backup-key.txt production-<ref>-<stamp>.dump.age > restore.dump
+pg_restore --list restore.dump                     # read before you write
+pg_restore --no-owner --no-privileges \
+  --schema=tenant_<slug> --dbname="$TARGET" restore.dump
+```
+
+`--list` first, every time.
+
+Then the logins, from the second archive. This one restores **`--data-only`**:
+a fresh Supabase project has already created `auth` and `storage` itself, owned
+by `supabase_auth_admin` and `supabase_storage_admin`, so replaying the archive's
+DDL would collide with objects the platform put there — and the usual way out of
+that collision at 3am is `--clean`, which turns a recovery into a second
+incident.
+
+```bash
+age -d -i backup-key.txt production-<ref>-<stamp>.auth-storage.dump.age > auth.dump
+pg_restore --list auth.dump
+pg_restore --data-only --no-owner --disable-triggers --dbname="$TARGET" \
+  --table=users --table=identities \
+  --table=buckets --table=objects \
+  auth.dump
+```
+
+Add `--table=sessions --table=refresh_tokens` only if you actually want to
+replay live sessions into the recovered project; normally you do not, and staff
+sign in again.
+
+Finally the object bytes, without which every document link in the restored
+register is dead:
+
+```bash
+rclone copy "r2:$R2_BUCKET/storage/documents/" "supastorage:documents/"
+rclone copy "r2:$R2_BUCKET/storage/cadastre/"  "supastorage:cadastre/"
+```
+
+**Then verify, do not assume (§5 of [AGENTS.md](../AGENTS.md)).** Compare the
+counts in `<base>.manifest.json` against the restored database, and then sign in
+as a staff user. A restore that reports success and cannot be logged into is the
+failure this whole section is built around. The manifest carries its own
+`restoreOrder` field with these same steps, because during a recovery the
+manifest is the file you have to hand and this document may not be.
 
 ---
 

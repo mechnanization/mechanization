@@ -12,8 +12,14 @@ import { ValidationError } from '../../common/exceptions';
  * older restore could not read. Checked on the way in, because the failure it
  * prevents — a snapshot half-restored before the mismatch is noticed — is not
  * one a municipality can undo.
+ *
+ * **3** adds `inspectorPayout`. The bump is the point, not a formality: a v2
+ * snapshot does not carry that table, and restore empties every table in
+ * `TABLE_ORDER` before writing. Accepting a v2 file under v3 would therefore
+ * delete every recorded commission and put nothing back — silently, with the
+ * restore reporting success. The strict `!==` check below refuses them instead.
  */
-const SNAPSHOT_VERSION = 2;
+const SNAPSHOT_VERSION = 3;
 
 /**
  * Ceiling on the *decompressed* snapshot, enforced by `gunzipSync`.
@@ -118,6 +124,14 @@ const TABLE_ORDER = [
   'document',
   'feeNotice',
   'citizenPayment',
+  /*
+   * `inspector_payouts.inspectorId` cascades from `users`, which restore
+   * deletes and rewrites — so every restore destroyed every recorded commission
+   * and then did not put it back, while reporting success. The same shape as
+   * the `unitOccupancy` hole above. It carries no trigger and needs only
+   * `user`, so it simply belongs here.
+   */
+  'inspectorPayout',
 ] as const;
 
 type TableName = (typeof TABLE_ORDER)[number];
@@ -131,6 +145,42 @@ type TableName = (typeof TABLE_ORDER)[number];
  * silently ignored.
  */
 const NEVER_RESTORED = new Set(['auditLogEntry']);
+
+/**
+ * ── `paymentTransaction` is deliberately NOT in `TABLE_ORDER`, and restore is
+ *    already broken for any municipality that has recorded one. ──────────────
+ *
+ * `0017_payment_ledger` installs `payment_transactions_no_delete` and
+ * `payment_transactions_no_update`, both
+ * calling `reject_ledger_mutation()`. The receipt ledger is append-only on
+ * purpose, for the same reason the audit trail is: a correction is a new
+ * opposing row, never an edit, so that what happened stays on the record.
+ *
+ * Adding the table here would therefore not fix anything — restore empties
+ * every table in this list, and that DELETE is refused by the trigger.
+ *
+ * The part that is *not* solved by leaving it out: `payment_transactions.
+ * paymentId` is `ON DELETE CASCADE` from `citizen_payments`, which **is** in
+ * this list. A cascade performs a real DELETE on the child and fires its
+ * BEFORE DELETE trigger, so `citizenPayment.deleteMany({})` raises
+ * `payment_transactions is append-only` and the whole restore transaction
+ * rolls back. Verified against Postgres 17, not inferred:
+ *
+ *     DELETE FROM payments WHERE id = 1;
+ *     ERROR:  ledger is append-only (attempted DELETE)
+ *     CONTEXT: SQL statement "DELETE FROM ONLY "ledger" WHERE $1 = "payment_id""
+ *
+ * So restore works today only because every tenant has zero rows in
+ * `payment_transactions`. The first municipality to take a payment loses the
+ * ability to restore, and finds out when it tries.
+ *
+ * This is left as it is rather than worked around, per §6 of AGENTS.md: the
+ * trigger is a control someone installed on purpose and reaching past it is not
+ * a fix. Resolving it is a design decision about what a restore *means* for a
+ * ledger — whether payments are outside restore scope the way the audit trail
+ * is, which would mean `citizenPayment` leaving this list too — and that is a
+ * decision for a person, not something to infer from the constraint.
+ */
 
 export interface SnapshotManifest {
   version: number;

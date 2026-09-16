@@ -22,6 +22,8 @@
     "db:deploy:local": "node scripts/db/deploy.mjs local",
     "db:deploy:staging": "node scripts/db/deploy.mjs staging",
     "db:deploy:production": "node scripts/db/deploy.mjs production",
+    "db:backup:status:staging": "node scripts/db/backup.mjs staging --dry-run",
+    "db:backup:status:production": "node scripts/db/backup.mjs production --dry-run",
     "staff:create": "pnpm --filter @mechanization/backend staff:create",
     "tenant:provision": "pnpm --filter @mechanization/backend tenant:provision",
     "lint": "eslint .",

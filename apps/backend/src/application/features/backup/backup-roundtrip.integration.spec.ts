@@ -1,3 +1,4 @@
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
@@ -55,6 +56,7 @@ describeIfDb('BackupService — export and restore round-trip', () => {
   let emit: jest.Mock;
 
   const citizenId = '11111111-1111-4111-8111-111111111111';
+  const inspectorId = '33333333-3333-4333-8333-333333333333';
 
   beforeAll(async () => {
     ddl = new Client({ connectionString: TEST_DATABASE_URL });
@@ -105,6 +107,18 @@ describeIfDb('BackupService — export and restore round-trip', () => {
   beforeEach(async () => {
     // Rebuilt per test so each one starts from the same register. The audit
     // trail is deliberately *not* cleared — it cannot be, which is the point.
+    /*
+      No `paymentTransaction` anywhere in this fixture, and that is not an
+      oversight. `0017_payment_ledger` makes the table append-only, so a row
+      created here could never be removed — and because
+      `payment_transactions.paymentId` cascades from `citizen_payments`, the
+      very next `citizenPayment.deleteMany({})` below would raise
+      "payment_transactions is append-only" and break every later test.
+      That is the same reason `BackupService.restore` cannot currently run for
+      a municipality that has taken a payment; see the note beside
+      NEVER_RESTORED in backup.service.ts.
+    */
+    await db.inspectorPayout.deleteMany({});
     await db.citizenPayment.deleteMany({});
     await db.user.deleteMany({});
 
@@ -119,6 +133,15 @@ describeIfDb('BackupService — export and restore round-trip', () => {
         referenceNumber: 'RTP-2608-ABC234',
       },
     });
+    await db.user.create({
+      data: {
+        id: inspectorId,
+        kind: 'STAFF',
+        tenantSlug: 'roundtrip',
+        firstName: 'سمير',
+        lastName: 'حيدر',
+      },
+    });
     await db.citizenPayment.create({
       data: {
         citizenId,
@@ -126,6 +149,10 @@ describeIfDb('BackupService — export and restore round-trip', () => {
         amount: 100_000,
         dueDate: new Date('2026-01-31T00:00:00.000Z'),
       },
+    });
+
+    await db.inspectorPayout.create({
+      data: { inspectorId, amount: 1, reference: 'RTP-PAYOUT-1' },
     });
     await db.auditLogEntry.create({
       data: { actorType: 'STAFF', action: 'SNAPSHOT_TAKEN', entityType: 'Tenant' },
@@ -146,7 +173,8 @@ describeIfDb('BackupService — export and restore round-trip', () => {
     const report = await service.restore(buffer, OPTIONS, ACTOR);
 
     expect(report.dryRun).toBe(false);
-    expect(await db.user.count()).toBe(1);
+    // The citizen and the inspector the payout belongs to.
+    expect(await db.user.count()).toBe(2);
     expect(await db.citizenPayment.count()).toBe(1);
 
     const restored = await db.user.findUniqueOrThrow({ where: { id: citizenId } });
@@ -157,6 +185,53 @@ describeIfDb('BackupService — export and restore round-trip', () => {
     const payment = await db.citizenPayment.findFirstOrThrow();
     // Decimal survives it too — as a string through JSON, back to Decimal here.
     expect(Number(payment.amount)).toBe(100_000);
+  }, 60_000);
+
+  it('carries inspector payouts through a restore', async () => {
+    const { buffer, manifest } = await service.exportSnapshot();
+
+    expect(manifest.counts.inspectorPayout).toBe(1);
+
+    /*
+      The disaster as it actually reached this table: nothing deletes a payout
+      directly. Emptying `users` cascades into `inspector_payouts` via
+      `inspectorId`. Before it was in `TABLE_ORDER`, restore did exactly this
+      and then never wrote it back — and reported success.
+    */
+    await db.citizenPayment.deleteMany({});
+    await db.user.deleteMany({});
+    expect(await db.inspectorPayout.count()).toBe(0);
+
+    const report = await service.restore(buffer, OPTIONS, ACTOR);
+
+    expect(report.written.inspectorPayout).toBe(1);
+    expect(await db.inspectorPayout.count()).toBe(1);
+
+    const payout = await db.inspectorPayout.findFirstOrThrow();
+    expect(payout.inspectorId).toBe(inspectorId);
+    expect(Number(payout.amount)).toBe(1);
+    expect(payout.reference).toBe('RTP-PAYOUT-1');
+  }, 60_000);
+
+  it('refuses a v2 snapshot, which predates inspectorPayout', async () => {
+    const { buffer } = await service.exportSnapshot();
+    const snapshot = JSON.parse(gunzipSync(buffer).toString('utf8')) as {
+      manifest: { version: number };
+      tables: Record<string, unknown>;
+    };
+
+    snapshot.manifest.version = 2;
+    delete snapshot.tables.inspectorPayout;
+    const stale = gzipSync(Buffer.from(JSON.stringify(snapshot), 'utf8'));
+
+    /*
+      Not a formality. Restore empties every table in `TABLE_ORDER` before it
+      writes, so accepting a v2 file would delete every recorded commission and
+      write nothing back. The version gate is the whole of what stands between
+      a pre-v3 snapshot and that outcome, so it is pinned here.
+    */
+    await expect(service.restore(stale, OPTIONS, ACTOR)).rejects.toThrow();
+    expect(await db.inspectorPayout.count()).toBe(1);
   }, 60_000);
 
   it('restores over a register that has since been modified', async () => {
@@ -246,6 +321,6 @@ describeIfDb('BackupService — export and restore round-trip', () => {
 
     await expect(service.restore(foreign, OPTIONS, ACTOR)).rejects.toThrow(/somewhere-else/);
     // And nothing was touched on the way to refusing.
-    expect(await db.user.count()).toBe(1);
+    expect(await db.user.count()).toBe(2);
   }, 60_000);
 });
