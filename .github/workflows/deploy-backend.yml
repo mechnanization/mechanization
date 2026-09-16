@@ -52,7 +52,7 @@ jobs:
           source: "release.tar.gz"
           target: "/var/www/municipality-app-releases/releases/${{ steps.vars.outputs.release }}-upload"
 
-      - name: Extract, symlink env, activate release, reload
+      - name: Extract, boot candidate on port 4001, health-check, then cut over
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -70,28 +70,59 @@ jobs:
             mkdir -p $RELEASE_DIR/apps/backend
             ln -sfn /var/www/municipality-app-releases/shared/backend/.env $RELEASE_DIR/apps/backend/.env
 
-            PREV_RELEASE=$(readlink /var/www/municipality-app-releases/current || echo "")
-            ln -sfn $RELEASE_DIR /var/www/municipality-app-releases/current
+            # Clean up any stale candidate from a previous failed deploy
+            pm2 delete municipality-app-candidate 2>/dev/null || true
 
-            pm2 reload /var/www/municipality-app-releases/ecosystem.config.js
+            # Boot the NEW release as a single-instance candidate on port 4001.
+            # Production (port 4000) is completely untouched — real users keep hitting the old release.
+            PORT=4001 pm2 start $RELEASE_DIR/apps/backend/dist/presentation/main.js \
+              --name municipality-app-candidate \
+              --cwd $RELEASE_DIR/apps/backend \
+              --update-env
 
+            # Health-check the candidate, NOT production
             HEALTHY=false
-            for i in $(seq 1 40); do
-              if curl -sf http://localhost:4000/api/v1/health > /dev/null; then
+            for i in $(seq 1 60); do
+              if curl -sf http://localhost:4001/api/v1/health > /dev/null; then
                 HEALTHY=true
+                echo "Candidate healthy after $((i*2))s"
                 break
               fi
-              echo "Waiting for app to become healthy... ($i/40)"
+              echo "Waiting for candidate to become healthy... ($i/60)"
               sleep 2
             done
 
-            if [ "$HEALTHY" = "true" ]; then
-              echo "Health check passed"
+            if [ "$HEALTHY" != "true" ]; then
+              echo "Candidate FAILED health check after 120s — aborting deploy, production untouched"
+              pm2 logs municipality-app-candidate --lines 50 --nostream || true
+              pm2 delete municipality-app-candidate || true
+              rm -rf $RELEASE_DIR
+              exit 1
+            fi
+
+            # Candidate is proven healthy. Now cut over.
+            echo "Cutting over production symlink and reloading main cluster"
+            pm2 delete municipality-app-candidate
+
+            ln -sfn $RELEASE_DIR /var/www/municipality-app-releases/current
+            pm2 reload /var/www/municipality-app-releases/ecosystem.config.js
+
+            # Confirm production is still healthy after reload
+            sleep 3
+            POST_HEALTHY=false
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:4000/api/v1/health > /dev/null; then
+                POST_HEALTHY=true
+                break
+              fi
+              sleep 2
+            done
+
+            if [ "$POST_HEALTHY" = "true" ]; then
+              echo "Production healthy after cutover"
               cd /var/www/municipality-app-releases/releases
               ls -t | tail -n +6 | xargs -r rm -rf
             else
-              echo "Health check FAILED after 80s — rolling back"
-              ln -sfn $PREV_RELEASE /var/www/municipality-app-releases/current
-              pm2 reload /var/www/municipality-app-releases/ecosystem.config.js
+              echo "Production unhealthy after cutover — investigate immediately"
               exit 1
             fi
