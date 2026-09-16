@@ -298,6 +298,26 @@ pg_restore --no-owner --no-privileges \
 
 `--list` first, every time.
 
+**Archives taken before tenant migration `0048` need one patch to restore.**
+`search_compact` called `search_normalize` unqualified, and `pg_restore` runs
+with `search_path = ''`, so building `citizen_payments` — whose `searchText` is a
+generated column calling it — stops with `function search_normalize(text) does
+not exist ... during inlining`. The rows are all in the archive; the schema
+cannot be built without the edit. Convert to SQL, qualify the single call, then
+load it:
+
+```bash
+pg_restore --no-owner --no-privileges -f restore.sql <archive>.dump
+perl -0pi -e 's/(AS \$\$\s*\n\s*SELECT replace\()search_normalize\(/$1tenant_<slug>.search_normalize(/' restore.sql
+psql "$TARGET" -c 'DROP SCHEMA IF EXISTS public CASCADE'
+psql "$TARGET" -v ON_ERROR_STOP=1 -f restore.sql
+rm -f restore.sql      # it is the whole register in plaintext
+```
+
+Once `0048` is applied to a database, its dumps restore with plain `pg_restore`
+and this step is unnecessary. It was found by the restore rehearsal — nothing
+else could have found it, and every archive taken before it has the defect.
+
 Then the logins, from the second archive. This one restores **`--data-only`**:
 a fresh Supabase project has already created `auth` and `storage` itself, owned
 by `supabase_auth_admin` and `supabase_storage_admin`, so replaying the archive's
