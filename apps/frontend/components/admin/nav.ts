@@ -2,6 +2,7 @@ import {
   ArrowLeftRight,
   BadgeDollarSign,
   Building2,
+  ClipboardCheck,
   ClipboardList,
   KeyRound,
   LayoutDashboard,
@@ -214,6 +215,35 @@ export const NAV_GROUPS: NavGroup[] = [
           'tenant',
         ],
       },
+      /*
+        The second pair of eyes on what the field filed.
+
+        Beside the register rather than under «النظام»: what it reviews is the
+        records themselves, and the person doing it moves between this screen
+        and «المواطنون» all day. Held to the roles `QualityController` lets
+        decide — an officer's own returned records and re-checks are on their
+        own «أرباحي والمسح الميداني» instead, so nobody is offered a screen
+        that would only tell them their work is being watched.
+      */
+      {
+        path: '/quality',
+        label: 'مراجعة الجودة',
+        labelEn: 'Quality Review',
+        icon: ClipboardCheck,
+        roles: ['SUPER_ADMIN', 'AUDITOR', 'ADMINISTRATIVE_OFFICER'],
+        keywords: [
+          'مراجعة',
+          'جودة',
+          'تكرار',
+          'تدقيق',
+          'اعتماد',
+          'إعادة',
+          'تحقق ميداني',
+          'quality',
+          'review',
+          'duplicates',
+        ],
+      },
       // A visit that didn't produce a citizen — nobody home, gate locked —
       // sits next to the registry it feeds rather than under land/map, since
       // what it records is "who to go back to", not a parcel's own facts.
@@ -309,7 +339,8 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'سجل النشاطات',
         labelEn: 'Audit Log',
         icon: ShieldCheck,
-        roles: ['SUPER_ADMIN'],
+        // The two roles `AuditController` serves — the auditor is who the log is for.
+        roles: ['SUPER_ADMIN', 'AUDITOR'],
         keywords: ['تدقيق', 'تاريخ', 'تغييرات', 'audit', 'logs'],
       },
       {

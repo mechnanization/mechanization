@@ -377,6 +377,10 @@ export interface QueuedBuilding {
      * later, with nobody at the screen to answer the question again.
      */
     acknowledgedDuplicates?: boolean;
+    /** Why the officer judged it a separate structure. See `CreateBuildingInput`. */
+    duplicateReason?: string;
+    /** Why no entrance pin was placed. See `CreateBuildingInput`. */
+    noPinReason?: string;
     /**
      * The matrix, carried with the shell — the registration form's path.
      *

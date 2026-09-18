@@ -24,6 +24,8 @@ import { FeesService } from './features/fees/fees.service';
 import { PaymentLedgerService } from './features/fees/payment-ledger.service';
 import { StaffService } from './features/staff/staff.service';
 import { ZonesService } from './features/zones/zones.service';
+import { DataQualityService } from './features/quality/data-quality.service';
+import { RecordReviewService } from './features/quality/record-review.service';
 
 /**
  * One service per bounded context — no command/query handler registration, no
@@ -63,6 +65,8 @@ import { ZonesService } from './features/zones/zones.service';
     CensusSyncService,
     DamageService,
     BackupService,
+    RecordReviewService,
+    DataQualityService,
     OtpCleanupJob,
     RecurringBillingJob,
   ],
@@ -88,6 +92,8 @@ import { ZonesService } from './features/zones/zones.service';
     CensusSyncService,
     DamageService,
     BackupService,
+    RecordReviewService,
+    DataQualityService,
     OtpCleanupJob,
     RecurringBillingJob,
     JwtModule,

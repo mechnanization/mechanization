@@ -1796,4 +1796,130 @@ describeIfDb('BuildingsService', () => {
     expect(listed.buildings.map((row) => row.parcelNumber)).toContain('LIFE-4');
     expect(listed.buildings.every((row) => row.lifecycleStatus === 'NOT_REALISED')).toBe(true);
   });
+
+  // ───────────────────────  Data-quality guards (2026-09-17)  ───────────────────────
+
+  describe('what the field errors of 2026-09-12 → 16 taught', () => {
+    it('lists the structures already on a parcel nearest first', async () => {
+      // Parcel 56: the duplicates stood 3.6 m and 4.1 m from the original.
+      await createBuilding(
+        { parcelNumber: 'DQ-NEAR', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1, name: 'بعيد', latitude: 33.2003, longitude: 35.26 },
+        actor(),
+      );
+      await createBuilding(
+        { parcelNumber: 'DQ-NEAR', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1, name: 'قريب', latitude: 33.20004, longitude: 35.26 },
+        actor(),
+      );
+
+      const refusal = await refusalFrom(() =>
+        buildings.create(
+          {
+            parcelNumber: 'DQ-NEAR',
+            structureType: 'RESIDENTIAL_BUILDING',
+            lifecycleStatus: 'IN_USE',
+            floorsCount: 1,
+            latitude: 33.2,
+            longitude: 35.26,
+          },
+          actor(),
+        ),
+      );
+      const candidates = (refusal.details as { candidates: Array<{ name: string; distanceMetres: number }> })
+        .candidates;
+      expect(candidates.map((row) => row.name)).toEqual(['قريب', 'بعيد']);
+      expect(candidates[0]!.distanceMetres).toBeLessThan(10);
+    });
+
+    it('asks before logging the same finding twice at one door, and lets a new finding through', async () => {
+      const { building } = await createBuilding(
+        { parcelNumber: 'DQ-VISIT', structureType: 'COMMERCIAL_CENTER', floorsCount: 1 },
+        actor(),
+      );
+      const { units } = await buildings.generateUnits(
+        building.id,
+        { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'SHOP' },
+        actor(),
+      );
+      const unitId = units[0]!.id;
+
+      await buildings.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER', notes: 'المحل مغلق' }, actor());
+
+      const refusal = await refusalFrom(() =>
+        buildings.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER', notes: 'مغلق في وقت الزيارة' }, actor()),
+      );
+      expect(refusal.details).toMatchObject({ repeatVisit: { unitId, outcome: 'VISITED_NO_ANSWER' } });
+
+      // An evening retry the officer confirms, and a different finding, both land.
+      await buildings.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER', acknowledgedRepeat: true }, actor());
+      const done = await buildings.logVisit({ unitId, outcome: 'COMPLETE' }, actor());
+      expect(done.visitCount).toBe(3);
+
+      // Somebody else's knock the same day is dispatch information, not a duplicate.
+      const colleague = { id: randomUUID(), role: 'FIELD_INSPECTOR' };
+      await db.user.create({
+        data: {
+          id: colleague.id,
+          kind: 'STAFF',
+          tenantSlug: 'census',
+          email: `colleague-${colleague.id}@census.gov.lb`,
+          firstName: 'زميل',
+          lastName: 'ميداني',
+          role: 'FIELD_INSPECTOR',
+        },
+      });
+      await expect(buildings.logVisit({ unitId, outcome: 'COMPLETE' }, colleague)).resolves.toBeDefined();
+    });
+
+    it('opens one follow-up case per door, and any number of notes', async () => {
+      const { buildingId, unitId } = await (async () => {
+        const { building } = await createBuilding(
+          { parcelNumber: 'DQ-CASE', structureType: 'COMMERCIAL_CENTER', floorsCount: 1 },
+          actor(),
+        );
+        const { units } = await buildings.generateUnits(
+          building.id,
+          { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'SHOP' },
+          actor(),
+        );
+        return { buildingId: building.id, unitId: units[0]!.id };
+      })();
+
+      await cases.create({ notes: 'مغلق', caseType: 'UNIT_UNREACHABLE', buildingId, unitId }, actor());
+      await expect(
+        cases.create({ notes: 'مغلق مرة ثانية', caseType: 'UNIT_UNREACHABLE', buildingId, unitId }, actor()),
+      ).rejects.toBeInstanceOf(ConflictError);
+
+      await cases.create({ notes: 'ملاحظة أولى', caseType: 'GENERAL_NOTE', buildingId, unitId }, actor());
+      await expect(
+        cases.create({ notes: 'ملاحظة ثانية', caseType: 'GENERAL_NOTE', buildingId, unitId }, actor()),
+      ).resolves.toBeDefined();
+    });
+
+    it('refuses a building save made from a screen loaded before a colleague saved it', async () => {
+      const { building } = await createBuilding(
+        { parcelNumber: 'DQ-STALE', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+        actor(),
+      );
+      const loadedAt = new Date(building.updatedAt).toISOString();
+
+      const saved = await buildings.update(
+        building.id,
+        { lifecycleStatus: 'DERELICT', expectedUpdatedAt: loadedAt },
+        actor(),
+      );
+
+      const stale = await refusalFrom(() =>
+        buildings.update(building.id, { lifecycleStatus: 'IN_USE', expectedUpdatedAt: loadedAt }, actor()),
+      );
+      expect(stale.details).toMatchObject({ staleEdit: { updatedAt: new Date(saved.updatedAt).toISOString() } });
+
+      await expect(
+        buildings.update(
+          building.id,
+          { lifecycleStatus: 'IN_USE', expectedUpdatedAt: new Date(saved.updatedAt).toISOString() },
+          actor(),
+        ),
+      ).resolves.toMatchObject({ lifecycleStatus: 'IN_USE' });
+    });
+  });
 });

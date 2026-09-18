@@ -5,7 +5,13 @@ import {
   unitBlueprintSchema,
   upsertOccupancySchema,
 } from '@mechanization/shared-schemas';
-import { partitionNumbersFor, rollupOf, sharedParcelsExcluding } from './buildings.service';
+import {
+  changedBuildingFields,
+  partitionNumbersFor,
+  rollupOf,
+  sharedParcelsExcluding,
+  sortByDistance,
+} from './buildings.service';
 import { damageSeverity, worstDamage } from './damage.service';
 
 /**
@@ -89,6 +95,86 @@ describe('الفرز — the أقسام a partition produced, and when they may 
 
   it('collapses repeats and drops blanks rather than refusing the save', () => {
     expect(partitionNumbersFor(true, ['12', ' 12 ', '', '  ', '13'])).toEqual(['12', '13']);
+  });
+});
+
+describe('BUILDING_UPDATED — the audit row names what changed', () => {
+  const building = {
+    name: 'بناية النور',
+    postedNumber: null,
+    isPartitioned: null,
+    partitionNumbers: [] as string[],
+    sharedParcelNumbers: [] as string[],
+    structureType: 'RESIDENTIAL_BUILDING',
+    lifecycleStatus: 'IN_USE',
+    latitude: 33.2,
+    longitude: 35.2,
+    floorsCount: 2,
+    basementsCount: 0,
+    notes: null,
+  };
+
+  it('records a فرز and its أقسام, which the old row never logged', () => {
+    const after = { ...building, isPartitioned: true, partitionNumbers: ['12', '13'] };
+    expect(changedBuildingFields(building, after)).toEqual({
+      before: { isPartitioned: null, partitionNumbers: [] },
+      after: { isPartitioned: true, partitionNumbers: ['12', '13'] },
+    });
+  });
+
+  it('records nothing for a save that changed nothing', () => {
+    expect(changedBuildingFields(building, { ...building, partitionNumbers: [] })).toEqual({
+      before: {},
+      after: {},
+    });
+  });
+
+  it('records a moved pin and shared parcels', () => {
+    const after = { ...building, latitude: 33.21, sharedParcelNumbers: ['25'] };
+    expect(Object.keys(changedBuildingFields(building, after).after)).toEqual([
+      'sharedParcelNumbers',
+      'latitude',
+    ]);
+  });
+});
+
+describe('the duplicate-building prompt — nearest structure first', () => {
+  /*
+    Parcel 56: the second and third records were created 3.6 m and 4.1 m from
+    the first, by officers shown a list ordered by code. The distance is the
+    fact that settles "is this the same building", so it leads.
+  */
+  it('puts the closest measured structure first', () => {
+    const rows = [
+      { code: 'Z-3-56-A', distanceMetres: 40 },
+      { code: 'Z-3-56-B', distanceMetres: 4 },
+      { code: 'Z-3-56-C', distanceMetres: 12 },
+    ];
+    expect(sortByDistance(rows).map((row) => row.code)).toEqual([
+      'Z-3-56-B',
+      'Z-3-56-C',
+      'Z-3-56-A',
+    ]);
+  });
+
+  it('keeps unmeasured structures after the measured ones, in the order given', () => {
+    // No pin on either side is "we cannot tell", never "zero metres".
+    const rows = [
+      { code: 'A', distanceMetres: null },
+      { code: 'B', distanceMetres: 30 },
+      { code: 'C', distanceMetres: null },
+      { code: 'D', distanceMetres: 0 },
+    ];
+    expect(sortByDistance(rows).map((row) => row.code)).toEqual(['D', 'B', 'A', 'C']);
+  });
+
+  it('leaves a parcel with no pins at all exactly as it was ordered', () => {
+    const rows = [
+      { code: 'own-A', distanceMetres: null },
+      { code: 'own-B', distanceMetres: null },
+      { code: 'shared-A', distanceMetres: null },
+    ];
+    expect(sortByDistance(rows)).toEqual(rows);
   });
 });
 

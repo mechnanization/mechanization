@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ExternalLink, UsersRound } from 'lucide-react';
+import { CloudOff, ExternalLink, UsersRound } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import { listCitizens, logApiError, type CitizenListItem } from '@/lib/api-client';
 import { Badge } from '@/components/ui/badge';
@@ -46,6 +46,7 @@ export function PossibleDuplicates({
   firstName,
   lastName,
   phone,
+  whatsapp,
   locale,
 }: {
   tenant: string;
@@ -53,12 +54,23 @@ export function PossibleDuplicates({
   firstName: unknown;
   lastName: unknown;
   phone: unknown;
+  /** The WhatsApp number, only when it is a different number from `phone`. */
+  whatsapp?: unknown;
   locale: string;
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
   const pathname = usePathname();
   const [matches, setMatches] = useState<CitizenListItem[]>([]);
+  /**
+   * The lookup could not reach the register.
+   *
+   * Kept apart from "no matches" because the two used to render as the same
+   * nothing. Field officers file households with no signal, and a panel that
+   * silently shows no duplicates when it could not look is a check that
+   * reports "clean" exactly when it did not run.
+   */
+  const [failed, setFailed] = useState(false);
 
   const name = useMemo(() => {
     const first = typeof firstName === 'string' ? firstName.trim() : '';
@@ -71,15 +83,22 @@ export function PossibleDuplicates({
     return raw.length >= 6 ? raw : '';
   }, [phone]);
 
+  // A WhatsApp number of its own is a second number somebody may already answer on.
+  const whatsappDigits = useMemo(() => {
+    const raw = typeof whatsapp === 'string' ? whatsapp.replace(/\D/g, '') : '';
+    return raw.length >= 6 && raw !== digits ? raw : '';
+  }, [whatsapp, digits]);
+
   useEffect(() => {
     if (!token || (!name && !digits)) {
       setMatches([]);
+      setFailed(false);
       return;
     }
 
     let cancelled = false;
     const timer = setTimeout(() => {
-      const searches = [name, digits]
+      const searches = [name, digits, whatsappDigits]
         .filter(Boolean)
         .map((search) => listCitizens(tenant, token, { search, limit: MAX_SHOWN }));
 
@@ -91,12 +110,16 @@ export function PossibleDuplicates({
             for (const item of result.items) byId.set(item.id, item);
           }
           setMatches([...byId.values()].slice(0, MAX_SHOWN));
+          setFailed(false);
         })
         .catch((caught) => {
-          // A hint that could not be fetched is a hint not shown — never a
-          // reason to stop somebody saving a household.
+          // Never a reason to stop somebody saving a household — but said, so
+          // an empty panel is not read as "nobody like this is on file".
           logApiError(caught);
-          if (!cancelled) setMatches([]);
+          if (!cancelled) {
+            setMatches([]);
+            setFailed(true);
+          }
         });
     }, DEBOUNCE_MS);
 
@@ -104,7 +127,28 @@ export function PossibleDuplicates({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [tenant, token, name, digits]);
+  }, [tenant, token, name, digits, whatsappDigits]);
+
+  if (failed) {
+    return (
+      <div
+        role="status"
+        className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 p-3 text-xs"
+      >
+        <CloudOff className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <p className="leading-relaxed">
+          <span className="font-semibold">
+            {en ? 'Could not check for an existing record.' : 'تعذّر التحقق من وجود ملف سابق.'}
+          </span>{' '}
+          <span className="text-muted-foreground">
+            {en
+              ? 'The register could not be reached. If this person may already be on file, search for them once you have a connection before saving a new record.'
+              : 'لم يُتح الوصول إلى السجل. إن كان هذا الشخص قد يكون مسجَّلاً فابحث عنه عند توفّر الاتصال قبل حفظ ملف جديد.'}
+          </span>
+        </p>
+      </div>
+    );
+  }
 
   if (matches.length === 0) return null;
 

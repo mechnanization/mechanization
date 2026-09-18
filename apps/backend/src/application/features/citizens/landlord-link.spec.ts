@@ -1,4 +1,4 @@
-import { LandlordLinkService, readFootprint } from './landlord-link.service';
+import { LandlordLinkService, landlordNameMatches, readFootprint } from './landlord-link.service';
 import { ConflictError, ValidationError } from '../../../domain/errors/domain-error';
 
 /**
@@ -187,6 +187,53 @@ describe('confirm — the guards that stop a wrong link', () => {
     */
     const { service, transaction } = harness({
       citizen: { id: OWNER, kind: 'CITIZEN', phone: '+96171999888', whatsapp: null, isActive: true },
+    });
+
+    await expect(
+      service.confirm({ propertyEntryId: ENTRY, citizenId: OWNER, actor }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it('accepts a card that names the citizen by name when the number is not theirs', async () => {
+    /*
+      بسام حبيب نسر, 2026-09-15: five cards named him with a number that was not
+      on his record, or with none. The queue now offers him by name, and the
+      clerk must be able to confirm exactly what they were shown.
+    */
+    const { service, transaction } = harness({
+      entry: tenantCard({ landlordName: 'سعيد حرب', landlordPhone: null }),
+      citizen: {
+        id: OWNER,
+        kind: 'CITIZEN',
+        phone: '+96171999888',
+        whatsapp: null,
+        isActive: true,
+        firstName: 'سعيد',
+        middleName: 'علي',
+        lastName: 'حرب',
+      },
+    });
+    transaction.mockRejectedValue(new Error('reached the write'));
+
+    await expect(
+      service.confirm({ propertyEntryId: ENTRY, citizenId: OWNER, actor }),
+    ).rejects.toThrow('reached the write');
+  });
+
+  it('still refuses when neither the number nor the name is the citizen’s', async () => {
+    const { service, transaction } = harness({
+      entry: tenantCard({ landlordName: 'مالك آخر', landlordPhone: '+96171000111' }),
+      citizen: {
+        id: OWNER,
+        kind: 'CITIZEN',
+        phone: '+96171999888',
+        whatsapp: null,
+        isActive: true,
+        firstName: 'سعيد',
+        middleName: 'علي',
+        lastName: 'حرب',
+      },
     });
 
     await expect(
@@ -676,5 +723,28 @@ describe('readFootprint — an unrecognised footprint reverts nothing', () => {
   it('rejects a version it does not know', () => {
     expect(readFootprint({ ...footprint, v: 2 }, OWNER)).toBeNull();
     expect(readFootprint(null, OWNER)).toBeNull();
+  });
+});
+
+describe('landlordNameMatches — the name rule the queue and confirm share', () => {
+  const bassam = { firstName: 'بسام', middleName: 'حبيب', lastName: 'نسر' };
+
+  it('matches first + family and first + father + family', () => {
+    expect(landlordNameMatches('بسام نسر', bassam)).toBe(true);
+    expect(landlordNameMatches('بسام حبيب نسر', bassam)).toBe(true);
+  });
+
+  it('ignores spacing and letter-form differences the search fold ignores', () => {
+    expect(landlordNameMatches('  بسام   نسر ', bassam)).toBe(true);
+    expect(
+      landlordNameMatches('عبدالحسن حدرج', { firstName: 'عبد الحسن', middleName: null, lastName: 'حدرج' }),
+    ).toBe(true);
+  });
+
+  it('does not match a first name alone, a different family, or nothing typed', () => {
+    expect(landlordNameMatches('بسام', bassam)).toBe(false);
+    expect(landlordNameMatches('بسام جفال', bassam)).toBe(false);
+    expect(landlordNameMatches('', bassam)).toBe(false);
+    expect(landlordNameMatches(null, bassam)).toBe(false);
   });
 });

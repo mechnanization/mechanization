@@ -1277,6 +1277,7 @@ export function CitizenForm({
         firstName={values.personal.firstName}
         lastName={values.personal.lastName}
         phone={values.contact.phone}
+        whatsapp={values.contact.whatsappSameAsPhone === false ? values.contact.whatsapp : undefined}
         locale={locale}
       />
     ) : null;

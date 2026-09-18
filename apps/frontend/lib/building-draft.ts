@@ -91,6 +91,13 @@ export interface BuildingDraft {
   gridSize: number;
   gridUnits: GridUnitDraft[];
   acknowledgedDuplicates: boolean;
+  /**
+   * The reason typed beside that tick. Optional so a draft written by the
+   * previous build still restores; it simply comes back empty.
+   */
+  duplicateReason?: string;
+  /** «تعذّر تثبيت المدخل» and its reason, as typed. */
+  noPinReason?: string;
 }
 
 interface StoredDraft extends BuildingDraft {

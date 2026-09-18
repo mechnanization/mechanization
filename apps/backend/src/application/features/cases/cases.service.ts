@@ -8,7 +8,21 @@ import type {
   CaseRepository,
 } from '../../../domain/interfaces/case-repository.interface';
 import type { UserRepository } from '../../../domain/interfaces/user-repository.interface';
-import { NotFoundError, ValidationError } from '../../common/exceptions';
+import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+
+/**
+ * The follow-up case types a unit can only usefully have one of at a time.
+ *
+ * A second open «تعذّر الوصول» on a shop that already has one is the same door
+ * twice on the dispatch list — production held exactly that pair on
+ * 2026-09-15, same officer, same day. `GENERAL_NOTE` and `OWNERSHIP_DISPUTE`
+ * are left alone: several notes on one unit are ordinary.
+ */
+const ONE_OPEN_PER_UNIT: ReadonlySet<string> = new Set([
+  'UNIT_UNREACHABLE',
+  'ACCESS_REFUSED',
+  'VACANT_UNCONFIRMED',
+]);
 
 @Injectable()
 export class CasesService {
@@ -52,6 +66,17 @@ export class CasesService {
   }
 
   async create(input: CreateCaseInput, actor: { id: string; role: string }): Promise<Case> {
+    if (input.unitId && input.caseType && ONE_OPEN_PER_UNIT.has(input.caseType)) {
+      const standing = (await this.cases.findAll({ unitId: input.unitId, caseType: input.caseType })).find(
+        (row) => row.status === 'OPEN' || row.status === 'SCHEDULED',
+      );
+      if (standing) {
+        throw new ConflictError('توجد حالة متابعة مفتوحة من النوع نفسه على هذه الوحدة — لم تُفتح حالة ثانية', {
+          existingCaseId: standing.id,
+        });
+      }
+    }
+
     const created = await this.cases.create({ ...input, createdById: actor.id });
 
     this.recordChange({

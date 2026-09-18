@@ -26,17 +26,47 @@ export function auditActionLabel(action: string, locale: string): string {
     CITIZEN_UPDATED: ['تعديل بيانات مواطن', 'Citizen updated'],
     CITIZEN_DELETED: ['حذف مواطن', 'Citizen deleted'],
     CITIZEN_DEACTIVATED: ['إلغاء تفعيل مواطن', 'Citizen deactivated'],
+    CITIZEN_REACTIVATED: ['إعادة تفعيل مواطن', 'Citizen reactivated'],
     HOUSEHOLD_LINKED: ['ربط أسرة', 'Household linked'],
     LANDLORD_LINKED: ['ربط مالك بمستأجر', 'Owner linked'],
+    LANDLORD_UNLINKED: ['إلغاء ربط مالك', 'Owner unlinked'],
+    LANDLORD_LINK_UPDATED: ['تحديث ربط مالك', 'Owner link updated'],
+    LANDLORD_MATCH_DISMISSED: ['رفض مطابقة مالك', 'Owner match dismissed'],
+    LANDLORD_MATCH_RESTORED: ['استعادة مطابقة مالك', 'Owner match restored'],
+    LANDLORD_TENANCY_ENDED: ['إنهاء إيجار لدى المالك', 'Tenancy ended on owner'],
     TENANCY_ENDED: ['إنهاء إيجار', 'Tenancy ended'],
+
+    // ── quality review ──
+    RECORD_APPROVED: ['اعتماد سجل', 'Record approved'],
+    RECORD_RETURNED: ['إعادة سجل للموظف', 'Record returned'],
+    RECORD_CORRECTED: ['تصحيح سجل مُعاد', 'Returned record corrected'],
+    QUALITY_CHECK_DONE: ['تحقق ميداني من سجل', 'Field re-check done'],
+    QUALITY_CHECK_ASSIGNED: ['إسناد تحقق ميداني', 'Re-check assigned'],
+    QUALITY_SAMPLE_DRAWN: ['سحب عيّنة للتحقق', 'Re-check sample drawn'],
+    QUALITY_FINDING_DISMISSED: ['ملاحظة جودة: ليست مشكلة', 'Finding dismissed'],
+    QUALITY_FINDING_RESTORED: ['إعادة فتح ملاحظة جودة', 'Finding restored'],
+
+    // ── hand corrections ──
+    DATA_CORRECTION: ['تصحيح يدوي للبيانات', 'Manual data correction'],
+    DATA_CORRECTION_DELETE: ['حذف يدوي ضمن تصحيح', 'Manual deletion (correction)'],
 
     // ── buildings and their units ──
     BUILDING_CREATED: ['إنشاء مبنى', 'Building created'],
     BUILDING_UPDATED: ['تعديل مبنى', 'Building updated'],
+    BUILDING_DELETED: ['حذف مبنى', 'Building deleted'],
+    BUILDING_UNITS_GENERATED: ['إنشاء وحدات المبنى', 'Units generated'],
     BUILDING_CODE_RECOMPUTED: ['إعادة احتساب رمز المبنى', 'Building code recomputed'],
+    UNIT_ADDED: ['إضافة وحدة', 'Unit added'],
     UNIT_UPDATED: ['تعديل وحدة', 'Unit updated'],
+    UNIT_DELETED: ['حذف وحدة', 'Unit deleted'],
     UNIT_VISIT_LOGGED: ['تسجيل زيارة وحدة', 'Unit visit logged'],
     UNIT_VACANCY_CONFIRMED: ['تأكيد شغور وحدة', 'Vacancy confirmed'],
+    UNIT_VACANCY_ENDED: ['إلغاء تأكيد الشغور', 'Vacancy lifted'],
+    CASE_CREATED: ['فتح حالة', 'Case opened'],
+    CASE_UPDATED: ['تعديل حالة', 'Case updated'],
+    CASE_RESOLVED: ['حل حالة', 'Case resolved'],
+    CASE_RESOLVED_WITH_CITIZEN: ['حل حالة بتسجيل مواطن', 'Case resolved with a citizen'],
+    CASE_DELETED: ['حذف حالة', 'Case deleted'],
     UNIT_STATUS_AFTER_TENANCY: ['حالة الوحدة بعد الإيجار', 'Unit status after tenancy'],
     OCCUPANCY_RECORDED: ['تسجيل إشغال', 'Occupancy recorded'],
     OCCUPANCY_ENDED: ['إنهاء إشغال', 'Occupancy ended'],
@@ -47,8 +77,20 @@ export function auditActionLabel(action: string, locale: string): string {
     ZONE_DELETED: ['حذف قطاع', 'Delete sector'],
     CADASTRE_IMPORT: ['استيراد خريطة', 'Cadastre import'],
 
+    // ── money ──
+    FEE_ISSUED: ['إصدار رسم', 'Fee issued'],
+    FEE_RECURRING_ISSUED: ['إصدار رسم دوري', 'Recurring fee issued'],
+    PAYMENT_DECLARED: ['تصريح بدفعة', 'Payment declared'],
+    PAYMENT_CONFIRMED: ['تأكيد دفعة', 'Payment confirmed'],
+    PAYMENT_REJECTED: ['رفض دفعة', 'Payment rejected'],
+    INSPECTOR_PAYOUT_RECORDED: ['تسجيل دفعة لمفتش', 'Inspector payout recorded'],
+
     // ── the portal itself ──
     LOGIN: ['تسجيل دخول', 'Login'],
+    REGISTER_RESTORED: ['استعادة سجل البلدية من نسخة احتياطية', 'Register restored from backup'],
+    STAFF_EMAIL_CHANGED: ['تغيير بريد موظف', 'Staff email changed'],
+    STAFF_PASSWORD_CHANGED: ['تغيير كلمة مرور موظف', 'Staff password changed'],
+    TOTP_DISABLED: ['إيقاف التحقق الثنائي', '2FA disabled'],
     DOCUMENT_VIEW: ['فتح مرفق', 'View document'],
     CSV_EXPORT: ['تصدير CSV', 'Export CSV'],
     SETTINGS_UPDATED: ['تعديل إعدادات البلدية', 'Settings updated'],
@@ -80,4 +122,26 @@ export const AUDIT_ENTITY = {
   building: 'Building',
   registration: 'Registration',
   zone: 'Zone',
+  case: 'Case',
 } as const;
+
+/** What kind of record an entry is about, in words — for the filter and the fallback target. */
+export function auditEntityLabel(entityType: string, locale: string): string {
+  const en = locale === 'en';
+  const map: Record<string, [ar: string, en: string]> = {
+    User: ['مواطن أو موظف', 'Citizen or staff'],
+    Building: ['مبنى', 'Building'],
+    Registration: ['طلب تسجيل', 'Registration'],
+    Case: ['حالة ميدانية', 'Field case'],
+    Zone: ['قطاع', 'Sector'],
+    Parcel: ['المسح العقاري', 'Cadastre'],
+    Document: ['مرفق', 'Document'],
+    FeeNotice: ['رسم', 'Fee notice'],
+    Payment: ['دفعة', 'Payment'],
+    SystemSettings: ['إعدادات البلدية', 'Settings'],
+    Tenant: ['سجل البلدية', 'Register'],
+    DataQuality: ['مراجعة الجودة', 'Quality review'],
+  };
+  const pair = map[entityType];
+  return pair ? (en ? pair[1] : pair[0]) : entityType;
+}
