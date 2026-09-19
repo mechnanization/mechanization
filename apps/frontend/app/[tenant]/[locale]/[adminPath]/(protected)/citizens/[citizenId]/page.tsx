@@ -9,7 +9,6 @@ import {
   Building2,
   Calendar,
   Clock3,
-  DoorClosed,
   DoorOpen,
   Droplet,
   ExternalLink,
@@ -33,7 +32,6 @@ import {
   Ruler,
   Signpost,
   StickyNote,
-  Sun,
   Tent,
   Trees,
   Unlink,
@@ -42,11 +40,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import {
-  getLabels,
-  isUnoccupied,
-  OWNER_BILLED_WHILE_ABSENT,
-} from '@mechanization/shared-schemas';
+import { getLabels, OWNER_BILLED_WHILE_ABSENT } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   getCitizenProfile,
@@ -98,25 +92,6 @@ const PROPERTY_ICON: Record<string, React.ComponentType<{ className?: string }>>
   TENT: Tent,
 };
 
-/**
- * Three tones, because حالة الوحدة answers three different money questions.
- *
- * `warning` for the statuses that stop the occupancy fee — شاغرة, قيد الإنجاز.
- * That is the only group `isUnoccupied` names, and it was the whole vocabulary
- * this page had.
- *
- * `soft-info` for «مسكن موسمي», which is deliberately in neither the unoccupied
- * list nor the occupied-by-others one (`OWNER_BILLED_WHILE_ABSENT`): nobody
- * lives there most of the year *and the owner is still billed*. Drawn as an
- * ordinary outline badge it read as "occupied, nothing to see", which is the
- * one reading that makes the bill look like a mistake.
- */
-function unitStatusTone(
-  status: string | null | undefined,
-): 'warning' | 'soft-info' | 'outline' {
-  if ((OWNER_BILLED_WHILE_ABSENT as readonly string[]).includes(status ?? '')) return 'soft-info';
-  return isUnoccupied(status) ? 'warning' : 'outline';
-}
 
 /**
  * Why a home nobody lives in is still charged to its owner.
@@ -368,6 +343,116 @@ function RetainedHouseholdSection({
  */
 function present(facts: FactItem[]): FactItem[] {
   return facts.filter((fact) => fact.value != null && fact.value !== '');
+}
+
+/**
+ * One row on a منشأة card: label at the inline start, value at the inline end,
+ * a hairline under it, the same padding as every other row on the card.
+ *
+ * Declared once rather than repeated, because "equal padding for all rows" is
+ * a property of the card that three copies of a class string do not keep.
+ */
+const UNIT_ROW =
+  'flex flex-wrap items-baseline justify-between gap-x-4 border-b border-border/50 py-2 last:border-0';
+
+/**
+ * A responsive grid of cards that stops before it becomes a scroll.
+ *
+ * One per منشأة means a household with twelve flats gets twelve cards, and
+ * twelve of anything below «الرسوم والمدفوعات» pushes «سجل الموظفين» off the
+ * end of a phone. Six is two full rows on a laptop and one on a wide screen —
+ * enough to see the shape of what they hold — and the rest are one tap away
+ * with the count on the button, so nobody has to wonder whether the list ended
+ * or was cut.
+ *
+ * Nothing is hidden from a browser's find-in-page that was not already: the
+ * cards beyond the cap are not rendered, the same as any paginated list. The
+ * count on the button is what tells a reader to open it.
+ */
+function CardGrid({
+  items,
+  locale,
+  initial = 6,
+}: {
+  items: React.ReactNode[];
+  locale: string;
+  initial?: number;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const en = locale === 'en';
+  const hidden = items.length - initial;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {showAll ? items : items.slice(0, initial)}
+      </div>
+      {hidden > 0 ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 w-full sm:w-auto"
+          onClick={() => setShowAll((open) => !open)}
+        >
+          {showAll
+            ? en
+              ? 'Show fewer'
+              : 'عرض أقل'
+            : en
+              ? `Show all ${items.length}`
+              : `عرض الكل (${items.length})`}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+type UnitCardRow = { label: string; value: React.ReactNode; hint?: string };
+
+/**
+ * First mention of a label wins, and an empty one never counts as a mention.
+ *
+ * The unit's facts are listed before the property's, so where both describe the
+ * same thing — حالة الوحدة, مساحة الوحدة, الحقوق المشتركة all exist at both
+ * levels — the flat's own answer is the one that survives. That is the right
+ * way round: the card is about the flat, and the entry's copy is what a filing
+ * said about whichever unit it happened to be opened from.
+ */
+function dedupeRows(rows: UnitCardRow[]): UnitCardRow[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    if (row.value == null || row.value === '' || seen.has(row.label)) return false;
+    seen.add(row.label);
+    return true;
+  });
+}
+
+/**
+ * One property entry, split into the cards it should be drawn as — one per منشأة.
+ *
+ * A مبنى with two flats in it is two cards, not one card holding a list: two
+ * flats are two things an officer surveys, bills and disputes separately, and
+ * the register's own unit of account is the unit, not the filing that happened
+ * to cover both.
+ *
+ * Flats still held come first and a flat given up follows, the order the units
+ * list used. An entry with no units at all — a plot of أرض, a منزل recorded
+ * without a breakdown — yields a single card about the entry itself, because
+ * there the entry *is* the منشأة.
+ *
+ * `siblings` is what the rest of the entry's units number, which the card needs
+ * in order to warn that «إنهاء الإيجار» ends all of them at once.
+ */
+function unitCards(
+  property: CitizenProfileProperty,
+): Array<{ unit: CitizenProfileUnit | null; siblings: number }> {
+  const ordered = [
+    ...property.units.filter((unit) => !unit.endedAt),
+    ...property.units.filter((unit) => unit.endedAt),
+  ];
+  if (ordered.length === 0) return [{ unit: null, siblings: 0 }];
+  return ordered.map((unit) => ({ unit, siblings: ordered.length - 1 }));
 }
 
 /**
@@ -717,32 +802,19 @@ export default function CitizenProfilePage({
       <header className="space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
           <div className="min-w-0 space-y-2">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               {citizen.fullName}
             </h1>
 
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted-foreground">
-              {/*
-                The رقم مرجعي, promoted out of the facts list and into the
-                headline. It is what a citizen reads down the phone and what a
-                clerk types to find them again, and it used to be three clicks
-                inside a closed section.
-              */}
-              <span className="inline-flex items-center gap-1.5">
-                <Hash className="size-3.5 shrink-0" aria-hidden />
-                <bdi dir="ltr" className="font-mono font-medium text-foreground">
-                  {citizen.referenceNumber}
-                </bdi>
-              </span>
-
-              {citizen.phone ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <Phone className="size-3.5 shrink-0" aria-hidden />
-                  <PhoneLink phone={citizen.phone} />
-                </span>
-              ) : null}
-            </div>
-
+            {/*
+              الرقم المرجعي and الهاتف used to repeat here, under the name. They
+              were promoted into the headline back when the facts lived in a
+              folded section three clicks away — which they no longer do:
+              «بيانات التسجيل» states the reference and «التواصل» states the
+              phone, both labelled, both on the first screen. Two copies of the
+              same number a hand's width apart is not emphasis, it is a reader
+              checking whether they are the same number.
+            */}
             <div className="flex flex-wrap items-center gap-1.5">
               {isNonResident ? (
                 <Badge variant="soft-info">
@@ -761,31 +833,18 @@ export default function CitizenProfilePage({
                 <Badge variant="soft-warning">{en ? 'Deactivated record' : 'سجل معطّل'}</Badge>
               ) : null}
               {/*
-                Household badges, and only on a household file. On a
-                non-resident record these are retained values the form no longer
-                asks for — they belong under «بيانات محفوظة», labelled, not in
-                the headline where they read as this person's current standing.
+                الجنس, فئة الدم and صفة الإقامة used to sit here too. They are
+                facts about the person, and «الهوية» — now directly below the
+                headline rather than off in a rail — states all three with their
+                own labels. A pill reading «ذكر» beside a pill reading «من سكان
+                الضيعة» makes the reader work out what each one is answering; the
+                card says «الجنس: ذكر» and asks nothing of them.
+
+                What stays is the two that are not facts but standing: a record
+                that is deactivated, and an owner who does not live here. Both
+                change what a clerk should do with everything under them, which
+                is what earns a place in the headline.
               */}
-              {!isNonResident && citizen.gender ? (
-                <Badge variant="outline">
-                  {labels.gender[citizen.gender as never] ?? citizen.gender}
-                </Badge>
-              ) : null}
-              {!isNonResident && citizen.bloodType ? (
-                <Badge
-                  variant="outline"
-                  className="border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-400"
-                >
-                  <Droplet className="me-1 size-3" />
-                  {labels.bloodType?.[citizen.bloodType as never] ?? citizen.bloodType}
-                </Badge>
-              ) : null}
-              {!isNonResident && citizen.residentStatus ? (
-                <Badge variant="outline">
-                  {labels.residentStatus[citizen.residentStatus as never] ??
-                    citizen.residentStatus}
-                </Badge>
-              ) : null}
             </div>
           </div>
 
@@ -797,43 +856,54 @@ export default function CitizenProfilePage({
               </Link>
             ) : null}
 
+            {/*
+              One button carries a word, the rest carry an icon.
+
+              All three used to be full-width labelled buttons, one of them
+              emerald, so the header offered three things of equal apparent
+              weight and spent two accent colours doing it. «تعديل البيانات» is
+              the one an officer came here to press; sending a رقم مرجعي over
+              واتساب and jumping to the map are things they occasionally reach
+              for. Demoting those two to icons says which is which without
+              removing either, and the name each one has kept in `title` is also
+              read out by a screen reader through `sr-only`.
+            */}
             {waHref ? (
               <a
                 href={waHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={buttonVariants({
-                  variant: 'outline',
-                  className:
-                    'border-emerald-600/30 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/70',
-                })}
+                className={buttonVariants({ variant: 'outline', size: 'icon' })}
                 title={
                   locale === 'en'
                     ? 'Send reference number and registration confirmation via WhatsApp'
                     : 'إرسال الرقم المرجعي وتأكيد التسجيل عبر واتساب'
                 }
               >
-                <MessageCircle
-                  className="size-4 text-emerald-600 dark:text-emerald-400"
-                  aria-hidden
-                />
-                <span>{locale === 'en' ? 'Send via WhatsApp' : 'إرسال عبر واتساب'}</span>
+                <MessageCircle className="size-4" aria-hidden />
+                <span className="sr-only">
+                  {locale === 'en' ? 'Send via WhatsApp' : 'إرسال عبر واتساب'}
+                </span>
               </a>
             ) : null}
 
             <Link
               href={locatedProperty ? mapHref(base, locatedProperty) : `${base}/map`}
-              className={buttonVariants({ variant: 'outline' })}
+              className={buttonVariants({ variant: 'outline', size: 'icon' })}
               title={
                 locatedProperty
-                  ? undefined
+                  ? locale === 'en'
+                    ? 'View on map'
+                    : 'عرض على الخريطة'
                   : locale === 'en'
                     ? 'No property location has been mapped for this citizen yet'
                     : 'لم يتم تحديد موقع أي عقار لهذا المواطن بعد'
               }
             >
               <MapPin className="size-4" aria-hidden />
-              {locale === 'en' ? 'View on Map' : 'عرض على الخريطة'}
+              <span className="sr-only">
+                {locale === 'en' ? 'View on Map' : 'عرض على الخريطة'}
+              </span>
             </Link>
           </div>
         </div>
@@ -848,17 +918,18 @@ export default function CitizenProfilePage({
           is nothing owed — so the page never says «لا مستحقات» in the colour of
           a debt.
         */}
-        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {/*
+          One strip, divided — not three floating cards. Three bordered boxes
+          carrying three short values read as three separate things to deal
+          with; ruled cells of one panel read as one summary line, which is what
+          they are. `border-s` and not `border-l`, so the rules fall between the
+          cells in Arabic as well as English.
+        */}
+        <dl className="grid grid-cols-1 overflow-hidden rounded-lg border bg-card sm:grid-cols-3 [&>*+*]:border-t sm:[&>*+*]:border-s sm:[&>*+*]:border-t-0">
           <StatTile
             icon={Wallet}
             label={en ? 'Outstanding' : 'الرصيد المستحق'}
-            tone={
-              citizen.fees.outstandingTotal === 0
-                ? 'good'
-                : citizen.fees.overdueTotal > 0
-                  ? 'bad'
-                  : 'plain'
-            }
+            tone={citizen.fees.overdueTotal > 0 ? 'bad' : 'plain'}
             value={
               citizen.fees.outstandingTotal > 0 ? (
                 <Money amount={citizen.fees.outstandingTotal} />
@@ -885,14 +956,27 @@ export default function CitizenProfilePage({
             label={en ? 'Applications' : 'الطلبات'}
             value={citizen.registrations.length}
             hint={formatDate(citizen.registeredAt)}
-            className="col-span-2 sm:col-span-1"
           />
         </dl>
       </header>
 
-      <div className="grid gap-5 lg:grid-cols-12">
-        {/* ── Rail: who this is ───────────────────────────────────── */}
-        <aside className="space-y-4 lg:col-span-4 lg:sticky lg:top-6 lg:self-start">
+      <div className="space-y-5">
+        {/*
+          ── Who this is ──
+
+          The identity cards run across the top, full width, instead of down a
+          sticky rail beside the record. A rail made them a sidebar — context you
+          read past on the way to the file — when they answer «مين هيدا؟», which
+          is the first question anyone opening this page has and the one to
+          settle before the page starts listing what the person owns and owes.
+
+          The cards stretch to one height, which is grid's default and why there
+          is no `items-start` here. «الهوية» carries nine facts and «التواصل»
+          two, so the short ones do carry empty space — but a row whose cards all
+          end on the same line reads as one band of identity, and four different
+          bottom edges read as four things that happened to land near each other.
+        */}
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <InfoCard icon={IdCard} title={en ? 'Identity' : 'الهوية'}>
             <FactList facts={identityFacts} />
           </InfoCard>
@@ -918,12 +1002,18 @@ export default function CitizenProfilePage({
           <InfoCard icon={Signpost} title={en ? 'Registration' : 'بيانات التسجيل'}>
             <FactList facts={registrationFacts} />
           </InfoCard>
+        </section>
 
-          <RetainedHouseholdSection citizen={citizen} locale={locale} />
-        </aside>
+        {/*
+          Outside the grid: «بيانات محفوظة» is a full-width note about the cards
+          above it — values a converted record still holds that the form no
+          longer asks for — and not a fifth card standing among them as though
+          it were current.
+        */}
+        <RetainedHouseholdSection citizen={citizen} locale={locale} />
 
         {/* ── Main: what the record says ──────────────────────────── */}
-        <div className="space-y-5 lg:col-span-8">
+        <div className="space-y-5">
           <FeesPanel
             citizen={citizen}
             payments={citizen.payments}
@@ -939,15 +1029,31 @@ export default function CitizenProfilePage({
             onSettled={() => void reload()}
           />
 
-          <section className="space-y-3">
-            <SectionHeading
-              icon={Building2}
-              title={locale === 'en' ? 'Properties' : 'العقارات'}
-              count={propertyCount}
-            />
+          {/*
+            «العقارات» folds like everything else on the page now.
 
+            It was the one long section that could not be put away, so a file
+            with four properties buried «مالك لدى مستأجرين» and «سجل العمليات»
+            under a page of unit tables. Open by default, because it is what
+            most visits are actually about — the fold is there for the visit
+            that is not.
+
+            The count survives the fold, which is the only thing that makes a
+            closed section worth closing.
+          */}
+          <CollapsibleSection
+            id="properties"
+            icon={Building2}
+            title={locale === 'en' ? 'Properties' : 'العقارات'}
+            summary={
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                {propertyCount}
+              </span>
+            }
+          >
+            <div className="space-y-3">
             {citizen.registrations.length === 0 ? (
-              <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+              <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
                 {locale === 'en'
                   ? 'No registered properties for this citizen.'
                   : 'لا توجد عقارات مسجّلة لهذا المواطن.'}
@@ -1028,20 +1134,36 @@ export default function CitizenProfilePage({
                     </div>
                   ) : null}
 
-                  {registration.properties
-                    .filter((property) => !property.endedAt)
-                    .map((property) => (
-                      <PropertyCard
-                        key={property.id}
-                        property={property}
-                        base={base}
-                        locale={locale}
-                        tenant={tenant}
-                        token={token}
-                        canEdit={canEdit}
-                        onChanged={() => void reload()}
-                      />
-                    ))}
+                  {/*
+                    Tiles in a grid, not a stack of full-width bars.
+
+                    A file with four properties used to be four rectangles you
+                    scrolled past one at a time, each one as tall as everything
+                    it could possibly say. As tiles they are comparable at a
+                    glance — which is how somebody actually reads a list of
+                    properties: they are looking for one of them.
+                  */}
+                  <CardGrid
+                    locale={locale}
+                    items={registration.properties
+                      .filter((property) => !property.endedAt)
+                      .flatMap((property) =>
+                        unitCards(property).map(({ unit, siblings }) => (
+                          <PropertyCard
+                            key={unit ? `${property.id}:${unit.id}` : property.id}
+                            property={property}
+                            unit={unit}
+                            siblingUnits={siblings}
+                            base={base}
+                            locale={locale}
+                            tenant={tenant}
+                            token={token}
+                            canEdit={canEdit}
+                            onChanged={() => void reload()}
+                          />
+                        )),
+                      )}
+                  />
 
                   {registration.properties.every((property) => property.endedAt) ? (
                     <p className="text-sm text-muted-foreground">
@@ -1066,20 +1188,28 @@ export default function CitizenProfilePage({
                           ? `Ended tenancies (${registration.properties.filter((property) => property.endedAt).length})`
                           : `إيجارات منتهية (${registration.properties.filter((property) => property.endedAt).length})`}
                       </SubHeading>
-                      {registration.properties
-                        .filter((property) => property.endedAt)
-                        .map((property) => (
-                          <PropertyCard
-                            key={property.id}
-                            property={property}
-                            base={base}
-                            locale={locale}
-                            tenant={tenant}
-                            token={token}
-                            canEdit={canEdit}
-                            onChanged={() => void reload()}
-                          />
-                        ))}
+                      {/* Same grid as the current ones, so the two lists read alike. */}
+                      <CardGrid
+                        locale={locale}
+                        items={registration.properties
+                          .filter((property) => property.endedAt)
+                          .flatMap((property) =>
+                            unitCards(property).map(({ unit, siblings }) => (
+                              <PropertyCard
+                                key={unit ? `${property.id}:${unit.id}` : property.id}
+                                property={property}
+                                unit={unit}
+                                siblingUnits={siblings}
+                                base={base}
+                                locale={locale}
+                                tenant={tenant}
+                                token={token}
+                                canEdit={canEdit}
+                                onChanged={() => void reload()}
+                              />
+                            )),
+                          )}
+                      />
                     </div>
                   ) : null}
 
@@ -1131,7 +1261,8 @@ export default function CitizenProfilePage({
                 </CardContent>
               </Card>
             ))}
-          </section>
+            </div>
+          </CollapsibleSection>
 
           {citizen.landlordOf && citizen.landlordOf.length > 0 ? (
             <LandlordOfSection
@@ -1183,19 +1314,25 @@ function StatTile({
   label: string;
   value: React.ReactNode;
   hint?: string;
-  tone?: 'plain' | 'good' | 'bad';
+  tone?: 'plain' | 'bad';
   className?: string;
 }) {
   return (
-    <div className={cn('rounded-xl border bg-card p-3.5 shadow-sm', className)}>
+    <div className={cn('px-4 py-3', className)}>
       <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Icon className="size-3.5 shrink-0" aria-hidden />
         {label}
       </dt>
       <dd
         className={cn(
-          'mt-1.5 text-lg font-bold tracking-tight',
-          tone === 'good' && 'text-emerald-600 dark:text-emerald-400',
+          'mt-1 text-base font-semibold tracking-tight',
+          /*
+            Only a debt gets a colour. «لا مستحقات» used to be emerald, which
+            made the calmest fact on the file the loudest thing on the screen —
+            and a page where nothing-owed shouts has no louder register left for
+            the file where something is. Nothing due now reads as ordinary text,
+            which is what it is.
+          */
           tone === 'bad' && 'text-destructive',
         )}
       >
@@ -1218,37 +1355,51 @@ function InfoCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl border bg-card shadow-sm">
-      <h2 className="flex items-center gap-2 border-b px-4 py-3 text-sm font-semibold">
-        <Icon className="size-4 shrink-0 text-primary" aria-hidden />
+    <section className="rounded-lg border bg-card">
+      {/*
+        The heading is a caption, not a title. It names the card for someone
+        scanning the rail and then gets out of the way of the facts, which are
+        what the rail is read for — so it is muted and small rather than another
+        line of body-weight text competing with the values under it.
+      */}
+      <h2 className="flex items-center gap-2 border-b px-4 py-2.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <Icon className="size-3.5 shrink-0" aria-hidden />
         {title}
       </h2>
-      <div className="p-4">{children}</div>
+      <div className="px-4 py-1">{children}</div>
     </section>
   );
 }
 
-/** The heading a main-column section wears, so an open section still announces
- *  itself as loudly as a closed one used to. */
-function SectionHeading({
-  icon: Icon,
-  title,
-  count,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  count?: number;
-}) {
+/**
+ * The rail's facts, one per line, label and value sharing it.
+ *
+ * `Fact` stacks the value under its caption, which is right in the property
+ * cards it was built for — a three-column grid where a long Arabic label and a
+ * Latin document number would otherwise fight over one baseline. In a narrow
+ * rail that same stacking turns five facts into ten lines, each with its own
+ * icon, and the card stops reading as a record and starts reading as a form.
+ *
+ * So the rail gets rows instead: caption at the inline start, value at the
+ * inline end, a hairline between. No icons — a person glyph repeated beside
+ * الاسم, اسم الأم and الجنس distinguishes nothing, and three of them in a column
+ * is just texture. The card's own heading carries the only icon that says
+ * anything.
+ */
+function FactRow({ label, value, ltr, hint }: FactItem) {
   return (
-    <h2 className="flex items-center gap-2 text-base font-semibold">
-      <Icon className="size-4 shrink-0 text-primary" aria-hidden />
-      {title}
-      {count !== undefined ? (
-        <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-          {count}
-        </span>
-      ) : null}
-    </h2>
+    <div className="flex items-baseline justify-between gap-4 border-b border-border/50 py-2.5 last:border-0">
+      <dt className="shrink-0 text-xs text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 break-words text-end text-sm font-medium">
+        {/* `<bdi>`, not `dir` on the block — see `Fact` for why. */}
+        {ltr ? <bdi dir="ltr">{value}</bdi> : value}
+        {hint ? (
+          <span className="mt-0.5 block text-[11px] font-normal leading-snug text-muted-foreground">
+            {hint}
+          </span>
+        ) : null}
+      </dd>
+    </div>
   );
 }
 
@@ -1257,9 +1408,9 @@ function FactList({ facts }: { facts: FactItem[] }) {
   const shown = present(facts);
   if (shown.length === 0) return null;
   return (
-    <dl className="space-y-3.5">
+    <dl>
       {shown.map((fact) => (
-        <Fact key={fact.label} {...fact} />
+        <FactRow key={fact.label} {...fact} />
       ))}
     </dl>
   );
@@ -1300,84 +1451,119 @@ function LandlordOfSection({
   return (
     <CollapsibleSection
       id="landlord-of"
-      title={en ? 'Owner to tenants' : 'مالك لدى مستأجرين'}
+      /*
+        «مالك لدى مستأجرين» said what the row was filed as, not what the section
+        is for. This lists the people renting from this citizen — the owner's
+        half of every confirmed link — so it is named after them. Both capacities
+        appear here, a مستأجر with a lease and a شاغل بتسامح without one, and the
+        badge on each card tells them apart.
+      */
+      title={en ? "Tenants in this owner's properties" : 'المستأجرون في عقارات هذا المالك'}
       icon={UserCheck}
       defaultOpen={false}
       summary={
         <span className="text-muted-foreground">
-          {current} {en ? 'linked tenancy card(s)' : 'بطاقة مستأجر مرتبطة'}
-          {past > 0 ? (en ? ` · ${past} ended` : ` · ${past} منتهية`) : null}
+          {current} {en ? 'current' : 'قائم'}
+          {past > 0 ? (en ? ` · ${past} ended` : ` · ${past} منتهٍ`) : null}
         </span>
       }
     >
-      <ul className="divide-y rounded-lg border">
-        {ordered.map((card) => (
-          <li key={card.propertyEntryId} className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
-            <div className="min-w-0 flex-1 space-y-1">
-              <p className="flex flex-wrap items-center gap-2 text-sm">
-                {card.endedAt ? (
-                  <Badge variant="soft-muted">
-                    {en ? 'Ended ' : 'انتهى في '}
-                    {formatDate(card.endedAt)}
-                  </Badge>
-                ) : null}
-                <Badge variant="soft-muted">
-                  {card.occupancyType === 'FREE_OCCUPANT'
-                    ? en
-                      ? 'Free occupant'
-                      : 'شاغل بتسامح'
-                    : en
-                      ? 'Tenant'
-                      : 'مستأجر'}
-                </Badge>
+      {/*
+        Boxes and rows, the same shape a منشأة card wears above. One tenancy is
+        one thing with a handful of labelled facts about it, which is what that
+        card already is — two layouts for the same kind of content would be two
+        things to keep in step and two things for a reader to learn.
+      */}
+      <CardGrid
+        locale={locale}
+        items={ordered.map((card) => {
+          const rows: Array<{ label: string; value: React.ReactNode }> = [
+            {
+              label: en ? 'Capacity' : 'صفة الإشغال',
+              value:
+                card.occupancyType === 'FREE_OCCUPANT'
+                  ? en
+                    ? 'Free occupant'
+                    : 'شاغل بتسامح'
+                  : en
+                    ? 'Tenant'
+                    : 'مستأجر',
+            },
+            {
+              label: en ? 'Reference' : 'الرقم المرجعي',
+              value: card.tenant.referenceNumber ? (
+                <bdi dir="ltr" className="font-mono">
+                  {card.tenant.referenceNumber}
+                </bdi>
+              ) : null,
+            },
+            { label: en ? 'Building' : 'اسم المبنى', value: card.buildingName ?? <span /> },
+            { label: en ? 'Parcel' : 'رقم العقار', value: card.propertyNumber },
+            {
+              label: en ? 'Units' : 'الوحدات',
+              value:
+                card.unitCodes.length > 0 ? (
+                  <bdi dir="ltr" className="font-mono">
+                    {card.unitCodes.join('، ')}
+                  </bdi>
+                ) : null,
+            },
+            {
+              label: en ? 'Linked on' : 'تاريخ الربط',
+              value: card.linkedAt ? formatDate(card.linkedAt) : null,
+            },
+            {
+              label: en ? 'Ended on' : 'انتهى في',
+              value: card.endedAt ? formatDate(card.endedAt) : null,
+            },
+          ].filter((row) => row.value != null && row.value !== '');
+
+          return (
+            <div
+              key={card.propertyEntryId}
+              className={cn(
+                'flex h-full flex-col overflow-hidden rounded-lg border',
+                card.endedAt ? 'border-dashed bg-background' : 'bg-card',
+              )}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 p-4">
                 <Link
                   href={`${base}/citizens/${card.tenant.id}`}
-                  className="font-semibold text-primary underline-offset-4 hover:underline"
+                  className="min-w-0 break-words font-semibold text-primary underline-offset-4 hover:underline"
                 >
                   {card.tenant.name}
                 </Link>
-                {card.tenant.referenceNumber ? (
-                  <bdi dir="ltr" className="font-mono text-xs text-muted-foreground">
-                    {card.tenant.referenceNumber}
-                  </bdi>
+                {card.endedAt ? (
+                  <Badge variant="soft-muted">{en ? 'Ended' : 'منتهٍ'}</Badge>
                 ) : null}
-              </p>
-              <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <span>
-                  {[
-                    card.buildingName,
-                    card.propertyNumber ? (en ? `Parcel ${card.propertyNumber}` : `العقار ${card.propertyNumber}`) : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ') || (en ? 'No building named' : 'لا اسم للمبنى')}
-                </span>
-                {card.unitCodes.length > 0 ? (
-                  <bdi dir="ltr" className="font-mono">
-                    {card.unitCodes.join(', ')}
-                  </bdi>
-                ) : null}
-                {card.linkedAt ? (
-                  <span>
-                    {en ? 'Linked ' : 'رُبط في '}
-                    {formatDate(card.linkedAt)}
-                  </span>
-                ) : null}
-              </p>
+              </div>
+
+              <dl className="px-4 text-sm">
+                {rows.map((row) => (
+                  <div key={row.label} className={UNIT_ROW}>
+                    <dt className="text-muted-foreground">{row.label}:</dt>
+                    <dd className="min-w-0 break-words text-end font-medium">{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
+
+              {canEdit && token && !card.endedAt ? (
+                <div className="mt-auto p-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 w-full"
+                    onClick={() => setUnlinking(card.propertyEntryId)}
+                  >
+                    <Unlink className="size-4" aria-hidden />
+                    {en ? 'Undo link' : 'إلغاء الربط'}
+                  </Button>
+                </div>
+              ) : null}
             </div>
-            {canEdit && token && !card.endedAt ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9"
-                onClick={() => setUnlinking(card.propertyEntryId)}
-              >
-                <Unlink className="size-4" aria-hidden />
-                {en ? 'Undo link' : 'إلغاء الربط'}
-              </Button>
-            ) : null}
-          </li>
-        ))}
-      </ul>
+          );
+        })}
+      />
 
       {canEdit && token && unlinking ? (
         <LandlordUnlinkDialog
@@ -1723,6 +1909,8 @@ function Total({
 
 function PropertyCard({
   property,
+  unit,
+  siblingUnits = 0,
   base,
   locale = 'ar',
   tenant,
@@ -1731,6 +1919,24 @@ function PropertyCard({
   onChanged,
 }: {
   property: CitizenProfileProperty;
+  /**
+   * The one منشأة this card is about — a flat, a shop, a مستودع.
+   *
+   * A card is a *unit*, not a property entry: a مبنى with two flats in it is
+   * two cards, because two flats are two things an officer surveys, bills and
+   * argues about separately, and folding them into one card meant the second
+   * one lived in a list inside a fold inside a tile.
+   *
+   * `null` where the entry has no units at all — a plot of أرض, or a منزل
+   * recorded without a unit breakdown. Then the entry itself is the منشأة and
+   * the card is about the property, as it always was.
+   */
+  unit?: CitizenProfileUnit | null;
+  /**
+   * How many other units share this card's property entry. Drives the warning
+   * on «إنهاء الإيجار», which ends the entry and therefore all of them.
+   */
+  siblingUnits?: number;
   base: string;
   locale?: string;
   tenant: string;
@@ -1787,7 +1993,21 @@ function PropertyCard({
     {
       icon: Building2,
       label: locale === 'en' ? 'Building Name' : 'اسم المبنى',
-      value: property.buildingName,
+      /*
+        Always on the card, blank where the building has no name.
+
+        Every other field here disappears when it is null, which is right for a
+        fact nobody claimed. A building's name is different: officers read down
+        the same row on card after card, and a row that is simply missing from
+        this one makes them count rows to be sure they are not misreading
+        another field as the name. An empty value says «nobody wrote one» in the
+        place they are already looking.
+
+        A `<span />` rather than `''` or `null` because `present` and
+        `dedupeRows` both drop those — an element is neither, and renders
+        nothing.
+      */
+      value: property.buildingName ?? <span />,
     },
     /*
       The censused structure this card is attached to.
@@ -1998,10 +2218,63 @@ function PropertyCard({
     },
   ]);
 
+  /*
+    The three facts that tell one property from another at a glance.
+
+    Not the whole `details` list, which runs to ten rows on a full card: a tile
+    that reprints everything is not a tile, it is the old card made narrow. الحي
+    and اسم المبنى are how somebody says which property they mean out loud, and
+    the unit count is the one number that changes what the card *is* — a منزل
+    with no flats and a مبنى with twelve read very differently. Everything else
+    is a click away and still on the same screen.
+  */
+  /*
+    Every fact about this منشأة, in one list.
+
+    Three lists — a glance, the property's facts, the unit's — meant three
+    paddings, three separator styles and, worse, the same fact twice: الطابق and
+    مساحة الوحدة were printed once as a glance row and again as a unit row, a
+    hand's width apart. One list, deduplicated by label with the first mention
+    winning, cannot do that.
+
+    Order is identity first (what kind of thing, held how), then the منشأة
+    itself, then the عقار it sits in — narrowing outward, so the unit's own
+    facts are never below the building's.
+  */
+  const rows = dedupeRows([
+    {
+      label: locale === 'en' ? 'Property type' : 'نوع العقار',
+      value: labels.propertyType[property.propertyType as never] ?? property.propertyType,
+    },
+    {
+      label: locale === 'en' ? 'Occupancy' : 'صفة الإشغال',
+      value: labels.occupancyType[property.occupancyType as never] ?? property.occupancyType,
+    },
+    ...(unit ? unitFactRows(unit, locale, ended || Boolean(unit.endedAt)) : []),
+    ...details.map((fact) => ({
+      label: fact.label,
+      value: fact.ltr ? <bdi dir="ltr">{fact.value}</bdi> : fact.value,
+      hint: fact.hint,
+    })),
+  ]);
+
   return (
-    <div className={cn('divide-y rounded-lg border', ended ? 'border-dashed bg-background' : 'bg-muted/20')}>
-      <div className="flex flex-wrap items-start justify-between gap-3 p-4">
-        <div className="flex min-w-0 items-start gap-3">
+    <div
+      className={cn(
+        // `h-full` so a tile stretches to its row — see the grid that holds these.
+        'flex h-full flex-col overflow-hidden rounded-lg border',
+        ended ? 'border-dashed bg-background' : 'bg-card',
+      )}
+    >
+      {/*
+        `items-center`, not `items-start`: the icon square, the unit's name and
+        «عرض على الخريطة» are three parts of one line and were sitting on three
+        different baselines — the icon is 40px tall, the name is one line of
+        text and the link is another, so top-aligning them stepped them down the
+        header. Centred, they read as the single row they are.
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 p-4">
+        <div className="flex min-w-0 items-center gap-3">
           <span
             aria-hidden
             className={cn(
@@ -2017,8 +2290,28 @@ function PropertyCard({
               than rendering "العقار رقم " with nothing after it — which reads
               as a bug and tells a collector nothing about why.
             */}
+            {/*
+              A unit card is named by its unit — «شقة ٠٢٠١» — because that is
+              what somebody standing at the door is holding. The عقار it belongs
+              to is context, and context is in «التفاصيل». An entry with no
+              units at all keeps the old headline: there, the عقار is the thing.
+            */}
             <p className="font-semibold">
-              {property.propertyNumber ? (
+              {unit ? (
+                /*
+                  The type alone — «شقة», «مكتب». The number used to follow it
+                  here and also appear as «رقم الوحدة» in the rows below, so the
+                  card said it twice. The rows are where a reader looks up a
+                  value; the headline only has to say what kind of thing this is.
+                */
+                unit.unitType ? (
+                  (labels.unitType[unit.unitType as never] ?? unit.unitType)
+                ) : locale === 'en' ? (
+                  'Unit'
+                ) : (
+                  'وحدة'
+                )
+              ) : property.propertyNumber ? (
                 <>
                   {locale === 'en' ? 'Property #' : 'العقار رقم '}
                   <span dir="ltr" className="font-mono">
@@ -2031,13 +2324,14 @@ function PropertyCard({
                 </span>
               )}
             </p>
+            {/*
+              نوع العقار and صفة الإشغال used to be pills here. They are two of
+              the card's facts and they now read as facts, labelled, in the list
+              below — «نوع العقار: مبنى» rather than a bare «مبنى» the reader has
+              to place. What is left up here is not attributes but alarms: a
+              structure recorded as war-damaged, and a card that has ended.
+            */}
             <div className="flex flex-wrap items-center gap-1.5">
-              <Badge variant="secondary">
-                {labels.propertyType[property.propertyType as never] ?? property.propertyType}
-              </Badge>
-              <Badge variant={isTenant ? 'warning' : 'outline'}>
-                {labels.occupancyType[property.occupancyType as never] ?? property.occupancyType}
-              </Badge>
               {/*
                 «متضررة من الحرب وغير مسكونة» — beside the card's own badges,
                 because it is a fact about the structure that changes how
@@ -2083,12 +2377,26 @@ function PropertyCard({
             its name, because the card is what ends; the dialog asks what the
             flat is now before anything is written.
           */}
+          {/*
+            The tenancy ends per *entry*, not per unit — `propertyEntryId` is
+            what `EndTenancyDialog` writes against. Where one entry covers
+            several flats, every one of their cards carries this button and any
+            of them ends the lot, so the button says so rather than letting an
+            officer discover it from the other cards going grey.
+          */}
           {isNonOwner && !ended && canEdit && token ? (
             <Button
               variant="outline"
               size="sm"
               className="h-9 transition-transform duration-150 ease-out active:scale-[0.97] motion-reduce:transform-none"
               onClick={() => setEndOpen(true)}
+              title={
+                siblingUnits > 0
+                  ? locale === 'en'
+                    ? `Ends this tenancy for all ${siblingUnits + 1} units on this application`
+                    : `يُنهي هذا الإيجار عن وحدات هذا الطلب كلّها (${siblingUnits + 1})`
+                  : undefined
+              }
             >
               <DoorOpen className="size-4" aria-hidden />
               {isTenant
@@ -2098,6 +2406,11 @@ function PropertyCard({
                 : locale === 'en'
                   ? 'End occupancy'
                   : 'إنهاء الإشغال'}
+              {siblingUnits > 0 ? (
+                <span className="text-xs font-normal text-muted-foreground">
+                  {locale === 'en' ? `(${siblingUnits + 1} units)` : `(${siblingUnits + 1} وحدات)`}
+                </span>
+              ) : null}
             </Button>
           ) : null}
         </div>
@@ -2114,14 +2427,26 @@ function PropertyCard({
         ) : null}
       </div>
 
-      {details.length > 0 ? (
-        <dl className="grid gap-x-6 gap-y-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
-          {details.map((fact) => (
-            <Fact key={fact.label} {...fact} />
+      {/* One list, one padding, values at the inline end. */}
+      {rows.length > 0 ? (
+        <dl className="px-4 text-sm">
+          {rows.map((row) => (
+            <div key={row.label} className={UNIT_ROW}>
+              <dt className="text-muted-foreground">{row.label}:</dt>
+              <dd className="min-w-0 break-words text-end font-medium">
+                {row.value}
+                {row.hint ? (
+                  <span className="mt-0.5 block text-[11px] font-normal leading-snug text-muted-foreground">
+                    {row.hint}
+                  </span>
+                ) : null}
+              </dd>
+            </div>
           ))}
         </dl>
       ) : null}
 
+        <div className="divide-y">
       {isNonOwner && landlord.length > 0 ? (
         <div className="space-y-3 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2133,7 +2458,8 @@ function PropertyCard({
               </Button>
             ) : null}
           </div>
-          <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* One column: this is inside a tile now, not a full-width card. */}
+          <dl className="space-y-4">
             {landlord.map((fact) => (
               <Fact key={fact.label} {...fact} />
             ))}
@@ -2152,53 +2478,44 @@ function PropertyCard({
         </div>
       ) : null}
 
-      {property.units.length > 0 ? (
-        <div className="space-y-3 p-4">
-          <SubHeading icon={Layers}>
-            {locale === 'en'
-              ? `Units (${ended ? property.units.length : currentUnits.length})`
-              : `الوحدات (${ended ? property.units.length : currentUnits.length})`}
-          </SubHeading>
-          <ul className="divide-y rounded-lg border bg-background">
-            {/* Flats still held first; a flat given up on a current card after them. */}
-            {[...currentUnits, ...property.units.filter((unit) => unit.endedAt)].map((unit) => (
-              <UnitRow key={unit.id} unit={unit} locale={locale} ended={ended || Boolean(unit.endedAt)} />
-            ))}
-          </ul>
+      {/*
+        The two findings that are sentences, not values — see `UnitNotes`. The
+        rows above already carry everything that fits in a row.
+      */}
+      {unit ? <UnitNotes unit={unit} locale={locale} ended={ended || Boolean(unit.endedAt)} /> : null}
         </div>
-      ) : null}
     </div>
   );
 }
 
 /**
- * «الوحدة» on a citizen's card — what they filed, and what the census says back.
+ * «الوحدة» — what the citizen filed about one منشأة, and what the census says back.
  *
- * Two sources meet on this row and they are not the same claim. The card is the
+ * Two sources meet here and they are not the same claim. The card is the
  * owner's own description of the flat; the linked `Unit` is سجل المباني's, and
- * billing reads the census first (`unitStatus ?? ownerDeclaredStatus`). A row
- * that showed only the card's version was showing the one that loses.
+ * billing reads the census first (`unitStatus ?? ownerDeclaredStatus`). Showing
+ * only the card's version was showing the one that loses.
  *
  * Every field here is nullable and every one of them means «لم يُسأل» when it
  * is null — a per-unit «غير مؤكَّد» flag blanks the field it excuses (migration
  * 0031), so a flat an officer could only half describe arrives with no type, no
- * floor and no area. This row rendered those unconditionally, which produced
+ * floor and no area. These rendered unconditionally once, which produced
  * «الطابق » followed by nothing and a bare «م²».
+ *
+ * A block of facts rather than a list row: each unit now has a card of its own
+ * (see `PropertyCard`'s `unit`), so this is the body of one, not an item in a
+ * list inside somebody else's.
  */
-function UnitRow({
-  unit,
-  locale,
-  ended = false,
-}: {
-  unit: CitizenProfileUnit;
-  locale: string;
+function unitFactRows(
+  unit: CitizenProfileUnit,
+  locale: string,
   /**
    * The tenancy on this flat is over. Its status, vacancy and seasonal lines
    * describe the flat today — somebody else's business now — so they are not
    * shown under a person who no longer lives there.
    */
-  ended?: boolean;
-}) {
+  ended = false,
+): Array<{ label: string; value: React.ReactNode }> {
   const en = locale === 'en';
   const labels = getLabels(locale);
 
@@ -2210,92 +2527,120 @@ function UnitRow({
   const censusDiffers =
     !ended && unit.censusUnitStatus != null && unit.censusUnitStatus !== unit.unitStatus;
 
+  /*
+    Every field the flat has, each on its own line behind its own label.
+
+    This row used to be one wrapping line of badges and icon-prefixed values —
+    «شقة  #0201  ⛁ الطابق ٢  ⛶ ١٤٠ م²» — which is compact and unreadable: the
+    icon was the only thing naming each value, so «٢» and «١٤٠ م²» sat next to
+    each other and the reader worked out which was the floor. A flat is read
+    here to answer a specific question (what floor? how big? whose?), and a
+    labelled line answers it without being decoded.
+
+    `null` drops a row; two fields state their own absence instead, because a
+    missing line and an unmeasured flat are different things — see مساحة الوحدة
+    and نوع الوحدة below.
+  */
+  return [
+    {
+      label: en ? 'Unit type' : 'نوع الوحدة',
+      value: unit.unitType ? (
+        (labels.unitType[unit.unitType as never] ?? unit.unitType)
+      ) : (
+        <span className="font-normal text-muted-foreground">
+          {en ? 'Unverified' : 'غير مؤكَّد'}
+        </span>
+      ),
+    },
+    {
+      label: en ? 'Unit number' : 'رقم الوحدة',
+      value: unit.unitCode ? (
+        <bdi dir="ltr" className="font-mono">
+          {unit.unitPostedNumber ?? unit.unitCode}
+        </bdi>
+      ) : null,
+    },
+    { label: en ? 'Floor' : 'الطابق', value: unit.floor ?? null },
+    {
+      /*
+        Said rather than left out when nobody has measured the flat. A clerk
+        reads this to decide whether a PER_AREA notice can be priced — it
+        cannot, against an unmeasured unit (see `assessCitizen`) — and a row
+        that simply has no area on it looks like one the page forgot.
+      */
+      label: en ? 'Unit area' : 'مساحة الوحدة',
+      value:
+        unit.unitArea != null ? (
+          `${unit.unitArea} ${en ? 'm²' : 'م²'}`
+        ) : (
+          <span className="font-normal text-muted-foreground">
+            {en ? 'Not recorded' : 'غير مسجَّلة'}
+          </span>
+        ),
+    },
+    { label: en ? 'Side' : 'الجهة', value: unit.side ?? null },
+    {
+      label: en ? 'Shared rights' : 'الحقوق المشتركة',
+      value: unit.sharedRights.length > 0 ? unit.sharedRights.join('، ') : null,
+    },
+    {
+      /*
+        Plain text, not a tinted badge. A value that is the only coloured thing
+        on an otherwise grey card reads as an alarm, and «مشغولة من المالك» is
+        the ordinary case — so the colour was firing on almost every card and
+        meaning nothing by the third one.
+      */
+      label: en ? 'Unit status' : 'حالة الوحدة',
+      value:
+        unit.unitStatus && !ended
+          ? (labels.unitStatus[unit.unitStatus as never] ?? unit.unitStatus)
+          : null,
+    },
+    {
+      /*
+        Only where the two disagree — see `censusDiffers` — and labelled for
+        what it is. «سجل المباني» alone collided with the building's own code
+        row of the same name once every row shared one list.
+      */
+      label: en ? 'Status per census' : 'حالة الوحدة في السجل',
+      value: censusDiffers
+        ? (labels.unitStatus[unit.censusUnitStatus as never] ?? unit.censusUnitStatus)
+        : null,
+    },
+    {
+      label: en ? 'Left on' : 'تركها في',
+      value: unit.endedAt ? formatDate(unit.endedAt) : null,
+    },
+  ].filter((row) => row.value != null && row.value !== '');
+}
+
+/**
+ * The two findings that are sentences rather than values.
+ *
+ * «تأكيد الشغور» is the reason nobody is being billed for this flat, and
+ * «مسكن موسمي» is why an owner who is away all year is billed all year. Both
+ * are stated with what they rest on and when — Shura 518/2007: failing to file
+ * a declaration does not make an occupied flat vacant, and a neighbour's word
+ * is not the same evidence as a تصريح — so neither reduces to a word in the
+ * rows above.
+ */
+function UnitNotes({
+  unit,
+  locale,
+  ended = false,
+}: {
+  unit: CitizenProfileUnit;
+  locale: string;
+  ended?: boolean;
+}) {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
   const seasonalMonths = unit.presenceMonths?.length
     ? formatMonthList(unit.presenceMonths, locale)
     : null;
 
   return (
-    <li className="space-y-1.5 px-3 py-2.5 text-sm">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        {unit.unitType ? (
-          <Badge variant="secondary" className="shrink-0">
-            {labels.unitType[unit.unitType as never] ?? unit.unitType}
-          </Badge>
-        ) : (
-          <Badge variant="soft-warning" className="shrink-0">
-            {en ? 'Unit type unverified' : 'نوع الوحدة غير مؤكَّد'}
-          </Badge>
-        )}
-
-        {/* The census's own name for the flat — what is written on its door. */}
-        {unit.unitCode ? (
-          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-            <Hash className="size-3.5 shrink-0" aria-hidden />
-            <bdi dir="ltr" className="font-mono text-xs">
-              {unit.unitPostedNumber ?? unit.unitCode}
-            </bdi>
-          </span>
-        ) : null}
-
-        {unit.floor ? (
-          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-            <Layers className="size-3.5 shrink-0" aria-hidden />
-            {en ? `Floor ${unit.floor}` : `الطابق ${unit.floor}`}
-          </span>
-        ) : null}
-
-        {/*
-          Said rather than left out when nobody has measured the flat. A clerk
-          reads this row to decide whether a PER_AREA notice can be priced — it
-          cannot, against an unmeasured unit (see `assessCitizen`) — and a row
-          that simply has no area on it looks like one the page forgot.
-        */}
-        {unit.unitArea != null ? (
-          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-            <Ruler className="size-3.5 shrink-0" aria-hidden />
-            {unit.unitArea} {en ? 'm²' : 'م²'}
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 text-muted-foreground/70">
-            <Ruler className="size-3.5 shrink-0" aria-hidden />
-            {en ? 'Area not recorded' : 'المساحة غير مسجَّلة'}
-          </span>
-        )}
-
-        {unit.side ? (
-          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-            <MapPin className="size-3.5 shrink-0" aria-hidden />
-            {unit.side}
-          </span>
-        ) : null}
-
-        {unit.sharedRights.length > 0 ? (
-          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-            <Key className="size-3.5 shrink-0" aria-hidden />
-            {unit.sharedRights.join(', ')}
-          </span>
-        ) : null}
-
-        {unit.unitStatus && !ended ? (
-          <Badge variant={unitStatusTone(unit.unitStatus)} className="shrink-0">
-            {labels.unitStatus[unit.unitStatus as never] ?? unit.unitStatus}
-          </Badge>
-        ) : null}
-
-        {unit.endedAt ? (
-          <Badge variant="soft-muted" className="shrink-0">
-            {en ? 'Left ' : 'تركها في '}
-            {formatDate(unit.endedAt)}
-          </Badge>
-        ) : null}
-
-        {censusDiffers ? (
-          <Badge variant={unitStatusTone(unit.censusUnitStatus)} className="shrink-0">
-            {en ? 'Census: ' : 'سجل المباني: '}
-            {labels.unitStatus[unit.censusUnitStatus as never] ?? unit.censusUnitStatus}
-          </Badge>
-        ) : null}
-      </div>
+    <div className="space-y-1.5 text-sm">
 
       {/*
         «تأكيد الشغور» — the reason nobody is being billed for this flat.
@@ -2308,21 +2653,24 @@ function UnitRow({
         vacant, and a neighbour's word is not the same evidence as a تصريح).
       */}
       {unit.vacancy && !ended ? (
-        <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md bg-warning/5 px-2 py-1 text-xs text-warning">
-          <DoorClosed className="size-3.5 shrink-0" aria-hidden />
-          <span className="font-medium">
-            {en ? 'Confirmed vacant' : 'شغور مؤكَّد'} — {formatDate(unit.vacancy.observedAt)}
-          </span>
-          {unit.vacancy.basis ? (
-            <span className="text-muted-foreground">
-              {labels.vacancyBasis[unit.vacancy.basis as never] ?? unit.vacancy.basis}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">
-              {en ? 'Basis not recorded (backfilled)' : 'دون مستند مسجَّل (سجل مُرحَّل)'}
-            </span>
-          )}
-        </p>
+        <dl className="px-4 text-sm">
+          <div className={UNIT_ROW}>
+            <dt className="text-muted-foreground">{en ? 'Confirmed vacant' : 'شغور مؤكَّد'}:</dt>
+            <dd className="min-w-0 break-words text-end font-medium">
+              {formatDate(unit.vacancy.observedAt)}
+            </dd>
+          </div>
+          <div className={UNIT_ROW}>
+            <dt className="text-muted-foreground">{en ? 'Basis' : 'المستند'}:</dt>
+            <dd className="min-w-0 break-words text-end font-medium">
+              {unit.vacancy.basis
+                ? (labels.vacancyBasis[unit.vacancy.basis as never] ?? unit.vacancy.basis)
+                : en
+                  ? 'Not recorded (backfilled)'
+                  : 'دون مستند مسجَّل (سجل مُرحَّل)'}
+            </dd>
+          </div>
+        </dl>
       ) : null}
 
       {/*
@@ -2334,36 +2682,40 @@ function UnitRow({
         readable at all.
       */}
       {!ended && (unit.unitStatus === 'SEASONAL' || unit.censusUnitStatus === 'SEASONAL') ? (
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2 text-xs text-muted-foreground">
-          <Sun className="size-3.5 shrink-0" aria-hidden />
+        <dl className="px-4 text-sm">
           {seasonalMonths ? (
-            <span>
-              {en ? 'Present: ' : 'أشهر الحضور: '}
-              {seasonalMonths}
-            </span>
+            <div className={UNIT_ROW}>
+              <dt className="text-muted-foreground">{en ? 'Present' : 'أشهر الحضور'}:</dt>
+              <dd className="min-w-0 break-words text-end font-medium">{seasonalMonths}</dd>
+            </div>
           ) : null}
           {unit.ownerLastStayAt ? (
-            <span>
-              {en ? 'Last stay ' : 'آخر إقامة '}
-              {formatDate(unit.ownerLastStayAt)}
-            </span>
+            <div className={UNIT_ROW}>
+              <dt className="text-muted-foreground">{en ? 'Last stay' : 'آخر إقامة'}:</dt>
+              <dd className="min-w-0 break-words text-end font-medium">
+                {formatDate(unit.ownerLastStayAt)}
+              </dd>
+            </div>
           ) : null}
           {unit.vacancyDeclaredAt ? (
-            <span>
-              {en ? 'Vacancy declared ' : 'تصريح بالشغور '}
-              {formatDate(unit.vacancyDeclaredAt)}
-            </span>
+            <div className={UNIT_ROW}>
+              <dt className="text-muted-foreground">{en ? 'Vacancy declared' : 'تصريح بالشغور'}:</dt>
+              <dd className="min-w-0 break-words text-end font-medium">
+                {formatDate(unit.vacancyDeclaredAt)}
+              </dd>
+            </div>
           ) : null}
           {!seasonalMonths && !unit.ownerLastStayAt && !unit.vacancyDeclaredAt ? (
-            <span>
-              {en
-                ? 'No presence months, last stay or vacancy declaration recorded'
-                : 'لم تُسجَّل أشهر الحضور ولا آخر إقامة ولا تصريح بالشغور'}
-            </span>
+            <div className={UNIT_ROW}>
+              <dt className="text-muted-foreground">{en ? 'Seasonal record' : 'سجل الموسمية'}:</dt>
+              <dd className="min-w-0 break-words text-end font-normal text-muted-foreground">
+                {en ? 'Nothing recorded' : 'لم يُسجَّل شيء'}
+              </dd>
+            </div>
           ) : null}
-        </p>
+        </dl>
       ) : null}
-    </li>
+    </div>
   );
 }
 
