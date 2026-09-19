@@ -98,7 +98,14 @@ const FALLBACK_ZOOM = 13.5;
  * Per tab and cleared when it closes, which is the right lifetime — a viewport
  * from last week is not where anybody is standing today.
  */
-const VIEWPORT_KEY = 'map:viewport';
+/*
+  Namespaced per municipality, for the reason the session token is: a staff
+  member may hold accounts in two of them, and one tab's viewport restored into
+  the other town's map drops the officer somewhere they have never been — with
+  `fittedRef` set, so the fit-to-parcels that would have corrected it stands
+  down.
+*/
+const viewportKey = (tenant: string) => `map:viewport:${tenant}`;
 
 type Viewport = { lng: number; lat: number; zoom: number; bearing: number; pitch: number };
 
@@ -108,9 +115,9 @@ type Viewport = { lng: number; lat: number; zoom: number; bearing: number; pitch
  * open because it could not remember where it was would be a far worse bug than
  * the one this fixes.
  */
-function rememberedViewport(): Viewport | null {
+function rememberedViewport(tenant: string): Viewport | null {
   try {
-    const raw = window.sessionStorage.getItem(VIEWPORT_KEY);
+    const raw = window.sessionStorage.getItem(viewportKey(tenant));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<Viewport>;
     const { lng, lat, zoom } = parsed;
@@ -127,11 +134,11 @@ function rememberedViewport(): Viewport | null {
   }
 }
 
-function rememberViewport(map: mapboxgl.Map): void {
+function rememberViewport(map: mapboxgl.Map, tenant: string): void {
   try {
     const center = map.getCenter();
     window.sessionStorage.setItem(
-      VIEWPORT_KEY,
+      viewportKey(tenant),
       JSON.stringify({
         lng: center.lng,
         lat: center.lat,
@@ -944,7 +951,7 @@ export function FullscreenMap({
     */
     const restored = focusParcelNumber || (focusLat != null && focusLng != null)
       ? null
-      : rememberedViewport();
+      : rememberedViewport(tenant);
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
@@ -970,7 +977,7 @@ export function FullscreenMap({
       attachCadastreSafely(map);
       attachMeasureLayers(map);
     });
-    const onMoveEnd = () => rememberViewport(map);
+    const onMoveEnd = () => rememberViewport(map, tenant);
     map.on('moveend', onMoveEnd);
     mapRef.current = map;
 

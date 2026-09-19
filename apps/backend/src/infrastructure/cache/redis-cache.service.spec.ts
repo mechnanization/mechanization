@@ -66,9 +66,22 @@ describe('RedisCacheService', () => {
     const port = await deadPort();
     service = new RedisCacheService(configWith(`redis://127.0.0.1:${port}`));
 
-    // Long enough for several reconnection attempts (200ms, 400ms, 600ms …),
-    // each of which emits its own `error` on the client.
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    /*
+      Wait for the first line rather than for a fixed stretch of wall clock.
+
+      The property under test is "one line however many retries", so the test
+      has to see retry number one and then keep watching. A flat sleep sized to
+      a developer's machine is the §8.6 shape this very service exists to keep
+      out of the logs: on a loaded CI runner the first `error` can land late,
+      and the run fails on a correct service. Polling turns that into a wait,
+      and the window below still covers several reconnection attempts
+      (200ms, 400ms, 600ms …), each of which emits its own `error`.
+    */
+    const deadline = Date.now() + 10_000;
+    while (warn.mock.calls.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
 
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0]?.[0])).toContain('ECONNREFUSED');

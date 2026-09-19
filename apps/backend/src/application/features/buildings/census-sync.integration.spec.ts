@@ -673,6 +673,110 @@ describeIfDb('CensusSyncService', () => {
   });
 
   /*
+    The same refusal in the direction that costs money.
+
+    A landlord's card filed before the tenant moved in says «مشغولة من المالك».
+    Carried onto a flat a tenancy has already made «مؤجرة», it bills the owner
+    the occupancy fee for a flat the tenant is billed for on their own card —
+    one flat, two bills, which is what حالة الوحدة exists to stop.
+  */
+  it('declines an owner card that claims a flat a recorded tenant lives in', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9H');
+    const landlord = await citizen('وليد');
+    const tenant = await citizen('هدى');
+    const flat = units[0]!;
+
+    await buildings.recordOccupancy({ unitId: flat.id, citizenId: tenant, role: 'TENANT' }, actor());
+
+    const registrationId = await registrationFor({
+      citizenId: landlord,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9H',
+      buildingId: building.id,
+      unitIds: [flat.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id, propertyEntry: { registrationId } },
+      data: { unitStatus: 'OWNER_OCCUPIED' },
+    });
+    await census.syncRegistration({ registrationId, citizenId: landlord, actor: actor() });
+
+    expect((await db.unit.findUniqueOrThrow({ where: { id: flat.id } })).unitStatus).toBe('RENTED');
+  });
+
+  /*
+    A card may still agree with the tenancy — «مؤجرة» over a recorded tenant is
+    the two screens saying one thing, and must not be refused as a clash.
+  */
+  it('carries an owner card that agrees with the recorded tenancy', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9J');
+    const landlord = await citizen('سمير');
+    const tenant = await citizen('لينا');
+    const flat = units[1]!;
+
+    await db.unit.update({ where: { id: flat.id }, data: { unitStatus: null } });
+    await buildings.recordOccupancy({ unitId: flat.id, citizenId: tenant, role: 'TENANT' }, actor());
+
+    const registrationId = await registrationFor({
+      citizenId: landlord,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9J',
+      buildingId: building.id,
+      unitIds: [flat.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id, propertyEntry: { registrationId } },
+      data: { unitStatus: 'RENTED' },
+    });
+    await census.syncRegistration({ registrationId, citizenId: landlord, actor: actor() });
+
+    expect((await db.unit.findUniqueOrThrow({ where: { id: flat.id } })).unitStatus).toBe('RENTED');
+  });
+
+  /*
+    «مسكن موسمي» is refused by the rule `isSeasonal` states, not by the unit's
+    own column alone: a flat painted from the street has no حالة of its own, so
+    «موسمي» about it lives on an owner's card until somebody opens the unit
+    editor. A January card calling it «شاغرة» would cancel the summer's fees.
+  */
+  it('declines to call a flat empty when an owner card says it is a seasonal home', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9K');
+    const summerOwner = await citizen('نبيل');
+    const coOwner = await citizen('ماجد');
+    const flat = units[0]!;
+
+    await db.unit.update({ where: { id: flat.id }, data: { unitStatus: null } });
+
+    // The seasonal answer, on a card nothing has synced onto the unit.
+    const seasonal = await registrationFor({
+      citizenId: summerOwner,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9K',
+      buildingId: building.id,
+      unitIds: [flat.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id, propertyEntry: { registrationId: seasonal } },
+      data: { unitStatus: 'SEASONAL' },
+    });
+
+    const empty = await registrationFor({
+      citizenId: coOwner,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9K',
+      buildingId: building.id,
+      unitIds: [flat.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id, propertyEntry: { registrationId: empty } },
+      data: { unitStatus: 'VACANT' },
+    });
+    await census.syncRegistration({ registrationId: empty, citizenId: coOwner, actor: actor() });
+
+    expect((await db.unit.findUniqueOrThrow({ where: { id: flat.id } })).unitStatus).toBeNull();
+  });
+
+  /*
     «غير مقيم في البلدة» on the matrix: someone who lives in another town and
     runs a shop here. Recorded as the shop's tenant, their file gains the card
     billing reads; recorded as the tenant of a flat in the same building, they

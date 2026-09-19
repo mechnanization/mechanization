@@ -10,6 +10,7 @@ import {
   auditFieldLabel,
   auditValueText,
 } from '@/lib/audit-labels';
+import { cn } from '@/lib/utils';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
@@ -122,7 +123,7 @@ export function ActivityTrail({
             with the writing direction without anything measuring them.
           */
           <ol className="relative space-y-0 border-s ps-5">
-            {entries.map((entry) => {
+            {entries.map((entry, index) => {
               const changes = auditChanges(entry.before, entry.after);
               const when = new Date(entry.createdAt);
               return (
@@ -137,9 +138,19 @@ export function ActivityTrail({
                   key={entry.id}
                   className="relative border-b border-border/50 py-3 first:pt-0 last:border-0 last:pb-0"
                 >
+                  {/*
+                    The first entry has no top padding (`first:pt-0`), so its
+                    dot sits higher to stay level with its own line of text.
+                    Keyed off the index rather than `first:`, which matches the
+                    first child of *every* `<li>` — this span — and so lifted
+                    every dot on the trail above the line it belongs to.
+                  */}
                   <span
                     aria-hidden
-                    className="absolute -start-[1.5625rem] top-4 size-2 rounded-full bg-border ring-4 ring-card first:top-1"
+                    className={cn(
+                      'absolute -start-[1.5625rem] size-2 rounded-full bg-border ring-4 ring-card',
+                      index === 0 ? 'top-1' : 'top-4',
+                    )}
                   />
 
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">

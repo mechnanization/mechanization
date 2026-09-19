@@ -636,27 +636,45 @@ export class CensusSyncService {
       return;
     }
 
-    if (isUnoccupied(declared)) {
-      if (input.unit.unitStatus === 'SEASONAL') {
-        this.logger.warn(
-          `census sync: unit ${input.unit.unitCode} is recorded as a seasonal home; the owner's card says ${declared} — unit left as recorded, card unchanged`,
-        );
-        return;
-      }
+    /*
+      Somebody recorded inside settles حالة الوحدة, whatever the card says —
+      and this is checked for *every* declared status, not only for «شاغرة».
 
-      const living = await this.db.unitOccupancy.count({
-        where: {
-          unitId: input.unitId,
-          toDate: null,
-          role: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
-        },
-      });
-      if (living > 0) {
+      Narrowed to the unoccupied ones, it read the emptiness cases and let the
+      opposite one through: an owner card saying «مشغولة من المالك» about a
+      flat a tenancy has already made «مؤجرة» overwrote it, from a card that
+      may have been filed months before the tenant moved in. That is one flat
+      claimed by two people — the owner billed the occupancy fee here and the
+      tenant billed it on their own card — which is the double-count
+      `OCCUPIED_BY_OTHERS` and the whole حالة الوحدة column exist to end.
+
+      A spell that agrees with the card is not a contradiction, so «مؤجرة» over
+      a tenant and «مشغولة بتسامح» over a شاغل بتسامح still pass: they are the
+      two screens saying the same thing.
+    */
+    const living = await this.db.unitOccupancy.findMany({
+      where: {
+        unitId: input.unitId,
+        toDate: null,
+        role: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+      },
+      select: { role: true },
+    });
+    if (living.length > 0) {
+      const implied = living.some((spell) => spell.role === 'TENANT') ? 'RENTED' : 'FREE_OCCUPIED';
+      if (declared !== implied) {
         this.logger.warn(
-          `census sync: unit ${input.unit.unitCode} has ${living} recorded occupant(s); the owner's card says ${declared} — unit left as recorded, card unchanged`,
+          `census sync: unit ${input.unit.unitCode} has ${living.length} recorded occupant(s) — the owner's card says ${declared}, the unit is ${implied}; unit left as recorded, card unchanged`,
         );
         return;
       }
+    }
+
+    if (isUnoccupied(declared) && (await this.isSeasonalHome(input.unitId, input.unit.unitStatus))) {
+      this.logger.warn(
+        `census sync: unit ${input.unit.unitCode} is a seasonal home; the owner's card says ${declared} — unit left as recorded, card unchanged`,
+      );
+      return;
     }
 
     await this.db.unit.update({
@@ -678,6 +696,36 @@ export class CensusSyncService {
       actorId: input.actor.id,
       actorRole: input.actor.role,
     });
+  }
+
+  /**
+   * Whether this flat is «مسكن موسمي» — by its own حالة, or by an owner's card
+   * where the unit has none.
+   *
+   * The fallback is the half that matters, and it mirrors
+   * `BuildingsService.isSeasonal`: a unit whose own حالة is null is the state
+   * of every row the census painted from the street, and «موسمي» about it
+   * exists only on the owner's card until somebody opens the unit editor. A
+   * check on the unit alone therefore passed exactly the rows the refusal is
+   * for, and a card filed in January could call a summer house empty — which
+   * cancels the season's fees, because a vacant flat is exempt and a seasonal
+   * one is not.
+   *
+   * Only live owner cards count, and only ones that say «موسمي»: the card
+   * being synced states something else by construction (it is in `declared`),
+   * so this reads a co-owner's answer or an earlier filing, never itself.
+   */
+  private async isSeasonalHome(unitId: string, unitStatus: string | null): Promise<boolean> {
+    if (unitStatus) return unitStatus === 'SEASONAL';
+    const declaredSeasonal = await this.db.buildingUnit.count({
+      where: {
+        unitId,
+        endedAt: null,
+        unitStatus: 'SEASONAL' as never,
+        propertyEntry: { occupancyType: 'OWNER' as never, endedAt: null },
+      },
+    });
+    return declaredSeasonal > 0;
   }
 
   /**

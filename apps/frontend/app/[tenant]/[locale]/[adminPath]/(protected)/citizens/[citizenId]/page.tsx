@@ -1497,7 +1497,13 @@ function LandlordOfSection({
                 </bdi>
               ) : null,
             },
-            { label: en ? 'Building' : 'اسم المبنى', value: card.buildingName ?? <span /> },
+            {
+              label: en ? 'Building' : 'اسم المبنى',
+              // «—» rather than an empty cell, which is the convention the rest
+              // of the admin uses for «nobody wrote one» — see the same row on
+              // the property card below.
+              value: card.buildingName ?? <span className="text-muted-foreground">—</span>,
+            },
             { label: en ? 'Parcel' : 'رقم العقار', value: card.propertyNumber },
             {
               label: en ? 'Units' : 'الوحدات',
@@ -2000,14 +2006,15 @@ function PropertyCard({
         fact nobody claimed. A building's name is different: officers read down
         the same row on card after card, and a row that is simply missing from
         this one makes them count rows to be sure they are not misreading
-        another field as the name. An empty value says «nobody wrote one» in the
-        place they are already looking.
+        another field as the name. A «—» says «nobody wrote one» in the place
+        they are already looking — the same placeholder the building editor and
+        the unit drawer use, and a blank cell is the one thing it must not be:
+        an empty value beside a label reads as a field that failed to load.
 
-        A `<span />` rather than `''` or `null` because `present` and
-        `dedupeRows` both drop those — an element is neither, and renders
-        nothing.
+        An element rather than `''` or `null` because `present` and `dedupeRows`
+        both drop those, and the row has to stay.
       */
-      value: property.buildingName ?? <span />,
+      value: property.buildingName ?? <span className="text-muted-foreground">—</span>,
     },
     /*
       The censused structure this card is attached to.
