@@ -67,6 +67,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
+import { MyQualityTasks } from '@/components/admin/quality/my-tasks';
+import { OfficerQuality } from '@/components/admin/quality/officer-quality';
 
 export default function InspectorProfilePage({
   params,
@@ -342,6 +344,16 @@ export default function InspectorProfilePage({
         </Card>
       )}
 
+      {/*
+        What is waiting on the person looking at their own screen — records a
+        reviewer sent back, and re-checks they may do. Renders nothing when
+        there is neither, and never appears while looking at somebody else's
+        profile: those are their tasks, not this reader's.
+      */}
+      {!targetInspectorId || targetInspectorId === currentUser?.id ? (
+        <MyQualityTasks tenant={tenant} base={base} locale={locale} token={token} />
+      ) : null}
+
       {/* Inspector Info Banner */}
       <Card>
         <CardContent className="p-4 sm:p-6">
@@ -443,6 +455,24 @@ export default function InspectorProfilePage({
           emphasis
         />
       </div>
+
+      {/*
+        The work beside its quality — the same figures «مراجعة الجودة» shows,
+        for this one person. Read-only and never about pay: the earnings above
+        count every property this officer filed, whatever a review said about it.
+      */}
+      <section className="space-y-2" aria-labelledby="officer-quality">
+        <h2 id="officer-quality" className="text-base font-bold">
+          {isAr ? 'جودة البيانات المسجَّلة' : 'Quality of what was filed'}
+        </h2>
+        <OfficerQuality
+          tenant={tenant}
+          base={base}
+          locale={locale}
+          token={token}
+          officerId={data.inspector.id}
+        />
+      </section>
 
       {/* Property Types Breakdown Grid */}
       <Card className="border-border/70">

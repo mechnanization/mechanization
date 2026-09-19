@@ -58,8 +58,17 @@ export function normalizeSearchText(raw: string): string {
   return value.replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
-/** Lebanese mobile prefixes a person might type in front of a national number. */
-const LEBANESE_PREFIX = /^(?:00961|961|0)/;
+/**
+ * The dialling prefixes a person might type in front of the digits the column
+ * holds: Lebanon's, then the `00` a foreign number is dialled with.
+ *
+ * The `00` is taken off only in front of 8–15 digits — E.164's own bounds, the
+ * same `internationalPhone` accepts — because that is the one reading in which
+ * it is a prefix. Left on, `0033 6 12 34 56 78` lost only its first zero and
+ * searched for `033612345678`, which the stored `+33612345678` does not
+ * contain, so a foreign owner on file came back as «لا نتيجة».
+ */
+const DIAL_PREFIX = /^(?:00961|961|00(?=\d{8,15}$)|0)/;
 
 /**
  * A reference number with its dashes gone: `BZR2608NZ58VK`.
@@ -89,7 +98,7 @@ const MAX_TOKENS = 6;
  *  - **A run of digits** is a phone number, an identity document or a civil
  *    record number, and splitting `70 123 456` into three tokens would match
  *    any row containing `70` and `123` and `456` anywhere — which is most of
- *    them. The Lebanese prefix comes off because the column holds E.164
+ *    them. The dialling prefix comes off because the column holds E.164
  *    (`+96170123456`) while the clerk reads `03/70 123 456` off a form.
  *
  *  - **A reference number**, which is three groups that are meaningless apart.
@@ -101,7 +110,7 @@ export function searchTokens(raw: string | undefined | null): string[] {
   const compact = normalized.replace(/ /g, '');
 
   if (/^\d+$/.test(compact) && compact.length >= 4) {
-    return [compact.replace(LEBANESE_PREFIX, '') || compact];
+    return [compact.replace(DIAL_PREFIX, '') || compact];
   }
   if (COMPACT_REFERENCE.test(compact)) return [compact];
 

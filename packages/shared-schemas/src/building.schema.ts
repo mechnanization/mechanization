@@ -357,6 +357,41 @@ export const createBuildingSchema = z
      */
     acknowledgedDuplicates: z.boolean().optional(),
     /**
+     * «لماذا هي منشأة منفصلة؟» — the officer's own sentence behind the tick.
+     *
+     * A checkbox records that somebody pressed it; parcel 56 became three
+     * records for one building because two officers pressed it 3.6 m and 4.1 m
+     * from a structure already on file. A reason written in front of the
+     * distance is a statement a reviewer can check against the street, and it
+     * is written into the creation's audit row beside the neighbours it was
+     * written about.
+     *
+     * Optional on the wire, never required by the server: a creation queued on
+     * a phone by a build that predates the field must still land. The editor is
+     * what insists on it.
+     */
+    duplicateReason: z
+      .string()
+      .trim()
+      .min(4, 'يرجى ذكر سبب اعتبارها منشأة منفصلة')
+      .max(300, 'السبب طويل جداً')
+      .optional(),
+    /**
+     * «تعذّر تثبيت المدخل» — why a building is being created with no pin.
+     *
+     * A pin is what lets the duplicate prompt say how far away the structure
+     * already on the parcel stands; without one it can only list codes. The
+     * editor asks for this sentence instead of a silent blank. Optional on the
+     * wire (queued creations, the registration card's deliberately pin-less
+     * structure, D19) and written only into the creation's audit row.
+     */
+    noPinReason: z
+      .string()
+      .trim()
+      .min(4, 'يرجى ذكر سبب عدم تثبيت المدخل')
+      .max(300, 'السبب طويل جداً')
+      .optional(),
+    /**
      * The suffix the phone showed while offline, if it showed one.
      *
      * Never trusted — the server re-allocates under a lock and returns the
@@ -456,9 +491,17 @@ export const updateBuildingSchema = z
     partitionNumbers: partitionNumbers.optional(),
     sharedParcelNumbers: sharedParcelNumbers.optional(),
     notes: notes.nullable().optional(),
+    /**
+     * The building's `updatedAt` as the editor loaded it. A save whose value no
+     * longer matches is refused with who changed it, instead of replacing their
+     * work with an older screen. Absent means "do not check" — older clients.
+     * Not a change in itself, so it does not count toward "something to save".
+     */
+    expectedUpdatedAt: z.string().datetime().optional(),
   })
   .superRefine((value, ctx) => {
-    if (!Object.values(value).some((v) => v !== undefined)) {
+    const { expectedUpdatedAt: _version, ...fields } = value;
+    if (!Object.values(fields).some((v) => v !== undefined)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'لا يوجد أي تغيير لحفظه' });
     }
     coordinatePair(value, ctx);
@@ -711,6 +754,34 @@ export const upsertOccupancySchema = z
      * tenant.
      */
     unitArea: areaField.optional(),
+    /**
+     * «لم تُقَس المساحة» — said out loud, with why, when the census has no area
+     * and none was given.
+     *
+     * An empty box used to be the only way to say it, and it read exactly like
+     * a question nobody asked: on 2026-09-16, 52 of 65 new units had no area and
+     * one record in 43 said why. Written into the occupancy's audit row, never
+     * onto the unit, so it never passes for a measurement.
+     */
+    unitAreaMissingReason: z
+      .string()
+      .trim()
+      .min(4, 'يرجى ذكر سبب عدم تسجيل المساحة')
+      .max(300, 'السبب طويل جداً')
+      .optional(),
+    /**
+     * «لم يُعرف من يشغلها» — an owner recorded without «ومن يشغلها؟», and why.
+     *
+     * The question is left unanswered rather than guessed (a guess bills), but
+     * an empty select read exactly like a question nobody asked. Owners only;
+     * written into the occupancy's audit row, never onto the unit.
+     */
+    unitStatusMissingReason: z
+      .string()
+      .trim()
+      .min(4, 'يرجى ذكر سبب عدم تحديد من يشغل الوحدة')
+      .max(300, 'السبب طويل جداً')
+      .optional(),
     fromDate: z.coerce.date({ invalid_type_error: 'تاريخ البدء غير صالح' }).optional(),
     toDate: z.coerce.date({ invalid_type_error: 'تاريخ الانتهاء غير صالح' }).optional(),
     /**
@@ -970,6 +1041,15 @@ export const logVisitSchema = z.object({
     .max(new Date(Date.now() + 60_000), 'تاريخ الزيارة في المستقبل')
     .optional(),
   notes: z.string().trim().max(1000, 'الملاحظات طويلة جداً').optional(),
+  /**
+   * «نعم، هذه محاولة جديدة» — the officer has seen that they already logged a
+   * visit to this unit in the last twelve hours and is logging another.
+   *
+   * Every visit counts toward D10's escalation, and on 2026-09-15 one officer
+   * logged the same closed shop twice in a day with a follow-up case each time.
+   * A second knock in the evening is real and is one tap; a double submit is not.
+   */
+  acknowledgedRepeat: z.boolean().optional(),
 });
 
 export type LogVisitInput = z.infer<typeof logVisitSchema>;

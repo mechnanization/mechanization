@@ -191,6 +191,8 @@ export function BuildingUnitMatrixView({
 
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  /** The signed-in officer — lets the visit form recognise their own visit from earlier today. */
+  const [viewerId, setViewerId] = useState<string | null>(null);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -200,6 +202,7 @@ export function BuildingUnitMatrixView({
     }
     setToken(session.accessToken);
     setRole(session.user.role ?? null);
+    setViewerId(session.user.id);
   }, [tenant, base, router]);
 
   const canWrite = role !== null && !READ_ONLY_ROLES.includes(role);
@@ -1199,6 +1202,7 @@ export function BuildingUnitMatrixView({
                   busy={busy}
                   locale={locale}
                   attempts={selectedUnit.visitCount}
+                  viewerId={viewerId}
                   visits={selectedUnit.visits}
                   onSubmit={(values) =>
                     void run(

@@ -4,15 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { History, Loader2 } from 'lucide-react';
 
 import { getAuditLog, type AuditEntry } from '@/lib/api-client';
-import {
-  auditActionLabel,
-  auditChanges,
-  auditFieldLabel,
-  auditValueText,
-} from '@/lib/audit-labels';
-import { cn } from '@/lib/utils';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { AuditEntryItem } from '@/components/admin/audit-entry';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
 
 /**
@@ -117,114 +111,15 @@ export function ActivityTrail({
           </p>
         ) : (
           /*
-            A timeline, because a trail is a sequence and a flat list of rows
-            does not say so. The rail and its dots are drawn with a border and
-            a ring rather than an SVG, so they follow the text size and flip
-            with the writing direction without anything measuring them.
+            The same entry the whole-portal trail draws, compact: the record is
+            the one on screen, so only who, when and what changed are said. The
+            server names the person — the old list printed an email or «النظام»,
+            and most census writes carried no email at all.
           */
-          <ol className="relative space-y-0 border-s ps-5">
-            {entries.map((entry, index) => {
-              const changes = auditChanges(entry.before, entry.after);
-              const when = new Date(entry.createdAt);
-              return (
-                /*
-                  A rule between entries. The rail down the side says these are
-                  one sequence; it does not say where one step stops and the
-                  next starts — and now that an entry can carry several change
-                  lines under it, two entries run together into one block of
-                  small text without a line to part them.
-                */
-                <li
-                  key={entry.id}
-                  className="relative border-b border-border/50 py-3 first:pt-0 last:border-0 last:pb-0"
-                >
-                  {/*
-                    The first entry has no top padding (`first:pt-0`), so its
-                    dot sits higher to stay level with its own line of text.
-                    Keyed off the index rather than `first:`, which matches the
-                    first child of *every* `<li>` — this span — and so lifted
-                    every dot on the trail above the line it belongs to.
-                  */}
-                  <span
-                    aria-hidden
-                    className={cn(
-                      'absolute -start-[1.5625rem] size-2 rounded-full bg-border ring-4 ring-card',
-                      index === 0 ? 'top-1' : 'top-4',
-                    )}
-                  />
-
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
-                    <span className="font-medium text-foreground">
-                      {auditActionLabel(entry.action, locale)}
-                    </span>
-                    {/*
-                      The actor. `actorEmail` is what the log stores — there is
-                      no name column on the entry, and resolving one per row
-                      would be a lookup per line for a panel usually closed.
-                      The role beside it is the thing a reader actually wants
-                      from an unfamiliar address: not who, but what they were
-                      allowed to do.
-                    */}
-                    <span className="text-muted-foreground" dir="ltr">
-                      {entry.actorEmail ?? (en ? 'system' : 'النظام')}
-                    </span>
-                    {entry.actorRole ? (
-                      <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                        {entry.actorRole}
-                      </span>
-                    ) : null}
-                    <time
-                      dateTime={entry.createdAt}
-                      title={when.toLocaleString(en ? 'en-GB' : 'ar-LB')}
-                      className="ms-auto shrink-0 text-xs tabular-nums text-muted-foreground"
-                    >
-                      {when.toLocaleString(en ? 'en-GB' : 'ar-LB', {
-                        dateStyle: 'medium',
-                        timeStyle: 'short',
-                      })}
-                    </time>
-                  </div>
-
-                  {/*
-                    What the action did. `before`/`after` have been on every row
-                    since the table existed and no screen ever read them, so the
-                    trail could say that a record was edited and never what the
-                    edit was.
-
-                    An action with no field diff — a login, a document opened —
-                    renders nothing here rather than an empty «لا تغييرات», which
-                    would be a line saying that a line was not needed.
-                  */}
-                  {changes.length > 0 ? (
-                    <dl className="mt-1.5 space-y-1">
-                      {changes.map((change) => (
-                        <div
-                          key={change.field}
-                          className="flex flex-wrap items-baseline gap-x-2 text-xs"
-                        >
-                          <dt className="text-muted-foreground">
-                            {auditFieldLabel(change.field, locale)}:
-                          </dt>
-                          <dd className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
-                            <span className="text-muted-foreground line-through decoration-muted-foreground/50">
-                              {auditValueText(change.from, locale)}
-                            </span>
-                            {/* Logical, not «→»: the arrow has to point the way
-                                the page reads or the change runs backwards. */}
-                            <span aria-hidden className="text-muted-foreground">
-                              {en ? '→' : '←'}
-                            </span>
-                            <span className="font-medium">
-                              {auditValueText(change.to, locale)}
-                            </span>
-                          </dd>
-                        </div>
-                      ))}
-                    </dl>
-                  ) : null}
-                </li>
-              );
-            })}
+          <ol className="divide-y">
+            {entries.map((entry) => (
+              <AuditEntryItem key={entry.id} entry={entry} locale={locale} base={base} compact />
+            ))}
           </ol>
         )}
       </div>

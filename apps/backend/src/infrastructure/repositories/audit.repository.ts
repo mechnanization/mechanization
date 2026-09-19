@@ -64,6 +64,28 @@ export class PrismaAuditRepository implements AuditRepository {
    * tenant schema's pool, which is what surfaced as pool-timeout errors under
    * any concurrent request.
    */
+  async facets(): Promise<{ actions: string[]; entityTypes: string[]; actorIds: string[] }> {
+    const [actions, entityTypes, actors] = await withConnectionRetry(() =>
+      Promise.all([
+        this.db.$queryRaw<Array<{ value: string }>>`
+          SELECT DISTINCT "action" AS value FROM ${this.S}audit_log_entries ORDER BY 1
+        `,
+        this.db.$queryRaw<Array<{ value: string }>>`
+          SELECT DISTINCT "entityType" AS value FROM ${this.S}audit_log_entries ORDER BY 1
+        `,
+        this.db.$queryRaw<Array<{ value: string }>>`
+          SELECT DISTINCT "actorId"::text AS value FROM ${this.S}audit_log_entries
+          WHERE "actorType" = 'STAFF' AND "actorId" IS NOT NULL
+        `,
+      ]),
+    );
+    return {
+      actions: actions.map((row) => row.value),
+      entityTypes: entityTypes.map((row) => row.value),
+      actorIds: actors.map((row) => row.value),
+    };
+  }
+
   async query(query: AuditQuery): Promise<{ items: AuditRow[]; total: number }> {
     const conditions: Prisma.Sql[] = [];
     if (query.actorId !== undefined && query.actorId !== null) {
@@ -75,6 +97,7 @@ export class PrismaAuditRepository implements AuditRepository {
       conditions.push(Prisma.sql`"actorId" = ${query.actorId}::uuid`);
     }
     if (query.entityType) conditions.push(Prisma.sql`"entityType" = ${query.entityType}`);
+    if (query.actions?.length) conditions.push(Prisma.sql`"action" = ANY(${query.actions}::text[])`);
     if (query.entityId) conditions.push(Prisma.sql`"entityId" = ${query.entityId}`);
     if (query.from) conditions.push(Prisma.sql`"createdAt" >= ${query.from}`);
     if (query.to) conditions.push(Prisma.sql`"createdAt" <= ${query.to}`);

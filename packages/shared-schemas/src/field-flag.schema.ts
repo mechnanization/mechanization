@@ -34,6 +34,18 @@ import { z } from 'zod';
  * record clear itself the day the missing parcel is finally imported.
  */
 
+/**
+ * «سجل مشابه موجود» — a filing that looks like somebody already on file,
+ * delivered with nobody at the screen to ask.
+ *
+ * Raised by the server only, as `UNVERIFIED`: the person's identity could not
+ * be confirmed against the register. It names no input, so the form never
+ * renders it on a field; it is carried across edits until somebody states that
+ * the match is a different person (`duplicateReview` on the edit), and that is
+ * what clears it.
+ */
+export const POSSIBLE_DUPLICATE_FLAG_PATH = 'personal.possibleDuplicate';
+
 /** What kind of exception a flag records. See the note above. */
 export const FIELD_FLAG_KINDS = ['UNESTABLISHED', 'UNVERIFIED'] as const;
 export type FieldFlagKind = (typeof FIELD_FLAG_KINDS)[number];

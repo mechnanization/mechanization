@@ -97,13 +97,23 @@ export function LandlordProposalCard({
     linkable person has it. Two «SAME» rows is a father and son with one name,
     which is precisely where the officer has to look.
   */
+  /*
+    And only among people the card's *number* found. A candidate found by the
+    typed name alone is by construction a «SAME» name, so preselecting it would
+    turn the weaker match into the default one — the reverse of what the name
+    match was added for.
+  */
   const preselected = useMemo(() => {
     if (proposal.blocked) return null;
     const same = proposal.candidates.filter(
-      (candidate) => !candidate.blocked && matches.get(candidate.id) === 'SAME',
+      (candidate) =>
+        !candidate.blocked &&
+        candidate.matchedBy !== 'NAME' &&
+        matches.get(candidate.id) === 'SAME',
     );
     return same.length === 1 ? same[0]!.id : null;
   }, [proposal, matches]);
+  const foundByName = proposal.candidates.some((candidate) => candidate.matchedBy === 'NAME');
 
   const [selectedId, setSelectedId] = useState<string | null>(preselected);
   const [busy, setBusy] = useState<'link' | 'dismiss' | null>(null);
@@ -239,13 +249,19 @@ export function LandlordProposalCard({
             >
               {proposal.landlordName ?? (en ? 'No name given' : 'لم يُذكر اسم')}
             </p>
-            <span
-              dir="ltr"
-              className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 font-mono text-sm tabular-nums"
-            >
-              <Phone className="size-3.5 text-muted-foreground" aria-hidden />
-              {formatPhone(proposal.landlordPhone)}
-            </span>
+            {proposal.landlordPhone ? (
+              <span
+                dir="ltr"
+                className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 font-mono text-sm tabular-nums"
+              >
+                <Phone className="size-3.5 text-muted-foreground" aria-hidden />
+                {formatPhone(proposal.landlordPhone)}
+              </span>
+            ) : (
+              <span className="text-sm text-muted-foreground">
+                {en ? 'no number given' : 'لم يُذكر رقم'}
+              </span>
+            )}
           </div>
         </div>
 
@@ -262,13 +278,19 @@ export function LandlordProposalCard({
         <fieldset className="space-y-2" disabled={Boolean(busy)}>
           <legend className="mb-2 text-sm font-semibold">
             {proposal.blocked
-              ? en
-                ? 'Registered on this number'
-                : 'المسجَّلون على هذا الرقم'
+              ? foundByName
+                ? en
+                  ? 'Registered on this number or name'
+                  : 'المسجَّلون بهذا الرقم أو الاسم'
+                : en
+                  ? 'Registered on this number'
+                  : 'المسجَّلون على هذا الرقم'
               : shared
                 ? en
                   ? `Which of these ${proposal.candidates.length} people is the owner?`
-                  : `من هو المالك؟ ${proposal.candidates.length} مواطنين مسجَّلين على هذا الرقم`
+                  : foundByName
+                    ? `من هو المالك؟ ${proposal.candidates.length} مواطنين مسجَّلين بهذا الرقم أو الاسم`
+                    : `من هو المالك؟ ${proposal.candidates.length} مواطنين مسجَّلين على هذا الرقم`
                 : en
                   ? 'Is this the owner?'
                   : 'هل هذا هو المالك؟'}
@@ -424,6 +446,11 @@ function CandidateRow({
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-sm font-semibold">{candidate.name}</span>
             <MatchBadge match={match} locale={locale} />
+            {candidate.matchedBy === 'NAME' ? (
+              <Badge variant="soft-warning">
+                {en ? 'Matched by name only — check the number' : 'مطابقة بالاسم فقط — تحقَّق من الرقم'}
+              </Badge>
+            ) : null}
             {candidate.residence === 'NON_RESIDENT_OWNER' ? (
               <Badge variant="soft-info">{en ? 'Lives elsewhere' : 'غير مقيم'}</Badge>
             ) : null}

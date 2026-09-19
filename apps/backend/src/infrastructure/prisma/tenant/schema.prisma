@@ -223,6 +223,13 @@ model User {
   unitVisits            UnitVisit[]          @relation("UnitVisitOfficer")
   vacanciesConfirmed    UnitVacancyConfirmation[] @relation("VacancyConfirmedBy")
   vacanciesEnded        UnitVacancyConfirmation[] @relation("VacancyEndedBy")
+  recordReviewsGiven    RecordReview[]       @relation("RecordReviewedBy")
+  recordReviewsResolved RecordReview[]       @relation("RecordReviewResolvedBy")
+  qualityChecksFiled    QualityCheck[]       @relation("QualityCheckOriginalOfficer")
+  qualityChecksSampled  QualityCheck[]       @relation("QualityCheckSampledBy")
+  qualityChecksAssigned QualityCheck[]       @relation("QualityCheckAssignedTo")
+  qualityChecksDone     QualityCheck[]       @relation("QualityCheckCheckedBy")
+  dataQualityDismissals DataQualityDismissal[] @relation("DataQualityDismissedBy")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -365,6 +372,8 @@ model Registration {
   properties      PropertyEntry[]
   documents       Document[]
   unitOccupancies UnitOccupancy[]
+  reviews         RecordReview[]
+  qualityChecks   QualityCheck[]
 
   @@index([status, submittedAt])
   @@index([citizenId])
@@ -1893,3 +1902,86 @@ model InspectorPayout {
   @@map("inspector_payouts")
 }
 
+// ─────────────────────────  Quality review (migration 0049)  ─────────────────────────
+
+/// A supervisor's decision on a filed record. Appended — a record returned,
+/// corrected and approved is three rows. Only `resolvedAt`/`resolvedById` are
+/// written after insert, when somebody saves the returned record.
+enum RecordReviewOutcome {
+  APPROVED
+  RETURNED
+}
+
+model RecordReview {
+  id             String              @id @default(uuid()) @db.Uuid
+  registrationId String              @db.Uuid
+  registration   Registration        @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  outcome        RecordReviewOutcome
+  /// Required on a return (CHECK in 0049).
+  reason         String?
+  /// What was wrong, as `REVIEW_FIELD` codes.
+  fields         String[]            @default([])
+  reviewedById   String?             @db.Uuid
+  reviewedBy     User?               @relation("RecordReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  resolvedAt     DateTime?
+  resolvedById   String?             @db.Uuid
+  resolvedBy     User?               @relation("RecordReviewResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime            @default(now())
+
+  @@index([registrationId, createdAt])
+  @@map("record_reviews")
+}
+
+enum QualityCheckStatus {
+  OPEN
+  DONE
+}
+
+enum QualityCheckResult {
+  MATCHES
+  DIFFERS
+}
+
+/// A filed record picked at random to be re-checked on the ground by someone
+/// other than the officer who filed it. Never edits the record.
+model QualityCheck {
+  id                String              @id @default(uuid()) @db.Uuid
+  registrationId    String              @unique @db.Uuid
+  registration      Registration        @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  originalOfficerId String?             @db.Uuid
+  originalOfficer   User?               @relation("QualityCheckOriginalOfficer", fields: [originalOfficerId], references: [id], onDelete: SetNull)
+  sampledById       String?             @db.Uuid
+  sampledBy         User?               @relation("QualityCheckSampledBy", fields: [sampledById], references: [id], onDelete: SetNull)
+  assignedToId      String?             @db.Uuid
+  assignedTo        User?               @relation("QualityCheckAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  status            QualityCheckStatus  @default(OPEN)
+  result            QualityCheckResult?
+  /// What differed, as `CHECK_DIFFERENCE` codes.
+  differences       String[]            @default([])
+  notes             String?
+  checkedById       String?             @db.Uuid
+  checkedBy         User?               @relation("QualityCheckCheckedBy", fields: [checkedById], references: [id], onDelete: SetNull)
+  checkedAt         DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([status])
+  @@index([originalOfficerId])
+  @@index([assignedToId])
+  @@map("quality_checks")
+}
+
+/// «ليست مشكلة» on a derived data-quality finding. The findings are computed
+/// live; only this answer is stored.
+model DataQualityDismissal {
+  id            String   @id @default(uuid()) @db.Uuid
+  kind          String
+  subjectKey    String
+  reason        String
+  dismissedById String?  @db.Uuid
+  dismissedBy   User?    @relation("DataQualityDismissedBy", fields: [dismissedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now())
+
+  @@unique([kind, subjectKey])
+  @@map("data_quality_dismissals")
+}

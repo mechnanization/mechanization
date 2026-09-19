@@ -79,6 +79,23 @@ describe('searchTokens', () => {
     },
   );
 
+  /**
+   * A foreign number is stored `+33612345678`, folded to `33612345678`. Typed
+   * with the `00` it is dialled with, only the first zero used to come off, and
+   * `033612345678` is not a substring of what is stored.
+   */
+  it.each([['+33 6 12 34 56 78'], ['0033 6 12 34 56 78'], ['٠٠٣٣٦١٢٣٤٥٦٧٨']])(
+    'reduces the foreign phone %s to the digits after its country prefix',
+    (input) => {
+      expect(searchTokens(input)).toEqual(['33612345678']);
+    },
+  );
+
+  /** Too short to follow an international `00`, so only the one zero goes, as before. */
+  it('leaves a short number that merely starts with 00 alone', () => {
+    expect(searchTokens('0012')).toEqual(['012']);
+  });
+
   it('returns nothing for an empty or punctuation-only term', () => {
     expect(searchTokens('')).toEqual([]);
     expect(searchTokens('   ')).toEqual([]);

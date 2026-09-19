@@ -58,7 +58,14 @@ export function SegmentedControl({
             onClick={() => onChange(option.value)}
             className={cn(
               'inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
-              fullWidth ? 'flex-1' : 'shrink-0',
+              /*
+                `min-w-0` is what makes `truncate` below work at all. A flex
+                item's `min-width` is `auto`, so a button refuses to shrink
+                past its icon, padding and full label — four segments of
+                «ملاحظات الجودة» length then push the page itself sideways on a
+                390px screen, which is the width of the phones this is used on.
+              */
+              fullWidth ? 'min-w-0 flex-1' : 'shrink-0',
               size === 'sm' && 'min-h-[34px] px-2.5 py-1 text-xs',
               size === 'default' && 'min-h-[40px] px-3 py-1.5 text-xs sm:text-sm',
               size === 'lg' && 'min-h-[46px] px-4 py-2 text-sm',

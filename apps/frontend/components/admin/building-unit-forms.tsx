@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertTriangle,
@@ -46,10 +46,12 @@ import {
   type VacancyEndReason,
 } from '@mechanization/shared-schemas';
 import {
+  ApiRequestError,
   createCase,
   listCitizens,
   logApiError,
   logUnitVisit,
+  REPEAT_VISIT_WINDOW_MS,
   type AfterTenancyAnswer,
   type CitizenListItem,
   type OccupancyFileLink,
@@ -78,7 +80,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Field } from '@/components/ui/field';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Field, FieldFlagProvider } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -637,7 +640,7 @@ export function ownerLinkMessage(result: RecordedOwnerLink, en: boolean): string
 /**
  * «إضافة شخص إلى الوحدة» — the one way a person reaches a flat from the matrix.
  *
- * ## Both ways out, always offered
+ * ## Search first, and «ملف جديد» once it has answered
  *
  * This used to be two buttons: «تسجيل شاغل», which linked somebody already on
  * file, and «تسجيل أسرة في هذه الوحدة», which opened a blank registration. The
@@ -645,29 +648,32 @@ export function ownerLinkMessage(result: RecordedOwnerLink, en: boolean): string
  * by definition not a شاغل (D2), and the second also created owner records,
  * which have no household — and nothing made the officer look before creating.
  *
- * So there is one entry and it searches. For a while it *also* withheld «ملف
- * جديد» until a search had come back, on the theory that this made officers
- * look before creating. It did not, and it cost more than it is worth stating
- * plainly:
+ * So there is one entry and it searches, and the new-file choices appear only
+ * once the search has answered the name typed *now*: nobody matched, or the
+ * register could not be reached. A list of matches offers them behind «ليس
+ * بينهم؟» instead, so the person on file is the first thing the officer sees.
  *
- *  - It gated on a search having *run*, not on the right one having run.
- *    «asdfgh» satisfied it, and that is what officers typed — so the guarantee
- *    was nil and the ritual was daily. A control that is noise is one people
- *    route around, including on the tenth card where it mattered.
+ * This gate was tried once before and removed, and the two ways it failed are
+ * why it is shaped as it is:
+ *
  *  - A failed lookup cleared the term it was waiting on, so an officer with no
  *    signal could not reach «ملف جديد» at all. This form is used in the field,
  *    offline, in settlements nobody is going back to; a dead end there is a
- *    household that goes unregistered.
+ *    household that goes unregistered. An unreachable register therefore
+ *    counts as answered — said as such, never as «لا نتيجة».
+ *  - Two «محمد خليل»s on one parcel are a real afternoon, and a gate that only
+ *    opens on zero matches never opens for the second one. Hence «ليس بينهم؟».
  *
- * Both choices are therefore offered from the start, and the duplicate check
- * moved to where it can actually work: `CitizenEditor` matches on the *name*
- * as it is typed and shows whoever it finds. That is a check «asdfgh» cannot
- * pass, and it is the one that matters for «غير مقيم في البلدة» — a record
+ * It still gates on a search having *run*, not on the right one — «asdfgh»
+ * opens it. The duplicate check that «asdfgh» cannot pass stays where it was:
+ * `CitizenEditor` matches on the *name* as it is typed and shows whoever it
+ * finds. That is the one that matters for «غير مقيم في البلدة» — a record
  * carrying a name, a phone and a town, no document number, so the one least
  * able to be merged after the fact.
  *
- * What the search term still does is travel: whatever the officer typed seeds
- * the new file's name, so a search that found nobody is not retyped.
+ * The search term also travels: whatever the officer typed seeds the new
+ * file — its phone when the term is a number, its name otherwise
+ * (`withSeededSearch`) — so a search that found nobody is not retyped.
  *
  * Both new-file choices carry the unit and preset نوع الملف, named with the
  * same labels the form's own chooser uses. Neither answers «ومن يشغلها؟» — an
@@ -733,7 +739,16 @@ export interface AddPersonValues {
   landlordPhone?: string;
   /** م² — sent only where the census has no area for the unit. See `recordOccupancy`. */
   unitArea?: number;
+  /** «لم تُقَس» and why, when neither the census nor the officer has an area. */
+  unitAreaMissingReason?: string;
+  /** Owners: «لم يُعرف من يشغلها» and why. */
+  unitStatusMissingReason?: string;
 }
+
+/** Local «غير مؤكَّد» keys for the add-person form. Shaped as the shared `Field` expects. */
+const AREA_FLAG_PATH = 'properties.0.unitArea';
+const STATUS_FLAG_PATH = 'properties.0.unitStatus';
+const NO_UNVERIFIED: ReadonlyMap<string, string> = new Map();
 
 export function AddPersonForm({
   tenant,
@@ -752,7 +767,7 @@ export function AddPersonForm({
   locale: string;
   /**
    * The registration form, pointed at this unit, with نوع الملف preset and the
-   * officer's search term carried across as the name to start from.
+   * officer's search term carried across as the name or phone to start from.
    *
    * Absent where the caller cannot build an admin URL; the search still works
    * and the no-match line says to register the person first.
@@ -826,6 +841,11 @@ export function AddPersonForm({
    * lead to different decisions about whether to open a new file.
    */
   const [failed, setFailed] = useState(false);
+  /** The term whose matches the officer has said «ليس بينهم؟» to. */
+  const [notAmong, setNotAmong] = useState('');
+  /** The shown results answer what is typed now, not a term since changed. */
+  const settled = !searching && searched !== '' && searched === term.trim();
+  const offerNewFile = settled && (failed || results.length === 0 || notAmong === searched);
   const [role, setRole] = useState<OccupancyRole | ''>('');
   const [shares, setShares] = useState('');
   /**
@@ -848,6 +868,46 @@ export function AddPersonForm({
   const areaFromCensus = recordedArea != null;
   const parsedArea = Number(unitArea.trim());
   const areaIsValid = unitArea.trim() === '' || (Number.isFinite(parsedArea) && parsedArea > 0);
+  /**
+   * «غير مؤكَّد» on the two questions this form asks about the unit — the same
+   * control, and the same reason box, the citizen form puts on every field.
+   *
+   * Both questions are required now. An empty area or an unanswered «ومن
+   * يشغلها؟» read exactly like a question nobody asked (52 of 65 units on
+   * 2026-09-16), and an unanswered flat bills its owner. So each is answered,
+   * or marked «غير مؤكَّد» with why. The reason travels to the occupancy's
+   * audit row; the unit itself keeps its null, so an unknown never passes for a
+   * measurement.
+   *
+   * The paths are local names the shared `Field` accepts, not a submission's —
+   * nothing here is sent as a field flag.
+   */
+  const [unitFlags, setUnitFlags] = useState<ReadonlyMap<string, string>>(new Map());
+  const unitFlagApi = useMemo(
+    () => ({
+      flags: unitFlags,
+      unverified: NO_UNVERIFIED,
+      set: (path: string, reason: string) =>
+        setUnitFlags((current) => new Map(current).set(path, reason)),
+      clear: (path: string) =>
+        setUnitFlags((current) => {
+          const next = new Map(current);
+          next.delete(path);
+          return next;
+        }),
+      locale,
+    }),
+    [unitFlags, locale],
+  );
+  const areaFlag = unitFlags.get(AREA_FLAG_PATH);
+  const statusFlag = unitFlags.get(STATUS_FLAG_PATH);
+  const areaAnswered =
+    areaFromCensus ||
+    (areaFlag !== undefined ? areaFlag.trim().length >= 4 : unitArea.trim() !== '' && areaIsValid);
+  const statusAnswered =
+    role !== 'OWNER' || (statusFlag !== undefined ? statusFlag.trim().length >= 4 : unitStatus !== '');
+  /** What «ومن يشغلها؟» actually says: nothing, while it is marked «غير مؤكَّد». */
+  const answeredStatus = role === 'OWNER' && statusFlag === undefined && unitStatus ? unitStatus : null;
 
   /**
    * Whether what is about to be recorded contradicts the standing vacancy.
@@ -858,7 +918,7 @@ export function AddPersonForm({
    * something it refuses is a failed save with no explanation.
    */
   const endsStandingVacancy = Boolean(
-    vacancy && role && contradictsVacancy(role, role === 'OWNER' ? unitStatus || null : null),
+    vacancy && role && contradictsVacancy(role, answeredStatus),
   );
 
   useEffect(() => {
@@ -936,6 +996,9 @@ export function AddPersonForm({
               />
               <Input
                 id="occupant-search"
+                // The form opens from «إضافة شخص إلى الوحدة», and searching is
+                // the first thing it asks for.
+                autoFocus
                 value={term}
                 onChange={(event) => setTerm(event.target.value)}
                 className="ps-9"
@@ -944,7 +1007,13 @@ export function AddPersonForm({
             </div>
           </Field>
 
-          {searching ? (
+          {!term.trim() ? (
+            <p className="text-xs text-muted-foreground">
+              {en
+                ? 'Search the register first. If the person is not on file, you can open a new file for this unit.'
+                : 'ابحث في السجل أولاً. إن لم يكن الشخص مسجَّلاً يمكنك فتح ملف جديد لهذه الوحدة.'}
+            </p>
+          ) : searching ? (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" aria-hidden />
               {en ? 'Searching…' : 'جاري البحث…'}
@@ -998,22 +1067,29 @@ export function AddPersonForm({
                 ? 'The register could not be reached, so this is not a “no match”. If you open a new file, check the name against the register once you are back online.'
                 : 'تعذّر الوصول إلى السجل، وهذا ليس «لا نتيجة». إن فتحت ملفاً جديداً فراجع الاسم في السجل عند عودة الاتصال.'}
             </p>
-          ) : !searching && searched && searched === term.trim() && results.length === 0 ? (
+          ) : settled && results.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               {en ? 'No match in the register.' : 'لا نتيجة في السجل.'}
             </p>
           ) : null}
 
           {/*
-            Offered from the start, rather than held back until a search has run.
-
-            Withholding these taught officers to type «asdfgh» to reveal them,
-            which gated nothing and cost a ritual on every record — see the
-            docblock. The look-before-you-create check lives in the form these
-            links open, where it matches on the name actually being typed and
-            «asdfgh» cannot satisfy it.
+            Held back until the search has answered — see the docblock for why
+            an unreachable register and «ليس بينهم؟» both open it. Without
+            either, an officer offline or facing a same-name match could not
+            register the household at all.
           */}
-          {newFileHref ? (
+          {settled && results.length > 0 && !offerNewFile ? (
+            <button
+              type="button"
+              className="py-1.5 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              onClick={() => setNotAmong(searched)}
+            >
+              {en ? 'Not one of these? Open a new file' : 'ليس بينهم؟ افتح ملفاً جديداً'}
+            </button>
+          ) : null}
+
+          {!offerNewFile ? null : newFileHref ? (
             <div className="space-y-2 rounded-md border border-dashed p-2.5">
               <p className="text-xs text-muted-foreground">
                 {results.length > 0
@@ -1098,6 +1174,7 @@ export function AddPersonForm({
         instead, which is the rule every lock in `UnitFields` follows: a field
         is stated rather than asked if, and only if, the register has an answer.
       */}
+      <FieldFlagProvider value={unitFlagApi}>
       {areaFromCensus ? (
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Ruler className="size-3.5 shrink-0" aria-hidden />
@@ -1109,8 +1186,10 @@ export function AddPersonForm({
         <Field
           label={en ? 'Unit Area (sq. meters)' : 'مساحة الوحدة (متر مربع)'}
           htmlFor="occupant-unit-area"
+          path={AREA_FLAG_PATH}
+          required
           error={
-            areaIsValid
+            areaFlag !== undefined || areaIsValid
               ? undefined
               : en
                 ? 'The area must be greater than zero.'
@@ -1118,8 +1197,8 @@ export function AddPersonForm({
           }
           hint={
             en
-              ? 'The census has no area for this unit. Leave it empty if it has not been measured — a guess would be billed.'
-              : 'لا توجد مساحة مسجَّلة لهذه الوحدة. اتركه فارغاً إن لم تُقَس — الرقم المُقدَّر تُحتسب عليه الرسوم.'
+              ? 'The census has no area for this unit. If it has not been measured, press «Unverified» and say why — never guess: a guess would be billed.'
+              : 'لا توجد مساحة مسجَّلة لهذه الوحدة. إن لم تُقَس فاضغط «غير مؤكَّد» واذكر السبب — لا تُقدِّر: الرقم المُقدَّر تُحتسب عليه الرسوم.'
           }
         >
           <Input
@@ -1143,25 +1222,22 @@ export function AddPersonForm({
         <Field
           label={en ? 'And who occupies it?' : 'ومن يشغلها؟'}
           htmlFor="occupant-unit-status"
+          path={STATUS_FLAG_PATH}
+          required
           hint={
             en
-              ? 'Owning a flat is not living in it. Leave unset if not established.'
-              : 'الملكية لا تعني السكن. اتركه دون تحديد إن لم يُسأل.'
+              ? 'Owning a flat is not living in it. If you could not find out, press «Unverified» and say why — never guess.'
+              : 'الملكية لا تعني السكن. إن لم تعرف من يشغلها فاضغط «غير مؤكَّد» واذكر السبب — لا تُخمِّن.'
           }
         >
           <Select
-            value={unitStatus || 'UNSET'}
-            onValueChange={(value) =>
-              setUnitStatus(value === 'UNSET' ? '' : (value as UnitStatus))
-            }
+            value={unitStatus || undefined}
+            onValueChange={(value) => setUnitStatus(value as UnitStatus)}
           >
             <SelectTrigger id="occupant-unit-status">
-              <SelectValue />
+              <SelectValue placeholder={en ? 'Choose…' : 'اختر…'} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="UNSET">
-                {en ? 'Not established' : 'غير محدد'}
-              </SelectItem>
               {UNIT_STATUS.map((value) => (
                 <SelectItem key={value} value={value}>
                   {labels.unitStatus[value]}
@@ -1177,6 +1253,7 @@ export function AddPersonForm({
             : `ستُسجَّل الوحدة «${labels.unitStatus[unitStatusForRole(role) as UnitStatus]}».`}
         </p>
       ) : null}
+      </FieldFlagProvider>
 
       {/*
         «المالك» — who a مستأجر or شاغل بتسامح holds the flat from.
@@ -1290,12 +1367,11 @@ export function AddPersonForm({
         without it, so nothing can override a colleague's finding by accident.
       */}
       {endsStandingVacancy ? (
-        <label className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed">
-          <input
-            type="checkbox"
-            className="mt-0.5 size-4 shrink-0"
+        <label className="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed">
+          <Checkbox
+            className="mt-0.5"
             checked={acknowledgedVacancy}
-            onChange={(event) => setAcknowledgedVacancy(event.target.checked)}
+            onCheckedChange={(checked) => setAcknowledgedVacancy(checked === true)}
           />
           <span>
             {en
@@ -1319,10 +1395,11 @@ export function AddPersonForm({
           (endsStandingVacancy && !acknowledgedVacancy) ||
           // A non-owner on a flat with recorded owners says which one, or that it is none of them.
           (role !== 'OWNER' && owners.length > 0 && !landlordChoice) ||
-          !areaIsValid
+          !areaAnswered ||
+          !statusAnswered
         }
         onClick={() => {
-          if (!chosen || !role || !areaIsValid) return;
+          if (!chosen || !role || !areaAnswered || !statusAnswered) return;
           const parsed = Number(shares);
           const nonOwner = role !== 'OWNER';
           const recordedOwner =
@@ -1335,7 +1412,7 @@ export function AddPersonForm({
             // Sent for an owner only, and only when actually chosen. The
             // server refuses it on anyone else, whose capacity settles the
             // unit's حالة without being asked.
-            unitStatus: role === 'OWNER' && unitStatus ? unitStatus : undefined,
+            unitStatus: answeredStatus ?? undefined,
             endsVacancy: endsStandingVacancy ? true : undefined,
             landlordCitizenId: recordedOwner,
             landlordName: typed && typedLandlordName.trim() ? typedLandlordName.trim() : undefined,
@@ -1350,7 +1427,13 @@ export function AddPersonForm({
               whether a PER_AREA notice refuses to price the flat or prices it
               at nothing.
             */
-            unitArea: !areaFromCensus && unitArea.trim() ? parsedArea : undefined,
+            unitArea: !areaFromCensus && areaFlag === undefined && unitArea.trim() ? parsedArea : undefined,
+            ...(!areaFromCensus && areaFlag !== undefined
+              ? { unitAreaMissingReason: areaFlag.trim() }
+              : {}),
+            ...(role === 'OWNER' && statusFlag !== undefined
+              ? { unitStatusMissingReason: statusFlag.trim() }
+              : {}),
           });
         }}
       >
@@ -1380,6 +1463,7 @@ export function VisitForm({
   locale,
   attempts,
   visits,
+  viewerId,
   onSubmit,
 }: {
   busy: boolean;
@@ -1388,6 +1472,8 @@ export function VisitForm({
   attempts: number;
   /** The recent ones, newest first. */
   visits: UnitVisitRow[];
+  /** The signed-in officer, so their own visit from earlier today can be recognised. */
+  viewerId?: string | null;
   onSubmit: (values: VisitValues) => void;
 }) {
   const en = locale === 'en';
@@ -1397,7 +1483,28 @@ export function VisitForm({
   const [visitedAt, setVisitedAt] = useState('');
   const [notes, setNotes] = useState('');
   const [revisitAt, setRevisitAt] = useState('');
+  const [repeatConfirmed, setRepeatConfirmed] = useState(false);
   const followUp = FOLLOW_UP_CASE[outcome];
+
+  /*
+    This officer's own visit to this door within the server's window.
+
+    Asked here, before the tap, because the second submit is the mistake: on
+    2026-09-15 one officer logged the same closed shop twice in a day, each with
+    its own follow-up case. The server asks the same question if this list was
+    stale; an evening retry is one tick away.
+  */
+  const claimedAt = visitedAt ? new Date(visitedAt).getTime() : Date.now();
+  const myRecentVisit = viewerId
+    ? visits.find(
+        (visit) =>
+          visit.officerId === viewerId &&
+          visit.outcome === outcome &&
+          Date.now() - new Date(visit.createdAt).getTime() < REPEAT_VISIT_WINDOW_MS &&
+          // The same rule as the server: logged recently, dated the same day, same finding.
+          Math.abs(new Date(visit.visitedAt).getTime() - claimedAt) < 24 * 60 * 60 * 1000,
+      )
+    : undefined;
 
   return (
     <div className="space-y-3 rounded-md border bg-background p-3">
@@ -1501,9 +1608,27 @@ export function VisitForm({
           : 'تنتقل حالة الوحدة إلى هذه النتيجة — زيارة واحدة وحالة واحدة تُسجَّلان معاً.'}
       </p>
 
+      {myRecentVisit ? (
+        <label className="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs">
+          <Checkbox
+            className="mt-0.5"
+            checked={repeatConfirmed}
+            onCheckedChange={(checked) => setRepeatConfirmed(checked === true)}
+          />
+          <span className="leading-relaxed">
+            <span className="font-semibold">
+              {en
+                ? `You already logged this unit ${formatDate(myRecentVisit.createdAt)} («${labels.surveyStatus[myRecentVisit.outcome]}»).`
+                : `سجَّلتَ زيارة لهذه الوحدة ${formatDate(myRecentVisit.createdAt)} («${labels.surveyStatus[myRecentVisit.outcome]}»).`}
+            </span>{' '}
+            {en ? 'This is a new attempt, not the same one again.' : 'هذه محاولة جديدة وليست تكراراً للسابقة.'}
+          </span>
+        </label>
+      ) : null}
+
       <Button
         size="sm"
-        disabled={busy}
+        disabled={busy || (Boolean(myRecentVisit) && !repeatConfirmed)}
         onClick={() =>
           onSubmit({
             outcome,
@@ -1513,6 +1638,7 @@ export function VisitForm({
             // under «لم يتم الرد» and then left behind by switching to «مكتملة»
             // must not open a case on a door that was answered.
             revisitAt: followUp ? revisitAt : '',
+            ...(myRecentVisit && repeatConfirmed ? { acknowledgedRepeat: true } : {}),
           })
         }
       >
@@ -1529,6 +1655,8 @@ export interface VisitValues {
   notes: string;
   /** Empty unless the outcome has a follow-up and a date was given. */
   revisitAt: string;
+  /** The officer confirmed a second visit of their own within the window. */
+  acknowledgedRepeat?: boolean;
 }
 
 /**
@@ -1572,6 +1700,7 @@ export async function logVisitWithFollowUp(
     outcome: values.outcome,
     visitedAt: values.visitedAt || undefined,
     notes: values.notes || undefined,
+    ...(values.acknowledgedRepeat ? { acknowledgedRepeat: true } : {}),
   });
   const logged = [
     en
@@ -1610,6 +1739,12 @@ export async function logVisitWithFollowUp(
     });
   } catch (caught) {
     logApiError(caught);
+    // One open follow-up per door: the visit counts, the case already exists.
+    if (caught instanceof ApiRequestError && caught.status === 409) {
+      return en
+        ? `${logged} — a follow-up case of this kind is already open on this unit`
+        : `${logged} — توجد حالة متابعة مفتوحة من النوع نفسه على هذه الوحدة`;
+    }
     return en
       ? `${logged} — but the follow-up case could not be opened`
       : `${logged} — لكن تعذّر فتح حالة المتابعة`;
@@ -2478,12 +2613,11 @@ function LinkOwnerDialog({
         </div>
 
         {needsConfirmation ? (
-          <label className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed">
-            <input
-              type="checkbox"
-              className="mt-0.5 size-4 shrink-0"
+          <label className="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed">
+            <Checkbox
+              className="mt-0.5"
               checked={confirmedAfter}
-              onChange={(event) => setConfirmedAfter(event.target.checked)}
+              onCheckedChange={(checked) => setConfirmedAfter(checked === true)}
             />
             <span>
               {en
