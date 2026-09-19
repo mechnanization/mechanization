@@ -1193,5 +1193,47 @@ describeIfDb('LandlordLinkService', () => {
         ),
       ).resolves.toMatchObject({ updated: true });
     });
+
+    it('does not name a reviewer as the last person to edit the file', async () => {
+      /*
+        A return is logged against the citizen but changes nothing on the file.
+        Counted as an edit, the officer opening the record to fix it was told
+        the reviewer had changed it.
+      */
+      const linked = await linkedTenant();
+      const payload = await payloadFor(linked.tenantId, [
+        cardFor(linked.entryId, linked.building.id, linked.units[0]!.id, { landlordPhone: linked.phone.typed }),
+      ]);
+      await within(() =>
+        citizens.update({ tenantSlug: 'links', citizenId: linked.tenantId, payload, actor: actor() }),
+      );
+      await settleAudit();
+
+      const reviewerId = randomUUID();
+      await db.user.create({
+        data: {
+          id: reviewerId,
+          kind: 'STAFF',
+          tenantSlug: 'links',
+          email: `reviewer-${reviewerId}@links.gov.lb`,
+          firstName: 'مدقق',
+          lastName: 'الجودة',
+          role: 'AUDITOR',
+        },
+      });
+      await db.auditLogEntry.create({
+        data: {
+          actorId: reviewerId,
+          actorType: 'STAFF',
+          actorRole: 'AUDITOR',
+          action: 'RECORD_RETURNED',
+          entityType: 'User',
+          entityId: linked.tenantId,
+        },
+      });
+
+      const opened = await within(() => citizens.getEditable(linked.tenantId, reviewerId));
+      expect(opened.lastStaffEdit).toMatchObject({ name: 'موظف البلدية', byViewer: false });
+    });
   });
 });

@@ -3,6 +3,7 @@
 import { use, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ClipboardCheck, ClipboardList, ShieldQuestion, UsersRound } from 'lucide-react';
+import { QUALITY_CHECK_ROLES } from '@mechanization/shared-schemas';
 import { type Session } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { getOfficerQuality } from '@/lib/quality-api';
@@ -78,6 +79,15 @@ export default function QualityPage({
     [staff.data],
   );
 
+  // Whom a re-check can be handed to: the server refuses anyone else.
+  const checkers = useMemo(
+    () =>
+      (staff.data?.officers ?? [])
+        .filter((person) => person.isActive && (QUALITY_CHECK_ROLES as readonly string[]).includes(person.role ?? ''))
+        .map((person) => ({ id: person.id, name: person.name })),
+    [staff.data],
+  );
+
   if (!session) return null;
   const token = session.accessToken;
 
@@ -116,7 +126,7 @@ export default function QualityPage({
       ) : tab === 'findings' ? (
         <FindingsList tenant={tenant} base={base} locale={locale} token={token} />
       ) : tab === 'checks' ? (
-        <ChecksPanel tenant={tenant} base={base} locale={locale} token={token} canReview officers={officers} />
+        <ChecksPanel tenant={tenant} base={base} locale={locale} token={token} canReview officers={checkers} />
       ) : (
         <OfficerQuality tenant={tenant} base={base} locale={locale} token={token} />
       )}

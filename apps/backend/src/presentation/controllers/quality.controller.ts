@@ -4,6 +4,7 @@ import {
   completeCheckSchema,
   dismissFindingSchema,
   drawSampleSchema,
+  QUALITY_CHECK_ROLES,
   QUALITY_FINDING_KIND,
   returnRecordSchema,
   type AssignCheckInput,
@@ -202,7 +203,7 @@ export class QualityController {
     return this.reviews.assign(optionalUuid(id, 'التحقق')!, body, actorOf(user));
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...QUALITY_CHECK_ROLES)
   @Post('checks/:id/complete')
   async complete(
     @Param('id') id: string,

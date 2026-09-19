@@ -66,6 +66,20 @@ export const drawSampleSchema = z
   .refine((value) => value.from <= value.to, { message: 'تاريخ البداية بعد النهاية', path: ['from'] });
 export type DrawSampleInput = z.infer<typeof drawSampleSchema>;
 
+/**
+ * Who may carry out a field re-check: the officers who register households,
+ * and the reviewers. One list, because four places ask — the endpoint that
+ * records the result, the task list that offers checks, the assignment that
+ * hands one to a named person, and that assignment's select. When they
+ * disagreed, a collector was offered checks the endpoint then refused.
+ */
+export const QUALITY_CHECK_ROLES = [
+  'SUPER_ADMIN',
+  'AUDITOR',
+  'FIELD_INSPECTOR',
+  'ADMINISTRATIVE_OFFICER',
+] as const;
+
 export const assignCheckSchema = z.object({ assignedToId: uuid.nullable() });
 export type AssignCheckInput = z.infer<typeof assignCheckSchema>;
 

@@ -382,7 +382,15 @@ export class DataQualityService {
     return findings;
   }
 
-  /** Filings delivered offline that the server held as possibly somebody already on file. */
+  /**
+   * Filings delivered offline that the server held as possibly somebody already on file.
+   *
+   * Read from each citizen's newest registration only — the one whose flag the
+   * edit form shows and clears. A flag on an older one could never be answered,
+   * and this finding is not dismissable, so it would stand for good. The
+   * registration path carries the flag forward when a filing is attached to
+   * someone already on file, so nothing is lost by looking only here.
+   */
   private async heldAsPossibleDuplicate(): Promise<RawFinding[]> {
     const rows = await this.db.$queryRaw<
       Array<{ id: string; citizenId: string; createdById: string | null; submittedAt: Date; reason: string | null }>
@@ -392,6 +400,12 @@ export class DataQualityService {
                WHERE f->>'path' = ${POSSIBLE_DUPLICATE_FLAG_PATH} LIMIT 1) AS reason
       FROM ${this.S}registrations r
       WHERE r."flaggedFields" @> ${JSON.stringify([{ path: POSSIBLE_DUPLICATE_FLAG_PATH }])}::jsonb
+        AND r.id = (
+          SELECT newest.id FROM ${this.S}registrations newest
+           WHERE newest."citizenId" = r."citizenId"
+           ORDER BY newest."submittedAt" DESC
+           LIMIT 1
+        )
     `;
     if (rows.length === 0) return [];
     const citizens = await this.citizenLabels(rows.map((row) => row.citizenId));

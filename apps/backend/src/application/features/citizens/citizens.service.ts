@@ -45,6 +45,7 @@ import {
   unestablishedOnCard,
 } from '../registration/registration.service';
 import { TenantService } from '../tenant/tenant.service';
+import { REVIEW_AUDIT_ACTIONS } from '../quality/record-review.service';
 import {
   assessFindings,
   hasFindings,
@@ -545,12 +546,22 @@ export class CitizensService {
     ].join(':');
   }
 
-  /** The last member of staff whose change to this citizen reached the audit log. */
+  /**
+   * The last member of staff whose change to this citizen reached the audit log.
+   *
+   * A reviewer's decision is logged against the citizen too, but changes
+   * nothing on the file — see `REVIEW_AUDIT_ACTIONS`.
+   */
   private async lastStaffEdit(
     citizenId: string,
   ): Promise<{ staffId: string | null; name: string | null; at: string } | null> {
     const entry = await this.db.auditLogEntry.findFirst({
-      where: { entityType: 'User', entityId: citizenId, actorType: 'STAFF' },
+      where: {
+        entityType: 'User',
+        entityId: citizenId,
+        actorType: 'STAFF',
+        action: { notIn: [...REVIEW_AUDIT_ACTIONS] },
+      },
       orderBy: { createdAt: 'desc' },
       select: { actorId: true, createdAt: true },
     });

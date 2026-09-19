@@ -7,7 +7,7 @@ import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-cli
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.repository';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
-import { ConflictError } from '../../../domain/errors/domain-error';
+import { ConflictError, ValidationError } from '../../../domain/errors/domain-error';
 import { AuditService } from '../audit/audit.service';
 import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
@@ -40,11 +40,14 @@ describeIfDb('Quality review', () => {
   let audit: AuditService;
   let buildings: BuildingsService;
 
-  const staff: Record<'jawad' | 'hussein' | 'auditor', string> = { jawad: '', hussein: '', auditor: '' };
-  const as = (who: keyof typeof staff, role = who === 'auditor' ? 'AUDITOR' : 'FIELD_INSPECTOR') => ({
-    id: staff[who],
-    role,
-  });
+  const staff: Record<'jawad' | 'hussein' | 'auditor' | 'collector', string> = {
+    jawad: '',
+    hussein: '',
+    auditor: '',
+    collector: '',
+  };
+  const ROLE_OF = { jawad: 'FIELD_INSPECTOR', hussein: 'FIELD_INSPECTOR', auditor: 'AUDITOR', collector: 'COLLECTOR' };
+  const as = (who: keyof typeof staff, role: string = ROLE_OF[who]) => ({ id: staff[who], role });
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-quality', tenantSlug: 'quality', schemaName: SCHEMA, prisma: db }, work);
@@ -78,6 +81,7 @@ describeIfDb('Quality review', () => {
       ['jawad', 'جواد', 'FIELD_INSPECTOR'],
       ['hussein', 'حسين', 'FIELD_INSPECTOR'],
       ['auditor', 'مدقق', 'AUDITOR'],
+      ['collector', 'جابي', 'COLLECTOR'],
     ] as const) {
       const id = randomUUID();
       staff[key] = id;
@@ -230,7 +234,65 @@ describeIfDb('Quality review', () => {
     expect(scores.officers[0]).toMatchObject({ checks: { done: 1, differs: 1, differsRate: 100 } });
   });
 
+  /**
+   * A collector's profile used to list unassigned re-checks with a form whose
+   * submit the endpoint refused them, and a reviewer could name a collector
+   * for a check they could then never record.
+   */
+  it('offers and hands re-checks only to roles that can record the result', async () => {
+    const day = new Date('2026-07-01T10:00:00Z');
+    const { citizenId } = await filing(staff.hussein, { firstName: 'تحقق', lastName: 'الأدوار' }, day);
+    await within(() =>
+      reviews.drawSample(
+        { from: new Date('2026-07-01T00:00:00Z'), to: new Date('2026-07-01T00:00:00Z'), percent: 50 },
+        as('auditor'),
+      ),
+    );
+    const check = (await within(() => reviews.listChecks({ status: 'OPEN', officerId: staff.hussein }))).find(
+      (row) => row.citizen.id === citizenId,
+    )!;
+
+    expect((await within(() => reviews.tasksFor(as('collector')))).checks).toEqual([]);
+    await expect(
+      within(() => reviews.assign(check.id, { assignedToId: staff.collector }, as('auditor'))),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    await within(() => reviews.assign(check.id, { assignedToId: staff.jawad }, as('auditor')));
+    const offered = await within(() => reviews.tasksFor(as('jawad')));
+    expect(offered.checks.map((row) => row.id)).toContain(check.id);
+  });
+
   // ─────────────────────────────  Findings  ─────────────────────────────
+
+  /**
+   * «سجل مشابه» is answered on the edit form, which owns a citizen's newest
+   * registration — and the finding cannot be dismissed. Read from every
+   * registration, a flag left on an older one stood for good.
+   */
+  it('reads a held duplicate from the newest registration only', async () => {
+    const flag = [{ path: 'personal.possibleDuplicate', kind: 'UNVERIFIED', reason: 'قد يكون: شخص آخر' }];
+    const older = await filing(staff.jawad, { firstName: 'قديم', lastName: 'معلَّق' }, new Date('2026-06-01T10:00:00Z'));
+    await db.registration.update({ where: { id: older.registrationId }, data: { flaggedFields: flag } });
+    const newer = await db.registration.create({
+      data: {
+        citizenId: older.citizenId,
+        referenceNumber: `QLT-${randomUUID().slice(0, 8)}`,
+        createdById: staff.jawad,
+        submittedAt: new Date('2026-06-02T10:00:00Z'),
+      },
+      select: { id: true },
+    });
+
+    const held = async () =>
+      (await within(() => quality.findings())).items
+        .filter((finding) => finding.kind === 'HELD_AS_POSSIBLE_DUPLICATE')
+        .map((finding) => finding.subjectKey);
+
+    expect(await held()).not.toContain(older.registrationId);
+
+    await db.registration.update({ where: { id: newer.id }, data: { flaggedFields: flag } });
+    expect(await held()).toContain(newer.id);
+  });
 
   it('finds the same person twice, a copied landlord phone, near buildings and a contradicted status', async () => {
     const phone = `+96171${String(Date.now()).slice(-6)}`;

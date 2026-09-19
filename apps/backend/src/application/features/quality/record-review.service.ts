@@ -1,12 +1,13 @@
 import { randomInt } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
-import type {
-  AssignCheckInput,
-  CompleteCheckInput,
-  DrawSampleInput,
-  FieldFlag,
-  ReturnRecordInput,
+import {
+  QUALITY_CHECK_ROLES,
+  type AssignCheckInput,
+  type CompleteCheckInput,
+  type DrawSampleInput,
+  type FieldFlag,
+  type ReturnRecordInput,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -33,6 +34,22 @@ export const TO_REVIEW: readonly ReviewState[] = ['NEW', 'CORRECTED', 'CHANGED']
 
 /** Roles that may approve or return a record. */
 export const REVIEWER_ROLES = ['SUPER_ADMIN', 'AUDITOR', 'ADMINISTRATIVE_OFFICER'] as const;
+
+/**
+ * What this service writes to a citizen's audit trail. None of it changes the
+ * record — a review is a message about it — so «آخر من عدّل الملف» must skip
+ * these, or the officer fixing a returned record is told the reviewer edited it.
+ */
+export const REVIEW_AUDIT_ACTIONS = [
+  'RECORD_APPROVED',
+  'RECORD_RETURNED',
+  'RECORD_CORRECTED',
+  'QUALITY_CHECK_ASSIGNED',
+  'QUALITY_CHECK_DONE',
+] as const;
+
+const canCheck = (role: string | null | undefined): boolean =>
+  (QUALITY_CHECK_ROLES as readonly string[]).includes(role ?? '');
 
 const MAX_PAGE = 100;
 
@@ -382,7 +399,10 @@ export class RecordReviewService {
 
   // ─────────────────────────────  Officer's own work  ─────────────────────────────
 
-  /** What is waiting on this member of staff: their returned records, and checks they can do. */
+  /**
+   * What is waiting on this member of staff: their returned records, and checks
+   * they can do — none for a role that cannot record a check's result.
+   */
   async tasksFor(actor: Actor) {
     const [returned, checks] = await Promise.all([
       this.db.recordReview.findMany({
@@ -405,7 +425,7 @@ export class RecordReviewService {
           },
         },
       }),
-      this.listChecks({ status: 'OPEN', availableTo: actor.id }),
+      canCheck(actor.role) ? this.listChecks({ status: 'OPEN', availableTo: actor.id }) : Promise.resolve([]),
     ]);
 
     return {
@@ -605,9 +625,12 @@ export class RecordReviewService {
       }
       const staff = await this.db.user.findFirst({
         where: { id: input.assignedToId, kind: 'STAFF', isActive: true },
-        select: { firstName: true, lastName: true },
+        select: { firstName: true, lastName: true, role: true },
       });
       if (!staff) throw new ValidationError('الموظف غير موجود أو غير فعّال.');
+      if (!canCheck(staff.role)) {
+        throw new ValidationError('دور هذا الموظف لا يسمح بتسجيل نتيجة التحقق — أسنِده إلى موظف ميداني أو مراجِع.');
+      }
     }
 
     await this.db.qualityCheck.update({ where: { id: checkId }, data: { assignedToId: input.assignedToId } });

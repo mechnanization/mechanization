@@ -407,6 +407,36 @@ describeIfDb('TenancyService', () => {
     expect(await bill(linked.ownerId, 'OCCUPANT')).toBe(1000);
   });
 
+  /**
+   * One «شاغرة قيد التحقق» per door is a rule for officers opening cases by
+   * hand. It used to reach this path too, where it refused inside the
+   * transaction — so the second tenant of a flat whose status was already
+   * being checked could not be moved out at all.
+   */
+  it('ends the tenancy when a vacancy check is already open on the flat, without a second case', async () => {
+    const linked = await linkedTenancy('TNC-5B');
+    const unitId = linked.units[0]!.id;
+    await db.case.create({
+      data: {
+        notes: 'سُئل عنها قبل اليوم',
+        caseType: 'VACANT_UNCONFIRMED',
+        buildingId: linked.building.id,
+        unitId,
+        createdById: officerId,
+      },
+    });
+
+    const result = await within(() =>
+      tenancy.endCard(linked.entryId, { reason: 'MOVED_OUT', afterStatus: 'UNKNOWN' }, actor()),
+    );
+
+    expect(result.casesOpened).toBe(0);
+    expect((await spell(linked.tenantId, unitId)).toDate).not.toBeNull();
+    expect(
+      await db.case.count({ where: { unitId, caseType: 'VACANT_UNCONFIRMED', status: 'OPEN' } }),
+    ).toBe(1);
+  });
+
   it('keeps a flat let to somebody new «مؤجرة» and opens a case to register them', async () => {
     const linked = await linkedTenancy('TNC-6');
     const unitId = linked.units[0]!.id;
