@@ -1187,6 +1187,15 @@ export interface CreateBuildingInput {
    */
   acknowledgedDuplicates?: boolean;
   /**
+   * The officer's sentence behind `acknowledgedDuplicates` — what makes this a
+   * separate structure. Written into the creation's audit row beside the
+   * neighbours and their distances. The editor requires it; the server accepts
+   * its absence so that creations already queued on phones still land.
+   */
+  duplicateReason?: string;
+  /** Why the building is created with no entrance pin. See the schema. */
+  noPinReason?: string;
+  /**
    * The matrix, created in the same transaction as the shell.
    *
    * For the registration form, which creates a structure the officer is
@@ -1216,6 +1225,8 @@ export interface CreateBuildingInput {
 }
 
 export type UpdateBuildingInput = Partial<{
+  /** The building's `updatedAt` as the editor loaded it — see the schema. */
+  expectedUpdatedAt: string;
   name: string | null;
   postedNumber: string | null;
   /**
@@ -1321,6 +1332,10 @@ export interface RecordOccupancyInput {
    * the citizen inherited that absence.
    */
   unitArea?: number;
+  /** Why no area is being given for a unit the census has none for. See the schema. */
+  unitAreaMissingReason?: string;
+  /** Owners: why «ومن يشغلها؟» is left unanswered. See the schema. */
+  unitStatusMissingReason?: string;
   fromDate?: string;
   toDate?: string;
   /**
@@ -1844,7 +1859,12 @@ export interface LogVisitInput {
   outcome: SurveyStatus;
   visitedAt?: string;
   notes?: string;
+  /** This officer already logged this unit in the last twelve hours, and means to again. */
+  acknowledgedRepeat?: boolean;
 }
+
+/** How recently an officer's own visit makes another one worth a question — the server's window. */
+export const REPEAT_VISIT_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 /**
  * Logs one attempt and moves the unit to what it found — two facts, one action.
@@ -2489,6 +2509,27 @@ export interface CitizenFormData {
   flags: FieldFlag[];
   /** «ملاحظات» on the most recent registration, or null for none. */
   notes: string | null;
+  /** The file as it stands now — sent back as `expectedVersion` on save. */
+  version?: string;
+  /** The last member of staff who changed this file, and whether it was the viewer. */
+  lastStaffEdit?: { name: string | null; at: string; byViewer: boolean } | null;
+}
+
+/** Who changed a file after this form opened, carried by a refused save. */
+export interface StaleEdit {
+  version: string;
+  lastEditedBy: string | null;
+  lastEditedAt: string | null;
+  byViewer: boolean;
+}
+
+/** The details of a save refused because the file changed since it was opened, or null. */
+export function staleEditOf(caught: unknown): StaleEdit | null {
+  if (!(caught instanceof ApiRequestError) || caught.payload.code !== 'CONFLICT') return null;
+  const details = caught.payload.details;
+  if (!details || Array.isArray(details)) return null;
+  const stale = (details as { staleEdit?: unknown }).staleEdit;
+  return stale && typeof stale === 'object' ? (stale as StaleEdit) : null;
 }
 
 export function getCitizenForm(tenant: string, token: string, citizenId: string) {
@@ -2519,6 +2560,91 @@ export interface CitizenWriteInput {
    * rather than registering the household a second time.
    */
   clientSubmissionId?: string;
+  /**
+   * «اسألني إن بدا مسجَّلاً مسبقاً». Sent only on a save with a person at the
+   * screen — never stored in the offline queue, whose deliveries must not be
+   * refused on arrival. See `adminCreateCitizenSubmissionSchema`.
+   */
+  reviewDuplicates?: boolean;
+  /** The officer's answer to the duplicate question, when it was asked. */
+  duplicateReview?: DuplicateReviewAnswer;
+  /** On an edit: the version the form was opened at. See `CitizenFormData.version`. */
+  expectedVersion?: string;
+}
+
+/** A record already on file that looks like the person being registered. */
+export interface DuplicateCandidate {
+  id: string;
+  referenceNumber: string | null;
+  fullName: string;
+  motherName: string | null;
+  phone: string | null;
+  residence: string | null;
+  propertyCount: number;
+  registeredAt: string | null;
+  registeredBy: string | null;
+  matchedOn: Array<'NAME' | 'NAME_SIMILAR' | 'PHONE' | 'MOTHER'>;
+}
+
+/** Which of the record's two numbers a match was on. `whatsapp` only when it differs from the phone. */
+export type ContactNumberField = 'phone' | 'whatsapp';
+
+/** Somebody this officer registered in the last two hours, on one of this record's numbers. */
+export interface DuplicatePhoneOwner {
+  id: string;
+  referenceNumber: string | null;
+  fullName: string;
+  phone: string | null;
+  fields: ContactNumberField[];
+  registeredAt: string;
+  minutesAgo: number;
+}
+
+export interface DuplicateReviewFindings {
+  possibleDuplicates: DuplicateCandidate[];
+  phoneOwners: DuplicatePhoneOwner[];
+  /** Cards of this record whose landlord number is one of the citizen's own numbers. */
+  landlordPhoneCards: Array<{ index: number; landlordName: string | null; field: ContactNumberField }>;
+}
+
+export interface DuplicateReviewAnswer {
+  differentFrom: string[];
+  sharedPhoneWith: string[];
+  sharedPhoneWithLandlord: boolean;
+  reason: string;
+}
+
+export function hasDuplicateFindings(findings: DuplicateReviewFindings): boolean {
+  return (
+    findings.possibleDuplicates.length > 0 ||
+    findings.phoneOwners.length > 0 ||
+    findings.landlordPhoneCards.length > 0
+  );
+}
+
+/**
+ * «هل هو مسجَّل مسبقاً؟» asked before anything is written — the same question
+ * `createCitizen` refuses on when sent `reviewDuplicates`.
+ */
+export async function reviewCitizenDuplicates(
+  tenant: string,
+  token: string,
+  input: CitizenWriteInput,
+): Promise<DuplicateReviewFindings> {
+  return apiFetch<DuplicateReviewFindings>(tenant, '/citizens/duplicate-review', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** The findings carried by a creation refused over a possible duplicate, or null. */
+export function duplicateReviewOf(caught: unknown): DuplicateReviewFindings | null {
+  if (!(caught instanceof ApiRequestError) || caught.payload.code !== 'CONFLICT') return null;
+  const details = caught.payload.details;
+  if (!details || Array.isArray(details)) return null;
+  const review = (details as { duplicateReview?: unknown }).duplicateReview;
+  return review && typeof review === 'object' ? (review as DuplicateReviewFindings) : null;
 }
 
 /**
@@ -2639,6 +2765,8 @@ export async function updateCitizen(
     updated: boolean;
     citizenId: string;
     status: CitizenRecordStatus;
+    /** The file's version after the save. */
+    version?: string;
     census: CensusSyncResult | null;
     landlordLinks: LandlordLinkOffers | null;
     /** Links the save undid or brought into line with the card — see the server. */
@@ -2700,6 +2828,11 @@ export interface LinkBlock {
 export type LinkOutcome = 'NEW_CARD' | 'ADDED_TO_CARD' | 'ALREADY_ON_FILE' | 'OCCUPANCY_ONLY';
 
 export interface LandlordProposalCandidate extends LandlordCandidate {
+  /**
+   * `PHONE` — the card's number is theirs. `NAME` — only the name the tenant
+   * typed is theirs; never preselected, and the card says so.
+   */
+  matchedBy: 'PHONE' | 'NAME';
   outcome: LinkOutcome | null;
   blocked: LinkBlock | null;
 }
@@ -2711,7 +2844,8 @@ export interface LandlordProposal {
   propertyType: string;
   /** What the tenant said, as typed. */
   landlordName: string | null;
-  landlordPhone: string;
+  /** Null when the tenant gave only a name and the owner was found by it. */
+  landlordPhone: string | null;
   propertyNumber: string | null;
   buildingName: string | null;
   buildingId: string | null;
@@ -3088,10 +3222,37 @@ export interface AuditEntry {
   action: string;
   entityType: string;
   entityId: string | null;
+  /** Sensitive values arrive already replaced with `[redacted]`. */
   before: unknown;
   after: unknown;
   ipAddress: string | null;
   createdAt: string;
+  /** Who did it, resolved by the server — a staff member's name, or «النظام». */
+  actor?: {
+    kind: 'STAFF' | 'CITIZEN' | 'SYSTEM';
+    name: string | null;
+    role: string | null;
+    email: string | null;
+  };
+  /** What it was done to, as a person reads it, and where to open it. */
+  target?: {
+    type: string;
+    id: string | null;
+    label: string | null;
+    secondary: string | null;
+    link: { kind: 'citizen' | 'staff' | 'building' | 'case' | 'zone'; id: string } | null;
+    missing: boolean;
+  };
+}
+
+export interface AuditFacets {
+  actions: string[];
+  entityTypes: string[];
+  actors: Array<{ id: string; name: string; role: string | null; isActive: boolean }>;
+}
+
+export function getAuditFacets(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<AuditFacets>(tenant, '/audit/facets', { token, signal });
 }
 
 /** SUPER_ADMIN/AUDITOR only, server-enforced. Omitting `actorId` returns
@@ -3105,6 +3266,8 @@ export function getAuditLog(
     entityType?: string;
     /** One record's own trail. Pairs with `entityType`; the server indexes both. */
     entityId?: string;
+    /** Any of these action codes. */
+    actions?: string[];
     from?: string;
     to?: string;
     limit?: number;
@@ -3117,6 +3280,7 @@ export function getAuditLog(
   if (filter.actorId) query.set('actorId', filter.actorId);
   if (filter.entityType) query.set('entityType', filter.entityType);
   if (filter.entityId) query.set('entityId', filter.entityId);
+  if (filter.actions?.length) query.set('action', filter.actions.join(','));
   if (filter.from) query.set('from', filter.from);
   if (filter.to) query.set('to', filter.to);
   query.set('limit', String(filter.limit ?? 50));

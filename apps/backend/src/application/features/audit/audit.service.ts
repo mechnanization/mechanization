@@ -6,10 +6,10 @@ import { AUDIT_REPOSITORY } from '../../../domain/interfaces/base-repository.int
 import {
   AuditQuery,
   AuditRepository,
-  AuditRow,
 } from '../../../domain/interfaces/audit-repository.interface';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { toAuditViews, type AuditView } from './audit-view';
 
 /**
  * The audit trail subscribes to domain events rather than being called by the
@@ -169,6 +169,34 @@ export class AuditService {
       action: payload.action,
       entityType: 'Building',
       entityId: payload.buildingId,
+      before: payload.before,
+      after: payload.after,
+    });
+  }
+
+  /**
+   * «مراجعة الجودة» actions that are not about one citizen's file — a sample
+   * drawn, a finding dismissed or restored. The ones that are (an approval, a
+   * return, a completed check) arrive as `citizen.changed` so they sit in that
+   * citizen's own trail.
+   */
+  @OnEvent('quality.changed')
+  async onQualityChanged(payload: {
+    action: string;
+    entityType?: string;
+    entityId?: string | null;
+    before?: Record<string, unknown>;
+    after?: Record<string, unknown>;
+    actorId: string;
+    actorRole: string;
+  }): Promise<void> {
+    await this.record({
+      actorId: payload.actorId,
+      actorType: 'STAFF',
+      actorRole: payload.actorRole as never,
+      action: payload.action,
+      entityType: payload.entityType ?? 'DataQuality',
+      entityId: payload.entityId ?? null,
       before: payload.before,
       after: payload.after,
     });
@@ -415,15 +443,50 @@ export class AuditService {
    * repeated reads of the same page — reopening it, paginating back — without
    * the log ever needing to look perfectly live.
    */
-  async query(query: AuditQuery): Promise<{ items: AuditRow[]; total: number }> {
+  async query(query: AuditQuery): Promise<{ items: AuditView[]; total: number }> {
     const key = this.cacheKey(query);
-    const cached = await this.cache.get<{ items: AuditRow[]; total: number }>(key);
+    const cached = await this.cache.get<{ items: AuditView[]; total: number }>(key);
     if (cached) return cached;
 
-    const result = await this.audit.query(query);
+    const raw = await this.audit.query(query);
+    /*
+      Who and what, resolved once per page. See `toAuditViews` — without it
+      every census write an officer made read as «النظام».
+    */
+    const result = { items: await toAuditViews(this.tenantContext.prisma, raw.items), total: raw.total };
     const ttl = this.config.get<number>('AUDIT_CACHE_TTL_SECONDS') ?? 20;
     await this.cache.set(key, result, ttl);
     return result;
+  }
+
+  /**
+   * The choices the audit screen's filters offer — only actions and staff that
+   * actually appear, so no filter can be set to something that returns nothing
+   * by construction. Staff are named, including accounts since deactivated.
+   */
+  async facets(): Promise<{
+    actions: string[];
+    entityTypes: string[];
+    actors: Array<{ id: string; name: string; role: string | null; isActive: boolean }>;
+  }> {
+    const facets = await this.audit.facets();
+    const staff = facets.actorIds.length
+      ? await this.tenantContext.prisma.user.findMany({
+          where: { id: { in: facets.actorIds }, kind: 'STAFF' },
+          select: { id: true, firstName: true, lastName: true, role: true, isActive: true },
+          orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+        })
+      : [];
+    return {
+      actions: facets.actions,
+      entityTypes: facets.entityTypes,
+      actors: staff.map((row) => ({
+        id: row.id,
+        name: `${row.firstName} ${row.lastName}`,
+        role: row.role,
+        isActive: row.isActive,
+      })),
+    };
   }
 
   private cacheKey(query: AuditQuery): string {
@@ -431,6 +494,7 @@ export class AuditService {
       query.actorId ?? 'ALL',
       query.entityType ?? 'ALL',
       query.entityId ?? 'ALL',
+      query.actions?.length ? query.actions.join('|') : 'ALL',
       query.from ? query.from.toISOString() : 'ALL',
       query.to ? query.to.toISOString() : 'ALL',
       query.limit,

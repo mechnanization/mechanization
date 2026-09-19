@@ -897,6 +897,106 @@ describeIfDb('LandlordLinkService', () => {
     expect(await within(() => links.claimsNaming(shown.id))).toEqual([]);
   });
 
+  // ─────────────────────────────  By name  ─────────────────────────────
+
+  it('offers the owner a card names by name when its number is not theirs, and links on it', async () => {
+    /*
+      بسام حبيب نسر, 2026-09-15: registered, and named on five cards in his own
+      building with a number that was not his. A distinctive name here so no
+      other test's owners answer to it.
+    */
+    const { units, building } = await surveyedBlock('LNK-NAME');
+    const ownerId = await citizen('وسيم', freshPhone().stored, { middleName: 'خليل', lastName: 'قصير' });
+    await db.registration.create({
+      data: { citizenId: ownerId, referenceNumber: `REF-${randomUUID().slice(0, 10)}` },
+    });
+    const { entryId } = await tenantFiling({
+      landlordPhone: freshPhone().stored,
+      landlordName: 'وسيم  قصير',
+      parcelNumber: 'LNK-NAME',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+    });
+
+    const queued = (await within(() => links.proposals({ limit: 100, offset: 0 }))).items.find(
+      (item) => item.propertyEntryId === entryId,
+    );
+    expect(queued?.candidates.map((candidate) => [candidate.id, candidate.matchedBy])).toEqual([
+      [ownerId, 'NAME'],
+    ]);
+
+    // The owner's own save finds it from the other side, with no number to go on.
+    expect((await within(() => links.claimsNaming(ownerId))).map((item) => item.propertyEntryId)).toContain(
+      entryId,
+    );
+
+    const result = await within(() => links.confirm({ propertyEntryId: entryId, citizenId: ownerId, actor: actor() }));
+    expect(result.linked).toBe(true);
+    await settleAudit();
+    const audit = await db.auditLogEntry.findFirst({
+      where: { action: 'LANDLORD_LINKED', entityId: ownerId },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(audit?.after).toMatchObject({ matchedBy: 'NAME' });
+  });
+
+  // ─────────────────────────────  «هل هو مسجَّل مسبقاً؟»  ─────────────────────────────
+
+  it('finds the same person by folded name and the same officer’s recent phone, against real rows', async () => {
+    const phone = freshPhone();
+    const existingId = await citizen('عبد الحسن', phone.stored, { middleName: 'ابراهيم', lastName: 'حدرج' });
+    await db.registration.create({
+      data: {
+        citizenId: existingId,
+        referenceNumber: `REF-${randomUUID().slice(0, 10)}`,
+        createdById: officerId,
+      },
+    });
+
+    // «عبدالحسن» with no space — the spelling the 2026-09-15 scan missed.
+    const same = await within(() =>
+      citizens.reviewDuplicates(
+        {
+          personal: { firstName: 'عبدالحسن', middleName: 'ابراهيم', lastName: 'حدرج' },
+          contact: {},
+          properties: [],
+        } as never,
+        { id: officerId },
+      ),
+    );
+    expect(same.possibleDuplicates.map((row) => row.id)).toContain(existingId);
+
+    // A different person on the number this officer filed minutes ago.
+    const otherPerson = await within(() =>
+      citizens.reviewDuplicates(
+        {
+          personal: { firstName: 'نور', middleName: 'حسين', lastName: 'عياش' },
+          contact: { phone: phone.stored },
+          properties: [{ occupancyType: 'FREE_OCCUPANT', landlordPhone: phone.stored, landlordName: 'عبد الحسن حدرج' }],
+        } as never,
+        { id: officerId },
+      ),
+    );
+    expect(otherPerson.possibleDuplicates).toEqual([]);
+    expect(otherPerson.phoneOwners.map((row) => row.id)).toEqual([existingId]);
+    expect(otherPerson.landlordPhoneCards).toEqual([
+      { index: 0, landlordName: 'عبد الحسن حدرج', field: 'phone' },
+    ]);
+
+    // Another officer, the same number: a household line, not a question.
+    const elsewhere = await within(() =>
+      citizens.reviewDuplicates(
+        {
+          personal: { firstName: 'نور', middleName: 'حسين', lastName: 'عياش' },
+          contact: { phone: phone.stored },
+          properties: [],
+        } as never,
+        { id: randomUUID() },
+      ),
+    );
+    expect(elsewhere.phoneOwners).toEqual([]);
+  });
+
   // ─────────────────────────────  Following the card  ─────────────────────────────
 
   it('moves the owner with the tenant’s corrected flat', async () => {
@@ -1043,6 +1143,97 @@ describeIfDb('LandlordLinkService', () => {
       expect(await db.propertyEntry.findUnique({ where: { id: linked.entryId } })).toBeNull();
       expect((await ownerSpells(linked.owner.id))[0]!.toDate).not.toBeNull();
       expect(await ownerCards(linked.owner.id)).toEqual([]);
+    });
+
+    it('refuses a save from a form opened before somebody else saved the file', async () => {
+      /*
+        2026-09-16: two officers on one registration for 45 minutes, each save
+        replacing the other's. The second save now says who got there first.
+      */
+      const linked = await linkedTenant();
+      const opened = await within(() => citizens.getEditable(linked.tenantId, officerId));
+      const payload = await payloadFor(linked.tenantId, [
+        cardFor(linked.entryId, linked.building.id, linked.units[0]!.id, { landlordPhone: linked.phone.typed }),
+      ]);
+
+      // A colleague saves first, from their own freshly opened form.
+      const first = await within(() =>
+        citizens.update({
+          tenantSlug: 'links',
+          citizenId: linked.tenantId,
+          payload: { ...payload, expectedVersion: opened.version },
+          actor: actor(),
+        }),
+      );
+      expect(first.version).not.toBe(opened.version);
+      await settleAudit();
+
+      const stale = within(() =>
+        citizens.update({
+          tenantSlug: 'links',
+          citizenId: linked.tenantId,
+          payload: { ...payload, expectedVersion: opened.version },
+          actor: actor(),
+        }),
+      );
+      await expect(stale).rejects.toBeInstanceOf(ConflictError);
+      await expect(stale).rejects.toMatchObject({
+        details: { staleEdit: { version: first.version, lastEditedBy: 'موظف البلدية' } },
+      });
+
+      // «احفظ واستبدل» — the current version goes through.
+      await expect(
+        within(() =>
+          citizens.update({
+            tenantSlug: 'links',
+            citizenId: linked.tenantId,
+            payload: { ...payload, expectedVersion: first.version },
+            actor: actor(),
+          }),
+        ),
+      ).resolves.toMatchObject({ updated: true });
+    });
+
+    it('does not name a reviewer as the last person to edit the file', async () => {
+      /*
+        A return is logged against the citizen but changes nothing on the file.
+        Counted as an edit, the officer opening the record to fix it was told
+        the reviewer had changed it.
+      */
+      const linked = await linkedTenant();
+      const payload = await payloadFor(linked.tenantId, [
+        cardFor(linked.entryId, linked.building.id, linked.units[0]!.id, { landlordPhone: linked.phone.typed }),
+      ]);
+      await within(() =>
+        citizens.update({ tenantSlug: 'links', citizenId: linked.tenantId, payload, actor: actor() }),
+      );
+      await settleAudit();
+
+      const reviewerId = randomUUID();
+      await db.user.create({
+        data: {
+          id: reviewerId,
+          kind: 'STAFF',
+          tenantSlug: 'links',
+          email: `reviewer-${reviewerId}@links.gov.lb`,
+          firstName: 'مدقق',
+          lastName: 'الجودة',
+          role: 'AUDITOR',
+        },
+      });
+      await db.auditLogEntry.create({
+        data: {
+          actorId: reviewerId,
+          actorType: 'STAFF',
+          actorRole: 'AUDITOR',
+          action: 'RECORD_RETURNED',
+          entityType: 'User',
+          entityId: linked.tenantId,
+        },
+      });
+
+      const opened = await within(() => citizens.getEditable(linked.tenantId, reviewerId));
+      expect(opened.lastStaffEdit).toMatchObject({ name: 'موظف البلدية', byViewer: false });
     });
   });
 });

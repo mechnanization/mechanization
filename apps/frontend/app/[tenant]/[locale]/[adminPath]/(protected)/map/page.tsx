@@ -136,11 +136,12 @@ export default function FullscreenMapPage({
             token={token}
             parcels={parcels}
             citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
-            registerHref={(buildingId, unitId, residence, name) =>
-              `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}${
-                name ? `&name=${encodeURIComponent(name)}` : ''
-              }`
-            }
+            /*
+              A building pin leads to the ledger's own full-page matrix rather
+              than to a panel over the map. Same route the census list opens, so
+              there is one screen for a building and not two.
+            */
+            buildingHref={(buildingId) => `${base}/buildings/${buildingId}/matrix`}
             refreshToken={refreshToken}
             focusParcelNumber={focus?.parcelNumber}
             focusLat={focus?.lat}

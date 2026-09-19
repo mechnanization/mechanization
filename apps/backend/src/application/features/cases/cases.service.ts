@@ -8,7 +8,21 @@ import type {
   CaseRepository,
 } from '../../../domain/interfaces/case-repository.interface';
 import type { UserRepository } from '../../../domain/interfaces/user-repository.interface';
-import { NotFoundError, ValidationError } from '../../common/exceptions';
+import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+
+/**
+ * The follow-up case types a unit can only usefully have one of at a time.
+ *
+ * A second open «تعذّر الوصول» on a shop that already has one is the same door
+ * twice on the dispatch list — production held exactly that pair on
+ * 2026-09-15, same officer, same day. `GENERAL_NOTE` and `OWNERSHIP_DISPUTE`
+ * are left alone: several notes on one unit are ordinary.
+ */
+const ONE_OPEN_PER_UNIT: ReadonlySet<string> = new Set([
+  'UNIT_UNREACHABLE',
+  'ACCESS_REFUSED',
+  'VACANT_UNCONFIRMED',
+]);
 
 @Injectable()
 export class CasesService {
@@ -51,7 +65,43 @@ export class CasesService {
     return found;
   }
 
+  /** The open case of a `ONE_OPEN_PER_UNIT` type already on this unit, if any. */
+  private async standingCase(input: CreateCaseInput): Promise<Case | null> {
+    if (!input.unitId || !input.caseType || !ONE_OPEN_PER_UNIT.has(input.caseType)) return null;
+    const rows = await this.cases.findAll({ unitId: input.unitId, caseType: input.caseType });
+    return rows.find((row) => row.status === 'OPEN' || row.status === 'SCHEDULED') ?? null;
+  }
+
+  /** An officer opening a case. Refuses a second open one of a one-per-door type. */
   async create(input: CreateCaseInput, actor: { id: string; role: string }): Promise<Case> {
+    const standing = await this.standingCase(input);
+    if (standing) {
+      throw new ConflictError('توجد حالة متابعة مفتوحة من النوع نفسه على هذه الوحدة — لم تُفتح حالة ثانية', {
+        existingCaseId: standing.id,
+      });
+    }
+    return this.insert(input, actor);
+  }
+
+  /**
+   * The system opening a case as a side effect of something else — a tenancy
+   * ended with «لا أعرف» asks somebody to go and look.
+   *
+   * Where that question is already open on the unit, it is already asked, so
+   * the standing case is returned instead of a second one. Refusing here, as
+   * `create` does for an officer, would fail the write this is a side effect
+   * of: it runs inside that transaction.
+   */
+  async openUnlessStanding(
+    input: CreateCaseInput,
+    actor: { id: string; role: string },
+  ): Promise<{ case: Case; opened: boolean }> {
+    const standing = await this.standingCase(input);
+    if (standing) return { case: standing, opened: false };
+    return { case: await this.insert(input, actor), opened: true };
+  }
+
+  private async insert(input: CreateCaseInput, actor: { id: string; role: string }): Promise<Case> {
     const created = await this.cases.create({ ...input, createdById: actor.id });
 
     this.recordChange({

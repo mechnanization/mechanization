@@ -4,11 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { History, Loader2 } from 'lucide-react';
 
 import { getAuditLog, type AuditEntry } from '@/lib/api-client';
-import { auditActionLabel } from '@/lib/audit-labels';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { AuditEntryItem } from '@/components/admin/audit-entry';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
-import { cn } from '@/lib/utils';
 
 /**
  * Who did what to this one record.
@@ -111,31 +110,15 @@ export function ActivityTrail({
               : 'لم يُسجَّل أي إجراء على هذا القيد بعد.'}
           </p>
         ) : (
-          <ol className="space-y-0">
-            {entries.map((entry, index) => (
-              <li
-                key={entry.id}
-                className={cn(
-                  'flex flex-wrap items-baseline gap-x-2 gap-y-1 py-2.5 text-sm',
-                  index > 0 && 'border-t',
-                )}
-              >
-                <span className="font-medium text-foreground">
-                  {auditActionLabel(entry.action, locale)}
-                </span>
-                {/* The actor. `actorEmail` is what the log stores — there is no
-                    name column on the entry, and resolving one per row would be
-                    a lookup per line for a panel that is usually closed. */}
-                <span className="text-muted-foreground" dir="ltr">
-                  {entry.actorEmail ?? (en ? 'system' : 'النظام')}
-                </span>
-                <span className="ms-auto shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {new Date(entry.createdAt).toLocaleString(en ? 'en-GB' : 'ar-LB', {
-                    dateStyle: 'short',
-                    timeStyle: 'short',
-                  })}
-                </span>
-              </li>
+          /*
+            The same entry the whole-portal trail draws, compact: the record is
+            the one on screen, so only who, when and what changed are said. The
+            server names the person — the old list printed an email or «النظام»,
+            and most census writes carried no email at all.
+          */
+          <ol className="divide-y">
+            {entries.map((entry) => (
+              <AuditEntryItem key={entry.id} entry={entry} locale={locale} base={base} compact />
             ))}
           </ol>
         )}

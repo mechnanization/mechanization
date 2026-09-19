@@ -110,6 +110,11 @@ export class RegistrationService {
     tenantSlug: string;
     payload: AdminCitizenSubmission;
     createdById?: string;
+    /**
+     * Notes the server raises about this filing as a whole — today only
+     * «سجل مشابه موجود». `UNVERIFIED` only; they excuse nothing.
+     */
+    serverFlags?: readonly FieldFlag[];
   }): Promise<SubmitResult> {
     const tenant = await this.tenants.resolve(input.tenantSlug);
 
@@ -142,6 +147,7 @@ export class RegistrationService {
     const flags: FieldFlag[] = [
       ...input.payload.flags,
       ...cadastreFlags(input.payload.properties, missing, input.payload.flags),
+      ...(input.serverFlags ?? []),
     ];
 
     // Zod validated the wire format at the controller. These construct domain

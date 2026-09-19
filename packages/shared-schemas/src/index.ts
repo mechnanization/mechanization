@@ -15,3 +15,4 @@ export * from './zone.schema';
 export * from './building.schema';
 export * from './staff.schema';
 export * from './case.schema';
+export * from './quality.schema';

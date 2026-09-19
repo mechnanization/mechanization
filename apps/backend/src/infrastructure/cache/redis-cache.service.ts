@@ -8,6 +8,35 @@ interface MemoryCacheEntry {
 }
 
 /**
+ * What actually went wrong, for the case where ioredis hands over an error that
+ * does not say.
+ *
+ * A refused connection to `localhost` is the common one and the worst offender:
+ * Node attempts `::1` and `127.0.0.1` together and reports the pair as an
+ * `AggregateError`, whose own `message` is the empty string. Logging
+ * `error.message` printed «Redis error:» followed by nothing — the one line
+ * that was supposed to say the cache was down said nothing at all, once a
+ * second. The cause was on the error the entire time, as `code` and `errors[]`.
+ */
+function describeRedisError(error: Error): string {
+  if (error.message) return error.message;
+
+  const code = (error as NodeJS.ErrnoException).code;
+  if (error instanceof AggregateError) {
+    const addresses = (error.errors as unknown[])
+      .map((inner) => inner as { address?: string; port?: number });
+    const where = addresses
+      .filter((inner) => inner?.address)
+      .map((inner) => `${inner.address}:${inner.port}`)
+      .join(', ');
+    const label = code ?? (addresses[0] as NodeJS.ErrnoException | undefined)?.code ?? 'connection failed';
+    return where ? `${label} ${where}` : label;
+  }
+
+  return code ?? 'connection failed';
+}
+
+/**
  * Fast multi-tier cache service:
  * - L1: In-memory Map cache with TTL and prefix invalidation (always active, ~0ms).
  * - L2: Redis (optional, active when `REDIS_URL` is provided).
@@ -22,22 +51,72 @@ export class RedisCacheService implements OnModuleDestroy {
   private readonly memoryCache = new Map<string, MemoryCacheEntry>();
   private readonly pruneTimer: NodeJS.Timeout;
 
+  /** Whether L2 is currently unreachable — see `reportOffline`. */
+  private offline = false;
+  private suppressed = 0;
+
   constructor(config: ConfigService) {
     const url = config.get<string>('REDIS_URL');
     if (!url) {
       this.logger.log('REDIS_URL not set — using high-performance in-memory cache');
       this.client = null;
     } else {
-      this.client = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 1 });
-      this.client.on('error', (error) => this.logger.error(`Redis error: ${error.message}`));
-      this.client.connect().catch((error: Error) => {
-        this.logger.error(`Redis connection failed: ${error.message}`);
+      this.client = new Redis(url, {
+        lazyConnect: true,
+        maxRetriesPerRequest: 1,
+        /*
+          Keep trying, but slowly. Giving up permanently would be worse than a
+          cold cache: L2 would stay dead until someone restarted the process,
+          with nothing in the log still saying so. Capped well above ioredis's
+          2s default because every attempt while Redis is down is wasted work
+          and L1 is already serving every read.
+        */
+        retryStrategy: (times: number) => Math.min(times * 200, 10_000),
       });
+
+      this.client.on('error', (error: Error) => this.reportOffline(describeRedisError(error)));
+      this.client.on('ready', () => this.reportOnline());
+      this.client.connect().catch((error: Error) => this.reportOffline(describeRedisError(error)));
     }
 
     // Periodically prune expired items every 60 seconds
     this.pruneTimer = setInterval(() => this.pruneExpired(), 60_000);
     if (this.pruneTimer.unref) this.pruneTimer.unref();
+  }
+
+  /**
+   * Redis being unreachable is logged once per outage, at `warn`.
+   *
+   * ioredis emits `error` on every reconnection attempt, so a cache nobody had
+   * started produced an ERROR line roughly once a second, forever. That is not
+   * a louder signal than one line — it is a quieter one. `scripts/start.mjs`
+   * opens a 30-line unfiltered window on any ERROR so that a real stack trace
+   * is never swallowed, and a flood of these holds that window open over
+   * whatever actually broke. A routine WARN prints itself and nothing else.
+   *
+   * `warn` rather than `error` because offline Redis is a supported mode and
+   * not a fault: L1 keeps serving, and the class contract above says so. The
+   * recovery is logged too, because an outage nobody saw end is one people go
+   * on believing they still have.
+   */
+  private reportOffline(reason: string): void {
+    if (this.offline) {
+      this.suppressed += 1;
+      return;
+    }
+    this.offline = true;
+    this.suppressed = 0;
+    this.logger.warn(`Redis unreachable (${reason}) — serving from the in-memory cache until it returns`);
+  }
+
+  private reportOnline(): void {
+    if (!this.offline) return;
+    const retries = this.suppressed;
+    this.offline = false;
+    this.suppressed = 0;
+    this.logger.log(
+      `Redis reconnected${retries > 0 ? ` — ${retries} retries were not logged` : ''}`,
+    );
   }
 
   private pruneExpired(): void {
@@ -68,7 +147,7 @@ export class RedisCacheService implements OnModuleDestroy {
       this.memoryCache.set(key, { value: parsed, expiresAt: now + 30_000 });
       return parsed;
     } catch (error) {
-      this.logger.warn(`GET ${key} failed: ${(error as Error).message}`);
+      this.logger.warn(`GET ${key} failed: ${describeRedisError(error as Error)}`);
       return null;
     }
   }
@@ -81,7 +160,7 @@ export class RedisCacheService implements OnModuleDestroy {
     try {
       await this.client.set(key, JSON.stringify(value), 'EX', ttlSeconds);
     } catch (error) {
-      this.logger.warn(`SET ${key} failed: ${(error as Error).message}`);
+      this.logger.warn(`SET ${key} failed: ${describeRedisError(error as Error)}`);
     }
   }
 
@@ -125,7 +204,7 @@ export class RedisCacheService implements OnModuleDestroy {
         stream.on('error', reject);
       });
     } catch (error) {
-      this.logger.warn(`Invalidate ${prefix}* failed: ${(error as Error).message}`);
+      this.logger.warn(`Invalidate ${prefix}* failed: ${describeRedisError(error as Error)}`);
     }
   }
 

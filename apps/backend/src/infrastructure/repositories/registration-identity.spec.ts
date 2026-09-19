@@ -17,7 +17,11 @@ import { isSamePerson, PrismaRegistrationRepository } from './registration.repos
  * not the `update` that should never have been called.
  */
 
-function harness(holder: { firstName: string; middleName: string | null; lastName: string } | null) {
+function harness(
+  holder: { firstName: string; middleName: string | null; lastName: string } | null,
+  /** The flags on the holder's newest registration. */
+  holderFlags: Array<{ path: string; kind: string; reason: string }> = [],
+) {
   const tx = {
     user: {
       findUnique: jest.fn().mockResolvedValue(
@@ -29,6 +33,7 @@ function harness(holder: { firstName: string; middleName: string | null; lastNam
     },
     registration: {
       create: jest.fn().mockResolvedValue({ id: 'reg-1', referenceNumber: 'BZR-1' }),
+      findFirst: jest.fn().mockResolvedValue(holder ? { flaggedFields: holderFlags } : null),
     },
     propertyEntry: { create: jest.fn() },
   };
@@ -82,6 +87,30 @@ describe('registration — a document number never merges two people', () => {
     expect(tx.registration.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ citizenId: 'holder-1' }) }),
     );
+  });
+
+  /**
+   * The edit form clears «سجل مشابه» from a citizen's newest registration only.
+   * Left behind on the holder's older one, the flag — and the quality finding
+   * read from it — could never be answered.
+   */
+  it('carries the holder’s open «سجل مشابه» onto the filing that becomes their newest', async () => {
+    const standing = { path: 'personal.possibleDuplicate', kind: 'UNVERIFIED', reason: 'قد يكون: يوسف جفال' };
+    const { repository, tx } = harness({ firstName: 'يوسف', middleName: 'علي', lastName: 'جفال' }, [standing]);
+
+    await repository.submit(filing({ identityDocType: 'PASSPORT', identityDocNumber: 'N123456' }));
+
+    const registration = tx.registration.create.mock.calls[0][0].data;
+    expect(registration.flaggedFields).toEqual([standing]);
+    expect(registration.status).toBe('REQUIRES_REVIEW');
+  });
+
+  it('carries nothing when the holder’s newest registration has no «سجل مشابه»', async () => {
+    const { repository, tx } = harness({ firstName: 'يوسف', middleName: 'علي', lastName: 'جفال' });
+
+    await repository.submit(filing({ identityDocType: 'PASSPORT', identityDocNumber: 'N123456' }));
+
+    expect(tx.registration.create.mock.calls[0][0].data.flaggedFields).toEqual([]);
   });
 
   it('keeps a different person separate, without the number, and says why', async () => {

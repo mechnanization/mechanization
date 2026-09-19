@@ -59,7 +59,7 @@ import {
   loadBuildingDraft,
   saveBuildingDraft,
 } from '@/lib/building-draft';
-import { pointInGeometry } from '@/lib/map-geometry';
+import { haversineDistance, pointInGeometry } from '@/lib/map-geometry';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { offlineStorageAvailable } from '@/lib/offline-db';
 import { queueBuilding } from '@/lib/offline-sync';
@@ -120,6 +120,60 @@ const PROMOTED_STRUCTURE_TYPE = 'RESIDENTIAL_BUILDING' as const;
 /** The grid's own physical ceiling (20×20) — a defensive assertion, not a
  *  real user-facing limit, since the grid itself can never produce more. */
 const MAX_GRID_UNITS = 400;
+
+/**
+ * Metres under which an existing structure is shown as «قريبة جداً».
+ *
+ * Neighbouring buildings in this town genuinely stand 2–7 m apart (parcel 45
+ * has four real structures that close), so this is not a line past which a
+ * second record is refused — it is where the distance stops being a detail and
+ * becomes the first thing on the row. Parcel 56's duplicates were 3.6 m and
+ * 4.1 m from the original.
+ */
+const NEAR_DUPLICATE_METRES = 15;
+
+/** The same four-character floor every other reason in the app has. */
+const MIN_DUPLICATE_REASON = 4;
+
+/**
+ * «على بُعد ٤ م» beside a structure already on the parcel.
+ *
+ * Three honest states: measured and close, measured and not, and not
+ * measurable — which says what would make it measurable, because the one fix
+ * available to the officer is dropping their own pin.
+ */
+function DistanceBadge({
+  metres,
+  hasPin,
+  en,
+}: {
+  metres: number | null;
+  hasPin: boolean;
+  en: boolean;
+}) {
+  if (metres == null) {
+    return (
+      <Badge variant="soft-muted" className="text-[10px]">
+        {hasPin
+          ? en
+            ? 'distance unknown — it has no pin'
+            : 'المسافة غير معروفة — لا مدخل مثبت لها'
+          : en
+            ? 'drop the entrance pin to see the distance'
+            : 'ثبِّت دبوس المدخل لمعرفة المسافة'}
+      </Badge>
+    );
+  }
+  const near = metres < NEAR_DUPLICATE_METRES;
+  const formatted = metres.toLocaleString(en ? 'en' : 'ar');
+  return (
+    <Badge variant={near ? 'soft-destructive' : 'soft-warning'} className="text-[11px] font-semibold">
+      {en
+        ? `${formatted} m away${near ? ' — very close' : ''}`
+        : `على بُعد ${formatted} م${near ? ' — قريبة جداً' : ''}`}
+    </Badge>
+  );
+}
 
 const STEPS = [
   /*
@@ -411,6 +465,13 @@ export function BuildingEditor({
   const [lifecycleStatus, setLifecycleStatus] = useState<BuildingLifecycle>('IN_USE');
   const [duplicates, setDuplicates] = useState<DuplicateBuildingCandidate[] | null>(null);
   const [acknowledgedDuplicates, setAcknowledgedDuplicates] = useState(false);
+  /** «لماذا هي منشأة منفصلة؟» — required beside the tick. See `duplicateReason` in the schema. */
+  const [duplicateReason, setDuplicateReason] = useState('');
+  /**
+   * «تعذّر تثبيت المدخل» — ticked, with a reason, when a new building is saved
+   * without a pin. Null while unticked. See `noPinReason` in the schema.
+   */
+  const [noPinReason, setNoPinReason] = useState<string | null>(null);
   const [outline, setOutline] = useState<Geometry | null>(null);
   /**
    * The parcel `outline` was looked up for.
@@ -479,6 +540,8 @@ export function BuildingEditor({
     setGridSize(draft.gridSize);
     setGridUnits(draft.gridUnits);
     setAcknowledgedDuplicates(draft.acknowledgedDuplicates);
+    setDuplicateReason(draft.duplicateReason ?? '');
+    setNoPinReason(draft.noPinReason ?? null);
     draftRestoredRef.current = true;
   }, [tenant, buildingId]);
 
@@ -506,6 +569,8 @@ export function BuildingEditor({
       gridSize,
       gridUnits,
       acknowledgedDuplicates,
+      duplicateReason,
+      ...(noPinReason !== null ? { noPinReason } : {}),
     });
   }, [
     tenant,
@@ -527,6 +592,8 @@ export function BuildingEditor({
     gridSize,
     gridUnits,
     acknowledgedDuplicates,
+    duplicateReason,
+    noPinReason,
   ]);
 
   /**
@@ -539,8 +606,16 @@ export function BuildingEditor({
    * the save diffs against, and the units the grid cannot draw. What the
    * officer typed stays theirs.
    */
+  /**
+   * The building's `updatedAt` as last loaded, sent with the save so a colleague's
+   * change made since is not silently replaced. Refreshed on every load,
+   * including the reload after a half-refused save.
+   */
+  const loadedUpdatedAtRef = useRef<string | null>(null);
+
   const hydrate = useCallback(
     (detail: BuildingDetail, keepEdits = false) => {
+      loadedUpdatedAtRef.current = detail.updatedAt ?? null;
       if (!keepEdits) {
         setParcelNumber(detail.parcelNumber);
         pinParcelRef.current = detail.parcelNumber;
@@ -1207,7 +1282,17 @@ export function BuildingEditor({
   );
 
   // ── Per-step validation gates ──
-  const step1Valid = Boolean(trimmedParcel) && !(pin && pinVerdict === false);
+  /*
+    A new building either has its entrance pinned, or says why not.
+
+    The pin is what the duplicate prompt measures from: without it an officer
+    on a parcel that already holds a structure is shown codes, not «على بُعد ٤ م».
+    Eight buildings went on file with no pin and no word about it. A correction
+    is not held to this — the building is already on file, pinned or not.
+  */
+  const pinAnswered =
+    editing || Boolean(pin) || (noPinReason !== null && noPinReason.trim().length >= MIN_DUPLICATE_REASON);
+  const step1Valid = Boolean(trimmedParcel) && !(pin && pinVerdict === false) && pinAnswered;
   /*
     What stops «التالي» on the facility step.
 
@@ -1222,10 +1307,40 @@ export function BuildingEditor({
     nothing on this step can set them any more, so they can only fail if some
     other path has put nonsense in the state.
   */
+  const duplicateAnswered =
+    acknowledgedDuplicates && duplicateReason.trim().length >= MIN_DUPLICATE_REASON;
   const step2Valid =
-    !(duplicates?.length && !acknowledgedDuplicates) &&
+    !(duplicates?.length && !duplicateAnswered) &&
     Number(floorsCount) >= 1 &&
     Number(basementsCount) >= 0;
+
+  /**
+   * The structures already on this parcel, nearest first, measured from the pin
+   * as it stands now.
+   *
+   * The server measures too, but only on a refused save; the list shown while
+   * the officer is still on the step comes from the parcel lookup, before any
+   * pin existed, and carried `distanceMetres: null`. So the distance is worked
+   * out here from the two pins and follows the officer's own pin as they move
+   * it. Parcel 56's second and third records were made 3.6 m and 4.1 m from
+   * the first by officers shown a list with no distance on it.
+   */
+  const rankedDuplicates = useMemo(() => {
+    if (!duplicates?.length) return [];
+    const measured = duplicates.map((row, index) => {
+      const distance =
+        pin && row.latitude != null && row.longitude != null
+          ? Math.round(haversineDistance(pin, [row.longitude, row.latitude]))
+          : row.distanceMetres;
+      return { row, distance, index };
+    });
+    return measured.sort((a, b) => {
+      if (a.distance != null && b.distance != null) return a.distance - b.distance || a.index - b.index;
+      if (a.distance != null) return -1;
+      if (b.distance != null) return 1;
+      return a.index - b.index;
+    });
+  }, [duplicates, pin]);
 
   /**
    * Moving between steps puts the top of the new step back on screen.
@@ -1264,6 +1379,7 @@ export function BuildingEditor({
    */
   const saveEdit = async (id: string, activeToken: string): Promise<string[]> => {
     await updateBuilding(tenant, activeToken, id, {
+      ...(loadedUpdatedAtRef.current ? { expectedUpdatedAt: loadedUpdatedAtRef.current } : {}),
       name: name.trim() || null,
       postedNumber: postedNumber.trim() || null,
       /*
@@ -1387,6 +1503,15 @@ export function BuildingEditor({
       goToStep(0);
       return;
     }
+    if (!pinAnswered) {
+      setPinError(
+        en
+          ? 'Pin the entrance on the map, or tick that it could not be pinned and say why.'
+          : 'ثبِّت المدخل على الخريطة، أو أشِر إلى تعذّر ذلك واذكر السبب.',
+      );
+      goToStep(0);
+      return;
+    }
     if (pin && pinVerdict === false) {
       setPinError(
         en
@@ -1489,6 +1614,8 @@ export function BuildingEditor({
             basementsCount: Number(basementsCount) || 0,
             notes: notes.trim() || undefined,
             acknowledgedDuplicates: true,
+            ...(duplicateReason.trim() ? { duplicateReason: duplicateReason.trim() } : {}),
+            ...(!pin && noPinReason?.trim() ? { noPinReason: noPinReason.trim() } : {}),
             units,
           },
           blueprint: null,
@@ -1529,6 +1656,10 @@ export function BuildingEditor({
         notes: notes.trim() || undefined,
         provisionalSuffix: suffix,
         acknowledgedDuplicates: acknowledgedDuplicates || undefined,
+        ...(acknowledgedDuplicates && duplicateReason.trim()
+          ? { duplicateReason: duplicateReason.trim() }
+          : {}),
+        ...(!pin && noPinReason?.trim() ? { noPinReason: noPinReason.trim() } : {}),
         units,
       });
 
@@ -1998,7 +2129,7 @@ export function BuildingEditor({
                       {pin[1].toFixed(6)}, {pin[0].toFixed(6)}
                     </span>
                   </div>
-                ) : (
+                ) : editing ? (
                   <div className="mt-2 flex items-start gap-2 rounded-lg border bg-muted/20 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
                     <Info className="size-3.5 shrink-0 mt-0.5 text-muted-foreground" />
                     <p>
@@ -2006,6 +2137,40 @@ export function BuildingEditor({
                         ? 'No entrance pinned yet. Saving without a pin is permitted (residents will be represented at the parcel level).'
                         : 'لم يُحدَّد مدخل بعد. يمكن الحفظ دون دبوس (سيُعرض سكان المبنى على موقع العقار).'}
                     </p>
+                  </div>
+                ) : (
+                  <div className="mt-2 space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-2.5 text-xs">
+                    <p className="flex items-start gap-2 leading-relaxed">
+                      <Info className="size-3.5 shrink-0 mt-0.5 text-warning" />
+                      <span>
+                        {en
+                          ? 'Tap the entrance on the map. Without a pin the app cannot warn you that a building already on file stands a few metres away.'
+                          : 'اضغط على مدخل المبنى في الخريطة. بدون دبوس لا يستطيع التطبيق تنبيهك إلى مبنى مسجَّل على بُعد أمتار.'}
+                      </span>
+                    </p>
+                    <label className="flex cursor-pointer items-start gap-2">
+                      <Checkbox
+                        checked={noPinReason !== null}
+                        onCheckedChange={(checked) => setNoPinReason(checked === true ? '' : null)}
+                        className="mt-0.5"
+                      />
+                      <span className="font-medium">
+                        {en ? 'The entrance could not be pinned now' : 'تعذّر تثبيت المدخل الآن'}
+                      </span>
+                    </label>
+                    {noPinReason !== null ? (
+                      <Textarea
+                        value={noPinReason}
+                        onChange={(event) => setNoPinReason(event.target.value)}
+                        maxLength={300}
+                        className="min-h-[56px] text-sm"
+                        placeholder={
+                          en
+                            ? 'e.g. no GPS signal; map does not load here'
+                            : 'مثال: لا توجد إشارة GPS؛ الخريطة لا تُحمَّل هنا'
+                        }
+                      />
+                    ) : null}
                   </div>
                 )}
               </StepField>
@@ -2500,10 +2665,17 @@ export function BuildingEditor({
                     </span>
                   </div>
 
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    {en
+                      ? 'If the building you are standing at is one of these, open it and record there — do not create it again.'
+                      : 'إن كان المبنى الذي تقف أمامه أحد هذه المنشآت فافتحه وسجِّل فيه — لا تُنشئه مرة ثانية.'}
+                  </p>
+
                   <ul className="divide-y divide-border/30 rounded-lg border border-border/40 bg-background/50 text-xs">
-                    {duplicates.map((row) => (
+                    {rankedDuplicates.map(({ row, distance }) => (
                       <li key={row.id} className="p-2.5 flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <DistanceBadge metres={distance} hasPin={Boolean(pin)} en={en} />
                           <span dir="ltr" className="font-mono font-bold text-primary">
                             {row.code}
                           </span>
@@ -2524,23 +2696,68 @@ export function BuildingEditor({
                             <span>{en ? 'Posted:' : 'مكتوب:'} <span dir="ltr" className="font-mono">{row.postedNumber}</span></span>
                           ) : null}
                           <span>{en ? `${row.unitsTotal} units` : `${row.unitsTotal} وحدة`}</span>
+                          {/*
+                            «هذه هي» — the answer the dialog had no button for.
+                            Ticking «منفصلة» used to be the only way forward, so
+                            an officer who recognised the building still had to
+                            create it again or abandon the form. Opening it
+                            clears the draft: the structure they meant exists.
+                          */}
+                          <Link
+                            href={`${base}/buildings/${encodeURIComponent(row.id)}/matrix`}
+                            onClick={cancelDraft}
+                            className={buttonVariants({ variant: 'outline', size: 'sm', className: 'h-8 px-2.5 text-[11px]' })}
+                          >
+                            {en ? 'This is the one — open it' : 'هذه هي المنشأة — افتحها'}
+                          </Link>
                         </div>
                       </li>
                     ))}
                   </ul>
 
-                  <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-warning/30 bg-background/60 p-2.5 text-xs text-foreground">
-                    <Checkbox
-                      checked={acknowledgedDuplicates}
-                      onCheckedChange={(checked) => setAcknowledgedDuplicates(checked === true)}
-                      className="mt-0.5"
-                    />
-                    <span className="font-medium leading-relaxed">
-                      {en
-                        ? 'I have verified in the field: this is a different structure from the existing ones above.'
-                        : 'تحقَّقت ميدانياً: هذه منشأة منفصلة ومختلفة عن المنشآت المذكورة أعلاه.'}
-                    </span>
-                  </label>
+                  <div className="space-y-2 rounded-lg border border-warning/30 bg-background/60 p-2.5 text-xs text-foreground">
+                    <label className="flex cursor-pointer items-start gap-2.5">
+                      <Checkbox
+                        checked={acknowledgedDuplicates}
+                        onCheckedChange={(checked) => setAcknowledgedDuplicates(checked === true)}
+                        className="mt-0.5"
+                      />
+                      <span className="font-medium leading-relaxed">
+                        {en
+                          ? 'I have verified in the field: this is a different structure from the existing ones above.'
+                          : 'تحقَّقت ميدانياً: هذه منشأة منفصلة ومختلفة عن المنشآت المذكورة أعلاه.'}
+                      </span>
+                    </label>
+                    {/*
+                      The tick alone is not an answer any more. A sentence about
+                      what makes it separate is what a reviewer can check on the
+                      street, and it goes into the audit row with the distances.
+                    */}
+                    {acknowledgedDuplicates ? (
+                      <div className="space-y-1">
+                        <Label htmlFor="duplicate-reason" className="text-[11px]">
+                          {en ? 'What makes it a separate structure?' : 'ما الذي يجعلها منشأة منفصلة؟'}
+                        </Label>
+                        <Textarea
+                          id="duplicate-reason"
+                          value={duplicateReason}
+                          onChange={(event) => setDuplicateReason(event.target.value)}
+                          maxLength={300}
+                          className="min-h-[64px] text-sm"
+                          placeholder={
+                            en
+                              ? 'e.g. a separate house behind the building, with its own entrance'
+                              : 'مثال: بيت مستقل خلف المبنى بمدخل منفصل'
+                          }
+                        />
+                        {duplicateReason.trim().length < MIN_DUPLICATE_REASON ? (
+                          <p className="text-[11px] text-muted-foreground">
+                            {en ? 'Required before continuing.' : 'مطلوب قبل المتابعة.'}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
 

@@ -20,6 +20,7 @@ import {
   adminCreateCitizenSubmissionSchema,
   allowedPropertyTypesFor,
   getLabels,
+  normalizeDigits,
   PROPERTY_FIELD_MAP,
   type CitizenResidence,
 } from '@mechanization/shared-schemas';
@@ -34,7 +35,11 @@ import {
   PersonalStep,
 } from '@/components/citizen/steps';
 import { SegmentedControl } from '@/components/ui/segmented-control';
-import { PossibleDuplicates } from './possible-duplicates';
+import {
+  PossibleDuplicatesBar,
+  PossibleDuplicatesPanel,
+  usePossibleDuplicates,
+} from './possible-duplicates';
 import {
   PropertyCard,
   type PropertyDraft,
@@ -171,23 +176,57 @@ export function withResidence(
 }
 
 /**
- * Seeds the name block from whatever the officer had typed into the search
- * that sent them here.
+ * The phone number a search term holds, or null when it does not hold one.
+ *
+ * The unit panel's box searches by name, phone and رقم القيد alike, and in the
+ * field the phone is usually what gets typed first — it is the one thing a
+ * household reads out without hesitating. So a term is a phone when it is
+ * nothing but digits, with an optional leading `+`, once the separators people
+ * dictate numbers with are taken out: `03 123 456`, `70-123456`, `(+33) 6 12
+ * 34 56 78`, `٠٠٣٣٦١٢٣٤٥٦٧٨`.
+ *
+ * ## Where a digit run is not a phone
+ *
+ * Fewer than seven digits and no `+`. Seven is the shortest number this
+ * register accepts at all (`3 123456`, Lebanon's 03 without its zero); below it
+ * the term is a رقم السجل, which runs to one to three digits, or a number the
+ * officer stopped typing halfway. Either one in الهاتف is a wrong answer
+ * sitting in a required field, so it seeds nothing. A `+` settles it at any
+ * length: nobody writes one in front of anything but a phone.
+ *
+ * ## What it returns
+ *
+ * The digits in Latin with the separators gone, and the `+` or `00` kept as
+ * typed. It is deliberately *not* validated against `internationalPhone`: a
+ * foreign number typed without its `+` is still that person's number, and the
+ * phone field's own error and hint («ابدأ بـ + ثم رمز الدولة») are where that
+ * gets fixed — not a blank field and a retype.
+ */
+export function phoneFromSearchTerm(term: string): string | null {
+  const compact = normalizeDigits(term.trim()).replace(/[\s\-()./]/g, '');
+  if (!/^\+?\d+$/.test(compact)) return null;
+  return compact.startsWith('+') || compact.length >= 7 ? compact : null;
+}
+
+/**
+ * Seeds the form from whatever the officer had typed into the search that sent
+ * them here: the phone field when it is a number, the name block otherwise.
  *
  * The unit panel's «ملف جديد» links carry their search term across, so a
  * search that found nobody is not retyped into the form immediately after. It
- * also gives the duplicate check something to check on the first render, which
- * is the half that matters: the panel used to withhold those links until a
- * search had run, and officers learned to type «asdfgh» to reveal them.
+ * also gives the duplicate check something to check on the first render —
+ * against the phone, which is the stronger of the two things it matches on,
+ * whenever the officer searched by one.
  *
  * ## What it refuses to seed
  *
- * A term holding a digit. The same box searches by phone and by رقم القيد, and
- * «03 123456» split across الاسم الأول and الشهرة is worse than an empty form —
- * it is a name nobody will read closely before saving, and `arabicOrLatinName`
- * would reject it at the point where the officer has stopped looking at it.
+ * Into the name, a term holding a digit. «03 123456» split across الاسم الأول
+ * and الشهرة is worse than an empty form — it is a name nobody will read
+ * closely before saving, and `arabicOrLatinName` would reject it at the point
+ * where the officer has stopped looking at it. A term that is neither a name
+ * nor a phone — a رقم السجل, a reference number — seeds nothing at all.
  *
- * ## How it splits
+ * ## How a name splits
  *
  * A single word is a first name. Two are الاسم الأول and الشهرة, because that
  * is how a person is addressed and therefore how they are searched for. Three
@@ -195,10 +234,13 @@ export function withResidence(
  * that never loses a word the officer typed. None of it is authoritative — it
  * is a first draft of three fields the officer is looking straight at.
  */
-export function withSeededName(
+export function withSeededSearch(
   values: CitizenFormValues,
   term: string,
 ): CitizenFormValues {
+  const phone = phoneFromSearchTerm(term);
+  if (phone) return { ...values, contact: { ...values.contact, phone } };
+
   const trimmed = term.trim();
   // Arabic-Indic and Extended digits alongside the Latin ones: an Arabic
   // keyboard produces «٠٣» by default, and a phone typed that way is no more a
@@ -790,11 +832,18 @@ export function CitizenForm({
   // so a parent that fetches once does not clobber what has been typed since.
   useEffect(() => {
     setValues(initial);
-    // An existing record opens with its cards folded — a clerk fixing a phone
-    // number should not have to scroll past four properties to reach «حفظ».
-    setCollapsed(
-      new Set(initial.properties.length > 1 ? initial.properties.map((_, i) => i) : []),
-    );
+    /*
+      Every card opens expanded, on a correction exactly as on a new filing.
+
+      An existing record used to open with its cards folded, on the reasoning
+      that a clerk fixing a phone number should not scroll past four properties
+      to reach «حفظ». It made the two forms different screens: the same section,
+      with the same heading, showing its contents on one and a row of shut
+      drawers on the other — and a field an officer cannot see is a field they
+      do not check. Folding is still one tap away per card, and the jump bar
+      reaches «حفظ» without passing them.
+    */
+    setCollapsed(new Set());
   }, [initial]);
 
   /*
@@ -1257,29 +1306,50 @@ export function CitizenForm({
   }, []);
 
   /**
-   * «قد يكون مسجَّلاً مسبقاً», built once and handed to whichever contact step
-   * is on screen — the mobile view and the desktop view each render one.
+   * «قد يكون مسجَّلاً مسبقاً» — looked up once, shown in one of two places.
    *
-   * It lives under the phone number rather than at the foot of the personal
-   * step, where it used to sit. The panel matches on the name *and* the phone,
-   * and the phone is by far the stronger of the two — so the old placement put
-   * an orange warning about a number one section above the field that asks for
-   * it, reading as a complaint about the name the officer had just typed.
-   *
-   * Creates only. On an edit the record being looked at is itself on the
-   * register, so every match is a match with the open file or its household.
+   * On a correction as well as a new filing, with the open file itself dropped
+   * from its own matches (`excludeId`). It used to be creates-only, on the
+   * reasoning that every match on an edit is a match with the record being
+   * looked at. That is true of the record itself and of nobody else: an officer
+   * correcting a surname, or adding the phone the household actually answers
+   * on, is doing the very thing that turns two files into recognisable
+   * duplicates, and this is the one screen where that is visible while it
+   * happens.
    */
-  const duplicatesPanel =
-    mode === 'create' ? (
-      <PossibleDuplicates
-        tenant={tenant}
-        token={token}
-        firstName={values.personal.firstName}
-        lastName={values.personal.lastName}
-        phone={values.contact.phone}
-        locale={locale}
-      />
-    ) : null;
+  const duplicateCheck = usePossibleDuplicates({
+    tenant,
+    token,
+    firstName: values.personal.firstName,
+    lastName: values.personal.lastName,
+    phone: values.contact.phone,
+    whatsapp: values.contact.whatsappSameAsPhone === false ? values.contact.whatsapp : undefined,
+    excludeId: citizenId,
+  });
+
+  /**
+   * On a desktop: in place, under the phone number, handed to whichever
+   * contact step is rendered.
+   *
+   * It lives there rather than at the foot of the personal step, where it used
+   * to sit. It matches on the name *and* the phone, and the phone is by far
+   * the stronger of the two — so the old placement put an orange warning about
+   * a number one section above the field that asks for it, reading as a
+   * complaint about the name the officer had just typed.
+   */
+  const duplicatesPanel = (
+    <PossibleDuplicatesPanel check={duplicateCheck} locale={locale} className="hidden lg:block" />
+  );
+
+  /**
+   * On a phone or a tablet: pinned in the sticky header instead, so it is on
+   * screen on every step and at every scroll position. See
+   * `PossibleDuplicatesBar` for why below `lg` the in-place panel is not
+   * enough.
+   */
+  const duplicatesBar = (
+    <PossibleDuplicatesBar check={duplicateCheck} locale={locale} className="basis-full lg:hidden" />
+  );
 
   const sections = useMemo(
     () => [
@@ -1496,6 +1566,8 @@ export function CitizenForm({
             </span>
           ) : null}
         </Button>
+
+        {duplicatesBar}
       </nav>
 
       {/* ── Mobile Step Header (visible on mobile only) ── */}
@@ -1537,6 +1609,8 @@ export function CitizenForm({
             );
           })}
         </div>
+
+        {duplicatesBar}
       </div>
 
       {/* ── Mobile View: Active Step Only ── */}
@@ -1859,23 +1933,29 @@ export function CitizenForm({
           {/*
             Quick save sits next to «غير مؤكَّد» because they are the same
             decision at two scales: one field the officer could not establish,
-            or a visit that produced almost nothing. Create only — a blanket
-            reason on an *edit* would excuse gaps in a record that has already
-            been reviewed once, which is a different and much worse claim.
+            or a visit that produced almost nothing.
+
+            Offered on a correction as well, so the two forms carry the same
+            controls in the same places — a bar that loses a button between the
+            screen you register on and the screen you fix a record on is the
+            difference this section exists to remove. It is worth knowing what
+            it now allows that it did not: a blanket reason on an *edit* excuses
+            gaps in a record that has already been reviewed once, which is a
+            broader claim than the same button makes on a first filing. The
+            dialog still names the count and still writes the reason onto every
+            gap it covers, so what was claimed and by whom stays on the file.
           */}
-          {mode === 'create' ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setQuickSaveOpen(true)}
-              disabled={submitting}
-              className="h-10 shrink-0 gap-1 px-2.5 text-xs font-medium"
-            >
-              <Zap className="size-3.5 shrink-0" aria-hidden />
-              <span className="truncate">{locale === 'en' ? 'Quick save' : 'حفظ سريع'}</span>
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setQuickSaveOpen(true)}
+            disabled={submitting}
+            className="h-10 shrink-0 gap-1 px-2.5 text-xs font-medium"
+          >
+            <Zap className="size-3.5 shrink-0" aria-hidden />
+            <span className="truncate">{locale === 'en' ? 'Quick save' : 'حفظ سريع'}</span>
+          </Button>
 
           {stepIndex < sections.length - 1 ? (
             <Button
@@ -1996,19 +2076,18 @@ export function CitizenForm({
           </div>
 
           <div className="flex items-center gap-2.5 ms-auto">
-            {mode === 'create' ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setQuickSaveOpen(true)}
-                disabled={submitting}
-                className="h-8 gap-1.5 rounded-lg px-4 text-xs font-medium"
-              >
-                <Zap className="size-3.5" aria-hidden />
-                {locale === 'en' ? 'Quick save' : 'حفظ سريع'}
-              </Button>
-            ) : null}
+            {/* Both modes, for the reason the mobile bar above gives. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setQuickSaveOpen(true)}
+              disabled={submitting}
+              className="h-8 gap-1.5 rounded-lg px-4 text-xs font-medium"
+            >
+              <Zap className="size-3.5" aria-hidden />
+              {locale === 'en' ? 'Quick save' : 'حفظ سريع'}
+            </Button>
             <Button
               type="button"
               variant="outline"

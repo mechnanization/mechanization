@@ -514,13 +514,16 @@ describeIfDb('CensusSyncService', () => {
   });
 
   /*
-    Case 6 from the field: an owner filed «شاغرة» on their own card, and the
-    matrix drew the flat as an ordinary registered one, because nothing reads
-    the card's حالة onto the unit. The building detail now carries it — and
-    only where the unit has no answer of its own, which is the order billing
-    reads the two in.
+    Case 6 from the field: an owner filed «شاغرة» on their own card and the
+    matrix drew the flat as an ordinary registered one, because nothing carried
+    the card's حالة onto the unit.
+
+    It is carried now — the sync writes it, so the two screens agree without the
+    building detail having to reconcile them on every read. `ownerDeclaredStatus`
+    stays as the fallback for the rows written before this did, and for the two
+    cases below where the write is declined.
   */
-  it('shows the حالة an owner stated on their card when the unit has none', async () => {
+  it('carries the حالة an owner stated on their card onto the unit', async () => {
     const { building, units } = await surveyedBlock('SYNC-9C');
     const owner = await citizen('ريما');
     const registrationId = await registrationFor({
@@ -535,19 +538,242 @@ describeIfDb('CensusSyncService', () => {
       data: { unitStatus: 'VACANT' },
     });
     await census.syncRegistration({ registrationId, citizenId: owner, actor: actor() });
-    // The second flat has its own answer, which must win over the card.
-    await db.unit.update({ where: { id: units[1]!.id }, data: { unitStatus: 'OWNER_OCCUPIED' } });
-    await db.buildingUnit.updateMany({
-      where: { unitId: units[1]!.id },
-      data: { unitStatus: 'VACANT' },
-    });
 
     const detail = await buildings.get(building.id);
     const byId = new Map(detail.units.map((unit) => [unit.id, unit]));
 
-    expect(byId.get(units[0]!.id)?.unitStatus).toBeNull();
-    expect(byId.get(units[0]!.id)?.ownerDeclaredStatus).toBe('VACANT');
+    expect(byId.get(units[0]!.id)?.unitStatus).toBe('VACANT');
+    // Stated by the unit itself now, so the fallback has nothing left to say.
+    expect(byId.get(units[0]!.id)?.ownerDeclaredStatus).toBeNull();
+    // The flat the card says nothing about is left exactly as it was.
+    expect(byId.get(units[1]!.id)?.unitStatus).toBeNull();
     expect(byId.get(units[1]!.id)?.ownerDeclaredStatus).toBeNull();
+  });
+
+  /*
+    The correction, which is the half that was missing.
+
+    An officer registering from the matrix gets حالة الوحدة seeded from the
+    census, picks «شاغرة» — or leaves the seeded one standing — saves, notices,
+    and corrects it to «مشغولة من المالك». Before this, the card changed and
+    nothing else did: سجل المباني went on drawing «شاغرة», the citizen's own
+    file showed both answers at once, and billing read the census's.
+
+    The second sync is the edit: same citizen, same flat, a card that now says
+    something different. A write narrowed to `unitStatus: null` would fix the
+    first filing and drop every correction after it.
+  */
+  it('carries a corrected حالة onto a unit that already has one', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9G');
+    const owner = await citizen('سليم');
+    const flat = units[0]!;
+
+    const first = await registrationFor({
+      citizenId: owner,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9G',
+      buildingId: building.id,
+      unitIds: [flat.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id },
+      data: { unitStatus: 'VACANT' },
+    });
+    await census.syncRegistration({ registrationId: first, citizenId: owner, actor: actor() });
+    expect((await db.unit.findUniqueOrThrow({ where: { id: flat.id } })).unitStatus).toBe('VACANT');
+
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id },
+      data: { unitStatus: 'OWNER_OCCUPIED' },
+    });
+    await census.syncRegistration({ registrationId: first, citizenId: owner, actor: actor() });
+
+    const detail = await buildings.get(building.id);
+    const corrected = detail.units.find((unit) => unit.id === flat.id);
+    expect(corrected?.unitStatus).toBe('OWNER_OCCUPIED');
+    // The two screens now say one thing, which is the whole point.
+    expect(corrected?.ownerDeclaredStatus).toBeNull();
+  });
+
+  /*
+    …and the two it declines, because neither is the sync's to overrule.
+
+    A confirmed vacancy is a finding with a basis, a date and somebody's name on
+    it, and it exempts the owner from the occupancy fee. Lifting it is «إلغاء
+    تأكيد الشغور» — a person, with a reason — not a side effect of saving a
+    form. The card keeps what the citizen filed and `ownerDeclaredStatus` goes on
+    surfacing the disagreement.
+  */
+  it('declines to write an owner card over a standing «تأكيد الشغور»', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9E');
+    const owner = await citizen('نجوى');
+    const flat = units[0]!;
+
+    await buildings.confirmVacancy(
+      flat.id,
+      { basis: 'FIELD_INSPECTION', notes: 'الشقة مقفلة منذ سنة' },
+      actor(),
+    );
+
+    const registrationId = await registrationFor({
+      citizenId: owner,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9E',
+      buildingId: building.id,
+      unitIds: [flat.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id },
+      data: { unitStatus: 'OWNER_OCCUPIED' },
+    });
+    await census.syncRegistration({ registrationId, citizenId: owner, actor: actor() });
+
+    const unit = await db.unit.findUniqueOrThrow({ where: { id: flat.id } });
+    expect(unit.unitStatus).toBe('VACANT');
+    expect(unit.surveyStatus).toBe('VACANT_CONFIRMED');
+    // The confirmation is still standing, and still undoable by a person.
+    expect(
+      await db.unitVacancyConfirmation.count({ where: { unitId: flat.id, endedAt: null } }),
+    ).toBe(1);
+  });
+
+  /*
+    The other refusal, and the same one `assertMayBeCalledEmpty` makes wherever
+    a flat is called empty: a مستأجر recorded on the unit is its occupant, and
+    «شاغرة» written over them leaves the register asserting nobody is there
+    beside a row naming who is — read downstream as an exemption, so the
+    contradiction quietly stops a bill.
+  */
+  it('declines to call a unit empty over a recorded tenant', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9F');
+    const landlord = await citizen('فادي');
+    const tenant = await citizen('رانيا');
+    const flat = units[0]!;
+
+    await buildings.recordOccupancy(
+      { unitId: flat.id, citizenId: tenant, role: 'TENANT' },
+      actor(),
+    );
+
+    const registrationId = await registrationFor({
+      citizenId: landlord,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9F',
+      buildingId: building.id,
+      unitIds: [flat.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id, propertyEntry: { registrationId } },
+      data: { unitStatus: 'VACANT' },
+    });
+    await census.syncRegistration({ registrationId, citizenId: landlord, actor: actor() });
+
+    // «مؤجرة», from the tenancy — not «شاغرة» from the landlord's card.
+    expect((await db.unit.findUniqueOrThrow({ where: { id: flat.id } })).unitStatus).toBe('RENTED');
+  });
+
+  /*
+    The same refusal in the direction that costs money.
+
+    A landlord's card filed before the tenant moved in says «مشغولة من المالك».
+    Carried onto a flat a tenancy has already made «مؤجرة», it bills the owner
+    the occupancy fee for a flat the tenant is billed for on their own card —
+    one flat, two bills, which is what حالة الوحدة exists to stop.
+  */
+  it('declines an owner card that claims a flat a recorded tenant lives in', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9H');
+    const landlord = await citizen('وليد');
+    const tenant = await citizen('هدى');
+    const flat = units[0]!;
+
+    await buildings.recordOccupancy({ unitId: flat.id, citizenId: tenant, role: 'TENANT' }, actor());
+
+    const registrationId = await registrationFor({
+      citizenId: landlord,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9H',
+      buildingId: building.id,
+      unitIds: [flat.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id, propertyEntry: { registrationId } },
+      data: { unitStatus: 'OWNER_OCCUPIED' },
+    });
+    await census.syncRegistration({ registrationId, citizenId: landlord, actor: actor() });
+
+    expect((await db.unit.findUniqueOrThrow({ where: { id: flat.id } })).unitStatus).toBe('RENTED');
+  });
+
+  /*
+    A card may still agree with the tenancy — «مؤجرة» over a recorded tenant is
+    the two screens saying one thing, and must not be refused as a clash.
+  */
+  it('carries an owner card that agrees with the recorded tenancy', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9J');
+    const landlord = await citizen('سمير');
+    const tenant = await citizen('لينا');
+    const flat = units[1]!;
+
+    await db.unit.update({ where: { id: flat.id }, data: { unitStatus: null } });
+    await buildings.recordOccupancy({ unitId: flat.id, citizenId: tenant, role: 'TENANT' }, actor());
+
+    const registrationId = await registrationFor({
+      citizenId: landlord,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9J',
+      buildingId: building.id,
+      unitIds: [flat.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id, propertyEntry: { registrationId } },
+      data: { unitStatus: 'RENTED' },
+    });
+    await census.syncRegistration({ registrationId, citizenId: landlord, actor: actor() });
+
+    expect((await db.unit.findUniqueOrThrow({ where: { id: flat.id } })).unitStatus).toBe('RENTED');
+  });
+
+  /*
+    «مسكن موسمي» is refused by the rule `isSeasonal` states, not by the unit's
+    own column alone: a flat painted from the street has no حالة of its own, so
+    «موسمي» about it lives on an owner's card until somebody opens the unit
+    editor. A January card calling it «شاغرة» would cancel the summer's fees.
+  */
+  it('declines to call a flat empty when an owner card says it is a seasonal home', async () => {
+    const { building, units } = await surveyedBlock('SYNC-9K');
+    const summerOwner = await citizen('نبيل');
+    const coOwner = await citizen('ماجد');
+    const flat = units[0]!;
+
+    await db.unit.update({ where: { id: flat.id }, data: { unitStatus: null } });
+
+    // The seasonal answer, on a card nothing has synced onto the unit.
+    const seasonal = await registrationFor({
+      citizenId: summerOwner,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9K',
+      buildingId: building.id,
+      unitIds: [flat.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id, propertyEntry: { registrationId: seasonal } },
+      data: { unitStatus: 'SEASONAL' },
+    });
+
+    const empty = await registrationFor({
+      citizenId: coOwner,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-9K',
+      buildingId: building.id,
+      unitIds: [flat.id],
+    });
+    await db.buildingUnit.updateMany({
+      where: { unitId: flat.id, propertyEntry: { registrationId: empty } },
+      data: { unitStatus: 'VACANT' },
+    });
+    await census.syncRegistration({ registrationId: empty, citizenId: coOwner, actor: actor() });
+
+    expect((await db.unit.findUniqueOrThrow({ where: { id: flat.id } })).unitStatus).toBeNull();
   });
 
   /*

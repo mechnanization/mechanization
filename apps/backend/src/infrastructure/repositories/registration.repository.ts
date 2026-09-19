@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { POSSIBLE_DUPLICATE_FLAG_PATH, type FieldFlag } from '@mechanization/shared-schemas';
 import { Prisma } from '../../generated/tenant-client';
 import { PropertyEntry } from '../../domain/entities/property-entry.entity';
 import { Registration } from '../../domain/entities/registration.entity';
@@ -161,6 +162,20 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
           }
         }
 
+        /*
+          «سجل مشابه» travels to the filing that becomes the newest.
+
+          The edit form reads and clears flags on a citizen's newest
+          registration only, and so does the quality screen. Attaching a filing
+          to a holder whose newest registration carries the flag would leave it
+          on a registration nothing can reach any more — an open question with
+          no way to answer it.
+        */
+        const carriedDuplicateFlag =
+          attachedTo && !input.flaggedFields.some((flag) => flag.path === POSSIBLE_DUPLICATE_FLAG_PATH)
+            ? await this.standingDuplicateFlag(tx, attachedTo)
+            : null;
+
         const flaggedFields =
           identity === 'CONFLICT'
             ? [
@@ -171,7 +186,9 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
                   reason: `رقم الوثيقة المُدخل (${identityDocNumber}) مسجَّل لمواطن آخر باسم مختلف، فلم يُحفظ على هذا الملف — يلزم التحقق من الوثيقة`,
                 },
               ]
-            : input.flaggedFields;
+            : carriedDuplicateFlag
+              ? [...input.flaggedFields, carriedDuplicateFlag]
+              : input.flaggedFields;
         const status = flaggedFields.length > 0 ? 'REQUIRES_REVIEW' : input.status;
 
         const citizen = attachedTo
@@ -314,6 +331,22 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
       propertyIds: existing.properties.map((property) => property.id),
       deduplicated: true,
     };
+  }
+
+  /** The «سجل مشابه» flag on this citizen's newest registration, if it has one. */
+  private async standingDuplicateFlag(
+    tx: Prisma.TransactionClient,
+    citizenId: string,
+  ): Promise<FieldFlag | null> {
+    const newest = await tx.registration.findFirst({
+      where: { citizenId },
+      orderBy: { submittedAt: 'desc' },
+      select: { flaggedFields: true },
+    });
+    const flags = Array.isArray(newest?.flaggedFields)
+      ? (newest!.flaggedFields as unknown as FieldFlag[])
+      : [];
+    return flags.find((flag) => flag?.path === POSSIBLE_DUPLICATE_FLAG_PATH) ?? null;
   }
 
   /** A P2002 naming `clientSubmissionId` — the same submission, twice, at once. */

@@ -18,6 +18,7 @@ import { TenantController } from './controllers/tenant.controller';
 import { FeesController } from './controllers/fees.controller';
 import { StaffController } from './controllers/staff.controller';
 import { ZonesController } from './controllers/zones.controller';
+import { QualityController } from './controllers/quality.controller';
 import { DomainExceptionFilter } from './filters/domain-exception.filter';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
@@ -41,6 +42,7 @@ import { TenantMiddleware } from './middleware/tenant.middleware';
     StaffController,
     ZonesController,
     CasesController,
+    QualityController,
     BuildingsController,
     BackupController,
   ],

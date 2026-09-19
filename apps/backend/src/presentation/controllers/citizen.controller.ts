@@ -450,8 +450,8 @@ export class CitizenController {
    */
   @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
   @Get(':id/form')
-  async getEditable(@Param('id') id: string) {
-    return this.citizens.getEditable(id);
+  async getEditable(@Param('id') id: string, @CurrentUser() user: SessionClaims) {
+    return this.citizens.getEditable(id, user.sub);
   }
 
   /**
@@ -477,6 +477,28 @@ export class CitizenController {
       payload,
       actor: { id: user.sub, role: user.role ?? '' },
     });
+  }
+
+  /**
+   * «هل هو مسجَّل مسبقاً؟» — the question `create` would refuse on, asked
+   * without writing anything.
+   *
+   * The form calls this before it creates a structure the household asked for,
+   * so a filing that turns out to be somebody already on file leaves nothing
+   * half-made behind. Same body and same roles as `create`: it is that
+   * endpoint's first step, not a lookup anyone else needs.
+   *
+   * A static path declared before any `:id` route, for the reason `import`
+   * gives.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Post('duplicate-review')
+  async duplicateReview(
+    @Body(new ZodValidationPipe(adminCreateCitizenSubmissionSchema))
+    payload: AdminCitizenSubmission,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.citizens.reviewDuplicates(payload, { id: user.sub });
   }
 
   /**

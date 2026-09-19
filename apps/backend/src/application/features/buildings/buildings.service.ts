@@ -1069,75 +1069,27 @@ export class BuildingsService {
       client that showed the same list from its cache sets it too, so the guard
       costs a phone with no signal nothing.
     */
-    if (!input.acknowledgedDuplicates) {
-      /*
-        Every structure standing on this عقار, including one filed under a
-        neighbouring parcel that also covers this one — see `standsOnParcels`.
-        That second kind is the likelier duplicate of the two: an officer on 25
-        who does not know Z-2-10-A reaches over the boundary will create it again.
-        Own-parcel rows first, so the dialog leads with the plainest candidates.
-      */
-      const found = await this.db.building.findMany({
-        where: standsOnParcels([parcelNumber]),
-        orderBy: [{ code: 'asc' }],
-        select: {
-          id: true,
-          code: true,
-          parcelNumber: true,
-          name: true,
-          postedNumber: true,
-          structureType: true,
-          lifecycleStatus: true,
-          unitsTotal: true,
-          latitude: true,
-          longitude: true,
+    /*
+      Asked whether or not the officer already acknowledged. Refused on when
+      nothing was acknowledged; written into the audit row when something was,
+      so "created 3.6 m from Z-3-56-A, because …" is a fact on record rather
+      than a tick nobody can see afterwards.
+    */
+    const neighbours = await this.parcelNeighbours(parcelNumber, input);
+
+    if (!input.acknowledgedDuplicates && neighbours.length > 0) {
+      throw new ConflictError(
+        `يوجد ${neighbours.length === 1 ? 'مبنى مسجَّل' : `${neighbours.length} مبانٍ مسجَّلة`} على العقار ${parcelNumber}. تأكَّد أن هذه منشأة مختلفة قبل المتابعة.`,
+        {
+          /*
+            The candidates travel with the refusal so the dialog can show
+            them without a second round trip — an officer offline enough to
+            have queued this creation may not get one.
+          */
+          parcelNumber,
+          candidates: neighbours,
         },
-      });
-      const neighbours = [
-        ...found.filter((row) => row.parcelNumber === parcelNumber),
-        ...found.filter((row) => row.parcelNumber !== parcelNumber),
-      ];
-
-      if (neighbours.length > 0) {
-        throw new ConflictError(
-          `يوجد ${neighbours.length === 1 ? 'مبنى مسجَّل' : `${neighbours.length} مبانٍ مسجَّلة`} على العقار ${parcelNumber}. تأكَّد أن هذه منشأة مختلفة قبل المتابعة.`,
-          {
-            /*
-              The candidates travel with the refusal so the dialog can show
-              them without a second round trip — an officer offline enough to
-              have queued this creation may not get one.
-
-              `distanceMetres` is null where either pin is missing rather than
-              defaulted to zero: "we cannot tell how far apart these are" and
-              "they are in the same place" are opposite findings, and the
-              second is the one that would talk somebody out of a real building.
-            */
-            parcelNumber,
-            candidates: neighbours.map(({ parcelNumber: ownParcel, ...row }) => ({
-              ...row,
-              /*
-                Named so the dialog can say «يمتد على هذا العقار — عقاره
-                الأساسي 10» instead of listing a building whose code names a
-                different parcel with no explanation.
-              */
-              ownParcelNumber: ownParcel,
-              sharesParcel: ownParcel !== parcelNumber,
-              distanceMetres:
-                input.latitude != null &&
-                input.longitude != null &&
-                row.latitude != null &&
-                row.longitude != null
-                  ? Math.round(
-                      metresBetween(
-                        { latitude: input.latitude, longitude: input.longitude },
-                        { latitude: row.latitude, longitude: row.longitude },
-                      ),
-                    )
-                  : null,
-            })),
-          },
-        );
-      }
+      );
     }
 
     const created = await this.db.$transaction(async (tx) => {
@@ -1287,11 +1239,100 @@ export class BuildingsService {
         parcelNumber: created.parcelNumber,
         structureType: created.structureType,
         ...(reconciled ? { provisionalSuffix: input.provisionalSuffix } : {}),
+        /*
+          What the officer said this was not, and how far away it stood.
+
+          Only where there was something to acknowledge. This is the row a
+          reviewer reads when two records on one parcel turn out to be one
+          building: the distances say whether the tick was a judgement or a
+          reflex, and the reason says what the officer saw.
+        */
+        ...(created.latitude == null && input.noPinReason?.trim()
+          ? { noPinReason: input.noPinReason.trim() }
+          : {}),
+        ...(neighbours.length > 0
+          ? {
+              acknowledgedNeighbours: neighbours.map((row) => ({
+                id: row.id,
+                code: row.code,
+                distanceMetres: row.distanceMetres,
+              })),
+              duplicateReason: input.duplicateReason?.trim() || null,
+            }
+          : {}),
       },
       actor,
     });
 
     return { building: toBuildingRow(created), reconciled, deduplicated: false };
+  }
+
+  /**
+   * Every structure standing on this عقار, nearest first where both pins exist.
+   *
+   * Including one filed under a neighbouring parcel that also covers this one —
+   * see `standsOnParcels`. That second kind is the likelier duplicate of the
+   * two: an officer on 25 who does not know Z-2-10-A reaches over the boundary
+   * will create it again.
+   *
+   * Ordered by distance because distance is the fact that decides the question:
+   * parcel 56's second and third records were created 3.6 m and 4.1 m from the
+   * first, off a list ordered by code. Rows with no distance keep the old order
+   * after the measured ones — own parcel first, then by code.
+   *
+   * `distanceMetres` is null where either pin is missing rather than defaulted
+   * to zero: "we cannot tell how far apart these are" and "they are in the same
+   * place" are opposite findings, and the second is the one that would talk
+   * somebody out of a real building.
+   */
+  private async parcelNeighbours(
+    parcelNumber: string,
+    pin: { latitude?: number | null; longitude?: number | null },
+  ) {
+    const found = await this.db.building.findMany({
+      where: standsOnParcels([parcelNumber]),
+      orderBy: [{ code: 'asc' }],
+      select: {
+        id: true,
+        code: true,
+        parcelNumber: true,
+        name: true,
+        postedNumber: true,
+        structureType: true,
+        lifecycleStatus: true,
+        unitsTotal: true,
+        latitude: true,
+        longitude: true,
+      },
+    });
+
+    const rows = [
+      ...found.filter((row) => row.parcelNumber === parcelNumber),
+      ...found.filter((row) => row.parcelNumber !== parcelNumber),
+    ].map(({ parcelNumber: ownParcel, ...row }) => ({
+      ...row,
+      /*
+        Named so the dialog can say «يمتد على هذا العقار — عقاره الأساسي 10»
+        instead of listing a building whose code names a different parcel with
+        no explanation.
+      */
+      ownParcelNumber: ownParcel,
+      sharesParcel: ownParcel !== parcelNumber,
+      distanceMetres:
+        pin.latitude != null &&
+        pin.longitude != null &&
+        row.latitude != null &&
+        row.longitude != null
+          ? Math.round(
+              metresBetween(
+                { latitude: pin.latitude, longitude: pin.longitude },
+                { latitude: row.latitude, longitude: row.longitude },
+              ),
+            )
+          : null,
+    }));
+
+    return sortByDistance(rows);
   }
 
   async update(
@@ -1301,6 +1342,39 @@ export class BuildingsService {
   ): Promise<BuildingRow> {
     const before = await this.db.building.findUnique({ where: { id } });
     if (!before) throw new NotFoundError('المبنى غير موجود');
+
+    /*
+      Somebody saved this building after the editor was opened. Refused before
+      anything is written, naming them, so a screen loaded an hour ago does not
+      quietly put back a lifecycle, a فرز or a pin a colleague has since changed.
+    */
+    if (input.expectedUpdatedAt && before.updatedAt.toISOString() !== new Date(input.expectedUpdatedAt).toISOString()) {
+      const last = await this.db.auditLogEntry.findFirst({
+        where: { entityType: 'Building', entityId: id },
+        orderBy: { createdAt: 'desc' },
+        select: { actorId: true, createdAt: true },
+      });
+      const staff = last?.actorId
+        ? await this.db.user.findFirst({
+            where: { id: last.actorId, kind: 'STAFF' },
+            select: { firstName: true, lastName: true },
+          })
+        : null;
+      const who = staff ? `${staff.firstName} ${staff.lastName}` : null;
+      throw new ConflictError(
+        who
+          ? `عدّل ${who} هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى تعديلاته قبل الحفظ.`
+          : 'عُدِّل هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى التعديلات قبل الحفظ.',
+        {
+          staleEdit: {
+            updatedAt: before.updatedAt.toISOString(),
+            lastEditedBy: who,
+            lastEditedAt: last?.createdAt.toISOString() ?? null,
+            byViewer: last?.actorId === actor.id,
+          },
+        },
+      );
+    }
 
     /*
       The other direction of the same rule.
@@ -1378,21 +1452,26 @@ export class BuildingsService {
       },
     });
 
+    /*
+      Every field this save changed, on both sides — and only those.
+
+      This logged name, structure type and lifecycle, always, whether they
+      moved or not. So on 2026-09-16 twenty rows read as identical before/after
+      pairs while the parcel's فرز, its shared parcels and a DERELICT → IN_USE
+      flip-flop left no field-level trail at all. The lifecycle is still written
+      on both sides every time: it is the one field that moves a building in and
+      out of the census denominator, and a coverage figure that jumped needs a
+      row naming the building that did it.
+    */
+    const changes = changedBuildingFields(before, updated);
     this.record({
       action: 'BUILDING_UPDATED',
       buildingId: id,
-      // The lifecycle is logged on both sides because it is the one field here
-      // that moves a building in and out of the census denominator — a coverage
-      // percentage that jumped needs a row explaining which building did it.
-      before: {
-        name: before.name,
-        structureType: before.structureType,
-        lifecycleStatus: before.lifecycleStatus,
-      },
+      before: { ...changes.before, lifecycleStatus: before.lifecycleStatus },
       after: {
-        name: updated.name,
-        structureType: updated.structureType,
+        ...changes.after,
         lifecycleStatus: updated.lifecycleStatus,
+        changedFields: Object.keys(changes.after),
       },
       actor,
     });
@@ -2694,6 +2773,14 @@ export class BuildingsService {
         ...(input.unitArea !== undefined && unit.unitArea == null
           ? { unitArea: input.unitArea }
           : {}),
+        // «لم تُقَس» with its reason — only where the unit really has no area.
+        ...(input.unitArea === undefined && unit.unitArea == null && input.unitAreaMissingReason
+          ? { unitAreaNotMeasured: input.unitAreaMissingReason }
+          : {}),
+        // «لم يُعرف من يشغلها» with its reason — an owner with no answer given.
+        ...(input.role === 'OWNER' && !input.unitStatus && input.unitStatusMissingReason
+          ? { unitStatusNotEstablished: input.unitStatusMissingReason }
+          : {}),
         casesResolved,
         /*
           Named in the audit row for the reason `endOccupancy` names its release:
@@ -3305,6 +3392,56 @@ export class BuildingsService {
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
 
     /*
+      The same officer, the same door, the same day, the same finding: asked,
+      not refused.
+
+      Each part rules out an ordinary sequence. Logged by this officer in the
+      last twelve hours, so a colleague's knock is not it. Dated within a day
+      of this one, so three back-dated paper visits a week apart are not it.
+      The same outcome, so «لا يوجد رد» in the morning and «مكتملة» in the
+      evening — a real second finding — is not it. What is left is the double
+      submit of one knock: 2026-09-15, one closed shop, «مغلق» twice, a case
+      each time.
+    */
+    if (!input.acknowledgedRepeat) {
+      const claimedAt = (input.visitedAt ?? new Date()).getTime();
+      const recent = (
+        await this.db.unitVisit.findMany({
+          where: {
+            unitId: input.unitId,
+            officerId: actor.id,
+            outcome: input.outcome as never,
+            createdAt: { gte: new Date(Date.now() - REPEAT_VISIT_WINDOW_MS) },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { createdAt: true, visitedAt: true, outcome: true },
+        })
+      ).find((visit) => Math.abs(visit.visitedAt.getTime() - claimedAt) < SAME_VISIT_DAY_MS);
+      if (recent) {
+        const minutesAgo = Math.max(0, Math.round((Date.now() - recent.createdAt.getTime()) / 60_000));
+        throw new ConflictError(
+          `سجَّلتَ زيارة بالنتيجة نفسها لهذه الوحدة قبل ${
+            minutesAgo === 1
+              ? 'دقيقة واحدة'
+              : minutesAgo === 2
+                ? 'دقيقتين'
+                : minutesAgo >= 3 && minutesAgo <= 10
+                  ? `${minutesAgo} دقائق`
+                  : `${minutesAgo} دقيقة`
+          }. إن كانت هذه محاولة جديدة فأكِّد ذلك قبل التسجيل.`,
+          {
+            repeatVisit: {
+              unitId: input.unitId,
+              loggedAt: recent.createdAt.toISOString(),
+              outcome: recent.outcome,
+              minutesAgo,
+            },
+          },
+        );
+      }
+    }
+
+    /*
       A visit to a flat whose vacancy is standing is logged, and leaves the
       finding alone.
 
@@ -3355,6 +3492,7 @@ export class BuildingsService {
         // Named in the audit row because the outcome and the unit's status
         // disagree in this case, and the reason has to be readable later.
         ...(standing ? { vacancyStands: true } : {}),
+        ...(input.acknowledgedRepeat ? { acknowledgedRepeat: true } : {}),
       },
       actor,
     });
@@ -3723,7 +3861,79 @@ export function rollupOf(unitStatuses: readonly string[]): string {
  * the two formulas differ by centimetres. What matters is that the number is
  * never confidently wrong, and Haversine at this range is not.
  */
-function metresBetween(
+/**
+ * How recently this officer's own visit to a unit makes another one worth a
+ * question. Twelve hours covers one working day's morning-and-evening retry,
+ * which is still allowed — it is only asked.
+ */
+const REPEAT_VISIT_WINDOW_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * How close two visits' own dates must be to read as one knock. A day, because
+ * the form sends a date without a time, so a visit dated "today" is midnight.
+ */
+const SAME_VISIT_DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The building columns `update` can write — what its audit row compares. */
+const AUDITED_BUILDING_FIELDS = [
+  'name',
+  'postedNumber',
+  'isPartitioned',
+  'partitionNumbers',
+  'sharedParcelNumbers',
+  'structureType',
+  'lifecycleStatus',
+  'latitude',
+  'longitude',
+  'floorsCount',
+  'basementsCount',
+  'notes',
+] as const;
+
+type AuditedBuilding = { [K in (typeof AUDITED_BUILDING_FIELDS)[number]]: unknown };
+
+/**
+ * The fields that differ between two versions of a building, each side keyed
+ * by field. Arrays compare by content, so re-saving the same أقسام in the same
+ * order is not a change. Exported for its spec.
+ */
+export function changedBuildingFields(
+  before: AuditedBuilding,
+  after: AuditedBuilding,
+): { before: Record<string, unknown>; after: Record<string, unknown> } {
+  const changed = { before: {} as Record<string, unknown>, after: {} as Record<string, unknown> };
+  for (const field of AUDITED_BUILDING_FIELDS) {
+    if (JSON.stringify(before[field] ?? null) === JSON.stringify(after[field] ?? null)) continue;
+    changed.before[field] = before[field] ?? null;
+    changed.after[field] = after[field] ?? null;
+  }
+  return changed;
+}
+
+/**
+ * Measured rows nearest first; unmeasured rows after them, in the order given.
+ *
+ * Exported for its spec. Stable by construction (the original index breaks
+ * every tie), so a parcel whose buildings have no pins reads exactly as it did
+ * before distances were sorted on.
+ */
+export function sortByDistance<T extends { distanceMetres: number | null }>(
+  rows: readonly T[],
+): T[] {
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const da = a.row.distanceMetres;
+      const db = b.row.distanceMetres;
+      if (da != null && db != null) return da - db || a.index - b.index;
+      if (da != null) return -1;
+      if (db != null) return 1;
+      return a.index - b.index;
+    })
+    .map(({ row }) => row);
+}
+
+export function metresBetween(
   a: { latitude: number; longitude: number },
   b: { latitude: number; longitude: number },
 ): number {

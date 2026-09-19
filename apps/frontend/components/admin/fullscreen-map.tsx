@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import type { FeatureCollection } from 'geojson';
@@ -34,7 +35,7 @@ import {
   type RegisteredParcel,
   type ZoneSummary,
 } from '@/lib/api-client';
-import { getLabels, type CitizenResidence } from '@mechanization/shared-schemas';
+import { getLabels } from '@mechanization/shared-schemas';
 import {
   BUILDING_LAYER,
   BUILDING_SOURCE,
@@ -62,7 +63,6 @@ import { CitizenDetailDrawer } from './citizen-detail-drawer';
 import { ZoneLegend } from './zone-legend';
 import { MapExportDialog } from './map-export-dialog';
 import { ZoneInfoDialog } from './zone-info-dialog';
-import { BuildingUnitMatrixDrawer } from './building-unit-matrix-drawer';
 import {
   basemapById,
   ensureRtlTextPlugin,
@@ -83,6 +83,74 @@ const PARCEL_LABEL_MIN_ZOOM = 16;
 /** Albazourieh's cadastre sits here; the fallback view before data loads. */
 const FALLBACK_CENTER: [number, number] = [35.2654, 33.2539];
 const FALLBACK_ZOOM = 13.5;
+
+/**
+ * Where the officer was looking, kept for the length of the tab.
+ *
+ * A building pin now leads to a full page rather than a panel over the map, and
+ * the one thing the panel was protecting is this: coming back from a building
+ * used to leave the officer at the town's default view, hunting for the street
+ * they had just zoomed into — on a phone, in a stairwell, having surveyed four
+ * flats. `sessionStorage` rather than a URL parameter because the viewport is
+ * not a destination anybody should be able to link to or bookmark, and because
+ * the map's `?lat=&lng=` already means something else: drop a pin here.
+ *
+ * Per tab and cleared when it closes, which is the right lifetime — a viewport
+ * from last week is not where anybody is standing today.
+ */
+/*
+  Namespaced per municipality, for the reason the session token is: a staff
+  member may hold accounts in two of them, and one tab's viewport restored into
+  the other town's map drops the officer somewhere they have never been — with
+  `fittedRef` set, so the fit-to-parcels that would have corrected it stands
+  down.
+*/
+const viewportKey = (tenant: string) => `map:viewport:${tenant}`;
+
+type Viewport = { lng: number; lat: number; zoom: number; bearing: number; pitch: number };
+
+/**
+ * Both halves are `try`-wrapped: `sessionStorage` throws outright in a private
+ * window and in an iframe with site data blocked, and a map that refuses to
+ * open because it could not remember where it was would be a far worse bug than
+ * the one this fixes.
+ */
+function rememberedViewport(tenant: string): Viewport | null {
+  try {
+    const raw = window.sessionStorage.getItem(viewportKey(tenant));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<Viewport>;
+    const { lng, lat, zoom } = parsed;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat) || !Number.isFinite(zoom)) return null;
+    return {
+      lng: lng as number,
+      lat: lat as number,
+      zoom: zoom as number,
+      bearing: Number.isFinite(parsed.bearing) ? (parsed.bearing as number) : 0,
+      pitch: Number.isFinite(parsed.pitch) ? (parsed.pitch as number) : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function rememberViewport(map: mapboxgl.Map, tenant: string): void {
+  try {
+    const center = map.getCenter();
+    window.sessionStorage.setItem(
+      viewportKey(tenant),
+      JSON.stringify({
+        lng: center.lng,
+        lat: center.lat,
+        zoom: map.getZoom(),
+        bearing: map.getBearing(),
+        pitch: map.getPitch(),
+      } satisfies Viewport),
+    );
+  } catch {
+    // Not being able to remember the viewport costs a pan, not a survey.
+  }
+}
 
 const SOURCE = {
   cadastre: 'cadastre-source',
@@ -337,7 +405,7 @@ export function FullscreenMap({
   focusParcelNumber,
   focusLat,
   focusLng,
-  registerHref,
+  buildingHref,
   locale = 'ar',
 }: {
   parcels: RegisteredParcel[];
@@ -349,21 +417,15 @@ export function FullscreenMap({
   focusLat?: number;
   focusLng?: number;
   /**
-   * Where the census drawer's «ملف جديد» choices go — see the drawer's own
-   * `registerHref`.
+   * Where a building pin leads — the ledger's full-page unit matrix.
    *
    * Built by the page, like `citizenHref` beside it: this component is handed
    * links rather than reconstructing `/{tenant}/{locale}/{adminPath}` itself.
    */
-  registerHref?: (
-    buildingId: string,
-    unitId: string,
-    residence: CitizenResidence,
-    /** Whatever the officer typed into the occupant search — seeds the name. */
-    name: string,
-  ) => string;
+  buildingHref: (buildingId: string) => string;
   locale?: string;
 }) {
+  const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
 
@@ -422,8 +484,14 @@ export function FullscreenMap({
   const [buildingPins, setBuildingPins] = useState<BuildingMapPin[]>([]);
   const [buildingsVisible, setBuildingsVisible] = useState(false);
   const [buildingLegendOpen, setBuildingLegendOpen] = useState(false);
-  /** Which building's matrix is open, if any. */
-  const [openBuildingId, setOpenBuildingId] = useState<string | null>(null);
+
+  /*
+    Read through a ref by the click handler, which binds to the Mapbox instance
+    once and must not be re-bound every time the page re-renders a new arrow —
+    the same reason `selectedRef` and `measureModeRef` exist above.
+  */
+  const buildingHrefRef = useRef(buildingHref);
+  buildingHrefRef.current = buildingHref;
 
   const zonesVisibleRef = useRef(zonesVisible);
   zonesVisibleRef.current = zonesVisible;
@@ -799,8 +867,20 @@ export function FullscreenMap({
   }, [buildingsVisible, buildingData]);
 
   /**
-   * Clicking a pin opens that building's matrix; clicking a parcel aggregate
-   * flies in far enough for its buildings to separate.
+   * Clicking a pin opens that building's matrix — the ledger's full page, not a
+   * slide-over; clicking a parcel aggregate flies in far enough for its
+   * buildings to separate.
+   *
+   * It used to be a drawer over the map. A مبنى of twelve flats does not fit in
+   * one: the matrix is a spatial drawing of the building, and squeezing it into
+   * a panel on a phone left the officer scrolling a drawing sideways inside a
+   * page they could also scroll. The full page is the same component the census
+   * ledger opens (`buildings/[id]/matrix`), so an officer who arrives from the
+   * map and one who arrives from the ledger are on one screen, not two.
+   *
+   * The map position is not lost by going there: `BackLink` returns through the
+   * history entry this push creates, so «رجوع» lands back on the same
+   * viewport — which is what the drawer existed to protect.
    *
    * The same fingertip-sized box the registered dots use, and for the same
    * reason: a 9px circle is not a tap target on a phone in a stairwell.
@@ -829,7 +909,7 @@ export function FullscreenMap({
 
       const buildingId = hit.properties?.id as string | undefined;
       if (buildingId) {
-        setOpenBuildingId(buildingId);
+        router.push(buildingHrefRef.current(buildingId));
         return;
       }
 
@@ -852,7 +932,7 @@ export function FullscreenMap({
     return () => {
       map.off('click', onClick);
     };
-  }, [buildingsVisible]);
+  }, [buildingsVisible, router]);
 
   // ── Map lifecycle ──────────────────────────────────────────────────
   useEffect(() => {
@@ -860,13 +940,31 @@ export function FullscreenMap({
 
     ensureRtlTextPlugin();
 
+    /*
+      Where this tab was last looking, if anywhere. Restored at construction
+      rather than flown to afterwards, so the officer never sees the town-wide
+      default flash past on the way back to their street.
+
+      `?parcel=` / `?lat=` win: those arrive from a citizen's file saying «عرض
+      على الخريطة» about a specific property, which is a destination somebody
+      asked for and not a viewport they happened to leave behind.
+    */
+    const restored = focusParcelNumber || (focusLat != null && focusLng != null)
+      ? null
+      : rememberedViewport(tenant);
+
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: styleFor(DEFAULT_BASEMAP),
-      center: FALLBACK_CENTER,
-      zoom: FALLBACK_ZOOM,
+      center: restored ? [restored.lng, restored.lat] : FALLBACK_CENTER,
+      zoom: restored ? restored.zoom : FALLBACK_ZOOM,
+      bearing: restored?.bearing ?? 0,
+      pitch: restored?.pitch ?? 0,
       preserveDrawingBuffer: true,
     });
+
+    // Restoring *is* the fit, so the fit-to-all-parcels below stands down.
+    if (restored) fittedRef.current = true;
 
     trackStyleSpec(map);
 
@@ -879,9 +977,12 @@ export function FullscreenMap({
       attachCadastreSafely(map);
       attachMeasureLayers(map);
     });
+    const onMoveEnd = () => rememberViewport(map, tenant);
+    map.on('moveend', onMoveEnd);
     mapRef.current = map;
 
     return () => {
+      map.off('moveend', onMoveEnd);
       map.remove();
       mapRef.current = null;
     };
@@ -2351,36 +2452,6 @@ export function FullscreenMap({
               : `دون مستوى التكبير ${BUILDING_ZOOM} يظهر العقار كنقطة واحدة تحمل أسوأ حالة فيه؛ انقر عليها للتكبير.`}
           </p>
         </div>
-      ) : null}
-
-      {/*
-        Clicking a pin opens the same matrix the census ledger opens — the same
-        component, so an officer who logs a visit from the map and one who logs
-        it from the ledger are using one screen, not two that have to be kept in
-        step.
-      */}
-      {token ? (
-        <BuildingUnitMatrixDrawer
-          open={openBuildingId !== null}
-          onClose={() => setOpenBuildingId(null)}
-          tenant={tenant}
-          token={token}
-          buildingId={openBuildingId}
-          canWrite
-          registerHref={registerHref}
-          // The same builder the parcel popups already use, so an occupant's
-          // name leads to the same record from either layer.
-          citizenHref={citizenHref}
-          onChanged={() => {
-            // The pin's own fill and ring are derived from what just changed,
-            // so the layer is re-read rather than left showing the old rollup.
-            if (!token) return;
-            void getBuildingMapPins(tenant, token)
-              .then((response) => setBuildingPins(response.buildings))
-              .catch(logApiError);
-          }}
-          locale={locale}
-        />
       ) : null}
 
       <ZoneInfoDialog
