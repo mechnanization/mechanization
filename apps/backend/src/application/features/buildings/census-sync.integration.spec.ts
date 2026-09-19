@@ -564,14 +564,14 @@ describeIfDb('CensusSyncService', () => {
     first filing and drop every correction after it.
   */
   it('carries a corrected حالة onto a unit that already has one', async () => {
-    const { building, units } = await surveyedBlock('SYNC-9D');
+    const { building, units } = await surveyedBlock('SYNC-9G');
     const owner = await citizen('سليم');
     const flat = units[0]!;
 
     const first = await registrationFor({
       citizenId: owner,
       propertyType: 'BUILDING',
-      parcelNumber: 'SYNC-9D',
+      parcelNumber: 'SYNC-9G',
       buildingId: building.id,
       unitIds: [flat.id],
     });
