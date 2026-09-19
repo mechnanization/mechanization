@@ -72,7 +72,7 @@ import {
   emptyCitizen,
   toSubmission,
   withResidence,
-  withSeededName,
+  withSeededSearch,
   type CitizenFormValues,
 } from './citizen-form';
 import {
@@ -706,7 +706,7 @@ export function CitizenEditor({
   fromCaseId,
   lockedCensusTarget,
   initialResidence,
-  initialName,
+  initialSearch,
 }: {
   tenant: string;
   locale: string;
@@ -724,11 +724,12 @@ export function CitizenEditor({
    * The search term that sent the officer here — the occupant panel's own box,
    * carried across so a search that found nobody is not retyped.
    *
-   * Applied to a new record only, and only when it looks like a name rather
-   * than a number (`withSeededName`). Its real job is to give the duplicate
-   * check something to check on the very first render.
+   * Applied to a new record only: to the phone field when it is a number, to
+   * the name when it is a name, and to neither otherwise (`withSeededSearch`).
+   * Its real job is to give the duplicate check something to check on the
+   * very first render.
    */
-  initialName?: string;
+  initialSearch?: string;
   /**
    * Arrived from a building's unit matrix — the structure, and possibly the
    * flat, is already decided.
@@ -978,7 +979,7 @@ export function CitizenEditor({
             other cases — nothing here writes — so following a unit link and
             then coming back to «تسجيل مواطن جديد» still finds it.
           */
-          if (!seeded && !initialResidence && !initialName) {
+          if (!seeded && !initialResidence && !initialSearch) {
             const draft = loadCitizenDraft(tenant);
             if (draft) {
               setInitial(draft.values);
@@ -989,7 +990,7 @@ export function CitizenEditor({
 
           const fresh = seeded ? { ...empty, properties: seeded } : empty;
           const withFile = initialResidence ? withResidence(fresh, initialResidence) : fresh;
-          setInitial(initialName ? withSeededName(withFile, initialName) : withFile);
+          setInitial(initialSearch ? withSeededSearch(withFile, initialSearch) : withFile);
           return;
         }
 
@@ -1098,7 +1099,7 @@ export function CitizenEditor({
     queueId,
     fromCaseId,
     initialResidence,
-    initialName,
+    initialSearch,
     base,
     router,
     locale,

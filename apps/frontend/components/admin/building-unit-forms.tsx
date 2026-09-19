@@ -640,7 +640,7 @@ export function ownerLinkMessage(result: RecordedOwnerLink, en: boolean): string
 /**
  * «إضافة شخص إلى الوحدة» — the one way a person reaches a flat from the matrix.
  *
- * ## Both ways out, always offered
+ * ## Search first, and «ملف جديد» once it has answered
  *
  * This used to be two buttons: «تسجيل شاغل», which linked somebody already on
  * file, and «تسجيل أسرة في هذه الوحدة», which opened a blank registration. The
@@ -648,29 +648,32 @@ export function ownerLinkMessage(result: RecordedOwnerLink, en: boolean): string
  * by definition not a شاغل (D2), and the second also created owner records,
  * which have no household — and nothing made the officer look before creating.
  *
- * So there is one entry and it searches. For a while it *also* withheld «ملف
- * جديد» until a search had come back, on the theory that this made officers
- * look before creating. It did not, and it cost more than it is worth stating
- * plainly:
+ * So there is one entry and it searches, and the new-file choices appear only
+ * once the search has answered the name typed *now*: nobody matched, or the
+ * register could not be reached. A list of matches offers them behind «ليس
+ * بينهم؟» instead, so the person on file is the first thing the officer sees.
  *
- *  - It gated on a search having *run*, not on the right one having run.
- *    «asdfgh» satisfied it, and that is what officers typed — so the guarantee
- *    was nil and the ritual was daily. A control that is noise is one people
- *    route around, including on the tenth card where it mattered.
+ * This gate was tried once before and removed, and the two ways it failed are
+ * why it is shaped as it is:
+ *
  *  - A failed lookup cleared the term it was waiting on, so an officer with no
  *    signal could not reach «ملف جديد» at all. This form is used in the field,
  *    offline, in settlements nobody is going back to; a dead end there is a
- *    household that goes unregistered.
+ *    household that goes unregistered. An unreachable register therefore
+ *    counts as answered — said as such, never as «لا نتيجة».
+ *  - Two «محمد خليل»s on one parcel are a real afternoon, and a gate that only
+ *    opens on zero matches never opens for the second one. Hence «ليس بينهم؟».
  *
- * Both choices are therefore offered from the start, and the duplicate check
- * moved to where it can actually work: `CitizenEditor` matches on the *name*
- * as it is typed and shows whoever it finds. That is a check «asdfgh» cannot
- * pass, and it is the one that matters for «غير مقيم في البلدة» — a record
+ * It still gates on a search having *run*, not on the right one — «asdfgh»
+ * opens it. The duplicate check that «asdfgh» cannot pass stays where it was:
+ * `CitizenEditor` matches on the *name* as it is typed and shows whoever it
+ * finds. That is the one that matters for «غير مقيم في البلدة» — a record
  * carrying a name, a phone and a town, no document number, so the one least
  * able to be merged after the fact.
  *
- * What the search term still does is travel: whatever the officer typed seeds
- * the new file's name, so a search that found nobody is not retyped.
+ * The search term also travels: whatever the officer typed seeds the new
+ * file — its phone when the term is a number, its name otherwise
+ * (`withSeededSearch`) — so a search that found nobody is not retyped.
  *
  * Both new-file choices carry the unit and preset نوع الملف, named with the
  * same labels the form's own chooser uses. Neither answers «ومن يشغلها؟» — an
@@ -764,7 +767,7 @@ export function AddPersonForm({
   locale: string;
   /**
    * The registration form, pointed at this unit, with نوع الملف preset and the
-   * officer's search term carried across as the name to start from.
+   * officer's search term carried across as the name or phone to start from.
    *
    * Absent where the caller cannot build an admin URL; the search still works
    * and the no-match line says to register the person first.
@@ -838,6 +841,11 @@ export function AddPersonForm({
    * lead to different decisions about whether to open a new file.
    */
   const [failed, setFailed] = useState(false);
+  /** The term whose matches the officer has said «ليس بينهم؟» to. */
+  const [notAmong, setNotAmong] = useState('');
+  /** The shown results answer what is typed now, not a term since changed. */
+  const settled = !searching && searched !== '' && searched === term.trim();
+  const offerNewFile = settled && (failed || results.length === 0 || notAmong === searched);
   const [role, setRole] = useState<OccupancyRole | ''>('');
   const [shares, setShares] = useState('');
   /**
@@ -988,6 +996,9 @@ export function AddPersonForm({
               />
               <Input
                 id="occupant-search"
+                // The form opens from «إضافة شخص إلى الوحدة», and searching is
+                // the first thing it asks for.
+                autoFocus
                 value={term}
                 onChange={(event) => setTerm(event.target.value)}
                 className="ps-9"
@@ -996,7 +1007,13 @@ export function AddPersonForm({
             </div>
           </Field>
 
-          {searching ? (
+          {!term.trim() ? (
+            <p className="text-xs text-muted-foreground">
+              {en
+                ? 'Search the register first. If the person is not on file, you can open a new file for this unit.'
+                : 'ابحث في السجل أولاً. إن لم يكن الشخص مسجَّلاً يمكنك فتح ملف جديد لهذه الوحدة.'}
+            </p>
+          ) : searching ? (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" aria-hidden />
               {en ? 'Searching…' : 'جاري البحث…'}
@@ -1050,22 +1067,29 @@ export function AddPersonForm({
                 ? 'The register could not be reached, so this is not a “no match”. If you open a new file, check the name against the register once you are back online.'
                 : 'تعذّر الوصول إلى السجل، وهذا ليس «لا نتيجة». إن فتحت ملفاً جديداً فراجع الاسم في السجل عند عودة الاتصال.'}
             </p>
-          ) : !searching && searched && searched === term.trim() && results.length === 0 ? (
+          ) : settled && results.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               {en ? 'No match in the register.' : 'لا نتيجة في السجل.'}
             </p>
           ) : null}
 
           {/*
-            Offered from the start, rather than held back until a search has run.
-
-            Withholding these taught officers to type «asdfgh» to reveal them,
-            which gated nothing and cost a ritual on every record — see the
-            docblock. The look-before-you-create check lives in the form these
-            links open, where it matches on the name actually being typed and
-            «asdfgh» cannot satisfy it.
+            Held back until the search has answered — see the docblock for why
+            an unreachable register and «ليس بينهم؟» both open it. Without
+            either, an officer offline or facing a same-name match could not
+            register the household at all.
           */}
-          {newFileHref ? (
+          {settled && results.length > 0 && !offerNewFile ? (
+            <button
+              type="button"
+              className="py-1.5 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              onClick={() => setNotAmong(searched)}
+            >
+              {en ? 'Not one of these? Open a new file' : 'ليس بينهم؟ افتح ملفاً جديداً'}
+            </button>
+          ) : null}
+
+          {!offerNewFile ? null : newFileHref ? (
             <div className="space-y-2 rounded-md border border-dashed p-2.5">
               <p className="text-xs text-muted-foreground">
                 {results.length > 0
