@@ -10,6 +10,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../../../domain/e
 import { BuildingsService } from '../buildings/buildings.service';
 import type { FileLinkResult } from '../buildings/building.types';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
+import { foldNamePart } from './possible-duplicates';
 
 /**
  * Identifying the owner a مستأجر named, among the register's own citizens.
@@ -146,9 +147,13 @@ export class LandlordLinkService {
     const numbers = [citizen.phone, citizen.whatsapp].filter(
       (value): value is string => Boolean(value),
     );
-    if (numbers.length === 0) return [];
 
-    const pairs = await this.matchPairs({ phones: numbers });
+    /*
+      No early return on a citizen with no phone any more: a tenant who named
+      the owner and not the number is still naming them, and the name is now
+      a second, weaker way the register can notice — see `matchPairs`.
+    */
+    const pairs = await this.matchPairs({ naming: { citizenId, phones: numbers } });
     /*
       Only the claims where *they* are a candidate. The query finds every claim
       naming a number they answer on, and a household line can resolve one of
@@ -178,21 +183,64 @@ export class LandlordLinkService {
    *    number was the case a card-wide dismissal lost forever.
    */
   private async matchPairs(
-    scope: { registrationId?: string; phones?: readonly string[] },
+    scope: {
+      registrationId?: string;
+      /** Claims naming this citizen — by one of these numbers, or by their name. */
+      naming?: { citizenId: string; phones: readonly string[] };
+    },
     page?: { limit: number; offset: number },
   ): Promise<MatchPair[]> {
     const S = tenantSchemaRef(this.tenantContext.schemaName);
     const narrow = scope.registrationId
       ? Prisma.sql`AND pe."registrationId" = ${scope.registrationId}::uuid`
-      : scope.phones
-        ? Prisma.sql`AND pe."landlordPhone" = ANY(${[...scope.phones]}::text[])`
+      : scope.naming
+        ? Prisma.sql`AND (
+            pe."landlordPhone" = ANY(${[...scope.naming.phones]}::text[])
+            OR ${S}search_compact(pe."landlordName") IN (
+              SELECT key FROM citizen_names WHERE citizen_id = ${scope.naming.citizenId}::uuid
+            )
+          )`
         : Prisma.empty;
     const paging = page ? Prisma.sql`LIMIT ${page.limit} OFFSET ${page.offset}` : Prisma.empty;
 
+    /*
+      Two ways a claim can point at somebody, and they are not equal.
+
+      **By number** is what this always was: the card's landlord phone is a
+      number the citizen answers on.
+
+      **By name** is new, and exists because of 2026-09-15: بسام حبيب نسر was a
+      registered citizen, and five of the six cards in his own building named
+      him as «بسام نسر» or «بسام حبيب نسر» with a phone that was not on his
+      record — or none at all. Matching on the number alone left all five
+      unlinked, and linked the sixth through the one number that turned out to
+      be a relative's. So a card whose typed name, folded and with its spaces
+      removed (`search_compact`), equals a citizen's first + family name or
+      first + father + family name is offered that citizen too.
+
+      Offered, never preselected and never linked by itself: two cousins share
+      three names far more often than two people share a phone, which is why
+      each candidate carries how it was found (`phoneCitizenIds`) and the card
+      says «مطابقة بالاسم فقط». Name keys are computed once per citizen and
+      equi-joined, so Postgres can hash the join as it does the phone one.
+    */
     return this.db.$queryRaw<MatchPair[]>`
-      WITH open_claims AS (
+      WITH citizen_names AS (
+        SELECT u.id AS citizen_id,
+               u."createdAt" AS citizen_created_at,
+               ${S}search_compact(u."firstName" || ' ' || u."lastName") AS key
+        FROM ${S}users u
+        WHERE u.kind = 'CITIZEN' AND u."isActive"
+        UNION
+        SELECT u.id, u."createdAt",
+               ${S}search_compact(u."firstName" || ' ' || u."middleName" || ' ' || u."lastName")
+        FROM ${S}users u
+        WHERE u.kind = 'CITIZEN' AND u."isActive" AND nullif(btrim(u."middleName"), '') IS NOT NULL
+      ),
+      open_claims AS (
         SELECT pe.id,
                pe."landlordPhone" AS phone,
+               nullif(${S}search_compact(pe."landlordName"), '') AS name_key,
                pe."createdAt" AS created_at,
                pe."landlordLinkDismissedAt" AS dismissed_at,
                pe."landlordLinkDismissedIds" AS dismissed_ids,
@@ -200,25 +248,30 @@ export class LandlordLinkService {
         FROM ${S}property_entries pe
         JOIN ${S}registrations r ON r.id = pe."registrationId"
         WHERE pe."landlordCitizenId" IS NULL
-          AND pe."landlordPhone" IS NOT NULL
+          AND (pe."landlordPhone" IS NOT NULL OR nullif(btrim(pe."landlordName"), '') IS NOT NULL)
           AND pe."occupancyType" <> 'OWNER'
           AND pe."endedAt" IS NULL
           ${narrow}
       ),
-      by_number AS (
+      matched AS (
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
-               u.id AS citizen_id, u."createdAt" AS citizen_created_at
+               u.id AS citizen_id, u."createdAt" AS citizen_created_at, true AS by_phone
         FROM open_claims c
         JOIN ${S}users u ON u.phone = c.phone AND u.kind = 'CITIZEN' AND u."isActive"
         UNION
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
-               u.id AS citizen_id, u."createdAt" AS citizen_created_at
+               u.id AS citizen_id, u."createdAt" AS citizen_created_at, true AS by_phone
         FROM open_claims c
         JOIN ${S}users u ON u.whatsapp = c.phone AND u.kind = 'CITIZEN' AND u."isActive"
+        UNION
+        SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
+               n.citizen_id, n.citizen_created_at, false AS by_phone
+        FROM open_claims c
+        JOIN citizen_names n ON n.key = c.name_key
       ),
       offered AS (
-        SELECT id, created_at, citizen_id
-        FROM by_number
+        SELECT id, created_at, citizen_id, by_phone
+        FROM matched
         WHERE citizen_id <> filer_id
           AND NOT (citizen_id = ANY(dismissed_ids))
           AND NOT (
@@ -229,6 +282,7 @@ export class LandlordLinkService {
       )
       SELECT id AS "entryId",
              array_agg(DISTINCT citizen_id) AS "citizenIds",
+             coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE by_phone), '{}') AS "phoneCitizenIds",
              count(*) OVER()::int AS total
       FROM offered
       GROUP BY id, created_at
@@ -270,6 +324,11 @@ export class LandlordLinkService {
           const plan = target.block ? null : this.planFor(target, citizen, context);
           return {
             ...toCandidate(citizen),
+            /*
+              Said per candidate, because one card can hold both kinds: the
+              father on the household number and a namesake found by name.
+            */
+            matchedBy: pair.phoneCitizenIds.includes(citizen.id) ? ('PHONE' as const) : ('NAME' as const),
             outcome: plan?.block ? null : (plan?.outcome ?? null),
             blocked: plan?.block ?? null,
           };
@@ -281,7 +340,7 @@ export class LandlordLinkService {
         occupancyType: entry.occupancyType,
         propertyType: entry.propertyType,
         landlordName: entry.landlordName,
-        landlordPhone: entry.landlordPhone!,
+        landlordPhone: entry.landlordPhone,
         propertyNumber: entry.propertyNumber,
         buildingName: entry.buildingName,
         buildingId: entry.buildingId,
@@ -623,7 +682,16 @@ export class LandlordLinkService {
 
     const citizen = await this.db.user.findUnique({
       where: { id: input.citizenId },
-      select: { id: true, kind: true, phone: true, whatsapp: true, isActive: true },
+      select: {
+        id: true,
+        kind: true,
+        phone: true,
+        whatsapp: true,
+        isActive: true,
+        firstName: true,
+        middleName: true,
+        lastName: true,
+      },
     });
     if (!citizen || citizen.kind !== 'CITIZEN') {
       throw new ValidationError('المواطن غير موجود', { citizenId: input.citizenId });
@@ -654,8 +722,16 @@ export class LandlordLinkService {
       not invent it.
     */
     const claimed = entry.landlordPhone?.trim();
-    if (!claimed || (claimed !== citizen.phone && claimed !== citizen.whatsapp)) {
-      throw new ValidationError('رقم هاتف المالك لا يطابق هذا المواطن', {
+    const matchedByPhone = Boolean(claimed && (claimed === citizen.phone || claimed === citizen.whatsapp));
+    /*
+      Or the name the tenant typed is this citizen's name — the same rule the
+      queue offered them by (`matchPairs`), so a clerk can confirm exactly what
+      they were shown and nothing wider. Still not invention: the card has to
+      say this person, by number or by name.
+    */
+    const matchedByName = !matchedByPhone && landlordNameMatches(entry.landlordName, citizen);
+    if (!matchedByPhone && !matchedByName) {
+      throw new ValidationError('رقم هاتف المالك أو اسمه لا يطابق هذا المواطن', {
         propertyEntryId: input.propertyEntryId,
         citizenId: input.citizenId,
       });
@@ -730,6 +806,8 @@ export class LandlordLinkService {
       tenantId: entry.registration?.citizen.id ?? null,
       entryId: entry.id,
       footprint,
+      // A name-only link is the weaker kind, and the audit row says which it was.
+      ...(matchedByName ? { detail: { matchedBy: 'NAME' } } : {}),
       actor: input.actor,
     });
 
@@ -2421,6 +2499,8 @@ const CARD_SELECT = {
 interface MatchPair {
   entryId: string;
   citizenIds: string[];
+  /** The subset of `citizenIds` whose number the card names. */
+  phoneCitizenIds: string[];
   total: number;
 }
 
@@ -2719,6 +2799,26 @@ function fullName(person: { firstName: string; middleName?: string | null; lastN
   return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ').trim();
 }
 
+/**
+ * Whether the landlord name typed on a card is this citizen's name.
+ *
+ * The TypeScript twin of the `citizen_names` join in `matchPairs`: folded, all
+ * spaces removed, equal to first + family or first + father + family. Kept
+ * exactly as narrow, so `confirm` accepts no link the queue would not offer.
+ */
+export function landlordNameMatches(
+  typed: string | null | undefined,
+  citizen: { firstName: string; middleName: string | null; lastName: string },
+): boolean {
+  const key = foldNamePart(typed);
+  if (!key) return false;
+  const short = foldNamePart(`${citizen.firstName} ${citizen.lastName}`);
+  const long = citizen.middleName?.trim()
+    ? foldNamePart(`${citizen.firstName} ${citizen.middleName} ${citizen.lastName}`)
+    : null;
+  return key === short || key === long;
+}
+
 function toCandidate(citizen: {
   id: string;
   firstName: string;
@@ -2763,7 +2863,8 @@ export interface LandlordProposal {
   propertyType: string;
   /** What the tenant said, as typed. */
   landlordName: string | null;
-  landlordPhone: string;
+  /** Null on a card found by the typed name alone — the tenant gave no number. */
+  landlordPhone: string | null;
   propertyNumber: string | null;
   buildingName: string | null;
   buildingId: string | null;
@@ -2782,7 +2883,15 @@ export interface LandlordProposal {
   blocked: LinkBlock | null;
   /** Oldest registration first. More than one is a shared household line. */
   candidates: Array<
-    LandlordCandidate & { outcome: LinkOutcome | null; blocked: LinkBlock | null }
+    LandlordCandidate & {
+      /**
+       * How this person was found: the card's number is theirs (`PHONE`), or
+       * only the typed name is (`NAME`) — never preselected, and said so.
+       */
+      matchedBy: 'PHONE' | 'NAME';
+      outcome: LinkOutcome | null;
+      blocked: LinkBlock | null;
+    }
   >;
 }
 

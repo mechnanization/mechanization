@@ -359,7 +359,7 @@ export function FullscreenMap({
     buildingId: string,
     unitId: string,
     residence: CitizenResidence,
-    /** Whatever the officer typed into the occupant search — seeds the name. */
+    /** Whatever the officer typed into the occupant search — seeds the name or the phone. */
     name: string,
   ) => string;
   locale?: string;

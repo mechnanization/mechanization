@@ -2,23 +2,29 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, CloudOff, UserPlus, UserRoundPen } from 'lucide-react';
+import { ArrowRight, CloudOff, UserPlus, UserRoundPen, UsersRound } from 'lucide-react';
 import {
   ApiRequestError,
   createBuilding,
   createCitizen,
+  duplicateReviewOf,
   getBuilding,
   getCase,
   getCitizenForm,
   getTenantConfig,
+  hasDuplicateFindings,
   logApiError,
+  reviewCitizenDuplicates,
+  staleEditOf,
   updateCase,
   updateCitizen,
 } from '@/lib/api-client';
+import type { DuplicateReviewAnswer, DuplicateReviewFindings, StaleEdit } from '@/lib/api-client';
 import type {
   BuildingDetail,
   CaseSummary,
   CensusSyncResult,
+  CitizenFormData,
   CreateBuildingInput,
 } from '@/lib/api-client';
 import type {
@@ -26,6 +32,7 @@ import type {
   LandlordLinkOffers,
   PublicTenantConfig,
 } from '@/lib/api-client';
+import { getOpenReturn, type OpenReturn } from '@/lib/quality-api';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatRelative } from '@/lib/dates';
 import {
@@ -39,6 +46,13 @@ import { buttonVariants } from '@/components/ui/button';
 import type { PropertyDraft, UnitDraft } from '@/components/citizen/property-card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { LandlordLinkPrompt } from '@/components/admin/landlord-link-prompt';
+import {
+  DuplicateReviewDialog,
+  type DuplicateReviewOutcome,
+} from '@/components/admin/duplicate-review-dialog';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { LoadingState } from '@/components/ui/states';
 import { flagsFromArray, unverifiedFromArray } from '@/components/ui/field';
 import { ShellLink, shellNavigate } from './shell-nav';
@@ -58,11 +72,13 @@ import {
   emptyCitizen,
   toSubmission,
   withResidence,
-  withSeededName,
+  withSeededSearch,
   type CitizenFormValues,
 } from './citizen-form';
 import {
   parseFloorLabel,
+  POSSIBLE_DUPLICATE_FLAG_PATH,
+  qualityLabels,
   STRUCTURE_TYPE_MAP,
   type CitizenResidence,
 } from '@mechanization/shared-schemas';
@@ -690,7 +706,7 @@ export function CitizenEditor({
   fromCaseId,
   lockedCensusTarget,
   initialResidence,
-  initialName,
+  initialSearch,
 }: {
   tenant: string;
   locale: string;
@@ -708,11 +724,12 @@ export function CitizenEditor({
    * The search term that sent the officer here — the occupant panel's own box,
    * carried across so a search that found nobody is not retyped.
    *
-   * Applied to a new record only, and only when it looks like a name rather
-   * than a number (`withSeededName`). Its real job is to give the duplicate
-   * check something to check on the very first render.
+   * Applied to a new record only: to the phone field when it is a number, to
+   * the name when it is a name, and to neither otherwise (`withSeededSearch`).
+   * Its real job is to give the duplicate check something to check on the
+   * very first render.
    */
-  initialName?: string;
+  initialSearch?: string;
   /**
    * Arrived from a building's unit matrix — the structure, and possibly the
    * flat, is already decided.
@@ -782,6 +799,42 @@ export function CitizenEditor({
     offers: LandlordLinkOffers;
     next: string;
   } | null>(null);
+  /**
+   * A save held on «هل هو مسجَّل مسبقاً؟ / لمن هذا الرقم؟».
+   *
+   * Holds the validated values, exactly as `pendingSave` does, so answering
+   * saves what was checked rather than whatever the form has become.
+   */
+  const [duplicateReview, setDuplicateReview] = useState<{
+    values: CitizenFormValues;
+    findings: DuplicateReviewFindings;
+  } | null>(null);
+  /**
+   * On an edit of a record held at «سجل مشابه موجود»: the officer's statement
+   * that the match is a different person, sent with the next save.
+   */
+  const [duplicateCleared, setDuplicateCleared] = useState(false);
+  const [duplicateClearedReason, setDuplicateClearedReason] = useState('');
+  /**
+   * The reviewer's own words, when this record was sent back for correction.
+   *
+   * Read-only here: saving the record is what closes the return, so the officer
+   * fixes what the sentence names and presses «حفظ» as usual. Quiet on failure —
+   * an unreachable quality endpoint must not stop somebody editing a citizen.
+   */
+  const [openReturn, setOpenReturn] = useState<OpenReturn | null>(null);
+  /**
+   * The version of the file this form was opened at. A ref, not state: the
+   * «احفظ على أي حال» answer moves it and saves in the same tick, and a
+   * `useCallback` closing over state would still send the old one.
+   */
+  const fileVersionRef = useRef<string | null>(null);
+  /** Who last changed this file, when the server said. */
+  const [lastStaffEdit, setLastStaffEdit] = useState<CitizenFormData['lastStaffEdit']>(null);
+  /** A save refused because somebody changed the file after it was opened. */
+  const [staleSave, setStaleSave] = useState<{ values: CitizenFormValues; stale: StaleEdit } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   /**
    * When the restored draft was last written, or `null` if this is a fresh
@@ -926,7 +979,7 @@ export function CitizenEditor({
             other cases — nothing here writes — so following a unit link and
             then coming back to «تسجيل مواطن جديد» still finds it.
           */
-          if (!seeded && !initialResidence && !initialName) {
+          if (!seeded && !initialResidence && !initialSearch) {
             const draft = loadCitizenDraft(tenant);
             if (draft) {
               setInitial(draft.values);
@@ -937,11 +990,13 @@ export function CitizenEditor({
 
           const fresh = seeded ? { ...empty, properties: seeded } : empty;
           const withFile = initialResidence ? withResidence(fresh, initialResidence) : fresh;
-          setInitial(initialName ? withSeededName(withFile, initialName) : withFile);
+          setInitial(initialSearch ? withSeededSearch(withFile, initialSearch) : withFile);
           return;
         }
 
         setReference(form.referenceNumber);
+        fileVersionRef.current = form.version ?? null;
+        setLastStaffEdit(form.lastStaffEdit ?? null);
         setInitial({
           residence: form.residence ?? 'RESIDENT',
           // The record's existing «غير مؤكَّد» flags, so whoever opens it to
@@ -1044,7 +1099,7 @@ export function CitizenEditor({
     queueId,
     fromCaseId,
     initialResidence,
-    initialName,
+    initialSearch,
     base,
     router,
     locale,
@@ -1199,7 +1254,16 @@ export function CitizenEditor({
   }, [keepsDraft, tenant]);
 
   const submit = useCallback(
-    async (values: CitizenFormValues, confirmed = false) => {
+    async (
+      values: CitizenFormValues,
+      confirmed = false,
+      /**
+       * The officer's answer to the duplicate question. `null` means it was
+       * asked and needed no answer (the phone was cleared instead), so the
+       * pre-check is not run a second time for the same values.
+       */
+      duplicateAnswer?: DuplicateReviewAnswer | null,
+    ) => {
       if (!token) return;
 
       /*
@@ -1220,6 +1284,29 @@ export function CitizenEditor({
 
       setSubmitting(true);
       setError(null);
+
+      /*
+        «هل هو مسجَّل مسبقاً؟» — asked before anything is written.
+
+        Only for a brand-new registration going straight to the server. Before
+        the structures below are materialised, so a household that turns out to
+        be somebody already on file leaves no empty building behind. If this
+        lookup fails the save goes on: the server asks the same question on
+        `createCitizen` (`reviewDuplicates`), so a skipped check here is not a
+        skipped check.
+      */
+      if (!citizenId && !queueId && !willQueue && duplicateAnswer === undefined) {
+        try {
+          const findings = await reviewCitizenDuplicates(tenant, token, toSubmission(values));
+          if (hasDuplicateFindings(findings)) {
+            setDuplicateReview({ values, findings });
+            setSubmitting(false);
+            return;
+          }
+        } catch (caught) {
+          logApiError(caught);
+        }
+      }
 
       /*
         `toSubmission`, not a second hand-built copy of it.
@@ -1400,12 +1487,35 @@ export function CitizenEditor({
 
       try {
         if (citizenId) {
-          const updated = await updateCitizen(tenant, token, citizenId, payload);
+          const updated = await updateCitizen(tenant, token, citizenId, {
+            ...payload,
+            ...(fileVersionRef.current ? { expectedVersion: fileVersionRef.current } : {}),
+            ...(duplicateCleared && duplicateClearedReason.trim().length >= 4
+              ? {
+                  duplicateReview: {
+                    differentFrom: [],
+                    sharedPhoneWith: [],
+                    sharedPhoneWithLandlord: false,
+                    reason: duplicateClearedReason.trim(),
+                  },
+                }
+              : {}),
+          });
           announceCensus(updated.census, toast, locale);
           announceLandlordLinkChanges(updated.landlordLinkChanges, toast, locale);
           leave(updated.landlordLinks, `${base}/citizens/${citizenId}`);
         } else {
-          const created = await createCitizen(tenant, token, payload);
+          /*
+            `reviewDuplicates` is added here, at the call, and never to
+            `payload`: the same object is queued below if the request never
+            arrives, and a queued delivery must not be refused hours later with
+            nobody at the screen to answer.
+          */
+          const created = await createCitizen(tenant, token, {
+            ...payload,
+            reviewDuplicates: true,
+            ...(duplicateAnswer ? { duplicateReview: duplicateAnswer } : {}),
+          });
           announceCensus(created.census, toast, locale, created.deduplicated);
           announceIdentity(created.identity, toast, locale);
 
@@ -1465,6 +1575,26 @@ export function CitizenEditor({
         }
 
         /*
+          The server asked the question the pre-check did not — somebody was
+          registered in between, or the pre-check could not reach it. Put to the
+          officer exactly as the pre-check would have.
+        */
+        const findings = !citizenId ? duplicateReviewOf(caught) : null;
+        if (findings) {
+          setDuplicateReview({ values, findings });
+          setSubmitting(false);
+          return;
+        }
+
+        // Somebody saved this file after it was opened — ask before replacing.
+        const stale = citizenId ? staleEditOf(caught) : null;
+        if (stale) {
+          setStaleSave({ values, stale });
+          setSubmitting(false);
+          return;
+        }
+
+        /*
           The request left and never arrived — `navigator.onLine` said yes, and
           it was wrong.
 
@@ -1514,8 +1644,82 @@ export function CitizenEditor({
       toast,
       materialiseBuildings,
       forgetDraft,
+      duplicateCleared,
+      duplicateClearedReason,
     ],
   );
+
+  /**
+   * The officer answered the duplicate question. A cleared phone becomes an
+   * ordinary «غير مؤكَّد» flag on the form's own values, so it is validated and
+   * stored exactly as if they had flagged the field by hand.
+   */
+  const resolveDuplicateReview = useCallback(
+    (outcome: DuplicateReviewOutcome) => {
+      const held = duplicateReview;
+      setDuplicateReview(null);
+      if (!held) return;
+
+      if (!outcome.clear.phone && !outcome.clear.whatsapp) {
+        void submit(held.values, true, outcome.answer ?? null);
+        return;
+      }
+
+      /*
+        Each number cleared on its own. The phone takes a WhatsApp number that
+        was the same number with it; a WhatsApp number of its own stays unless
+        it too was somebody else's.
+      */
+      let contact = { ...held.values.contact };
+      const flags = new Map(held.values.flags);
+      if (outcome.clear.phone) {
+        const whatsappIsPhone =
+          contact.whatsappSameAsPhone !== false || contact.whatsapp === contact.phone;
+        flags.set('contact.phone', outcome.clear.phone);
+        contact = {
+          ...contact,
+          phone: '',
+          ...(whatsappIsPhone ? { whatsapp: '', whatsappSameAsPhone: true } : {}),
+        };
+      }
+      if (outcome.clear.whatsapp) {
+        flags.set('contact.whatsapp', outcome.clear.whatsapp);
+        contact = { ...contact, whatsapp: '', whatsappSameAsPhone: false };
+      }
+      void submit({ ...held.values, contact, flags }, true, outcome.answer ?? null);
+    },
+    [duplicateReview, submit],
+  );
+
+  useEffect(() => {
+    if (!citizenId || !token) return;
+    let cancelled = false;
+    getOpenReturn(tenant, token, citizenId)
+      .then((result) => {
+        if (!cancelled) setOpenReturn(result.openReturn);
+      })
+      .catch((caught) => logApiError(caught));
+    return () => {
+      cancelled = true;
+    };
+  }, [tenant, token, citizenId]);
+
+  /**
+   * Somebody else changed this file within the last hour. Said when the form
+   * opens, because on 2026-09-16 two officers spent 45 minutes saving over each
+   * other on one registration and neither screen said so.
+   */
+  const recentOtherEdit =
+    citizenId &&
+    lastStaffEdit &&
+    !lastStaffEdit.byViewer &&
+    Date.now() - new Date(lastStaffEdit.at).getTime() < 60 * 60 * 1000
+      ? lastStaffEdit
+      : null;
+
+  /** The server's «سجل مشابه موجود» note on the record being edited, if one stands. */
+  const standingDuplicateNote =
+    citizenId && initial ? (initial.unverified.get(POSSIBLE_DUPLICATE_FLAG_PATH) ?? null) : null;
 
   const cancelHref = useMemo(
     () => (citizenId ? `${base}/citizens/${citizenId}` : `${base}/citizens`),
@@ -1648,6 +1852,89 @@ export function CitizenEditor({
         />
       ) : null}
 
+      {openReturn ? (
+        <div className="space-y-2 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
+          <p className="flex items-center gap-1.5 font-semibold text-warning">
+            <ArrowRight className="size-4 shrink-0 rtl:rotate-180" aria-hidden />
+            {locale === 'en' ? 'Sent back for correction' : 'أُعيد هذا السجل للتصحيح'}
+          </p>
+          {openReturn.reason ? <p className="leading-relaxed">{openReturn.reason}</p> : null}
+          {openReturn.fields.length > 0 ? (
+            <p className="flex flex-wrap gap-1">
+              {openReturn.fields.map((field) => (
+                <Badge key={field} variant="soft-warning" className="text-[10px]">
+                  {qualityLabels(locale).reviewField[field] ?? field}
+                </Badge>
+              ))}
+            </p>
+          ) : null}
+          <p className="text-xs text-muted-foreground">
+            {locale === 'en'
+              ? `${openReturn.by ?? 'A reviewer'} · ${formatRelative(new Date(openReturn.at), locale)} — saving this record marks it corrected.`
+              : `${openReturn.by ?? 'المراجع'} · ${formatRelative(new Date(openReturn.at), locale)} — حفظ السجل يسجّله مُصحَّحاً.`}
+          </p>
+        </div>
+      ) : null}
+
+      {recentOtherEdit ? (
+        <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
+          <UserRoundPen className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          <p>
+            {locale === 'en'
+              ? `${recentOtherEdit.name ?? 'Another member of staff'} changed this file ${formatRelative(new Date(recentOtherEdit.at), locale)}. Make sure you are not both working on it — the later save will be asked before it replaces the earlier one.`
+              : `عدّل ${recentOtherEdit.name ?? 'موظف آخر'} هذا الملف ${formatRelative(new Date(recentOtherEdit.at), locale)}. تأكَّد أنكما لا تعملان عليه معاً — سيُسأل الحفظ اللاحق قبل أن يستبدل السابق.`}
+          </p>
+        </div>
+      ) : null}
+
+      {standingDuplicateNote ? (
+        <div className="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
+          <p className="flex items-center gap-1.5 font-semibold text-warning">
+            <UsersRound className="size-4 shrink-0" aria-hidden />
+            {locale === 'en' ? 'Possible existing record' : 'سجل مشابه موجود'}
+          </p>
+          <p className="text-muted-foreground">{standingDuplicateNote}</p>
+          <p className="text-xs text-muted-foreground">
+            {locale === 'en'
+              ? 'Search for the reference above. If it is the same person, do not save here — ask an administrator to merge the two files. If it is a different person, say so below and save.'
+              : 'ابحث عن الرقم المرجعي أعلاه. إن كان الشخص نفسه فلا تحفظ هنا — اطلب من الإدارة دمج الملفين. وإن كان شخصاً مختلفاً فاذكر ذلك أدناه واحفظ.'}
+          </p>
+          <label className="flex cursor-pointer items-start gap-2 text-xs">
+            <Checkbox
+              checked={duplicateCleared}
+              onCheckedChange={(checked) => setDuplicateCleared(checked === true)}
+              className="mt-0.5"
+            />
+            <span className="font-medium">
+              {locale === 'en'
+                ? 'I checked: this is a different person'
+                : 'تحقَّقت: هذا شخص مختلف'}
+            </span>
+          </label>
+          {duplicateCleared ? (
+            <div className="space-y-1">
+              <Label htmlFor="duplicate-cleared-reason" className="text-xs">
+                {locale === 'en' ? 'How do you know?' : 'كيف عرفت ذلك؟'}
+              </Label>
+              <Textarea
+                id="duplicate-cleared-reason"
+                value={duplicateClearedReason}
+                onChange={(event) => setDuplicateClearedReason(event.target.value)}
+                maxLength={300}
+                className="min-h-[56px] text-sm"
+              />
+              {duplicateClearedReason.trim().length < 4 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  {locale === 'en'
+                    ? 'Without a reason the note stays on the record after saving.'
+                    : 'بدون سبب يبقى التنبيه على السجل بعد الحفظ.'}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <CitizenForm
         tenant={tenant}
         token={token}
@@ -1734,6 +2021,56 @@ export function CitizenEditor({
         land on next belongs to the household, not to the claim. The push it is
         holding runs on close, whichever way the question was answered or left.
       */}
+      <ConfirmDialog
+        open={staleSave !== null}
+        onOpenChange={(next) => {
+          if (!next) setStaleSave(null);
+        }}
+        destructive
+        title={
+          locale === 'en'
+            ? 'This file changed after you opened it'
+            : 'عُدِّل هذا الملف بعد أن فتحتَه'
+        }
+        description={
+          staleSave
+            ? locale === 'en'
+              ? `${staleSave.stale.byViewer ? 'You' : (staleSave.stale.lastEditedBy ?? 'Someone')} saved it${staleSave.stale.lastEditedAt ? ` ${formatRelative(new Date(staleSave.stale.lastEditedAt), locale)}` : ''}. Saving now replaces those changes with what is on your screen. To see their changes instead, go back and reload the page — what you typed here will be lost.`
+              : `حفظه ${staleSave.stale.byViewer ? 'أنت' : (staleSave.stale.lastEditedBy ?? 'موظف آخر')}${staleSave.stale.lastEditedAt ? ` ${formatRelative(new Date(staleSave.stale.lastEditedAt), locale)}` : ''}. الحفظ الآن يستبدل تلك التعديلات بما على شاشتك. ولرؤية تعديلاته بدلاً من ذلك ارجع وحدِّث الصفحة — وسيضيع ما كتبته هنا.`
+            : ''
+        }
+        confirmLabel={locale === 'en' ? 'Save and replace' : 'احفظ واستبدل'}
+        cancelLabel={locale === 'en' ? 'Back, without saving' : 'رجوع دون حفظ'}
+        onConfirm={async () => {
+          const held = staleSave;
+          setStaleSave(null);
+          if (!held) return;
+          fileVersionRef.current = held.stale.version;
+          await submit(held.values, true, null);
+        }}
+      />
+
+      {duplicateReview ? (
+        <DuplicateReviewDialog
+          findings={duplicateReview.findings}
+          numbers={{
+            phone:
+              typeof duplicateReview.values.contact.phone === 'string'
+                ? duplicateReview.values.contact.phone
+                : null,
+            whatsapp:
+              duplicateReview.values.contact.whatsappSameAsPhone === false &&
+              typeof duplicateReview.values.contact.whatsapp === 'string'
+                ? duplicateReview.values.contact.whatsapp
+                : null,
+          }}
+          citizenHref={(id) => `${base}/citizens/${encodeURIComponent(id)}`}
+          locale={locale}
+          onCancel={() => setDuplicateReview(null)}
+          onResolve={resolveDuplicateReview}
+        />
+      ) : null}
+
       {linkOffers ? (
         <LandlordLinkPrompt
           tenant={tenant}

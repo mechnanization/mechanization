@@ -6,6 +6,7 @@ import {
   cadastreFlags,
   FIELD_FLAG_KINDS,
   IMPORT_COLUMNS,
+  POSSIBLE_DUPLICATE_FLAG_PATH,
   statusForFlags,
 } from '@mechanization/shared-schemas';
 import type {
@@ -44,6 +45,25 @@ import {
   unestablishedOnCard,
 } from '../registration/registration.service';
 import { TenantService } from '../tenant/tenant.service';
+import { REVIEW_AUDIT_ACTIONS } from '../quality/record-review.service';
+import {
+  assessFindings,
+  hasFindings,
+  NO_FINDINGS,
+  outstandingFindings,
+  possibleDuplicateFlag,
+  type DuplicateReviewFindings,
+} from './possible-duplicates';
+import { normalizeSearchText } from '../../common/search-terms';
+
+/**
+ * The most register rows one duplicate lookup compares.
+ *
+ * The lookup is blocked on the phone and on the name parts, so this is only
+ * reached by a very common first name in a very large municipality. Comparing
+ * in the application is cheap; this bounds the read.
+ */
+const MAX_DUPLICATE_LOOKUP_ROWS = 1000;
 
 /** A page of the registry beyond this is a report, not a screen. */
 const MAX_LIST_ROWS = 500;
@@ -501,7 +521,65 @@ export class CitizensService {
    * registration's properties are included — see `update` for why that is the
    * one the form owns.
    */
-  async getEditable(citizenId: string) {
+  /**
+   * An opaque token for "this file as it stands": the latest registration and
+   * every card on it, including ended ones. Any save through the form, a link,
+   * an ended tenancy or a card the matrix added moves it.
+   *
+   * Not a lock. It exists for the human-scale race — two officers with one file
+   * open for half an hour — not for two requests a millisecond apart, which
+   * the write path's own row locks already serialise.
+   */
+  private async fileVersion(citizenId: string): Promise<string> {
+    const registration = await this.db.registration.findFirst({
+      where: { citizenId },
+      orderBy: { submittedAt: 'desc' },
+      select: { id: true, updatedAt: true, properties: { select: { updatedAt: true } } },
+    });
+    if (!registration) return 'none';
+    const cards = registration.properties.map((card) => card.updatedAt.getTime());
+    return [
+      registration.id,
+      registration.updatedAt.getTime(),
+      cards.length,
+      cards.length ? Math.max(...cards) : 0,
+    ].join(':');
+  }
+
+  /**
+   * The last member of staff whose change to this citizen reached the audit log.
+   *
+   * A reviewer's decision is logged against the citizen too, but changes
+   * nothing on the file — see `REVIEW_AUDIT_ACTIONS`.
+   */
+  private async lastStaffEdit(
+    citizenId: string,
+  ): Promise<{ staffId: string | null; name: string | null; at: string } | null> {
+    const entry = await this.db.auditLogEntry.findFirst({
+      where: {
+        entityType: 'User',
+        entityId: citizenId,
+        actorType: 'STAFF',
+        action: { notIn: [...REVIEW_AUDIT_ACTIONS] },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { actorId: true, createdAt: true },
+    });
+    if (!entry) return null;
+    const staff = entry.actorId
+      ? await this.db.user.findFirst({
+          where: { id: entry.actorId, kind: 'STAFF' },
+          select: { firstName: true, lastName: true },
+        })
+      : null;
+    return {
+      staffId: entry.actorId,
+      name: staff ? `${staff.firstName} ${staff.lastName}` : null,
+      at: entry.createdAt.toISOString(),
+    };
+  }
+
+  async getEditable(citizenId: string, viewerId?: string) {
     const citizen = await withConnectionRetry(() =>
       this.db.user.findFirst({
         where: { id: citizenId, kind: 'CITIZEN' },
@@ -569,11 +647,26 @@ export class CitizensService {
 
     const registration = citizen.registrations[0] ?? null;
 
+    const [version, lastEdit] = await Promise.all([
+      this.fileVersion(citizen.id),
+      this.lastStaffEdit(citizen.id),
+    ]);
+
     return {
       id: citizen.id,
       registrationId: registration?.id ?? null,
       referenceNumber: registration?.referenceNumber ?? null,
       status: registration?.status ?? null,
+      /** Sent back as `expectedVersion` on save — see `fileVersion`. */
+      version,
+      /**
+       * Who last changed this file, so the form can say «عدّله حسين حدرج قبل ٤
+       * دقائق» when it was somebody else and recently. Not live presence: it
+       * knows who saved, not who has the form open.
+       */
+      lastStaffEdit: lastEdit
+        ? { name: lastEdit.name, at: lastEdit.at, byViewer: Boolean(viewerId && lastEdit.staffId === viewerId) }
+        : null,
       /**
        * The «غير مؤكَّد» fields and the reasons given for them, so the edit
        * form opens with the record's gaps already marked rather than making
@@ -735,15 +828,141 @@ export class CitizensService {
    * and skipping the review queue would hide staff-entered claims from the
    * only screen that checks them.
    */
+  /**
+   * «هل هو مسجَّل مسبقاً؟» for one filing — read-only.
+   *
+   * The form asks this before it writes anything (it may be about to create a
+   * new structure for the household), and `create` asks it again, because a
+   * question the browser skipped is not a question the register may skip.
+   *
+   * Blocked on what can be matched cheaply — either number, and each name part
+   * as a substring of the folded search column — and compared in the
+   * application, where the Arabic-aware edit distance lives. A typo in the
+   * family name is still found through the first name, and the other way round.
+   */
+  async reviewDuplicates(
+    payload: AdminCitizenSubmission,
+    actor: { id: string },
+  ): Promise<DuplicateReviewFindings> {
+    const personal = payload.personal as Record<string, unknown>;
+    const contact = payload.contact as Record<string, unknown>;
+    const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+
+    const incoming = {
+      firstName: text(personal.firstName) ?? '',
+      middleName: text(personal.middleName),
+      lastName: text(personal.lastName) ?? '',
+      motherName: text(personal.motherName),
+      phone: text(contact.phone),
+      whatsapp: text(contact.whatsapp) ?? text(contact.phone),
+    };
+
+    const numbers = [...new Set([incoming.phone, incoming.whatsapp].filter((v): v is string => Boolean(v)))];
+    const tokens = [
+      ...new Set(
+        [incoming.firstName, incoming.lastName]
+          .flatMap((part) => normalizeSearchText(part).split(' '))
+          .filter((token) => token.length >= 2),
+      ),
+    ];
+    if (numbers.length === 0 && tokens.length === 0) return NO_FINDINGS;
+
+    const rows = await this.db.user.findMany({
+      where: {
+        kind: 'CITIZEN',
+        isActive: true,
+        OR: [
+          ...(numbers.length ? [{ phone: { in: numbers } }, { whatsapp: { in: numbers } }] : []),
+          ...tokens.map((token) => ({ searchText: { contains: token } })),
+        ],
+      },
+      take: MAX_DUPLICATE_LOOKUP_ROWS,
+      select: {
+        id: true,
+        firstName: true,
+        middleName: true,
+        lastName: true,
+        motherName: true,
+        phone: true,
+        whatsapp: true,
+        referenceNumber: true,
+        residence: true,
+        registrations: {
+          orderBy: { submittedAt: 'desc' },
+          select: {
+            submittedAt: true,
+            createdById: true,
+            createdBy: { select: { firstName: true, lastName: true } },
+            _count: { select: { properties: { where: { endedAt: null } } } },
+          },
+        },
+      },
+    });
+
+    return assessFindings({
+      incoming,
+      rows,
+      cards: payload.properties as ReadonlyArray<{
+        occupancyType?: string | null;
+        landlordPhone?: string | null;
+        landlordName?: string | null;
+      }>,
+      actorId: actor.id,
+      now: new Date(),
+    });
+  }
+
   async create(input: {
     tenantSlug: string;
     payload: AdminCitizenSubmission;
     actor: { id: string; role: string };
   }) {
+    /*
+      The duplicate question, before anything is written.
+
+      Skipped for a re-delivery: the record a lost response already created is
+      itself the "match", and refusing the retry would strand the officer on a
+      household that is safely on file.
+
+      Refused only when a person is at the screen (`reviewDuplicates`). A
+      filing delivered from the offline queue is written and held at «يتطلب
+      مراجعة» with the match named — see `POSSIBLE_DUPLICATE_FLAG_PATH`.
+    */
+    const replay = input.payload.clientSubmissionId
+      ? await this.db.registration.findUnique({
+          where: { clientSubmissionId: input.payload.clientSubmissionId },
+          select: { id: true },
+        })
+      : null;
+    const findings = replay ? NO_FINDINGS : await this.reviewDuplicates(input.payload, input.actor);
+    const open = outstandingFindings(findings, input.payload.duplicateReview);
+
+    if (input.payload.reviewDuplicates && hasFindings(open)) {
+      throw new ConflictError(
+        open.possibleDuplicates.length > 0
+          ? 'قد يكون هذا المواطن مسجَّلاً مسبقاً. راجِع الملفات المشابهة قبل إنشاء ملف جديد.'
+          : 'رقم الهاتف المُدخل مسجَّل لشخص آخر. تأكَّد لمن هذا الرقم قبل الحفظ.',
+        { duplicateReview: open },
+      );
+    }
+
+    const serverFlags =
+      !input.payload.reviewDuplicates && open.possibleDuplicates.length > 0
+        ? [possibleDuplicateFlag(open.possibleDuplicates)]
+        : [];
+
+    const referenceOf = new Map(
+      [...findings.possibleDuplicates, ...findings.phoneOwners].map((row) => [
+        row.id,
+        row.referenceNumber ?? row.id,
+      ]),
+    );
+
     const result = await this.registrations.submit({
       tenantSlug: input.tenantSlug,
       payload: input.payload,
       createdById: input.actor.id,
+      serverFlags,
     });
 
     /*
@@ -821,6 +1040,32 @@ export class CitizensService {
           // Which way a given passport number went: a new holder, added to the
           // file of the person who already holds it, or a clash left for review.
           ...(result.identity ? { identity: result.identity } : {}),
+          /*
+            What the officer was shown and what they said about it — by
+            reference, never by phone number. This is the row a reviewer reads
+            when two files turn out to be one person after all.
+          */
+          ...(input.payload.duplicateReview
+            ? {
+                duplicateReview: {
+                  differentFrom: input.payload.duplicateReview.differentFrom.map(
+                    (id) => referenceOf.get(id) ?? id,
+                  ),
+                  sharedPhoneWith: input.payload.duplicateReview.sharedPhoneWith.map(
+                    (id) => referenceOf.get(id) ?? id,
+                  ),
+                  sharedPhoneWithLandlord: input.payload.duplicateReview.sharedPhoneWithLandlord,
+                  reason: input.payload.duplicateReview.reason,
+                },
+              }
+            : {}),
+          ...(serverFlags.length > 0
+            ? {
+                heldAsPossibleDuplicateOf: open.possibleDuplicates.map(
+                  (candidate) => candidate.referenceNumber ?? candidate.id,
+                ),
+              }
+            : {}),
         },
         actorId: input.actor.id,
         actorRole: input.actor.role,
@@ -1097,11 +1342,52 @@ export class CitizensService {
             properties: {
               select: { id: true, landlordPhone: true, landlordCitizenId: true, endedAt: true },
             },
+            flaggedFields: true,
           },
         },
       },
     });
     if (!citizen) throw new NotFoundError('Citizen', input.citizenId);
+
+    /*
+      Somebody changed this file after the form was opened. Refused before any
+      read that decides a write, with who and when, so the officer chooses
+      between reloading and replacing — instead of the second save of the day
+      quietly undoing the first.
+    */
+    if (input.payload.expectedVersion) {
+      const current = await this.fileVersion(citizen.id);
+      if (current !== input.payload.expectedVersion) {
+        const lastEdit = await this.lastStaffEdit(citizen.id);
+        throw new ConflictError(
+          lastEdit?.name
+            ? `عدّل ${lastEdit.name} هذا الملف بعد أن فتحتَه. حدِّث الصفحة لترى تعديلاته، أو احفظ لتستبدلها.`
+            : 'عُدِّل هذا الملف بعد أن فتحتَه. حدِّث الصفحة لترى التعديلات، أو احفظ لتستبدلها.',
+          {
+            staleEdit: {
+              version: current,
+              lastEditedBy: lastEdit?.name ?? null,
+              lastEditedAt: lastEdit?.at ?? null,
+              byViewer: lastEdit?.staffId === input.actor.id,
+            },
+          },
+        );
+      }
+    }
+
+    /*
+      «سجل مشابه» is the server's note, so the form never sends it back — and an
+      edit that says nothing about it must not be what clears it. It stands
+      until the edit carries `duplicateReview`: somebody looked, and it is a
+      different person.
+    */
+    const storedFlags = Array.isArray(citizen.registrations[0]?.flaggedFields)
+      ? (citizen.registrations[0]!.flaggedFields as unknown as FieldFlag[])
+      : [];
+    const standingDuplicateFlag = storedFlags.find(
+      (flag) => flag?.path === POSSIBLE_DUPLICATE_FLAG_PATH,
+    );
+    const duplicateFlagResolved = Boolean(standingDuplicateFlag && input.payload.duplicateReview);
 
     // Same construction the submit path performs: the taxonomy rules live in
     // the aggregate, so an edit gets the identical guarantees a submission did
@@ -1156,10 +1442,13 @@ export class CitizensService {
         linkLocked.add(index);
       }
     });
-    const flags: FieldFlag[] = submittedFlags.filter((flag) => {
-      const match = /^properties\.(\d+)\.(landlordName|landlordPhone)$/.exec(flag.path);
-      return !(match && linkLocked.has(Number(match[1])));
-    });
+    const flags: FieldFlag[] = [
+      ...submittedFlags.filter((flag) => {
+        const match = /^properties\.(\d+)\.(landlordName|landlordPhone)$/.exec(flag.path);
+        return !(match && linkLocked.has(Number(match[1])));
+      }),
+      ...(standingDuplicateFlag && !duplicateFlagResolved ? [standingDuplicateFlag] : []),
+    ];
 
     const entries = input.payload.properties.map((property, index) => {
       const { id, ...values } = property as { id?: string } & Record<string, unknown>;
@@ -1579,6 +1868,14 @@ export class CitizensService {
         propertiesRemoved: removedIds.length,
         status: nextStatus,
         unestablishedFields: flags.length,
+        ...(duplicateFlagResolved
+          ? {
+              possibleDuplicateReviewed: {
+                was: standingDuplicateFlag!.reason,
+                reason: input.payload.duplicateReview!.reason,
+              },
+            }
+          : {}),
       },
       actorId: input.actor.id,
       actorRole: input.actor.role,
@@ -1588,6 +1885,8 @@ export class CitizensService {
       updated: true,
       citizenId: citizen.id,
       status: nextStatus,
+      /** The file's version after this save, for a form that stays open. */
+      version: await this.fileVersion(citizen.id),
       census,
       landlordLinks,
       /**

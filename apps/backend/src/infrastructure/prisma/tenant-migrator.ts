@@ -34,6 +34,28 @@ function assertSafeSchemaName(schemaName: string): void {
 }
 
 /**
+ * `CREATE EXTENSION IF NOT EXISTS`, made safe against itself.
+ *
+ * The statement checks and then inserts, so two sessions that both find the
+ * extension missing both insert, and the second fails on
+ * `pg_extension_name_index` (23505) instead of finding it there. The migrator
+ * runs one municipality at a time, so production never races — but CI starts
+ * every integration suite at once against an empty database, and whichever
+ * suite lost failed its whole `beforeAll`: a red run on correct code, gone on
+ * retry, which is the kind of gate people learn to re-run past.
+ *
+ * Losing that race means another session created the extension, which is the
+ * outcome asked for; any other error is still thrown.
+ */
+async function ensurePgcrypto(client: Client): Promise<void> {
+  try {
+    await client.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+  } catch (error) {
+    if ((error as { code?: string }).code !== '23505') throw error;
+  }
+}
+
+/**
  * Creates the schema if needed and applies every migration it has not seen.
  *
  * Applied migrations are tracked in a `_tenant_migrations` table *inside each
@@ -51,7 +73,7 @@ export async function migrateTenantSchema(
   await client.query(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
   // pgcrypto backs gen_random_uuid(); installed in `public` and reachable from
   // every schema, so tenant DDL does not each need its own copy.
-  await client.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+  await ensurePgcrypto(client);
 
   await client.query(`
     CREATE TABLE IF NOT EXISTS "${schemaName}"."_tenant_migrations" (

@@ -213,6 +213,9 @@ interface SubmissionInput {
   blanketFlagReason?: string;
   notes?: string;
   clientSubmissionId?: string;
+  reviewDuplicates?: boolean;
+  duplicateReview?: DuplicateReviewAnswer;
+  expectedVersion?: string;
 }
 
 /**
@@ -588,6 +591,10 @@ function shapeSubmission(input: SubmissionInput) {
     */
     flags: allFlags(input).filter(isUnestablished),
     clientSubmissionId: input.clientSubmissionId,
+    // Carried through untouched — see `duplicateReviewAnswerSchema`.
+    ...(input.reviewDuplicates ? { reviewDuplicates: true as const } : {}),
+    ...(input.duplicateReview ? { duplicateReview: input.duplicateReview } : {}),
+    ...(input.expectedVersion ? { expectedVersion: input.expectedVersion } : {}),
   };
 }
 
@@ -650,11 +657,64 @@ const submissionEnvelope = {
     .max(2000, 'الملاحظات طويلة جداً')
     .optional(),
   clientSubmissionId: uuid.optional(),
+  /**
+   * The officer's answer to «هل هو مسجَّل مسبقاً؟», when it was put to them.
+   *
+   * On a creation: which records they looked at and said are somebody else,
+   * which people they confirmed share this phone, and one sentence for why.
+   * On an edit: that the «سجل مشابه» a queued filing was held for has been
+   * checked and is a different person.
+   */
+  duplicateReview: z.lazy(() => duplicateReviewAnswerSchema).optional(),
+  /**
+   * The file as it stood when this form was opened (`getEditable().version`).
+   *
+   * On an edit, a save whose version no longer matches is refused and the
+   * officer is told who changed the file since — rather than one officer's
+   * save silently replacing another's. On 2026-09-16 two officers edited one
+   * registration for 45 minutes and the record ended up contradicting itself.
+   * Absent means "do not check", which is what every older client sends.
+   */
+  expectedVersion: z.string().trim().max(200).optional(),
 };
+
+/**
+ * What the officer said when the save stopped to ask about a possible duplicate.
+ *
+ * Every list names only records the officer was *shown*: the server re-runs
+ * the check and asks again about anybody not on it, so an answer given about
+ * one person can never wave through a second who was registered in between.
+ */
+export const duplicateReviewAnswerSchema = z.object({
+  /** Records offered as possibly this person, confirmed to be somebody else. */
+  differentFrom: z.array(uuid).max(20).default([]),
+  /** People already on file with this phone, confirmed to share the line. */
+  sharedPhoneWith: z.array(uuid).max(20).default([]),
+  /** The phone is also the landlord's number on one of this record's own cards, and that is right. */
+  sharedPhoneWithLandlord: z.boolean().default(false),
+  reason: z
+    .string({ required_error: 'يرجى ذكر سبب الاعتبار' })
+    .trim()
+    .min(4, 'يرجى ذكر سبب الاعتبار')
+    .max(300, 'السبب طويل جداً'),
+});
+
+export type DuplicateReviewAnswer = z.infer<typeof duplicateReviewAnswerSchema>;
 
 export const adminCreateCitizenSubmissionSchema = z
   .object({
     ...submissionEnvelope,
+    /**
+     * «اسألني إن بدا مسجَّلاً مسبقاً» — sent only by a form with a person at it.
+     *
+     * With it, a creation that looks like somebody already on file is refused
+     * with the candidates, so the officer answers before a second record exists.
+     * Without it — a record queued offline and delivered hours later, an older
+     * build, an import — nothing is refused: nobody is at the screen to answer,
+     * and a filing queued in a settlement must not fail on arrival. Such a
+     * record is filed and held at «يتطلب مراجعة» with the match named instead.
+     */
+    reviewDuplicates: z.boolean().optional(),
     properties: z
       .array(rawSection)
       .max(25, 'عدد العقارات كبير جداً — يرجى مراجعة البلدية'),

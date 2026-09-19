@@ -45,6 +45,7 @@ import {
   type UnitWithOccupants,
 } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
+import { loadSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -157,7 +158,7 @@ export function BuildingUnitMatrixDrawer({
     buildingId: string,
     unitId: string,
     residence: CitizenResidence,
-    /** Whatever the officer typed into the occupant search — seeds the name. */
+    /** Whatever the officer typed into the occupant search — seeds the name or the phone. */
     name: string,
   ) => string;
   /**
@@ -178,6 +179,11 @@ export function BuildingUnitMatrixDrawer({
   const en = locale === 'en';
   const labels = getLabels(locale);
   const toast = useToast();
+  /** The signed-in officer — lets the visit form recognise their own visit from earlier today. */
+  const [viewerId, setViewerId] = useState<string | null>(null);
+  useEffect(() => {
+    setViewerId(loadSession(tenant)?.user.id ?? null);
+  }, [tenant]);
 
   const [building, setBuilding] = useState<BuildingDetail | null>(null);
   const [damage, setDamage] = useState<{
@@ -1142,6 +1148,7 @@ export function BuildingUnitMatrixDrawer({
                   busy={busy}
                   locale={locale}
                   attempts={selectedUnit.visitCount}
+                  viewerId={viewerId}
                   visits={selectedUnit.visits}
                   onSubmit={(values) =>
                     void run(

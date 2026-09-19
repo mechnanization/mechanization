@@ -787,7 +787,8 @@ export class TenancyService {
             data: { unitStatus: null },
           });
         }
-        await this.cases.create(
+        // A check already open on the flat asks the same question; see `openUnlessStanding`.
+        const { opened } = await this.cases.openUnlessStanding(
           {
             notes: `خرج ${tenantName} من الوحدة ${unit.unitCode} ولم تُعرف حالتها بعده — تحقّق: شاغرة أم يسكنها أحد.`,
             caseType: 'VACANT_UNCONFIRMED',
@@ -797,7 +798,7 @@ export class TenancyService {
           } as never,
           actor,
         );
-        result.casesOpened += 1;
+        if (opened) result.casesOpened += 1;
         break;
       }
       default:
