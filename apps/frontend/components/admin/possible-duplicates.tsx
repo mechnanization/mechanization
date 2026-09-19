@@ -58,9 +58,13 @@ export interface DuplicateCheck {
 /**
  * Looks the typed name and phone up in the register, debounced.
  *
- * A null `token` asks nothing and answers nothing, which is how the edit form
- * — where every match is the open file itself — switches it off without
- * breaking the rules of hooks.
+ * It runs on a correction as well as a new filing, with the open file itself
+ * dropped from its own matches (`excludeId`): an officer correcting a surname,
+ * or adding the phone the household actually answers on, is doing the very
+ * thing that turns two files into recognisable duplicates.
+ *
+ * A null `token` asks nothing and answers nothing, without breaking the rules
+ * of hooks — which is how a caller with no session switches it off.
  */
 export function usePossibleDuplicates({
   tenant,
@@ -69,6 +73,7 @@ export function usePossibleDuplicates({
   lastName,
   phone,
   whatsapp,
+  excludeId,
 }: {
   tenant: string;
   token: string | null | undefined;
@@ -77,6 +82,16 @@ export function usePossibleDuplicates({
   phone: unknown;
   /** The WhatsApp number, only when it is a different number from `phone`. */
   whatsapp?: unknown;
+  /**
+   * The file this form is editing, dropped from its own matches.
+   *
+   * Without it the panel opens on every edit announcing that the person on
+   * screen may already be registered — as themselves. A warning that is wrong
+   * every single time is one officers learn to close without reading, which
+   * costs the panel the record where it was right (§8.6 is the same lesson from
+   * a flaky test).
+   */
+  excludeId?: string;
 }): DuplicateCheck {
   const [matches, setMatches] = useState<CitizenListItem[]>([]);
   /**
@@ -124,7 +139,10 @@ export function usePossibleDuplicates({
           if (cancelled) return;
           const byId = new Map<string, CitizenListItem>();
           for (const result of results) {
-            for (const item of result.items) byId.set(item.id, item);
+            for (const item of result.items) {
+              if (item.id === excludeId) continue;
+              byId.set(item.id, item);
+            }
           }
           setMatches([...byId.values()].slice(0, MAX_SHOWN));
           setFailed(false);
@@ -144,7 +162,7 @@ export function usePossibleDuplicates({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [tenant, token, name, digits, whatsappDigits]);
+  }, [tenant, token, name, digits, whatsappDigits, excludeId]);
 
   return { matches, failed };
 }
@@ -164,8 +182,16 @@ function MatchList({ matches, locale }: { matches: CitizenListItem[]; locale: st
   const en = locale === 'en';
   const labels = getLabels(locale);
   const pathname = usePathname();
+  /*
+    The match's own file, under whichever `/citizens/…` route this form is on.
+
+    Anchored at `/citizens/` and told to drop everything after it, because the
+    panel now renders on three: `citizens/new`, `citizens/<id>/edit` and
+    `citizens/queue/<id>`. Matching only `new` left the other two rewriting
+    nothing — every row linked back to the page it was already on.
+  */
   const fileHref = (id: string) =>
-    pathname.replace(/\/citizens\/new(\/.*)?$/, `/citizens/${encodeURIComponent(id)}`);
+    pathname.replace(/(\/citizens)\/.*$/, `$1/${encodeURIComponent(id)}`);
 
   return (
     <ul className="space-y-1">
