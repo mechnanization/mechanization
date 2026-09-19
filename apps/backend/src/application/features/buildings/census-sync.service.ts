@@ -1,10 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
-import { unitStatusForRole } from '@mechanization/shared-schemas';
+import {
+  contradictsVacancy,
+  isUnoccupied,
+  unitStatusForRole,
+} from '@mechanization/shared-schemas';
 import type { OccupancyRole, OccupancyType } from '@mechanization/shared-schemas';
 import { CasesService } from '../cases/cases.service';
-import { closeActiveVacancy } from './unit-vacancy';
+import { activeVacancy, closeActiveVacancy } from './unit-vacancy';
 
 /**
  * The write path from a citizen's registration back into the census (P5-T1).
@@ -118,7 +122,18 @@ export class CensusSyncService {
         occupancyType: true,
         buildingId: true,
         buildingName: true,
-        units: { where: { endedAt: null }, select: { id: true, unitId: true } },
+        /*
+          حالة الوحدة as the card states it — read so a correction on the
+          citizen's file reaches سجل المباني. See `declaredStatus` below.
+
+          The منزل card carries its own, because a منزل has no units array to
+          tick; the مبنى card carries one per ticked flat.
+        */
+        unitStatus: true,
+        units: {
+          where: { endedAt: null },
+          select: { id: true, unitId: true, unitStatus: true },
+        },
       },
     });
 
@@ -131,7 +146,16 @@ export class CensusSyncService {
       flat is a duplicate, not a co-tenancy. Last writer wins, which is the same
       rule `recordOccupancy` applies when the pair already exists.
     */
-    const claimed = new Map<string, { role: OccupancyRole; propertyId: string; buildingId: string }>();
+    const claimed = new Map<
+      string,
+      {
+        role: OccupancyRole;
+        propertyId: string;
+        buildingId: string;
+        /** حالة الوحدة this card states about the flat, or null where it states none. */
+        declaredStatus: string | null;
+      }
+    >();
 
     for (const property of properties) {
       const buildingId = property.buildingId;
@@ -163,7 +187,12 @@ export class CensusSyncService {
 
       if (linked.length > 0) {
         for (const unit of linked) {
-          claimed.set(unit.unitId!, { role, propertyId: property.id, buildingId });
+          claimed.set(unit.unitId!, {
+            role,
+            propertyId: property.id,
+            buildingId,
+            declaredStatus: unit.unitStatus ?? null,
+          });
         }
         continue;
       }
@@ -191,7 +220,12 @@ export class CensusSyncService {
         take: 2,
       });
       if (units.length === 1)
-        claimed.set(units[0]!.id, { role, propertyId: property.id, buildingId });
+        claimed.set(units[0]!.id, {
+          role,
+          propertyId: property.id,
+          buildingId,
+          declaredStatus: property.unitStatus ?? null,
+        });
     }
 
     /*
@@ -212,7 +246,7 @@ export class CensusSyncService {
     */
     let firstFailure: unknown = null;
 
-    for (const [unitId, { role, buildingId }] of claimed) {
+    for (const [unitId, { role, buildingId, declaredStatus }] of claimed) {
       try {
         const applied = await this.applyOccupancy({
           unitId,
@@ -220,6 +254,7 @@ export class CensusSyncService {
           citizenId: input.citizenId,
           registrationId: input.registrationId,
           role,
+          declaredStatus,
           actor: input.actor,
         });
 
@@ -279,6 +314,11 @@ export class CensusSyncService {
     citizenId: string;
     registrationId: string;
     role: OccupancyRole;
+    /**
+     * حالة الوحدة the card states, or null where it states none — the owner's
+     * own answer, carried onto the unit by `declareUnitStatus` below.
+     */
+    declaredStatus: string | null;
     actor: { id: string; role: string };
   }): Promise<{
     created: boolean;
@@ -460,6 +500,30 @@ export class CensusSyncService {
     }
 
     /*
+      …and حالة الوحدة as the owner's own card states it, which *replaces*.
+
+      This is the half that was missing, and the gap it left is a split record
+      of exactly the kind D2 exists to prevent. An officer who picked «شاغرة» on
+      the card and then corrected it to «مشغولة من المالك» changed the card and
+      nothing else: سجل المباني went on drawing the flat «شاغرة», the citizen's
+      own file showed both answers at once («مشغولة من المالك» beside «سجل
+      المباني: شاغرة»), and billing read the census's — the one that lost the
+      correction (P2-T8 reads `unitStatus ?? ownerDeclaredStatus`).
+
+      Owner cards only, and for the reason `recordOccupancy` gives at its own
+      copy of this write: a مستأجر or شاغل بتسامح has no حالة to state, because
+      their capacity already settles it and `unitStatusForRole` above records
+      it. An owner is the one person whose card answers a question the unit
+      cannot answer from who is recorded against it.
+
+      Replacing rather than filling is the same decision `recordOccupancy` took,
+      and for the same reason: this is a person stating what the flat is, not an
+      inference. Narrowing it to `unitStatus: null` would fix a first filing and
+      silently drop every correction after it — which is the bug.
+    */
+    await this.declareUnitStatus({ ...input, unit });
+
+    /*
       A visit is logged only the first time this household is recorded here —
       ever, not merely the first time it is recorded *currently*.
 
@@ -516,6 +580,104 @@ export class CensusSyncService {
     });
 
     return { created: !current, surveyed: lifted.count, casesResolved, vacancyEnded };
+  }
+
+  /**
+   * Carries حالة الوحدة from an owner's card onto the unit — and says so in the
+   * building's log, because a status that decides a bill is not a silent write.
+   *
+   * ## What it refuses, and why it refuses rather than asks
+   *
+   * `recordOccupancy` poses both of these to the officer standing in front of
+   * it. Here there is nobody to ask: the registration has already committed and
+   * this runs after the fact. So each one is *declined*, not overridden — the
+   * card keeps what the citizen filed, `ownerDeclaredStatus` goes on surfacing
+   * it beside the census's answer, and the disagreement stays visible on both
+   * screens for a person to settle.
+   *
+   * **A standing «تأكيد الشغور».** A confirmed vacancy is a finding with a
+   * basis, a date and somebody's name on it, and it exempts the owner from the
+   * occupancy fee. Writing «مشغولة من المالك» over it from a form somebody
+   * saved would undo that finding with nothing recorded about who decided it
+   * had stopped being true — which is the whole reason «إلغاء تأكيد الشغور»
+   * exists and asks for a reason. The undo is a person's to make.
+   *
+   * **Somebody else living there.** The rule `assertMayBeCalledEmpty` applies
+   * wherever a flat is called empty: a مستأجر or شاغل بتسامح recorded on the
+   * unit is its occupant, and «شاغرة» written over them leaves the register
+   * asserting nobody is there beside rows naming who is — read downstream as an
+   * exemption, so the contradiction quietly stops a bill.
+   *
+   * **A «مسكن موسمي» being called empty.** The same refusal, and the other half
+   * of `assertMayBeCalledEmpty`: a seasonal home is billed to its owners while
+   * they are away, a vacant one is exempt, and the owners being away is what
+   * «موسمي» *means*. A card filed in January saying «شاغرة» about a summer house
+   * would cancel the summer's fees. The declaration that actually shortens the
+   * bill is `vacancyDeclaredAt` on the unit, not this.
+   */
+  private async declareUnitStatus(input: {
+    unitId: string;
+    citizenId: string;
+    role: OccupancyRole;
+    declaredStatus: string | null;
+    unit: { buildingId: string; unitCode: string; unitStatus: string | null };
+    actor: { id: string; role: string };
+  }): Promise<void> {
+    const declared = input.declaredStatus;
+    if (input.role !== 'OWNER' || !declared) return;
+    // Already what the card says. Not a no-op worth an audit row.
+    if (declared === input.unit.unitStatus) return;
+
+    const standing = await activeVacancy(this.db, input.unitId);
+    if (standing && contradictsVacancy(input.role, declared)) {
+      this.logger.warn(
+        `census sync: unit ${input.unit.unitCode} is confirmed vacant (${standing.id}); the owner's card says ${declared} — unit left as recorded, card unchanged`,
+      );
+      return;
+    }
+
+    if (isUnoccupied(declared)) {
+      if (input.unit.unitStatus === 'SEASONAL') {
+        this.logger.warn(
+          `census sync: unit ${input.unit.unitCode} is recorded as a seasonal home; the owner's card says ${declared} — unit left as recorded, card unchanged`,
+        );
+        return;
+      }
+
+      const living = await this.db.unitOccupancy.count({
+        where: {
+          unitId: input.unitId,
+          toDate: null,
+          role: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+        },
+      });
+      if (living > 0) {
+        this.logger.warn(
+          `census sync: unit ${input.unit.unitCode} has ${living} recorded occupant(s); the owner's card says ${declared} — unit left as recorded, card unchanged`,
+        );
+        return;
+      }
+    }
+
+    await this.db.unit.update({
+      where: { id: input.unitId },
+      data: { unitStatus: declared as never },
+    });
+
+    this.events.emit('building.changed', {
+      tenantSlug: this.tenantContext.tenantSlug,
+      action: 'UNIT_UPDATED',
+      buildingId: input.unit.buildingId,
+      before: { unitCode: input.unit.unitCode, unitStatus: input.unit.unitStatus },
+      after: {
+        unitCode: input.unit.unitCode,
+        unitStatus: declared,
+        citizenId: input.citizenId,
+        via: 'REGISTRATION',
+      },
+      actorId: input.actor.id,
+      actorRole: input.actor.role,
+    });
   }
 
   /**

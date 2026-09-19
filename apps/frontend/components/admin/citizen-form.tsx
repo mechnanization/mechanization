@@ -790,11 +790,18 @@ export function CitizenForm({
   // so a parent that fetches once does not clobber what has been typed since.
   useEffect(() => {
     setValues(initial);
-    // An existing record opens with its cards folded — a clerk fixing a phone
-    // number should not have to scroll past four properties to reach «حفظ».
-    setCollapsed(
-      new Set(initial.properties.length > 1 ? initial.properties.map((_, i) => i) : []),
-    );
+    /*
+      Every card opens expanded, on a correction exactly as on a new filing.
+
+      An existing record used to open with its cards folded, on the reasoning
+      that a clerk fixing a phone number should not scroll past four properties
+      to reach «حفظ». It made the two forms different screens: the same section,
+      with the same heading, showing its contents on one and a row of shut
+      drawers on the other — and a field an officer cannot see is a field they
+      do not check. Folding is still one tap away per card, and the jump bar
+      reaches «حفظ» without passing them.
+    */
+    setCollapsed(new Set());
   }, [initial]);
 
   /*
@@ -1266,20 +1273,25 @@ export function CitizenForm({
    * an orange warning about a number one section above the field that asks for
    * it, reading as a complaint about the name the officer had just typed.
    *
-   * Creates only. On an edit the record being looked at is itself on the
-   * register, so every match is a match with the open file or its household.
+   * On a correction as well as a new filing, with the open file itself excluded
+   * — see `excludeId`. It used to be creates-only, on the reasoning that every
+   * match on an edit is a match with the record being looked at. That is true
+   * of the record itself and of nobody else: an officer correcting a surname,
+   * or adding the phone the household actually answers on, is doing the very
+   * thing that turns two files into recognisable duplicates, and this is the
+   * one screen where that is visible while it happens.
    */
-  const duplicatesPanel =
-    mode === 'create' ? (
-      <PossibleDuplicates
-        tenant={tenant}
-        token={token}
-        firstName={values.personal.firstName}
-        lastName={values.personal.lastName}
-        phone={values.contact.phone}
-        locale={locale}
-      />
-    ) : null;
+  const duplicatesPanel = (
+    <PossibleDuplicates
+      tenant={tenant}
+      token={token}
+      firstName={values.personal.firstName}
+      lastName={values.personal.lastName}
+      phone={values.contact.phone}
+      excludeId={citizenId}
+      locale={locale}
+    />
+  );
 
   const sections = useMemo(
     () => [
@@ -1859,23 +1871,29 @@ export function CitizenForm({
           {/*
             Quick save sits next to «غير مؤكَّد» because they are the same
             decision at two scales: one field the officer could not establish,
-            or a visit that produced almost nothing. Create only — a blanket
-            reason on an *edit* would excuse gaps in a record that has already
-            been reviewed once, which is a different and much worse claim.
+            or a visit that produced almost nothing.
+
+            Offered on a correction as well, so the two forms carry the same
+            controls in the same places — a bar that loses a button between the
+            screen you register on and the screen you fix a record on is the
+            difference this section exists to remove. It is worth knowing what
+            it now allows that it did not: a blanket reason on an *edit* excuses
+            gaps in a record that has already been reviewed once, which is a
+            broader claim than the same button makes on a first filing. The
+            dialog still names the count and still writes the reason onto every
+            gap it covers, so what was claimed and by whom stays on the file.
           */}
-          {mode === 'create' ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setQuickSaveOpen(true)}
-              disabled={submitting}
-              className="h-10 shrink-0 gap-1 px-2.5 text-xs font-medium"
-            >
-              <Zap className="size-3.5 shrink-0" aria-hidden />
-              <span className="truncate">{locale === 'en' ? 'Quick save' : 'حفظ سريع'}</span>
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setQuickSaveOpen(true)}
+            disabled={submitting}
+            className="h-10 shrink-0 gap-1 px-2.5 text-xs font-medium"
+          >
+            <Zap className="size-3.5 shrink-0" aria-hidden />
+            <span className="truncate">{locale === 'en' ? 'Quick save' : 'حفظ سريع'}</span>
+          </Button>
 
           {stepIndex < sections.length - 1 ? (
             <Button
@@ -1996,19 +2014,18 @@ export function CitizenForm({
           </div>
 
           <div className="flex items-center gap-2.5 ms-auto">
-            {mode === 'create' ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setQuickSaveOpen(true)}
-                disabled={submitting}
-                className="h-8 gap-1.5 rounded-lg px-4 text-xs font-medium"
-              >
-                <Zap className="size-3.5" aria-hidden />
-                {locale === 'en' ? 'Quick save' : 'حفظ سريع'}
-              </Button>
-            ) : null}
+            {/* Both modes, for the reason the mobile bar above gives. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setQuickSaveOpen(true)}
+              disabled={submitting}
+              className="h-8 gap-1.5 rounded-lg px-4 text-xs font-medium"
+            >
+              <Zap className="size-3.5" aria-hidden />
+              {locale === 'en' ? 'Quick save' : 'حفظ سريع'}
+            </Button>
             <Button
               type="button"
               variant="outline"

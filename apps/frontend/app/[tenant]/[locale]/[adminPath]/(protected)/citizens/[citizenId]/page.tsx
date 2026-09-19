@@ -535,33 +535,215 @@ export default function CitizenProfilePage({
   });
   const waHref = buildWhatsappHref(citizen.whatsapp || citizen.phone, waMessage);
 
+
+  /*
+    The identity facts, built once and read by the rail below.
+
+    Assembled here rather than inline in the JSX because the rail renders them
+    in one place now instead of three, and a fact list interleaved with layout
+    is a fact list nobody can see the shape of.
+  */
+  const identityFacts: FactItem[] = isNonResident
+    ? [
+        { icon: User, label: en ? 'Name' : 'الاسم', value: citizen.fullName },
+        /*
+          Where they live, in the identity block rather than under «التواصل» —
+          on this kind of record it is not a way to reach them, it is the fact
+          that defines the record. Law 60/1988 Art. 14 wants the occupancy
+          notice to name the occupant *and where they live*, and this is that.
+        */
+        {
+          icon: Home,
+          label: en ? 'Lives in' : 'مكان الإقامة',
+          value: citizen.residencePlace ?? undefined,
+        },
+      ]
+    : [
+        { icon: User, label: en ? 'Name' : 'الاسم', value: citizen.fullName },
+        /*
+          Beside the name, because it is part of how this person is named — and
+          because it is the only thing on this card that separates them from a
+          namesake now that no identity document is asked.
+
+          Rendered as «لم يُسأل» rather than dropped when null, which is what a
+          household filed before migration 0044 holds. A row that vanishes is
+          indistinguishable from a field this page forgot; the visible «لم
+          يُسأل» is the difference between "we did not ask" and "she has no
+          name", and it is the prompt to ask next time the door opens.
+        */
+        {
+          icon: User,
+          label: en ? "Mother's Full Name" : 'اسم الأم وشهرتها',
+          value: citizen.motherName ?? <NotAsked locale={locale} />,
+        },
+        {
+          icon: User,
+          label: en ? 'Gender' : 'الجنس',
+          value: labels.gender[citizen.gender as never] ?? citizen.gender,
+        },
+        {
+          icon: Droplet,
+          label: en ? 'Blood Type' : 'فئة الدم',
+          value: citizen.bloodType
+            ? (labels.bloodType?.[citizen.bloodType as never] ?? citizen.bloodType)
+            : undefined,
+        },
+        { icon: Flag, label: en ? 'Nationality' : 'الجنسية', value: citizen.nationality },
+        {
+          icon: Home,
+          label: en ? 'Residency Status' : 'صفة الإقامة',
+          value: labels.residentStatus[citizen.residentStatus as never] ?? citizen.residentStatus,
+        },
+        {
+          icon: IdCard,
+          label: en ? 'ID Document Type' : 'نوع وثيقة الإثبات',
+          value: labels.identityDocType[citizen.identityDocType as never] ?? citizen.identityDocType,
+          hint: legacyDocumentHint(citizen, locale),
+        },
+        {
+          icon: FileDigit,
+          label: en ? 'Document Number' : 'رقم الوثيقة',
+          value: citizen.identityDocNumber,
+          ltr: true,
+          hint: legacyDocumentHint(citizen, locale),
+        },
+        citizen.isLebanese
+          ? {
+              icon: FileDigit,
+              label: en ? 'Civil Record (Sijil) No.' : 'رقم السجل',
+              value: citizen.civilRecordNumber,
+              ltr: true,
+            }
+          : {
+              icon: FileDigit,
+              label: en ? 'Residency Permit No.' : 'رقم الإقامة',
+              value: citizen.residencyNumber,
+              ltr: true,
+            },
+      ];
+
+  const contactFacts: FactItem[] = [
+    {
+      icon: Phone,
+      label: en ? 'Phone' : 'الهاتف',
+      value: citizen.phone ? <PhoneLink phone={citizen.phone} /> : null,
+    },
+    {
+      icon: MessageCircle,
+      label: en ? 'WhatsApp' : 'واتساب',
+      value: citizen.whatsapp ? (
+        <WhatsAppPhoneLink phone={citizen.whatsapp} message={waMessage} />
+      ) : null,
+    },
+    // Who holds the keys here, for an owner who is not here.
+    ...(isNonResident
+      ? [
+          {
+            icon: User,
+            label: en ? 'Local contact' : 'جهة الاتصال المحلية',
+            value: citizen.localContactName ?? undefined,
+          },
+          {
+            icon: Phone,
+            label: en ? 'Local contact phone' : 'هاتف جهة الاتصال',
+            value: citizen.localContactPhone ? (
+              <PhoneLink phone={citizen.localContactPhone} />
+            ) : null,
+          },
+        ]
+      : []),
+  ];
+
+  const registrationFacts: FactItem[] = [
+    {
+      icon: Hash,
+      label: en ? 'Reference Number' : 'الرقم المرجعي',
+      value: citizen.referenceNumber,
+      ltr: true,
+    },
+    /*
+      نوع الملف, stated rather than left to be inferred from the badge beside
+      the name. It decides which fields this record is ever asked for, so a
+      reviewer wondering why there is no blood type should find the answer
+      written down, not have to know it.
+    */
+    {
+      icon: Signpost,
+      label: en ? 'Record Type' : 'نوع الملف',
+      value:
+        labels.citizenResidence[
+          (citizen.residence ?? 'RESIDENT') as keyof typeof labels.citizenResidence
+        ],
+    },
+    {
+      icon: Calendar,
+      label: en ? 'First Registered' : 'تاريخ أول تسجيل',
+      value: formatDate(citizen.registeredAt),
+    },
+  ];
+
+  /*
+    ## The layout
+
+    A two-column reading page, not a stack of closed drawers.
+
+    What this replaced: «البيانات الشخصية»، «الرسوم والمدفوعات» and «العقارات»
+    were three accordions, all three shut on arrival. Every visit to this page
+    — the counter clerk checking a phone number, the collector checking a
+    balance, the inspector checking which flat — began with the same two or
+    three clicks, and the summary line on a closed section was the compensation
+    for that rather than a feature. A record that decides what somebody is
+    charged should not open folded.
+
+    So: who this is and how to reach them lives in a rail that stays put while
+    the long things scroll beside it, and the long things — the ledger, the
+    properties, the trail — are simply open. The rail is `lg:sticky` only where
+    there is height to hold it; on a phone it is the first thing on the page,
+    which is also the right order there.
+
+    The fold is kept for exactly the two blocks that earn it: «بيانات محفوظة»,
+    which is by definition not current, and the activity trail, which is long
+    and is read on purpose rather than in passing.
+  */
   return (
-    <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+    <div className="w-full space-y-5 px-4 py-6 sm:px-6 lg:px-8">
       <BackLink
         fallbackHref={`${base}/citizens`}
         label={locale === 'en' ? 'Back' : 'رجوع'}
         className="text-sm"
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-6">
-        <div className="flex min-w-0 items-center gap-4">
-          <span
-            aria-hidden
-            className="flex size-14 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary ring-1 ring-primary/20"
-          >
-            <User className="size-7" />
-          </span>
-          <div className="min-w-0 space-y-1.5">
-            <h1 className="truncate text-3xl font-bold tracking-tight">{citizen.fullName}</h1>
-            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+      {/* ── Identity bar ────────────────────────────────────────────── */}
+      <header className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
+          <div className="min-w-0 space-y-2">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+              {citizen.fullName}
+            </h1>
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted-foreground">
+              {/*
+                The رقم مرجعي, promoted out of the facts list and into the
+                headline. It is what a citizen reads down the phone and what a
+                clerk types to find them again, and it used to be three clicks
+                inside a closed section.
+              */}
               <span className="inline-flex items-center gap-1.5">
-                <FileText className="size-3.5" aria-hidden />
-                {citizen.registrations.length} {locale === 'en' ? 'applications' : 'طلب'}
+                <Hash className="size-3.5 shrink-0" aria-hidden />
+                <bdi dir="ltr" className="font-mono font-medium text-foreground">
+                  {citizen.referenceNumber}
+                </bdi>
               </span>
-              <span className="inline-flex items-center gap-1.5">
-                <Building2 className="size-3.5" aria-hidden />
-                {propertyCount} {locale === 'en' ? 'properties' : 'عقار'}
-              </span>
+
+              {citizen.phone ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <Phone className="size-3.5 shrink-0" aria-hidden />
+                  <PhoneLink phone={citizen.phone} />
+                </span>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
               {isNonResident ? (
                 <Badge variant="soft-info">
                   {labels.citizenResidence.NON_RESIDENT_OWNER}
@@ -576,9 +758,7 @@ export default function CitizenProfilePage({
                 built; the staff page that decides things never did.
               */}
               {!citizen.isActive ? (
-                <Badge variant="soft-warning">
-                  {en ? 'Deactivated record' : 'سجل معطّل'}
-                </Badge>
+                <Badge variant="soft-warning">{en ? 'Deactivated record' : 'سجل معطّل'}</Badge>
               ) : null}
               {/*
                 Household badges, and only on a household file. On a
@@ -587,421 +767,269 @@ export default function CitizenProfilePage({
                 the headline where they read as this person's current standing.
               */}
               {!isNonResident && citizen.gender ? (
-                <Badge variant="outline">{labels.gender[citizen.gender as never] ?? citizen.gender}</Badge>
+                <Badge variant="outline">
+                  {labels.gender[citizen.gender as never] ?? citizen.gender}
+                </Badge>
               ) : null}
               {!isNonResident && citizen.bloodType ? (
-                <Badge variant="outline" className="border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-400">
+                <Badge
+                  variant="outline"
+                  className="border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-400"
+                >
                   <Droplet className="me-1 size-3" />
                   {labels.bloodType?.[citizen.bloodType as never] ?? citizen.bloodType}
                 </Badge>
               ) : null}
               {!isNonResident && citizen.residentStatus ? (
                 <Badge variant="outline">
-                  {labels.residentStatus[citizen.residentStatus as never] ?? citizen.residentStatus}
+                  {labels.residentStatus[citizen.residentStatus as never] ??
+                    citizen.residentStatus}
                 </Badge>
               ) : null}
             </div>
           </div>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {waHref ? (
-            <a
-              href={waHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={buttonVariants({
-                variant: 'outline',
-                className:
-                  'border-emerald-600/30 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/70',
-              })}
+          <div className="flex flex-wrap items-center gap-2">
+            {canEdit ? (
+              <Link href={`${base}/citizens/${citizen.id}/edit`} className={buttonVariants()}>
+                <Pencil className="size-4" aria-hidden />
+                {locale === 'en' ? 'Edit Details' : 'تعديل البيانات'}
+              </Link>
+            ) : null}
+
+            {waHref ? (
+              <a
+                href={waHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={buttonVariants({
+                  variant: 'outline',
+                  className:
+                    'border-emerald-600/30 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/70',
+                })}
+                title={
+                  locale === 'en'
+                    ? 'Send reference number and registration confirmation via WhatsApp'
+                    : 'إرسال الرقم المرجعي وتأكيد التسجيل عبر واتساب'
+                }
+              >
+                <MessageCircle
+                  className="size-4 text-emerald-600 dark:text-emerald-400"
+                  aria-hidden
+                />
+                <span>{locale === 'en' ? 'Send via WhatsApp' : 'إرسال عبر واتساب'}</span>
+              </a>
+            ) : null}
+
+            <Link
+              href={locatedProperty ? mapHref(base, locatedProperty) : `${base}/map`}
+              className={buttonVariants({ variant: 'outline' })}
               title={
-                locale === 'en'
-                  ? 'Send reference number and registration confirmation via WhatsApp'
-                  : 'إرسال الرقم المرجعي وتأكيد التسجيل عبر واتساب'
+                locatedProperty
+                  ? undefined
+                  : locale === 'en'
+                    ? 'No property location has been mapped for this citizen yet'
+                    : 'لم يتم تحديد موقع أي عقار لهذا المواطن بعد'
               }
             >
-              <MessageCircle className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
-              <span>{locale === 'en' ? 'Send via WhatsApp' : 'إرسال عبر واتساب'}</span>
-            </a>
-          ) : null}
-
-          {canEdit ? (
-            <Link href={`${base}/citizens/${citizen.id}/edit`} className={buttonVariants()}>
-              <Pencil className="size-4" aria-hidden />
-              {locale === 'en' ? 'Edit Details' : 'تعديل البيانات'}
+              <MapPin className="size-4" aria-hidden />
+              {locale === 'en' ? 'View on Map' : 'عرض على الخريطة'}
             </Link>
-          ) : null}
-          <Link
-            href={locatedProperty ? mapHref(base, locatedProperty) : `${base}/map`}
-            className={buttonVariants({ variant: 'outline' })}
-            title={
-              locatedProperty
-                ? undefined
-                : (locale === 'en'
-                    ? 'No property location has been mapped for this citizen yet'
-                    : 'لم يتم تحديد موقع أي عقار لهذا المواطن بعد')
-            }
-          >
-            <MapPin className="size-4" aria-hidden />
-            {locale === 'en' ? 'View on Map' : 'عرض على الخريطة'}
-          </Link>
-        </div>
-      </div>
-
-      <CollapsibleSection
-        id="personal"
-        defaultOpen={false}
-        title={locale === 'en' ? 'Personal Details' : 'البيانات الشخصية'}
-        icon={IdCard}
-        className="[&_summary]:pb-4"
-        summary={
-          /*
-            What a closed section still tells you — and it can no longer be the
-            document number, which a Lebanese household is no longer asked for
-            at all. The most identifying thing the record now holds takes its
-            place: اسم الأم on a household, مكان الإقامة on a non-resident.
-          */
-          <span className="inline-block max-w-[12rem] truncate align-bottom text-muted-foreground">
-            {isNonResident
-              ? citizen.residencePlace
-              : (citizen.motherName ?? citizen.identityDocNumber ?? null)}
-          </span>
-        }
-      >
-        <div className="-m-5 divide-y">
-          <FactSection
-            title={en ? 'Identity' : 'الهوية'}
-            facts={
-              isNonResident
-                ? [
-                    {
-                      icon: User,
-                      label: en ? 'Name' : 'الاسم',
-                      value: citizen.fullName,
-                    },
-                    /*
-                      Where they live, in the identity block rather than under
-                      «التواصل» — on this kind of record it is not a way to
-                      reach them, it is the fact that defines the record. Law
-                      60/1988 Art. 14 wants the occupancy notice to name the
-                      occupant *and where they live*, and this is that.
-                    */
-                    {
-                      icon: Home,
-                      label: en ? 'Lives in' : 'مكان الإقامة',
-                      value: citizen.residencePlace ?? undefined,
-                    },
-                  ]
-                : [
-                    {
-                      icon: User,
-                      label: en ? 'Name' : 'الاسم',
-                      value: citizen.fullName,
-                    },
-                    /*
-                      Beside the name, because it is part of how this person is
-                      named — and because it is the only thing on this card that
-                      separates them from a namesake now that no identity
-                      document is asked.
-
-                      Rendered as «لم يُسأل» rather than dropped when null,
-                      which is what a household filed before migration 0044
-                      holds. A row that vanishes is indistinguishable from a
-                      field this page forgot; the visible «لم يُسأل» is the
-                      difference between "we did not ask" and "she has no name",
-                      and it is the prompt to ask next time the door opens.
-                    */
-                    {
-                      icon: User,
-                      label: en ? "Mother's Full Name" : 'اسم الأم وشهرتها',
-                      value: citizen.motherName ?? <NotAsked locale={locale} />,
-                    },
-                    {
-                      icon: User,
-                      label: en ? 'Gender' : 'الجنس',
-                      value: labels.gender[citizen.gender as never] ?? citizen.gender,
-                    },
-                    {
-                      icon: Droplet,
-                      label: en ? 'Blood Type' : 'فئة الدم',
-                      value: citizen.bloodType
-                        ? (labels.bloodType?.[citizen.bloodType as never] ?? citizen.bloodType)
-                        : undefined,
-                    },
-                    {
-                      icon: Flag,
-                      label: en ? 'Nationality' : 'الجنسية',
-                      value: citizen.nationality,
-                    },
-                    {
-                      icon: Home,
-                      label: en ? 'Residency Status' : 'صفة الإقامة',
-                      value:
-                        labels.residentStatus[citizen.residentStatus as never] ??
-                        citizen.residentStatus,
-                    },
-                    {
-                      icon: IdCard,
-                      label: en ? 'ID Document Type' : 'نوع وثيقة الإثبات',
-                      value:
-                        labels.identityDocType[citizen.identityDocType as never] ??
-                        citizen.identityDocType,
-                      hint: legacyDocumentHint(citizen, locale),
-                    },
-                    {
-                      icon: FileDigit,
-                      label: en ? 'Document Number' : 'رقم الوثيقة',
-                      value: citizen.identityDocNumber,
-                      ltr: true,
-                      hint: legacyDocumentHint(citizen, locale),
-                    },
-                    citizen.isLebanese
-                      ? {
-                          icon: FileDigit,
-                          label: en ? 'Civil Record (Sijil) No.' : 'رقم السجل',
-                          value: citizen.civilRecordNumber,
-                          ltr: true,
-                        }
-                      : {
-                          icon: FileDigit,
-                          label: en ? 'Residency Permit No.' : 'رقم الإقامة',
-                          value: citizen.residencyNumber,
-                          ltr: true,
-                        },
-                  ]
-            }
-          />
-
-          <div className="grid gap-x-6 gap-y-6 p-6 sm:grid-cols-2 lg:grid-cols-3">
-            <FactSection
-              stack
-              title={en ? 'Contact' : 'التواصل'}
-              facts={[
-                {
-                  icon: Phone,
-                  label: en ? 'Phone' : 'الهاتف',
-                  value: citizen.phone ? <PhoneLink phone={citizen.phone} /> : null,
-                },
-                {
-                  icon: MessageCircle,
-                  label: en ? 'WhatsApp' : 'واتساب',
-                  value: citizen.whatsapp ? (
-                    <WhatsAppPhoneLink phone={citizen.whatsapp} message={waMessage} />
-                  ) : null,
-                },
-                // Who holds the keys here, for an owner who is not here.
-                ...(isNonResident
-                  ? [
-                      {
-                        icon: User,
-                        label: en ? 'Local contact' : 'جهة الاتصال المحلية',
-                        value: citizen.localContactName ?? undefined,
-                      },
-                      {
-                        icon: Phone,
-                        label: en ? 'Local contact phone' : 'هاتف جهة الاتصال',
-                        value: citizen.localContactPhone ? (
-                          <PhoneLink phone={citizen.localContactPhone} />
-                        ) : null,
-                      },
-                    ]
-                  : []),
-              ]}
-            />
-
-            {/*
-              «الأسرة» belongs to a household file. A non-resident record is
-              asked for none of it (`nonResidentOwnerPersonalSchema`), so
-              whatever a converted record still holds is shown below under
-              «بيانات محفوظة», where it is labelled as kept rather than current.
-            */}
-            {isNonResident ? null : (
-              <FactSection
-                stack
-                title={en ? 'Household' : 'الأسرة'}
-                facts={householdFacts(citizen, locale)}
-              />
-            )}
-
-            <FactSection
-              stack
-              title={en ? 'Registration Information' : 'بيانات التسجيل'}
-              facts={[
-                {
-                  icon: Hash,
-                  label: en ? 'Reference Number' : 'الرقم المرجعي',
-                  value: citizen.referenceNumber,
-                  ltr: true,
-                },
-                /*
-                  نوع الملف, stated rather than left to be inferred from the
-                  badge beside the name. It decides which fields this record is
-                  ever asked for, so a reviewer wondering why there is no blood
-                  type should find the answer written down, not have to know it.
-                */
-                {
-                  icon: Signpost,
-                  label: en ? 'Record Type' : 'نوع الملف',
-                  value:
-                    labels.citizenResidence[
-                      (citizen.residence ?? 'RESIDENT') as keyof typeof labels.citizenResidence
-                    ],
-                },
-                {
-                  icon: Calendar,
-                  label: en ? 'First Registered' : 'تاريخ أول تسجيل',
-                  value: formatDate(citizen.registeredAt),
-                },
-              ]}
-            />
           </div>
         </div>
-      </CollapsibleSection>
 
-      <RetainedHouseholdSection citizen={citizen} locale={locale} />
+        {/*
+          ── At a glance ──
 
-      <FeesPanel
-        citizen={citizen}
-        payments={citizen.payments}
-        fees={citizen.fees}
-        canManage={canManage}
-        municipalityName={municipalityName}
-        governorate={settings?.governorate}
-        councilDecisionRef={settings?.councilDecisionRef}
-        district={settings?.district}
-        contactPhone={settings?.contactPhone}
-        officeWhatsapp={settings?.whatsappNumber}
-        locale={locale}
-        onSettled={() => void reload()}
-      />
+          The three numbers somebody came to this page for, answered before any
+          section is read. The balance leads because it is the only one of the
+          three that is ever urgent, and it carries the same tone the ledger
+          gives it — destructive where something is overdue, emerald where there
+          is nothing owed — so the page never says «لا مستحقات» in the colour of
+          a debt.
+        */}
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <StatTile
+            icon={Wallet}
+            label={en ? 'Outstanding' : 'الرصيد المستحق'}
+            tone={
+              citizen.fees.outstandingTotal === 0
+                ? 'good'
+                : citizen.fees.overdueTotal > 0
+                  ? 'bad'
+                  : 'plain'
+            }
+            value={
+              citizen.fees.outstandingTotal > 0 ? (
+                <Money amount={citizen.fees.outstandingTotal} />
+              ) : (
+                <span>{en ? 'Nothing due' : 'لا مستحقات'}</span>
+              )
+            }
+            hint={
+              citizen.fees.overdueTotal > 0
+                ? en
+                  ? 'Includes overdue'
+                  : 'منها متأخرات'
+                : undefined
+            }
+          />
+          <StatTile
+            icon={Building2}
+            label={en ? 'Properties' : 'العقارات'}
+            value={propertyCount}
+            hint={en ? 'Currently held' : 'قائمة حالياً'}
+          />
+          <StatTile
+            icon={FileText}
+            label={en ? 'Applications' : 'الطلبات'}
+            value={citizen.registrations.length}
+            hint={formatDate(citizen.registeredAt)}
+            className="col-span-2 sm:col-span-1"
+          />
+        </dl>
+      </header>
 
-      <CollapsibleSection
-        id="properties"
-        title={locale === 'en' ? 'Properties' : 'العقارات'}
-        icon={FileText}
-        defaultOpen={false}
-        summary={
-          <span className="text-muted-foreground">
-            {propertyCount} {locale === 'en' ? 'properties' : 'عقار'}
-          </span>
-        }
-      >
-        <div className="space-y-4">
+      <div className="grid gap-5 lg:grid-cols-12">
+        {/* ── Rail: who this is ───────────────────────────────────── */}
+        <aside className="space-y-4 lg:col-span-4 lg:sticky lg:top-6 lg:self-start">
+          <InfoCard icon={IdCard} title={en ? 'Identity' : 'الهوية'}>
+            <FactList facts={identityFacts} />
+          </InfoCard>
 
-        {citizen.registrations.map((registration) => (
-          <Card key={registration.id}>
-            <CardHeader className="flex-row items-center justify-between space-y-0 border-b">
-              <div>
-                <CardTitle className="font-mono text-base">
-                  {/* Inline `<bdi>` for the same reason as `Fact` below. */}
-                  <bdi dir="ltr">{registration.referenceNumber}</bdi>
-                </CardTitle>
-                <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
-                  <Calendar className="size-3.5" aria-hidden />
-                  {formatDate(registration.submittedAt)}
-                </p>
-              </div>
-            </CardHeader>
+          {present(contactFacts).length > 0 ? (
+            <InfoCard icon={Phone} title={en ? 'Contact' : 'التواصل'}>
+              <FactList facts={contactFacts} />
+            </InfoCard>
+          ) : null}
 
-            <CardContent className="space-y-4 pt-6">
-              {/*
-                What this record does not know about itself, said first.
+          {/*
+            «الأسرة» belongs to a household file. A non-resident record is asked
+            for none of it (`nonResidentOwnerPersonalSchema`), so whatever a
+            converted record still holds is shown below under «بيانات محفوظة»,
+            where it is labelled as kept rather than current.
+          */}
+          {!isNonResident && present(householdFacts(citizen, locale)).length > 0 ? (
+            <InfoCard icon={Users} title={en ? 'Household' : 'الأسرة'}>
+              <FactList facts={householdFacts(citizen, locale)} />
+            </InfoCard>
+          ) : null}
 
-                Above the properties rather than tucked under them, because it
-                changes how everything below it should be read: a collector
-                looking at a parcel with no رقم العقار needs to know that was a
-                decision someone recorded, not a rendering fault or a field
-                someone forgot.
-              */}
-              {registration.flags.length > 0 ? (
-                <div className="space-y-1.5 rounded-lg border border-warning/40 bg-warning/5 p-3">
-                  <p className="flex items-center gap-1.5 text-sm font-semibold text-warning">
-                    <FileQuestion className="size-4 shrink-0" aria-hidden />
-                    {locale === 'en'
-                      ? `Requires review — ${registration.flags.length} unverified field(s)`
-                      : `يتطلب مراجعة — ${registration.flags.length} حقلاً غير مؤكَّد`}
+          <InfoCard icon={Signpost} title={en ? 'Registration' : 'بيانات التسجيل'}>
+            <FactList facts={registrationFacts} />
+          </InfoCard>
+
+          <RetainedHouseholdSection citizen={citizen} locale={locale} />
+        </aside>
+
+        {/* ── Main: what the record says ──────────────────────────── */}
+        <div className="space-y-5 lg:col-span-8">
+          <FeesPanel
+            citizen={citizen}
+            payments={citizen.payments}
+            fees={citizen.fees}
+            canManage={canManage}
+            municipalityName={municipalityName}
+            governorate={settings?.governorate}
+            councilDecisionRef={settings?.councilDecisionRef}
+            district={settings?.district}
+            contactPhone={settings?.contactPhone}
+            officeWhatsapp={settings?.whatsappNumber}
+            locale={locale}
+            onSettled={() => void reload()}
+          />
+
+          <section className="space-y-3">
+            <SectionHeading
+              icon={Building2}
+              title={locale === 'en' ? 'Properties' : 'العقارات'}
+              count={propertyCount}
+            />
+
+            {citizen.registrations.length === 0 ? (
+              <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                {locale === 'en'
+                  ? 'No registered properties for this citizen.'
+                  : 'لا توجد عقارات مسجّلة لهذا المواطن.'}
+              </p>
+            ) : null}
+
+            {citizen.registrations.map((registration) => (
+              <Card key={registration.id} className="overflow-hidden">
+                <CardHeader className="flex-row items-center justify-between space-y-0 gap-3 border-b bg-muted/30 py-3">
+                  <CardTitle className="font-mono text-sm font-semibold">
+                    {/* Inline `<bdi>` for the same reason as `Fact` below. */}
+                    <bdi dir="ltr">{registration.referenceNumber}</bdi>
+                  </CardTitle>
+                  <p className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <Calendar className="size-3.5" aria-hidden />
+                    {formatDate(registration.submittedAt)}
                   </p>
-                  <ul className="space-y-1 text-sm">
-                    {registration.flags.map((flag) => (
-                      <li key={flag.path}>
-                        <span className="font-medium">{flagFieldLabel(flag.path, locale)}</span>
-                        <span className="text-muted-foreground"> — {flag.reason}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  {canEdit ? (
-                    <Link
-                      href={`${base}/citizens/${citizen.id}/edit`}
-                      className="inline-block pt-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
-                    >
-                      {locale === 'en' ? 'Complete this record' : 'استكمال بيانات السجل'}
-                    </Link>
+                </CardHeader>
+
+                <CardContent className="space-y-4 pt-5">
+                  {/*
+                    What this record does not know about itself, said first.
+
+                    Above the properties rather than tucked under them, because
+                    it changes how everything below it should be read: a
+                    collector looking at a parcel with no رقم العقار needs to
+                    know that was a decision someone recorded, not a rendering
+                    fault or a field someone forgot.
+                  */}
+                  {registration.flags.length > 0 ? (
+                    <div className="space-y-1.5 rounded-lg border border-warning/40 bg-warning/5 p-3">
+                      <p className="flex items-center gap-1.5 text-sm font-semibold text-warning">
+                        <FileQuestion className="size-4 shrink-0" aria-hidden />
+                        {locale === 'en'
+                          ? `Requires review — ${registration.flags.length} unverified field(s)`
+                          : `يتطلب مراجعة — ${registration.flags.length} حقلاً غير مؤكَّد`}
+                      </p>
+                      <ul className="space-y-1 text-sm">
+                        {registration.flags.map((flag) => (
+                          <li key={flag.path}>
+                            <span className="font-medium">{flagFieldLabel(flag.path, locale)}</span>
+                            <span className="text-muted-foreground"> — {flag.reason}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      {canEdit ? (
+                        <Link
+                          href={`${base}/citizens/${citizen.id}/edit`}
+                          className="inline-block pt-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
+                        >
+                          {locale === 'en' ? 'Complete this record' : 'استكمال بيانات السجل'}
+                        </Link>
+                      ) : null}
+                    </div>
                   ) : null}
-                </div>
-              ) : null}
 
-              {/*
-                «ملاحظات» — what the last officer learned by standing there.
+                  {/*
+                    «ملاحظات» — what the last officer learned by standing there.
 
-                Under the flags and above the properties. It is not a warning,
-                so it does not wear the warning colours the flag block does;
-                it is frequently the most useful line on the page for whoever
-                is about to knock on this door, so it is not buried under the
-                property cards either.
+                    Under the flags and above the properties. It is not a
+                    warning, so it does not wear the warning colours the flag
+                    block does; it is frequently the most useful line on the
+                    page for whoever is about to knock on this door, so it is
+                    not buried under the property cards either.
 
-                `whitespace-pre-line` because a note is written as a note: line
-                breaks the officer typed are part of what they said.
-              */}
-              {registration.notes ? (
-                <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
-                  <p className="flex items-center gap-1.5 text-sm font-semibold">
-                    <StickyNote className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                    {locale === 'en' ? 'Notes' : 'ملاحظات'}
-                  </p>
-                  <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
-                    {registration.notes}
-                  </p>
-                </div>
-              ) : null}
+                    `whitespace-pre-line` because a note is written as a note:
+                    line breaks the officer typed are part of what they said.
+                  */}
+                  {registration.notes ? (
+                    <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
+                      <p className="flex items-center gap-1.5 text-sm font-semibold">
+                        <StickyNote className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                        {locale === 'en' ? 'Notes' : 'ملاحظات'}
+                      </p>
+                      <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+                        {registration.notes}
+                      </p>
+                    </div>
+                  ) : null}
 
-              {registration.properties
-                .filter((property) => !property.endedAt)
-                .map((property) => (
-                  <PropertyCard
-                    key={property.id}
-                    property={property}
-                    base={base}
-                    locale={locale}
-                    tenant={tenant}
-                    token={token}
-                    canEdit={canEdit}
-                    onChanged={() => void reload()}
-                  />
-                ))}
-
-              {registration.properties.every((property) => property.endedAt) ? (
-                <p className="text-sm text-muted-foreground">
-                  {locale === 'en' ? 'No current properties in this application.' : 'لا توجد عقارات قائمة في هذا الطلب.'}
-                </p>
-              ) : null}
-
-              {/*
-                «إيجارات منتهية» — tenancies this person has left.
-
-                Kept on the file with their lease rather than deleted, and set
-                apart under their own heading rather than mixed in, so nobody
-                counting what this person holds today counts a flat they left.
-              */}
-              {registration.properties.some((property) => property.endedAt) ? (
-                <div className="space-y-3 border-t pt-4">
-                  <SubHeading icon={History}>
-                    {locale === 'en'
-                      ? `Ended tenancies (${registration.properties.filter((property) => property.endedAt).length})`
-                      : `إيجارات منتهية (${registration.properties.filter((property) => property.endedAt).length})`}
-                  </SubHeading>
                   {registration.properties
-                    .filter((property) => property.endedAt)
+                    .filter((property) => !property.endedAt)
                     .map((property) => (
                       <PropertyCard
                         key={property.id}
@@ -1014,81 +1042,226 @@ export default function CitizenProfilePage({
                         onChanged={() => void reload()}
                       />
                     ))}
-                </div>
-              ) : null}
 
-              <div className="space-y-2 border-t pt-4">
-                <SubHeading icon={FileText}>
-                  {locale === 'en'
-                    ? `Attachments ${registration.documents.length > 0 ? `(${registration.documents.length})` : ''}`
-                    : `المرفقات ${registration.documents.length > 0 ? `(${registration.documents.length})` : ''}`}
-                </SubHeading>
-                {registration.documents.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    {locale === 'en' ? 'No attachments for this application.' : 'لا توجد مرفقات لهذا الطلب.'}
-                  </p>
-                ) : (
-                  <ul className="grid gap-2 sm:grid-cols-2">
-                    {registration.documents.map((document) => (
-                      <li key={document.id}>
-                        <button
-                          type="button"
-                          onClick={() => openDocument(document.id)}
-                          disabled={openingDocId === document.id}
-                          className="flex w-full items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3 text-start transition-colors hover:bg-muted/60 disabled:opacity-60"
-                        >
-                          <span className="flex min-w-0 items-center gap-2">
-                            <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                            <span className="truncate text-sm font-medium">
-                              {labels.documentType?.[document.type as never] ?? document.type}
-                            </span>
-                          </span>
-                          {openingDocId === document.id ? (
-                            <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
-                          ) : (
-                            <ExternalLink className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                          )}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+                  {registration.properties.every((property) => property.endedAt) ? (
+                    <p className="text-sm text-muted-foreground">
+                      {locale === 'en'
+                        ? 'No current properties in this application.'
+                        : 'لا توجد عقارات قائمة في هذا الطلب.'}
+                    </p>
+                  ) : null}
 
-            </CardContent>
-          </Card>
-        ))}
+                  {/*
+                    «إيجارات منتهية» — tenancies this person has left.
 
-        {citizen.registrations.length === 0 ? (
-          <p className="rounded-lg border p-6 text-center text-muted-foreground">
-            {locale === 'en' ? 'No registered properties for this citizen.' : 'لا توجد عقارات مسجّلة لهذا المواطن.'}
-          </p>
-        ) : null}
+                    Kept on the file with their lease rather than deleted, and
+                    set apart under their own heading rather than mixed in, so
+                    nobody counting what this person holds today counts a flat
+                    they left.
+                  */}
+                  {registration.properties.some((property) => property.endedAt) ? (
+                    <div className="space-y-3 border-t pt-4">
+                      <SubHeading icon={History}>
+                        {locale === 'en'
+                          ? `Ended tenancies (${registration.properties.filter((property) => property.endedAt).length})`
+                          : `إيجارات منتهية (${registration.properties.filter((property) => property.endedAt).length})`}
+                      </SubHeading>
+                      {registration.properties
+                        .filter((property) => property.endedAt)
+                        .map((property) => (
+                          <PropertyCard
+                            key={property.id}
+                            property={property}
+                            base={base}
+                            locale={locale}
+                            tenant={tenant}
+                            token={token}
+                            canEdit={canEdit}
+                            onChanged={() => void reload()}
+                          />
+                        ))}
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-2 border-t pt-4">
+                    <SubHeading icon={FileText}>
+                      {locale === 'en'
+                        ? `Attachments ${registration.documents.length > 0 ? `(${registration.documents.length})` : ''}`
+                        : `المرفقات ${registration.documents.length > 0 ? `(${registration.documents.length})` : ''}`}
+                    </SubHeading>
+                    {registration.documents.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        {locale === 'en'
+                          ? 'No attachments for this application.'
+                          : 'لا توجد مرفقات لهذا الطلب.'}
+                      </p>
+                    ) : (
+                      <ul className="grid gap-2 sm:grid-cols-2">
+                        {registration.documents.map((document) => (
+                          <li key={document.id}>
+                            <button
+                              type="button"
+                              onClick={() => openDocument(document.id)}
+                              disabled={openingDocId === document.id}
+                              className="flex w-full items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3 text-start transition-colors hover:bg-muted/60 disabled:opacity-60"
+                            >
+                              <span className="flex min-w-0 items-center gap-2">
+                                <FileText
+                                  className="size-4 shrink-0 text-muted-foreground"
+                                  aria-hidden
+                                />
+                                <span className="truncate text-sm font-medium">
+                                  {labels.documentType?.[document.type as never] ?? document.type}
+                                </span>
+                              </span>
+                              {openingDocId === document.id ? (
+                                <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                              ) : (
+                                <ExternalLink
+                                  className="size-4 shrink-0 text-muted-foreground"
+                                  aria-hidden
+                                />
+                              )}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </section>
+
+          {citizen.landlordOf && citizen.landlordOf.length > 0 ? (
+            <LandlordOfSection
+              cards={citizen.landlordOf}
+              base={base}
+              tenant={tenant}
+              token={token}
+              canEdit={canEdit}
+              onChanged={() => void reload()}
+              locale={locale}
+            />
+          ) : null}
+
+          {/* «ربط مالك بمستأجر», «تسجيل مواطن» and the rest are filed against
+              the `User` row this page is showing — see AUDIT_ENTITY.citizen. */}
+          <ActivityTrail
+            tenant={tenant}
+            locale={locale}
+            base={base}
+            entityType={AUDIT_ENTITY.citizen}
+            entityId={citizenId}
+          />
         </div>
-      </CollapsibleSection>
-
-      {citizen.landlordOf && citizen.landlordOf.length > 0 ? (
-        <LandlordOfSection
-          cards={citizen.landlordOf}
-          base={base}
-          tenant={tenant}
-          token={token}
-          canEdit={canEdit}
-          onChanged={() => void reload()}
-          locale={locale}
-        />
-      ) : null}
-
-      {/* «ربط مالك بمستأجر», «تسجيل مواطن» and the rest are filed against the
-          `User` row this page is showing — see AUDIT_ENTITY.citizen. */}
-      <ActivityTrail
-        tenant={tenant}
-        locale={locale}
-        base={base}
-        entityType={AUDIT_ENTITY.citizen}
-        entityId={citizenId}
-      />
+      </div>
     </div>
+  );
+}
+
+/**
+ * One number from the top of the file, said plainly.
+ *
+ * Three of these sit above the fold and answer the three questions this page is
+ * opened with — what is owed, how much property, how many filings — so that the
+ * commonest visit needs no section opened at all.
+ *
+ * `tone` colours only the value, never the tile: a red card for an overdue
+ * balance turns the whole page into an alert, and the next person to open a file
+ * with a routine unpaid fee reads it as an emergency.
+ */
+function StatTile({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  tone = 'plain',
+  className,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: React.ReactNode;
+  hint?: string;
+  tone?: 'plain' | 'good' | 'bad';
+  className?: string;
+}) {
+  return (
+    <div className={cn('rounded-xl border bg-card p-3.5 shadow-sm', className)}>
+      <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Icon className="size-3.5 shrink-0" aria-hidden />
+        {label}
+      </dt>
+      <dd
+        className={cn(
+          'mt-1.5 text-lg font-bold tracking-tight',
+          tone === 'good' && 'text-emerald-600 dark:text-emerald-400',
+          tone === 'bad' && 'text-destructive',
+        )}
+      >
+        {value}
+      </dd>
+      {hint ? <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
+/** A titled card in the rail. The same chrome `CollapsibleSection` wears, minus
+ *  the fold — these are the facts the page is read for, so they do not fold. */
+function InfoCard({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border bg-card shadow-sm">
+      <h2 className="flex items-center gap-2 border-b px-4 py-3 text-sm font-semibold">
+        <Icon className="size-4 shrink-0 text-primary" aria-hidden />
+        {title}
+      </h2>
+      <div className="p-4">{children}</div>
+    </section>
+  );
+}
+
+/** The heading a main-column section wears, so an open section still announces
+ *  itself as loudly as a closed one used to. */
+function SectionHeading({
+  icon: Icon,
+  title,
+  count,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  count?: number;
+}) {
+  return (
+    <h2 className="flex items-center gap-2 text-base font-semibold">
+      <Icon className="size-4 shrink-0 text-primary" aria-hidden />
+      {title}
+      {count !== undefined ? (
+        <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+          {count}
+        </span>
+      ) : null}
+    </h2>
+  );
+}
+
+/** `FactSection` without the heading — the card above it already carries one. */
+function FactList({ facts }: { facts: FactItem[] }) {
+  const shown = present(facts);
+  if (shown.length === 0) return null;
+  return (
+    <dl className="space-y-3.5">
+      {shown.map((fact) => (
+        <Fact key={fact.label} {...fact} />
+      ))}
+    </dl>
   );
 }
 
@@ -1314,7 +1487,17 @@ function FeesPanel({
     <>
       <CollapsibleSection
         id="fees"
-        defaultOpen={false}
+        /*
+          Open when there is something owed, folded when there is not.
+
+          It used to be folded always, which made the commonest reason to open
+          this page — «شو عليّي؟» at the counter — a click away on every file.
+          The headline tile above now answers the *amount*; this is the working
+          out, and it is worth unfolding exactly when the amount is not zero. A
+          file with nothing due still shows the ledger's own «لا مستحقات» on the
+          fold, so nothing is hidden, only quiet.
+        */
+        defaultOpen={fees.outstandingTotal > 0}
         title={locale === 'en' ? 'Fees & Ledger' : 'الرسوم والمدفوعات'}
         icon={Wallet}
         summary={

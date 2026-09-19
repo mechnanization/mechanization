@@ -46,6 +46,7 @@ export function PossibleDuplicates({
   firstName,
   lastName,
   phone,
+  excludeId,
   locale,
 }: {
   tenant: string;
@@ -53,6 +54,16 @@ export function PossibleDuplicates({
   firstName: unknown;
   lastName: unknown;
   phone: unknown;
+  /**
+   * The file this form is editing, dropped from its own matches.
+   *
+   * Without it the panel opens on every edit announcing that the person on
+   * screen may already be registered — as themselves. A warning that is wrong
+   * every single time is one officers learn to close without reading, which
+   * costs the panel the record where it was right (§8.6 is the same lesson from
+   * a flaky test).
+   */
+  excludeId?: string;
   locale: string;
 }) {
   const en = locale === 'en';
@@ -88,7 +99,10 @@ export function PossibleDuplicates({
           if (cancelled) return;
           const byId = new Map<string, CitizenListItem>();
           for (const result of results) {
-            for (const item of result.items) byId.set(item.id, item);
+            for (const item of result.items) {
+              if (item.id === excludeId) continue;
+              byId.set(item.id, item);
+            }
           }
           setMatches([...byId.values()].slice(0, MAX_SHOWN));
         })
@@ -104,12 +118,20 @@ export function PossibleDuplicates({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [tenant, token, name, digits]);
+  }, [tenant, token, name, digits, excludeId]);
 
   if (matches.length === 0) return null;
 
+  /*
+    The match's own file, under whichever `/citizens/…` route this form is on.
+
+    Anchored at `/citizens/` and told to drop everything after it, because the
+    panel now renders on three: `citizens/new`, `citizens/<id>/edit` and
+    `citizens/queue/<id>`. Matching only `new` left the other two rewriting
+    nothing — every row linked back to the page it was already on.
+  */
   const fileHref = (id: string) =>
-    pathname.replace(/\/citizens\/new(\/.*)?$/, `/citizens/${encodeURIComponent(id)}`);
+    pathname.replace(/(\/citizens)\/.*$/, `$1/${encodeURIComponent(id)}`);
 
   return (
     <div
