@@ -1,6 +1,7 @@
 import { POSSIBLE_DUPLICATE_FLAG_PATH } from '@mechanization/shared-schemas';
 import {
   assessFindings,
+  compareMothers,
   compareNames,
   duplicateSignals,
   editDistance,
@@ -180,6 +181,94 @@ describe('isLikelySamePerson — pairs that are genuinely two people', () => {
         person({ firstName: 'غانم', middleName: 'علي', lastName: 'غانم', motherName: 'زينب سعيد' }),
       ),
     ).toBe(true);
+  });
+});
+
+/**
+ * The mother's name written at two lengths, which is what got past the rule.
+ *
+ * Both pairs below are production, 2026-09-19. Each was a duplicate question
+ * that was never put, because her father's name was typed at one door and left
+ * out at the next and the two readings were compared as single strings.
+ */
+describe('compareMothers — one woman, written long and short', () => {
+  it('reads a name with her father included as the same woman', () => {
+    expect(compareMothers('منيرة عواضة', 'منيرة ابراهيم عواضة')).toBe('SAME');
+    expect(compareMothers('نوال محمود شعبان', 'نوال شعبان')).toBe('SAME');
+    expect(compareMothers('حُسن شلهوب', 'حُسن مرشد شلهوب')).toBe('SAME');
+  });
+
+  it('keeps a different family name apart, however alike the first', () => {
+    expect(compareMothers('فاطمة دياب', 'فاطمة زيون')).toBe('DIFFERENT');
+    expect(compareMothers('ليديا وطفى', 'سناء النويري')).toBe('DIFFERENT');
+  });
+
+  it('allows one slip inside a part, and in a short part across the whole name', () => {
+    expect(compareMothers('فاطمة دياب', 'فاطة دياب')).toBe('SAME');
+    expect(compareMothers('زينب سعد', 'زينب سعيد')).toBe('SAME');
+    expect(compareMothers('نور الهدى حدرج', 'نور الهدي حدرج')).toBe('SAME');
+  });
+
+  it('matches a lone part against any part, being too little to refuse on', () => {
+    expect(compareMothers('فاطمة', 'فاطمة دياب')).toBe('SAME');
+    expect(compareMothers('دياب', 'فاطمة دياب')).toBe('SAME');
+    expect(compareMothers('مريم', 'فاطمة دياب')).toBe('DIFFERENT');
+  });
+
+  it('is unknown, not different, when one side has no mother on file', () => {
+    expect(compareMothers(null, 'فاطمة دياب')).toBe('UNKNOWN');
+    expect(compareMothers('  ', 'فاطمة دياب')).toBe('UNKNOWN');
+  });
+
+  it('asks about سمير عبد الكريم/عبد المريم عواضة — the pair that got through', () => {
+    expect(
+      ask(
+        person({
+          firstName: 'سمير',
+          middleName: 'عبد الكريم',
+          lastName: 'عواضة',
+          motherName: 'منيرة عواضة',
+          phone: '+96176012427',
+        }),
+        person({
+          firstName: 'سمير',
+          middleName: 'عبد المريم',
+          lastName: 'عواضة',
+          motherName: 'منيرة ابراهيم عواضة',
+          phone: '+96176012427',
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('asks about تهاني مرزوق/مرزوء, who share neither a phone nor a spelling', () => {
+    expect(
+      ask(
+        person({
+          firstName: 'تهاني',
+          middleName: 'محمد',
+          lastName: 'مرزوق',
+          motherName: 'نوال شعبان',
+          phone: '+96171291921',
+        }),
+        person({
+          firstName: 'تهاني',
+          middleName: 'محمد',
+          lastName: 'مرزوء',
+          motherName: 'نوال محمود شعبان',
+          phone: '+96171515149',
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('still refuses to ask about brothers, whose mother is written one way', () => {
+    expect(
+      ask(
+        person({ firstName: 'حسن', middleName: 'عبد الأمير', lastName: 'طحيني', motherName: 'فاتن الزوزو' }),
+        person({ firstName: 'حسين', middleName: 'عبد الأمير', lastName: 'طحيني', motherName: 'فاتن الزوزو' }),
+      ),
+    ).toBe(false);
   });
 });
 

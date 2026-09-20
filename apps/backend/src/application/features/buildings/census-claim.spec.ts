@@ -36,7 +36,7 @@ const CITIZEN = 'citizen-1';
 const REGISTRATION = 'reg-1';
 
 interface HarnessOptions {
-  /** How many units the structure has — the منزل inference's one condition. */
+  /** How many units the structure has — what decides منزل or مبنى on a card being minted. */
   unitsInBuilding?: number;
   /** `null` models a citizen with no file to attach a card to. */
   registration?: { id: string } | null;
@@ -63,6 +63,13 @@ interface HarnessOptions {
   owners?: Record<string, { phone: string | null; whatsapp?: string | null }>;
   /** Current owner spells on units other than this one, for the typed-number reuse. */
   otherOwnerSpells?: Array<{ unitId: string }>;
+  /**
+   * What the census says *this* citizen currently holds in *this* structure.
+   *
+   * What a منزل card is about is read from here, because the card itself does
+   * not say: it bills from its own columns and has no units array.
+   */
+  spellsHere?: Array<{ unitId: string; role: string }>;
   /**
    * The area the census already holds for the flat.
    *
@@ -161,7 +168,13 @@ function harness(options: HarnessOptions = {}) {
         citizen: { firstName: 'محمد', lastName: 'لا' },
       }),
       update: jest.fn(),
-      findMany: jest.fn().mockResolvedValue(options.otherOwnerSpells ?? []),
+      // Two different reads again: this citizen's own spells in this building,
+      // and other people's owner spells on a candidate card's flats.
+      findMany: jest
+        .fn()
+        .mockImplementation(({ where }: { where: Record<string, unknown> }) =>
+          Promise.resolve(where.unit ? (options.spellsHere ?? []) : (options.otherOwnerSpells ?? [])),
+        ),
     },
     building: {
       findUnique: jest.fn().mockResolvedValue({
@@ -339,6 +352,152 @@ describe('recordOccupancy — establishing the census claim', () => {
     // Derived from the tenancy: `bearsFee` reads a null حالة as "nobody was
     // asked" and charges the owner an occupancy fee the tenant is already paying.
     expect(data.unitStatus).toBe('RENTED');
+  });
+
+  /*
+    Z-5-201-A, 2026-09-19. An officer filed a citizen on a منزل card of 130 m²
+    while the structure was a single house, then made it a three-floor building,
+    added a 9 m² مستودع, and recorded the same man as its owner. The مستودع was
+    ticked onto his منزل card — and `billableUnits` reads a card's rows whenever
+    it has any and its own columns only while it has none, so from that moment
+    the municipality assessed 9 m² and his home was not assessed at all.
+
+    One matrix tap, no warning, and nothing in the file that looks wrong.
+  */
+  it('leaves a منزل card unticked when they hold another flat here, so the house stays billed', async () => {
+    const { service, buildingUnitCreate, propertyEntryCreate } = harness({
+      unitsInBuilding: 2,
+      existingEntry: { id: 'entry-house', propertyType: 'HOUSE', units: [] },
+      // The home the منزل card was filed for, which no row names.
+      spellsHere: [
+        { unitId: 'unit-home', role: 'OWNER' },
+        { unitId: UNIT, role: 'OWNER' },
+      ],
+    });
+
+    const result = await record(service);
+
+    expect(buildingUnitCreate).not.toHaveBeenCalled();
+    expect(result.fileLink.outcome).toBe('ENTRY_CREATED');
+    const { data } = propertyEntryCreate.mock.calls[0][0];
+    expect(data.units.create.unitId).toBe(UNIT);
+  });
+
+  it('writes nothing when the منزل card is about this very flat', async () => {
+    // The same shape, minus the second holding: nothing else here is theirs, so
+    // the card that bills from its own columns is this flat's card. Re-recording
+    // the spell — an owner link re-running over a flat the matrix already has —
+    // must not mint a second card and bill the man twice.
+    const { service, buildingUnitCreate, propertyEntryCreate } = harness({
+      unitsInBuilding: 2,
+      existingEntry: { id: 'entry-house', propertyType: 'HOUSE', units: [] },
+      spellsHere: [{ unitId: UNIT, role: 'OWNER' }],
+    });
+
+    const result = await record(service);
+
+    expect(buildingUnitCreate).not.toHaveBeenCalled();
+    expect(propertyEntryCreate).not.toHaveBeenCalled();
+    expect(result.fileLink).toEqual({
+      backed: true,
+      outcome: 'ALREADY_CLAIMED',
+      propertyEntryId: 'entry-house',
+    });
+  });
+
+  it('files a flat on a built-up منزل as a مبنى card naming it', async () => {
+    /*
+      With several units standing there is nothing for a card billing from its
+      own columns to be about, and no honest way to make it say which flat it
+      is: `PropertyEntry` forbids a HOUSE card a units array, the منزل branch
+      of `propertyEntrySchema` has no such field for the form to round-trip,
+      and a row written past both is deleted by the first save of the file.
+
+      So the census decides نوع العقار, not `STRUCTURE_TYPE_MAP` alone.
+    */
+    const { service, propertyEntryCreate } = harness({
+      unitsInBuilding: 3,
+      structureType: 'INDEPENDENT_HOUSE',
+    });
+
+    await record(service, { role: 'TENANT' });
+
+    const { data } = propertyEntryCreate.mock.calls[0][0];
+    expect(data.propertyType).toBe('BUILDING');
+    expect(data.units.create.unitId).toBe(UNIT);
+    // The columns a منزل bills from stay empty: the row carries the flat.
+    expect(data.unitArea).toBeUndefined();
+    expect(data.unitType).toBeUndefined();
+  });
+
+  it('still files a منزل as a منزل while it is the only unit standing', async () => {
+    const { service, propertyEntryCreate } = harness({
+      unitsInBuilding: 1,
+      structureType: 'INDEPENDENT_HOUSE',
+      unitArea: 130,
+    });
+
+    await record(service);
+
+    const { data } = propertyEntryCreate.mock.calls[0][0];
+    expect(data.propertyType).toBe('HOUSE');
+    expect(data.units).toBeUndefined();
+    expect(data.unitArea).toBe(130);
+  });
+
+  it('lets two منزل cards account for two flats rather than minting a third', async () => {
+    /*
+      Neither card says which flat it is, so the flats are counted against the
+      cards rather than matched to them. Two column-billing cards cover two
+      flats between them, and this is one of the two — a third card would bill
+      the man for a flat he holds once, twice.
+
+      Reachable only through cards filed by hand: this path mints at most one
+      per capacity per structure. Which is the point — the rule has to hold on
+      data it did not create.
+    */
+    const { service, buildingUnitCreate, propertyEntryCreate } = harness({
+      unitsInBuilding: 3,
+      existingCards: [
+        { id: 'entry-a', propertyType: 'HOUSE', occupancyType: 'OWNER', units: [] },
+        { id: 'entry-b', propertyType: 'HOUSE', occupancyType: 'OWNER', units: [] },
+      ],
+      spellsHere: [
+        { unitId: 'unit-home', role: 'OWNER' },
+        { unitId: UNIT, role: 'OWNER' },
+      ],
+    });
+
+    const result = await record(service);
+
+    expect(buildingUnitCreate).not.toHaveBeenCalled();
+    expect(propertyEntryCreate).not.toHaveBeenCalled();
+    expect(result.fileLink.outcome).toBe('ALREADY_CLAIMED');
+    expect(result.fileLink.propertyEntryId).toBe('entry-a');
+  });
+
+  it('files the flat those cards cannot account for', async () => {
+    // Three flats held, two cards that each bill one: the surplus gets its own.
+    const { service, buildingUnitCreate, propertyEntryCreate } = harness({
+      unitsInBuilding: 4,
+      existingCards: [
+        { id: 'entry-a', propertyType: 'HOUSE', occupancyType: 'OWNER', units: [] },
+        { id: 'entry-b', propertyType: 'HOUSE', occupancyType: 'OWNER', units: [] },
+      ],
+      spellsHere: [
+        { unitId: 'unit-home', role: 'OWNER' },
+        { unitId: 'unit-shop', role: 'OWNER' },
+        { unitId: UNIT, role: 'OWNER' },
+      ],
+    });
+
+    const result = await record(service);
+
+    // Never as a row on one of them: that card would stop billing its own flat.
+    expect(buildingUnitCreate).not.toHaveBeenCalled();
+    expect(result.fileLink.outcome).toBe('ENTRY_CREATED');
+    const { data } = propertyEntryCreate.mock.calls[0][0];
+    expect(data.units.create.unitId).toBe(UNIT);
   });
 
   it('adds the missing tick to a card that already itemises other flats', async () => {
