@@ -17,6 +17,7 @@ import { formatDateTime, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { FactCell, FactRow } from '@/components/ui/facts';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -201,8 +202,19 @@ export function ReviewQueue({
             const badge = STATE_BADGE[item.state];
             const openReturn = item.history.find((entry) => entry.outcome === 'RETURNED' && !entry.resolvedAt);
             return (
-              <li key={item.registrationId} className="rounded-xl border bg-card">
-                <div className="space-y-3 p-4">
+              /*
+                Bands, not one run of stacked blocks.
+
+                A record card carries four different kinds of thing — who and
+                when, the property claimed, the fields left unconfirmed, the
+                review history — and run together with `space-y` they read as
+                one wall of small text a reviewer has to parse before they can
+                decide anything. A rule between them says where each answer
+                stops, and every band lays its facts on the same column rhythm
+                so «النوع» sits under «سجَّله» down the whole page.
+              */
+              <li key={item.registrationId} className="overflow-hidden rounded-xl border bg-card">
+                <div className="divide-y [&>*]:px-4 [&>*]:py-3">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                     <Link
                       href={`${base}/citizens/${encodeURIComponent(item.citizen.id)}`}
@@ -221,55 +233,138 @@ export function ReviewQueue({
                     </span>
                   </div>
 
-                  <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                    <span>
-                      {en ? 'Filed by' : 'سجَّله'}{' '}
-                      <span className="font-medium text-foreground/80">{item.officer?.name ?? (en ? 'unknown' : 'غير معروف')}</span>
-                    </span>
+                  {/*
+                    The record itself, on the card's column rhythm.
+
+                    This was a run-on line — «سجَّله فلان  والدته فلانة  ٤ أفراد
+                    مقيم» — readable once and unscannable down a queue of
+                    twenty. The fields a decision actually turns on (who filed
+                    it, when it last moved, how many doors it claims) are
+                    stated rather than left for whoever thinks to open the file.
+                  */}
+                  <FactRow columns>
+                    <FactCell
+                      label={en ? 'Filed by' : 'سجَّله'}
+                      value={item.officer?.name ?? (en ? 'unknown' : 'غير معروف')}
+                    />
+                    <FactCell label={en ? 'Filed on' : 'تاريخ التقديم'} value={formatDateTime(item.submittedAt)} />
+                    {item.updatedAt !== item.submittedAt ? (
+                      <FactCell label={en ? 'Last edited' : 'آخر تعديل'} value={formatDateTime(item.updatedAt)} />
+                    ) : null}
+                    <FactCell
+                      label={en ? 'Record ref.' : 'مرجع السجل'}
+                      className="font-mono"
+                      value={item.referenceNumber}
+                    />
                     {item.citizen.motherName ? (
-                      <span>{en ? `mother: ${item.citizen.motherName}` : `والدته: ${item.citizen.motherName}`}</span>
+                      <FactCell label={en ? 'Mother' : 'اسم الأم'} value={item.citizen.motherName} />
                     ) : null}
                     {item.citizen.householdMembers != null ? (
-                      <span>{en ? `${item.citizen.householdMembers} in household` : `${item.citizen.householdMembers} أفراد`}</span>
+                      <FactCell
+                        label={en ? 'Household' : 'أفراد الأسرة'}
+                        value={
+                          en
+                            ? `${item.citizen.householdMembers}`
+                            : `${item.citizen.householdMembers} أفراد`
+                        }
+                      />
                     ) : null}
-                    <span>{labels.citizenResidence[item.citizen.residence as never] ?? item.citizen.residence}</span>
-                  </p>
+                    <FactCell
+                      label={en ? 'Residence' : 'مكان الإقامة'}
+                      value={labels.citizenResidence[item.citizen.residence as never] ?? item.citizen.residence}
+                    />
+                    <FactCell
+                      label={en ? 'Properties' : 'العقارات'}
+                      value={
+                        item.properties.length === 0
+                          ? en
+                            ? 'none on this record'
+                            : 'لا عقار على هذا السجل'
+                          : en
+                            ? `${item.properties.length}`
+                            : `${item.properties.length}`
+                      }
+                    />
+                  </FactRow>
 
-                  {item.properties.length > 0 ? (
-                    <ul className="flex flex-wrap gap-1.5">
-                      {item.properties.map((card, index) => (
-                        <li
-                          key={`${item.registrationId}-${index}`}
-                          className="rounded-md bg-muted/50 px-2 py-1 text-xs text-foreground/90"
-                        >
-                          {labels.propertyType[card.propertyType as never] ?? card.propertyType}
-                          {card.occupancyType
-                            ? ` · ${labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}`
-                            : ''}
-                          {card.propertyNumber ? ` · ${en ? 'parcel' : 'عقار'} ${card.propertyNumber}` : ''}
-                          {card.buildingCode ? ` · ${card.buildingCode}` : ''}
-                          {card.unitCount > 0 ? ` · ${card.unitCount} ${en ? 'unit(s)' : 'وحدة'}` : ''}
-                          {card.unitArea != null ? ` · ${card.unitArea} ${en ? 'm²' : 'م²'}` : ''}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">{en ? 'No property on this record.' : 'لا عقار على هذا السجل.'}</p>
-                  )}
+                  {/*
+                    Each property spelled out rather than squeezed into a pill.
+                    A «شقة · مالك · عقار 498 · X-498-A · 3 وحدة» chip hides which
+                    dot is which the moment one of the parts is missing.
+                  */}
+                  {item.properties.map((card, index) => (
+                    <div key={`${item.registrationId}-${index}`} className="space-y-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {item.properties.length > 1
+                          ? `${en ? 'Property' : 'العقار'} ${index + 1}`
+                          : en
+                            ? 'Property'
+                            : 'العقار'}
+                      </p>
+                      <FactRow columns>
+                        <FactCell
+                          label={en ? 'Type' : 'النوع'}
+                          value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
+                        />
+                        {card.occupancyType ? (
+                          <FactCell
+                            label={en ? 'Occupancy' : 'صفة الإشغال'}
+                            value={labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}
+                          />
+                        ) : null}
+                        {card.propertyNumber ? (
+                          <FactCell label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
+                        ) : null}
+                        {card.buildingCode || card.buildingName ? (
+                          <FactCell
+                            label={en ? 'Building' : 'المبنى'}
+                            value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
+                          />
+                        ) : null}
+                        {card.unitCount > 0 ? (
+                          <FactCell
+                            label={en ? 'Units' : 'عدد الوحدات'}
+                            value={en ? `${card.unitCount}` : `${card.unitCount} وحدة`}
+                          />
+                        ) : null}
+                        {card.unitArea != null ? (
+                          <FactCell
+                            label={en ? 'Area' : 'المساحة'}
+                            value={`${card.unitArea} ${en ? 'm²' : 'م²'}`}
+                          />
+                        ) : null}
+                      </FactRow>
+                    </div>
+                  ))}
 
                   {item.flags.length > 0 ? (
-                    <dl className="grid gap-x-3 gap-y-1 rounded-lg bg-warning/5 p-2.5 text-xs sm:grid-cols-[minmax(8rem,max-content)_1fr]">
-                      {item.flags.map((flag) => (
-                        <div key={flag.path} className="contents">
-                          <dt className="font-medium text-warning">{flagFieldLabel(flag.path, locale)}</dt>
-                          <dd className="text-muted-foreground">{flag.reason}</dd>
-                        </div>
-                      ))}
-                    </dl>
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-warning">
+                        {en ? 'Fields left unconfirmed' : 'حقول غير مؤكَّدة'}
+                      </p>
+                      <FactRow columns>
+                        {item.flags.map((flag) => (
+                          <FactCell
+                            key={flag.path}
+                            label={
+                              <span className="text-warning">{flagFieldLabel(flag.path, locale)}</span>
+                            }
+                            className="max-w-sm text-muted-foreground"
+                            value={flag.reason}
+                          />
+                        ))}
+                      </FactRow>
+                    </div>
                   ) : null}
 
+                  {/* Already its own band — no inner box needed on top of it. */}
                   {item.notes ? (
-                    <p className="rounded-lg bg-muted/50 px-3 py-2 text-xs leading-relaxed">{item.notes}</p>
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {en ? 'Officer’s note' : 'ملاحظة الموظف'}
+                      </p>
+                      <p className="text-xs leading-relaxed">{item.notes}</p>
+                    </div>
                   ) : null}
 
                   {item.history.length > 0 ? (
@@ -277,9 +372,11 @@ export function ReviewQueue({
                       <summary className="w-fit cursor-pointer text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
                         {en ? `Review history (${item.history.length})` : `سجل المراجعات (${item.history.length})`}
                       </summary>
-                      <ol className="mt-2 space-y-1.5">
+                      {/* Divided, not boxed — a rule separates these entries
+                          without drawing a frame round every value in them. */}
+                      <ol className="mt-2 divide-y">
                         {item.history.map((entry) => (
-                          <li key={entry.id} className="rounded-md border px-2.5 py-1.5">
+                          <li key={entry.id} className="py-1.5 first:pt-0 last:pb-0">
                             <span className="font-medium">
                               {entry.outcome === 'APPROVED'
                                 ? en
@@ -310,10 +407,12 @@ export function ReviewQueue({
                   ) : null}
 
                   {openReturn ? (
-                    <p className="rounded-lg bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
-                      {en ? 'Waiting on the officer: ' : 'بانتظار الموظف: '}
-                      {openReturn.reason}
-                    </p>
+                    <div className="space-y-1 bg-warning/5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-warning">
+                        {en ? 'Waiting on the officer' : 'بانتظار الموظف'}
+                      </p>
+                      <p className="text-xs leading-relaxed text-warning">{openReturn.reason}</p>
+                    </div>
                   ) : null}
                 </div>
 

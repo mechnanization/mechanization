@@ -89,6 +89,24 @@ export const envSchema = z
      * looking stale, which a historical log tolerates fine.
      */
     AUDIT_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(20),
+    /**
+     * «مراجعة الجودة» — the eight data-quality scans, the per-officer roll-up
+     * built on them, and the review queue.
+     *
+     * Far longer than the audit trail's because the cost is the other way
+     * round: one open of that screen reads every active citizen and compares
+     * them pairwise inside each name block, then reads every building to
+     * measure distances between them. The staleness this buys back is bounded
+     * by invalidation, not by the clock — `DataQualityService` and
+     * `RecordReviewService` clear it on every write that can change an answer
+     * (a decision, a correcting edit, a new filing, a dismissal), so this is
+     * the backstop for a write some *other* process made.
+     *
+     * `nonnegative` rather than `positive`: zero is the documented way to turn
+     * caching off for a municipality that would rather pay the scan every time,
+     * and both services branch on it because `EX 0` is an error in Redis.
+     */
+    QUALITY_CACHE_TTL_SECONDS: z.coerce.number().int().nonnegative().default(180),
 
     /**
      * Shared secret for the Vercel Cron endpoints. Optional so a local or

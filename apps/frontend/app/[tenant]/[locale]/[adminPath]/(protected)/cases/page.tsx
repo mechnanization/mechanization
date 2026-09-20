@@ -36,6 +36,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { DatePicker } from '@/components/ui/date-picker';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
@@ -188,6 +189,15 @@ export default function CasesPage({
   const [zoneId, setZoneId] = useState('');
   const [parcelNumber, setParcelNumber] = useState('');
   const [buildingCode, setBuildingCode] = useState('');
+  /**
+   * When the case was opened — «ماذا ورد هذا الأسبوع».
+   *
+   * `createdAt`, not `scheduledRevisitAt`: a revisit date is set on only some
+   * types, so it would silently drop every other row from a range that asked
+   * an innocent question. `YYYY-MM-DD`, both ends inclusive.
+   */
+  const [openedFrom, setOpenedFrom] = useState('');
+  const [openedTo, setOpenedTo] = useState('');
   /** Which building's matrix is open from a case row, if any. */
   const [matrixId, setMatrixId] = useState<string | null>(null);
 
@@ -249,18 +259,32 @@ export default function CasesPage({
     const types = CASE_TABS.find((entry) => entry.id === tab)?.types ?? null;
     const parcel = parcelNumber.trim();
     const code = buildingCode.trim().toLowerCase();
+    /*
+      Local midnight to local end-of-day, so a range typed as «من ١٥ إلى ١٥»
+      holds everything logged on the 15th as the officer who logged it would
+      count it. `GET /cases` takes the same range as ISO instants for callers
+      that want the server to narrow; this page filters in the browser to keep
+      the conversion strip above computed over every case, as it documents.
+    */
+    const after = openedFrom ? new Date(`${openedFrom}T00:00:00`).getTime() : null;
+    const before = openedTo ? new Date(`${openedTo}T23:59:59.999`).getTime() : null;
 
     return allItems.filter((item) => {
       if (types && !types.includes(item.caseType)) return false;
       if (parcel && item.propertyNumber !== parcel) return false;
       if (code && !(item.buildingCode ?? '').toLowerCase().includes(code)) return false;
+      if (after !== null || before !== null) {
+        const opened = new Date(item.createdAt).getTime();
+        if (after !== null && opened < after) return false;
+        if (before !== null && opened > before) return false;
+      }
       if (zoneId) {
         const zone = item.propertyNumber ? zoneOfParcel[item.propertyNumber] : undefined;
         if (zone?.id !== zoneId) return false;
       }
       return true;
     });
-  }, [allItems, tab, parcelNumber, buildingCode, zoneId, zoneOfParcel]);
+  }, [allItems, tab, parcelNumber, buildingCode, openedFrom, openedTo, zoneId, zoneOfParcel]);
 
   /** How many cases each tab holds, so an empty queue is visible before it is opened. */
   const tabCounts = useMemo(() => {
@@ -273,7 +297,7 @@ export default function CasesPage({
     return counts;
   }, [allItems]);
 
-  const activeFilters = [zoneId, parcelNumber, buildingCode].filter(Boolean).length;
+  const activeFilters = [zoneId, parcelNumber, buildingCode, openedFrom, openedTo].filter(Boolean).length;
 
   /**
    * The number this whole bridge exists to answer. Of every case ever
@@ -723,6 +747,26 @@ export default function CasesPage({
           className="h-9 w-36 rounded-md border border-input bg-background px-3 text-start text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
         />
 
+        {/* «من» / «إلى» on the day the case was opened. */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">{locale === 'en' ? 'Opened' : 'فُتحت'}</span>
+          <DatePicker
+            id="cases-from"
+            value={openedFrom}
+            onChange={setOpenedFrom}
+            max={openedTo || undefined}
+            placeholder={locale === 'en' ? 'From' : 'من'}
+            locale={locale === 'en' ? 'en' : 'ar'}
+          />
+          <DatePicker
+            id="cases-to"
+            value={openedTo}
+            onChange={setOpenedTo}
+            placeholder={locale === 'en' ? 'To' : 'إلى'}
+            locale={locale === 'en' ? 'en' : 'ar'}
+          />
+        </div>
+
         {activeFilters > 0 ? (
           <Button
             variant="ghost"
@@ -731,6 +775,8 @@ export default function CasesPage({
               setZoneId('');
               setParcelNumber('');
               setBuildingCode('');
+              setOpenedFrom('');
+              setOpenedTo('');
             }}
           >
             <X className="size-4" aria-hidden />

@@ -10,6 +10,7 @@ import { ZodValidationPipe } from '../../application/common/pipes/zod-validation
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
+import { parseDate } from './query-params';
 
 /**
  * Sits under `t/:tenantSlug` like every other tenant-scoped controller — that
@@ -42,9 +43,21 @@ export class CasesController {
     @Query('caseType') caseType?: string,
     @Query('buildingId') buildingId?: string,
     @Query('unitId') unitId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     return {
-      cases: await this.cases.list({ propertyNumber, status, caseType, buildingId, unitId }),
+      cases: await this.cases.list({
+        propertyNumber,
+        status,
+        caseType,
+        buildingId,
+        unitId,
+        // An unparseable date is dropped rather than sent on as `Invalid Date`,
+        // which Prisma turns into a 500 for what is a malformed query string.
+        from: parseDate(from),
+        to: parseDate(to),
+      }),
     };
   }
 

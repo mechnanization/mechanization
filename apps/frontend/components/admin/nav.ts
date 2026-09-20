@@ -12,12 +12,14 @@ import {
   Receipt,
   Settings,
   ShieldCheck,
+  ShieldQuestion,
   UserPlus,
   Users,
   UsersRound,
   type LucideIcon,
 } from 'lucide-react';
 import { STAFF_ROLE } from '@mechanization/shared-schemas';
+import { QUALITY_REVIEWER_ROLES } from '@/components/admin/quality/quality-screen';
 
 /**
  * Every staff role there is — spelled out rather than left implicit.
@@ -79,9 +81,9 @@ export interface NavGroup {
 }
 
 /**
- * An unlabelled landing pair, then four groups in the order a clerk's day runs:
+ * An unlabelled landing pair, then five groups in the order a clerk's day runs:
  * the register, the money raised against it, the land those records describe,
- * and the portal's own administration.
+ * the checking of all three, and the portal's own administration.
  *
  * A flat list of ten was past scannable — «القطاعات» and «الموظفون» read as
  * equally likely neighbours of «المواطنون» when they belong to different jobs
@@ -215,35 +217,6 @@ export const NAV_GROUPS: NavGroup[] = [
           'tenant',
         ],
       },
-      /*
-        The second pair of eyes on what the field filed.
-
-        Beside the register rather than under «النظام»: what it reviews is the
-        records themselves, and the person doing it moves between this screen
-        and «المواطنون» all day. Held to the roles `QualityController` lets
-        decide — an officer's own returned records and re-checks are on their
-        own «أرباحي والمسح الميداني» instead, so nobody is offered a screen
-        that would only tell them their work is being watched.
-      */
-      {
-        path: '/quality',
-        label: 'مراجعة الجودة',
-        labelEn: 'Quality Review',
-        icon: ClipboardCheck,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'ADMINISTRATIVE_OFFICER'],
-        keywords: [
-          'مراجعة',
-          'جودة',
-          'تكرار',
-          'تدقيق',
-          'اعتماد',
-          'إعادة',
-          'تحقق ميداني',
-          'quality',
-          'review',
-          'duplicates',
-        ],
-      },
       // A visit that didn't produce a citizen — nobody home, gate locked —
       // sits next to the registry it feeds rather than under land/map, since
       // what it records is "who to go back to", not a parcel's own facts.
@@ -330,10 +303,63 @@ export const NAV_GROUPS: NavGroup[] = [
       },
     ],
   },
+  /*
+    Checking the work, as its own section.
+
+    «مراجعة الجودة» was one row opening one page of four tabs, and a tab is not
+    addressable: it cannot be linked from a notification, cannot be opened in a
+    second window beside «المواطنون», and hides three of the four screens from
+    the command palette. Four rows, four pages.
+
+    That made a section worth having. The four screens were the eighth row of
+    «السجل», which the header of this file already warns about — a heading with
+    eight rows under it is the flat list again — and they are not *the register*
+    anyway, they are the checking of it. «سجل النشاطات» moves here for the same
+    reason: an auditor reading who changed what is doing this job, not
+    configuring the municipality, and «النظام» is left as what it says —
+    settings and accounts.
+
+    Every row is held to the roles `QualityController` enforces with
+    `REVIEWER_ROLES`. An officer's own returned records and the re-checks they
+    may do are on «أرباحي والمسح الميداني» instead, so nobody is offered a
+    screen that would only tell them their work is being watched.
+  */
   {
-    label: 'النظام',
-    labelEn: 'System',
+    label: 'المراجعة والتدقيق',
+    labelEn: 'Review & audit',
     items: [
+      {
+        path: '/quality/reviews',
+        label: 'السجلات',
+        labelEn: 'Records to review',
+        icon: ClipboardCheck,
+        roles: QUALITY_REVIEWER_ROLES,
+        keywords: ['مراجعة', 'اعتماد', 'إعادة', 'جودة', 'review', 'approve', 'return'],
+      },
+      {
+        path: '/quality/findings',
+        label: 'ملاحظات الجودة',
+        labelEn: 'Quality findings',
+        icon: ShieldQuestion,
+        roles: QUALITY_REVIEWER_ROLES,
+        keywords: ['تكرار', 'جودة', 'تناقض', 'ملاحظات', 'findings', 'duplicates', 'quality'],
+      },
+      {
+        path: '/quality/checks',
+        label: 'التحقق الميداني',
+        labelEn: 'Field re-checks',
+        icon: ClipboardList,
+        roles: QUALITY_REVIEWER_ROLES,
+        keywords: ['تحقق', 'عيّنة', 'ميداني', 'check', 'sample', 'field'],
+      },
+      {
+        path: '/quality/officers',
+        label: 'الجودة حسب الموظف',
+        labelEn: 'Quality by officer',
+        icon: UsersRound,
+        roles: QUALITY_REVIEWER_ROLES,
+        keywords: ['موظف', 'أداء', 'جودة', 'officer', 'performance', 'quality'],
+      },
       {
         path: '/audit',
         label: 'سجل النشاطات',
@@ -343,6 +369,12 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: ['SUPER_ADMIN', 'AUDITOR'],
         keywords: ['تدقيق', 'تاريخ', 'تغييرات', 'audit', 'logs'],
       },
+    ],
+  },
+  {
+    label: 'النظام',
+    labelEn: 'System',
+    items: [
       {
         path: '/settings',
         label: 'إعدادات البلدية',

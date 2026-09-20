@@ -64,7 +64,17 @@ describeIfDb('Quality review', () => {
     context = new TenantContextService();
     events = new EventEmitter2();
 
-    const cache = { get: async () => null, set: async () => undefined };
+    /*
+      Always a miss, so every assertion below reads the register rather than
+      whatever a previous case left behind. `DataQualityService` caches its
+      eight scans in production; a test that shared them could not tell a
+      finding that was fixed from one that was merely remembered.
+    */
+    const cache = {
+      get: async () => null,
+      set: async () => undefined,
+      invalidatePrefix: async () => undefined,
+    };
     audit = new AuditService(new PrismaAuditRepository(context), context, cache as never, { get: () => 0 } as never);
     events.on('building.changed', (payload) => audit.onBuildingChanged(payload));
     events.on('citizen.changed', (payload) => audit.onCitizenChanged(payload));
@@ -73,8 +83,8 @@ describeIfDb('Quality review', () => {
     const cases = new CasesService(new PrismaCaseRepository(context), {} as never, events);
     buildings = new BuildingsService(context, cases, events);
     const links = new LandlordLinkService(context, buildings, events);
-    reviews = new RecordReviewService(context, events);
-    quality = new DataQualityService(context, links, events);
+    reviews = new RecordReviewService(context, events, cache as never, { get: () => 0 } as never);
+    quality = new DataQualityService(context, links, events, cache as never, { get: () => 0 } as never);
     events.on('citizen.changed', (payload) => reviews.onCitizenChanged(payload));
 
     for (const [key, first, role] of [

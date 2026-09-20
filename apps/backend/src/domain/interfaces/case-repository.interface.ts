@@ -49,6 +49,16 @@ export interface CaseListFilter {
   caseType?: string;
   buildingId?: string;
   unitId?: string;
+  /**
+   * When the case was opened, inclusive at both ends.
+   *
+   * On `createdAt` rather than `scheduledRevisitAt`: «what came in last week»
+   * is the question the list is read with, and a revisit date is set on only
+   * some types. Filtering by the date a case was raised is the one that means
+   * the same thing for every row.
+   */
+  from?: Date;
+  to?: Date;
 }
 
 /** The columns a case may carry beyond what the doorstep form collects. */

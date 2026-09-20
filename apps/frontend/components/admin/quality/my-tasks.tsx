@@ -9,7 +9,7 @@ import { completeQualityCheck, getMyQualityTasks } from '@/lib/quality-api';
 import { formatDate, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { AnswerForm } from '@/components/admin/quality/checks-panel';
-import { Badge } from '@/components/ui/badge';
+import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
 
@@ -103,13 +103,12 @@ export function MyQualityTasks({
                 </div>
                 {item.reason ? <p className="mt-1 text-sm leading-relaxed">{item.reason}</p> : null}
                 {item.fields.length > 0 ? (
-                  <p className="mt-1 flex flex-wrap gap-1">
-                    {item.fields.map((field) => (
-                      <Badge key={field} variant="soft-warning" className="text-[10px]">
-                        {quality.reviewField[field] ?? field}
-                      </Badge>
-                    ))}
-                  </p>
+                  <FactRow className="mt-1.5">
+                    <FactCell
+                      label={en ? 'Fields to fix' : 'الحقول المطلوب تصحيحها'}
+                      value={item.fields.map((field) => quality.reviewField[field] ?? field).join('، ')}
+                    />
+                  </FactRow>
                 ) : null}
                 <Link
                   href={`${base}/citizens/${encodeURIComponent(item.citizenId)}/edit`}
@@ -141,23 +140,36 @@ export function MyQualityTasks({
                     {check.citizen.name}
                   </Link>
                   {check.assignedTo ? (
-                    <Badge variant="soft-info" className="text-[10px]">
+                    <span className="text-xs text-primary">
                       {en ? 'Assigned to you' : 'مُسنَد إليك'}
-                    </Badge>
+                    </span>
                   ) : null}
                   <span className="ms-auto text-xs text-muted-foreground">
                     {en ? 'Filed by' : 'سجَّله'} {check.originalOfficer?.name ?? '—'} · {formatDate(check.filedAt)}
                   </span>
                 </div>
-                <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                <div className="mt-1.5 space-y-2">
                   {check.properties.map((card, index) => (
-                    <li key={`${check.id}-${index}`} className="rounded-md bg-muted/50 px-2 py-1 text-xs">
-                      {labels.propertyType[card.propertyType as never] ?? card.propertyType}
-                      {card.propertyNumber ? ` · ${en ? 'parcel' : 'عقار'} ${card.propertyNumber}` : ''}
-                      {card.buildingCode ? ` · ${card.buildingCode}` : ''}
-                    </li>
+                    <FactRow columns key={`${check.id}-${index}`} className="text-xs">
+                      <FactCell
+                        label={en ? 'Type' : 'النوع'}
+                        value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
+                      />
+                      {card.propertyNumber ? (
+                        <FactCell label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
+                      ) : null}
+                      {card.buildingCode || card.buildingName ? (
+                        <FactCell
+                          label={en ? 'Building' : 'المبنى'}
+                          value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
+                        />
+                      ) : null}
+                      {card.units.length > 0 ? (
+                        <FactCell label={en ? 'Units' : 'الوحدات'} value={card.units.join('، ')} />
+                      ) : null}
+                    </FactRow>
                   ))}
-                </ul>
+                </div>
 
                 {answering === check.id ? (
                   <AnswerForm

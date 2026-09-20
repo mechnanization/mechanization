@@ -754,6 +754,9 @@ export function getCases(
     /** Every case on this structure, however its units are spread. */
     buildingId?: string;
     unitId?: string;
+    /** When the case was opened, inclusive. ISO instants. */
+    from?: string;
+    to?: string;
   } = {},
   signal?: AbortSignal,
 ) {
@@ -763,6 +766,8 @@ export function getCases(
   if (filter.caseType) query.set('caseType', filter.caseType);
   if (filter.buildingId) query.set('buildingId', filter.buildingId);
   if (filter.unitId) query.set('unitId', filter.unitId);
+  if (filter.from) query.set('from', filter.from);
+  if (filter.to) query.set('to', filter.to);
   const qs = query.toString();
   return apiFetch<{ cases: CaseSummary[] }>(tenant, `/cases${qs ? `?${qs}` : ''}`, {
     token,
@@ -3290,6 +3295,75 @@ export function getAuditLog(
     token,
     signal,
   });
+}
+
+/** One staff member's day in «التقرير اليومي». */
+export interface AuditDaySummary {
+  /** `YYYY-MM-DD`, bucketed in the zone this browser asked for. */
+  day: string;
+  actor: {
+    id: string | null;
+    kind: 'STAFF' | 'CITIZEN' | 'SYSTEM';
+    name: string | null;
+    role: string | null;
+    email: string | null;
+  };
+  /** Commonest first. */
+  actions: Array<{ action: string; count: number }>;
+  total: number;
+  lastAt: string;
+}
+
+/**
+ * The same trail as `getAuditLog`, rolled up to one row per person per day.
+ *
+ * The day boundaries are the reader's, so the zone goes with the request —
+ * grouping server-side in UTC would file an evening's work under the next
+ * morning for everyone in Lebanon.
+ */
+export function getAuditDaily(
+  tenant: string,
+  token: string,
+  filter: {
+    actorId?: string;
+    entityType?: string;
+    actions?: string[];
+    from?: string;
+    to?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (filter.actorId) query.set('actorId', filter.actorId);
+  if (filter.entityType) query.set('entityType', filter.entityType);
+  if (filter.actions?.length) query.set('action', filter.actions.join(','));
+  if (filter.from) query.set('from', filter.from);
+  if (filter.to) query.set('to', filter.to);
+  query.set('timeZone', browserTimeZone());
+  query.set('limit', String(filter.limit ?? 50));
+  query.set('offset', String(filter.offset ?? 0));
+
+  return apiFetch<{ items: AuditDaySummary[]; total: number }>(tenant, `/audit/daily?${query}`, {
+    token,
+    signal,
+  });
+}
+
+/**
+ * This browser's IANA zone, or nothing.
+ *
+ * The server falls back to Asia/Beirut on anything it does not recognise, so an
+ * environment without `Intl` resolution loses an hour at the day boundary
+ * rather than the screen.
+ */
+function browserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {
+    return '';
+  }
 }
 
 export interface CadastreImportResult {

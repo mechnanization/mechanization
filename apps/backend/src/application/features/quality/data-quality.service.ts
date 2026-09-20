@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
   POSSIBLE_DUPLICATE_FLAG_PATH,
   type DismissFindingInput,
@@ -7,6 +8,7 @@ import {
   type QualityFindingKind,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
+import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError } from '../../common/exceptions';
@@ -70,10 +72,14 @@ const SEVERITY_ORDER: Record<FindingSeverity, number> = { HIGH: 0, MEDIUM: 1, LO
  */
 @Injectable()
 export class DataQualityService {
+  private readonly logger = new Logger(DataQualityService.name);
+
   constructor(
     private readonly tenantContext: TenantContextService,
     private readonly landlordLinks: LandlordLinkService,
     private readonly events: EventEmitter2,
+    private readonly cache: RedisCacheService,
+    private readonly config: ConfigService,
   ) {}
 
   private get db() {
@@ -84,9 +90,124 @@ export class DataQualityService {
     return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
-  async findings(filter: { includeDismissed?: boolean; officerId?: string } = {}) {
-    const [staffNames, dismissals, ...groups] = await Promise.all([
+  /** Everything this service caches, under one prefix so one call clears it. */
+  private prefix(slug = this.tenantContext.tenantSlug): string {
+    return `quality:${slug}:`;
+  }
+
+  /**
+   * Seconds to hold a computed answer. Zero or less turns caching off, which
+   * is the escape hatch for a municipality that would rather pay the scan than
+   * ever read a stale finding — `EX 0` is an error in Redis, so "disabled" has
+   * to be a branch here rather than a TTL of nothing.
+   */
+  private ttl(): number {
+    return this.config.get<number>('QUALITY_CACHE_TTL_SECONDS') ?? 180;
+  }
+
+  /**
+   * The eight scans, and only the eight scans.
+   *
+   * This is the whole cost of «مراجعة الجودة»: `duplicateCitizens` alone reads
+   * every active citizen and compares them pairwise inside each name and phone
+   * block, and `nearDuplicateBuildings` reads every building to measure
+   * distances. None of it depends on who is asking or how they filtered, and
+   * `officerQuality` needs the same answer — so it is computed once per
+   * municipality and reused, rather than recomputed per request per filter as
+   * it was.
+   *
+   * Dismissals are deliberately *not* in here. They are one cheap indexed read
+   * and they change on exactly the action a reviewer expects to see reflected
+   * immediately, so they are joined on afterwards: pressing «ليست مشكلة» takes
+   * effect at once without paying for a rescan.
+   */
+  private async scan(): Promise<Array<Omit<QualityFinding, 'dismissal'>>> {
+    const ttl = this.ttl();
+    const key = `${this.prefix()}scan`;
+    if (ttl > 0) {
+      const cached = await this.cache.get<Array<Omit<QualityFinding, 'dismissal'>>>(key);
+      if (cached) return cached;
+    }
+
+    const [staffNames, ...groups] = await Promise.all([
       this.staffNames(),
+      this.duplicateCitizens(),
+      this.heldAsPossibleDuplicate(),
+      this.occupantsWithLandlordPhone(),
+      this.nearDuplicateBuildings(),
+      this.unitStatusContradictions(),
+      this.buildingsWithoutPin(),
+      this.unitsWithoutArea(),
+      this.unlinkedLandlords(),
+    ]);
+
+    const computed = groups
+      .flat()
+      .map(({ officerIds, ...finding }) => ({
+        ...finding,
+        officers: officerIds
+          .filter((id, index, list) => id && list.indexOf(id) === index)
+          .map((id) => ({ id, name: staffNames.get(id) ?? '—' })),
+      }));
+
+    if (ttl > 0) await this.cache.set(key, computed, ttl);
+    return computed;
+  }
+
+  /**
+   * Clears the scan and every officer roll-up derived from it.
+   *
+   * Called on the two writes this service owns, and on the register writes a
+   * finding is computed from — fixing a duplicate should make it disappear on
+   * the next refresh, not three minutes later. Cheap here because a
+   * municipality's staff write tens of records a day, not thousands: the
+   * opposite trade from `AuditService`, which is appended to on almost every
+   * request and so is left on a TTL alone.
+   *
+   * **From inside a transaction, cleared once it commits** — the rule
+   * `ReportingService.onDashboardDataChanged` states and for the same reason.
+   * These events are emitted mid-transaction, and a clear that lands before
+   * the commit is a clear another reader can undo: their scan re-caches the
+   * findings the transaction is about to fix, and the screen shows them for
+   * the whole TTL. That is the exact staleness this invalidation exists to
+   * prevent, arrived at by invalidating too early.
+   */
+  private async invalidate(slug?: string): Promise<void> {
+    const scope = this.tenantContext.peek();
+    const resolved = slug ?? scope?.tenantSlug;
+    if (!resolved) return;
+    const prefix = this.prefix(resolved);
+    if (scope?.transaction) {
+      scope.transaction.afterCommit.push(() => this.cache.invalidatePrefix(prefix));
+      return;
+    }
+    await this.cache.invalidatePrefix(prefix);
+  }
+
+  /*
+    Emitted inside the request that wrote the record, so the tenant scope is
+    still on the async context — the same assumption `AuditService` makes when
+    it reads `tenantContext.peek()` from its own subscribers. A failure to
+    clear must never fail the write that triggered it: the worst case is a
+    finding that lingers until the TTL expires.
+  */
+  @OnEvent('citizen.changed')
+  @OnEvent('building.changed')
+  @OnEvent('registration.submitted')
+  @OnEvent('quality.changed')
+  async onRegisterChanged(): Promise<void> {
+    try {
+      await this.invalidate();
+    } catch (error) {
+      this.logger.warn(
+        `Could not clear the quality cache: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  async findings(filter: { includeDismissed?: boolean; officerId?: string } = {}) {
+    const [computed, dismissals] = await Promise.all([
+      this.scan(),
       this.db.dataQualityDismissal.findMany({
         select: {
           kind: true,
@@ -96,14 +217,6 @@ export class DataQualityService {
           dismissedBy: { select: { firstName: true, lastName: true } },
         },
       }),
-      this.duplicateCitizens(),
-      this.heldAsPossibleDuplicate(),
-      this.occupantsWithLandlordPhone(),
-      this.nearDuplicateBuildings(),
-      this.unitStatusContradictions(),
-      this.buildingsWithoutPin(),
-      this.unitsWithoutArea(),
-      this.unlinkedLandlords(),
     ]);
 
     const dismissedBy = new Map(
@@ -117,13 +230,10 @@ export class DataQualityService {
       ]),
     );
 
-    const all: QualityFinding[] = groups.flat().map((finding) => ({
+    const all: QualityFinding[] = computed.map((finding) => ({
       ...finding,
-      officers: finding.officerIds
-        .filter((id, index, list) => id && list.indexOf(id) === index)
-        .map((id) => ({ id, name: staffNames.get(id) ?? '—' })),
       dismissal: dismissedBy.get(`${finding.kind}|${finding.subjectKey}`) ?? null,
-    })).map(({ officerIds: _ids, ...finding }) => finding);
+    }));
 
     const visible = all
       .filter((finding) => filter.includeDismissed || !finding.dismissal)
@@ -190,7 +300,35 @@ export class DataQualityService {
    * How each officer's filings are faring — beside, never inside, what they are
    * paid. Every figure is a count of something a person can open and look at.
    */
+  /**
+   * Each officer's filings and how they fared — six reads plus the scan.
+   *
+   * Cached per filter, and worth caching even now that `scan` is: «مراجعة
+   * الجودة» asks for this twice on open (once to name the officers its two
+   * selects offer, once for the «حسب الموظف» tab) and every officer's own
+   * «أرباحي» screen asks for their row of it.
+   */
   async officerQuality(filter: { officerId?: string; from?: Date; to?: Date } = {}) {
+    const key =
+      `${this.prefix()}officers:` +
+      [
+        filter.officerId ?? 'ALL',
+        filter.from ? filter.from.toISOString() : 'ALL',
+        filter.to ? filter.to.toISOString() : 'ALL',
+      ].join(':');
+    const ttl = this.ttl();
+    if (ttl > 0) {
+      const cached =
+        await this.cache.get<Awaited<ReturnType<DataQualityService['computeOfficerQuality']>>>(key);
+      if (cached) return cached;
+    }
+
+    const result = await this.computeOfficerQuality(filter);
+    if (ttl > 0) await this.cache.set(key, result, ttl);
+    return result;
+  }
+
+  private async computeOfficerQuality(filter: { officerId?: string; from?: Date; to?: Date }) {
     const range = {
       ...(filter.from ? { gte: filter.from } : {}),
       ...(filter.to ? { lte: filter.to } : {}),

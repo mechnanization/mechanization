@@ -95,6 +95,14 @@ export class PrismaCaseRepository implements CaseRepository {
           ...(filter?.caseType ? { caseType: filter.caseType as never } : {}),
           ...(filter?.buildingId ? { buildingId: filter.buildingId } : {}),
           ...(filter?.unitId ? { unitId: filter.unitId } : {}),
+          ...(filter?.from || filter?.to
+            ? {
+                createdAt: {
+                  ...(filter.from ? { gte: filter.from } : {}),
+                  ...(filter.to ? { lte: filter.to } : {}),
+                },
+              }
+            : {}),
         },
         include: includeRelations,
         orderBy: { createdAt: 'desc' },
