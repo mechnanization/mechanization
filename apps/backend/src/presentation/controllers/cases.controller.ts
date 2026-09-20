@@ -10,13 +10,7 @@ import { ZodValidationPipe } from '../../application/common/pipes/zod-validation
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
-
-/** A query-string date, or nothing. Never an `Invalid Date` handed to Prisma. */
-function parseDate(value: string | undefined): Date | undefined {
-  if (!value) return undefined;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
-}
+import { parseDate } from './query-params';
 
 /**
  * Sits under `t/:tenantSlug` like every other tenant-scoped controller — that

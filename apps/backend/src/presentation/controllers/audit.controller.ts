@@ -1,6 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { AuditService } from '../../application/features/audit/audit.service';
 import { Roles } from '../decorators/roles.decorator';
+import { parseDate } from './query-params';
 
 /** Where a municipality of this system is. Used when the browser says nothing. */
 const DEFAULT_TIME_ZONE = 'Asia/Beirut';
@@ -73,8 +74,14 @@ export class AuditController {
       actorId,
       entityType,
       actions: parseActions(action),
-      from: from ? new Date(from) : undefined,
-      to: to ? new Date(to) : undefined,
+      /*
+        Dropped rather than passed on when it will not parse. An `Invalid Date`
+        reaches `cacheKey` before it reaches Postgres, and `.toISOString()` on
+        one throws — so a mistyped `?from=` was a 500 on the log screen rather
+        than the unfiltered list it plainly meant.
+      */
+      from: parseDate(from),
+      to: parseDate(to),
       timeZone: safeTimeZone(timeZone),
       limit: Math.min(Number(limit) || 50, 200),
       offset: Number(offset) || 0,
@@ -98,8 +105,8 @@ export class AuditController {
       entityType,
       entityId,
       actions: parseActions(action),
-      from: from ? new Date(from) : undefined,
-      to: to ? new Date(to) : undefined,
+      from: parseDate(from),
+      to: parseDate(to),
       limit: Math.min(Number(limit) || 50, 200),
       offset: Number(offset) || 0,
     });

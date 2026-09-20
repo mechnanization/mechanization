@@ -163,11 +163,25 @@ export class DataQualityService {
    * municipality's staff write tens of records a day, not thousands: the
    * opposite trade from `AuditService`, which is appended to on almost every
    * request and so is left on a TTL alone.
+   *
+   * **From inside a transaction, cleared once it commits** — the rule
+   * `ReportingService.onDashboardDataChanged` states and for the same reason.
+   * These events are emitted mid-transaction, and a clear that lands before
+   * the commit is a clear another reader can undo: their scan re-caches the
+   * findings the transaction is about to fix, and the screen shows them for
+   * the whole TTL. That is the exact staleness this invalidation exists to
+   * prevent, arrived at by invalidating too early.
    */
   private async invalidate(slug?: string): Promise<void> {
-    const resolved = slug ?? this.tenantContext.peek()?.tenantSlug;
+    const scope = this.tenantContext.peek();
+    const resolved = slug ?? scope?.tenantSlug;
     if (!resolved) return;
-    await this.cache.invalidatePrefix(this.prefix(resolved));
+    const prefix = this.prefix(resolved);
+    if (scope?.transaction) {
+      scope.transaction.afterCommit.push(() => this.cache.invalidatePrefix(prefix));
+      return;
+    }
+    await this.cache.invalidatePrefix(prefix);
   }
 
   /*

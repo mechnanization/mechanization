@@ -20,10 +20,23 @@
  *
  * `pnpm --filter @mechanization/frontend build` is unchanged and still writes
  * `.next` — that is what Vercel and `next start` expect.
+ *
+ * ## The one file the build writes back into the source tree
+ *
+ * `next build` rewrites the tracked `next-env.d.ts` to reference
+ * `<distDir>/types/routes.d.ts`. With a `distDir` of our own that leaves the
+ * repository dirty, pointing every editor and `tsc` at a directory that only
+ * a verification build produces — which is the same class of confusion this
+ * script exists to avoid, arriving through the type checker instead of the
+ * dev server. So it is put back exactly as it was.
  */
 import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const DIST_DIR = process.env.NEXT_DIST_DIR ?? '.next-check';
+const ENV_TYPES = fileURLToPath(new URL('../next-env.d.ts', import.meta.url));
+const before = existsSync(ENV_TYPES) ? readFileSync(ENV_TYPES, 'utf8') : null;
 
 const result = spawnSync('next', ['build'], {
   stdio: 'inherit',
@@ -32,6 +45,12 @@ const result = spawnSync('next', ['build'], {
   shell: true,
   env: { ...process.env, NEXT_DIST_DIR: DIST_DIR },
 });
+
+// Restored whether the build passed or failed: a failed verification must not
+// leave the tree worse than it found it either.
+if (before !== null && readFileSync(ENV_TYPES, 'utf8') !== before) {
+  writeFileSync(ENV_TYPES, before);
+}
 
 if (result.error) {
   console.error(result.error.message);

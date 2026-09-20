@@ -124,15 +124,25 @@ export class RecordReviewService {
    * state can move — a decision, an officer's correcting edit, and a new
    * filing — so the TTL is only a backstop for a write this process did not
    * see.
+   *
+   * From inside a transaction, cleared once it commits. Cleared before, a
+   * concurrent read re-caches the queue the decision is about to change and
+   * serves it for the whole TTL — see `ReportingService`, which states the
+   * rule, and `DataQualityService.invalidate`, which follows it.
    */
   @OnEvent('quality.changed')
   @OnEvent('citizen.changed')
   @OnEvent('registration.submitted')
   async onQueueChanged(): Promise<void> {
-    const slug = this.tenantContext.peek()?.tenantSlug;
-    if (!slug) return;
+    const scope = this.tenantContext.peek();
+    if (!scope?.tenantSlug) return;
+    const prefix = this.queuePrefix(scope.tenantSlug);
     try {
-      await this.cache.invalidatePrefix(this.queuePrefix(slug));
+      if (scope.transaction) {
+        scope.transaction.afterCommit.push(() => this.cache.invalidatePrefix(prefix));
+        return;
+      }
+      await this.cache.invalidatePrefix(prefix);
     } catch {
       // A queue that lingers until the TTL is not worth failing a write over.
     }
