@@ -2920,10 +2920,62 @@ export class BuildingsService {
       orderBy: { createdAt: 'asc' },
     });
 
+    /*
+      The flats this citizen currently holds in this structure, from the census.
+
+      What a منزل card covers has to be inferred — it has no units array — and
+      the inference used to be the unit count alone: "the building has exactly
+      one unit, so this card is about it". That stops being true the moment an
+      officer adds a second unit, and then the card claimed nothing, the next
+      tick on the matrix appended its first unit row, and billing — which
+      itemises a card's rows whenever it has any, and reads the card's own
+      columns only while it has none — quietly stopped charging the house
+      itself. Production 2026-09-19, Z-5-201-A: a منزل card for a 130 m² home
+      gained a 9 m² مستودع and the home stopped being assessed.
+
+      So the inference is made against the register's own record of what they
+      hold instead. See `claims`.
+    */
+    const spellsHere = await this.db.unitOccupancy.findMany({
+      where: {
+        citizenId: input.citizenId,
+        toDate: null,
+        unit: { buildingId: building.id },
+      },
+      select: { unitId: true, role: true },
+    });
+    const namedByACard = new Set(
+      cards.flatMap((card) => card.units.flatMap((row) => (row.unitId ? [row.unitId] : []))),
+    );
+
+    /**
+     * The other flats this citizen holds here in a card's capacity that no card
+     * row names — what a card billing from its own columns could still be about.
+     */
+    const otherUnnamedSpells = (card: (typeof cards)[number]) =>
+      spellsHere.filter(
+        (spell) =>
+          spell.unitId !== input.unitId &&
+          String(spell.role) === String(card.occupancyType) &&
+          !namedByACard.has(spell.unitId),
+      );
+
     const claims = (card: (typeof cards)[number]) =>
       card.units.some((row) => row.unitId === input.unitId) ||
-      (card.propertyType === 'HOUSE' && unitsInBuilding === 1) ||
-      (card.propertyType === 'BUILDING' && card.units.length === 0);
+      (card.propertyType === 'BUILDING' && card.units.length === 0) ||
+      /*
+        A card that bills from its own columns — a منزل — is about this flat
+        when this is the only flat they hold here in that capacity that no row
+        already names. On a single-unit structure that is the old inference
+        unchanged. On one that has grown a second unit it is the difference
+        between re-recording the spell that is already on the card (nothing to
+        write) and a genuinely second flat, which leaves this card alone and
+        gets a card of its own below rather than turning this one into an
+        itemised card that no longer bills the house.
+      */
+      (card.propertyType !== 'BUILDING' &&
+        card.units.length === 0 &&
+        otherUnnamedSpells(card).length === 0);
 
     /*
       Already ticked, or already backed by one of the two whole-structure shapes.
@@ -2959,7 +3011,20 @@ export class BuildingsService {
       The card this flat may join: same capacity — rows bill in the card's نوع
       الإشغال — and for a non-owner, the same owner. See the docblock.
     */
-    const sameCapacity = cards.filter((card) => card.occupancyType === input.role);
+    /*
+      …and one that can take a row without losing what it already bills.
+
+      A منزل card with no rows bills its own columns. Give it a row and those
+      columns stop being read, so the flat it was filed for silently leaves the
+      assessment — the Z-5-201-A defect above. Such a card is passed over here;
+      the flat gets its own card below, and both are billed. A منزل card that
+      already carries rows is in the itemised shape already and takes another.
+    */
+    const itemisable = (card: (typeof cards)[number]) =>
+      card.propertyType === 'BUILDING' || card.units.length > 0;
+    const sameCapacity = cards.filter(
+      (card) => card.occupancyType === input.role && itemisable(card),
+    );
     const existing = nonOwner
       ? await this.cardHeldFrom(sameCapacity, input.landlord ?? null, owner)
       : sameCapacity[0];
@@ -3071,6 +3136,29 @@ export class BuildingsService {
               unitType: mapped.defaultUnitType as never,
               unitStatus: (input.unitStatus ?? null) as never,
               unitArea: described.unitArea,
+              /*
+                On a structure that already holds more than one unit, a منزل
+                card cannot be left to infer which flat it is about: the next
+                one minted here would be indistinguishable from it, and neither
+                could be told apart from the other's flat. So it names it. The
+                row describes the same flat as the columns beside it, so the
+                assessment still charges it once — `billableUnits` reads the
+                rows and stops reading the columns.
+              */
+              ...(unitsInBuilding > 1
+                ? {
+                    units: {
+                      create: {
+                        unitId: input.unitId,
+                        unitType: described.unitType as never,
+                        floor: described.floor,
+                        side: described.side,
+                        unitArea: described.unitArea,
+                        unitStatus: (input.unitStatus ?? null) as never,
+                      },
+                    },
+                  }
+                : {}),
             }
           : {
               units: {

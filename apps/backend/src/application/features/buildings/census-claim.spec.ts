@@ -64,6 +64,13 @@ interface HarnessOptions {
   /** Current owner spells on units other than this one, for the typed-number reuse. */
   otherOwnerSpells?: Array<{ unitId: string }>;
   /**
+   * What the census says *this* citizen currently holds in *this* structure.
+   *
+   * What a منزل card is about is read from here, because the card itself does
+   * not say: it bills from its own columns and has no units array.
+   */
+  spellsHere?: Array<{ unitId: string; role: string }>;
+  /**
    * The area the census already holds for the flat.
    *
    * Null by default, which is what a matrix painted from the street looks like:
@@ -161,7 +168,13 @@ function harness(options: HarnessOptions = {}) {
         citizen: { firstName: 'محمد', lastName: 'لا' },
       }),
       update: jest.fn(),
-      findMany: jest.fn().mockResolvedValue(options.otherOwnerSpells ?? []),
+      // Two different reads again: this citizen's own spells in this building,
+      // and other people's owner spells on a candidate card's flats.
+      findMany: jest
+        .fn()
+        .mockImplementation(({ where }: { where: Record<string, unknown> }) =>
+          Promise.resolve(where.unit ? (options.spellsHere ?? []) : (options.otherOwnerSpells ?? [])),
+        ),
     },
     building: {
       findUnique: jest.fn().mockResolvedValue({
@@ -339,6 +352,72 @@ describe('recordOccupancy — establishing the census claim', () => {
     // Derived from the tenancy: `bearsFee` reads a null حالة as "nobody was
     // asked" and charges the owner an occupancy fee the tenant is already paying.
     expect(data.unitStatus).toBe('RENTED');
+  });
+
+  /*
+    Z-5-201-A, 2026-09-19. An officer filed a citizen on a منزل card of 130 m²
+    while the structure was a single house, then made it a three-floor building,
+    added a 9 m² مستودع, and recorded the same man as its owner. The مستودع was
+    ticked onto his منزل card — and `billableUnits` reads a card's rows whenever
+    it has any and its own columns only while it has none, so from that moment
+    the municipality assessed 9 m² and his home was not assessed at all.
+
+    One matrix tap, no warning, and nothing in the file that looks wrong.
+  */
+  it('leaves a منزل card unticked when they hold another flat here, so the house stays billed', async () => {
+    const { service, buildingUnitCreate, propertyEntryCreate } = harness({
+      unitsInBuilding: 2,
+      existingEntry: { id: 'entry-house', propertyType: 'HOUSE', units: [] },
+      // The home the منزل card was filed for, which no row names.
+      spellsHere: [
+        { unitId: 'unit-home', role: 'OWNER' },
+        { unitId: UNIT, role: 'OWNER' },
+      ],
+    });
+
+    const result = await record(service);
+
+    expect(buildingUnitCreate).not.toHaveBeenCalled();
+    expect(result.fileLink.outcome).toBe('ENTRY_CREATED');
+    const { data } = propertyEntryCreate.mock.calls[0][0];
+    expect(data.units.create.unitId).toBe(UNIT);
+  });
+
+  it('writes nothing when the منزل card is about this very flat', async () => {
+    // The same shape, minus the second holding: nothing else here is theirs, so
+    // the card that bills from its own columns is this flat's card. Re-recording
+    // the spell — an owner link re-running over a flat the matrix already has —
+    // must not mint a second card and bill the man twice.
+    const { service, buildingUnitCreate, propertyEntryCreate } = harness({
+      unitsInBuilding: 2,
+      existingEntry: { id: 'entry-house', propertyType: 'HOUSE', units: [] },
+      spellsHere: [{ unitId: UNIT, role: 'OWNER' }],
+    });
+
+    const result = await record(service);
+
+    expect(buildingUnitCreate).not.toHaveBeenCalled();
+    expect(propertyEntryCreate).not.toHaveBeenCalled();
+    expect(result.fileLink).toEqual({
+      backed: true,
+      outcome: 'ALREADY_CLAIMED',
+      propertyEntryId: 'entry-house',
+    });
+  });
+
+  it('names the flat on a منزل card minted where the structure has several units', async () => {
+    // With more than one unit standing there is nothing left to infer from, and
+    // the next منزل card minted here would be indistinguishable from this one.
+    const { service, propertyEntryCreate } = harness({
+      unitsInBuilding: 3,
+      structureType: 'INDEPENDENT_HOUSE',
+    });
+
+    await record(service, { role: 'TENANT' });
+
+    const { data } = propertyEntryCreate.mock.calls[0][0];
+    expect(data.propertyType).toBe('HOUSE');
+    expect(data.units.create.unitId).toBe(UNIT);
   });
 
   it('adds the missing tick to a card that already itemises other flats', async () => {
