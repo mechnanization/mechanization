@@ -43,15 +43,43 @@ import { cn } from '@/lib/utils';
 export function FactRow({
   children,
   className,
+  columns = false,
 }: {
   children: React.ReactNode;
   className?: string;
+  /**
+   * Lay the pairs on a fixed column rhythm instead of packing them to their
+   * own widths.
+   *
+   * For a card carrying more than one row of facts — a record and then its
+   * property, a finding and then its subjects. Packed, each row sizes its
+   * cells to its own content, so «النوع» under «سجَّله» starts somewhere
+   * different on every row and on every card in the list; on a rhythm the
+   * columns line up down the whole page and a reviewer can compare two records
+   * without reading either of them twice.
+   *
+   * Left off inside a table cell, where the cell is already a column and
+   * packing to content is what keeps the table narrow.
+   */
+  columns?: boolean;
 }): React.JSX.Element {
   /*
-    Wraps rather than scrolls, so a long email takes a second line with the
-    rest instead of pushing the row off the side of a phone.
+    Either way it wraps rather than scrolls, so a long email takes a second
+    line with the rest instead of pushing the row off the side of a phone.
   */
-  return <dl className={cn('flex flex-wrap gap-x-8 gap-y-3 text-xs', className)}>{children}</dl>;
+  return (
+    <dl
+      className={cn(
+        'text-xs',
+        columns
+          ? 'grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-5'
+          : 'flex flex-wrap gap-x-8 gap-y-3',
+        className,
+      )}
+    >
+      {children}
+    </dl>
+  );
 }
 
 /**

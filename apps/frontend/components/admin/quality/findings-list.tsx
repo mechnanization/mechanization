@@ -8,7 +8,7 @@ import { ApiRequestError, logApiError } from '@/lib/api-client';
 import { dismissFinding, getFindings, restoreFinding, type QualityFinding } from '@/lib/quality-api';
 import { formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { Badge } from '@/components/ui/badge';
+import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
@@ -143,70 +143,96 @@ export function FindingsList({
             const key = `${finding.kind}|${finding.subjectKey}`;
             const severity = SEVERITY[finding.severity];
             return (
+              /*
+                The same banded card «السجلات» uses, so the two tabs of one
+                screen read as one screen.
+
+                What a finding is made of: a headline and its severity, the
+                sentence of evidence, the records it is about, and who filed
+                them. Those were a heading, a paragraph and a row of outlined
+                link-chips — the chips being the thing that made a subject look
+                like a control rather than the record it names.
+              */
               <li
                 key={key}
-                className={cn('rounded-xl border bg-card p-4', finding.dismissal && 'opacity-70')}
+                className={cn(
+                  'overflow-hidden rounded-xl border bg-card',
+                  finding.dismissal && 'opacity-70',
+                )}
               >
-                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                  <span aria-hidden className={cn('size-2 shrink-0 rounded-full', severity.dot)} />
-                  <h3 className="text-sm font-semibold">{quality.findingKind[finding.kind] ?? finding.kind}</h3>
-                  <Badge variant="soft-muted" className="text-[10px]">
-                    {en ? severity.en : severity.ar}
-                  </Badge>
-                  {finding.at ? (
-                    <span className="ms-auto text-xs text-muted-foreground">{formatRelative(finding.at, locale)}</span>
-                  ) : null}
-                </div>
+                <div className="divide-y [&>*]:px-4 [&>*]:py-3">
+                  <div>
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <span aria-hidden className={cn('size-2 shrink-0 rounded-full', severity.dot)} />
+                      <h3 className="text-sm font-semibold">
+                        {quality.findingKind[finding.kind] ?? finding.kind}
+                      </h3>
+                      {/* Severity as coloured words — the dot already carries it. */}
+                      <span className="text-xs text-muted-foreground">{en ? severity.en : severity.ar}</span>
+                      {finding.at ? (
+                        <span className="ms-auto text-xs text-muted-foreground">
+                          {formatRelative(finding.at, locale)}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1.5 text-sm leading-relaxed text-foreground/90">{finding.detail}</p>
+                  </div>
 
-                <p className="mt-1.5 text-sm leading-relaxed text-foreground/90">{finding.detail}</p>
-
-                {finding.subjects.length > 0 ? (
-                  <ul className="mt-2 flex flex-wrap gap-1.5">
-                    {finding.subjects.map((subject) => (
-                      <li key={`${key}-${subject.id}`}>
-                        <Link
-                          href={
+                  {finding.subjects.length > 0 || finding.officers.length > 0 ? (
+                    <FactRow columns>
+                      {finding.subjects.map((subject) => (
+                        <FactCell
+                          key={`${key}-${subject.id}`}
+                          label={
                             subject.kind === 'citizen'
-                              ? `${base}/citizens/${encodeURIComponent(subject.id)}`
-                              : `${base}/buildings/${encodeURIComponent(subject.id)}/matrix`
+                              ? en
+                                ? 'Citizen'
+                                : 'المواطن'
+                              : en
+                                ? 'Structure'
+                                : 'المنشأة'
                           }
-                          className="inline-flex min-h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs text-primary transition-colors hover:bg-primary/5"
-                        >
-                          {subject.label}
-                          {subject.secondary ? (
-                            <span className="text-muted-foreground">{subject.secondary}</span>
-                          ) : null}
-                        </Link>
-                      </li>
-                    ))}
-                    {finding.kind === 'UNLINKED_LANDLORDS' ? (
-                      <li>
-                        <Link
-                          href={`${base}/citizens/landlord-links`}
-                          className="inline-flex min-h-8 items-center rounded-md border px-2.5 text-xs text-primary hover:bg-primary/5"
-                        >
-                          {en ? 'Open the owner-link queue' : 'فتح «روابط المالكين»'}
-                        </Link>
-                      </li>
-                    ) : null}
-                  </ul>
-                ) : finding.kind === 'UNLINKED_LANDLORDS' ? (
-                  <Link
-                    href={`${base}/citizens/landlord-links`}
-                    className="mt-2 inline-flex min-h-8 items-center rounded-md border px-2.5 text-xs text-primary hover:bg-primary/5"
-                  >
-                    {en ? 'Open the owner-link queue' : 'فتح «روابط المالكين»'}
-                  </Link>
-                ) : null}
+                          value={
+                            <>
+                              <Link
+                                href={
+                                  subject.kind === 'citizen'
+                                    ? `${base}/citizens/${encodeURIComponent(subject.id)}`
+                                    : `${base}/buildings/${encodeURIComponent(subject.id)}/matrix`
+                                }
+                                className="text-primary underline-offset-4 hover:underline"
+                              >
+                                {subject.label}
+                              </Link>
+                              {subject.secondary ? (
+                                <span className="block text-muted-foreground">{subject.secondary}</span>
+                              ) : null}
+                            </>
+                          }
+                        />
+                      ))}
+                      {finding.officers.length > 0 ? (
+                        <FactCell
+                          label={en ? 'Filed by' : 'سجَّلها'}
+                          value={finding.officers.map((officer) => officer.name).join('، ')}
+                        />
+                      ) : null}
+                    </FactRow>
+                  ) : null}
 
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {finding.officers.length > 0
-                    ? `${en ? 'Filed by' : 'سجَّلها'} ${finding.officers.map((officer) => officer.name).join('، ')}`
-                    : ''}
-                </p>
+                  {finding.kind === 'UNLINKED_LANDLORDS' ? (
+                    <div>
+                      <Link
+                        href={`${base}/citizens/landlord-links`}
+                        className="text-xs text-primary underline-offset-4 hover:underline"
+                      >
+                        {en ? 'Open the owner-link queue' : 'فتح «روابط المالكين»'}
+                      </Link>
+                    </div>
+                  ) : null}
 
                 {finding.dismissal ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2 bg-muted/30 text-xs">
                     <ShieldQuestion className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
                     <span>
                       {en ? 'Not a problem — ' : 'ليست مشكلة — '}
@@ -234,7 +260,7 @@ export function FindingsList({
                   </div>
                 ) : finding.dismissable ? (
                   dismissing === key ? (
-                    <div className="mt-3 flex flex-wrap items-end gap-2">
+                    <div className="flex flex-wrap items-end gap-2 bg-muted/20">
                       <div className="min-w-[14rem] flex-1 space-y-1">
                         <label htmlFor={`dismiss-${key}`} className="text-xs text-muted-foreground">
                           {en ? 'Why is this not a problem?' : 'لماذا هي ليست مشكلة؟'}
@@ -272,25 +298,26 @@ export function FindingsList({
                       </Button>
                     </div>
                   ) : (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="mt-2 h-8 px-2 text-muted-foreground"
-                      onClick={() => {
-                        setDismissing(key);
-                        setReason('');
-                      }}
-                    >
-                      {en ? 'Not a problem…' : 'ليست مشكلة…'}
-                    </Button>
+                    <div className="flex bg-muted/20">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-muted-foreground"
+                        onClick={() => {
+                          setDismissing(key);
+                          setReason('');
+                        }}
+                      >
+                        {en ? 'Not a problem…' : 'ليست مشكلة…'}
+                      </Button>
+                    </div>
                   )
                 ) : (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {en
-                      ? 'Closed by fixing the record itself.'
-                      : 'تُغلَق بتصحيح السجل نفسه.'}
+                  <p className="bg-muted/20 text-xs text-muted-foreground">
+                    {en ? 'Closed by fixing the record itself.' : 'تُغلَق بتصحيح السجل نفسه.'}
                   </p>
                 )}
+                </div>
               </li>
             );
           })}

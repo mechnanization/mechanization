@@ -462,7 +462,7 @@ export function InspectorProfileDetail({
                         </span>
                         <div className="space-y-1">
                           <span className="text-sm font-bold sm:text-base">{item.citizenName}</span>
-                          <FactRow>
+                          <FactRow columns>
                             <FactCell
                               label={isAr ? 'الرقم المرجعي' : 'Reference'}
                               className="font-mono"
@@ -581,7 +581,7 @@ export function InspectorProfileDetail({
                               ${money(payout.amount)} {payout.currency}
                             </bdi>
                           </span>
-                          <FactRow>
+                          <FactRow columns>
                             {payout.reference ? (
                               <FactCell
                                 label={isAr ? 'رقم الإيصال' : 'Receipt'}

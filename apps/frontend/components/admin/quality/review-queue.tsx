@@ -202,8 +202,19 @@ export function ReviewQueue({
             const badge = STATE_BADGE[item.state];
             const openReturn = item.history.find((entry) => entry.outcome === 'RETURNED' && !entry.resolvedAt);
             return (
-              <li key={item.registrationId} className="rounded-xl border bg-card">
-                <div className="space-y-3 p-4">
+              /*
+                Bands, not one run of stacked blocks.
+
+                A record card carries four different kinds of thing — who and
+                when, the property claimed, the fields left unconfirmed, the
+                review history — and run together with `space-y` they read as
+                one wall of small text a reviewer has to parse before they can
+                decide anything. A rule between them says where each answer
+                stops, and every band lays its facts on the same column rhythm
+                so «النوع» sits under «سجَّله» down the whole page.
+              */
+              <li key={item.registrationId} className="overflow-hidden rounded-xl border bg-card">
+                <div className="divide-y [&>*]:px-4 [&>*]:py-3">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                     <Link
                       href={`${base}/citizens/${encodeURIComponent(item.citizen.id)}`}
@@ -223,17 +234,15 @@ export function ReviewQueue({
                   </div>
 
                   {/*
-                    The record itself, as aligned pairs.
+                    The record itself, on the card's column rhythm.
 
                     This was a run-on line — «سجَّله فلان  والدته فلانة  ٤ أفراد
-                    مقيم» — which is readable once and unscannable down a queue
-                    of twenty. A reviewer comparing records reads one column at
-                    a time, so every value starts at the same edge, and the
-                    fields the decision actually turns on (who filed it, when it
-                    last moved, how many doors it claims) are stated rather than
-                    left for whoever thinks to open the file.
+                    مقيم» — readable once and unscannable down a queue of
+                    twenty. The fields a decision actually turns on (who filed
+                    it, when it last moved, how many doors it claims) are
+                    stated rather than left for whoever thinks to open the file.
                   */}
-                  <FactRow className="text-xs">
+                  <FactRow columns>
                     <FactCell
                       label={en ? 'Filed by' : 'سجَّله'}
                       value={item.officer?.name ?? (en ? 'unknown' : 'غير معروف')}
@@ -284,15 +293,15 @@ export function ReviewQueue({
                     dot is which the moment one of the parts is missing.
                   */}
                   {item.properties.map((card, index) => (
-                    <div key={`${item.registrationId}-${index}`} className="space-y-1">
-                      <p className="text-xs font-medium text-foreground/70">
+                    <div key={`${item.registrationId}-${index}`} className="space-y-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                         {item.properties.length > 1
                           ? `${en ? 'Property' : 'العقار'} ${index + 1}`
                           : en
                             ? 'Property'
                             : 'العقار'}
                       </p>
-                      <FactRow className="text-xs">
+                      <FactRow columns>
                         <FactCell
                           label={en ? 'Type' : 'النوع'}
                           value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
@@ -329,11 +338,11 @@ export function ReviewQueue({
                   ))}
 
                   {item.flags.length > 0 ? (
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium text-warning">
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-warning">
                         {en ? 'Fields left unconfirmed' : 'حقول غير مؤكَّدة'}
                       </p>
-                      <FactRow className="text-xs">
+                      <FactRow columns>
                         {item.flags.map((flag) => (
                           <FactCell
                             key={flag.path}
@@ -348,8 +357,14 @@ export function ReviewQueue({
                     </div>
                   ) : null}
 
+                  {/* Already its own band — no inner box needed on top of it. */}
                   {item.notes ? (
-                    <p className="rounded-lg bg-muted/50 px-3 py-2 text-xs leading-relaxed">{item.notes}</p>
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {en ? 'Officer’s note' : 'ملاحظة الموظف'}
+                      </p>
+                      <p className="text-xs leading-relaxed">{item.notes}</p>
+                    </div>
                   ) : null}
 
                   {item.history.length > 0 ? (
@@ -392,10 +407,12 @@ export function ReviewQueue({
                   ) : null}
 
                   {openReturn ? (
-                    <p className="rounded-lg bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
-                      {en ? 'Waiting on the officer: ' : 'بانتظار الموظف: '}
-                      {openReturn.reason}
-                    </p>
+                    <div className="space-y-1 bg-warning/5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-warning">
+                        {en ? 'Waiting on the officer' : 'بانتظار الموظف'}
+                      </p>
+                      <p className="text-xs leading-relaxed text-warning">{openReturn.reason}</p>
+                    </div>
                   ) : null}
                 </div>
 

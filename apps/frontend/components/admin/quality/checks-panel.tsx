@@ -197,7 +197,7 @@ export function ChecksPanel({
                   so a property reads identically on both tabs. */}
               <div className="mt-2 space-y-2">
                 {check.properties.map((card, index) => (
-                  <FactRow key={`${check.id}-${index}`} className="text-xs">
+                  <FactRow columns key={`${check.id}-${index}`} className="text-xs">
                     <FactCell
                       label={en ? 'Type' : 'النوع'}
                       value={labels.propertyType[card.propertyType as never] ?? card.propertyType}

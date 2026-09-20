@@ -151,7 +151,7 @@ export function MyQualityTasks({
                 </div>
                 <div className="mt-1.5 space-y-2">
                   {check.properties.map((card, index) => (
-                    <FactRow key={`${check.id}-${index}`} className="text-xs">
+                    <FactRow columns key={`${check.id}-${index}`} className="text-xs">
                       <FactCell
                         label={en ? 'Type' : 'النوع'}
                         value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
