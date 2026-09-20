@@ -20,7 +20,7 @@ import type { StaffSummary } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
-import { Fact, FactGrid } from '@/components/ui/fact-grid';
+import { FactCell, FactRow } from '@/components/ui/fact-grid';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -324,19 +324,18 @@ function InspectorCard({
             </Link>
 
             {/*
-              The role, the account's state and the three dates as aligned
-              pairs, so every value starts under the one above it.
+              Across, not down — each value directly under its own label, the
+              way the figures table further down this card already reads.
 
-              The role and the state used to be badges on the name's line: two
-              filled pills of different colours per card, which on a page of
-              five inspectors is ten shapes competing with the figures the page
-              is actually about. The state keeps its colour — «معطّل» is the one
-              thing here somebody must not miss — but as coloured text, not as a
-              container.
+              These five were badges and a run-on line before, then a stack of
+              five rows, which turned a card header into a column of mostly
+              empty space on a page meant to be scanned five inspectors at a
+              time. The state keeps its colour — «معطّل» is the one thing here
+              nobody should miss — as text rather than a filled pill.
             */}
-            <FactGrid labelWidth="6rem" className="gap-y-1">
-              <Fact label={isAr ? 'الصفة' : 'Role'} value={roleLabel} />
-              <Fact
+            <FactRow>
+              <FactCell label={isAr ? 'الصفة' : 'Role'} value={roleLabel} />
+              <FactCell
                 label={isAr ? 'الحساب' : 'Account'}
                 className={
                   inspector.isActive
@@ -346,10 +345,14 @@ function InspectorCard({
                 value={inspector.isActive ? (isAr ? 'فعّال' : 'Active') : isAr ? 'معطّل' : 'Disabled'}
               />
               {inspector.email ? (
-                <Fact label={isAr ? 'البريد' : 'Email'} value={inspector.email} />
+                <FactCell
+                  label={isAr ? 'البريد' : 'Email'}
+                  className="max-w-[16rem]"
+                  value={inspector.email}
+                />
               ) : null}
-              <Fact label={isAr ? 'انضم في' : 'Joined'} value={formatDate(inspector.createdAt)} />
-              <Fact
+              <FactCell label={isAr ? 'انضم في' : 'Joined'} value={formatDate(inspector.createdAt)} />
+              <FactCell
                 label={isAr ? 'آخر دخول' : 'Last login'}
                 value={
                   inspector.lastLoginAt
@@ -359,7 +362,7 @@ function InspectorCard({
                       : 'never'
                 }
               />
-            </FactGrid>
+            </FactRow>
           </div>
         </div>
 

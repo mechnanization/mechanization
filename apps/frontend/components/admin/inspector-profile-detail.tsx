@@ -34,7 +34,7 @@ import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialo
 import { MyQualityTasks } from '@/components/admin/quality/my-tasks';
 import { OfficerQuality } from '@/components/admin/quality/officer-quality';
 import { useGoBack } from '@/components/ui/back-link';
-import { Fact, FactGrid } from '@/components/ui/fact-grid';
+import { Fact, FactCell, FactGrid, FactRow } from '@/components/ui/fact-grid';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -240,12 +240,12 @@ export function InspectorProfileDetail({
               */}
               <div className="min-w-0 space-y-2">
                 <h2 className="text-lg font-bold">{data.inspector.name}</h2>
-                <FactGrid labelWidth="6rem" className="gap-y-1">
-                  <Fact
+                <FactRow>
+                  <FactCell
                     label={isAr ? 'الصفة' : 'Role'}
                     value={labels.staffRole?.[data.inspector.role as never] ?? data.inspector.role}
                   />
-                  <Fact
+                  <FactCell
                     label={isAr ? 'الحساب' : 'Account'}
                     className={
                       data.inspector.isActive
@@ -263,23 +263,27 @@ export function InspectorProfileDetail({
                     }
                   />
                   {data.inspector.email ? (
-                    <Fact label={isAr ? 'البريد' : 'Email'} value={data.inspector.email} />
+                    <FactCell
+                      label={isAr ? 'البريد' : 'Email'}
+                      className="max-w-[16rem]"
+                      value={data.inspector.email}
+                    />
                   ) : null}
-                  <Fact
+                  <FactCell
                     label={isAr ? 'انضم في' : 'Joined'}
                     value={formatDate(data.inspector.createdAt)}
                   />
                   {data.inspector.lastLoginAt ? (
-                    <Fact
+                    <FactCell
                       label={isAr ? 'آخر دخول' : 'Last login'}
                       value={formatDateTime(data.inspector.lastLoginAt)}
                     />
                   ) : null}
-                  <Fact
+                  <FactCell
                     label={isAr ? 'معدل العمولة' : 'Rate'}
                     value={isAr ? '$1.00 لكل عقار أو وحدة' : '$1.00 per property or unit'}
                   />
-                </FactGrid>
+                </FactRow>
               </div>
             </div>
           </div>

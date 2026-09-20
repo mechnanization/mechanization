@@ -134,3 +134,56 @@ export function FactChange({
     />
   );
 }
+
+/**
+ * The same pairs laid out across instead of down: label on top, value directly
+ * under it, each pair sitting beside the next.
+ *
+ * For a header strip — who this person is, when they joined — where the facts
+ * are few, short, and read at a glance rather than compared against a slip.
+ * Stacked as rows they turn a card header into five lines of mostly empty
+ * space; across, they read the way the figures table under them already does,
+ * every value under the word naming it.
+ *
+ * Wraps rather than scrolls, so a long email takes a second line with the rest
+ * instead of pushing the row off the side of a phone.
+ */
+export function FactRow({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <dl className={cn('flex flex-wrap gap-x-8 gap-y-3 text-xs', className)}>{children}</dl>
+  );
+}
+
+/**
+ * One pair inside a `FactRow`.
+ *
+ * Not a `<div className="contents">` like `Fact`: here the pair *is* the box
+ * the flex row lays out, and its two lines have to stay together when the row
+ * wraps.
+ */
+export function FactCell({
+  label,
+  value,
+  className,
+}: {
+  label: React.ReactNode;
+  value: React.ReactNode;
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <div className="min-w-0">
+      <dt className="text-muted-foreground">{label}</dt>
+      {/* `<bdi>` for the same reason as everywhere else in this file: a Latin
+          value must not drag its own alignment away from its label. */}
+      <dd className={cn('mt-0.5 min-w-0 truncate text-start text-foreground', className)}>
+        <bdi>{value}</bdi>
+      </dd>
+    </div>
+  );
+}
