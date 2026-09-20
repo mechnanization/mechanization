@@ -15,7 +15,7 @@ import {
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { Badge } from '@/components/ui/badge';
-import { Fact, FactGrid } from '@/components/ui/fact-grid';
+import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
@@ -197,30 +197,30 @@ export function ChecksPanel({
                   so a property reads identically on both tabs. */}
               <div className="mt-2 space-y-2">
                 {check.properties.map((card, index) => (
-                  <FactGrid key={`${check.id}-${index}`} labelWidth="8rem" className="text-xs">
-                    <Fact
+                  <FactRow key={`${check.id}-${index}`} className="text-xs">
+                    <FactCell
                       label={en ? 'Type' : 'النوع'}
                       value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
                     />
                     {card.occupancyType ? (
-                      <Fact
+                      <FactCell
                         label={en ? 'Occupancy' : 'صفة الإشغال'}
                         value={labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}
                       />
                     ) : null}
                     {card.propertyNumber ? (
-                      <Fact label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
+                      <FactCell label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
                     ) : null}
                     {card.buildingCode || card.buildingName ? (
-                      <Fact
+                      <FactCell
                         label={en ? 'Building' : 'المبنى'}
                         value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
                       />
                     ) : null}
                     {card.units.length > 0 ? (
-                      <Fact label={en ? 'Units' : 'الوحدات'} value={card.units.join('، ')} />
+                      <FactCell label={en ? 'Units' : 'الوحدات'} value={card.units.join('، ')} />
                     ) : null}
-                  </FactGrid>
+                  </FactRow>
                 ))}
               </div>
 

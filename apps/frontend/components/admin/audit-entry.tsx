@@ -25,7 +25,7 @@ import { auditActionLabel, auditEntityLabel } from '@/lib/audit-labels';
 import { auditToneOf, describeAudit, type AuditTone } from '@/lib/audit-describe';
 import { formatDateTime, formatRelative, formatTime } from '@/lib/dates';
 import { cn } from '@/lib/utils';
-import { Fact, FactChange, FactGrid } from '@/components/ui/fact-grid';
+import { ChangeValue, FactCell, FactRow } from '@/components/ui/facts';
 
 /**
  * One audit entry: what was done, to which record, by whom, when — and what
@@ -185,11 +185,11 @@ export function AuditEntryItem({
         ))}
 
         {shown.length > 0 ? (
-          <FactGrid labelWidth="7rem">
+          <FactRow>
             {shown.map((line) => (
               <Line key={`${line.kind}-${line.label}`} line={line} en={en} />
             ))}
-          </FactGrid>
+          </FactRow>
         ) : null}
 
         {detailCount > 0 ? (
@@ -198,19 +198,19 @@ export function AuditEntryItem({
               {en ? `All details (${detailCount})` : `كل التفاصيل (${detailCount})`}
             </summary>
             {/* The fold keeps its own surface — it is a panel, not a value. */}
-            <FactGrid labelWidth="7rem" className="mt-2 rounded-lg bg-muted/30 px-3 py-2">
+            <FactRow className="mt-2 rounded-lg bg-muted/30 px-3 py-2">
               {folded.map((line) => (
                 <Line key={`folded-${line.kind}-${line.label}`} line={line} en={en} />
               ))}
               {description.details.map((detail) => (
                 <Line key={`detail-${detail.label}`} line={{ kind: 'fact', ...detail }} en={en} />
               ))}
-              <Fact
+              <FactCell
                 label={en ? 'Action code' : 'رمز الإجراء'}
                 className="font-mono text-[11px] text-muted-foreground"
                 value={`${entry.action}${entry.entityId ? ` · ${entry.entityType} ${entry.entityId}` : ''}`}
               />
-            </FactGrid>
+            </FactRow>
           </details>
         ) : null}
       </div>
@@ -230,15 +230,21 @@ function Line({
     to the far edge while «مبنى سكني» stayed on the near one — see `FactGrid`,
     which isolates the value with `<bdi>` instead so the column holds.
   */
-  return line.kind === 'change' ? (
-    <FactChange
+  return (
+    <FactCell
       label={line.label}
-      before={line.before}
-      after={line.after}
-      becameLabel={en ? 'became' : 'أصبح'}
+      value={
+        line.kind === 'change' ? (
+          <ChangeValue
+            before={line.before}
+            after={line.after}
+            becameLabel={en ? 'became' : 'أصبح'}
+          />
+        ) : (
+          line.value
+        )
+      }
     />
-  ) : (
-    <Fact label={line.label} value={line.value} />
   );
 }
 

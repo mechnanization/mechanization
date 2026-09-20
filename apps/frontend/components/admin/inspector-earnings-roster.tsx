@@ -20,7 +20,7 @@ import type { StaffSummary } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
-import { FactCell, FactRow } from '@/components/ui/fact-grid';
+import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';

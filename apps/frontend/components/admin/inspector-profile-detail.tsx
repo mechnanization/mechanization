@@ -34,7 +34,7 @@ import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialo
 import { MyQualityTasks } from '@/components/admin/quality/my-tasks';
 import { OfficerQuality } from '@/components/admin/quality/officer-quality';
 import { useGoBack } from '@/components/ui/back-link';
-import { Fact, FactCell, FactGrid, FactRow } from '@/components/ui/fact-grid';
+import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -462,13 +462,13 @@ export function InspectorProfileDetail({
                         </span>
                         <div className="space-y-1">
                           <span className="text-sm font-bold sm:text-base">{item.citizenName}</span>
-                          <FactGrid labelWidth="7rem" className="gap-y-1">
-                            <Fact
+                          <FactRow>
+                            <FactCell
                               label={isAr ? 'الرقم المرجعي' : 'Reference'}
                               className="font-mono"
                               value={item.referenceNumber}
                             />
-                            <Fact
+                            <FactCell
                               label={isAr ? 'الحالة' : 'Status'}
                               className={
                                 item.status === 'REQUIRES_REVIEW'
@@ -485,23 +485,23 @@ export function InspectorProfileDetail({
                                     : 'Completed'
                               }
                             />
-                            <Fact
+                            <FactCell
                               label={isAr ? 'تاريخ التسجيل' : 'Date'}
                               value={formatDateTime(item.submittedAt)}
                             />
                             {item.neighborhoods.length > 0 ? (
-                              <Fact
+                              <FactCell
                                 label={isAr ? 'الأحياء' : 'Neighborhoods'}
                                 value={item.neighborhoods.join('، ')}
                               />
                             ) : null}
                             {item.propertyNumbers.length > 0 ? (
-                              <Fact
+                              <FactCell
                                 label={isAr ? 'أرقام العقارات' : 'Property #'}
                                 value={item.propertyNumbers.join('، ')}
                               />
                             ) : null}
-                          </FactGrid>
+                          </FactRow>
                         </div>
                       </div>
 
@@ -581,32 +581,34 @@ export function InspectorProfileDetail({
                               ${money(payout.amount)} {payout.currency}
                             </bdi>
                           </span>
-                          <FactGrid labelWidth="7rem" className="gap-y-1">
+                          <FactRow>
                             {payout.reference ? (
-                              <Fact
+                              <FactCell
                                 label={isAr ? 'رقم الإيصال' : 'Receipt'}
                                 className="font-mono"
                                 value={payout.reference}
                               />
                             ) : null}
-                            <Fact
+                            <FactCell
                               label={isAr ? 'تاريخ الدفع' : 'Paid on'}
                               value={formatDateTime(payout.paidAt)}
                             />
                             {payout.recordedByName ? (
-                              <Fact
+                              <FactCell
                                 label={isAr ? 'سُجّلت بواسطة' : 'Recorded by'}
                                 value={payout.recordedByName}
                               />
                             ) : null}
+                            {/* Capped: a note is prose, and uncapped it would
+                                take the whole row and push the dates off it. */}
                             {payout.note ? (
-                              <Fact
+                              <FactCell
                                 label={isAr ? 'ملاحظات' : 'Notes'}
-                                className="text-muted-foreground"
+                                className="max-w-sm text-muted-foreground"
                                 value={payout.note}
                               />
                             ) : null}
-                          </FactGrid>
+                          </FactRow>
                         </div>
                       </div>
                     </div>

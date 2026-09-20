@@ -10,7 +10,7 @@ import { formatDate, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { AnswerForm } from '@/components/admin/quality/checks-panel';
 import { Badge } from '@/components/ui/badge';
-import { Fact, FactGrid } from '@/components/ui/fact-grid';
+import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
 
@@ -104,12 +104,12 @@ export function MyQualityTasks({
                 </div>
                 {item.reason ? <p className="mt-1 text-sm leading-relaxed">{item.reason}</p> : null}
                 {item.fields.length > 0 ? (
-                  <FactGrid labelWidth="7rem" className="mt-1.5">
-                    <Fact
+                  <FactRow className="mt-1.5">
+                    <FactCell
                       label={en ? 'Fields to fix' : 'الحقول المطلوب تصحيحها'}
                       value={item.fields.map((field) => quality.reviewField[field] ?? field).join('، ')}
                     />
-                  </FactGrid>
+                  </FactRow>
                 ) : null}
                 <Link
                   href={`${base}/citizens/${encodeURIComponent(item.citizenId)}/edit`}
@@ -151,24 +151,24 @@ export function MyQualityTasks({
                 </div>
                 <div className="mt-1.5 space-y-2">
                   {check.properties.map((card, index) => (
-                    <FactGrid key={`${check.id}-${index}`} labelWidth="7rem" className="text-xs">
-                      <Fact
+                    <FactRow key={`${check.id}-${index}`} className="text-xs">
+                      <FactCell
                         label={en ? 'Type' : 'النوع'}
                         value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
                       />
                       {card.propertyNumber ? (
-                        <Fact label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
+                        <FactCell label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
                       ) : null}
                       {card.buildingCode || card.buildingName ? (
-                        <Fact
+                        <FactCell
                           label={en ? 'Building' : 'المبنى'}
                           value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
                         />
                       ) : null}
                       {card.units.length > 0 ? (
-                        <Fact label={en ? 'Units' : 'الوحدات'} value={card.units.join('، ')} />
+                        <FactCell label={en ? 'Units' : 'الوحدات'} value={card.units.join('، ')} />
                       ) : null}
-                    </FactGrid>
+                    </FactRow>
                   ))}
                 </div>
 

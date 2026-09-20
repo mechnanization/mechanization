@@ -8,7 +8,7 @@ import { auditActionLabel, auditEntityLabel } from '@/lib/audit-labels';
 import { describeAudit } from '@/lib/audit-describe';
 import { formatMonth } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { Fact, FactGrid } from '@/components/ui/fact-grid';
+import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
@@ -538,20 +538,22 @@ function DetailRow({ entry, locale }: { entry: AuditEntry; locale: string }): Re
       </TableCell>
 
       {/*
-        Two aligned columns, so the values read down as a column of their own.
-        Laid out flush-start rather than «الرمز: X-498-A» inline — the labels
-        differ in width, so an inline pair starts every value at a different
-        place and there is nothing to scan down.
+        Label on top, value directly under it, pairs beside each other — the
+        same reading as the column headings above this table.
+
+        Stacked as rows they were aligned but tall: an entry with four changed
+        fields made a four-line cell in a table whose other three columns are
+        one or two, so a day's ten actions scrolled like thirty.
       */}
       <TableCell className="whitespace-normal align-top text-xs">
         {lines.length === 0 ? (
           <span className="text-muted-foreground">—</span>
         ) : (
-          <FactGrid labelWidth="5.5rem" className="gap-x-4 gap-y-1">
+          <FactRow className="gap-x-6 gap-y-2">
             {lines.map((line, index) => (
-              <Fact key={`${line.label}-${index}`} label={line.label} value={line.value} />
+              <FactCell key={`${line.label}-${index}`} label={line.label} value={line.value} />
             ))}
-          </FactGrid>
+          </FactRow>
         )}
       </TableCell>
     </TableRow>

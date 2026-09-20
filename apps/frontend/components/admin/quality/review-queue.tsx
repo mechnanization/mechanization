@@ -17,7 +17,7 @@ import { formatDateTime, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Fact, FactGrid } from '@/components/ui/fact-grid';
+import { FactCell, FactRow } from '@/components/ui/facts';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -233,25 +233,25 @@ export function ReviewQueue({
                     last moved, how many doors it claims) are stated rather than
                     left for whoever thinks to open the file.
                   */}
-                  <FactGrid labelWidth="8rem" className="text-xs">
-                    <Fact
+                  <FactRow className="text-xs">
+                    <FactCell
                       label={en ? 'Filed by' : 'سجَّله'}
                       value={item.officer?.name ?? (en ? 'unknown' : 'غير معروف')}
                     />
-                    <Fact label={en ? 'Filed on' : 'تاريخ التقديم'} value={formatDateTime(item.submittedAt)} />
+                    <FactCell label={en ? 'Filed on' : 'تاريخ التقديم'} value={formatDateTime(item.submittedAt)} />
                     {item.updatedAt !== item.submittedAt ? (
-                      <Fact label={en ? 'Last edited' : 'آخر تعديل'} value={formatDateTime(item.updatedAt)} />
+                      <FactCell label={en ? 'Last edited' : 'آخر تعديل'} value={formatDateTime(item.updatedAt)} />
                     ) : null}
-                    <Fact
+                    <FactCell
                       label={en ? 'Record ref.' : 'مرجع السجل'}
                       className="font-mono"
                       value={item.referenceNumber}
                     />
                     {item.citizen.motherName ? (
-                      <Fact label={en ? 'Mother' : 'اسم الأم'} value={item.citizen.motherName} />
+                      <FactCell label={en ? 'Mother' : 'اسم الأم'} value={item.citizen.motherName} />
                     ) : null}
                     {item.citizen.householdMembers != null ? (
-                      <Fact
+                      <FactCell
                         label={en ? 'Household' : 'أفراد الأسرة'}
                         value={
                           en
@@ -260,11 +260,11 @@ export function ReviewQueue({
                         }
                       />
                     ) : null}
-                    <Fact
+                    <FactCell
                       label={en ? 'Residence' : 'مكان الإقامة'}
                       value={labels.citizenResidence[item.citizen.residence as never] ?? item.citizen.residence}
                     />
-                    <Fact
+                    <FactCell
                       label={en ? 'Properties' : 'العقارات'}
                       value={
                         item.properties.length === 0
@@ -276,7 +276,7 @@ export function ReviewQueue({
                             : `${item.properties.length}`
                       }
                     />
-                  </FactGrid>
+                  </FactRow>
 
                   {/*
                     Each property spelled out rather than squeezed into a pill.
@@ -292,39 +292,39 @@ export function ReviewQueue({
                             ? 'Property'
                             : 'العقار'}
                       </p>
-                      <FactGrid labelWidth="8rem" className="text-xs">
-                        <Fact
+                      <FactRow className="text-xs">
+                        <FactCell
                           label={en ? 'Type' : 'النوع'}
                           value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
                         />
                         {card.occupancyType ? (
-                          <Fact
+                          <FactCell
                             label={en ? 'Occupancy' : 'صفة الإشغال'}
                             value={labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}
                           />
                         ) : null}
                         {card.propertyNumber ? (
-                          <Fact label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
+                          <FactCell label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
                         ) : null}
                         {card.buildingCode || card.buildingName ? (
-                          <Fact
+                          <FactCell
                             label={en ? 'Building' : 'المبنى'}
                             value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
                           />
                         ) : null}
                         {card.unitCount > 0 ? (
-                          <Fact
+                          <FactCell
                             label={en ? 'Units' : 'عدد الوحدات'}
                             value={en ? `${card.unitCount}` : `${card.unitCount} وحدة`}
                           />
                         ) : null}
                         {card.unitArea != null ? (
-                          <Fact
+                          <FactCell
                             label={en ? 'Area' : 'المساحة'}
                             value={`${card.unitArea} ${en ? 'm²' : 'م²'}`}
                           />
                         ) : null}
-                      </FactGrid>
+                      </FactRow>
                     </div>
                   ))}
 
@@ -333,18 +333,18 @@ export function ReviewQueue({
                       <p className="text-xs font-medium text-warning">
                         {en ? 'Fields left unconfirmed' : 'حقول غير مؤكَّدة'}
                       </p>
-                      <FactGrid labelWidth="8rem" className="text-xs">
+                      <FactRow className="text-xs">
                         {item.flags.map((flag) => (
-                          <Fact
+                          <FactCell
                             key={flag.path}
                             label={
                               <span className="text-warning">{flagFieldLabel(flag.path, locale)}</span>
                             }
-                            className="text-muted-foreground"
+                            className="max-w-sm text-muted-foreground"
                             value={flag.reason}
                           />
                         ))}
-                      </FactGrid>
+                      </FactRow>
                     </div>
                   ) : null}
 
