@@ -4,7 +4,6 @@ import { UsersRound } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import { getOfficerQuality, type OfficerQuality as OfficerQualityRow } from '@/lib/quality-api';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { Badge } from '@/components/ui/badge';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { cn } from '@/lib/utils';
 
@@ -62,15 +61,14 @@ export function OfficerQuality({
         <li key={officer.id} className="rounded-xl border bg-card p-4">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <h3 className="text-sm font-semibold">{officer.name}</h3>
+            {/* A role is a fact about the person, not a state of this card. */}
             {officer.role ? (
-              <Badge variant="soft-muted" className="text-[10px]">
+              <span className="text-xs text-muted-foreground">
                 {(labels.staffRole as Record<string, string>)[officer.role] ?? officer.role}
-              </Badge>
+              </span>
             ) : null}
             {officer.isActive ? null : (
-              <Badge variant="soft-destructive" className="text-[10px]">
-                {en ? 'Disabled' : 'معطَّل'}
-              </Badge>
+              <span className="text-xs text-destructive">{en ? 'Disabled' : 'معطَّل'}</span>
             )}
             <span className="ms-auto text-xs text-muted-foreground">
               {en ? `${officer.filed} records filed` : `${officer.filed} سجلاً`}

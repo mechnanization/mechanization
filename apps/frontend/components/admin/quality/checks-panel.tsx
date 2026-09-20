@@ -321,14 +321,21 @@ function CheckHeader({ check, base, locale }: { check: QualityCheck; base: strin
       <span dir="ltr" className="font-mono text-xs text-muted-foreground">
         {check.referenceNumber}
       </span>
+      {/*
+        The result keeps its badge — it is the one state of the record this
+        card is about, and a check with no marker is a check you have to read
+        to know the answer to. Who it is assigned to is a name, so it is a name.
+      */}
       {check.status === 'DONE' ? (
         <Badge variant={check.result === 'MATCHES' ? 'soft-success' : 'soft-destructive'}>
           {quality.checkResult[check.result ?? 'MATCHES']}
         </Badge>
       ) : check.assignedTo ? (
-        <Badge variant="soft-info">{en ? `For ${check.assignedTo.name}` : `لـ ${check.assignedTo.name}`}</Badge>
+        <span className="text-xs text-muted-foreground">
+          {en ? `For ${check.assignedTo.name}` : `لـ ${check.assignedTo.name}`}
+        </span>
       ) : (
-        <Badge variant="soft-muted">{en ? 'Unassigned' : 'غير مُسنَد'}</Badge>
+        <span className="text-xs text-muted-foreground">{en ? 'Unassigned' : 'غير مُسنَد'}</span>
       )}
       <span className="ms-auto text-xs text-muted-foreground">
         {en ? 'Filed by' : 'سجَّله'} {check.originalOfficer?.name ?? '—'} · {formatDate(check.filedAt)}

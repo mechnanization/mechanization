@@ -9,7 +9,6 @@ import { completeQualityCheck, getMyQualityTasks } from '@/lib/quality-api';
 import { formatDate, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { AnswerForm } from '@/components/admin/quality/checks-panel';
-import { Badge } from '@/components/ui/badge';
 import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
@@ -141,9 +140,9 @@ export function MyQualityTasks({
                     {check.citizen.name}
                   </Link>
                   {check.assignedTo ? (
-                    <Badge variant="soft-info" className="text-[10px]">
+                    <span className="text-xs text-primary">
                       {en ? 'Assigned to you' : 'مُسنَد إليك'}
-                    </Badge>
+                    </span>
                   ) : null}
                   <span className="ms-auto text-xs text-muted-foreground">
                     {en ? 'Filed by' : 'سجَّله'} {check.originalOfficer?.name ?? '—'} · {formatDate(check.filedAt)}
