@@ -405,7 +405,7 @@ export default function StaffPage({
                     size="icon-sm"
                     className="border-emerald-600/30 text-emerald-700 bg-emerald-600/5 hover:bg-emerald-600/15 dark:text-emerald-400 dark:border-emerald-500/30"
                     aria-label={locale === 'en' ? 'Performance & Earnings' : 'لوحة الأداء والعمولات'}
-                    onClick={() => router.push(`${base}/inspector/profile?inspectorId=${staff.id}`)}
+                    onClick={() => router.push(`${base}/inspector/profile/${staff.id}`)}
                   >
                     <BadgeDollarSign className="size-4" aria-hidden />
                   </Button>
@@ -626,7 +626,7 @@ export default function StaffPage({
                           variant="outline"
                           size="sm"
                           className="w-full text-xs gap-1.5 border-primary/20 hover:bg-primary/5 text-primary"
-                          onClick={() => router.push(`${base}/inspector/profile?inspectorId=${insp.id}`)}
+                          onClick={() => router.push(`${base}/inspector/profile/${insp.id}`)}
                         >
                           <BadgeDollarSign className="size-3.5" />
                           {locale === 'en' ? 'View Dashboard & Payouts' : 'عرض لوحة الأرباح والدفعات'}
