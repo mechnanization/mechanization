@@ -99,19 +99,30 @@ export function editDistance(a: string, b: string): number {
  * part that is a different name makes the whole name different, however close
  * the others are.
  */
-/** Whether two single parts are the same one, allowing a long part one slip. */
-function samePart(a: string, b: string): boolean {
-  if (a === b) return true;
-  if (a.length < MIN_LETTERS_FOR_TYPO || b.length < MIN_LETTERS_FOR_TYPO) return false;
-  return editDistance(a, b) <= 1;
+function partEdits(a: string, b: string): number | null {
+  if (a === b) return 0;
+  if (a.length < MIN_LETTERS_FOR_TYPO || b.length < MIN_LETTERS_FOR_TYPO) return null;
+  const distance = editDistance(a, b);
+  return distance <= 1 ? distance : null;
 }
 
-/** One name split into folded parts: «نوال محمود شعبان» → [نوال, محمود, شعبان]. */
+/** Whether two single parts are the same one — `partEdits`' rule, without the count. */
+function samePart(a: string, b: string): boolean {
+  return partEdits(a, b) !== null;
+}
+
+/**
+ * One name split into folded parts: «نوال محمود شعبان» → [نوال, محمود, شعبان].
+ *
+ * Folded first and split second, because the fold is what decides where the
+ * parts are: `normalizeSearchText` turns every separator — a hyphen, a comma,
+ * a double space — into one space, so «منيرة-عواضة» splits into the same two
+ * parts as «منيرة عواضة» rather than staying one. Splitting first left the
+ * two sides of a comparison cut in different places, which is the one thing
+ * a part-by-part rule cannot survive.
+ */
 function nameParts(value: string | null | undefined): string[] {
-  return (value ?? '')
-    .split(/\s+/)
-    .map(foldNamePart)
-    .filter(Boolean);
+  return value ? normalizeSearchText(value).split(' ').filter(Boolean) : [];
 }
 
 /** Whether every part of the shorter name appears in the longer, in order. */
@@ -171,13 +182,6 @@ export function compareMothers(
     if (!samePart(shorter[shorter.length - 1]!, longer[longer.length - 1]!)) return 'DIFFERENT';
   }
   return isSubsequence(shorter, longer) ? 'SAME' : 'DIFFERENT';
-}
-
-function partEdits(a: string, b: string): number | null {
-  if (a === b) return 0;
-  if (a.length < MIN_LETTERS_FOR_TYPO || b.length < MIN_LETTERS_FOR_TYPO) return null;
-  const distance = editDistance(a, b);
-  return distance <= 1 ? distance : null;
 }
 
 /**

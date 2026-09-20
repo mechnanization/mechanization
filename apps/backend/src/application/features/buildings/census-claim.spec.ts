@@ -36,7 +36,7 @@ const CITIZEN = 'citizen-1';
 const REGISTRATION = 'reg-1';
 
 interface HarnessOptions {
-  /** How many units the structure has — the منزل inference's one condition. */
+  /** How many units the structure has — what decides منزل or مبنى on a card being minted. */
   unitsInBuilding?: number;
   /** `null` models a citizen with no file to attach a card to. */
   registration?: { id: string } | null;
@@ -405,9 +405,16 @@ describe('recordOccupancy — establishing the census claim', () => {
     });
   });
 
-  it('names the flat on a منزل card minted where the structure has several units', async () => {
-    // With more than one unit standing there is nothing left to infer from, and
-    // the next منزل card minted here would be indistinguishable from this one.
+  it('files a flat on a built-up منزل as a مبنى card naming it', async () => {
+    /*
+      With several units standing there is nothing for a card billing from its
+      own columns to be about, and no honest way to make it say which flat it
+      is: `PropertyEntry` forbids a HOUSE card a units array, the منزل branch
+      of `propertyEntrySchema` has no such field for the form to round-trip,
+      and a row written past both is deleted by the first save of the file.
+
+      So the census decides نوع العقار, not `STRUCTURE_TYPE_MAP` alone.
+    */
     const { service, propertyEntryCreate } = harness({
       unitsInBuilding: 3,
       structureType: 'INDEPENDENT_HOUSE',
@@ -416,7 +423,80 @@ describe('recordOccupancy — establishing the census claim', () => {
     await record(service, { role: 'TENANT' });
 
     const { data } = propertyEntryCreate.mock.calls[0][0];
+    expect(data.propertyType).toBe('BUILDING');
+    expect(data.units.create.unitId).toBe(UNIT);
+    // The columns a منزل bills from stay empty: the row carries the flat.
+    expect(data.unitArea).toBeUndefined();
+    expect(data.unitType).toBeUndefined();
+  });
+
+  it('still files a منزل as a منزل while it is the only unit standing', async () => {
+    const { service, propertyEntryCreate } = harness({
+      unitsInBuilding: 1,
+      structureType: 'INDEPENDENT_HOUSE',
+      unitArea: 130,
+    });
+
+    await record(service);
+
+    const { data } = propertyEntryCreate.mock.calls[0][0];
     expect(data.propertyType).toBe('HOUSE');
+    expect(data.units).toBeUndefined();
+    expect(data.unitArea).toBe(130);
+  });
+
+  it('lets two منزل cards account for two flats rather than minting a third', async () => {
+    /*
+      Neither card says which flat it is, so the flats are counted against the
+      cards rather than matched to them. Two column-billing cards cover two
+      flats between them, and this is one of the two — a third card would bill
+      the man for a flat he holds once, twice.
+
+      Reachable only through cards filed by hand: this path mints at most one
+      per capacity per structure. Which is the point — the rule has to hold on
+      data it did not create.
+    */
+    const { service, buildingUnitCreate, propertyEntryCreate } = harness({
+      unitsInBuilding: 3,
+      existingCards: [
+        { id: 'entry-a', propertyType: 'HOUSE', occupancyType: 'OWNER', units: [] },
+        { id: 'entry-b', propertyType: 'HOUSE', occupancyType: 'OWNER', units: [] },
+      ],
+      spellsHere: [
+        { unitId: 'unit-home', role: 'OWNER' },
+        { unitId: UNIT, role: 'OWNER' },
+      ],
+    });
+
+    const result = await record(service);
+
+    expect(buildingUnitCreate).not.toHaveBeenCalled();
+    expect(propertyEntryCreate).not.toHaveBeenCalled();
+    expect(result.fileLink.outcome).toBe('ALREADY_CLAIMED');
+    expect(result.fileLink.propertyEntryId).toBe('entry-a');
+  });
+
+  it('files the flat those cards cannot account for', async () => {
+    // Three flats held, two cards that each bill one: the surplus gets its own.
+    const { service, buildingUnitCreate, propertyEntryCreate } = harness({
+      unitsInBuilding: 4,
+      existingCards: [
+        { id: 'entry-a', propertyType: 'HOUSE', occupancyType: 'OWNER', units: [] },
+        { id: 'entry-b', propertyType: 'HOUSE', occupancyType: 'OWNER', units: [] },
+      ],
+      spellsHere: [
+        { unitId: 'unit-home', role: 'OWNER' },
+        { unitId: 'unit-shop', role: 'OWNER' },
+        { unitId: UNIT, role: 'OWNER' },
+      ],
+    });
+
+    const result = await record(service);
+
+    // Never as a row on one of them: that card would stop billing its own flat.
+    expect(buildingUnitCreate).not.toHaveBeenCalled();
+    expect(result.fileLink.outcome).toBe('ENTRY_CREATED');
+    const { data } = propertyEntryCreate.mock.calls[0][0];
     expect(data.units.create.unitId).toBe(UNIT);
   });
 

@@ -11,6 +11,7 @@ import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
+import { claimsFlat } from '../../../domain/entities/census-claim';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CasesService } from '../cases/cases.service';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
@@ -250,34 +251,48 @@ export class TenancyService {
     if (!occupancy) throw new NotFoundError('سجل الإشغال غير موجود');
     if (occupancy.toDate) throw new ConflictError('هذا الإشغال منتهٍ مسبقاً');
 
-    const unitsInBuilding = await this.db.unit.count({
-      where: { buildingId: occupancy.unit.buildingId },
-    });
-
     /*
-      The tenant's current cards that claim this flat, in either shape the census
-      reads a claim from: a row naming it, or a منزل on its one-unit structure.
+      The tenant's current cards on this structure, and what the census says
+      they hold in it. Which of the cards actually claim this flat is
+      `claimsFlat`'s answer and not a `where` clause's: a card that names no
+      flat is read against the spells, which SQL here cannot count.
+
+      So the query widens to every current non-owner card of theirs on the
+      building — a handful, and one read rather than the two it replaces — and
+      the rule filters. It used to widen only on a one-unit structure, which is
+      how a منزل card on a structure that had since grown became a tenancy
+      «إنهاء الإيجار» could not see, and could not end.
     */
-    const cards = await this.db.propertyEntry.findMany({
-      where: {
-        endedAt: null,
-        occupancyType: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
-        registration: { citizenId: occupancy.citizenId },
-        OR: [
-          { units: { some: { unitId: occupancy.unit.id, endedAt: null } } },
-          ...(unitsInBuilding === 1
-            ? [{ buildingId: occupancy.unit.buildingId, propertyType: 'HOUSE' as never }]
-            : []),
-        ],
-      },
-      select: CARD_SELECT,
-      orderBy: { createdAt: 'asc' },
-    });
+    const [cards, spellsHere] = await Promise.all([
+      this.db.propertyEntry.findMany({
+        where: {
+          endedAt: null,
+          occupancyType: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+          registration: { citizenId: occupancy.citizenId },
+          OR: [
+            { units: { some: { unitId: occupancy.unit.id, endedAt: null } } },
+            { buildingId: occupancy.unit.buildingId },
+          ],
+        },
+        select: CARD_SELECT,
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.db.unitOccupancy.findMany({
+        where: {
+          citizenId: occupancy.citizenId,
+          toDate: null,
+          unit: { buildingId: occupancy.unit.buildingId },
+        },
+        select: { unitId: true, role: true },
+      }),
+    ]);
+
+    const claims = claimsFlat(cards, spellsHere, occupancy.unit.id);
 
     return this.describe({
       citizenId: occupancy.citizenId,
       unitIds: [occupancy.unit.id],
-      cards: cards.map((card) => ({
+      cards: cards.filter(claims).map((card) => ({
         ...card,
         endingRowIds: card.units
           .filter((row) => row.unitId === occupancy.unit.id)
