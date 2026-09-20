@@ -15,6 +15,7 @@ import {
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { Badge } from '@/components/ui/badge';
+import { Fact, FactGrid } from '@/components/ui/fact-grid';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
@@ -192,16 +193,36 @@ export function ChecksPanel({
             <li key={check.id} className="rounded-xl border bg-card p-4">
               <CheckHeader check={check} base={base} locale={locale} />
 
-              <ul className="mt-2 flex flex-wrap gap-1.5">
+              {/* Aligned pairs, not chips — the same treatment «السجلات» uses,
+                  so a property reads identically on both tabs. */}
+              <div className="mt-2 space-y-2">
                 {check.properties.map((card, index) => (
-                  <li key={`${check.id}-${index}`} className="rounded-md bg-muted/50 px-2 py-1 text-xs">
-                    {labels.propertyType[card.propertyType as never] ?? card.propertyType}
-                    {card.occupancyType ? ` · ${labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}` : ''}
-                    {card.propertyNumber ? ` · ${en ? 'parcel' : 'عقار'} ${card.propertyNumber}` : ''}
-                    {card.buildingCode ? ` · ${card.buildingCode}` : ''}
-                  </li>
+                  <FactGrid key={`${check.id}-${index}`} labelWidth="8rem" className="text-xs">
+                    <Fact
+                      label={en ? 'Type' : 'النوع'}
+                      value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
+                    />
+                    {card.occupancyType ? (
+                      <Fact
+                        label={en ? 'Occupancy' : 'صفة الإشغال'}
+                        value={labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}
+                      />
+                    ) : null}
+                    {card.propertyNumber ? (
+                      <Fact label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
+                    ) : null}
+                    {card.buildingCode || card.buildingName ? (
+                      <Fact
+                        label={en ? 'Building' : 'المبنى'}
+                        value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
+                      />
+                    ) : null}
+                    {card.units.length > 0 ? (
+                      <Fact label={en ? 'Units' : 'الوحدات'} value={card.units.join('، ')} />
+                    ) : null}
+                  </FactGrid>
                 ))}
-              </ul>
+              </div>
 
               {check.status === 'DONE' ? (
                 <div className="mt-3 space-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs">

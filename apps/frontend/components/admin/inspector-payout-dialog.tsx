@@ -19,6 +19,28 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 
+/**
+ * What may be typed into an amount: digits, and at most one decimal point.
+ *
+ * Applied on every keystroke rather than checked on submit, because the field
+ * is a plain text box now — nothing else stops «٤٠٠ ل.ل» or a second dot from
+ * reaching `parseFloat`, which would read the first of them and silently pay
+ * out a different number from the one on screen. Arabic-Indic digits are
+ * folded to Latin so a keyboard set to Arabic still works.
+ */
+function sanitiseAmount(raw: string): string {
+  const latin = raw.replace(/[٠-٩]/g, (digit) =>
+    String(digit.charCodeAt(0) - 0x0660),
+  );
+  const cleaned = latin.replace(/[^0-9.]/g, '');
+  const parts = cleaned.split('.');
+  const whole = parts[0] ?? '';
+  if (parts.length === 1) return whole;
+  // A second dot is dropped rather than starting a new decimal part, and cents
+  // stop at two places — «12.345» is a typo, not a third of a cent.
+  return `${whole}.${parts.slice(1).join('').slice(0, 2)}`;
+}
+
 /** `YYYY-MM-DD` for today, in the reader's own timezone rather than UTC. */
 export function todayIso(): string {
   const now = new Date();
@@ -167,18 +189,30 @@ export function InspectorPayoutDialog({
               {isAr ? 'المبلغ المسلّم (USD) *' : 'Amount handed over (USD) *'}
             </Label>
             <div className="relative">
+              {/*
+                A text box, not `type="number"`.
+
+                The spinners were the problem the number type brought with it:
+                a hand resting on a tablet nudges a payout from 40 to 45, and
+                on a touchscreen those two arrows are the easiest thing in the
+                dialog to hit by accident. `inputMode="decimal"` still raises
+                the numeric keypad on a phone, and the filter below is what
+                keeps the value a number — one that no longer depends on the
+                browser's own stepping.
+
+                No placeholder either: «0.00» sitting in an empty amount field
+                is a figure the eye reads as a value, and a payout of nothing
+                is exactly the mistake worth not suggesting.
+              */}
               <Input
                 id="payout-amount"
-                type="number"
-                step="0.5"
-                min="0.5"
+                type="text"
                 inputMode="decimal"
-                placeholder="0.00"
+                autoComplete="off"
                 required
-                dir="ltr"
-                className="pe-14 text-lg font-bold"
+                className="pe-14 text-start text-lg font-bold"
                 value={amount}
-                onChange={(event) => setAmount(event.target.value)}
+                onChange={(event) => setAmount(sanitiseAmount(event.target.value))}
               />
               <span className="pointer-events-none absolute end-3 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">
                 USD
@@ -187,9 +221,7 @@ export function InspectorPayoutDialog({
             {typeof pendingBalance === 'number' ? (
               <p className="text-xs text-muted-foreground">
                 {isAr ? 'الرصيد المتبقي حالياً:' : 'Pending balance:'}{' '}
-                <span dir="ltr" className="font-semibold tabular-nums">
-                  ${pendingBalance.toFixed(2)}
-                </span>
+                <bdi className="font-semibold tabular-nums">${pendingBalance.toFixed(2)}</bdi>
               </p>
             ) : null}
           </div>

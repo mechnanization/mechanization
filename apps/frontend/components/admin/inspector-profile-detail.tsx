@@ -8,17 +8,13 @@ import {
   ArrowLeft,
   ArrowRight,
   BadgeDollarSign,
-  Ban,
   Building,
   Building2,
-  Calendar,
-  CheckCircle2,
   Clock,
   FileText,
   HandCoins,
   Home,
   Layers,
-  Mail,
   MapPin,
   Receipt,
   RefreshCw,
@@ -26,7 +22,6 @@ import {
   Tent,
   TrendingUp,
   User,
-  UserCheck,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -39,7 +34,7 @@ import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialo
 import { MyQualityTasks } from '@/components/admin/quality/my-tasks';
 import { OfficerQuality } from '@/components/admin/quality/officer-quality';
 import { useGoBack } from '@/components/ui/back-link';
-import { Badge } from '@/components/ui/badge';
+import { Fact, FactGrid } from '@/components/ui/fact-grid';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -237,55 +232,56 @@ export function InspectorProfileDetail({
               >
                 {data.inspector.name.charAt(0)}
               </span>
-              <div className="space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-lg font-bold">{data.inspector.name}</h2>
-                  <Badge variant="secondary" className="gap-1 text-xs">
-                    <UserCheck className="size-3" aria-hidden />
-                    {labels.staffRole?.[data.inspector.role as never] ?? data.inspector.role}
-                  </Badge>
-                  {data.inspector.isActive ? (
-                    <Badge
-                      variant="outline"
-                      className="gap-1 border-emerald-600/30 bg-emerald-600/10 text-xs text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
-                    >
-                      <CheckCircle2 className="size-3" aria-hidden />
-                      {isAr ? 'حساب فعّال' : 'Active'}
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="gap-1 text-xs text-destructive">
-                      <Ban className="size-3" aria-hidden />
-                      {isAr ? 'معطّل' : 'Disabled'}
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              {/*
+                The same aligned block the roster card carries, so an inspector
+                reads identically whichever screen you reached them from. The
+                role and the account state were filled pills on the name's line;
+                they are values, and a value belongs under its label.
+              */}
+              <div className="min-w-0 space-y-2">
+                <h2 className="text-lg font-bold">{data.inspector.name}</h2>
+                <FactGrid labelWidth="6rem" className="gap-y-1">
+                  <Fact
+                    label={isAr ? 'الصفة' : 'Role'}
+                    value={labels.staffRole?.[data.inspector.role as never] ?? data.inspector.role}
+                  />
+                  <Fact
+                    label={isAr ? 'الحساب' : 'Account'}
+                    className={
+                      data.inspector.isActive
+                        ? 'text-emerald-700 dark:text-emerald-400'
+                        : 'text-destructive'
+                    }
+                    value={
+                      data.inspector.isActive
+                        ? isAr
+                          ? 'فعّال'
+                          : 'Active'
+                        : isAr
+                          ? 'معطّل'
+                          : 'Disabled'
+                    }
+                  />
                   {data.inspector.email ? (
-                    <span className="flex items-center gap-1" dir="ltr">
-                      <Mail className="size-3.5" aria-hidden />
-                      {data.inspector.email}
-                    </span>
+                    <Fact label={isAr ? 'البريد' : 'Email'} value={data.inspector.email} />
                   ) : null}
-                  <span className="flex items-center gap-1">
-                    <Calendar className="size-3.5" aria-hidden />
-                    {isAr ? 'انضم في:' : 'Joined:'} {formatDate(data.inspector.createdAt)}
-                  </span>
+                  <Fact
+                    label={isAr ? 'انضم في' : 'Joined'}
+                    value={formatDate(data.inspector.createdAt)}
+                  />
                   {data.inspector.lastLoginAt ? (
-                    <span className="flex items-center gap-1">
-                      <Clock className="size-3.5" aria-hidden />
-                      {isAr ? 'آخر دخول:' : 'Last login:'} {formatDateTime(data.inspector.lastLoginAt)}
-                    </span>
+                    <Fact
+                      label={isAr ? 'آخر دخول' : 'Last login'}
+                      value={formatDateTime(data.inspector.lastLoginAt)}
+                    />
                   ) : null}
-                </div>
+                  <Fact
+                    label={isAr ? 'معدل العمولة' : 'Rate'}
+                    value={isAr ? '$1.00 لكل عقار أو وحدة' : '$1.00 per property or unit'}
+                  />
+                </FactGrid>
               </div>
             </div>
-
-            <Badge
-              variant="outline"
-              className="self-end border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary sm:self-center"
-            >
-              {isAr ? 'معدل العمولة: 1.00$ لكل عقار' : 'Rate: $1.00 per property'}
-            </Badge>
           </div>
         </CardContent>
       </Card>
@@ -309,20 +305,17 @@ export function InspectorProfileDetail({
           icon={TrendingUp}
           label={isAr ? 'إجمالي الأرباح' : 'Total earned'}
           value={`$${money(data.totalEarnings)}`}
-          ltr
         />
         <Stat
           icon={Wallet}
           label={isAr ? 'المدفوع' : 'Paid'}
           value={`$${money(data.paidBalance)}`}
           note={`${data.payouts.length} ${isAr ? 'دفعة مسجلة' : 'payouts'}`}
-          ltr
         />
         <Stat
           icon={Clock}
           label={isAr ? 'المتبقي المستحق' : 'Pending'}
           value={`$${money(data.pendingBalance)}`}
-          ltr
           emphasis
         />
       </div>
@@ -464,42 +457,47 @@ export function InspectorProfileDetail({
                           <User className="size-5" />
                         </span>
                         <div className="space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-bold sm:text-base">{item.citizenName}</span>
-                            <Badge variant="outline" className="text-xs" dir="ltr">
-                              {item.referenceNumber}
-                            </Badge>
-                            {item.status === 'REQUIRES_REVIEW' ? (
-                              <Badge
-                                variant="outline"
-                                className="border-amber-500/30 bg-amber-500/10 text-xs text-amber-700 dark:text-amber-400"
-                              >
-                                {isAr ? 'يتطلب مراجعة' : 'Requires review'}
-                              </Badge>
-                            ) : (
-                              <Badge
-                                variant="outline"
-                                className="border-emerald-600/30 bg-emerald-600/10 text-xs text-emerald-700 dark:text-emerald-400"
-                              >
-                                {isAr ? 'مكتمل' : 'Completed'}
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                            <span>
-                              {isAr ? 'تاريخ التسجيل:' : 'Date:'} {formatDateTime(item.submittedAt)}
-                            </span>
+                          <span className="text-sm font-bold sm:text-base">{item.citizenName}</span>
+                          <FactGrid labelWidth="7rem" className="gap-y-1">
+                            <Fact
+                              label={isAr ? 'الرقم المرجعي' : 'Reference'}
+                              className="font-mono"
+                              value={item.referenceNumber}
+                            />
+                            <Fact
+                              label={isAr ? 'الحالة' : 'Status'}
+                              className={
+                                item.status === 'REQUIRES_REVIEW'
+                                  ? 'text-amber-700 dark:text-amber-400'
+                                  : 'text-emerald-700 dark:text-emerald-400'
+                              }
+                              value={
+                                item.status === 'REQUIRES_REVIEW'
+                                  ? isAr
+                                    ? 'يتطلب مراجعة'
+                                    : 'Requires review'
+                                  : isAr
+                                    ? 'مكتمل'
+                                    : 'Completed'
+                              }
+                            />
+                            <Fact
+                              label={isAr ? 'تاريخ التسجيل' : 'Date'}
+                              value={formatDateTime(item.submittedAt)}
+                            />
                             {item.neighborhoods.length > 0 ? (
-                              <span>
-                                {isAr ? 'الأحياء:' : 'Neighborhoods:'} {item.neighborhoods.join('، ')}
-                              </span>
+                              <Fact
+                                label={isAr ? 'الأحياء' : 'Neighborhoods'}
+                                value={item.neighborhoods.join('، ')}
+                              />
                             ) : null}
                             {item.propertyNumbers.length > 0 ? (
-                              <span>
-                                {isAr ? 'أرقام العقارات:' : 'Property #:'} {item.propertyNumbers.join('، ')}
-                              </span>
+                              <Fact
+                                label={isAr ? 'أرقام العقارات' : 'Property #'}
+                                value={item.propertyNumbers.join('، ')}
+                              />
                             ) : null}
-                          </div>
+                          </FactGrid>
                         </div>
                       </div>
 
@@ -508,11 +506,8 @@ export function InspectorProfileDetail({
                           <div className="text-xs text-muted-foreground">
                             {item.propertyCount} {isAr ? 'عقار / وحدة' : 'properties'}
                           </div>
-                          <div
-                            className="text-sm font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400"
-                            dir="ltr"
-                          >
-                            +${money(item.commissionEarned)}
+                          <div className="text-sm font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">
+                            <bdi>+${money(item.commissionEarned)}</bdi>
                           </div>
                         </div>
                         <Button
@@ -576,35 +571,38 @@ export function InspectorProfileDetail({
                         >
                           <HandCoins className="size-5" />
                         </span>
-                        <div className="space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span
-                              className="text-base font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400"
-                              dir="ltr"
-                            >
+                        <div className="min-w-0 space-y-1.5">
+                          <span className="block text-base font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">
+                            <bdi>
                               ${money(payout.amount)} {payout.currency}
-                            </span>
+                            </bdi>
+                          </span>
+                          <FactGrid labelWidth="7rem" className="gap-y-1">
                             {payout.reference ? (
-                              <Badge variant="outline" className="text-xs">
-                                {isAr ? 'سند رقم:' : 'Ref:'} {payout.reference}
-                              </Badge>
+                              <Fact
+                                label={isAr ? 'رقم الإيصال' : 'Receipt'}
+                                className="font-mono"
+                                value={payout.reference}
+                              />
                             ) : null}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                            <span>
-                              {isAr ? 'تاريخ الدفع:' : 'Paid on:'} {formatDateTime(payout.paidAt)}
-                            </span>
+                            <Fact
+                              label={isAr ? 'تاريخ الدفع' : 'Paid on'}
+                              value={formatDateTime(payout.paidAt)}
+                            />
                             {payout.recordedByName ? (
-                              <span>
-                                {isAr ? 'سُجلت بواسطة:' : 'Recorded by:'} {payout.recordedByName}
-                              </span>
+                              <Fact
+                                label={isAr ? 'سُجّلت بواسطة' : 'Recorded by'}
+                                value={payout.recordedByName}
+                              />
                             ) : null}
-                          </div>
-                          {payout.note ? (
-                            <p className="mt-1 rounded-lg bg-muted/40 p-2 text-xs text-muted-foreground">
-                              {payout.note}
-                            </p>
-                          ) : null}
+                            {payout.note ? (
+                              <Fact
+                                label={isAr ? 'ملاحظات' : 'Notes'}
+                                className="text-muted-foreground"
+                                value={payout.note}
+                              />
+                            ) : null}
+                          </FactGrid>
                         </div>
                       </div>
                     </div>
@@ -661,9 +659,11 @@ function TabButton({
     >
       <Icon className="size-4" aria-hidden />
       {label}
-      <Badge variant="secondary" className="ms-1.5 text-xs">
-        {count}
-      </Badge>
+      {/* The count is a value, so it is a number — not a filled pill sitting
+          inside a control that is already a shape of its own. */}
+      <span className="ms-1 text-xs font-normal tabular-nums opacity-70">
+        <bdi>({count})</bdi>
+      </span>
     </button>
   );
 }
@@ -700,15 +700,12 @@ function Stat({
   label,
   value,
   note,
-  ltr,
   emphasis,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string;
   note?: string;
-  /** Latin numerals and a leading `$` read left-to-right inside an RTL page. */
-  ltr?: boolean;
   emphasis?: boolean;
 }): React.JSX.Element {
   return (
@@ -717,13 +714,17 @@ function Stat({
         <Icon className="size-4 shrink-0" aria-hidden />
         <span className="min-w-0 truncate">{label}</span>
       </div>
+      {/*
+        `<bdi>` rather than `dir="ltr"`: the label sits above its value, and a
+        value carrying its own direction lands on the opposite edge from the
+        word naming it — see `FactGrid` for why this keeps catching us out.
+      */}
       <div
         className={`mt-2 text-2xl font-bold tabular-nums ${
           emphasis ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'
         }`}
-        dir={ltr ? 'ltr' : undefined}
       >
-        {value}
+        <bdi>{value}</bdi>
       </div>
       {note ? <p className="mt-1 text-xs text-muted-foreground">{note}</p> : null}
     </div>

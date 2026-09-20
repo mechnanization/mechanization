@@ -11,6 +11,13 @@ import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 
+/** A query-string date, or nothing. Never an `Invalid Date` handed to Prisma. */
+function parseDate(value: string | undefined): Date | undefined {
+  if (!value) return undefined;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
 /**
  * Sits under `t/:tenantSlug` like every other tenant-scoped controller — that
  * prefix is what `TenantMiddleware` binds to, so a route outside it would run
@@ -42,9 +49,21 @@ export class CasesController {
     @Query('caseType') caseType?: string,
     @Query('buildingId') buildingId?: string,
     @Query('unitId') unitId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     return {
-      cases: await this.cases.list({ propertyNumber, status, caseType, buildingId, unitId }),
+      cases: await this.cases.list({
+        propertyNumber,
+        status,
+        caseType,
+        buildingId,
+        unitId,
+        // An unparseable date is dropped rather than sent on as `Invalid Date`,
+        // which Prisma turns into a 500 for what is a malformed query string.
+        from: parseDate(from),
+        to: parseDate(to),
+      }),
     };
   }
 

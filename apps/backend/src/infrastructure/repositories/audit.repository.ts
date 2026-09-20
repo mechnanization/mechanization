@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '../../generated/tenant-client';
 import { AuditLogEntry } from '../../domain/entities/audit-log-entry.entity';
 import {
+  AuditDailyQuery,
+  AuditDailyRow,
   AuditQuery,
   AuditRepository,
   AuditRow,
@@ -86,7 +88,14 @@ export class PrismaAuditRepository implements AuditRepository {
     };
   }
 
-  async query(query: AuditQuery): Promise<{ items: AuditRow[]; total: number }> {
+  /**
+   * The filter clause both reads share.
+   *
+   * One builder rather than two, because `daily` is the same question as
+   * `query` asked at a coarser grain — a summary that narrowed differently from
+   * the list it drills into would be a summary of something else.
+   */
+  private where(query: Partial<AuditQuery>): Prisma.Sql {
     const conditions: Prisma.Sql[] = [];
     if (query.actorId !== undefined && query.actorId !== null) {
       // Postgres raises on `'not-a-uuid'::uuid`, which would surface as a 500
@@ -102,8 +111,86 @@ export class PrismaAuditRepository implements AuditRepository {
     if (query.from) conditions.push(Prisma.sql`"createdAt" >= ${query.from}`);
     if (query.to) conditions.push(Prisma.sql`"createdAt" <= ${query.to}`);
 
-    const where =
-      conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+    return conditions.length > 0
+      ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`
+      : Prisma.empty;
+  }
+
+  /**
+   * One row per (day, actor), with that person's actions counted beneath it.
+   *
+   * Grouped in Postgres rather than in the page, and that is the point: the
+   * list view groups the fifty rows it happens to be showing, so a day spanning
+   * a page boundary is two half-days and a busy officer's total is whatever
+   * fell on screen. A summary has to count the days, not the page — so the
+   * paging unit here is the group, and `count(*) OVER()` counts groups too.
+   */
+  async daily(query: AuditDailyQuery): Promise<{ items: AuditDailyRow[]; total: number }> {
+    const where = this.where(query);
+
+    const rows = await withConnectionRetry(() =>
+      this.db.$queryRaw<
+        Array<{
+          day: string;
+          actorId: string | null;
+          actions: Array<{ action: string; count: number }>;
+          total: number;
+          lastAt: Date;
+          groups: number;
+        }>
+      >`
+        WITH per_action AS (
+          -- createdAt is TIMESTAMP(3) -- no zone -- and Prisma writes UTC into
+          -- it. The first AT TIME ZONE labels that value as UTC; the second
+          -- converts the instant to the reader's wall clock. One alone would
+          -- read the stored value as though it had been written in Beirut and
+          -- move every day boundary by the offset.
+          SELECT to_char(
+                   ("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${query.timeZone}::text)::date,
+                   'YYYY-MM-DD'
+                 ) AS day,
+                 "actorId",
+                 "action",
+                 count(*)::int AS n,
+                 max("createdAt") AS last_at
+          FROM ${this.S}audit_log_entries
+          ${where}
+          GROUP BY 1, 2, 3
+        ),
+        per_day AS (
+          SELECT day,
+                 "actorId",
+                 sum(n)::int AS total,
+                 max(last_at) AS "lastAt",
+                 jsonb_agg(
+                   jsonb_build_object('action', "action", 'count', n)
+                   ORDER BY n DESC, "action"
+                 ) AS actions
+          FROM per_action
+          GROUP BY day, "actorId"
+        )
+        SELECT day, "actorId", total, "lastAt", actions,
+               count(*) OVER()::int AS groups
+        FROM per_day
+        ORDER BY day DESC, total DESC, "actorId"
+        LIMIT ${query.limit} OFFSET ${query.offset}
+      `,
+    );
+
+    return {
+      items: rows.map((row) => ({
+        day: row.day,
+        actorId: row.actorId,
+        actions: row.actions,
+        total: row.total,
+        lastAt: row.lastAt,
+      })),
+      total: rows[0]?.groups ?? 0,
+    };
+  }
+
+  async query(query: AuditQuery): Promise<{ items: AuditRow[]; total: number }> {
+    const where = this.where(query);
 
     const rows = await withConnectionRetry(() =>
       this.db.$queryRaw<

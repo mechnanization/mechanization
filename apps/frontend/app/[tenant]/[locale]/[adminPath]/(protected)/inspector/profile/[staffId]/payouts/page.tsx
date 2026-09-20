@@ -19,7 +19,6 @@ import { useStaffSession } from '@/lib/use-staff-session';
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
 import { BackLink } from '@/components/ui/back-link';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -220,7 +219,6 @@ export default function InspectorPayoutHistoryPage({
                   ? `${isAr ? 'آخر دفعة:' : 'Latest:'} ${formatDate(latestPayout.paidAt)}`
                   : undefined
               }
-              plain
             />
             <Stat
               icon={Clock}
@@ -280,17 +278,22 @@ export default function InspectorPayoutHistoryPage({
                           <TableCell className="whitespace-nowrap">
                             {formatDateTime(payout.paidAt)}
                           </TableCell>
-                          <TableCell
-                            className="whitespace-nowrap font-bold tabular-nums text-emerald-600 dark:text-emerald-400"
-                            dir="ltr"
-                          >
-                            ${money(payout.amount)} {payout.currency}
+                          {/*
+                            `<bdi>` on the figures rather than `dir="ltr"` on
+                            the cell, so each one sits under the heading that
+                            names it — see `FactGrid` for the whole story. The
+                            receipt number is plain text for the same reason a
+                            payout amount is: it is a value being read off a
+                            paper slip, not a control.
+                          */}
+                          <TableCell className="whitespace-nowrap font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                            <bdi>
+                              ${money(payout.amount)} {payout.currency}
+                            </bdi>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-xs">
                             {payout.reference ? (
-                              <Badge variant="outline" className="text-xs" dir="ltr">
-                                {payout.reference}
-                              </Badge>
+                              <bdi>{payout.reference}</bdi>
                             ) : (
                               <span className="text-muted-foreground">—</span>
                             )}
@@ -298,8 +301,8 @@ export default function InspectorPayoutHistoryPage({
                           <TableCell className="text-muted-foreground">
                             {payout.recordedByName ?? '—'}
                           </TableCell>
-                          <TableCell className="whitespace-nowrap tabular-nums" dir="ltr">
-                            ${money(remaining)}
+                          <TableCell className="whitespace-nowrap tabular-nums">
+                            <bdi>${money(remaining)}</bdi>
                           </TableCell>
                           {/*
                             The one cell here that is prose rather than a
@@ -348,15 +351,12 @@ function Stat({
   value,
   note,
   emphasis,
-  /** A count rather than an amount — no `$`, so no LTR override. */
-  plain,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string;
   note?: string;
   emphasis?: boolean;
-  plain?: boolean;
 }): React.JSX.Element {
   return (
     <div className="rounded-lg border bg-card p-4">
@@ -364,13 +364,19 @@ function Stat({
         <Icon className="size-4 shrink-0" aria-hidden />
         <span className="min-w-0 truncate">{label}</span>
       </div>
+      {/*
+        `<bdi>` rather than a `dir` override: the label sits above the value,
+        and a value with its own direction lands on the opposite edge from the
+        word naming it. The isolate keeps «$412.00» in the right order without
+        moving where it starts — so counts and amounts now line up with each
+        other too, which the `plain` flag used to exist to work around.
+      */}
       <div
         className={`mt-2 text-2xl font-bold tabular-nums ${
           emphasis ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'
         }`}
-        dir={plain ? undefined : 'ltr'}
       >
-        {value}
+        <bdi>{value}</bdi>
       </div>
       {note ? <p className="mt-1 truncate text-xs text-muted-foreground">{note}</p> : null}
     </div>

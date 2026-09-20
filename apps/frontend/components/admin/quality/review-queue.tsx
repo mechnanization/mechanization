@@ -17,6 +17,7 @@ import { formatDateTime, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Fact, FactGrid } from '@/components/ui/fact-grid';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -221,51 +222,130 @@ export function ReviewQueue({
                     </span>
                   </div>
 
-                  <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                    <span>
-                      {en ? 'Filed by' : 'سجَّله'}{' '}
-                      <span className="font-medium text-foreground/80">{item.officer?.name ?? (en ? 'unknown' : 'غير معروف')}</span>
-                    </span>
+                  {/*
+                    The record itself, as aligned pairs.
+
+                    This was a run-on line — «سجَّله فلان  والدته فلانة  ٤ أفراد
+                    مقيم» — which is readable once and unscannable down a queue
+                    of twenty. A reviewer comparing records reads one column at
+                    a time, so every value starts at the same edge, and the
+                    fields the decision actually turns on (who filed it, when it
+                    last moved, how many doors it claims) are stated rather than
+                    left for whoever thinks to open the file.
+                  */}
+                  <FactGrid labelWidth="8rem" className="text-xs">
+                    <Fact
+                      label={en ? 'Filed by' : 'سجَّله'}
+                      value={item.officer?.name ?? (en ? 'unknown' : 'غير معروف')}
+                    />
+                    <Fact label={en ? 'Filed on' : 'تاريخ التقديم'} value={formatDateTime(item.submittedAt)} />
+                    {item.updatedAt !== item.submittedAt ? (
+                      <Fact label={en ? 'Last edited' : 'آخر تعديل'} value={formatDateTime(item.updatedAt)} />
+                    ) : null}
+                    <Fact
+                      label={en ? 'Record ref.' : 'مرجع السجل'}
+                      className="font-mono"
+                      value={item.referenceNumber}
+                    />
                     {item.citizen.motherName ? (
-                      <span>{en ? `mother: ${item.citizen.motherName}` : `والدته: ${item.citizen.motherName}`}</span>
+                      <Fact label={en ? 'Mother' : 'اسم الأم'} value={item.citizen.motherName} />
                     ) : null}
                     {item.citizen.householdMembers != null ? (
-                      <span>{en ? `${item.citizen.householdMembers} in household` : `${item.citizen.householdMembers} أفراد`}</span>
+                      <Fact
+                        label={en ? 'Household' : 'أفراد الأسرة'}
+                        value={
+                          en
+                            ? `${item.citizen.householdMembers}`
+                            : `${item.citizen.householdMembers} أفراد`
+                        }
+                      />
                     ) : null}
-                    <span>{labels.citizenResidence[item.citizen.residence as never] ?? item.citizen.residence}</span>
-                  </p>
+                    <Fact
+                      label={en ? 'Residence' : 'مكان الإقامة'}
+                      value={labels.citizenResidence[item.citizen.residence as never] ?? item.citizen.residence}
+                    />
+                    <Fact
+                      label={en ? 'Properties' : 'العقارات'}
+                      value={
+                        item.properties.length === 0
+                          ? en
+                            ? 'none on this record'
+                            : 'لا عقار على هذا السجل'
+                          : en
+                            ? `${item.properties.length}`
+                            : `${item.properties.length}`
+                      }
+                    />
+                  </FactGrid>
 
-                  {item.properties.length > 0 ? (
-                    <ul className="flex flex-wrap gap-1.5">
-                      {item.properties.map((card, index) => (
-                        <li
-                          key={`${item.registrationId}-${index}`}
-                          className="rounded-md bg-muted/50 px-2 py-1 text-xs text-foreground/90"
-                        >
-                          {labels.propertyType[card.propertyType as never] ?? card.propertyType}
-                          {card.occupancyType
-                            ? ` · ${labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}`
-                            : ''}
-                          {card.propertyNumber ? ` · ${en ? 'parcel' : 'عقار'} ${card.propertyNumber}` : ''}
-                          {card.buildingCode ? ` · ${card.buildingCode}` : ''}
-                          {card.unitCount > 0 ? ` · ${card.unitCount} ${en ? 'unit(s)' : 'وحدة'}` : ''}
-                          {card.unitArea != null ? ` · ${card.unitArea} ${en ? 'm²' : 'م²'}` : ''}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">{en ? 'No property on this record.' : 'لا عقار على هذا السجل.'}</p>
-                  )}
+                  {/*
+                    Each property spelled out rather than squeezed into a pill.
+                    A «شقة · مالك · عقار 498 · X-498-A · 3 وحدة» chip hides which
+                    dot is which the moment one of the parts is missing.
+                  */}
+                  {item.properties.map((card, index) => (
+                    <div key={`${item.registrationId}-${index}`} className="space-y-1">
+                      <p className="text-xs font-medium text-foreground/70">
+                        {item.properties.length > 1
+                          ? `${en ? 'Property' : 'العقار'} ${index + 1}`
+                          : en
+                            ? 'Property'
+                            : 'العقار'}
+                      </p>
+                      <FactGrid labelWidth="8rem" className="text-xs">
+                        <Fact
+                          label={en ? 'Type' : 'النوع'}
+                          value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
+                        />
+                        {card.occupancyType ? (
+                          <Fact
+                            label={en ? 'Occupancy' : 'صفة الإشغال'}
+                            value={labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}
+                          />
+                        ) : null}
+                        {card.propertyNumber ? (
+                          <Fact label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
+                        ) : null}
+                        {card.buildingCode || card.buildingName ? (
+                          <Fact
+                            label={en ? 'Building' : 'المبنى'}
+                            value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
+                          />
+                        ) : null}
+                        {card.unitCount > 0 ? (
+                          <Fact
+                            label={en ? 'Units' : 'عدد الوحدات'}
+                            value={en ? `${card.unitCount}` : `${card.unitCount} وحدة`}
+                          />
+                        ) : null}
+                        {card.unitArea != null ? (
+                          <Fact
+                            label={en ? 'Area' : 'المساحة'}
+                            value={`${card.unitArea} ${en ? 'm²' : 'م²'}`}
+                          />
+                        ) : null}
+                      </FactGrid>
+                    </div>
+                  ))}
 
                   {item.flags.length > 0 ? (
-                    <dl className="grid gap-x-3 gap-y-1 rounded-lg bg-warning/5 p-2.5 text-xs sm:grid-cols-[minmax(8rem,max-content)_1fr]">
-                      {item.flags.map((flag) => (
-                        <div key={flag.path} className="contents">
-                          <dt className="font-medium text-warning">{flagFieldLabel(flag.path, locale)}</dt>
-                          <dd className="text-muted-foreground">{flag.reason}</dd>
-                        </div>
-                      ))}
-                    </dl>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-warning">
+                        {en ? 'Fields left unconfirmed' : 'حقول غير مؤكَّدة'}
+                      </p>
+                      <FactGrid labelWidth="8rem" className="text-xs">
+                        {item.flags.map((flag) => (
+                          <Fact
+                            key={flag.path}
+                            label={
+                              <span className="text-warning">{flagFieldLabel(flag.path, locale)}</span>
+                            }
+                            className="text-muted-foreground"
+                            value={flag.reason}
+                          />
+                        ))}
+                      </FactGrid>
+                    </div>
                   ) : null}
 
                   {item.notes ? (
@@ -277,9 +357,11 @@ export function ReviewQueue({
                       <summary className="w-fit cursor-pointer text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
                         {en ? `Review history (${item.history.length})` : `سجل المراجعات (${item.history.length})`}
                       </summary>
-                      <ol className="mt-2 space-y-1.5">
+                      {/* Divided, not boxed — a rule separates these entries
+                          without drawing a frame round every value in them. */}
+                      <ol className="mt-2 divide-y">
                         {item.history.map((entry) => (
-                          <li key={entry.id} className="rounded-md border px-2.5 py-1.5">
+                          <li key={entry.id} className="py-1.5 first:pt-0 last:pb-0">
                             <span className="font-medium">
                               {entry.outcome === 'APPROVED'
                                 ? en

@@ -4,17 +4,13 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  Ban,
   BadgeDollarSign,
-  CheckCircle2,
   Clock,
   HandCoins,
   Home,
-  Mail,
   Receipt,
   RefreshCw,
   TrendingUp,
-  UserCheck,
   UsersRound,
   Wallet,
 } from 'lucide-react';
@@ -24,7 +20,7 @@ import type { StaffSummary } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
-import { Badge } from '@/components/ui/badge';
+import { Fact, FactGrid } from '@/components/ui/fact-grid';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -203,19 +199,16 @@ export function InspectorEarningsRoster({
           icon={TrendingUp}
           label={isAr ? 'إجمالي الأرباح' : 'Total earned'}
           value={`$${money(totals.earned, locale)}`}
-          ltr
         />
         <Stat
           icon={Wallet}
           label={isAr ? 'إجمالي المدفوع' : 'Total paid'}
           value={`$${money(totals.paid, locale)}`}
-          ltr
         />
         <Stat
           icon={Clock}
           label={isAr ? 'إجمالي المتبقي' : 'Total pending'}
           value={`$${money(totals.pending, locale)}`}
-          ltr
           emphasis
         />
       </div>
@@ -316,54 +309,57 @@ function InspectorCard({
           >
             {inspector.fullName.charAt(0)}
           </span>
-          <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              {/*
-                The name is the way into the full dashboard — the survey log,
-                the property-type breakdown, every payout. Two buttons already
-                sit on this card; a third labelled «عرض» would compete with the
-                one that actually moves money.
-              */}
-              <Link
-                href={`${base}/inspector/profile/${inspector.id}`}
-                className="truncate text-base font-bold hover:underline"
-              >
-                {inspector.fullName}
-              </Link>
-              <Badge variant="secondary" className="gap-1 text-xs">
-                <UserCheck className="size-3" aria-hidden />
-                {roleLabel}
-              </Badge>
-              {inspector.isActive ? (
-                <Badge
-                  variant="outline"
-                  className="gap-1 border-emerald-600/30 bg-emerald-600/10 text-xs text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
-                >
-                  <CheckCircle2 className="size-3" aria-hidden />
-                  {isAr ? 'فعّال' : 'Active'}
-                </Badge>
-              ) : (
-                <Badge variant="outline" className="gap-1 text-xs text-destructive">
-                  <Ban className="size-3" aria-hidden />
-                  {isAr ? 'معطّل' : 'Disabled'}
-                </Badge>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <div className="min-w-0 space-y-2">
+            {/*
+              The name is the way into the full dashboard — the survey log, the
+              property-type breakdown, every payout. Two buttons already sit on
+              this card; a third labelled «عرض» would compete with the one that
+              actually moves money.
+            */}
+            <Link
+              href={`${base}/inspector/profile/${inspector.id}`}
+              className="block truncate text-base font-bold hover:underline"
+            >
+              {inspector.fullName}
+            </Link>
+
+            {/*
+              The role, the account's state and the three dates as aligned
+              pairs, so every value starts under the one above it.
+
+              The role and the state used to be badges on the name's line: two
+              filled pills of different colours per card, which on a page of
+              five inspectors is ten shapes competing with the figures the page
+              is actually about. The state keeps its colour — «معطّل» is the one
+              thing here somebody must not miss — but as coloured text, not as a
+              container.
+            */}
+            <FactGrid labelWidth="6rem" className="gap-y-1">
+              <Fact label={isAr ? 'الصفة' : 'Role'} value={roleLabel} />
+              <Fact
+                label={isAr ? 'الحساب' : 'Account'}
+                className={
+                  inspector.isActive
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : 'text-destructive'
+                }
+                value={inspector.isActive ? (isAr ? 'فعّال' : 'Active') : isAr ? 'معطّل' : 'Disabled'}
+              />
               {inspector.email ? (
-                <span className="flex items-center gap-1 truncate" dir="ltr">
-                  <Mail className="size-3.5 shrink-0" aria-hidden />
-                  {inspector.email}
-                </span>
+                <Fact label={isAr ? 'البريد' : 'Email'} value={inspector.email} />
               ) : null}
-              <span>
-                {isAr ? 'انضم في:' : 'Joined:'} {formatDate(inspector.createdAt)}
-              </span>
-              <span>
-                {isAr ? 'آخر دخول:' : 'Last login:'}{' '}
-                {inspector.lastLoginAt ? formatDate(inspector.lastLoginAt) : isAr ? 'لم يدخل بعد' : 'never'}
-              </span>
-            </div>
+              <Fact label={isAr ? 'انضم في' : 'Joined'} value={formatDate(inspector.createdAt)} />
+              <Fact
+                label={isAr ? 'آخر دخول' : 'Last login'}
+                value={
+                  inspector.lastLoginAt
+                    ? formatDate(inspector.lastLoginAt)
+                    : isAr
+                      ? 'لم يدخل بعد'
+                      : 'never'
+                }
+              />
+            </FactGrid>
           </div>
         </div>
 
@@ -416,22 +412,27 @@ function InspectorCard({
                 <TableCell className="text-base font-semibold tabular-nums">
                   {properties.toLocaleString(locale)}
                 </TableCell>
-                <TableCell className="text-base font-semibold tabular-nums" dir="ltr">
-                  ${money(earned, locale)}
+                {/*
+                  `<bdi>`, not `dir="ltr"` on the cell.
+
+                  `dir="ltr"` sets the cell's own direction, which also flips
+                  where its text starts — so «$0.00» drifted to the far side
+                  while its heading stayed on the near one, and no figure sat
+                  under the word naming it. The isolate keeps the dollar sign in
+                  front of the number without moving the number.
+                */}
+                <TableCell className="text-base font-semibold tabular-nums">
+                  <bdi>${money(earned, locale)}</bdi>
                 </TableCell>
-                <TableCell
-                  className="text-base font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
-                  dir="ltr"
-                >
-                  ${money(paid, locale)}
+                <TableCell className="text-base font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                  <bdi>${money(paid, locale)}</bdi>
                 </TableCell>
                 <TableCell
                   className={`text-base font-bold tabular-nums ${
                     pending > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
                   }`}
-                  dir="ltr"
                 >
-                  ${money(pending, locale)}
+                  <bdi>${money(pending, locale)}</bdi>
                 </TableCell>
               </TableRow>
             </TableBody>
@@ -454,15 +455,13 @@ function Stat({
   label,
   value,
   note,
-  ltr,
+
   emphasis,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string;
   note?: string;
-  /** Latin numerals and a leading `$` read left-to-right inside an RTL page. */
-  ltr?: boolean;
   emphasis?: boolean;
 }): React.JSX.Element {
   return (
@@ -471,13 +470,17 @@ function Stat({
         <Icon className="size-4 shrink-0" aria-hidden />
         <span className="min-w-0 truncate">{label}</span>
       </div>
+      {/*
+        `<bdi>` rather than `dir="ltr"` on the number: the label sits above its
+        value, and giving the value its own direction pushed it to the opposite
+        edge from the word naming it.
+      */}
       <div
         className={`mt-2 text-2xl font-bold tabular-nums ${
           emphasis ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'
         }`}
-        dir={ltr ? 'ltr' : undefined}
       >
-        {value}
+        <bdi>{value}</bdi>
       </div>
       {note ? <p className="mt-1 truncate text-xs text-muted-foreground">{note}</p> : null}
     </div>

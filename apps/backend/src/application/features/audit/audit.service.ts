@@ -4,12 +4,31 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
 import { AUDIT_REPOSITORY } from '../../../domain/interfaces/base-repository.interface';
 import {
+  AuditDailyQuery,
   AuditQuery,
   AuditRepository,
 } from '../../../domain/interfaces/audit-repository.interface';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { toAuditViews, type AuditView } from './audit-view';
+
+/** One staff member's day, as «التقرير اليومي» lists it. */
+export interface AuditDailySummary {
+  /** `YYYY-MM-DD` in the reader's own zone. */
+  day: string;
+  actor: {
+    id: string | null;
+    kind: 'STAFF' | 'CITIZEN' | 'SYSTEM';
+    name: string | null;
+    role: string | null;
+    email: string | null;
+  };
+  /** Commonest first — what the one-line headline is built from. */
+  actions: Array<{ action: string; count: number }>;
+  total: number;
+  /** The last thing they did that day, ISO. */
+  lastAt: string;
+}
 
 /**
  * The audit trail subscribes to domain events rather than being called by the
@@ -454,6 +473,55 @@ export class AuditService {
       every census write an officer made read as «النظام».
     */
     const result = { items: await toAuditViews(this.tenantContext.prisma, raw.items), total: raw.total };
+    const ttl = this.config.get<number>('AUDIT_CACHE_TTL_SECONDS') ?? 20;
+    await this.cache.set(key, result, ttl);
+    return result;
+  }
+
+  /**
+   * «التقرير اليومي» — one row per staff member per day, with what they did.
+   *
+   * The same filters as `query`, so the summary and the list it drills into
+   * always describe the same set. Names are resolved here rather than in the
+   * repository for the same reason `toAuditViews` exists: the log stores an
+   * actor id and an email that most census writes never had, so an unresolved
+   * row reads «النظام» beside a day's work somebody actually did.
+   */
+  async daily(query: AuditDailyQuery): Promise<{ items: AuditDailySummary[]; total: number }> {
+    const key = `${this.cacheKey(query)}:daily:${query.timeZone}`;
+    const cached = await this.cache.get<{ items: AuditDailySummary[]; total: number }>(key);
+    if (cached) return cached;
+
+    const raw = await this.audit.daily(query);
+    const ids = [...new Set(raw.items.map((row) => row.actorId).filter((id): id is string => Boolean(id)))];
+    const people = ids.length
+      ? await this.tenantContext.prisma.user.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, kind: true, firstName: true, lastName: true, role: true, email: true },
+        })
+      : [];
+    const byId = new Map(people.map((person) => [person.id, person]));
+
+    const result = {
+      items: raw.items.map((row) => {
+        const person = row.actorId ? byId.get(row.actorId) : undefined;
+        return {
+          day: row.day,
+          total: row.total,
+          lastAt: row.lastAt.toISOString(),
+          actions: row.actions,
+          actor: {
+            id: row.actorId,
+            kind: (person?.kind ?? 'SYSTEM') as 'STAFF' | 'CITIZEN' | 'SYSTEM',
+            name: person ? `${person.firstName} ${person.lastName}`.trim() : null,
+            role: person?.role ?? null,
+            email: person?.email ?? null,
+          },
+        };
+      }),
+      total: raw.total,
+    };
+
     const ttl = this.config.get<number>('AUDIT_CACHE_TTL_SECONDS') ?? 20;
     await this.cache.set(key, result, ttl);
     return result;

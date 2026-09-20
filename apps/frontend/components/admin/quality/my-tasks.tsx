@@ -10,6 +10,7 @@ import { formatDate, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { AnswerForm } from '@/components/admin/quality/checks-panel';
 import { Badge } from '@/components/ui/badge';
+import { Fact, FactGrid } from '@/components/ui/fact-grid';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
 
@@ -103,13 +104,12 @@ export function MyQualityTasks({
                 </div>
                 {item.reason ? <p className="mt-1 text-sm leading-relaxed">{item.reason}</p> : null}
                 {item.fields.length > 0 ? (
-                  <p className="mt-1 flex flex-wrap gap-1">
-                    {item.fields.map((field) => (
-                      <Badge key={field} variant="soft-warning" className="text-[10px]">
-                        {quality.reviewField[field] ?? field}
-                      </Badge>
-                    ))}
-                  </p>
+                  <FactGrid labelWidth="7rem" className="mt-1.5">
+                    <Fact
+                      label={en ? 'Fields to fix' : 'الحقول المطلوب تصحيحها'}
+                      value={item.fields.map((field) => quality.reviewField[field] ?? field).join('، ')}
+                    />
+                  </FactGrid>
                 ) : null}
                 <Link
                   href={`${base}/citizens/${encodeURIComponent(item.citizenId)}/edit`}
@@ -149,15 +149,28 @@ export function MyQualityTasks({
                     {en ? 'Filed by' : 'سجَّله'} {check.originalOfficer?.name ?? '—'} · {formatDate(check.filedAt)}
                   </span>
                 </div>
-                <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                <div className="mt-1.5 space-y-2">
                   {check.properties.map((card, index) => (
-                    <li key={`${check.id}-${index}`} className="rounded-md bg-muted/50 px-2 py-1 text-xs">
-                      {labels.propertyType[card.propertyType as never] ?? card.propertyType}
-                      {card.propertyNumber ? ` · ${en ? 'parcel' : 'عقار'} ${card.propertyNumber}` : ''}
-                      {card.buildingCode ? ` · ${card.buildingCode}` : ''}
-                    </li>
+                    <FactGrid key={`${check.id}-${index}`} labelWidth="7rem" className="text-xs">
+                      <Fact
+                        label={en ? 'Type' : 'النوع'}
+                        value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
+                      />
+                      {card.propertyNumber ? (
+                        <Fact label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
+                      ) : null}
+                      {card.buildingCode || card.buildingName ? (
+                        <Fact
+                          label={en ? 'Building' : 'المبنى'}
+                          value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
+                        />
+                      ) : null}
+                      {card.units.length > 0 ? (
+                        <Fact label={en ? 'Units' : 'الوحدات'} value={card.units.join('، ')} />
+                      ) : null}
+                    </FactGrid>
                   ))}
-                </ul>
+                </div>
 
                 {answering === check.id ? (
                   <AnswerForm

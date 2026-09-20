@@ -1,5 +1,6 @@
 import { randomInt } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
   QUALITY_CHECK_ROLES,
@@ -10,6 +11,7 @@ import {
   type ReturnRecordInput,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
+import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
@@ -53,6 +55,19 @@ const canCheck = (role: string | null | undefined): boolean =>
 
 const MAX_PAGE = 100;
 
+/**
+ * One page of the queue, named so it can be cached.
+ *
+ * Derived from `hydrate` rather than written out: the card carries eighteen
+ * fields across four joins, and a hand-kept copy of that shape is a copy that
+ * drifts the first time a column is added to the card.
+ */
+export interface QueuePage {
+  items: Array<Awaited<ReturnType<RecordReviewService['hydrate']>>[number] & { state: ReviewState }>;
+  total: number;
+  counts: Record<ReviewState, number>;
+}
+
 const fullName = (row: { firstName: string; middleName?: string | null; lastName: string }) =>
   [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' ');
 
@@ -79,6 +94,8 @@ export class RecordReviewService {
   constructor(
     private readonly tenantContext: TenantContextService,
     private readonly events: EventEmitter2,
+    private readonly cache: RedisCacheService,
+    private readonly config: ConfigService,
   ) {}
 
   private get db() {
@@ -87,6 +104,38 @@ export class RecordReviewService {
 
   private get S() {
     return tenantSchemaRef(this.tenantContext.schemaName);
+  }
+
+  private queuePrefix(slug = this.tenantContext.tenantSlug): string {
+    return `quality:${slug}:queue:`;
+  }
+
+  /** Shares `QUALITY_CACHE_TTL_SECONDS`; zero or less turns caching off. */
+  private ttl(): number {
+    return this.config.get<number>('QUALITY_CACHE_TTL_SECONDS') ?? 180;
+  }
+
+  /**
+   * Clears the cached queue.
+   *
+   * Driven by events rather than by a short TTL, because this list is an action
+   * surface: a reviewer approves a record and the next thing they look at is
+   * the list it should have left. The three events below are every way a row's
+   * state can move — a decision, an officer's correcting edit, and a new
+   * filing — so the TTL is only a backstop for a write this process did not
+   * see.
+   */
+  @OnEvent('quality.changed')
+  @OnEvent('citizen.changed')
+  @OnEvent('registration.submitted')
+  async onQueueChanged(): Promise<void> {
+    const slug = this.tenantContext.peek()?.tenantSlug;
+    if (!slug) return;
+    try {
+      await this.cache.invalidatePrefix(this.queuePrefix(slug));
+    } catch {
+      // A queue that lingers until the TTL is not worth failing a write over.
+    }
   }
 
   // ─────────────────────────────  The queue  ─────────────────────────────
@@ -105,6 +154,30 @@ export class RecordReviewService {
     const limit = Math.min(Math.max(filter.limit ?? 20, 1), MAX_PAGE);
     const offset = Math.max(filter.offset ?? 0, 0);
     const S = this.S;
+
+    /*
+      Cached because the `classified` CTE below is evaluated twice per call —
+      once for the page, once for the per-state counts the tabs show — and each
+      pass is a `DISTINCT ON` over every registration with a LATERAL lookup of
+      its newest review. Paging back and forth, or switching tabs and back,
+      used to repeat both. `onQueueChanged` clears this on any decision, edit
+      or new filing, so what is being traded away is only the seconds between
+      another clerk's write and this reader's next request.
+    */
+    const ttl = this.ttl();
+    const cacheKey =
+      this.queuePrefix() +
+      [
+        [...filter.states].join('|'),
+        filter.officerId ?? 'ALL',
+        filter.flaggedOnly ? 'FLAGGED' : 'ALL',
+        limit,
+        offset,
+      ].join(':');
+    if (ttl > 0) {
+      const cached = await this.cache.get<QueuePage>(cacheKey);
+      if (cached) return cached;
+    }
 
     const narrow = Prisma.join(
       [
@@ -160,13 +233,16 @@ export class RecordReviewService {
     const stateById = new Map(page.map((row) => [row.id, row.state]));
     const items = await this.hydrate(page.map((row) => row.id));
 
-    return {
+    const result: QueuePage = {
       items: items.map((item) => ({ ...item, state: stateById.get(item.registrationId)! })),
       total: page[0]?.total ?? 0,
       counts: Object.fromEntries(
         REVIEW_STATES.map((state) => [state, counts.find((row) => row.state === state)?.count ?? 0]),
       ) as Record<ReviewState, number>,
     };
+
+    if (ttl > 0) await this.cache.set(cacheKey, result, ttl);
+    return result;
   }
 
   /** What a reviewer needs on one card to decide without opening the file. */

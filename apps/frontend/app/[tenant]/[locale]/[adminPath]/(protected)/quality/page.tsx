@@ -66,7 +66,18 @@ export default function QualityPage({
     select by a 403.
   */
   const staff = useStaffQuery({
-    queryKey: ['quality-officer-names', tenant],
+    /*
+      Deliberately the key `OfficerQuality` uses for the same call, not a name
+      of its own.
+
+      Both are `GET /quality/officers` with no filter, and under two keys React
+      Query fetched it twice — once here for the selects, once again the moment
+      «حسب الموظف» was opened. On the server that endpoint rolls up every
+      officer's filings *and* runs the eight data-quality scans behind them, so
+      the duplicate was the single most expensive thing this page did. Sharing
+      the key makes the tab's render a cache hit.
+    */
+    queryKey: ['quality-officers', tenant, 'all'],
     queryFn: (token, signal) => getOfficerQuality(tenant, token, {}, signal),
     tenant,
     base,

@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import {
-  ArrowLeft,
   Banknote,
   Building2,
   ClipboardCheck,
@@ -26,6 +25,7 @@ import { auditActionLabel, auditEntityLabel } from '@/lib/audit-labels';
 import { auditToneOf, describeAudit, type AuditTone } from '@/lib/audit-describe';
 import { formatDateTime, formatRelative, formatTime } from '@/lib/dates';
 import { cn } from '@/lib/utils';
+import { Fact, FactChange, FactGrid } from '@/components/ui/fact-grid';
 
 /**
  * One audit entry: what was done, to which record, by whom, when — and what
@@ -165,7 +165,14 @@ export function AuditEntryItem({
         <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
           <UserRound className="size-3.5 shrink-0" aria-hidden />
           <span className="font-medium text-foreground/80">{actorName}</span>
-          {roleLabel ? <span className="rounded bg-muted px-1.5 py-px text-[11px]">{roleLabel}</span> : null}
+          {/* Plain, not a chip: a role is a fact about the actor, and a filled
+              pill around it reads as a control on a line of running text. */}
+          {roleLabel ? (
+            <>
+              <span aria-hidden>·</span>
+              <span>{roleLabel}</span>
+            </>
+          ) : null}
           <span aria-hidden>·</span>
           <span>{formatRelative(entry.createdAt, locale)}</span>
         </p>
@@ -178,11 +185,11 @@ export function AuditEntryItem({
         ))}
 
         {shown.length > 0 ? (
-          <dl className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-[minmax(7rem,max-content)_1fr]">
+          <FactGrid labelWidth="7rem">
             {shown.map((line) => (
               <Line key={`${line.kind}-${line.label}`} line={line} en={en} />
             ))}
-          </dl>
+          </FactGrid>
         ) : null}
 
         {detailCount > 0 ? (
@@ -190,19 +197,20 @@ export function AuditEntryItem({
             <summary className="w-fit cursor-pointer select-none rounded text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               {en ? `All details (${detailCount})` : `كل التفاصيل (${detailCount})`}
             </summary>
-            <dl className="mt-2 grid gap-x-4 gap-y-1 rounded-lg border px-3 py-2 sm:grid-cols-[minmax(7rem,max-content)_1fr]">
+            {/* The fold keeps its own surface — it is a panel, not a value. */}
+            <FactGrid labelWidth="7rem" className="mt-2 rounded-lg bg-muted/30 px-3 py-2">
               {folded.map((line) => (
                 <Line key={`folded-${line.kind}-${line.label}`} line={line} en={en} />
               ))}
               {description.details.map((detail) => (
                 <Line key={`detail-${detail.label}`} line={{ kind: 'fact', ...detail }} en={en} />
               ))}
-              <dt className="text-muted-foreground">{en ? 'Action code' : 'رمز الإجراء'}</dt>
-              <dd className="font-mono text-[11px] text-muted-foreground" dir="ltr">
-                {entry.action}
-                {entry.entityId ? ` · ${entry.entityType} ${entry.entityId}` : ''}
-              </dd>
-            </dl>
+              <Fact
+                label={en ? 'Action code' : 'رمز الإجراء'}
+                className="font-mono text-[11px] text-muted-foreground"
+                value={`${entry.action}${entry.entityId ? ` · ${entry.entityType} ${entry.entityId}` : ''}`}
+              />
+            </FactGrid>
           </details>
         ) : null}
       </div>
@@ -217,21 +225,20 @@ function Line({
   line: { kind: 'change'; label: string; before: string; after: string } | { kind: 'fact'; label: string; value: string };
   en: boolean;
 }) {
-  return (
-    <>
-      <dt className="text-muted-foreground">{line.label}</dt>
-      <dd className="min-w-0 break-words text-foreground" dir="auto">
-        {line.kind === 'change' ? (
-          <span className="inline-flex flex-wrap items-center gap-1.5">
-            <span className="text-muted-foreground line-through decoration-muted-foreground/50">{line.before}</span>
-            <ArrowLeft className="size-3 shrink-0 text-muted-foreground ltr:rotate-180" aria-label={en ? 'became' : 'أصبح'} />
-            <span className="font-medium">{line.after}</span>
-          </span>
-        ) : (
-          line.value
-        )}
-      </dd>
-    </>
+  /*
+    `dir="auto"` used to sit on the `<dd>` here, and it is what pulled «X-498-A»
+    to the far edge while «مبنى سكني» stayed on the near one — see `FactGrid`,
+    which isolates the value with `<bdi>` instead so the column holds.
+  */
+  return line.kind === 'change' ? (
+    <FactChange
+      label={line.label}
+      before={line.before}
+      after={line.after}
+      becameLabel={en ? 'became' : 'أصبح'}
+    />
+  ) : (
+    <Fact label={line.label} value={line.value} />
   );
 }
 
