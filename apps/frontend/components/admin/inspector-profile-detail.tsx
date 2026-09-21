@@ -462,7 +462,7 @@ export function InspectorProfileDetail({
                         </span>
                         <div className="space-y-1">
                           <span className="text-sm font-bold sm:text-base">{item.citizenName}</span>
-                          <FactRow columns>
+                          <FactRow>
                             <FactCell
                               label={isAr ? 'الرقم المرجعي' : 'Reference'}
                               className="font-mono"
@@ -581,7 +581,7 @@ export function InspectorProfileDetail({
                               ${money(payout.amount)} {payout.currency}
                             </bdi>
                           </span>
-                          <FactRow columns>
+                          <FactRow>
                             {payout.reference ? (
                               <FactCell
                                 label={isAr ? 'رقم الإيصال' : 'Receipt'}
@@ -627,7 +627,6 @@ export function InspectorProfileDetail({
         token={token}
         locale={locale}
         staff={{ id: data.inspector.id, name: data.inspector.name }}
-        pendingBalance={data.pendingBalance}
         onRecorded={async () => {
           await Promise.all([
             queryClient.invalidateQueries({ queryKey }),

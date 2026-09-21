@@ -331,7 +331,6 @@ export default function InspectorPayoutHistoryPage({
             token={token}
             locale={locale}
             staff={{ id: data.inspector.id, name: data.inspector.name }}
-            pendingBalance={data.pendingBalance}
             onRecorded={async () => {
               await Promise.all([
                 queryClient.invalidateQueries({ queryKey }),

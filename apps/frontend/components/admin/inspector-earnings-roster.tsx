@@ -20,21 +20,13 @@ import type { StaffSummary } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
-import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { ActionTooltip } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 
 /** Every figure on this screen is USD with two decimals, and only here. */
 function money(value: number, locale: string): string {
@@ -150,9 +142,12 @@ export function InspectorEarningsRoster({
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         {header}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
           {Array.from({ length: 5 }).map((_, index) => (
-            <Skeleton key={index} className="h-24 rounded-lg" />
+            <Skeleton
+              key={index}
+              className={cn('h-24 rounded-lg', index === 4 && 'col-span-2 xl:col-span-1')}
+            />
           ))}
         </div>
         <Skeleton className="h-52 rounded-xl" />
@@ -182,8 +177,13 @@ export function InspectorEarningsRoster({
         The whole municipality's position, above the rows that make it up.
         One accent, on the balance still owed — it is the only figure here that
         asks somebody to do something.
+
+        Two across until there is room for five: the fifth, the balance owed,
+        then takes the whole last row instead of sitting alone at half width.
+        Five across waits for `xl` because the sidebar takes a quarter of a
+        laptop, and a dollar figure in five columns of what is left wraps.
       */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
         <Stat
           icon={UsersRound}
           label={isAr ? 'المفتشون الميدانيون' : 'Field inspectors'}
@@ -210,6 +210,7 @@ export function InspectorEarningsRoster({
           label={isAr ? 'إجمالي المتبقي' : 'Total pending'}
           value={`$${money(totals.pending, locale)}`}
           emphasis
+          className="col-span-2 xl:col-span-1"
         />
       </div>
 
@@ -256,7 +257,6 @@ export function InspectorEarningsRoster({
         token={token}
         locale={locale}
         staff={payoutFor ? { id: payoutFor.id, name: payoutFor.fullName } : null}
-        pendingBalance={payoutFor?.pendingBalance}
         onRecorded={async () => {
           setPayoutFor(null);
           /*
@@ -299,17 +299,63 @@ function InspectorCard({
   const paid = inspector.paidBalance ?? 0;
   const pending = inspector.pendingBalance ?? 0;
 
+  const facts: Array<{ label: string; value: string; className?: string }> = [
+    { label: isAr ? 'الصفة' : 'Role', value: roleLabel },
+    {
+      label: isAr ? 'الحساب' : 'Account',
+      value: inspector.isActive ? (isAr ? 'فعّال' : 'Active') : isAr ? 'معطّل' : 'Disabled',
+      // «معطّل» is the one thing here nobody should miss — as text, not a pill.
+      className: inspector.isActive
+        ? 'text-emerald-700 dark:text-emerald-400'
+        : 'text-destructive',
+    },
+    ...(inspector.email
+      ? [{ label: isAr ? 'البريد' : 'Email', value: inspector.email }]
+      : []),
+    { label: isAr ? 'انضم في' : 'Joined', value: formatDate(inspector.createdAt) },
+    {
+      label: isAr ? 'آخر دخول' : 'Last login',
+      value: inspector.lastLoginAt
+        ? formatDate(inspector.lastLoginAt)
+        : isAr
+          ? 'لم يدخل بعد'
+          : 'never',
+    },
+  ];
+
+  const figures: Array<{ label: string; value: string; className?: string }> = [
+    { label: isAr ? 'المواطنون' : 'Citizens', value: citizens.toLocaleString(locale) },
+    {
+      label: isAr ? 'العقارات والوحدات' : 'Properties & units',
+      value: properties.toLocaleString(locale),
+    },
+    { label: isAr ? 'إجمالي الأرباح' : 'Earned', value: `$${money(earned, locale)}` },
+    {
+      label: isAr ? 'المدفوع' : 'Paid',
+      value: `$${money(paid, locale)}`,
+      className: 'text-emerald-600 dark:text-emerald-400',
+    },
+    {
+      label: isAr ? 'المتبقي المستحق' : 'Pending',
+      value: `$${money(pending, locale)}`,
+      className: cn(
+        'font-bold',
+        pending > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground',
+      ),
+    },
+  ];
+
   return (
     <Card className="overflow-hidden border-border/70">
-      <CardHeader className="gap-3 space-y-0 border-b bg-muted/20 pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-lg font-bold text-primary"
-          >
-            {inspector.fullName.charAt(0)}
-          </span>
-          <div className="min-w-0 space-y-2">
+      <CardHeader className="space-y-4 border-b bg-muted/20 pb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span
+              aria-hidden
+              className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-lg font-bold text-primary"
+            >
+              {inspector.fullName.charAt(0)}
+            </span>
             {/*
               The name is the way into the full dashboard — the survey log, the
               property-type breakdown, every payout. Two buttons already sit on
@@ -318,129 +364,91 @@ function InspectorCard({
             */}
             <Link
               href={`${base}/inspector/profile/${inspector.id}`}
-              className="block truncate text-base font-bold hover:underline"
+              className="min-w-0 truncate text-base font-bold hover:underline"
             >
               {inspector.fullName}
             </Link>
+          </div>
 
-            {/*
-              Across, not down — each value directly under its own label, the
-              way the figures table further down this card already reads.
-
-              These five were badges and a run-on line before, then a stack of
-              five rows, which turned a card header into a column of mostly
-              empty space on a page meant to be scanned five inspectors at a
-              time. The state keeps its colour — «معطّل» is the one thing here
-              nobody should miss — as text rather than a filled pill.
-            */}
-            <FactRow>
-              <FactCell label={isAr ? 'الصفة' : 'Role'} value={roleLabel} />
-              <FactCell
-                label={isAr ? 'الحساب' : 'Account'}
-                className={
-                  inspector.isActive
-                    ? 'text-emerald-700 dark:text-emerald-400'
-                    : 'text-destructive'
-                }
-                value={inspector.isActive ? (isAr ? 'فعّال' : 'Active') : isAr ? 'معطّل' : 'Disabled'}
-              />
-              {inspector.email ? (
-                <FactCell
-                  label={isAr ? 'البريد' : 'Email'}
-                  className="max-w-[16rem]"
-                  value={inspector.email}
-                />
-              ) : null}
-              <FactCell label={isAr ? 'انضم في' : 'Joined'} value={formatDate(inspector.createdAt)} />
-              <FactCell
-                label={isAr ? 'آخر دخول' : 'Last login'}
-                value={
-                  inspector.lastLoginAt
-                    ? formatDate(inspector.lastLoginAt)
-                    : isAr
-                      ? 'لم يدخل بعد'
-                      : 'never'
-                }
-              />
-            </FactRow>
+          {/* Two equal columns: the same width whatever each label says, full width on a phone. */}
+          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto">
+            <Button
+              size="sm"
+              className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-800"
+              onClick={onPay}
+            >
+              <HandCoins className="size-4" aria-hidden />
+              {isAr ? 'تسجيل دفعة' : 'Pay'}
+            </Button>
+            <Button asChild variant="outline" size="sm" className="gap-1.5">
+              <Link href={`${base}/inspector/profile/${inspector.id}/payouts`}>
+                <Receipt className="size-4" aria-hidden />
+                {isAr ? 'سجل الدفعات' : 'History'}
+              </Link>
+            </Button>
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            size="sm"
-            className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-800"
-            onClick={onPay}
-          >
-            <HandCoins className="size-4" aria-hidden />
-            {isAr ? 'تسجيل دفعة' : 'Pay'}
-          </Button>
-          <Button asChild variant="outline" size="sm" className="gap-1.5">
-            <Link href={`${base}/inspector/profile/${inspector.id}/payouts`}>
-              <Receipt className="size-4" aria-hidden />
-              {isAr ? 'سجل الدفعات' : 'History'}
-            </Link>
-          </Button>
-        </div>
+        {/*
+          Rows on a phone — label at the start, value at the far edge, a rule
+          between each — and five columns across from `lg`, each value under
+          its label, so a wide card reads in one line instead of a narrow
+          column of mostly empty space beside the name.
+        */}
+        <dl className="divide-y divide-border/60 text-xs lg:grid lg:grid-cols-5 lg:gap-4 lg:divide-y-0 lg:border-t lg:border-border/60 lg:pt-3">
+          {facts.map((fact) => (
+            <div
+              key={fact.label}
+              className="flex items-center justify-between gap-4 py-2 lg:block lg:min-w-0 lg:py-0"
+            >
+              <dt className="shrink-0 text-muted-foreground">{fact.label}</dt>
+              <dd
+                title={fact.value}
+                className={cn(
+                  'min-w-0 truncate text-end text-sm font-semibold lg:mt-1 lg:text-start',
+                  fact.className,
+                )}
+              >
+                <bdi>{fact.value}</bdi>
+              </dd>
+            </div>
+          ))}
+        </dl>
       </CardHeader>
 
       <CardContent className="p-0">
         {/*
-          A table rather than five tiles: these are the same five measures for
-          every inspector on the page, and a column is what lets one card be
-          read against the one below it.
+          The same five measures for every inspector, in the same places, so one
+          card reads against the next. A grid rather than a table: five columns
+          across from `sm`, and on a phone two by two with the balance owed —
+          the figure this page exists to clear — across the whole last row,
+          instead of a table that scrolls it out of sight. The hairlines are the
+          gaps showing the border colour through.
 
-          The scroll container is this file's to supply — `Table` is a bare
-          `<table>` by design, leaving it to whoever knows how wide the screen
-          is. Five columns do not fit a phone, and the card's `overflow-hidden`
-          would otherwise clip the pending balance, which is the column that
-          matters most.
+          Values in `<bdi>`, not `dir="ltr"`: a direction on the cell flips
+          where its text starts, and «$0.00» drifts to the far side from its label.
         */}
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>{isAr ? 'المواطنون' : 'Citizens'}</TableHead>
-                <TableHead>{isAr ? 'العقارات والوحدات' : 'Properties & units'}</TableHead>
-                <TableHead>{isAr ? 'إجمالي الأرباح' : 'Earned'}</TableHead>
-                <TableHead>{isAr ? 'المدفوع' : 'Paid'}</TableHead>
-                <TableHead>{isAr ? 'المتبقي المستحق' : 'Pending'}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TableRow className="hover:bg-transparent">
-                <TableCell className="text-base font-semibold tabular-nums">
-                  {citizens.toLocaleString(locale)}
-                </TableCell>
-                <TableCell className="text-base font-semibold tabular-nums">
-                  {properties.toLocaleString(locale)}
-                </TableCell>
-                {/*
-                  `<bdi>`, not `dir="ltr"` on the cell.
-
-                  `dir="ltr"` sets the cell's own direction, which also flips
-                  where its text starts — so «$0.00» drifted to the far side
-                  while its heading stayed on the near one, and no figure sat
-                  under the word naming it. The isolate keeps the dollar sign in
-                  front of the number without moving the number.
-                */}
-                <TableCell className="text-base font-semibold tabular-nums">
-                  <bdi>${money(earned, locale)}</bdi>
-                </TableCell>
-                <TableCell className="text-base font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-                  <bdi>${money(paid, locale)}</bdi>
-                </TableCell>
-                <TableCell
-                  className={`text-base font-bold tabular-nums ${
-                    pending > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
-                  }`}
-                >
-                  <bdi>${money(pending, locale)}</bdi>
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </div>
+        <dl className="grid grid-cols-2 gap-px bg-border/60 sm:grid-cols-5">
+          {figures.map((figure, position) => (
+            <div
+              key={figure.label}
+              className={cn(
+                'min-w-0 bg-card px-4 py-3',
+                position === figures.length - 1 && 'col-span-2 sm:col-span-1',
+              )}
+            >
+              <dt className="truncate text-xs text-muted-foreground">{figure.label}</dt>
+              <dd
+                className={cn(
+                  'mt-1 truncate text-base font-semibold tabular-nums',
+                  figure.className,
+                )}
+              >
+                <bdi>{figure.value}</bdi>
+              </dd>
+            </div>
+          ))}
+        </dl>
       </CardContent>
     </Card>
   );
@@ -458,17 +466,18 @@ function Stat({
   label,
   value,
   note,
-
   emphasis,
+  className,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string;
   note?: string;
   emphasis?: boolean;
+  className?: string;
 }): React.JSX.Element {
   return (
-    <div className="rounded-lg border bg-card p-4">
+    <div className={cn('rounded-lg border bg-card p-4', className)}>
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <Icon className="size-4 shrink-0" aria-hidden />
         <span className="min-w-0 truncate">{label}</span>

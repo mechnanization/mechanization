@@ -1,9 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { HandCoins, Loader2 } from 'lucide-react';
-import type { RecordInspectorPayoutInput } from '@mechanization/shared-schemas';
-import { ApiRequestError, logApiError, recordInspectorPayout } from '@/lib/api-client';
+import {
+  PAYOUT_WEEKLY_CAP,
+  payoutAllowance,
+  payoutRefusal,
+  type RecordInspectorPayoutInput,
+} from '@mechanization/shared-schemas';
+import {
+  ApiRequestError,
+  getInspectorProfile,
+  logApiError,
+  recordInspectorPayout,
+} from '@/lib/api-client';
+import { formatDate } from '@/lib/dates';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import {
@@ -16,6 +28,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 
@@ -58,6 +71,13 @@ export function todayIso(): string {
  * will be accepted negative in one of them. The rule lives here once: a payout
  * is a positive number of dollars, and the caller is told what was recorded
  * instead of being left to re-read it.
+ *
+ * The payout rule — nothing before $100 earned, then at most $50 a week
+ * counted from the first payout — is `payoutAllowance`, the same function the
+ * server refuses with. The dialog reads the inspector's figures itself, so all
+ * three screens show the same allowance without each passing it in, and it
+ * follows the date: a payout backdated into last week is measured against
+ * last week.
  */
 export function InspectorPayoutDialog({
   open,
@@ -66,7 +86,6 @@ export function InspectorPayoutDialog({
   token,
   locale,
   staff,
-  pendingBalance,
   onRecorded,
 }: {
   open: boolean;
@@ -76,8 +95,6 @@ export function InspectorPayoutDialog({
   token: string | null;
   locale: string;
   staff: { id: string; name: string } | null;
-  /** Shown under the amount, so the figure being settled stays in view. */
-  pendingBalance?: number;
   /** Refresh whatever the caller is showing. Awaited, after the toast. */
   onRecorded: () => void | Promise<void>;
 }): React.JSX.Element {
@@ -90,6 +107,35 @@ export function InspectorPayoutDialog({
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  /*
+    The key the inspector's dashboard reads the same figures under, so opening
+    the dialog from there costs no request — and a recorded payout, which every
+    caller answers by invalidating `['staff', tenant]`, refreshes this too.
+  */
+  const profile = useQuery({
+    queryKey: ['staff', tenant, 'inspector-profile', staff?.id],
+    queryFn: ({ signal }) => getInspectorProfile(tenant, token as string, staff!.id, signal),
+    enabled: open && Boolean(token && staff),
+  });
+
+  // Null while the picker holds no date — there is no week to measure against.
+  const paidAtDate = new Date(`${paidOn}T12:00:00`);
+  const paidAt = Number.isNaN(paidAtDate.getTime()) ? null : paidAtDate.toISOString();
+  const allowance = useMemo(
+    () =>
+      profile.data && paidAt
+        ? payoutAllowance({
+            totalEarnings: profile.data.totalEarnings,
+            pendingBalance: profile.data.pendingBalance,
+            payouts: profile.data.payouts,
+            paidAt,
+          })
+        : null,
+    [profile.data, paidAt],
+  );
+  /** Nothing can be paid on this date, whatever the amount. */
+  const blocked = allowance && !allowance.allowed ? payoutRefusal(allowance, 0) : null;
 
   /*
     Reset on open, not on close. Closing by Escape or mid-submit would
@@ -112,6 +158,12 @@ export function InspectorPayoutDialog({
     const parsed = Number.parseFloat(amount);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       setError(isAr ? 'يرجى إدخال مبلغ صحيح أكبر من صفر' : 'Enter a valid amount greater than zero');
+      return;
+    }
+    // The server checks again; this only saves a round trip to be told the same thing.
+    const refusal = allowance ? payoutRefusal(allowance, parsed) : null;
+    if (refusal) {
+      setError(refusal);
       return;
     }
 
@@ -184,6 +236,59 @@ export function InspectorPayoutDialog({
             </p>
           ) : null}
 
+          {/*
+            What the rule allows on the date below, read before an amount is
+            typed: rows, one figure each, the same as every read-back here.
+            When nothing can be paid, the reason — and the button is off.
+          */}
+          {profile.isLoading ? (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              {isAr ? 'جارٍ حساب المبلغ المتاح…' : 'Working out the allowance…'}
+            </p>
+          ) : allowance ? (
+            <SummaryList className="rounded-lg border px-3">
+              {allowance.reason === 'BELOW_THRESHOLD' ? (
+                <>
+                  <SummaryRow label={isAr ? 'إجمالي الأرباح' : 'Total earned'} className="tabular-nums">
+                    ${profile.data!.totalEarnings.toFixed(2)}
+                  </SummaryRow>
+                  <SummaryRow label={isAr ? 'المتبقي لبلوغ 100$' : 'Left to reach $100'} className="tabular-nums text-amber-600 dark:text-amber-400">
+                    ${allowance.shortBy.toFixed(2)}
+                  </SummaryRow>
+                </>
+              ) : (
+                <>
+                  <SummaryRow label={isAr ? 'الرصيد المستحق' : 'Pending balance'} className="tabular-nums">
+                    ${allowance.owed.toFixed(2)}
+                  </SummaryRow>
+                  <SummaryRow label={isAr ? 'أسبوع الصرف' : 'Payout week'} className="tabular-nums">
+                    {formatDate(`${allowance.weekStart}T12:00:00`)} – {formatDate(`${allowance.weekEnd}T12:00:00`)}
+                  </SummaryRow>
+                  <SummaryRow label={isAr ? 'صُرف في هذا الأسبوع' : 'Paid this week'} className="tabular-nums">
+                    ${allowance.paidThisWeek.toFixed(2)} / ${PAYOUT_WEEKLY_CAP.toFixed(2)}
+                  </SummaryRow>
+                  <SummaryRow
+                    label={isAr ? 'أقصى مبلغ الآن' : 'Most payable now'}
+                    className={
+                      allowance.maxAmount > 0
+                        ? 'tabular-nums text-emerald-600 dark:text-emerald-400'
+                        : 'tabular-nums text-muted-foreground'
+                    }
+                  >
+                    ${allowance.maxAmount.toFixed(2)}
+                  </SummaryRow>
+                </>
+              )}
+            </SummaryList>
+          ) : null}
+
+          {blocked ? (
+            <p className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-300">
+              {blocked}
+            </p>
+          ) : null}
+
           <div className="space-y-2">
             <Label htmlFor="payout-amount" className="text-xs font-semibold">
               {isAr ? 'المبلغ المسلّم (USD) *' : 'Amount handed over (USD) *'}
@@ -218,12 +323,6 @@ export function InspectorPayoutDialog({
                 USD
               </span>
             </div>
-            {typeof pendingBalance === 'number' ? (
-              <p className="text-xs text-muted-foreground">
-                {isAr ? 'الرصيد المتبقي حالياً:' : 'Pending balance:'}{' '}
-                <bdi className="font-semibold tabular-nums">${pendingBalance.toFixed(2)}</bdi>
-              </p>
-            ) : null}
           </div>
 
           <div className="space-y-2">
@@ -280,7 +379,7 @@ export function InspectorPayoutDialog({
             </Button>
             <Button
               type="submit"
-              disabled={submitting || !token || !staff}
+              disabled={submitting || !token || !staff || Boolean(blocked)}
               className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-800"
             >
               {submitting ? (
