@@ -483,7 +483,7 @@ export function UnitsEditor({
             onClick={() => (flagged ? flagging?.clear(path) : flagging?.set(path, ''))}
             aria-pressed={flagged}
             className={cn(
-              'inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+              'inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium transition-colors',
               flagged
                 ? 'bg-destructive/10 text-destructive ring-1 ring-destructive/40'
                 : 'text-muted-foreground/70 hover:bg-muted hover:text-foreground',
@@ -509,7 +509,7 @@ export function UnitsEditor({
         <div className="space-y-1.5">
           <label
             htmlFor={`units-reason-${index}`}
-            className="text-[11px] font-medium text-destructive"
+            className="text-xs font-medium text-destructive"
           >
             {locale === 'en'
               ? 'Why were the units not recorded? (required)'
@@ -531,7 +531,7 @@ export function UnitsEditor({
 
       {flagged || !asksUnitStatus || units.length < 2 ? null : (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border/70 bg-muted/20 p-2.5">
-          <span className="text-[11px] font-medium text-muted-foreground">
+          <span className="text-xs font-medium text-muted-foreground">
             {locale === 'en'
               ? `Set all ${units.length} units to:`
               : `تعيين حالة الوحدات الـ${units.length} جميعاً:`}
@@ -543,7 +543,7 @@ export function UnitsEditor({
                 key={option}
                 type="button"
                 onClick={() => setAllStatuses(option)}
-                className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 <Icon className="size-3 shrink-0" aria-hidden />
                 {labels.unitStatus[option]}

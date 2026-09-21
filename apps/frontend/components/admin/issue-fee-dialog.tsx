@@ -223,7 +223,7 @@ export function IssueFeeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         closeLabel={locale === 'en' ? 'Close' : 'إغلاق'}
-        className="flex max-h-[88vh] flex-col gap-0 p-0 sm:max-w-xl"
+        className="flex max-h-[88dvh] flex-col gap-0 p-0 sm:max-w-xl"
       >
         <DialogHeader className="shrink-0 space-y-3 border-b p-6 text-start">
           <div className="space-y-1">
@@ -375,7 +375,7 @@ export function IssueFeeDialog({
                               <Icon className="size-4 shrink-0" aria-hidden />
                               {labels.feeBearer[option]}
                             </span>
-                            <span className="text-[11px] leading-relaxed text-muted-foreground">
+                            <span className="text-xs leading-relaxed text-muted-foreground">
                               {labels.feeBearerHint[option]}
                             </span>
                           </button>

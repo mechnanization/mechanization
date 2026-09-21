@@ -141,7 +141,7 @@ export default function ResetPasswordPage({
           </div>
         ) : link.kind === 'email_change' ? (
           <div className="space-y-2.5 text-center">
-            <CheckCircle2 className="mx-auto size-8 text-emerald-600" aria-hidden />
+            <CheckCircle2 className="mx-auto size-8 text-success" aria-hidden />
             <h1 className="font-display text-2xl font-bold tracking-tight">
               {tAuth('emailChangeConfirmedTitle')}
             </h1>
@@ -152,7 +152,7 @@ export default function ResetPasswordPage({
           </div>
         ) : done ? (
           <div className="space-y-2.5 text-center">
-            <CheckCircle2 className="mx-auto size-8 text-emerald-600" aria-hidden />
+            <CheckCircle2 className="mx-auto size-8 text-success" aria-hidden />
             <h1 className="font-display text-2xl font-bold tracking-tight">
               {tAuth('passwordUpdatedTitle')}
             </h1>

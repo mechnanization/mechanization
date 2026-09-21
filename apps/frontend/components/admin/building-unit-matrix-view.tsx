@@ -112,10 +112,10 @@ const STATUS_BLOCK_CLASSES: Record<
   'soft-success' | 'soft-warning' | 'soft-destructive' | 'soft-info' | 'soft-muted',
   string
 > = {
-  'soft-success': 'bg-emerald-600/15 text-emerald-700 dark:text-emerald-400 ring-emerald-600/40',
-  'soft-warning': 'bg-amber-500/15 text-amber-700 dark:text-amber-400 ring-amber-500/40',
+  'soft-success': 'bg-success/15 text-success ring-success/40',
+  'soft-warning': 'bg-warning/15 text-warning ring-warning/40',
   'soft-destructive': 'bg-destructive/15 text-destructive ring-destructive/40',
-  'soft-info': 'bg-sky-500/15 text-sky-700 dark:text-sky-400 ring-sky-500/40',
+  'soft-info': 'bg-info/15 text-info ring-info/40',
   'soft-muted': 'bg-muted text-muted-foreground ring-border',
 };
 
@@ -582,7 +582,7 @@ export function BuildingUnitMatrixView({
               {building.lifecycleStatus !== 'IN_USE' ? (
                 <SummaryRow
                   label={en ? 'Construction Status' : 'الحالة الإنشائية'}
-                  className="text-amber-700 dark:text-amber-400"
+                  className="text-warning"
                 >
                   {labels.buildingLifecycle[building.lifecycleStatus]}
                 </SummaryRow>
@@ -606,7 +606,7 @@ export function BuildingUnitMatrixView({
                   isOccupiableLifecycle(building.lifecycleStatus) &&
                   building.unitsTotal > 0 &&
                   building.unitsSurveyed === building.unitsTotal
-                    ? 'text-emerald-700 dark:text-emerald-400'
+                    ? 'text-success'
                     : undefined
                 }
               >
@@ -752,7 +752,7 @@ export function BuildingUnitMatrixView({
                     key={floor}
                     className={cn(
                       MATRIX_ROW_HEIGHT,
-                      'flex w-12 items-center justify-end text-[11px] font-medium tabular-nums text-muted-foreground sm:w-20',
+                      'flex w-12 items-center justify-end text-xs font-medium tabular-nums text-muted-foreground sm:w-20',
                       floor < 0 && 'font-mono text-foreground/70',
                     )}
                   >
@@ -830,16 +830,16 @@ export function BuildingUnitMatrixView({
                               not show. Truncated rather than wrapped so a
                               narrow block keeps its height.
                             */}
-                            <span className="block max-w-full truncate text-[10px] font-medium leading-tight">
+                            <span className="block max-w-full truncate text-xs font-medium leading-tight">
                               {badge.short}
                             </span>
                             {badge.detail ? (
-                              <span className="hidden max-w-full truncate text-[10px] leading-tight opacity-80 sm:block">
+                              <span className="hidden max-w-full truncate text-xs leading-tight opacity-80 sm:block">
                                 {badge.detail}
                               </span>
                             ) : null}
                             {unit.visitCount > 0 ? (
-                              <span className="flex items-center gap-0.5 text-[10px] opacity-80">
+                              <span className="flex items-center gap-0.5 text-xs opacity-80">
                                 <Footprints className="size-2.5 shrink-0" aria-hidden />
                                 {unit.visitCount}
                               </span>
@@ -936,14 +936,14 @@ export function BuildingUnitMatrixView({
                 >
                   {en ? 'Cancel' : 'إلغاء'}
                 </Button>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   {en ? 'The code is assigned from the floor.' : 'يُشتق رمز الوحدة من الطابق.'}
                 </span>
               </div>
 
               {duplicateUnits && duplicateUnits.floor === addingFloor ? (
                 <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2.5">
-                  <p className="flex items-start gap-1.5 text-[11px] font-medium leading-relaxed">
+                  <p className="flex items-start gap-1.5 text-xs font-medium leading-relaxed">
                     <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
                     {en
                       ? 'This floor already has a unit of the same type. Is the one you are adding different?'
@@ -953,7 +953,7 @@ export function BuildingUnitMatrixView({
                     {duplicateUnits.candidates.map((row) => (
                       <li
                         key={row.id}
-                        className="rounded-md bg-background/70 px-2 py-1.5 text-[11px] leading-relaxed"
+                        className="rounded-md bg-background/70 px-2 py-1.5 text-xs leading-relaxed"
                       >
                         <span className="font-mono font-medium" dir="ltr">
                           {row.unitCode}
@@ -1290,7 +1290,7 @@ export function BuildingUnitMatrixView({
                   label={en ? 'Survey status' : 'حالة المسح'}
                   className={
                     selectedUnit.surveyStatus === 'COMPLETE'
-                      ? 'text-emerald-700 dark:text-emerald-400'
+                      ? 'text-success'
                       : undefined
                   }
                 >
@@ -1368,7 +1368,7 @@ export function BuildingUnitMatrixView({
                   <ShieldAlert className="size-3.5 text-muted-foreground" aria-hidden />
                   {en ? 'Damage history' : 'سجل الأضرار'}
                 </p>
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   {en
                     ? `${damage.history.length} assessment(s) · current: ${
                         damage.current ? labels.damageLevel[damage.current] : '—'
@@ -1412,7 +1412,7 @@ export function BuildingUnitMatrixView({
                         <p className="leading-relaxed text-muted-foreground">{row.observations}</p>
                       ) : null}
                       {row.assessedByName ? (
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                           {en ? 'Assessed by ' : 'الكاشف: '}
                           {row.assessedByName}
                         </p>

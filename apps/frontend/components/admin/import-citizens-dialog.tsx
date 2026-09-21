@@ -177,7 +177,7 @@ export function ImportCitizensDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         closeLabel="إغلاق"
-        className="flex max-h-[88vh] flex-col gap-0 p-0 sm:max-w-2xl"
+        className="flex max-h-[88dvh] flex-col gap-0 p-0 sm:max-w-2xl"
       >
         <DialogHeader className="shrink-0 space-y-3 border-b p-6 text-start">
           <div className="space-y-1">

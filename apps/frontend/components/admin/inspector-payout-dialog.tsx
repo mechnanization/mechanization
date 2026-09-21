@@ -214,7 +214,7 @@ export function InspectorPayoutDialog({
       <DialogContent closeLabel={isAr ? 'إغلاق' : 'Close'} className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <HandCoins className="size-5 text-emerald-600" aria-hidden />
+            <HandCoins className="size-5 text-success" aria-hidden />
             {isAr ? 'تسجيل دفعة' : 'Record a payout'}
           </DialogTitle>
           <DialogDescription>
@@ -253,7 +253,7 @@ export function InspectorPayoutDialog({
                   <SummaryRow label={isAr ? 'إجمالي الأرباح' : 'Total earned'} className="tabular-nums">
                     ${profile.data!.totalEarnings.toFixed(2)}
                   </SummaryRow>
-                  <SummaryRow label={isAr ? 'المتبقي لبلوغ 100$' : 'Left to reach $100'} className="tabular-nums text-amber-600 dark:text-amber-400">
+                  <SummaryRow label={isAr ? 'المتبقي لبلوغ 100$' : 'Left to reach $100'} className="tabular-nums text-warning">
                     ${allowance.shortBy.toFixed(2)}
                   </SummaryRow>
                 </>
@@ -272,7 +272,7 @@ export function InspectorPayoutDialog({
                     label={isAr ? 'أقصى مبلغ الآن' : 'Most payable now'}
                     className={
                       allowance.maxAmount > 0
-                        ? 'tabular-nums text-emerald-600 dark:text-emerald-400'
+                        ? 'tabular-nums text-success'
                         : 'tabular-nums text-muted-foreground'
                     }
                   >
@@ -284,7 +284,7 @@ export function InspectorPayoutDialog({
           ) : null}
 
           {blocked ? (
-            <p className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-300">
+            <p className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm text-warning">
               {blocked}
             </p>
           ) : null}
@@ -380,7 +380,7 @@ export function InspectorPayoutDialog({
             <Button
               type="submit"
               disabled={submitting || !token || !staff || Boolean(blocked)}
-              className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-800"
+              className="bg-success text-success-foreground hover:bg-success/90"
             >
               {submitting ? (
                 <>

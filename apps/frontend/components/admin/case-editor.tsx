@@ -208,7 +208,7 @@ export function CaseEditor({
 
   if (loadError) {
     return (
-      <div className="w-full space-y-4 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <p
           role="alert"
           className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
@@ -247,7 +247,7 @@ export function CaseEditor({
               ? (locale === 'en' ? 'Edit Case' : 'تعديل الحالة')
               : (locale === 'en' ? 'Open a follow-up case' : 'فتح حالة متابعة')}
           </h1>
-          <p className="text-[11px] sm:text-xs text-muted-foreground hidden sm:block">
+          <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">
             {locale === 'en'
               ? 'For a visit that could not become a citizen registration — record what was observed so the next visit does not start from zero.'
               : 'لزيارة لم تنتهِ بتسجيل مواطن — سجّل ما أمكن ملاحظته حتى لا تبدأ الزيارة القادمة من الصفر.'}

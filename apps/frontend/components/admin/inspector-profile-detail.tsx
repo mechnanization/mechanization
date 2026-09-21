@@ -193,7 +193,7 @@ export function InspectorProfileDetail({
             {isSuperAdmin ? (
               <Button
                 size="sm"
-                className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-800"
+                className="gap-1.5 bg-success text-success-foreground hover:bg-success/90"
                 onClick={() => setPayoutOpen(true)}
               >
                 <HandCoins className="size-4" aria-hidden />
@@ -228,7 +228,7 @@ export function InspectorProfileDetail({
             <div className="flex items-center gap-3.5">
               <span
                 aria-hidden
-                className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-lg font-bold text-primary"
+                className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-lg font-bold text-primary"
               >
                 {data.inspector.name.charAt(0)}
               </span>
@@ -249,7 +249,7 @@ export function InspectorProfileDetail({
                     label={isAr ? 'الحساب' : 'Account'}
                     className={
                       data.inspector.isActive
-                        ? 'text-emerald-700 dark:text-emerald-400'
+                        ? 'text-success'
                         : 'text-destructive'
                     }
                     value={
@@ -359,14 +359,14 @@ export function InspectorProfileDetail({
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             <BreakdownTile
               icon={Home}
-              tone="text-blue-600 bg-blue-500/10 dark:bg-blue-500/20"
+              tone="text-info bg-info/10"
               value={data.breakdown.houses}
               label={isAr ? 'بيوت مستقلة' : 'Houses'}
               locale={locale}
             />
             <BreakdownTile
               icon={Building2}
-              tone="text-emerald-600 bg-emerald-500/10 dark:bg-emerald-500/20"
+              tone="text-success bg-success/10"
               value={data.breakdown.apartments}
               label={isAr ? 'شقق سكنية' : 'Apartments'}
               locale={locale}
@@ -387,14 +387,14 @@ export function InspectorProfileDetail({
             />
             <BreakdownTile
               icon={MapPin}
-              tone="text-amber-600 bg-amber-500/10 dark:bg-amber-500/20"
+              tone="text-warning bg-warning/10"
               value={data.breakdown.lands}
               label={isAr ? 'أراضٍ' : 'Lands'}
               locale={locale}
             />
             <BreakdownTile
               icon={Tent}
-              tone="text-rose-600 bg-rose-500/10 dark:bg-rose-500/20"
+              tone="text-destructive bg-destructive/10"
               value={data.breakdown.tents + data.breakdown.other}
               label={isAr ? 'خيام وأخرى' : 'Tents & other'}
               locale={locale}
@@ -472,8 +472,8 @@ export function InspectorProfileDetail({
                               label={isAr ? 'الحالة' : 'Status'}
                               className={
                                 item.status === 'REQUIRES_REVIEW'
-                                  ? 'text-amber-700 dark:text-amber-400'
-                                  : 'text-emerald-700 dark:text-emerald-400'
+                                  ? 'text-warning'
+                                  : 'text-success'
                               }
                               value={
                                 item.status === 'REQUIRES_REVIEW'
@@ -510,7 +510,7 @@ export function InspectorProfileDetail({
                           <div className="text-xs text-muted-foreground">
                             {item.propertyCount} {isAr ? 'عقار / وحدة' : 'properties'}
                           </div>
-                          <div className="text-sm font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">
+                          <div className="text-sm font-extrabold tabular-nums text-success">
                             <bdi>+${money(item.commissionEarned)}</bdi>
                           </div>
                         </div>
@@ -571,12 +571,12 @@ export function InspectorProfileDetail({
                       <div className="flex items-start gap-3">
                         <span
                           aria-hidden
-                          className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20"
+                          className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-success/10 text-success"
                         >
                           <HandCoins className="size-5" />
                         </span>
                         <div className="min-w-0 space-y-1.5">
-                          <span className="block text-base font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">
+                          <span className="block text-base font-extrabold tabular-nums text-success">
                             <bdi>
                               ${money(payout.amount)} {payout.currency}
                             </bdi>
@@ -726,7 +726,7 @@ function Stat({
       */}
       <div
         className={`mt-2 text-2xl font-bold tabular-nums ${
-          emphasis ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'
+          emphasis ? 'text-warning' : 'text-foreground'
         }`}
       >
         <bdi>{value}</bdi>

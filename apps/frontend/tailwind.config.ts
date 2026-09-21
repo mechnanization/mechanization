@@ -55,8 +55,21 @@ const config: Config = {
           DEFAULT: 'hsl(var(--popover))',
           foreground: 'hsl(var(--popover-foreground))',
         },
-        warning: 'hsl(var(--warning))',
-        success: 'hsl(var(--success))',
+        // The status trio. Each carries a `-foreground` for the rare solid
+        // fill, so `bg-success text-success-foreground` is legible in both
+        // themes — plain `text-white` on these is not, in the dark one.
+        warning: {
+          DEFAULT: 'hsl(var(--warning))',
+          foreground: 'hsl(var(--warning-foreground))',
+        },
+        success: {
+          DEFAULT: 'hsl(var(--success))',
+          foreground: 'hsl(var(--success-foreground))',
+        },
+        info: {
+          DEFAULT: 'hsl(var(--info))',
+          foreground: 'hsl(var(--info-foreground))',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',

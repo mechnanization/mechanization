@@ -1591,7 +1591,7 @@ export function CitizenForm({
                 >
                   <span className="truncate">{item.title}</span>
                   {item.count ? (
-                    <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-bold text-warning">
+                    <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-xs font-bold text-warning">
                       {item.count}
                     </span>
                   ) : null}
@@ -1630,7 +1630,7 @@ export function CitizenForm({
       {reviewing && focus && focus.paths.size === 0 ? (
         <EmptyState
           className="rounded-xl border border-border/80 bg-card"
-          iconNode={<CheckCircle2 className="text-emerald-600 dark:text-emerald-400" />}
+          iconNode={<CheckCircle2 className="text-success" />}
           title={locale === 'en' ? 'No unverified fields' : 'لا توجد خانات غير مؤكَّدة'}
           description={
             locale === 'en'
@@ -1842,7 +1842,7 @@ export function CitizenForm({
             <FileQuestion className="size-3.5 shrink-0" />
             <span className="truncate">{locale === 'en' ? 'Unverified' : 'غير مؤكَّد'}</span>
             {values.flags.size > 0 ? (
-              <span className="rounded-full bg-warning/20 px-1.5 py-0.2 text-[10px] font-bold text-warning">
+              <span className="rounded-full bg-warning/20 px-1.5 py-0.2 text-xs font-bold text-warning">
                 {values.flags.size}
               </span>
             ) : null}

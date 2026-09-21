@@ -251,7 +251,7 @@ export function Field({
           it.
         */}
         {unverifiedNote !== undefined ? (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/30">
+          <span className="inline-flex shrink-0 items-center gap-1 rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning ring-1 ring-warning/30">
             <ShieldQuestion className="size-3 shrink-0" aria-hidden />
             <span>{locale === 'en' ? 'Needs verification' : 'بانتظار التحقق'}</span>
           </span>
@@ -265,7 +265,7 @@ export function Field({
             type="button"
             onClick={() => flagging?.set(path, '')}
             aria-pressed={false}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/70 transition-colors select-none hover:bg-muted hover:text-foreground"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-muted-foreground/70 transition-colors select-none hover:bg-muted hover:text-foreground"
           >
             <FileQuestion className="size-3 shrink-0" aria-hidden />
             {locale === 'en' ? 'Unverified' : 'غير مؤكَّد'}
@@ -329,7 +329,7 @@ export function Field({
         officer is looking at rather than as a refusal of it.
       */}
       {unverifiedNote !== undefined && !flagged ? (
-        <p className="rounded-md border border-warning/30 bg-warning/5 px-2.5 py-1 text-[11px] leading-normal text-warning">
+        <p className="rounded-md border border-warning/30 bg-warning/5 px-2.5 py-1 text-xs leading-normal text-warning">
           {unverifiedNote}
         </p>
       ) : null}

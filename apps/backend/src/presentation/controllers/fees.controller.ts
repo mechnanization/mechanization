@@ -161,6 +161,18 @@ export class FeesController {
     return this.fees.listDistinctTitles();
   }
 
+  /**
+   * What the two money screens' filters may offer — read off the ledger.
+   *
+   * Same roles as the ledger itself: an option the reader cannot then apply
+   * is worse than no option.
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Get('filter-options')
+  async filterOptions() {
+    return this.fees.filterOptions();
+  }
+
   @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
   @Get('payments')
   async listPayments(

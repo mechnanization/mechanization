@@ -142,14 +142,14 @@ export function MapExportDialog({
           {/* Map Preview Canvas */}
           <div
             ref={printRef}
-            className="relative overflow-hidden rounded-xl border border-border/80 bg-muted/40 shadow-inner flex items-center justify-center min-h-[320px] max-h-[55vh]"
+            className="relative overflow-hidden rounded-xl border border-border/80 bg-muted/40 shadow-inner flex items-center justify-center min-h-[320px] max-h-[55dvh]"
           >
             {mapDataUrl ? (
               /* eslint-disable-next-line @next/next/no-img-element */
               <img
                 src={mapDataUrl}
                 alt="Map Snapshot"
-                className="w-full h-auto max-h-[55vh] object-contain rounded-lg"
+                className="w-full h-auto max-h-[55dvh] object-contain rounded-lg"
               />
             ) : (
               <p className="text-sm text-muted-foreground">

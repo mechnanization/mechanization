@@ -76,7 +76,7 @@ import { Money } from '@/components/ui/money';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
-import { LoadingState } from '@/components/ui/states';
+import { EmptyState, LoadingState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { formatPhone } from '@/lib/phone';
 import {
@@ -596,7 +596,7 @@ export default function CitizenProfilePage({
 
   if (error) {
     return (
-      <div className="w-full space-y-4 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive">
           {error}
         </p>
@@ -847,7 +847,7 @@ export default function CitizenProfilePage({
     and is read on purpose rather than in passing.
   */
   return (
-    <div className="w-full space-y-5 px-4 py-6 sm:px-6 lg:px-8">
+    <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <BackLink
         fallbackHref={`${base}/citizens`}
         label={locale === 'en' ? 'Back' : 'رجوع'}
@@ -1032,7 +1032,7 @@ export default function CitizenProfilePage({
           end on the same line reads as one band of identity, and four different
           bottom edges read as four things that happened to land near each other.
         */}
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <InfoCard icon={IdCard} title={en ? 'Identity' : 'الهوية'}>
             <FactList facts={identityFacts} />
           </InfoCard>
@@ -1110,11 +1110,15 @@ export default function CitizenProfilePage({
           >
             <div className="space-y-3">
             {citizen.registrations.length === 0 ? (
-              <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                {locale === 'en'
-                  ? 'No registered properties for this citizen.'
-                  : 'لا توجد عقارات مسجّلة لهذا المواطن.'}
-              </p>
+              <EmptyState
+                compact
+                icon={Home}
+                title={
+                  locale === 'en'
+                    ? 'No registered properties for this citizen.'
+                    : 'لا توجد عقارات مسجّلة لهذا المواطن.'
+                }
+              />
             ) : null}
 
             {citizen.registrations.map((registration) => (
@@ -1449,7 +1453,7 @@ function StatTile({
       >
         {value}
       </dd>
-      {hint ? <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p> : null}
+      {hint ? <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
@@ -1507,7 +1511,7 @@ function FactRow({ label, value, ltr, hint }: FactItem) {
         */}
         {ltr ? <bdi dir="ltr">{value}</bdi> : value}
         {hint ? (
-          <span className="mt-0.5 block text-[11px] font-normal leading-snug text-muted-foreground">
+          <span className="mt-0.5 block text-xs font-normal leading-snug text-muted-foreground">
             {hint}
           </span>
         ) : null}
@@ -1704,12 +1708,12 @@ function LandlordOfSection({
 
 /** Tone per payment state, matching the fees screen's vocabulary. */
 const PAYMENT_TONE: Record<string, string> = {
-  PAID: 'border-emerald-600/30 bg-emerald-600/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+  PAID: 'border-success/30 bg-success/10 text-success',
   PENDING_REVIEW:
-    'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300',
+    'border-info/30 bg-info/10 text-info',
   UNPAID:
-    'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
-  OVERDUE: 'border-red-600/30 bg-red-600/10 text-red-700 dark:bg-red-500/15 dark:text-red-300',
+    'border-warning/30 bg-warning/10 text-warning',
+  OVERDUE: 'border-destructive/30 bg-destructive/10 text-destructive',
 };
 
 /**
@@ -1814,7 +1818,7 @@ function FeesPanel({
               <Money amount={fees.outstandingTotal} /> {locale === 'en' ? 'due' : 'مستحق'}
             </span>
           ) : (
-            <span className="text-emerald-600">
+            <span className="text-success">
               {locale === 'en' ? 'No balance due' : 'لا مستحقات'}
             </span>
           )
@@ -1823,7 +1827,7 @@ function FeesPanel({
         <div className="space-y-6">
           <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Total label={locale === 'en' ? 'Total Billed' : 'إجمالي الرسوم'} value={fees.feesTotal} />
-            <Total label={locale === 'en' ? 'Paid' : 'المسدَّد'} value={fees.paidTotal} tone="text-emerald-600" />
+            <Total label={locale === 'en' ? 'Paid' : 'المسدَّد'} value={fees.paidTotal} tone="text-success" />
             <Total label={locale === 'en' ? 'Unpaid Balance' : 'غير المسدَّد'} value={fees.outstandingTotal} />
             <Total
               label={
@@ -1837,8 +1841,8 @@ function FeesPanel({
           </dl>
 
           {fees.pendingReviewCount > 0 ? (
-            <p className="flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-sm">
-              <Clock3 className="size-4 shrink-0 text-blue-600" aria-hidden />
+            <p className="flex items-center gap-2 rounded-lg border border-info/30 bg-info/5 p-3 text-sm">
+              <Clock3 className="size-4 shrink-0 text-info" aria-hidden />
               {locale === 'en'
                 ? `${fees.pendingReviewCount} payment(s) awaiting verification — review them in Fees & Billing.`
                 : `${fees.pendingReviewCount} دفعة بانتظار تحقق الموظف — راجعها من صفحة إدارة الرسوم.`}
@@ -1887,7 +1891,7 @@ function FeesPanel({
                             </span>
                           ) : null}
                           {payment.paidAt ? (
-                            <span className="text-emerald-600">
+                            <span className="text-success">
                               {locale === 'en' ? 'Paid ' : 'سُدّد '}
                               {formatDate(payment.paidAt)}
                             </span>
@@ -2556,7 +2560,7 @@ function PropertyCard({
               <dd className="min-w-0 break-words text-end font-medium">
                 {row.value}
                 {row.hint ? (
-                  <span className="mt-0.5 block text-[11px] font-normal leading-snug text-muted-foreground">
+                  <span className="mt-0.5 block text-xs font-normal leading-snug text-muted-foreground">
                     {row.hint}
                   </span>
                 ) : null}
@@ -2903,10 +2907,10 @@ function WhatsAppPhoneLink({ phone, message }: { phone: string; message?: string
       target="_blank"
       rel="noopener noreferrer"
       dir="ltr"
-      className="inline-flex items-center gap-1.5 font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 hover:underline"
+      className="inline-flex items-center gap-1.5 font-medium text-success hover:text-success hover:underline"
       title="فتح في واتساب"
     >
-      <MessageCircle className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
+      <MessageCircle className="size-3.5 text-success" aria-hidden />
       <span>{formatPhone(phone)}</span>
     </a>
   );

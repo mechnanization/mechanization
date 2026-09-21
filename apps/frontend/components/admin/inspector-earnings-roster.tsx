@@ -122,11 +122,7 @@ export function InspectorEarningsRoster({
     <PageHeader
       icon={BadgeDollarSign}
       title={isAr ? 'أرباح المسح الميداني' : 'Field survey earnings'}
-      subtitle={
-        isAr
-          ? 'ما استحقّه كل مفتش ميداني عن مسحه، وما سُلّم له منه — بمعدل 1.00$ لكل عقار أو وحدة'
-          : 'What each field inspector has earned on their survey and what has been handed over — $1.00 per property or unit'
-      }
+
       actions={
         <ActionTooltip label={isAr ? 'تحديث البيانات' : 'Refresh'}>
           <Button variant="outline" size="icon-sm" disabled={fetching} onClick={() => refetch()}>
@@ -142,7 +138,7 @@ export function InspectorEarningsRoster({
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         {header}
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
           {Array.from({ length: 5 }).map((_, index) => (
             <Skeleton
               key={index}
@@ -183,7 +179,7 @@ export function InspectorEarningsRoster({
         Five across waits for `xl` because the sidebar takes a quarter of a
         laptop, and a dollar figure in five columns of what is left wraps.
       */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <Stat
           icon={UsersRound}
           label={isAr ? 'المفتشون الميدانيون' : 'Field inspectors'}
@@ -306,7 +302,7 @@ function InspectorCard({
       value: inspector.isActive ? (isAr ? 'فعّال' : 'Active') : isAr ? 'معطّل' : 'Disabled',
       // «معطّل» is the one thing here nobody should miss — as text, not a pill.
       className: inspector.isActive
-        ? 'text-emerald-700 dark:text-emerald-400'
+        ? 'text-success'
         : 'text-destructive',
     },
     ...(inspector.email
@@ -333,14 +329,14 @@ function InspectorCard({
     {
       label: isAr ? 'المدفوع' : 'Paid',
       value: `$${money(paid, locale)}`,
-      className: 'text-emerald-600 dark:text-emerald-400',
+      className: 'text-success',
     },
     {
       label: isAr ? 'المتبقي المستحق' : 'Pending',
       value: `$${money(pending, locale)}`,
       className: cn(
         'font-bold',
-        pending > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground',
+        pending > 0 ? 'text-warning' : 'text-muted-foreground',
       ),
     },
   ];
@@ -352,7 +348,7 @@ function InspectorCard({
           <div className="flex min-w-0 items-center gap-3">
             <span
               aria-hidden
-              className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-lg font-bold text-primary"
+              className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-lg font-bold text-primary"
             >
               {inspector.fullName.charAt(0)}
             </span>
@@ -374,7 +370,7 @@ function InspectorCard({
           <div className="grid w-full grid-cols-2 gap-2 sm:w-auto">
             <Button
               size="sm"
-              className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-800"
+              className="gap-1.5 bg-success text-success-foreground hover:bg-success/90"
               onClick={onPay}
             >
               <HandCoins className="size-4" aria-hidden />
@@ -489,7 +485,7 @@ function Stat({
       */}
       <div
         className={`mt-2 text-2xl font-bold tabular-nums ${
-          emphasis ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'
+          emphasis ? 'text-warning' : 'text-foreground'
         }`}
       >
         <bdi>{value}</bdi>

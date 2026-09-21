@@ -20,11 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import {
-  BUILDING_LIFECYCLE,
-  DAMAGE_LEVEL,
   getLabels,
-  STRUCTURE_TYPE,
-  SURVEY_STATUS,
   type BuildingLifecycle,
   type DamageLevel,
   type StructureType,
@@ -33,6 +29,7 @@ import {
 import {
   ApiRequestError,
   deleteBuilding,
+  getBuildingFilterOptions,
   getBuildings,
   getZones,
   logApiError,
@@ -41,7 +38,7 @@ import {
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { Badge } from '@/components/ui/badge';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -271,6 +268,16 @@ export default function BuildingsPage({
     });
 
   // ── Data ──────────────────────────────────────────────────────────
+  /*
+    The sectors, read once.
+
+    A municipality's قطاعات are set up when it is onboarded and changed a
+    handful of times after that; the default read policy re-asked for them on
+    every visit to this page and again on every window focus, to be told the
+    same four names. `reference` holds the answer for the session — and holds
+    it across screens, so خريطة البلدية and سجل الحالات, which ask for the same
+    key, get it for free.
+  */
   const zonesQuery = useStaffQuery({
     queryKey: ['zones', tenant],
     queryFn: (accessToken) => getZones(tenant, accessToken),
@@ -278,8 +285,36 @@ export default function BuildingsPage({
     base,
     token,
     errorMessage: en ? 'Could not load the sectors.' : 'تعذّر تحميل القطاعات.',
+    reference: true,
   });
   const zones: ZoneSummary[] = useMemo(() => zonesQuery.data?.zones ?? [], [zonesQuery.data]);
+
+  /**
+   * What the four selects below may offer — read off the census, not off the
+   * enum.
+   *
+   * The lists used to be `STRUCTURE_TYPE`, `BUILDING_LIFECYCLE`,
+   * `SURVEY_STATUS` and `DAMAGE_LEVEL` — the *type* system's answer to "what
+   * is possible", which is not the register's answer to "what is here". A
+   * municipality with no collapsed buildings was offered «انهيار كامل» all the
+   * same, and choosing it emptied the ledger. Every option here is now one the
+   * census can answer.
+   *
+   * Keyed under `['buildings', tenant, …]` on purpose: `reload` below already
+   * invalidates that prefix after a write, so filing the first مبنى تجاري or
+   * deleting the last one brings the list back into step without this screen
+   * having to remember a second key.
+   */
+  const filterOptionsQuery = useStaffQuery({
+    queryKey: ['buildings', tenant, 'filter-options'],
+    queryFn: (accessToken, signal) => getBuildingFilterOptions(tenant, accessToken, signal),
+    tenant,
+    base,
+    token,
+    errorMessage: en ? 'Could not load the filters.' : 'تعذّر تحميل خيارات التصفية.',
+    reference: true,
+  });
+  const filterOptions = filterOptionsQuery.data;
 
   const query = useStaffQuery({
     queryKey: [
@@ -511,11 +546,20 @@ export default function BuildingsPage({
         header: en ? 'Code' : 'الرمز',
         cell: ({ row }) => (
           <div className="space-y-0.5">
-            <span dir="ltr" className="block font-mono text-sm font-bold">
-              {row.original.code}
+            {/*
+              `<bdi>` inside the block, never `dir` on the block itself.
+              `dir="ltr"` on a block-level element also decides which edge its
+              text starts at, so the code flew to the left of its column while
+              «الرمز» stayed on the right — the heading and its own values on
+              opposite sides. `<bdi>` is inline: it isolates «A1-411-H» so the
+              Latin reads left-to-right without moving where it sits. Same rule
+              as `FactCell`.
+            */}
+            <span className="block font-mono text-sm font-bold">
+              <bdi dir="ltr">{row.original.code}</bdi>
             </span>
             {row.original.postedNumber ? (
-              <span className="block text-[11px] text-muted-foreground">
+              <span className="block text-xs text-muted-foreground">
                 {en ? 'Door: ' : 'مكتوب: '}
                 <span dir="ltr">{row.original.postedNumber}</span>
               </span>
@@ -565,20 +609,39 @@ export default function BuildingsPage({
         accessorKey: 'structureType',
         header: en ? 'Structure' : 'المنشأة',
         cell: ({ row }) => (
-          <div className="flex flex-wrap items-center gap-1">
-            <Badge variant="soft-muted">{labels.structureType[row.original.structureType]}</Badge>
+          <div className="space-y-0.5">
             {/*
-              Beside the type rather than in a column of its own, and only when
+              Each on its own block, with the tag left inline inside it.
+              `CellTag` is `inline-flex`, so it goes where the containing
+              block's text alignment puts it — the start edge in the table, the
+              end edge in the phone card's `<dd>`. Making the tag itself a
+              flex block would pin it to one of those and leave it out of line
+              with every other value on the other.
+            */}
+            <div>
+              <CellTag>{labels.structureType[row.original.structureType]}</CellTag>
+            </div>
+            {/*
+              Under the type rather than in a column of its own, and only when
               it is not the ordinary answer.
 
               «قائم ومستعمل» is nineteen rows in twenty; printing it on all of
               them would add a column of noise to hide the one row that says
               «قيد الإنشاء». The exception is what the reader is scanning for.
+
+              On its own line, not beside it. These were two badges, and the
+              boxes were what kept them apart — set as plain text on one line
+              they run together into «سكني - تجاري قيد الإنشاء», which reads as
+              a single phrase describing a single thing. Stacking says what the
+              boxes used to: two facts, the second qualifying the first. Same
+              shape as «الرمز», which puts the posted number under the code.
             */}
             {row.original.lifecycleStatus !== 'IN_USE' ? (
-              <Badge variant="soft-warning">
-                {labels.buildingLifecycle[row.original.lifecycleStatus]}
-              </Badge>
+              <div>
+                <CellTag tone="warning" className="text-xs">
+                  {labels.buildingLifecycle[row.original.lifecycleStatus]}
+                </CellTag>
+              </div>
             ) : null}
           </div>
         ),
@@ -612,7 +675,7 @@ export default function BuildingsPage({
                 />
               </div>
               {unitsTotal === 0 ? (
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   {en ? 'No matrix yet' : 'لا مصفوفة بعد'}
                 </p>
               ) : null}
@@ -633,11 +696,9 @@ export default function BuildingsPage({
             );
           }
           return (
-            <Badge
-              variant={DAMAGED_LEVELS.includes(level) ? 'soft-destructive' : 'soft-success'}
-            >
+            <CellTag tone={DAMAGED_LEVELS.includes(level) ? 'destructive' : 'success'}>
               {labels.damageLevel[level]}
-            </Badge>
+            </CellTag>
           );
         },
       },
@@ -739,7 +800,7 @@ export default function BuildingsPage({
         and the fifth takes the whole last row rather than sitting alone at
         half width.
       */}
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
         <MetricCard
           label={en ? 'Buildings' : 'عدد المباني'}
           value={(summary?.buildings ?? 0).toLocaleString('en-US')}
@@ -848,7 +909,7 @@ export default function BuildingsPage({
                     label={en ? 'Structure' : 'المنشأة'}
                     value={structureType}
                     onChange={(value) => setFilter(() => setStructureType(value))}
-                    options={STRUCTURE_TYPE.map((value) => ({
+                    options={(filterOptions?.structureTypes ?? []).map((value) => ({
                       value,
                       label: labels.structureType[value],
                     }))}
@@ -858,7 +919,7 @@ export default function BuildingsPage({
                     label={en ? 'Construction' : 'الحالة الإنشائية'}
                     value={lifecycleStatus}
                     onChange={(value) => setFilter(() => setLifecycleStatus(value))}
-                    options={BUILDING_LIFECYCLE.map((value) => ({
+                    options={(filterOptions?.lifecycleStatuses ?? []).map((value) => ({
                       value,
                       label: labels.buildingLifecycle[value],
                     }))}
@@ -868,7 +929,7 @@ export default function BuildingsPage({
                     label={en ? 'Survey' : 'المسح'}
                     value={surveyStatus}
                     onChange={(value) => setFilter(() => setSurveyStatus(value))}
-                    options={SURVEY_STATUS.map((value) => ({
+                    options={(filterOptions?.surveyStatuses ?? []).map((value) => ({
                       value,
                       label: labels.surveyStatus[value],
                     }))}
@@ -878,7 +939,7 @@ export default function BuildingsPage({
                     label={en ? 'Condition' : 'الضرر'}
                     value={damageLevel}
                     onChange={(value) => setFilter(() => setDamageLevel(value))}
-                    options={DAMAGE_LEVEL.map((value) => ({
+                    options={(filterOptions?.damageLevels ?? []).map((value) => ({
                       value,
                       label: labels.damageLevel[value],
                     }))}
@@ -1017,8 +1078,24 @@ function FilterSelect({
     query builder already treats as absent.
   */
   const ALL = '__all__';
+  /*
+    Nothing to choose between.
+
+    The options are now the values the census holds, so an empty list is a real
+    statement: no building has been assessed yet, nobody has recorded a
+    lifecycle other than the default. A select that opens onto «كل الأنواع» and
+    nothing else is a control that cannot change the answer, and offering it
+    invites the reader to look for a filter that is not there. It is also the
+    state while the list is still loading, which is the same thing from the
+    reader's side — there is nothing to pick yet.
+  */
+  const empty = options.length === 0;
   return (
-    <Select value={value || ALL} onValueChange={(next) => onChange(next === ALL ? '' : next)}>
+    <Select
+      value={value || ALL}
+      onValueChange={(next) => onChange(next === ALL ? '' : next)}
+      disabled={empty}
+    >
       <SelectTrigger
         aria-label={label}
         className={cn(

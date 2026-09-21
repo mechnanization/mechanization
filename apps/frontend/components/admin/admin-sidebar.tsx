@@ -323,7 +323,7 @@ export function SidebarNav({
             <summary
               className={cn(
                 'flex cursor-pointer list-none items-center gap-1.5 rounded-md px-2 py-1.5',
-                'text-[11px] font-semibold tracking-wider text-muted-foreground',
+                'text-xs font-semibold tracking-wider text-muted-foreground',
                 'transition-colors hover:bg-accent/50 hover:text-foreground',
                 // Safari still paints its own disclosure triangle without this.
                 '[&::-webkit-details-marker]:hidden',

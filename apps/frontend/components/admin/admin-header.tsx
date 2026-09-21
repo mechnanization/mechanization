@@ -183,7 +183,7 @@ export function AdminHeader({
           <Search className="size-3.5" />
           <span>{locale === 'en' ? 'Search…' : 'بحث في السجل…'}</span>
         </span>
-        <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
+        <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-xs font-medium text-muted-foreground">
           <span className="text-xs">Ctrl</span>K
         </kbd>
       </Button>

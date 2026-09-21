@@ -80,7 +80,7 @@ export function ParcelRosterDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Building2 className="size-5 shrink-0 text-primary" aria-hidden />
@@ -129,13 +129,13 @@ export function ParcelRosterDialog({
                   <Users className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                   {citizen.fullName}
                   {!citizen.isActive ? (
-                    <Badge variant="outline" className="text-[10px]">
+                    <Badge variant="outline" className="text-xs">
                       {locale === 'en' ? 'Inactive' : 'غير مفعّل'}
                     </Badge>
                   ) : null}
                 </p>
                 {citizen.referenceNumber ? (
-                  <Badge variant="outline" className="font-mono text-[10px]" dir="ltr">
+                  <Badge variant="outline" className="font-mono text-xs" dir="ltr">
                     {citizen.referenceNumber}
                   </Badge>
                 ) : null}
@@ -186,7 +186,7 @@ export function ParcelRosterDialog({
                           <li
                             key={unit.id ?? unitIndex}
                             className={cn(
-                              'rounded px-1.5 py-0.5 text-[11px] ring-1',
+                              'rounded px-1.5 py-0.5 text-xs ring-1',
                               empty
                                 ? 'bg-warning/10 text-warning ring-warning/40'
                                 : 'bg-background text-muted-foreground ring-border/60',

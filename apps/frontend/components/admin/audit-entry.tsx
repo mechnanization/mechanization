@@ -40,11 +40,11 @@ import { ChangeValue, FactCell, FactRow } from '@/components/ui/facts';
  */
 
 const TONE_CLASS: Record<AuditTone, string> = {
-  create: 'bg-emerald-600/10 text-emerald-700 dark:text-emerald-400',
+  create: 'bg-success/10 text-success',
   change: 'bg-primary/10 text-primary',
   remove: 'bg-destructive/10 text-destructive',
-  review: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
-  correction: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  review: 'bg-info/10 text-info',
+  correction: 'bg-warning/15 text-warning',
   money: 'bg-primary/10 text-primary',
   access: 'bg-muted text-muted-foreground',
 };
@@ -192,7 +192,7 @@ export function AuditEntryItem({
 
         {description.quotes.map((quote) => (
           <figure key={`${quote.label}-${quote.value}`} className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
-            <figcaption className="mb-0.5 text-[11px] font-medium text-muted-foreground">{quote.label}</figcaption>
+            <figcaption className="mb-0.5 text-xs font-medium text-muted-foreground">{quote.label}</figcaption>
             <blockquote className="leading-relaxed text-foreground">{quote.value}</blockquote>
           </figure>
         ))}
@@ -222,7 +222,7 @@ export function AuditEntryItem({
               ))}
               <FactCell
                 label={en ? 'Action code' : 'رمز الإجراء'}
-                className="font-mono text-[11px] font-normal text-muted-foreground"
+                className="font-mono text-xs font-normal text-muted-foreground"
                 value={`${entry.action}${entry.entityId ? ` · ${entry.entityType} ${entry.entityId}` : ''}`}
               />
             </FactRow>

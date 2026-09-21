@@ -78,7 +78,7 @@ export default function TenantHome({
   }, [tenant, base, router, reference, submitting, locale]);
 
   return (
-    <div className="mx-auto flex min-h-[60vh] max-w-md flex-col justify-center space-y-6">
+    <div className="mx-auto flex min-h-[60dvh] max-w-md flex-col justify-center space-y-6">
       <div className="space-y-3 text-center">
         <span
           aria-hidden

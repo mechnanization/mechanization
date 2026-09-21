@@ -142,7 +142,7 @@ export function NotificationsBell({
           {count > 0 ? (
             <span
               aria-hidden
-              className="absolute -end-0.5 -top-0.5 flex size-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold tabular-nums text-destructive-foreground shadow-xs ring-2 ring-background"
+              className="absolute -end-0.5 -top-0.5 flex size-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-xs font-bold tabular-nums text-destructive-foreground shadow-xs ring-2 ring-background"
             >
               {count > 9 ? '9+' : count}
             </span>
@@ -168,7 +168,7 @@ export function NotificationsBell({
               {count > 0 ? (
                 <Badge
                   variant="secondary"
-                  className="h-5 px-1.5 text-[11px] font-bold rounded-full bg-destructive/10 text-destructive border-0 tabular-nums"
+                  className="h-5 px-1.5 text-xs font-bold rounded-full bg-destructive/10 text-destructive border-0 tabular-nums"
                 >
                   {count}
                 </Badge>
@@ -192,7 +192,7 @@ export function NotificationsBell({
         {/* Body */}
         {count === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2.5 px-6 py-10 text-center">
-            <div className="flex size-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+            <div className="flex size-12 items-center justify-center rounded-full bg-success/10 text-success">
               <CheckCircle2 className="size-6" />
             </div>
             <div className="space-y-1">
@@ -239,7 +239,7 @@ export function NotificationsBell({
                       {payment.title}
                     </p>
 
-                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                       {payment.paymentMethod ? (
                         <span className="inline-flex items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 font-medium text-foreground/80">
                           <CreditCard className="size-3 shrink-0 text-muted-foreground" />
@@ -247,14 +247,14 @@ export function NotificationsBell({
                             {labels.paymentMethod?.[payment.paymentMethod as never] ?? payment.paymentMethod}
                           </span>
                           {payment.whishTransactionRef ? (
-                            <span className="font-mono text-[10px] text-muted-foreground">
+                            <span className="font-mono text-xs text-muted-foreground">
                               � {payment.whishTransactionRef}
                             </span>
                           ) : null}
                         </span>
                       ) : null}
 
-                      <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                         <Clock className="size-3 shrink-0" />
                         <span>{formatDate(payment.dueDate)}</span>
                       </span>
@@ -266,7 +266,7 @@ export function NotificationsBell({
                     type="button"
                     onClick={(e) => void handleMarkAsSeen(e, payment.id)}
                     title={locale === 'en' ? 'Mark as seen' : '����� ������'}
-                    className="shrink-0 mt-0.5 flex size-7 items-center justify-center rounded-full border border-border/60 bg-background/80 text-muted-foreground shadow-2xs hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all cursor-pointer group-hover:border-border"
+                    className="shrink-0 mt-0.5 flex size-7 items-center justify-center rounded-full border border-border/60 bg-background/80 text-muted-foreground shadow-2xs hover:bg-success hover:text-success-foreground hover:border-success transition-all cursor-pointer group-hover:border-border"
                   >
                     <Check className="size-3.5" />
                     <span className="sr-only">{locale === 'en' ? 'Mark as seen' : '����� ������'}</span>

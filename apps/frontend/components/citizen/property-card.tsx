@@ -562,7 +562,7 @@ export function PropertyCard({
                   the picker's badge said: chosen already, not up for changing
                   here.
                 */}
-                <span className="inline-flex items-center gap-1 text-[11px] font-normal text-muted-foreground">
+                <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground">
                   <Lock className="size-3 shrink-0" aria-hidden />
                   {locale === 'en' ? 'From the unit matrix' : 'من مصفوفة الوحدات'}
                 </span>
@@ -882,7 +882,7 @@ export function PropertyCard({
               </Field>
 
               {nonResidentOccupant ? (
-                <p className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                <p className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
                   {locale === 'en'
                     ? 'Someone who lives outside the town is recorded as a tenant or occupant of a shop, office, clinic, warehouse or land only. A person who rents a home here and lives in it belongs on a household file.'
                     : 'غير المقيم يُسجَّل مستأجراً أو شاغلاً لمحل أو مكتب أو عيادة أو مستودع أو أرض فقط. من يستأجر مسكناً في البلدة ويسكنه يُسجَّل بملف أسرة.'}
@@ -1423,7 +1423,7 @@ function CensusFacts({
           type="button"
           onClick={onToggle}
           aria-expanded={expanded}
-          className="ms-auto inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+          className="ms-auto inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
         >
           {expanded
             ? en
@@ -1725,7 +1725,7 @@ function PropertyNumberField({
               ? 'This parcel number is not currently in the municipality cadastre.'
               : 'هذا الرقم غير مدرج في السجل العقاري للبلدية حالياً.'}
           </p>
-          <p className="text-[11px] text-muted-foreground leading-normal">
+          <p className="text-xs text-muted-foreground leading-normal">
             {locale === 'en'
               ? 'You can save this record now and verify or edit the number during review after syncing.'
               : 'يمكنك حفظ السجل الآن وتصحيح الرقم لاحقاً عند مراجعة الطلب بعد المزامنة.'}

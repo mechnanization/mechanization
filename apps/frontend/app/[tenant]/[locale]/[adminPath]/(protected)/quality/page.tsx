@@ -29,7 +29,7 @@ export default function QualityIndexPage({
   }, [tenant, locale, adminPath, router]);
 
   return (
-    <div className="w-full space-y-5 px-4 py-6 sm:px-6 lg:px-8">
+    <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <div className="flex items-center gap-3">
         <Skeleton className="size-11 rounded-xl" />
         <div className="space-y-2">

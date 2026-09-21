@@ -183,20 +183,20 @@ export function CitizenDetailDrawer({
             </span>
 
             {status === 'PAID' ? (
-              <Badge variant="soft-success" className="gap-1 px-2 py-0.5 text-[11px] font-semibold">
+              <Badge variant="soft-success" className="gap-1 px-2 py-0.5 text-xs font-semibold">
                 <CheckCircle2 className="size-3" />
                 {isEnglish ? 'Fully Paid' : 'مسدد بالكامل'}
               </Badge>
             ) : status === 'PARTIALLY_PAID' ? (
-              <Badge variant="soft-warning" className="px-2 py-0.5 text-[11px] font-semibold">
+              <Badge variant="soft-warning" className="px-2 py-0.5 text-xs font-semibold">
                 {isEnglish ? 'Partially Paid' : 'مسدد جزئياً'}
               </Badge>
             ) : status === 'UNPAID' ? (
-              <Badge variant="soft-destructive" className="px-2 py-0.5 text-[11px] font-semibold">
+              <Badge variant="soft-destructive" className="px-2 py-0.5 text-xs font-semibold">
                 {isEnglish ? 'Unpaid' : 'غير مسدد'}
               </Badge>
             ) : (
-              <Badge variant="soft-muted" className="px-2 py-0.5 text-[11px]">
+              <Badge variant="soft-muted" className="px-2 py-0.5 text-xs">
                 {isEnglish ? 'No Bills' : 'لا توجد رسوم'}
               </Badge>
             )}
@@ -204,7 +204,7 @@ export function CitizenDetailDrawer({
 
           <div className="grid grid-cols-3 gap-2 pt-1 border-t border-border/50 text-center">
             <div className="rounded-lg bg-muted/40 p-2">
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {isEnglish ? 'Total' : 'الإجمالي'}
               </p>
               <p className="mt-0.5 text-xs font-bold text-foreground" title={formatLbp(totalBilled, locale)}>
@@ -212,11 +212,11 @@ export function CitizenDetailDrawer({
               </p>
             </div>
 
-            <div className="rounded-lg bg-emerald-500/10 p-2">
-              <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+            <div className="rounded-lg bg-success/10 p-2">
+              <p className="text-xs text-success">
                 {isEnglish ? 'Paid' : 'المسدد'}
               </p>
-              <p className="mt-0.5 text-xs font-bold text-emerald-700 dark:text-emerald-300" title={formatLbp(totalPaid, locale)}>
+              <p className="mt-0.5 text-xs font-bold text-success" title={formatLbp(totalPaid, locale)}>
                 {totalPaid > 0 ? formatLbpCompact(totalPaid, locale) : '0'}
               </p>
             </div>
@@ -225,7 +225,7 @@ export function CitizenDetailDrawer({
               'rounded-lg p-2',
               totalDue > 0 ? 'bg-destructive/10 text-destructive' : 'bg-muted/40 text-muted-foreground'
             )}>
-              <p className="text-[10px]">
+              <p className="text-xs">
                 {isEnglish ? 'Remaining' : 'المتبقي'}
               </p>
               <p className="mt-0.5 text-xs font-bold" title={formatLbp(totalDue, locale)}>
@@ -252,7 +252,7 @@ export function CitizenDetailDrawer({
 
         {/* Occupants Section Title */}
         <div className="flex items-center justify-between px-1 pt-0.5">
-          <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+          <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
             {isEnglish ? 'Registered Citizens' : 'المسجلون على هذا العقار'} ({filtered.length})
           </span>
         </div>
@@ -282,7 +282,7 @@ export function CitizenDetailDrawer({
                     </span>
 
                     {registrant.phone ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground shrink-0 ms-auto font-mono" dir="ltr">
+                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0 ms-auto font-mono" dir="ltr">
                         <Phone className="size-3 shrink-0 text-muted-foreground/70" aria-hidden />
                         <span>{registrant.phone}</span>
                       </span>
@@ -310,7 +310,7 @@ export function CitizenDetailDrawer({
                       return (
                         <span
                           key={s.id || sIdx}
-                          className="inline-flex items-center gap-1 rounded-md bg-muted/70 px-2 py-0.5 text-[10px] font-medium text-foreground/85 border border-border/60"
+                          className="inline-flex items-center gap-1 rounded-md bg-muted/70 px-2 py-0.5 text-xs font-medium text-foreground/85 border border-border/60"
                         >
                           <span>{displayName}</span>
                           {s.unitCount > 0 ? (

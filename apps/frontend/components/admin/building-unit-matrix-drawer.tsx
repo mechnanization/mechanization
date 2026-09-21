@@ -632,7 +632,7 @@ export function BuildingUnitMatrixDrawer({
                   <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b bg-muted/30 px-3 py-1.5">
                     <p className="text-xs font-semibold">{floorLabel(floor, en)}</p>
                     <div className="flex items-center gap-3">
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-xs text-muted-foreground">
                         {en ? `${units.length} units` : `${units.length} وحدة`}
                       </p>
                       {/*
@@ -662,7 +662,7 @@ export function BuildingUnitMatrixDrawer({
                           // from in this drawer, so a mis-tap here is the
                           // difference between recording a flat and reading a
                           // number.
-                          className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-dashed px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                          className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-dashed px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
                         >
                           <UserPlus className="size-3.5 shrink-0" aria-hidden />
                           {en ? 'Add unit' : 'إضافة وحدة'}
@@ -706,7 +706,7 @@ export function BuildingUnitMatrixDrawer({
                         >
                           {en ? 'Cancel' : 'إلغاء'}
                         </Button>
-                        <span className="text-[11px] text-muted-foreground">
+                        <span className="text-xs text-muted-foreground">
                           {en
                             ? 'The code is assigned from the floor.'
                             : 'يُشتق رمز الوحدة من الطابق.'}
@@ -728,7 +728,7 @@ export function BuildingUnitMatrixDrawer({
                       */}
                       {duplicateUnits && duplicateUnits.floor === floor ? (
                         <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2.5">
-                          <p className="flex items-start gap-1.5 text-[11px] font-medium leading-relaxed">
+                          <p className="flex items-start gap-1.5 text-xs font-medium leading-relaxed">
                             <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
                             {en
                               ? 'This floor already has a unit of the same type. Is the one you are adding different?'
@@ -739,7 +739,7 @@ export function BuildingUnitMatrixDrawer({
                             {duplicateUnits.candidates.map((row) => (
                               <li
                                 key={row.id}
-                                className="rounded-md bg-background/70 px-2 py-1.5 text-[11px] leading-relaxed"
+                                className="rounded-md bg-background/70 px-2 py-1.5 text-xs leading-relaxed"
                               >
                                 <span className="font-mono font-medium" dir="ltr">
                                   {row.unitCode}
@@ -846,7 +846,7 @@ export function BuildingUnitMatrixDrawer({
                               <span className="font-mono text-sm font-bold" dir="ltr">
                                 {unit.unitCode}
                               </span>
-                              <span className="text-[11px] text-muted-foreground">
+                              <span className="text-xs text-muted-foreground">
                                 {labels.unitType[unit.unitType]}
                               </span>
                             </div>
@@ -854,11 +854,11 @@ export function BuildingUnitMatrixDrawer({
                               {badge.short}
                             </Badge>
                             {badge.detail ? (
-                              <span className="mt-1 block truncate text-[11px] text-muted-foreground">
+                              <span className="mt-1 block truncate text-xs text-muted-foreground">
                                 {badge.detail}
                               </span>
                             ) : null}
-                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                               {unit.postedNumber ? (
                                 <span>
                                   {en ? 'Door: ' : 'الباب: '}
@@ -1235,7 +1235,7 @@ export function BuildingUnitMatrixDrawer({
                   <ShieldAlert className="size-3.5 text-muted-foreground" aria-hidden />
                   {en ? 'Damage history' : 'سجل الأضرار'}
                 </p>
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   {en
                     ? `${damage.history.length} assessment(s) · current: ${
                         damage.current ? labels.damageLevel[damage.current] : '—'
@@ -1299,7 +1299,7 @@ export function BuildingUnitMatrixDrawer({
                       ) : null}
 
                       {row.assessedByName ? (
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                           {en ? 'Assessed by ' : 'الكاشف: '}
                           {row.assessedByName}
                         </p>

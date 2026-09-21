@@ -737,7 +737,7 @@ export function UnitGridPicker({
 
 
           {existingCount > 0 ? (
-            <p className="text-[11px] leading-snug text-muted-foreground">
+            <p className="text-xs leading-snug text-muted-foreground">
               {en
                 ? 'Cells showing a unit code are already in the census. Paint on the empty blocks to add floors or units to it.'
                 : 'الخانات التي تحمل رمز وحدة مسجَّلة في سجل المباني. ارسم على الخانات الفارغة لإضافة طوابق أو وحدات جديدة.'}
@@ -776,7 +776,7 @@ export function UnitGridPicker({
         <div className="grid w-full grid-cols-1 gap-2 lg:w-80 lg:shrink-0">
           {/* Vertical / Floors */}
           <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
-            <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
+            <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
               {en ? 'Vertical (Floors)' : 'عمودي (الطوابق)'}
             </span>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -821,7 +821,7 @@ export function UnitGridPicker({
 
           {/* Below ground / Basements */}
           <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
-            <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
+            <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
               {en ? 'Below ground (B)' : 'تحت الأرض (B)'}
             </span>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -869,7 +869,7 @@ export function UnitGridPicker({
 
           {/* Horizontal / Columns */}
           <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
-            <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
+            <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
               {en ? 'Horizontal (Cols)' : 'أفقي (الأعمدة)'}
             </span>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -941,7 +941,7 @@ export function UnitGridPicker({
               ? 'Need a garage or an annexe beside it?'
               : 'هل يوجد كراج أو ملحق بجانبها؟'}
           </span>
-          <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]" onClick={addAdjacentUnit}>
+          <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={addAdjacentUnit}>
             <Plus className="size-3" />
             {en ? 'Add adjacent unit' : 'إضافة وحدة ملاصقة'}
           </Button>
@@ -949,7 +949,7 @@ export function UnitGridPicker({
       ) : null}
 
       {/* ── Mobile Scroll & Unit Count Hint ── */}
-      <div className="sm:hidden flex items-center justify-between text-[11px] text-muted-foreground px-0.5">
+      <div className="sm:hidden flex items-center justify-between text-xs text-muted-foreground px-0.5">
         <span>{en ? 'Scroll horizontally for more columns →' : 'مرّر أفقياً لعرض باقي الخانات ←'}</span>
         <span className="font-mono">{units.length} {en ? 'units' : 'وحدة'}</span>
       </div>
@@ -1136,7 +1136,7 @@ export function UnitGridPicker({
                 */}
                 <span
                   className={cn(
-                    'pointer-events-none sticky left-0 z-10 w-14 sm:w-20 shrink-0 text-end text-[10px] sm:text-[11px] font-medium tabular-nums px-1.5 py-1 rounded shadow-2xs select-none bg-card dark:bg-muted',
+                    'pointer-events-none sticky left-0 z-10 w-14 sm:w-20 shrink-0 text-end text-xs sm:text-xs font-medium tabular-nums px-1.5 py-1 rounded shadow-2xs select-none bg-card dark:bg-muted',
                     floor < 0 ? 'font-mono text-foreground/70' : 'text-muted-foreground',
                   )}
                 >
@@ -1168,16 +1168,16 @@ export function UnitGridPicker({
       {/* ── Compact Surveyed Units Tally ── */}
       {units.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-border/40 text-xs">
-          <span className="text-muted-foreground font-medium text-[11px]">
+          <span className="text-muted-foreground font-medium text-xs">
             {en ? 'Units Summary:' : 'ملخص الوحدات:'}
           </span>
-          <Badge variant="secondary" className="font-mono text-[10px] h-5 px-2">
+          <Badge variant="secondary" className="font-mono text-xs h-5 px-2">
             {units.length} {en ? 'Total' : 'إجمالي'}
           </Badge>
           {/* Only where the two kinds coexist — on a new building every cell is
               new, and saying so on all of them says nothing. */}
           {existingCount > 0 && units.length > existingCount ? (
-            <Badge variant="soft-success" className="text-[10px] h-5 px-2 gap-1 font-normal">
+            <Badge variant="soft-success" className="text-xs h-5 px-2 gap-1 font-normal">
               <span>{en ? 'New on save:' : 'تُضاف عند الحفظ:'}</span>
               <span className="font-semibold font-mono">{units.length - existingCount}</span>
             </Badge>
@@ -1190,7 +1190,7 @@ export function UnitGridPicker({
             const count = units.filter((u) => u.unitType === type).length;
             if (count === 0) return null;
             return (
-              <Badge key={type} variant="outline" className="text-[10px] h-5 px-2 gap-1 font-normal">
+              <Badge key={type} variant="outline" className="text-xs h-5 px-2 gap-1 font-normal">
                 <span>{labels.unitType[type]}:</span>
                 <span className="font-semibold font-mono">{count}</span>
               </Badge>
@@ -1208,7 +1208,7 @@ export function UnitGridPicker({
         {panel ? (
           <div className="space-y-4">
             {panelUnit?.existingId ? (
-              <p className="rounded-md border bg-muted/30 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+              <p className="rounded-md border bg-muted/30 px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
                 {en
                   ? `Unit ${panelUnit.unitCode ?? ''} is already in the census. Changes here are saved against it rather than creating a second unit.`
                   : `الوحدة ${panelUnit.unitCode ?? ''} مسجَّلة في سجل المباني. يُحفظ التعديل عليها ولا تُنشأ وحدة ثانية.`}
@@ -1297,7 +1297,7 @@ export function UnitGridPicker({
             </div>
 
             {panelUnit?.undeletableReason ? (
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <p className="text-xs leading-relaxed text-muted-foreground">
                 {panelUnit.undeletableReason}
               </p>
             ) : null}

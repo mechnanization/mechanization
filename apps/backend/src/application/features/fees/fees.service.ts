@@ -1694,6 +1694,52 @@ export class FeesService {
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ar'));
   }
 
+  /**
+   * The filter vocabularies إدارة الرسوم and سجل العمليات actually need.
+   *
+   * Both screens built their filter rows out of arrays written into the page —
+   * four status tabs, four method tabs — which is the enum restated in a
+   * second place rather than the register described. A municipality that has
+   * never taken a Whish transfer was still shown a «Whish» tab, and pressing
+   * it emptied the table; a status the state machine has not reached yet was
+   * offered the same way.
+   *
+   * Read off the rows instead, so every option on screen is one that can
+   * return something. `paymentStatus` and `paymentMethod` are both stored
+   * columns — OVERDUE included — so this is the register's own answer and not
+   * a derivation that could drift from the one the list applies.
+   *
+   * Sequential rather than `Promise.all`: a pooler with `connection_limit=1`
+   * queues a fan-out and hits P2024. The client caches this for the session,
+   * so the round trips are paid once.
+   */
+  async filterOptions(): Promise<{ statuses: string[]; methods: string[]; titles: string[] }> {
+    const statuses = await withConnectionRetry(() =>
+      this.db.citizenPayment.groupBy({
+        by: ['paymentStatus'],
+        orderBy: { paymentStatus: 'asc' },
+      }),
+    );
+    const methods = await withConnectionRetry(() =>
+      this.db.citizenPayment.groupBy({
+        by: ['paymentMethod'],
+        // A row nobody has paid has no method. It is not a fifth method, and
+        // listing `null` as one would put an unselectable tab on the screen.
+        where: { paymentMethod: { not: null } },
+        orderBy: { paymentMethod: 'asc' },
+      }),
+    );
+
+    return {
+      statuses: statuses.map((row) => String(row.paymentStatus)),
+      methods: methods
+        .map((row) => row.paymentMethod)
+        .filter((method): method is NonNullable<typeof method> => method !== null)
+        .map(String),
+      titles: await this.listDistinctTitles(),
+    };
+  }
+
   async listAllPayments(
     filter: {
       status?: string;

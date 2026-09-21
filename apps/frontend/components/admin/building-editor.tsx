@@ -153,7 +153,7 @@ function DistanceBadge({
 }) {
   if (metres == null) {
     return (
-      <Badge variant="soft-muted" className="text-[10px]">
+      <Badge variant="soft-muted" className="text-xs">
         {hasPin
           ? en
             ? 'distance unknown — it has no pin'
@@ -167,7 +167,7 @@ function DistanceBadge({
   const near = metres < NEAR_DUPLICATE_METRES;
   const formatted = metres.toLocaleString(en ? 'en' : 'ar');
   return (
-    <Badge variant={near ? 'soft-destructive' : 'soft-warning'} className="text-[11px] font-semibold">
+    <Badge variant={near ? 'soft-destructive' : 'soft-warning'} className="text-xs font-semibold">
       {en
         ? `${formatted} m away${near ? ' — very close' : ''}`
         : `على بُعد ${formatted} م${near ? ' — قريبة جداً' : ''}`}
@@ -2106,7 +2106,7 @@ export function BuildingEditor({
                     </span>
                   </div>
                 ) : editing ? (
-                  <div className="mt-2 flex items-start gap-2 rounded-lg border bg-muted/20 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border bg-muted/20 p-2.5 text-xs leading-relaxed text-muted-foreground">
                     <Info className="size-3.5 shrink-0 mt-0.5 text-muted-foreground" />
                     <p>
                       {en
@@ -2201,7 +2201,7 @@ export function BuildingEditor({
                 )}
 
                 {parcelFromMap ? (
-                  <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-medium text-success">
+                  <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-medium text-success">
                     <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />
                     {en ? 'Read from the cadastre' : 'مأخوذ من المسح العقاري'}
                   </p>
@@ -2215,7 +2215,7 @@ export function BuildingEditor({
                   two is wrong.
                 */}
                 {zoneMismatch ? (
-                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-[11px] leading-relaxed text-warning">
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed text-warning">
                     <AlertTriangle className="size-3.5 shrink-0 mt-0.5" aria-hidden />
                     <p>
                       {en
@@ -2247,11 +2247,11 @@ export function BuildingEditor({
                         {en ? 'Resolving…' : 'جاري التحقق…'}
                       </span>
                     ) : editing ? (
-                      <Badge variant="soft-success" className="text-[11px] px-2 py-0.5">
+                      <Badge variant="soft-success" className="text-xs px-2 py-0.5">
                         {en ? 'Allocated' : 'معتمد'}
                       </Badge>
                     ) : (
-                      <Badge variant="soft-warning" className="text-[11px] px-2 py-0.5">
+                      <Badge variant="soft-warning" className="text-xs px-2 py-0.5">
                         {en ? 'Provisional' : 'مؤقت'}
                       </Badge>
                     )}
@@ -2312,7 +2312,7 @@ export function BuildingEditor({
 
                   {isPartitioned ? (
                     <div className="space-y-2 border-s-2 border-primary/30 ps-3">
-                      <p className="text-[11px] font-medium text-foreground/80">
+                      <p className="text-xs font-medium text-foreground/80">
                         {en ? 'Partition numbers (أرقام الأقسام)' : 'أرقام الأقسام'}
                       </p>
 
@@ -2434,7 +2434,7 @@ export function BuildingEditor({
                     than letting them find out it did.
                   */}
                   {sharedParcels.some((value) => value.trim() && value.trim() === trimmedParcel) ? (
-                    <p role="alert" className="text-[11px] leading-relaxed text-destructive">
+                    <p role="alert" className="text-xs leading-relaxed text-destructive">
                       {en
                         ? 'The building’s own parcel is already recorded above — that row will not be saved.'
                         : 'عقار المبنى الأساسي مسجَّل أعلاه — لن يُحفظ هذا السطر.'}
@@ -2539,7 +2539,7 @@ export function BuildingEditor({
                 that already has flats keeps its matrix while this one loses it.
               */}
               {isUnsurveyableShell(lifecycleStatus) ? (
-                <div className="flex items-start gap-2 rounded-xl border border-sky-500/40 bg-sky-500/10 p-3.5 text-xs text-sky-700 dark:text-sky-400">
+                <div className="flex items-start gap-2 rounded-xl border border-info/40 bg-info/10 p-3.5 text-xs text-info">
                   <Info className="size-4 shrink-0 mt-0.5" aria-hidden />
                   <div className="space-y-1">
                     <p className="font-semibold">
@@ -2575,7 +2575,7 @@ export function BuildingEditor({
                     </span>
                   </div>
 
-                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  <p className="text-xs leading-relaxed text-muted-foreground">
                     {en
                       ? 'If the building you are standing at is one of these, open it and record there — do not create it again.'
                       : 'إن كان المبنى الذي تقف أمامه أحد هذه المنشآت فافتحه وسجِّل فيه — لا تُنشئه مرة ثانية.'}
@@ -2590,18 +2590,18 @@ export function BuildingEditor({
                             {row.code}
                           </span>
                           {row.name ? <span className="font-medium text-foreground">{row.name}</span> : null}
-                          <span className="text-muted-foreground text-[11px]">
+                          <span className="text-muted-foreground text-xs">
                             ({labels.structureType[row.structureType]})
                           </span>
                           {row.sharesParcel && row.ownParcelNumber ? (
-                            <Badge variant="soft-info" className="text-[10px]">
+                            <Badge variant="soft-info" className="text-xs">
                               {en
                                 ? `Also stands on this parcel — filed under ${row.ownParcelNumber}`
                                 : `يمتد على هذا العقار — عقاره الأساسي ${row.ownParcelNumber}`}
                             </Badge>
                           ) : null}
                         </div>
-                        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
                           {row.postedNumber ? (
                             <span>{en ? 'Posted:' : 'مكتوب:'} <span dir="ltr" className="font-mono">{row.postedNumber}</span></span>
                           ) : null}
@@ -2616,7 +2616,7 @@ export function BuildingEditor({
                           <Link
                             href={`${base}/buildings/${encodeURIComponent(row.id)}/matrix`}
                             onClick={cancelDraft}
-                            className={buttonVariants({ variant: 'outline', size: 'sm', className: 'h-8 px-2.5 text-[11px]' })}
+                            className={buttonVariants({ variant: 'outline', size: 'sm', className: 'h-8 px-2.5 text-xs' })}
                           >
                             {en ? 'This is the one — open it' : 'هذه هي المنشأة — افتحها'}
                           </Link>
@@ -2645,7 +2645,7 @@ export function BuildingEditor({
                     */}
                     {acknowledgedDuplicates ? (
                       <div className="space-y-1">
-                        <Label htmlFor="duplicate-reason" className="text-[11px]">
+                        <Label htmlFor="duplicate-reason" className="text-xs">
                           {en ? 'What makes it a separate structure?' : 'ما الذي يجعلها منشأة منفصلة؟'}{' '}
                           <span
                             className="font-bold text-destructive"
@@ -2798,7 +2798,7 @@ export function BuildingEditor({
                 file, and the save leaves every one of them untouched.
               */}
               {hiddenUnits.length > 0 ? (
-                <p className="flex items-start gap-2 rounded-lg border bg-muted/20 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                <p className="flex items-start gap-2 rounded-lg border bg-muted/20 p-2.5 text-xs leading-relaxed text-muted-foreground">
                   <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
                   <span>
                     {en
@@ -2875,11 +2875,11 @@ export function BuildingEditor({
 
                 <SummaryRow
                   label={en ? 'Entrance Location' : 'موقع المدخل'}
-                  className={pin ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}
+                  className={pin ? 'text-success' : 'text-muted-foreground'}
                 >
                   {pin ? (en ? 'Pinned' : 'مُثبت') : en ? 'Desk entry' : 'غير مُثبت'}
                   {name ? (
-                    <span className="text-[11px] font-normal text-muted-foreground hidden lg:inline">
+                    <span className="text-xs font-normal text-muted-foreground hidden lg:inline">
                       {' '}· {name}
                     </span>
                   ) : null}
@@ -3141,7 +3141,7 @@ function StepField({
           */}
           <span
             aria-hidden
-            className="flex size-6 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-[11px] font-bold tabular-nums text-primary sm:absolute sm:start-0 sm:top-0 sm:size-7"
+            className="flex size-6 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-xs font-bold tabular-nums text-primary sm:absolute sm:start-0 sm:top-0 sm:size-7"
           >
             {ordinal}
           </span>
@@ -3169,7 +3169,7 @@ function StepField({
         {children}
 
         {error ? (
-          <p role="alert" className="text-[11px] font-medium text-destructive">
+          <p role="alert" className="text-xs font-medium text-destructive">
             {error}
           </p>
         ) : null}

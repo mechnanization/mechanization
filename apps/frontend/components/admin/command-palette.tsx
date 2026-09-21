@@ -155,7 +155,7 @@ export function CommandPalette({
           // Sits below the top edge rather than centred: the palette grows
           // downward as results arrive, and a vertically centred panel would
           // shift its own input out from under the cursor while typing.
-          'relative mt-[8vh] flex w-full max-w-xl flex-col overflow-hidden rounded-xl border bg-popover shadow-2xl',
+          'relative mt-[8dvh] flex w-full max-w-xl flex-col overflow-hidden rounded-xl border bg-popover shadow-2xl',
           'max-h-[min(28rem,calc(100dvh-12vh))] animate-in fade-in zoom-in-95 duration-150',
         )}
       >
@@ -214,7 +214,7 @@ export function CommandPalette({
           ) : (
             <>
               {sections.length > 0 ? (
-                <p className="px-2.5 pb-1 pt-2 text-[11px] font-semibold tracking-wider text-muted-foreground">
+                <p className="px-2.5 pb-1 pt-2 text-xs font-semibold tracking-wider text-muted-foreground">
                   {locale === 'en' ? 'Sections' : 'الأقسام'}
                 </p>
               ) : null}
@@ -254,7 +254,7 @@ export function CommandPalette({
                 return (
                   <React.Fragment key={`citizen-${citizen.id}`}>
                     {isFirstCitizen ? (
-                      <p className="px-2.5 pb-1 pt-3 text-[11px] font-semibold tracking-wider text-muted-foreground">
+                      <p className="px-2.5 pb-1 pt-3 text-xs font-semibold tracking-wider text-muted-foreground">
                         {locale === 'en' ? 'Citizens' : 'المواطنون'}
                       </p>
                     ) : null}
@@ -288,7 +288,7 @@ export function CommandPalette({
                         </span>
                       </span>
                       {citizen.overdueTotal > 0 ? (
-                        <span className="shrink-0 rounded-md bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+                        <span className="shrink-0 rounded-md bg-destructive/10 px-1.5 py-0.5 text-xs font-semibold text-destructive">
                           {locale === 'en' ? 'Overdue' : 'متأخرات'}
                         </span>
                       ) : null}
@@ -300,7 +300,7 @@ export function CommandPalette({
           )}
         </div>
 
-        <div className="hidden shrink-0 items-center gap-3 border-t px-3.5 py-2 text-[11px] text-muted-foreground sm:flex">
+        <div className="hidden shrink-0 items-center gap-3 border-t px-3.5 py-2 text-xs text-muted-foreground sm:flex">
           <span>{locale === 'en' ? '↑↓ to navigate' : '↑↓ للتنقل'}</span>
           <span>{locale === 'en' ? 'Enter to select' : 'Enter للفتح'}</span>
           <span>{locale === 'en' ? 'Esc to close' : 'Esc للإغلاق'}</span>

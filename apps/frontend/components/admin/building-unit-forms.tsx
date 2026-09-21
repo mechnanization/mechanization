@@ -358,7 +358,7 @@ export function UnitStateLegend({ locale, className }: { locale: string; classNa
   ];
   return (
     <ul
-      className={cn('flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-foreground', className)}
+      className={cn('flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground', className)}
       aria-label={en ? 'What the colours mean' : 'دلالة الألوان'}
     >
       {entries.map((entry) => (
@@ -1534,7 +1534,7 @@ export function VisitForm({
             {visits.map((visit) => (
               <li
                 key={visit.id}
-                className="flex flex-wrap items-center gap-2 rounded-md bg-muted/30 px-2 py-1 text-[11px]"
+                className="flex flex-wrap items-center gap-2 rounded-md bg-muted/30 px-2 py-1 text-xs"
               >
                 <span className="text-muted-foreground">{formatDate(visit.visitedAt)}</span>
                 <Badge variant="soft-muted">{labels.surveyStatus[visit.outcome]}</Badge>
@@ -1813,7 +1813,7 @@ export function CaseForm({
 
   return (
     <div className="space-y-3 rounded-md border bg-background p-3">
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
+      <p className="text-xs leading-relaxed text-muted-foreground">
         
       </p>
       <div className="grid gap-3">
@@ -2147,7 +2147,7 @@ export function EndOccupancyDialog({
               ))}
             </div>
             {reason === 'RECORDED_IN_ERROR' ? (
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <p className="text-xs leading-relaxed text-muted-foreground">
                 {en
                   ? 'Kept on record as what was entered, and hidden from the unit’s history.'
                   : 'يبقى محفوظاً كسجل لما أُدخل، ولا يظهر في تاريخ الوحدة.'}
@@ -2299,7 +2299,7 @@ export function OccupantList({
                 <Badge variant="soft-muted">{labels.occupancyRole[occupant.role]}</Badge>
                 {!current ? <Badge variant="outline">{en ? 'Former' : 'سابق'}</Badge> : null}
                 {!current && occupant.endReason ? (
-                  <span className="text-[11px]">{labels.occupancyEndReason[occupant.endReason]}</span>
+                  <span className="text-xs">{labels.occupancyEndReason[occupant.endReason]}</span>
                 ) : null}
                 {occupant.shares ? (
                   <span className="text-muted-foreground">
@@ -2327,7 +2327,7 @@ export function OccupantList({
                 </span>
                 {unbacked ? (
                   <span
-                    className="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-500"
+                    className="inline-flex items-center gap-1 text-xs text-warning"
                     title={
                       en
                         ? 'This citizen has no registration, so nothing on their file claims this unit and it cannot be billed. Register them to link it.'
@@ -2386,7 +2386,7 @@ export function OccupantList({
       ) : null}
 
       {hidden > 0 ? (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {en
             ? `${hidden} entr${hidden === 1 ? 'y' : 'ies'} recorded in error — kept, not shown.`
             : `${hidden} إشغال سُجِّل بالخطأ — محفوظ ولا يُعرض.`}
@@ -2449,7 +2449,7 @@ function OwnerLinkLine({
     // The flat's only owner is listed right above — naming them again says nothing.
     if (others.length === 0) return null;
     return (
-      <span className="basis-full text-[11px] text-muted-foreground">
+      <span className="basis-full text-xs text-muted-foreground">
         {en ? 'Owner: ' : 'المالك: '}
         <span className="font-medium text-foreground">{link.ownerName}</span>
         {others.length > 0
@@ -2463,7 +2463,7 @@ function OwnerLinkLine({
 
   if (link.state === 'LINKED_ELSEWHERE') {
     return (
-      <span className="inline-flex basis-full items-center gap-1 text-[11px] text-amber-700 dark:text-amber-500">
+      <span className="inline-flex basis-full items-center gap-1 text-xs text-warning">
         <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
         {en
           ? `Linked to ${link.ownerName}, who is not recorded as an owner of this unit`
@@ -2473,7 +2473,7 @@ function OwnerLinkLine({
   }
 
   return (
-    <span className="basis-full text-[11px] text-muted-foreground">
+    <span className="basis-full text-xs text-muted-foreground">
       {en ? 'Not linked to an owner' : 'غير مربوط بمالك'}
       {link.typedName ? (en ? ` (named: ${link.typedName})` : ` (ذكر: ${link.typedName})`) : null}
     </span>
@@ -2600,7 +2600,7 @@ function LinkOwnerDialog({
                 </span>
               ) : null}
               {recordedAfter(owner) ? (
-                <span className="basis-full text-[11px] font-normal text-amber-700 dark:text-amber-500">
+                <span className="basis-full text-xs font-normal text-warning">
                   {en ? 'Recorded on the unit after the tenant' : 'سُجِّل على الوحدة بعد المستأجر'}
                 </span>
               ) : null}
@@ -3074,13 +3074,13 @@ export function VacancyPanel({
   return (
     <>
       {standing ? (
-        <div className="space-y-2 rounded-md border border-sky-500/30 bg-sky-500/5 p-3">
+        <div className="space-y-2 rounded-md border border-info/30 bg-info/5 p-3">
           <p className="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
-            <DoorClosed className="size-3.5 shrink-0 text-sky-700 dark:text-sky-400" aria-hidden />
+            <DoorClosed className="size-3.5 shrink-0 text-info" aria-hidden />
             {en ? 'Confirmed vacant since ' : 'مؤكَّدة الشغور منذ '}
             {formatDate(standing.observedAt)}
           </p>
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             {standing.basis
               ? labels.vacancyBasis[standing.basis]
               : en
@@ -3089,9 +3089,9 @@ export function VacancyPanel({
             {standing.confirmedByName ? ` — ${standing.confirmedByName}` : ''}
           </p>
           {standing.notes ? (
-            <p className="text-[11px] leading-relaxed">{standing.notes}</p>
+            <p className="text-xs leading-relaxed">{standing.notes}</p>
           ) : null}
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             {en
               ? 'The owner is not billed the occupancy fee for it while this stands.'
               : 'لا تُحتسب على المالك رسوم الإشغال عنها ما دام هذا التأكيد قائماً.'}
@@ -3115,7 +3115,7 @@ export function VacancyPanel({
           {closed.map((row) => (
             <li
               key={row.id}
-              className="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground"
+              className="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground"
             >
               <DoorClosed className="size-3 shrink-0" aria-hidden />
               {en ? 'Vacant ' : 'شاغرة '}
@@ -3129,7 +3129,7 @@ export function VacancyPanel({
       ) : null}
 
       {corrections > 0 ? (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {en
             ? `${corrections} vacancy confirmation(s) recorded in error — kept, not shown.`
             : `${corrections} تأكيد شغور سُجِّل بالخطأ — محفوظ ولا يُعرض.`}
@@ -3198,9 +3198,9 @@ export function SeasonalHomePanel({
     );
 
   return (
-    <div className="space-y-3 rounded-md border border-sky-500/30 bg-sky-500/5 p-3">
+    <div className="space-y-3 rounded-md border border-info/30 bg-info/5 p-3">
       <p className="flex items-center gap-1.5 text-xs font-semibold">
-        <CalendarDays className="size-3.5 text-sky-700 dark:text-sky-400" aria-hidden />
+        <CalendarDays className="size-3.5 text-info" aria-hidden />
         {en ? 'Seasonal home — owners live elsewhere' : 'مسكن موسمي — أصحابه مقيمون خارج البلدة'}
       </p>
 
@@ -3219,8 +3219,8 @@ export function SeasonalHomePanel({
                 aria-pressed={on}
                 onClick={() => toggle(month)}
                 className={cn(
-                  'min-h-9 rounded-md border px-1.5 text-[11px] transition-colors',
-                  on ? 'border-sky-500/60 bg-sky-500/15 font-medium' : 'hover:bg-accent',
+                  'min-h-9 rounded-md border px-1.5 text-xs transition-colors',
+                  on ? 'border-info/60 bg-info/15 font-medium' : 'hover:bg-accent',
                 )}
               >
                 {label}

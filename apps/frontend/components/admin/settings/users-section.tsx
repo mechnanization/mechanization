@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Ban, Check, Copy, KeyRound, Loader2, Lock, RotateCcw, Search, ShieldCheck, UserPlus, UsersRound } from 'lucide-react';
+import { EmptyState } from '@/components/ui/states';
 import {
   ApiRequestError,
   createStaff,
@@ -18,6 +19,7 @@ import {
   type SettingsCopy,
 } from '@/lib/settings-i18n';
 import { Badge } from '@/components/ui/badge';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -300,9 +302,10 @@ export function UsersSection({
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <p className="rounded-xl border border-border/70 bg-muted/20 p-4 text-center text-sm text-muted-foreground">
-            {search ? copy.users.emptySearch : copy.users.empty}
-          </p>
+          /* The shared empty state rather than a bordered sentence: this is
+             a table with no rows, which is the same thing every other table
+             here says in the same shape. */
+          <EmptyState compact icon={UsersRound} title={search ? copy.users.emptySearch : copy.users.empty} />
         ) : (
           <ScrollableTable minWidth="44rem">
             <Table>
@@ -323,8 +326,8 @@ export function UsersSection({
                       <TableCell className="font-medium">{row.fullName}</TableCell>
                       {/* An address is Latin inside an RTL table; without `dir`
                           the @ and the dots reorder around the domain. */}
-                      <TableCell dir="ltr" className="text-start">
-                        {row.email}
+                      <TableCell>
+                        <bdi dir="ltr">{row.email}</bdi>
                       </TableCell>
                       <TableCell>
                         {/* Falls back to the raw enum rather than blank: an
@@ -332,9 +335,9 @@ export function UsersSection({
                         {key ? copy.users.roleNames[key] : row.role}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={row.isActive ? 'soft-success' : 'soft-muted'}>
+                        <CellTag tone={row.isActive ? 'success' : 'muted'}>
                           {row.isActive ? copy.users.statusActive : copy.users.statusSuspended}
-                        </Badge>
+                        </CellTag>
                       </TableCell>
                       <TableCell className="text-end">
                         <Button
@@ -477,7 +480,7 @@ export function UsersSection({
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <div className="mx-auto mb-2 flex size-12 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-600 ring-1 ring-amber-500/20">
+            <div className="mx-auto mb-2 flex size-12 items-center justify-center rounded-xl bg-warning/10 text-warning ring-1 ring-warning/20">
               <KeyRound className="size-6" />
             </div>
             <DialogTitle className="text-center text-xl font-bold">
@@ -514,7 +517,7 @@ export function UsersSection({
                 >
                   {copiedSecret ? (
                     <>
-                      <Check className="size-4 text-emerald-600" />
+                      <Check className="size-4 text-success" />
                       <span className="text-xs">تم النسخ</span>
                     </>
                   ) : (
@@ -527,7 +530,7 @@ export function UsersSection({
               </div>
             </div>
 
-            <div className="rounded-lg bg-amber-500/5 p-3 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+            <div className="rounded-lg bg-warning/5 p-3 border border-warning/20 text-xs text-warning leading-relaxed">
               ⚠️ <strong>تنبيه:</strong> هذا المفتاح يُعرض <strong>لمرة واحدة فقط</strong> الآن ولن يمكن استرجاعه لاحقاً من الموقع. في حال فقدانه يمكن إعادة تعيينه عبر موجه الأوامر (CLI).
             </div>
           </div>

@@ -72,7 +72,7 @@ export function QualityScreen({
 
   if (!token || !allowed) {
     return (
-      <div className="w-full space-y-5 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <div className="flex items-center gap-3">
           <Skeleton className="size-11 rounded-xl" />
           <div className="space-y-2">
@@ -86,7 +86,7 @@ export function QualityScreen({
   }
 
   return (
-    <div className="w-full space-y-5 px-4 py-6 sm:px-6 lg:px-8">
+    <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader icon={icon} title={title} subtitle={subtitle} />
       {children({ token, base, locale })}
     </div>

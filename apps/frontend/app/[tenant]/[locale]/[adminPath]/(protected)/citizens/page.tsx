@@ -40,7 +40,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import type { CitizenListItem } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { Badge } from '@/components/ui/badge';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -69,12 +69,12 @@ const CAN_WRITE = ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'];
 const ACTION_TINT = {
   view: 'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary',
   whatsapp:
-    'bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/20 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300',
-  edit: 'bg-sky-500/10 text-sky-700 hover:bg-sky-500/20 hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300',
+    'bg-success/10 text-success hover:bg-success/20 hover:text-success',
+  edit: 'bg-info/10 text-info hover:bg-info/20 hover:text-info',
   disable:
-    'bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300',
+    'bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning',
   enable:
-    'bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/20 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300',
+    'bg-success/10 text-success hover:bg-success/20 hover:text-success',
   remove: 'bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive',
 } as const;
 
@@ -416,7 +416,7 @@ export default function CitizensPage({
           if (!nonResident && citizen.isActive && !review) {
             return (
               <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-                <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" aria-hidden />
+                <CheckCircle2 className="size-3.5 shrink-0 text-success" aria-hidden />
                 {locale === 'en' ? 'Active' : 'نشط'}
               </span>
             );
@@ -424,7 +424,7 @@ export default function CitizensPage({
           return (
             <div className="space-y-0.5 text-sm font-medium">
               {review ? (
-                <p className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
+                <p className="flex items-center gap-1.5 text-warning">
                   <FileQuestion className="size-3.5 shrink-0" aria-hidden />
                   {locale === 'en'
                     ? `Requires review (${citizen.unestablishedFieldCount})`
@@ -438,7 +438,7 @@ export default function CitizensPage({
                 </p>
               ) : null}
               {nonResident ? (
-                <p className="text-sky-700 dark:text-sky-400">
+                <p className="text-info">
                   {labels.citizenResidence.NON_RESIDENT_OWNER}
                 </p>
               ) : null}
@@ -526,8 +526,8 @@ export default function CitizensPage({
           if (!identityDocNumber) return <span className="text-muted-foreground">—</span>;
           return (
             <div className="space-y-0.5">
-              <p className="font-mono text-sm" dir="ltr">
-                {identityDocNumber}
+              <p className="font-mono text-sm">
+                <bdi dir="ltr">{identityDocNumber}</bdi>
               </p>
               {identityDocType ? (
                 <p className="text-xs text-muted-foreground">
@@ -547,9 +547,9 @@ export default function CitizensPage({
           const { residentStatus } = row.original;
           if (!residentStatus) return <span className="text-muted-foreground">—</span>;
           return (
-            <Badge variant="soft-muted">
+            <CellTag>
               {labels.residentStatus?.[residentStatus as never] ?? residentStatus}
-            </Badge>
+            </CellTag>
           );
         },
       },
@@ -620,7 +620,7 @@ export default function CitizensPage({
           if (citizen.outstandingTotal === 0) {
             return (
               <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-                <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" aria-hidden />
+                <CheckCircle2 className="size-3.5 shrink-0 text-success" aria-hidden />
                 {locale === 'en' ? 'No arrears' : 'لا متأخرات'}
               </span>
             );
@@ -652,10 +652,10 @@ export default function CitizensPage({
                   <span>{locale === 'en' ? 'Not yet due' : 'غير مستحقة بعد'}</span>
                 )}
                 {citizen.pendingReviewCount > 0 ? (
-                  <Badge variant="outline" className="gap-1 py-0 text-[0.7rem]">
+                  <CellTag tone="warning" className="gap-1 text-xs">
                     <Clock3 className="size-3" aria-hidden />
                     {citizen.pendingReviewCount} {locale === 'en' ? 'under review' : 'قيد التحقق'}
-                  </Badge>
+                  </CellTag>
                 ) : null}
               </p>
             </div>

@@ -17,6 +17,7 @@ import {
   Download,
   Home,
   Layers,
+  LayoutDashboard,
   Map as MapIcon,
   Minus,
   Receipt,
@@ -42,9 +43,9 @@ import { ar, type InspectorProfileResponse } from '@mechanization/shared-schemas
 import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { formatMonth } from '@/lib/dates';
-import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Money } from '@/components/ui/money';
+import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   ChartCard,
@@ -380,43 +381,36 @@ export default function StaffDashboard({
   if (!token) return null;
 
   return (
-    <div className="w-full space-y-8 px-4 py-6 sm:px-6 lg:px-8">
-      <header className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
-              {locale === 'en' ? 'Dashboard' : 'لوحة التحكم'}
-            </h1>
-            {role ? (
-              <Badge variant="soft-default">
-                {locale === 'en' ? role : (ar.staffRole?.[role as never] ?? role)}
-              </Badge>
+    <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+      <PageHeader
+        icon={LayoutDashboard}
+        title={locale === 'en' ? 'Dashboard' : 'لوحة التحكم'}
+        /* The role rode beside the title as a badge; as a subtitle it says the
+           same thing without a second object competing with the heading. */
+        subtitle={role ? (locale === 'en' ? role : (ar.staffRole?.[role as never] ?? role)) : undefined}
+        actions={
+          <>
+            {role === 'SUPER_ADMIN' || role === 'AUDITOR' ? (
+              <a
+                href={`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1'}/t/${tenant}/dashboard/export.csv`}
+                className={buttonVariants({ variant: 'outline' })}
+              >
+                <Download className="size-4" aria-hidden />
+                {tCommon('exportCsv')}
+              </a>
             ) : null}
-          </div>
-
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {role === 'SUPER_ADMIN' || role === 'AUDITOR' ? (
-            <a
-              href={`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1'}/t/${tenant}/dashboard/export.csv`}
-              className={buttonVariants({ variant: 'outline' })}
+            <Button
+              variant="outline"
+              onClick={() => void load()}
+              disabled={refreshing}
+              title={tCommon('refresh')}
             >
-              <Download className="size-4" aria-hidden />
-              {tCommon('exportCsv')}
-            </a>
-          ) : null}
-          <Button
-            variant="outline"
-            onClick={() => void load()}
-            disabled={refreshing}
-            title={tCommon('refresh')}
-          >
-            <RefreshCw className={refreshing ? 'size-4 animate-spin' : 'size-4'} aria-hidden />
-            {tCommon('refresh')}
-          </Button>
-        </div>
-      </header>
+              <RefreshCw className={refreshing ? 'size-4 animate-spin' : 'size-4'} aria-hidden />
+              {tCommon('refresh')}
+            </Button>
+          </>
+        }
+      />
 
       {error ? (
         <p
@@ -493,7 +487,7 @@ export default function StaffDashboard({
                 <p className="text-xs font-medium text-muted-foreground">
                   {locale === 'en' ? 'Total Commission ($1/prop)' : 'إجمالي أرباحك ($1/عقار)'}
                 </p>
-                <p className="mt-1.5 text-2xl font-bold tracking-tight text-emerald-600 dark:text-emerald-400">
+                <p className="mt-1.5 text-2xl font-bold tracking-tight text-success">
                   ${(inspectorData?.totalEarnings ?? 0).toLocaleString()}
                 </p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
@@ -505,7 +499,7 @@ export default function StaffDashboard({
                 <p className="text-xs font-medium text-muted-foreground">
                   {locale === 'en' ? 'Pending Balance' : 'الرصيد المتبقي (المعلق)'}
                 </p>
-                <p className="mt-1.5 text-2xl font-bold tracking-tight text-amber-600 dark:text-amber-400">
+                <p className="mt-1.5 text-2xl font-bold tracking-tight text-warning">
                   ${(inspectorData?.pendingBalance ?? 0).toLocaleString()}
                 </p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
@@ -525,7 +519,7 @@ export default function StaffDashboard({
           height with their detail panels on one line, whatever each card's
           middle happens to carry.
         */}
-        <section aria-label={locale === 'en' ? 'Key Metrics' : 'المؤشرات الرئيسية'} className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <section aria-label={locale === 'en' ? 'Key Metrics' : 'المؤشرات الرئيسية'} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
             label={tDashboard('kpiPopulation')}
             icon={Users}
@@ -848,7 +842,7 @@ function KpiCard({
   children: React.ReactNode;
 }) {
   return (
-    <article className="flex h-full flex-col rounded-2xl border border-border/70 bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
+    <article className="flex h-full flex-col rounded-xl border border-border/70 bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
       <div className="flex items-start justify-between gap-3">
         <p className="min-w-0 pt-1 text-sm font-medium text-muted-foreground">{label}</p>
         <span

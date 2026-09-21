@@ -21,6 +21,8 @@ import type {
   NumberingSequence,
   OccupancyEndReason,
   OccupancyRole,
+  PaymentMethod,
+  PaymentStatus,
   RecordInspectorPayoutInput,
   SequenceKey,
   BuildingLifecycle,
@@ -1393,6 +1395,18 @@ export interface RecordDamageInput {
 }
 
 /**
+ * What «سجل المباني»'s selects may offer — every list is the set of values the
+ * census actually holds, so choosing one can never return an empty table for
+ * the reason that nothing was ever filed under it.
+ */
+export interface BuildingFilterOptions {
+  structureTypes: StructureType[];
+  lifecycleStatuses: BuildingLifecycle[];
+  surveyStatuses: SurveyStatus[];
+  damageLevels: DamageLevel[];
+}
+
+/**
  * Every building matching the filters, with the totals for that same set.
  *
  * Not cached: this is what an officer reloads after creating a building from
@@ -1415,6 +1429,20 @@ export function getBuildings(
     `/buildings${qs ? `?${qs}` : ''}`,
     { token, signal },
   );
+}
+
+/**
+ * The values «سجل المباني»'s filters may offer, as found in the census.
+ *
+ * A *reference* read, not a data read: it describes the municipality's
+ * vocabulary — which kinds of structure it has entered, which conditions it
+ * has assessed — rather than the rows on screen. It changes when somebody
+ * records the first building of a kind, which is a handful of times in a
+ * register's life, so the caller reads it once per session (see
+ * `useStaffQuery`'s `reference` option) instead of on every visit to the page.
+ */
+export function getBuildingFilterOptions(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<BuildingFilterOptions>(tenant, '/buildings/filter-options', { token, signal });
 }
 
 /** One building with its whole unit matrix and each unit's occupants. */
@@ -3846,6 +3874,26 @@ export interface AdminPaymentItem {
  */
 export function getFeeTitles(tenant: string, token: string, signal?: AbortSignal) {
   return apiFetch<string[]>(tenant, '/fees/titles', { token, signal });
+}
+
+/**
+ * What the two money screens' filters may offer, as found in the ledger.
+ *
+ * The same kind of read as `getBuildingFilterOptions`: a vocabulary, not a
+ * page. A municipality that has never taken a Whish transfer has no «Whish»
+ * tab, because there is no answer behind it.
+ */
+export interface FeeFilterOptions {
+  /** Stored `paymentStatus` values present — OVERDUE included; it is a column. */
+  statuses: PaymentStatus[];
+  /** Stored `paymentMethod` values present. Never null: an unpaid row has none. */
+  methods: PaymentMethod[];
+  /** Distinct bill titles, for the searchable «نوع الرسم» filter. */
+  titles: string[];
+}
+
+export function getFeeFilterOptions(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<FeeFilterOptions>(tenant, '/fees/filter-options', { token, signal });
 }
 
 export function getAllPayments(

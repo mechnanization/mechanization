@@ -259,7 +259,7 @@ export default function SettlePaymentPage({
       <div className="grid gap-6 lg:grid-cols-12 lg:items-stretch">
         {/* Left Column (8 cols): Form Controls */}
         <div className="h-full lg:col-span-8">
-          <div className="flex flex-col justify-between h-full space-y-5 rounded-2xl border bg-card p-4 shadow-sm">
+          <div className="flex flex-col justify-between h-full space-y-5 rounded-xl border bg-card p-4 shadow-sm">
             <div className="space-y-5">
               {/* Payment Method */}
               <Field label={locale === 'en' ? 'Payment Method' : 'طريقة الدفع'} htmlFor="settle-method" required>
@@ -426,7 +426,7 @@ export default function SettlePaymentPage({
 
         {/* Right Column (4 cols): Summary & Submission */}
         <div className="h-full lg:col-span-4">
-          <div className="flex flex-col justify-between h-full rounded-2xl border bg-card p-4 shadow-sm">
+          <div className="flex flex-col justify-between h-full rounded-xl border bg-card p-4 shadow-sm">
             {/* Top: Details List */}
             <div className="space-y-4">
               <h3 className="font-bold text-sm text-foreground border-b pb-3">

@@ -346,12 +346,16 @@ export function NumberingSection({
                     */}
                     <TableCell className="pe-4 align-top sm:pe-5">
                       {previewable ? (
-                        <div className="space-y-0.5 font-mono text-sm" dir="ltr">
+                        <div className="space-y-0.5 font-mono text-sm">
                           <p className="whitespace-nowrap">
-                            {formatReference(sequence.prefix, next, padding)}
+                            <bdi dir="ltr">
+                              {formatReference(sequence.prefix, next, padding)}
+                            </bdi>
                           </p>
                           <p className="whitespace-nowrap text-xs text-muted-foreground">
-                            {formatReference(sequence.prefix, next + 1, padding)}
+                            <bdi dir="ltr">
+                              {formatReference(sequence.prefix, next + 1, padding)}
+                            </bdi>
                           </p>
                         </div>
                       ) : (

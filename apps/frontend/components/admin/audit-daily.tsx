@@ -507,12 +507,14 @@ function DetailRow({ entry, locale }: { entry: AuditEntry; locale: string }): Re
 
   return (
     <TableRow>
-      <TableCell className="align-top text-xs tabular-nums text-muted-foreground" dir="ltr">
-        {new Date(entry.createdAt).toLocaleTimeString(en ? 'en-GB' : 'ar-LB', {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-        })}
+      <TableCell className="align-top text-xs tabular-nums text-muted-foreground">
+        <bdi dir="ltr">
+          {new Date(entry.createdAt).toLocaleTimeString(en ? 'en-GB' : 'ar-LB', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          })}
+        </bdi>
       </TableCell>
 
       <TableCell className="align-top">

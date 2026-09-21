@@ -295,7 +295,7 @@ export function ReviewQueue({
                   */}
                   {item.properties.map((card, index) => (
                     <div key={`${item.registrationId}-${index}`} className="space-y-2">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         {item.properties.length > 1
                           ? `${en ? 'Property' : 'العقار'} ${index + 1}`
                           : en
@@ -340,7 +340,7 @@ export function ReviewQueue({
 
                   {item.flags.length > 0 ? (
                     <div className="space-y-2">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-warning">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-warning">
                         {en ? 'Fields left unconfirmed' : 'حقول غير مؤكَّدة'}
                       </p>
                       <FactRow>
@@ -361,7 +361,7 @@ export function ReviewQueue({
                   {/* Already its own band — no inner box needed on top of it. */}
                   {item.notes ? (
                     <div className="space-y-1">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         {en ? 'Officer’s note' : 'ملاحظة الموظف'}
                       </p>
                       <p className="text-xs leading-relaxed">{item.notes}</p>
@@ -397,7 +397,7 @@ export function ReviewQueue({
                               </p>
                             ) : null}
                             {entry.resolvedAt ? (
-                              <p className="mt-0.5 text-emerald-700 dark:text-emerald-400">
+                              <p className="mt-0.5 text-success">
                                 {en ? 'Corrected' : 'صُحِّح'} — {entry.resolvedBy ?? ''} · {formatDateTime(entry.resolvedAt)}
                               </p>
                             ) : null}
@@ -409,7 +409,7 @@ export function ReviewQueue({
 
                   {openReturn ? (
                     <div className="space-y-1 bg-warning/5">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-warning">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-warning">
                         {en ? 'Waiting on the officer' : 'بانتظار الموظف'}
                       </p>
                       <p className="text-xs leading-relaxed text-warning">{openReturn.reason}</p>

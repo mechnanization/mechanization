@@ -366,10 +366,10 @@ export function PossibleDuplicatesBar({
       >
         <UsersRound className="size-3.5 shrink-0" aria-hidden />
         <span className="flex-1">{en ? HEADLINE.en : HEADLINE.ar}</span>
-        <span className="rounded-full bg-warning/25 px-1.5 py-0.5 text-[10px] font-bold">
+        <span className="rounded-full bg-warning/25 px-1.5 py-0.5 text-xs font-bold">
           {check.matches.length}
         </span>
-        <span className="text-[11px] font-medium text-muted-foreground">
+        <span className="text-xs font-medium text-muted-foreground">
           {open ? (en ? 'Hide' : 'إخفاء') : en ? 'Show' : 'عرض'}
         </span>
         <ChevronDown
@@ -378,7 +378,7 @@ export function PossibleDuplicatesBar({
         />
       </button>
       {open ? (
-        <div className="max-h-[40vh] space-y-2 overflow-y-auto border-t border-warning/30 px-2.5 pb-2.5 pt-2">
+        <div className="max-h-[40dvh] space-y-2 overflow-y-auto border-t border-warning/30 px-2.5 pb-2.5 pt-2">
           <p className="leading-relaxed text-muted-foreground">{en ? EXPLANATION.en : EXPLANATION.ar}</p>
           <MatchList matches={check.matches} locale={locale} />
         </div>

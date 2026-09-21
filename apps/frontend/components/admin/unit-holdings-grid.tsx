@@ -13,15 +13,15 @@ import { floorLabel, type LaidOutUnit } from './building-unit-forms';
  * three, so a reader who knows the matrix page reads this one without a key.
  */
 export const HELD_CLASS: Record<string, string> = {
-  OWNER: 'bg-emerald-600/15 text-emerald-700 ring-emerald-600/50 hover:bg-emerald-600/25 dark:text-emerald-400',
-  TENANT: 'bg-sky-500/15 text-sky-700 ring-sky-500/50 hover:bg-sky-500/25 dark:text-sky-400',
-  FREE_OCCUPANT: 'bg-amber-500/15 text-amber-700 ring-amber-500/50 hover:bg-amber-500/25 dark:text-amber-400',
+  OWNER: 'bg-success/15 text-success ring-success/50 hover:bg-success/25',
+  TENANT: 'bg-info/15 text-info ring-info/50 hover:bg-info/25',
+  FREE_OCCUPANT: 'bg-warning/15 text-warning ring-warning/50 hover:bg-warning/25',
 };
 
 export const HELD_DOT: Record<string, string> = {
-  OWNER: 'bg-emerald-600',
-  TENANT: 'bg-sky-500',
-  FREE_OCCUPANT: 'bg-amber-500',
+  OWNER: 'bg-success',
+  TENANT: 'bg-info',
+  FREE_OCCUPANT: 'bg-warning',
 };
 
 /**
@@ -79,7 +79,7 @@ export function UnitHoldingsGrid({
           {floors.map(({ floor }) => (
             <div
               key={floor}
-              className="flex h-12 w-14 items-center justify-end text-[11px] font-medium tabular-nums text-muted-foreground sm:w-20"
+              className="flex h-12 w-14 items-center justify-end text-xs font-medium tabular-nums text-muted-foreground sm:w-20"
             >
               {floorLabel(floor, en)}
             </div>
@@ -114,7 +114,7 @@ export function UnitHoldingsGrid({
                     >
                       <span className="font-mono text-xs font-bold">{unit.unitCode}</span>
                       {role ? (
-                        <span className="block max-w-full truncate text-[10px] font-medium leading-tight">
+                        <span className="block max-w-full truncate text-xs font-medium leading-tight">
                           {labels.occupancyType[role as never] ?? role}
                         </span>
                       ) : null}

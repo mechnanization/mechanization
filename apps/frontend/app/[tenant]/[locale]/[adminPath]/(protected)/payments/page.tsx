@@ -18,6 +18,7 @@ import { ar } from '@mechanization/shared-schemas';
 import {
   getAllPayments,
   getCitizenProfile,
+  getFeeFilterOptions,
   getMunicipalitySettings,
   getTenantConfig,
   logApiError,
@@ -31,11 +32,12 @@ import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatLbp } from '@/lib/currency';
 import { formatDateTime, formatRelative } from '@/lib/dates';
-import { Badge } from '@/components/ui/badge';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { cn } from '@/lib/utils';
@@ -84,18 +86,31 @@ const EMPTY_TOTALS = {
   awaiting: 0,
 } as const;
 
-const METHOD_FILTERS = [
-  { id: '', label: 'الكل', icon: ArrowLeftRight },
-  { id: 'CASH', label: 'نقداً', icon: Banknote },
-  { id: 'WHISH_MONEY', label: 'Whish', icon: CreditCard },
-  { id: 'COLLECTOR', label: 'المحصّل', icon: UserCheck },
-] as const;
+/**
+ * The order the method tabs read in, and the glyph each one carries.
+ *
+ * Which of them appear is not decided here — see `filterOptionsQuery`. A
+ * municipality that has never taken a Whish transfer had a «Whish» tab anyway,
+ * and pressing it emptied the ledger: a question with only one possible
+ * answer, and that answer "nothing". The tabs are now the methods money has
+ * actually arrived by.
+ */
+const METHOD_TAB_ORDER = ['CASH', 'WHISH_MONEY', 'COLLECTOR'] as const;
 
-/** Badge tone and glyph per method — one place, so the filter and the row agree. */
+const METHOD_TAB = {
+  CASH: { label: 'نقداً', icon: Banknote },
+  WHISH_MONEY: { label: 'Whish', icon: CreditCard },
+  COLLECTOR: { label: 'المحصّل', icon: UserCheck },
+} as const;
+
+/** «الكل» is not a method — it is the absence of the filter — so it is always here. */
+const ALL_METHODS_TAB = { id: '', label: 'الكل', icon: ArrowLeftRight } as const;
+
+/** Text tone and glyph per method — one place, so the filter and the row agree. */
 const METHOD_STYLE = {
-  CASH: { icon: Banknote, className: 'border-success/40 bg-success/10 text-success' },
-  WHISH_MONEY: { icon: CreditCard, className: 'border-primary/40 bg-primary/10 text-primary' },
-  COLLECTOR: { icon: UserCheck, className: 'border-warning/40 bg-warning/10 text-warning' },
+  CASH: { icon: Banknote, tone: 'success' },
+  WHISH_MONEY: { icon: CreditCard, tone: 'primary' },
+  COLLECTOR: { icon: UserCheck, tone: 'warning' },
 } as const;
 
 /** Opening letters of the first and last name — what goes on a folder tab. */
@@ -203,6 +218,36 @@ export default function PaymentsPage({
     keepPrevious: true,
   });
 
+  /**
+   * The methods money has actually arrived by, for the tab row.
+   *
+   * `reference`: read once and held for the session, and shared with إدارة
+   * الرسوم, which asks for the same key. This screen is read-only by design —
+   * it takes no payments — so nothing it does can extend the vocabulary, and
+   * it never needs to invalidate the key. The screen that *can* extend it does
+   * (see the fees ledger's `load`).
+   */
+  const filterOptionsQuery = useStaffQuery({
+    queryKey: ['fee-filter-options', tenant],
+    queryFn: (accessToken, signal) => getFeeFilterOptions(tenant, accessToken, signal),
+    tenant,
+    base,
+    token,
+    errorMessage: 'تعذّر تحميل خيارات التصفية.',
+    reference: true,
+  });
+
+  const methodTabs = useMemo(() => {
+    const present = new Set(filterOptionsQuery.data?.methods ?? []);
+    return [
+      ALL_METHODS_TAB,
+      ...METHOD_TAB_ORDER.filter((method) => present.has(method)).map((method) => ({
+        id: method,
+        ...METHOD_TAB[method],
+      })),
+    ];
+  }, [filterOptionsQuery.data]);
+
   /** The office details a reprinted وصل carries. Neither is rendered on this page. */
   const receiptContextQuery = useStaffQuery({
     queryKey: ['receipt-context', tenant],
@@ -287,13 +332,15 @@ export default function PaymentsPage({
           // gets the whole thing into a message or a ticket.
           const short = payment.id.split('-').at(-1) ?? payment.id;
           return (
-            // Set as a quiet chip rather than plain text at row weight: this is
-            // a lookup key someone reaches for once a week, and at the same
-            // size as the payer's name it competed with every column that gets
-            // read on every row.
+            // Held down in size and colour rather than in a grey chip: this
+            // is a lookup key someone reaches for once a week, and at the
+            // payer's name's weight it competed with every column that gets
+            // read on every row. The box did that job and cost more than it
+            // was worth — it inset the value from the cell's edge, so «رقم
+            // العملية» no longer sat over its own column.
             <div className="flex items-center gap-1">
               <span
-                className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-tight text-muted-foreground"
+                className="font-mono text-xs uppercase tracking-tight text-muted-foreground"
                 dir="ltr"
               >
                 {short}
@@ -404,19 +451,19 @@ export default function PaymentsPage({
           const Icon = style.icon;
           return (
             <div className="space-y-1">
-              <Badge variant="outline" className={cn('gap-1.5', style.className)}>
+              <CellTag tone={style.tone}>
                 <Icon className="size-3" aria-hidden />
                 {ar.paymentMethod[payment.paymentMethod as never] ?? payment.paymentMethod}
-              </Badge>
-              {/* Each method's one auditable fact, under its badge: the
+              </CellTag>
+              {/* Each method's one auditable fact, under the method: the
                   transfer's number, or the name of whoever is holding the
                   cash until he hands it in. */}
               {payment.whishTransactionRef ? (
-                <p className="font-mono text-[11px] text-muted-foreground" dir="ltr">
+                <p className="font-mono text-xs text-muted-foreground" dir="ltr">
                   {payment.whishTransactionRef}
                 </p>
               ) : payment.collectedByName ? (
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   بعهدة {payment.collectedByName}
                 </p>
               ) : null}
@@ -437,10 +484,10 @@ export default function PaymentsPage({
           // exactly when money has been received against the row.
           if (payment.paidAmount <= 0) {
             return (
-              <Badge variant="outline" className="gap-1.5 text-muted-foreground">
+              <CellTag tone="muted">
                 <Clock className="size-3" aria-hidden />
                 بانتظار التأكيد
-              </Badge>
+              </CellTag>
             );
           }
           return (
@@ -484,8 +531,8 @@ export default function PaymentsPage({
                 {exact ? '' : '≈ '}
                 {formatRelative(stampedAt)}
               </p>
-              <p className="text-xs tabular-nums text-muted-foreground" dir="ltr">
-                {formatDateTime(stampedAt)}
+              <p className="text-xs tabular-nums text-muted-foreground">
+                <bdi dir="ltr">{formatDateTime(stampedAt)}</bdi>
               </p>
             </div>
           );
@@ -552,43 +599,39 @@ export default function PaymentsPage({
               سجل العمليات
             </CardTitle>
 
-            {/* Method Tabs Filter */}
-            <div className="flex flex-wrap items-center gap-1 rounded-xl bg-muted p-1">
-              {METHOD_FILTERS.map((tab) => {
-                const Icon = tab.icon;
-                const active = method === tab.id;
-                return (
-                  <button
-                    key={tab.id || 'all'}
-                    type="button"
-                    /*
-                      Narrowing to one method returns to the first page, here
-                      rather than in an effect watching `method`: two state
-                      updates in one render make one query key and one request,
-                      where the effect made two — the first at an offset that no
-                      longer existed.
-                    */
-                    onClick={() => {
-                      setMethod(tab.id);
-                      setPagination((previous) =>
-                        previous.pageIndex === 0
-                          ? previous
-                          : { ...previous, pageIndex: 0 },
-                      );
-                    }}
-                    className={cn(
-                      'flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-semibold transition-all',
-                      active
-                        ? 'bg-card text-foreground shadow-xs'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    {Icon ? <Icon className="size-3.5" aria-hidden /> : null}
-                    <span>{tab.label}</span>
-                  </button>
+            {/*
+              The method filter, as the shared segmented control rather than a
+              hand-rolled tab row.
+
+              The row it replaces was 26px tall — `px-3 py-1` on 12px text —
+              which is half the 48px a finger needs, on a screen a collector
+              uses standing up. `SegmentedControl` carries `coarse:min-h-touch`
+              and the app's one selected-segment treatment, so this stops being
+              a fourth thing that looks almost like the other three.
+            */}
+            <SegmentedControl
+              aria-label="تصفية حسب طريقة الدفع"
+              value={method}
+              size="sm"
+              fullWidth={false}
+              options={methodTabs.map((tab) => ({
+                value: tab.id,
+                label: tab.label,
+                icon: tab.icon,
+              }))}
+              /*
+                Narrowing to one method returns to the first page, here rather
+                than in an effect watching `method`: two state updates in one
+                render make one query key and one request, where the effect
+                made two — the first at an offset that no longer existed.
+              */
+              onChange={(next) => {
+                setMethod(next);
+                setPagination((previous) =>
+                  previous.pageIndex === 0 ? previous : { ...previous, pageIndex: 0 },
                 );
-              })}
-            </div>
+              }}
+            />
           </div>
         </CardHeader>
 

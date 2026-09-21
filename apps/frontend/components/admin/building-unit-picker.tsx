@@ -1006,7 +1006,7 @@ export function BuildingUnitPicker({
             <button
               type="button"
               onClick={unlink}
-              className="flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+              className="flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
             >
               <Unlink className="size-3" aria-hidden />
               {en ? 'Unlink' : 'إلغاء الربط'}
@@ -1015,7 +1015,7 @@ export function BuildingUnitPicker({
         </div>
 
         {loading ? (
-          <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="size-3 animate-spin" aria-hidden />
             {en ? 'Checking the census…' : 'جاري مراجعة سجل المباني…'}
           </p>
@@ -1032,14 +1032,14 @@ export function BuildingUnitPicker({
               on every field registration.
             */}
             {lookup === 'failed' ? (
-              <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-[11px] leading-relaxed">
+              <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs leading-relaxed">
                 <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
                 {en
                   ? `The census could not be reached, so what stands on parcel ${parcelNumber} is unknown — there may already be a structure recorded here.`
                   : `تعذّر الوصول إلى سجل المباني، فلا يُعرف ما هو مسجَّل على العقار ${parcelNumber} — قد تكون هناك منشأة مسجَّلة بالفعل.`}
               </p>
             ) : (
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <p className="text-xs leading-relaxed text-muted-foreground">
                 {en
                   ? `No structure has been censused on parcel ${parcelNumber} yet. The card is valid without one — the link can be made later from the census ledger.`
                   : `لا توجد منشأة مسجَّلة على العقار ${parcelNumber} بعد. البطاقة صالحة بدون ربط — يمكن ربطها لاحقاً من سجل المباني.`}
@@ -1112,7 +1112,7 @@ export function BuildingUnitPicker({
                       {/* Filed under a neighbouring parcel and covering this one —
                           said, because its code names a different عقار. */}
                       {parcelNumber && row.parcelNumber !== parcelNumber ? (
-                        <span className="text-[10px] text-sky-700 dark:text-sky-400">
+                        <span className="text-xs text-info">
                           {en
                             ? `shared — filed under ${row.parcelNumber}`
                             : `مشترك — عقاره الأساسي ${row.parcelNumber}`}
@@ -1185,7 +1185,7 @@ export function BuildingUnitPicker({
         */}
         {buildingId && !isBuilding && detail && detail.units.length > 1 ? (
           <div className="space-y-1 border-t pt-2">
-            <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-[11px] leading-relaxed">
+            <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs leading-relaxed">
               <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
               <span>
                 {en
@@ -1202,7 +1202,7 @@ export function BuildingUnitPicker({
       {buildingId && isBuilding ? (
         <div className="space-y-2 rounded-lg border border-dashed p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[11px] font-medium">
+            <p className="text-xs font-medium">
               {editingLinks
                 ? en
                   ? 'Which units does this citizen hold?'
@@ -1215,13 +1215,13 @@ export function BuildingUnitPicker({
           </div>
 
           {detailLoading ? (
-            <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="size-3 animate-spin" aria-hidden />
               {en ? 'Loading the matrix…' : 'جاري تحميل المصفوفة…'}
             </p>
           ) : !detail || detail.units.length === 0 ? (
             <>
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <p className="text-xs leading-relaxed text-muted-foreground">
                 {en
                   ? 'This structure has no unit matrix yet. Add the flats here to put them in the census, or record them on the card below.'
                   : 'لا توجد مصفوفة وحدات لهذه المنشأة بعد. أضف الوحدات هنا لتدخل سجل المباني، أو سجّلها في البطاقة أدناه.'}
@@ -1269,9 +1269,9 @@ export function BuildingUnitPicker({
                 {floors.map(({ floor, units }) => (
                   <div key={floor} className="rounded-lg border">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-2.5 py-1.5">
-                      <p className="text-[11px] font-semibold">{floorLabel(floor, en)}</p>
+                      <p className="text-xs font-semibold">{floorLabel(floor, en)}</p>
                       <div className="flex items-center gap-2">
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                           {en ? `${units.length} units` : `${units.length} وحدة`}
                         </p>
                         {/*
@@ -1285,7 +1285,7 @@ export function BuildingUnitPicker({
                             type="button"
                             disabled={addingBusy}
                             onClick={() => openAdd(floor, floor)}
-                            className="inline-flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                            className="inline-flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
                           >
                             <Plus className="size-3" aria-hidden />
                             {en ? 'Add unit' : 'إضافة وحدة'}
@@ -1314,7 +1314,7 @@ export function BuildingUnitPicker({
                     ) : null}
 
                     {units.length === 0 ? (
-                      <p className="px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                      <p className="px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
                         {en
                           ? 'The register says this level exists but no unit has been recorded on it yet.'
                           : 'سجل المباني يذكر هذا الطابق لكن لم تُسجَّل عليه أي وحدة بعد.'}
@@ -1375,7 +1375,7 @@ export function BuildingUnitPicker({
                                   ) : null}
                                   <span dir="ltr">{unit.unitCode}</span>
                                 </span>
-                                <span className="text-[11px] text-muted-foreground">
+                                <span className="text-xs text-muted-foreground">
                                   {labels.unitType[unit.unitType]}
                                 </span>
                               </div>
@@ -1394,7 +1394,7 @@ export function BuildingUnitPicker({
                                 shop on the ground floor» saw «0001» and had no
                                 way to tell whether that *was* their shop.
                               */}
-                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                                 {unit.postedNumber && unit.postedNumber !== unit.unitCode ? (
                                   <span>
                                     {en ? 'Door: ' : 'الباب: '}
@@ -1416,7 +1416,7 @@ export function BuildingUnitPicker({
                                 person being edited — stops reading as a clash.
                               */}
                               {mine.length > 0 ? (
-                                <p className="text-[11px] font-medium text-primary">
+                                <p className="text-xs font-medium text-primary">
                                   {en ? 'Already linked to this citizen' : 'مسجَّل لهذا المواطن'}
                                   {' · '}
                                   {mine.map((row) => labels.occupancyRole[row.role]).join('، ')}
@@ -1427,10 +1427,10 @@ export function BuildingUnitPicker({
                                 <p
                                   key={occupant.id}
                                   className={cn(
-                                    'text-[11px]',
+                                    'text-xs',
                                     occupant.role === 'OWNER'
                                       ? 'text-muted-foreground'
-                                      : 'font-medium text-amber-700 dark:text-amber-500',
+                                      : 'font-medium text-warning',
                                   )}
                                 >
                                   {labels.occupancyRole[occupant.role]}
@@ -1452,7 +1452,7 @@ export function BuildingUnitPicker({
                                 occupancy fee for one flat.
                               */}
                               {heldByOccupant ? (
-                                <p className="text-[11px] text-amber-700 dark:text-amber-500">
+                                <p className="text-xs text-warning">
                                   {en
                                     ? 'Occupied by someone else — this card will record it as such'
                                     : `تُسجَّل على هذه البطاقة «${
@@ -1469,7 +1469,7 @@ export function BuildingUnitPicker({
                 ))}
               </div>
 
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <p className="text-xs leading-relaxed text-muted-foreground">
                 {en
                   ? 'Nothing is selected by default — a twelve-flat building says nothing about how many of them one person holds.'
                   : 'لا شيء محدَّد افتراضياً — وجود اثنتي عشرة شقة في مبنى لا يعني أن الشخص يملكها كلها.'}
@@ -1567,7 +1567,7 @@ function NoLinkOption({
       onClick={onSelect}
       aria-pressed={active}
       className={cn(
-        'flex w-full items-center gap-1.5 rounded-md border px-2.5 py-2 text-start text-[11px] transition-colors',
+        'flex w-full items-center gap-1.5 rounded-md border px-2.5 py-2 text-start text-xs transition-colors',
         active ? 'border-primary bg-primary/10 text-primary' : 'border-dashed hover:bg-accent',
       )}
     >
@@ -1644,14 +1644,14 @@ function NewStructureBranch({
     return (
       <div className="space-y-1.5 rounded-md border border-primary/40 bg-primary/5 px-2.5 py-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="flex items-center gap-1.5 text-[11px] font-medium text-primary">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-primary">
             <Plus className="size-3" aria-hidden />
             {en ? 'A new structure will be created' : 'ستُنشأ منشأة جديدة على هذا العقار'}
           </p>
           <button
             type="button"
             onClick={onCancel}
-            className="text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+            className="text-xs text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
           >
             {en ? 'Cancel' : 'تراجع'}
           </button>
@@ -1677,7 +1677,7 @@ function NewStructureBranch({
     <button
       type="button"
       onClick={onStart}
-      className="flex w-full items-center gap-1.5 rounded-md border border-dashed px-2.5 py-2 text-start text-[11px] transition-colors hover:bg-accent"
+      className="flex w-full items-center gap-1.5 rounded-md border border-dashed px-2.5 py-2 text-start text-xs transition-colors hover:bg-accent"
     >
       <Plus className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
       <span>
@@ -1832,7 +1832,7 @@ function AddUnitInline({
       <button
         type="button"
         onClick={onOpen}
-        className="inline-flex items-center gap-1 rounded-md border border-dashed px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        className="inline-flex items-center gap-1 rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         <Plus className="size-3" aria-hidden />
         {en ? 'Add a unit to this building' : 'إضافة وحدة إلى هذا المبنى'}
@@ -1844,7 +1844,7 @@ function AddUnitInline({
     <div className="space-y-2 rounded-md border border-dashed bg-muted/20 p-2.5">
       <div className="flex flex-wrap items-end gap-2">
         <label className="space-y-1">
-          <span className="block text-[11px] font-medium">{en ? 'Floor' : 'الطابق'}</span>
+          <span className="block text-xs font-medium">{en ? 'Floor' : 'الطابق'}</span>
           <input
             type="number"
             inputMode="numeric"
@@ -1857,13 +1857,13 @@ function AddUnitInline({
           />
           {/* The one place the signed floor is typed rather than clicked, so
               the mapping between it and the B-prefixed label is stated. */}
-          <span className="block text-[10px] leading-snug text-muted-foreground">
+          <span className="block text-xs leading-snug text-muted-foreground">
             {en ? '0 = ground · -1 = B1' : '0 = الأرضي · ‎-1 = B1'}
           </span>
         </label>
 
         <label className="min-w-40 flex-1 space-y-1">
-          <span className="block text-[11px] font-medium">
+          <span className="block text-xs font-medium">
             {en ? 'Unit type' : 'نوع الوحدة'}
           </span>
           <Select
@@ -1892,7 +1892,7 @@ function AddUnitInline({
           type="button"
           disabled={busy || duplicates !== null}
           onClick={onSubmit}
-          className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-2.5 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+          className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {busy ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
           {en ? 'Add' : 'إضافة'}
@@ -1902,13 +1902,13 @@ function AddUnitInline({
           type="button"
           disabled={busy}
           onClick={onCancel}
-          className="h-8 px-1.5 text-[11px] text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+          className="h-8 px-1.5 text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
         >
           {en ? 'Cancel' : 'إلغاء'}
         </button>
       </div>
 
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
+      <p className="text-xs leading-relaxed text-muted-foreground">
         {en
           ? 'The unit is added to the census and ticked for this citizen. Its code is assigned from the floor.'
           : 'تُضاف الوحدة إلى سجل المباني وتُحدَّد لهذا المواطن. يُشتق رمزها من الطابق.'}
@@ -1930,7 +1930,7 @@ function AddUnitInline({
       */}
       {duplicates && duplicates.length > 0 ? (
         <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2.5">
-          <p className="flex items-start gap-1.5 text-[11px] font-medium leading-relaxed">
+          <p className="flex items-start gap-1.5 text-xs font-medium leading-relaxed">
             <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
             {en
               ? 'This floor already has a unit of the same type. Is the one you are adding different?'
@@ -1941,7 +1941,7 @@ function AddUnitInline({
             {duplicates.map((row) => (
               <li
                 key={row.id}
-                className="rounded-md bg-background/70 px-2 py-1.5 text-[11px] leading-relaxed"
+                className="rounded-md bg-background/70 px-2 py-1.5 text-xs leading-relaxed"
               >
                 <span className="font-mono font-medium" dir="ltr">
                   {row.unitCode}
@@ -1994,7 +1994,7 @@ function AddUnitInline({
               type="button"
               disabled={busy}
               onClick={onConfirmDuplicates}
-              className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2.5 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {busy ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
               {en ? 'Yes, it is a different unit' : 'نعم، هذه وحدة مختلفة'}
@@ -2003,7 +2003,7 @@ function AddUnitInline({
               type="button"
               disabled={busy}
               onClick={onDeclineDuplicates}
-              className="h-7 px-1.5 text-[11px] text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+              className="h-7 px-1.5 text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
             >
               {en ? 'No — it is one of these' : 'لا، إنها إحدى هذه الوحدات'}
             </button>
@@ -2012,7 +2012,7 @@ function AddUnitInline({
       ) : null}
 
       {error ? (
-        <p role="alert" className="text-[11px] text-destructive">
+        <p role="alert" className="text-xs text-destructive">
           {error}
         </p>
       ) : null}

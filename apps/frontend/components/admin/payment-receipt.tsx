@@ -197,7 +197,7 @@ export function PaymentReceipt({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         closeLabel={locale === 'en' ? 'Close' : 'إغلاق'}
-        className="flex max-h-[94vh] flex-col gap-0 p-0 sm:max-w-4xl"
+        className="flex max-h-[94dvh] flex-col gap-0 p-0 sm:max-w-4xl"
       >
         <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-6 bg-muted/20">
           {/* Printable Receipt Facsimile */}
@@ -355,7 +355,7 @@ function DrawnFacsimile({
           <header className="flex items-start justify-between gap-4 border-b-2 border-black pb-3">
             {/* Right (first, in RTL): receipt number stamp, bill title, and rule */}
             <div className="text-center pt-1 space-y-1.5">
-              <div className="mx-auto inline-flex items-center gap-1.5 rounded-sm border border-black/60 px-2 py-0.5 text-[10px] font-bold tracking-wide text-black">
+              <div className="mx-auto inline-flex items-center gap-1.5 rounded-sm border border-black/60 px-2 py-0.5 text-xs font-bold tracking-wide text-black">
                 <span>رقم الوصل</span>
                 <span className="font-mono">{receiptNumber(payment)}</span>
               </div>
@@ -518,7 +518,7 @@ function DrawnFacsimile({
             </div>
             <div
               aria-hidden
-              className="flex size-16 shrink-0 items-center justify-center rounded-full border border-dashed border-black/40 text-[10px] font-bold text-black/40"
+              className="flex size-16 shrink-0 items-center justify-center rounded-full border border-dashed border-black/40 text-xs font-bold text-black/40"
             >
               الختم
             </div>
@@ -540,7 +540,7 @@ function DrawnFacsimile({
             decree is needed for the codes to be valid.
           */}
           {property?.buildingCode ? (
-            <p className="mt-3 border-t border-black/30 pt-2 text-center text-[10px] leading-relaxed text-black/70">
+            <p className="mt-3 border-t border-black/30 pt-2 text-center text-xs leading-relaxed text-black/70">
               {councilDecisionRef
                 ? `رمز المبنى معتمد بموجب ${councilDecisionRef}.`
                 : 'رمز المبنى صادر ضمن أعمال المسح والتخمين البلدي، وهو رمز مسحي داخلي لا يحل محل رقم العقار في السجل العقاري.'}

@@ -34,10 +34,10 @@ import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 
 const STATUS_TONE: Record<string, string> = {
-  UNPAID: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
-  OVERDUE: 'border-red-600/30 bg-red-600/10 text-red-700 dark:text-red-300',
-  PENDING_REVIEW: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-700 dark:text-yellow-300',
-  PAID: 'border-emerald-600/30 bg-emerald-600/10 text-emerald-700 dark:text-emerald-300',
+  UNPAID: 'border-warning/30 bg-warning/10 text-warning',
+  OVERDUE: 'border-destructive/30 bg-destructive/10 text-destructive',
+  PENDING_REVIEW: 'border-warning/30 bg-warning/10 text-warning',
+  PAID: 'border-success/30 bg-success/10 text-success',
 };
 
 const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> = {

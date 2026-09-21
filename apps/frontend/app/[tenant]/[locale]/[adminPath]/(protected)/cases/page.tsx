@@ -32,12 +32,13 @@ import type { CaseSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate } from '@/lib/dates';
-import { Badge } from '@/components/ui/badge';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DatePicker } from '@/components/ui/date-picker';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { LinkCaseCitizenDialog } from '@/components/admin/link-case-citizen-dialog';
@@ -468,24 +469,22 @@ export default function CasesPage({
           return (
             <div className="space-y-1">
               {item.status === 'RESOLVED' ? (
-                <Badge className="gap-1.5 border-emerald-600/30 bg-emerald-600/10 py-1 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" variant="outline">
+                <CellTag tone="success">
                   <CheckCircle2 className="size-3.5" aria-hidden />
                   {labels.caseStatus.RESOLVED}
-                </Badge>
+                </CellTag>
               ) : item.status === 'SCHEDULED' ? (
-                <Badge className="gap-1.5 py-1" variant="soft-warning">
+                <CellTag tone="warning">
                   <CalendarClock className="size-3.5" aria-hidden />
                   {labels.caseStatus.SCHEDULED}
-                </Badge>
+                </CellTag>
               ) : (
-                <Badge className="gap-1.5 py-1" variant="outline">
-                  {labels.caseStatus.OPEN}
-                </Badge>
+                <CellTag>{labels.caseStatus.OPEN}</CellTag>
               )}
               {/* The date is what «مجدولة» means; a status without it is a
                   promise nobody can plan around. */}
               {item.scheduledRevisitAt ? (
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   {locale === 'en' ? 'Revisit ' : 'العودة '}
                   {formatDate(item.scheduledRevisitAt)}
                 </p>
@@ -496,7 +495,7 @@ export default function CasesPage({
                   onClick={() =>
                     router.push(`${base}/citizens/${item.resolvedCitizenId}`)
                   }
-                  className="flex items-center gap-1 text-[11px] text-primary underline-offset-2 hover:underline"
+                  className="flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
                 >
                   <Link2 className="size-3 shrink-0" aria-hidden />
                   {item.resolvedCitizenName}
@@ -649,25 +648,23 @@ export default function CasesPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <div className="flex flex-col items-start justify-between gap-4 border-b pb-6 md:flex-row md:items-center">
-        <div className="space-y-2">
-          <h1 className="flex items-center gap-3 text-3xl font-bold tracking-tight">
-            <ClipboardList className="size-7 text-primary" aria-hidden />
-            {locale === 'en' ? 'Cases' : 'الحالات'}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {locale === 'en'
-              ? 'Visits that did not become a citizen registration — nobody home, access refused. Log what was observed for the next visit.'
-              : 'زيارات لم تنتهِ بتسجيل مواطن — لا أحد في المنزل، أو تعذّر الدخول. سجّل ما أمكن ملاحظته للزيارة القادمة.'}
-          </p>
-        </div>
-        {canWrite ? (
-          <Button onClick={() => router.push(`${base}/cases/new`)}>
-            <Plus className="size-4" aria-hidden />
-            {locale === 'en' ? 'Open a follow-up case' : 'فتح حالة متابعة'}
-          </Button>
-        ) : null}
-      </div>
+      <PageHeader
+        icon={ClipboardList}
+        title={locale === 'en' ? 'Cases' : 'الحالات'}
+        subtitle={
+          locale === 'en'
+            ? 'Visits that did not become a citizen registration — nobody home, access refused. Log what was observed for the next visit.'
+            : 'زيارات لم تنتهِ بتسجيل مواطن — لا أحد في المنزل، أو تعذّر الدخول. سجّل ما أمكن ملاحظته للزيارة القادمة.'
+        }
+        actions={
+          canWrite ? (
+            <Button onClick={() => router.push(`${base}/cases/new`)}>
+              <Plus className="size-4" aria-hidden />
+              {locale === 'en' ? 'Open a follow-up case' : 'فتح حالة متابعة'}
+            </Button>
+          ) : null
+        }
+      />
 
       {/*
         Tabs as a work queue, not a copy of the enum.
@@ -691,14 +688,19 @@ export default function CasesPage({
               aria-selected={active}
               onClick={() => setTab(entry.id)}
               className={cn(
-                'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+                // `min-h-9 coarse:min-h-touch`, matching `SegmentedControl`:
+                // padding alone left these at 30px, and this row is tapped on
+                // a phone in the field. Kept as a `tablist` rather than folded
+                // into the segmented control because the queues are tabs over
+                // one table, and the counts ride in the label.
+                'flex min-h-9 coarse:min-h-touch items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
                 active ? 'border-primary bg-primary/10 text-primary' : 'hover:bg-accent',
               )}
             >
               {locale === 'en' ? entry.en : entry.ar}
               <span
                 className={cn(
-                  'rounded-full px-1.5 text-[10px] font-bold',
+                  'rounded-full px-1.5 text-xs font-bold',
                   active ? 'bg-primary/20' : 'bg-muted text-muted-foreground',
                 )}
               >

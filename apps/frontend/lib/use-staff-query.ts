@@ -46,6 +46,7 @@ export function useStaffQuery<T>({
   token,
   errorMessage,
   keepPrevious = false,
+  reference = false,
 }: {
   /**
    * Must contain the tenant and every parameter that changes the response.
@@ -73,6 +74,28 @@ export function useStaffQuery<T>({
    * rows sit still until their replacements are ready.
    */
   keepPrevious?: boolean;
+  /**
+   * Marks the read as a **reference list** rather than a page of data.
+   *
+   * The sectors, the bill titles, the values a filter may offer: sets that
+   * change when somebody sets the municipality up or files the first record of
+   * a kind, not while a clerk works. The default policy — thirty seconds stale,
+   * re-read on every window focus — is right for a table of invoices and wrong
+   * for these: it puts a request on the wire every time a screen is opened, to
+   * be told again what the sectors are called.
+   *
+   * With this set the list is fetched **once** and then served from the cache
+   * for the rest of the session, across every screen that asks for it. It is
+   * still a live read, not a constant baked into the page: a screen that adds a
+   * value invalidates the key (see the census ledger's `reload`), and the next
+   * read picks it up.
+   *
+   * `gcTime: Infinity` matters as much as `staleTime`. Without it the entry is
+   * collected five minutes after the last screen using it unmounts, and moving
+   * away from a filter for six minutes and back would fetch it again — which is
+   * the behaviour this exists to remove.
+   */
+  reference?: boolean;
 }): StaffQueryResult<T> {
   const router = useRouter();
 
@@ -83,6 +106,15 @@ export function useStaffQuery<T>({
     // run until it is set.
     enabled: Boolean(token),
     placeholderData: keepPrevious ? keepPreviousData : undefined,
+    ...(reference
+      ? {
+          staleTime: Infinity,
+          gcTime: Infinity,
+          refetchOnWindowFocus: false as const,
+          refetchOnMount: false as const,
+          refetchOnReconnect: false as const,
+        }
+      : {}),
   });
 
   const { error } = query;

@@ -1729,7 +1729,7 @@ export function CitizenEditor({
 
   if (loadError) {
     return (
-      <div className="w-full space-y-4 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <p
           role="alert"
           className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"

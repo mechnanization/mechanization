@@ -221,7 +221,7 @@ export function BillTypeSelect({
                     : (isEnglish ? 'No matching previous bill titles.' : 'لا توجد رسوم سابقة مطابقة.')}
                 </p>
                 {search.trim() ? (
-                  <p className="mt-1 text-[11px] text-foreground font-semibold">
+                  <p className="mt-1 text-xs text-foreground font-semibold">
                     {isEnglish ? 'Press Enter to use your typed title.' : 'اضغط Enter لاعتماد الاسم المكتوب.'}
                   </p>
                 ) : null}
