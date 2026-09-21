@@ -549,7 +549,7 @@ function DetailRow({ entry, locale }: { entry: AuditEntry; locale: string }): Re
         {lines.length === 0 ? (
           <span className="text-muted-foreground">—</span>
         ) : (
-          <FactRow className="gap-x-6 gap-y-2">
+          <FactRow>
             {lines.map((line, index) => (
               <FactCell key={`${line.label}-${index}`} label={line.label} value={line.value} />
             ))}

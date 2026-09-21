@@ -170,7 +170,6 @@ export function SettlePaymentDialog({
               label={locale === 'en' ? 'Transaction Reference Number' : 'رقم عملية التحويل'}
               htmlFor="settle-reference"
               required
-              hint={locale === 'en' ? 'As shown on Whish receipt.' : 'كما يظهر في إشعار Whish.'}
             >
               <Input
                 id="settle-reference"
@@ -189,7 +188,6 @@ export function SettlePaymentDialog({
               label={locale === 'en' ? 'Collector' : 'المحصّل'}
               htmlFor="settle-collector"
               required
-              hint={locale === 'en' ? 'Responsible staff member.' : 'الموظف المسؤول.'}
             >
               {collectors.length === 0 ? (
                 <p className="rounded-lg border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
@@ -258,7 +256,7 @@ export function SettlePaymentDialog({
             </p>
           ) : null}
 
-          <Field label={locale === 'en' ? 'Notes' : 'ملاحظة'} htmlFor="settle-note" hint={locale === 'en' ? 'Optional' : 'اختياري'}>
+          <Field label={locale === 'en' ? 'Notes' : 'ملاحظة'} htmlFor="settle-note">
             <Textarea
               id="settle-note"
               rows={2}

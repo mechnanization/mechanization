@@ -3,8 +3,8 @@ import { ArrowLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
- * Label-and-value pairs, laid out across: the label on top, its value directly
- * under it, each pair sitting beside the next.
+ * Label-and-value pairs, one per row: the label at the inline start, its value
+ * at the inline end, a hairline between each pair and the next.
  *
  * ## Why this is a component and not eight hand-written `<dl>`s
  *
@@ -15,26 +15,24 @@ import { cn } from '@/lib/utils';
  * against a paper slip reads *down* the value column; if that column starts at
  * a different place on each line there is no column to read down.
  *
- * ## Why across and not down
+ * ## Why rows
  *
- * Down was the first fix, and it was aligned but tall: five facts about a
- * staff member became five lines of mostly empty space at the top of a card on
- * a page meant to be scanned five inspectors at a time, and an entry with four
- * changed fields made a four-line cell in a table whose other columns are one.
- * Across, the pairs read the way the figures table under them already does.
+ * Label-over-value packed across the width was tried and left the far half of
+ * every card empty while the near half held two lines per fact. Rows use the
+ * whole width, put every value on the same edge, and read the same as
+ * «ملخص المنشأة», the building page and the citizen file — one shape for a
+ * fact wherever a fact is shown.
  *
  * ## The bidi rule, which is the actual bug this exists to fix
  *
  * The obvious spelling — `dir="auto"` or `dir="ltr"` on the value — is what
  * scattered the values in the first place. Those set the *element's* direction,
  * which also decides which edge its text starts at, so «X-498-A» became LTR and
- * flew to one side while «مبنى سكني» stayed on the other. Two facts in one
- * list, aligned to opposite edges, and a `$0.00` sitting nowhere near the
- * heading naming it.
+ * flew to one side while «مبنى سكني» stayed on the other.
  *
  * `<bdi>` is the right tool: it isolates the value's own direction so a Latin
  * code still reads left-to-right internally, without touching the direction of
- * the box that holds it. The box keeps the page's direction and `text-start`
+ * the box that holds it. The box keeps the page's direction and `text-end`
  * puts every value on the same edge, Arabic and Latin alike.
  *
  * If you ever find a number sitting away from its label again, this is almost
@@ -43,51 +41,18 @@ import { cn } from '@/lib/utils';
 export function FactRow({
   children,
   className,
-  columns = false,
 }: {
   children: React.ReactNode;
   className?: string;
-  /**
-   * Lay the pairs on a fixed column rhythm instead of packing them to their
-   * own widths.
-   *
-   * For a card carrying more than one row of facts — a record and then its
-   * property, a finding and then its subjects. Packed, each row sizes its
-   * cells to its own content, so «النوع» under «سجَّله» starts somewhere
-   * different on every row and on every card in the list; on a rhythm the
-   * columns line up down the whole page and a reviewer can compare two records
-   * without reading either of them twice.
-   *
-   * Left off inside a table cell, where the cell is already a column and
-   * packing to content is what keeps the table narrow.
-   */
-  columns?: boolean;
 }): React.JSX.Element {
-  /*
-    Either way it wraps rather than scrolls, so a long email takes a second
-    line with the rest instead of pushing the row off the side of a phone.
-  */
-  return (
-    <dl
-      className={cn(
-        'text-xs',
-        columns
-          ? 'grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-5'
-          : 'flex flex-wrap gap-x-8 gap-y-3',
-        className,
-      )}
-    >
-      {children}
-    </dl>
-  );
+  return <dl className={cn('divide-y divide-border/60 text-xs', className)}>{children}</dl>;
 }
 
 /**
  * One pair inside a `FactRow`.
  *
- * The pair is the box the row lays out, so its two lines stay together when
- * the row wraps. Values carry no chip, pill, background or border: a border
- * around a value says «this is a control», and these are facts.
+ * Values carry no chip, pill, background or border: a border around a value
+ * says «this is a control», and these are facts.
  */
 export function FactCell({
   label,
@@ -96,18 +61,17 @@ export function FactCell({
 }: {
   label: React.ReactNode;
   value: React.ReactNode;
-  /** Cap prose here — `max-w-sm` on a note stops it taking the whole row. */
+  /** Styles the value — `font-mono` for a code, a colour for a tone. */
   className?: string;
 }): React.JSX.Element {
   return (
-    <div className="min-w-0">
-      <dt className="text-muted-foreground">{label}</dt>
+    <div className="flex min-w-0 items-baseline justify-between gap-4 py-2">
+      <dt className="shrink-0 text-muted-foreground">{label}</dt>
       {/*
         Wraps rather than truncating. A clipped value in a log is a value
-        somebody has to open something else to read — a caller that genuinely
-        wants one line asks for it with `truncate` in `className`.
+        somebody has to open something else to read.
       */}
-      <dd className={cn('mt-0.5 min-w-0 break-words text-start text-foreground', className)}>
+      <dd className={cn('min-w-0 break-words text-end text-sm font-medium text-foreground', className)}>
         <bdi>{value}</bdi>
       </dd>
     </div>

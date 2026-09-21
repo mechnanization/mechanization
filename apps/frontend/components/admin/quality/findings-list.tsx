@@ -160,7 +160,7 @@ export function FindingsList({
                   finding.dismissal && 'opacity-70',
                 )}
               >
-                <div className="divide-y [&>*]:px-4 [&>*]:py-3">
+                <div className="divide-y-2 divide-primary/30 [&>*]:px-4 [&>*]:py-3">
                   <div>
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                       <span aria-hidden className={cn('size-2 shrink-0 rounded-full', severity.dot)} />
@@ -179,7 +179,7 @@ export function FindingsList({
                   </div>
 
                   {finding.subjects.length > 0 || finding.officers.length > 0 ? (
-                    <FactRow columns>
+                    <FactRow>
                       {finding.subjects.map((subject) => (
                         <FactCell
                           key={`${key}-${subject.id}`}

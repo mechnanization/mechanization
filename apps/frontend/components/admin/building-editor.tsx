@@ -26,7 +26,6 @@ import {
   defaultUnitTypeFor,
   formatBuildingCode,
   getLabels,
-  isOccupiableLifecycle,
   isUnsurveyableShell,
   nextBuildingSuffix,
   STRUCTURE_TYPE,
@@ -79,6 +78,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { BackLink } from '@/components/ui/back-link';
@@ -1780,7 +1780,7 @@ export function BuildingEditor({
   }
 
   return (
-    <div ref={rootRef} className="w-full max-w-7xl mx-auto space-y-6 px-4 py-6 sm:px-6 lg:px-8 pb-28 sm:pb-12">
+    <div ref={rootRef} className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8 pb-28 sm:pb-12">
       {/* ── Breadcrumb & Navigation ── */}
       {/*
         Wraps rather than overflows. On a phone this row can carry «رجوع», the
@@ -1847,7 +1847,7 @@ export function BuildingEditor({
                   : 'صحّح بيانات المنشأة ومصفوفتها — يمكن إضافة الطوابق والوحدات من هنا في أي وقت.'
                 : en
                   ? 'Record the structure first — the units inside it are surveyed afterwards.'
-                  : 'سجّل المنشأة أولاً — أما الوحدات داخلها فتُمسح لاحقاً.'}
+                  : ''}
             </p>
           </div>
         </div>
@@ -1892,7 +1892,7 @@ export function BuildingEditor({
       </div>
 
       {/* ── Step Indicator ── */}
-      <ol className="flex items-center gap-2 sm:gap-4">
+      <ol className="flex items-center justify-center gap-2 sm:gap-4 max-w-sm sm:max-w-none mx-auto w-full px-1 sm:px-0">
         {visibleSteps.map((item, index) => {
           const Icon = item.icon;
           const state = index < step ? 'done' : index === step ? 'current' : 'upcoming';
@@ -1905,7 +1905,13 @@ export function BuildingEditor({
           */
           const reachable = editing || index < step;
           return (
-            <li key={item.en} className="flex flex-1 items-center gap-2 sm:gap-3">
+            <li
+              key={item.en}
+              className={cn(
+                'flex items-center gap-2 sm:gap-3',
+                index < visibleSteps.length - 1 ? 'flex-1' : 'flex-none',
+              )}
+            >
               <button
                 type="button"
                 onClick={() => reachable && goToStep(index as 0 | 1 | 2)}
@@ -1937,7 +1943,7 @@ export function BuildingEditor({
       </ol>
 
       {/* Mobile Current Step Bar */}
-      <div className="sm:hidden flex items-center justify-between text-xs px-1 text-muted-foreground">
+      <div className="sm:hidden flex items-center justify-between text-xs px-2 text-muted-foreground max-w-sm mx-auto w-full">
         <span className="font-semibold text-foreground">
           {en ? `Step ${step + 1}: ${visibleSteps[step]?.en}` : `الخطوة ${step + 1}: ${visibleSteps[step]?.ar}`}
         </span>
@@ -1974,11 +1980,7 @@ export function BuildingEditor({
                     <CardTitle className="text-base font-semibold">
                       {en ? 'Location & Parcel' : 'الموقع والعقار'}
                     </CardTitle>
-                    <CardDescription className="text-xs">
-                      {en
-                        ? 'Pick the sector, place the building on the map, then confirm its parcel'
-                        : 'اختر القطاع، ثم حدّد موقع المبنى على الخريطة، ثم أكّد رقم العقار'}
-                    </CardDescription>
+
                   </div>
                 </div>
                 {pin ? (
@@ -2021,11 +2023,7 @@ export function BuildingEditor({
                   en={en}
                   ordinal={1}
                   title={en ? 'Sector (القطاع)' : 'القطاع'}
-                  hint={
-                    en
-                      ? 'Narrows the map to that sector so the building can be placed on it. The code’s sector is still read from the parcel itself.'
-                      : 'يحصر الخريطة ضمن القطاع لتحديد موقع المبنى عليه. أما قطاع الرمز فيُقرأ من العقار نفسه.'
-                  }
+
                   htmlFor="building-zone"
                 >
                   <Select value={zoneId} onValueChange={setZoneId}>
@@ -2050,20 +2048,6 @@ export function BuildingEditor({
                       ))}
                     </SelectContent>
                   </Select>
-
-                  {selectedZone && zoneParcelNumbers.length > 0 ? (
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">
-                      {en
-                        ? `${zoneParcelNumbers.length} parcel(s) in this sector are drawn on the map below.`
-                        : `تم رسم ${zoneParcelNumbers.length} عقاراً من هذا القطاع على الخريطة أدناه.`}
-                    </p>
-                  ) : selectedZone ? (
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">
-                      {en
-                        ? 'None of this sector’s parcels have a traced outline, so it cannot be drawn. Enter the parcel number directly.'
-                        : 'لا يوجد مخطط مرسوم لأي من عقارات هذا القطاع، لذا يتعذّر عرضه. أدخل رقم العقار مباشرة.'}
-                    </p>
-                  ) : null}
                 </StepField>
               ) : null}
 
@@ -2084,15 +2068,7 @@ export function BuildingEditor({
                 en={en}
                 ordinal={!editing && zones.length > 0 ? 2 : 1}
                 title={en ? 'Building location on the map' : 'موقع المبنى على الخريطة'}
-                hint={
-                  editing
-                    ? en
-                      ? 'The pin is the entrance — the point a collector navigates to.'
-                      : 'الدبوس هو المدخل — النقطة التي يقصدها المحصّل.'
-                    : en
-                      ? 'Tap where the building stands. Its parcel number is read off the cadastre below.'
-                      : 'انقر على موقع المبنى. ويُقرأ رقم العقار من المسح العقاري أدناه.'
-                }
+
               >
                 <ParcelPinPicker
                   outline={outline}
@@ -2140,14 +2116,6 @@ export function BuildingEditor({
                   </div>
                 ) : (
                   <div className="mt-2 space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-2.5 text-xs">
-                    <p className="flex items-start gap-2 leading-relaxed">
-                      <Info className="size-3.5 shrink-0 mt-0.5 text-warning" />
-                      <span>
-                        {en
-                          ? 'Tap the entrance on the map. Without a pin the app cannot warn you that a building already on file stands a few metres away.'
-                          : 'اضغط على مدخل المبنى في الخريطة. بدون دبوس لا يستطيع التطبيق تنبيهك إلى مبنى مسجَّل على بُعد أمتار.'}
-                      </span>
-                    </p>
                     <label className="flex cursor-pointer items-start gap-2">
                       <Checkbox
                         checked={noPinReason !== null}
@@ -2190,19 +2158,6 @@ export function BuildingEditor({
                 htmlFor="building-parcel"
                 required={!editing}
                 error={fieldErrors.parcelNumber}
-                hint={
-                  editing
-                    ? en
-                      ? 'A building cannot be moved to another parcel — its code derives from this one.'
-                      : 'لا يمكن نقل المبنى إلى عقار آخر — رمزه مشتق من هذا العقار.'
-                    : parcelFromMap
-                      ? en
-                        ? 'Read off the cadastre from the point you tapped. Correct it here if the survey disagrees.'
-                        : 'قُرئ من المسح العقاري حسب النقطة التي حدّدتها. صحّحه هنا إن خالف السجل.'
-                      : en
-                        ? 'Place the building on the map above and this fills itself — or type the number if you know it.'
-                        : 'حدّد موقع المبنى على الخريطة أعلاه ليُملأ تلقائياً — أو اكتب الرقم إن كنت تعرفه.'
-                }
               >
                 {editing ? (
                   <p
@@ -2277,11 +2232,14 @@ export function BuildingEditor({
                   </div>
                 ) : null}
 
-                <div className="mt-3 rounded-xl border bg-muted/30 p-3.5 space-y-2">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="mt-3 border-s-2 border-border ps-3 py-1">
+                  <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
                     <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
                       <Hash className="size-3.5" />
-                      {en ? 'Derived Census Code' : 'رمز المبنى المشتق'}
+                      {en ? 'Derived Census Code:' : 'رمز المبنى المشتق:'}
+                    </span>
+                    <span className="font-mono text-lg sm:text-xl font-bold tracking-tight text-foreground" dir="ltr">
+                      {displayCode ?? '—'}
                     </span>
                     {resolving && !editing ? (
                       <span className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -2297,33 +2255,6 @@ export function BuildingEditor({
                         {en ? 'Provisional' : 'مؤقت'}
                       </Badge>
                     )}
-                  </div>
-
-                  <p className="font-mono text-xl sm:text-2xl font-bold tracking-tight text-foreground" dir="ltr">
-                    {displayCode ?? '—'}
-                  </p>
-
-                  <div className="text-[11px] leading-relaxed text-muted-foreground space-y-1 border-t border-border/40 pt-2">
-                    <p>
-                      {zoneName
-                        ? en
-                          ? `Sector ${zoneCode} — ${zoneName}`
-                          : `القطاع ${zoneCode} — ${zoneName}`
-                        : trimmedParcel
-                          ? en
-                            ? `This parcel is currently in no sector, so the code begins with ${UNZONED_CODE}.`
-                            : `هذا العقار غير مضاف إلى أي قطاع بعد، لذلك يبدأ الرمز بـ ${UNZONED_CODE}.`
-                          : en
-                            ? 'Place the building on the map, or enter a parcel number, to compute sector and code.'
-                            : 'حدّد موقع المبنى على الخريطة أو أدخل رقم العقار لعرض القطاع ورمز المبنى.'}
-                    </p>
-                    {trimmedParcel ? (
-                      <p className="text-muted-foreground/80">
-                        {en
-                          ? 'The final letter suffix is confirmed on save to guarantee zero collisions.'
-                          : 'يُخصَّص الحرف النهائي تلقائياً عند الحفظ لضمان عدم تكرار الرمز.'}
-                      </p>
-                    ) : null}
                   </div>
                 </div>
               </StepField>
@@ -2355,14 +2286,9 @@ export function BuildingEditor({
                 en={en}
                 ordinal={!editing && zones.length > 0 ? 4 : 3}
                 title={en ? 'Partitioned on a parcel?' : 'هل الوحدة مفروزة على عقار؟'}
-                hint={
-                  en
-                    ? 'Optional. Partitioning (فرز) splits one parcel into separately titled units. Leave it unticked if it has not been established.'
-                    : 'اختياري. الفرز يقسّم العقار إلى وحدات ذات صحائف عقارية مستقلة. اتركه دون تحديد إن لم يُتحقَّق منه.'
-                }
               >
                 <div className="space-y-3">
-                  <label className="flex min-h-10 cursor-pointer items-center gap-2.5 rounded-lg border bg-background/80 px-3 py-2 text-sm font-medium transition-colors hover:bg-accent/40">
+                  <label className="-mx-2 flex min-h-10 cursor-pointer items-center gap-2.5 rounded-lg px-2 py-2 text-sm font-medium transition-colors hover:bg-accent/40">
                     <Checkbox
                       checked={isPartitioned}
                       onCheckedChange={(checked) => {
@@ -2385,14 +2311,9 @@ export function BuildingEditor({
                   </label>
 
                   {isPartitioned ? (
-                    <div className="space-y-2 rounded-lg border border-primary/25 bg-primary/[0.04] p-3">
+                    <div className="space-y-2 border-s-2 border-primary/30 ps-3">
                       <p className="text-[11px] font-medium text-foreground/80">
                         {en ? 'Partition numbers (أرقام الأقسام)' : 'أرقام الأقسام'}
-                      </p>
-                      <p className="text-[11px] leading-relaxed text-muted-foreground">
-                        {en
-                          ? 'One per titled unit, as written on the صحيفة عقارية. Leave empty if the numbers have not been collected yet — the partition is still recorded.'
-                          : 'رقم لكل قسم كما هو مدوَّن في الصحيفة العقارية. اتركها فارغة إن لم تُجمع الأرقام بعد — يبقى الفرز مسجَّلاً.'}
                       </p>
 
                       {partitionNumbers.map((value, index) => (
@@ -2467,11 +2388,7 @@ export function BuildingEditor({
                     ? 'Shared across more than one parcel'
                     : 'إن كانت الوحدة مشتركة على أكثر من عقار'
                 }
-                hint={
-                  en
-                    ? 'Optional. Add the other parcel numbers the structure stands on — its own is already recorded above.'
-                    : 'اختياري. أضف أرقام العقارات الأخرى التي يقوم عليها المبنى — أما عقاره الأساسي فمسجَّل أعلاه.'
-                }
+
               >
                 <div className="space-y-2">
                   {sharedParcels.map((value, index) => (
@@ -2560,11 +2477,12 @@ export function BuildingEditor({
                       ? 'Structure type, construction status, and physical attributes'
                       : 'نوع المنشأة، الحالة الإنشائية، والمواصفات الفيزيائية'}
                   </CardDescription>
+
                 </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-4 pt-5">
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-4">
                 <Field
                   label={en ? 'Structure Type' : 'نوع المنشأة'}
                   htmlFor="building-structure-type"
@@ -2593,15 +2511,7 @@ export function BuildingEditor({
                   htmlFor="building-lifecycle"
                   required
                   error={fieldErrors.lifecycleStatus}
-                  hint={
-                    isOccupiableLifecycle(lifecycleStatus)
-                      ? en
-                        ? 'Units count towards census survey metrics'
-                        : 'تُحتسب وحداته ضمن أرقام المسح'
-                      : en
-                        ? 'Under construction or unoccupiable — units excluded from survey'
-                        : 'قيد الإنشاء أو غير مسكون — تُستثنى وحداته من المسح'
-                  }
+
                 >
                   <Select
                     value={lifecycleStatus}
@@ -2736,7 +2646,13 @@ export function BuildingEditor({
                     {acknowledgedDuplicates ? (
                       <div className="space-y-1">
                         <Label htmlFor="duplicate-reason" className="text-[11px]">
-                          {en ? 'What makes it a separate structure?' : 'ما الذي يجعلها منشأة منفصلة؟'}
+                          {en ? 'What makes it a separate structure?' : 'ما الذي يجعلها منشأة منفصلة؟'}{' '}
+                          <span
+                            className="font-bold text-destructive"
+                            aria-label={en ? 'Required field' : 'حقل إلزامي'}
+                          >
+                            *
+                          </span>
                         </Label>
                         <Textarea
                           id="duplicate-reason"
@@ -2750,11 +2666,6 @@ export function BuildingEditor({
                               : 'مثال: بيت مستقل خلف المبنى بمدخل منفصل'
                           }
                         />
-                        {duplicateReason.trim().length < MIN_DUPLICATE_REASON ? (
-                          <p className="text-[11px] text-muted-foreground">
-                            {en ? 'Required before continuing.' : 'مطلوب قبل المتابعة.'}
-                          </p>
-                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -2779,7 +2690,6 @@ export function BuildingEditor({
                 label={en ? 'Building Name (Optional)' : 'اسم المبنى (اختياري)'}
                 htmlFor="building-name"
                 error={fieldErrors.name}
-                hint={en ? 'Common name used by locals' : 'الاسم الشائع بين أهالي الحي'}
               >
                 <Input
                   id="building-name"
@@ -2822,22 +2732,7 @@ export function BuildingEditor({
                 label={en ? 'Field Notes (Optional)' : 'ملاحظات ميدانية (اختياري)'}
                 htmlFor="building-notes"
                 error={fieldErrors.notes}
-                hint={
-                  /* On a demolished plot this field stops being optional in
-                     practice: the floor count and the matrix are gone, so it
-                     is the only place left that can say what was seen. */
-                  shellShortcut
-                    ? en
-                      ? 'The only record of what was observed — the floor count and matrix are skipped'
-                      : 'السجل الوحيد لما شوهد — عدد الطوابق والمصفوفة متخطَّاة'
-                    : warDamaged
-                      ? en
-                        ? 'Record the damage — the storeys and units are still entered normally'
-                        : 'دوِّن الأضرار — عدد الطوابق والوحدات تُدخَل كالمعتاد'
-                      : en
-                        ? 'Useful guidance for upcoming field visits'
-                        : 'إرشادات تفيد فرق المسح الميداني القادمة'
-                }
+
               >
                 <Textarea
                   id="building-notes"
@@ -2875,15 +2770,7 @@ export function BuildingEditor({
                   <CardTitle className="text-base font-semibold">
                     {en ? 'Unit Matrix' : 'مصفوفة الوحدات'}
                   </CardTitle>
-                  <CardDescription className="text-xs">
-                    {editing
-                      ? en
-                        ? 'Raise the floor count and paint the new units — they are added at «not surveyed»'
-                        : 'ارفع عدد الطوابق وارسم الوحدات الجديدة — تُضاف بحالة «غير ممسوحة»'
-                      : en
-                        ? 'Paint out each unit on the floors below — created at «not surveyed»'
-                        : 'حدّد كل وحدة على الطوابق أدناه — تُنشأ بحالة «غير ممسوحة»'}
-                  </CardDescription>
+
                 </div>
               </div>
             </CardHeader>
@@ -2956,71 +2843,48 @@ export function BuildingEditor({
                   <span className="text-xs text-muted-foreground hidden sm:inline">
                     {en ? 'Review before saving' : 'راجع قبل الحفظ'}
                   </span>
-                  <Badge variant="outline" className="text-xs font-mono border-primary/40 bg-primary/5 text-primary">
+                  <span dir="ltr" className="font-mono text-xs font-semibold text-primary">
                     {codePreview ?? '—'}
-                  </Badge>
+                  </span>
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="pt-4">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Parcel Number' : 'رقم العقار'}</p>
-                  <p dir="ltr" className="font-mono font-bold text-sm sm:text-base text-foreground truncate">
-                    {trimmedParcel || '—'}
-                  </p>
-                </div>
+            <CardContent className="py-1">
+              <SummaryList>
+                <SummaryRow label={en ? 'Parcel Number' : 'رقم العقار'} className="font-mono font-bold">
+                  {trimmedParcel || '—'}
+                </SummaryRow>
 
-                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Building Code' : 'رمز المبنى'}</p>
-                  <p dir="ltr" className="font-mono font-bold text-sm sm:text-base text-primary truncate">
-                    {codePreview || '—'}
-                  </p>
-                </div>
+                <SummaryRow label={en ? 'Building Code' : 'رمز المبنى'} className="font-mono font-bold text-primary">
+                  {codePreview || '—'}
+                </SummaryRow>
 
-                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Sector' : 'القطاع'}</p>
-                  <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
-                    {zoneCode ? `${zoneCode} · ${zoneName ?? ''}` : trimmedParcel ? UNZONED_CODE : '—'}
-                  </p>
-                </div>
+                <SummaryRow label={en ? 'Sector' : 'القطاع'}>
+                  {zoneCode ? `${zoneCode} · ${zoneName ?? ''}` : trimmedParcel ? UNZONED_CODE : '—'}
+                </SummaryRow>
 
-                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Structure Type' : 'نوع المنشأة'}</p>
-                  <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
-                    {labels.structureType[structureType]}
-                  </p>
-                </div>
+                <SummaryRow label={en ? 'Structure Type' : 'نوع المنشأة'}>
+                  {labels.structureType[structureType]}
+                </SummaryRow>
 
-                <div className="rounded-lg border bg-background/70 p-3 space-y-1">
-                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Floors & Units' : 'الطوابق والوحدات'}</p>
-                  <p className="font-semibold text-xs sm:text-sm text-foreground truncate">
-                    {`${floorsCount} ${en ? 'floors' : 'طوابق'}`}
-                    {Number(basementsCount) > 0 ? ` + B${Number(basementsCount)}` : ''}{' '}
-                    · {gridUnits.length + hiddenUnits.length} {en ? 'units' : 'وحدة'}
-                  </p>
-                </div>
+                <SummaryRow label={en ? 'Floors & Units' : 'الطوابق والوحدات'}>
+                  {`${floorsCount} ${en ? 'floors' : 'طوابق'}`}
+                  {Number(basementsCount) > 0 ? ` + B${Number(basementsCount)}` : ''}{' '}
+                  · {gridUnits.length + hiddenUnits.length} {en ? 'units' : 'وحدة'}
+                </SummaryRow>
 
-                <div className="rounded-lg border bg-background/70 p-3 space-y-1 col-span-2 sm:col-span-1">
-                  <p className="text-[11px] text-muted-foreground font-medium">{en ? 'Entrance Location' : 'موقع المدخل'}</p>
-                  <div className="pt-0.5 flex items-center gap-1.5 flex-wrap">
-                    {pin ? (
-                      <Badge variant="soft-success" className="text-[11px] px-2">
-                        {en ? 'Pinned' : 'مُثبت'}
-                      </Badge>
-                    ) : (
-                      <Badge variant="soft-muted" className="text-[11px] px-2">
-                        {en ? 'Desk entry' : 'غير مُثبت'}
-                      </Badge>
-                    )}
-                    {name ? (
-                      <span className="text-[11px] text-muted-foreground truncate hidden lg:inline">
-                        · {name}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
+                <SummaryRow
+                  label={en ? 'Entrance Location' : 'موقع المدخل'}
+                  className={pin ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}
+                >
+                  {pin ? (en ? 'Pinned' : 'مُثبت') : en ? 'Desk entry' : 'غير مُثبت'}
+                  {name ? (
+                    <span className="text-[11px] font-normal text-muted-foreground hidden lg:inline">
+                      {' '}· {name}
+                    </span>
+                  ) : null}
+                </SummaryRow>
+              </SummaryList>
             </CardContent>
           </Card>
         ) : null}
@@ -3230,7 +3094,6 @@ export function BuildingEditor({
 function StepField({
   ordinal,
   title,
-  hint,
   error,
   required,
   htmlFor,
@@ -3239,7 +3102,6 @@ function StepField({
 }: {
   ordinal: number;
   title: string;
-  hint?: string;
   error?: string;
   required?: boolean;
   /** Present only where the section really is one control. */
@@ -3257,22 +3119,32 @@ function StepField({
   children: React.ReactNode;
 }) {
   return (
-    <section className="relative ps-9 sm:ps-10">
-      {/*
-        `aria-hidden`, because the number is the visual account of an order a
-        screen reader already gets from the document: the sections are in the
-        DOM in the order they are asked. Announcing "1" before every label would
-        add a digit to each heading and no information to any of them.
-      */}
-      <span
-        aria-hidden
-        className="absolute start-0 top-0 flex size-7 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
-      >
-        {ordinal}
-      </span>
+    /*
+      The step number sits in a gutter on a desktop, and inline on a phone.
 
+      A 36px `ps-9` gutter is cheap on a 1280px page and expensive on a 390px
+      one: stacked with the page and card padding it was taking roughly a fifth
+      of the screen away from the controls themselves, which is why the map
+      inside step 2 rendered as a narrow strip with dead space beside it. On a
+      phone the number joins the title row instead, and the section reclaims the
+      full width. One element either way — `sm:absolute` lifts the same badge
+      out of the flow once there is room for a gutter.
+    */
+    <section className="relative sm:ps-10">
       <div className="space-y-1.5">
-        <div className="flex items-baseline gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/*
+            `aria-hidden`, because the number is the visual account of an order a
+            screen reader already gets from the document: the sections are in the
+            DOM in the order they are asked. Announcing "1" before every label would
+            add a digit to each heading and no information to any of them.
+          */}
+          <span
+            aria-hidden
+            className="flex size-6 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-[11px] font-bold tabular-nums text-primary sm:absolute sm:start-0 sm:top-0 sm:size-7"
+          >
+            {ordinal}
+          </span>
           {htmlFor ? (
             <Label htmlFor={htmlFor} className="text-xs font-medium text-foreground/90">
               {title}
@@ -3300,10 +3172,6 @@ function StepField({
           <p role="alert" className="text-[11px] font-medium text-destructive">
             {error}
           </p>
-        ) : null}
-
-        {hint ? (
-          <p className="text-[11px] leading-relaxed text-muted-foreground">{hint}</p>
         ) : null}
       </div>
     </section>

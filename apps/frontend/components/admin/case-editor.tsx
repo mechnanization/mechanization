@@ -270,11 +270,6 @@ export function CaseEditor({
             label={locale === 'en' ? 'What happened' : 'ماذا حصل'}
             htmlFor="notes"
             required
-            hint={
-              locale === 'en'
-                ? 'e.g. "Nobody home, revisit evening" or "Gate locked, dog in yard"'
-                : 'مثال: «لا أحد في المنزل، إعادة زيارة مساءً» أو «البوابة مقفلة، كلب في الحديقة»'
-            }
             error={notesError}
           >
             <Textarea
@@ -288,7 +283,7 @@ export function CaseEditor({
             />
           </Field>
 
-          <div className="grid gap-3.5 sm:gap-5 sm:grid-cols-2">
+          <div className="grid gap-3.5 sm:gap-5">
             <Field label={locale === 'en' ? 'Property Number' : 'رقم العقار'} htmlFor="propertyNumber">
               <Input
                 id="propertyNumber"
@@ -334,7 +329,7 @@ export function CaseEditor({
             is asked.
           */}
           {visible.includes('buildingName') || visible.includes('side') ? (
-            <div className="grid gap-3.5 sm:gap-5 sm:grid-cols-2">
+            <div className="grid gap-3.5 sm:gap-5">
               {visible.includes('buildingName') ? (
                 <Field
                   label={locale === 'en' ? 'Building / House Name' : 'اسم المبنى/المنزل'}
@@ -364,7 +359,6 @@ export function CaseEditor({
             <Field label={locale === 'en' ? 'Floor' : 'الطابق'} htmlFor="floor">
               <Input
                 id="floor"
-                className="max-w-xs"
                 value={values.floor}
                 onChange={(event) => set({ floor: event.target.value })}
               />
@@ -377,7 +371,7 @@ export function CaseEditor({
                 value={values.landType || '__none'}
                 onValueChange={(next) => set({ landType: next === '__none' ? '' : next })}
               >
-                <SelectTrigger id="landType" className="max-w-xs">
+                <SelectTrigger id="landType">
                   <SelectValue placeholder={locale === 'en' ? 'Unknown' : 'غير معروف'} />
                 </SelectTrigger>
                 <SelectContent>

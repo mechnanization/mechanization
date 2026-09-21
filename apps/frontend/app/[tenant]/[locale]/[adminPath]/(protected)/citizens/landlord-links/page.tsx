@@ -145,7 +145,7 @@ export default function LandlordLinksPage({
         }
       />
 
-      <div className="mx-auto w-full max-w-4xl space-y-4">
+      <div className="w-full space-y-4">
         <details className="group rounded-lg border bg-card px-4 py-3 text-sm">
           <summary className="flex cursor-pointer list-none items-center gap-2 font-medium [&::-webkit-details-marker]:hidden">
             <HelpCircle className="size-4 shrink-0 text-muted-foreground" aria-hidden />

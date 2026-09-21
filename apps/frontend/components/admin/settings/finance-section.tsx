@@ -313,8 +313,8 @@ export function FinanceSection({
             </AlignedFieldGrid>
 
             {local.secondaryCurrency ? (
-              <div className="mt-3 grid items-start gap-5 lg:grid-cols-12">
-                <div className="lg:col-span-6">
+              <div className="mt-3 grid items-start gap-5">
+                <div>
                   <SettingsField
                     label={copy.finance.exchangeRate}
                     htmlFor="exchange-rate"
@@ -340,7 +340,7 @@ export function FinanceSection({
                   </SettingsField>
                 </div>
 
-                <div className="lg:col-span-6">
+                <div>
                   <SettingsField
                     label={copy.finance.conversionPreview}
                     htmlFor="conversion-preview"

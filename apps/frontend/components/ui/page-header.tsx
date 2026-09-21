@@ -30,14 +30,14 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b pb-4 sm:pb-6',
+        'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b pb-4',
         className,
       )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <span
           aria-hidden
-          className="flex size-10 sm:size-11 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-primary/10 text-primary"
+          className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
         >
           <Icon className="size-5" />
         </span>

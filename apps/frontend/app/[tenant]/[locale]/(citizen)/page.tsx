@@ -130,9 +130,6 @@ export default function TenantHome({
                 if (event.key === 'Enter') void submit();
               }}
             />
-            <p className="text-center text-xs text-muted-foreground">
-              {tCitizen('autoDashHint')}
-            </p>
           </div>
 
           <Button

@@ -2,9 +2,18 @@ import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
-/** Ported verbatim from the Albazourieh platform's shadcn/ui badge. */
+/**
+ * Ported from the Albazourieh platform's shadcn/ui badge, reshaped to the
+ * sibling Solar system's chip: a squared `rounded-md` rather than a full pill,
+ * `font-medium` rather than `font-semibold`, and a hair less horizontal padding.
+ *
+ * The pill shape reads as a *button* — it is the same geometry as the rounded
+ * controls beside it — which is misleading on a column of status labels nobody
+ * can click. Squaring it off and dropping the weight settles the badge back
+ * into the row as an annotation on the data rather than an object above it.
+ */
 const badgeVariants = cva(
-  'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+  'inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
   {
     variants: {
       variant: {

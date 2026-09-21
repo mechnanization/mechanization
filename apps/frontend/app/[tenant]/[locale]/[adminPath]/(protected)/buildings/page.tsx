@@ -694,21 +694,12 @@ export default function BuildingsPage({
 
   if (!token) return null;
 
-  const surveyPercent =
-    summary && summary.unitsTotal > 0
-      ? Math.round((summary.unitsSurveyed / summary.unitsTotal) * 100)
-      : 0;
-
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={Building2}
         title={en ? 'Building Census' : 'سجل المباني'}
-        subtitle={
-          en
-            ? 'Every structure standing on a parcel, and how much of it has been surveyed. A building exists here before anyone inside it is registered.'
-            : 'كل منشأة قائمة على عقار، وما أُنجز من مسحها. المبنى مسجَّل هنا قبل أن يُسجَّل أحد من ساكنيه.'
-        }
+
         actions={
           <>
             <Button
@@ -742,33 +733,23 @@ export default function BuildingsPage({
       */}
       <BuildingQueueNotice tenant={tenant} locale={locale} />
 
-      {/* ── The dispatch decision, in four numbers ─────────────────── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {/*
+        ── The dispatch decision, in five numbers ───────────────────
+        Two across until five fit — the sidebar takes a quarter of a laptop —
+        and the fifth takes the whole last row rather than sitting alone at
+        half width.
+      */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-5">
         <MetricCard
           label={en ? 'Buildings' : 'عدد المباني'}
           value={(summary?.buildings ?? 0).toLocaleString('en-US')}
-          subtext={
-            activeFilters > 0
-              ? en
-                ? 'Matching the current filters'
-                : 'ضمن الفلاتر المطبّقة'
-              : en
-                ? 'Across the whole municipality'
-                : 'في كامل نطاق البلدية'
-          }
           loading={query.loading}
           icon={<Building2 className="size-6 text-primary" />}
         />
+        {/* The count behind the share, which a percentage hides: «12 من 40». */}
         <MetricCard
-          label={en ? 'Units surveyed' : 'نسبة المسح'}
-          value={`${surveyPercent}%`}
-          subtext={
-            summary
-              ? en
-                ? `${summary.unitsSurveyed.toLocaleString('en-US')} of ${summary.unitsTotal.toLocaleString('en-US')} units`
-                : `${summary.unitsSurveyed.toLocaleString('en-US')} من ${summary.unitsTotal.toLocaleString('en-US')} وحدة`
-              : undefined
-          }
+          label={en ? 'Units surveyed' : 'الوحدات الممسوحة'}
+          value={`${(summary?.unitsSurveyed ?? 0).toLocaleString('en-US')} ${en ? 'of' : 'من'} ${(summary?.unitsTotal ?? 0).toLocaleString('en-US')}`}
           loading={query.loading}
           icon={<ClipboardCheck className="size-6 text-success" />}
           accent="bg-success/10"
@@ -776,11 +757,6 @@ export default function BuildingsPage({
         <MetricCard
           label={en ? 'Damaged buildings' : 'مبانٍ متضررة'}
           value={(summary?.damaged ?? 0).toLocaleString('en-US')}
-          subtext={
-            en
-              ? 'Restricted use, unsafe or collapsed'
-              : 'استخدام مقيّد أو غير آمن أو منهار'
-          }
           loading={query.loading}
           icon={<ShieldAlert className="size-6 text-destructive" />}
           accent="bg-destructive/10"
@@ -788,53 +764,16 @@ export default function BuildingsPage({
         <MetricCard
           label={en ? 'Unsurveyed units' : 'وحدات غير ممسوحة'}
           value={(summary?.unitsUnsurveyed ?? 0).toLocaleString('en-US')}
-          /*
-            Says why the number is smaller than the matrix totals suggest.
-
-            Units in structures nobody can be inside — permitted, going up,
-            demolished, never built — are out of these figures, and a coverage
-            percentage that improved because somebody marked a block demolished
-            has to be explainable on the screen showing it rather than only in
-            the audit log.
-          */
-          subtext={
-            summary && summary.unitsOutOfScope > 0
-              ? en
-                ? `Doors still to be knocked on · ${summary.unitsOutOfScope.toLocaleString('en-US')} excluded (not standing)`
-                : `أبواب لم يُطرق عليها بعد · ${summary.unitsOutOfScope.toLocaleString('en-US')} مستثناة (منشآت غير قائمة)`
-              : en
-                ? 'Doors still to be knocked on'
-                : 'أبواب لم يُطرق عليها بعد'
-          }
           loading={query.loading}
           icon={<DoorOpen className="size-6 text-warning" />}
           accent="bg-warning/10"
         />
-        {/*
-          «بلا مدخل مُثبت» — the doors nobody has stood at.
-
-          No entrance is ever guessed for a building (D19): the parcel centroid
-          is the middle of a plot where no structure stands, it is the same
-          point for every structure on that plot, and stored in the column that
-          means "the entrance" a guess is indistinguishable from a surveyed
-          fact. So a building created from a desk — or from the registration
-          form, which always creates one this way — has no pin until a person
-          places it.
-
-          That is honest and it is also invisible, which is what this tile
-          fixes. Tapping it filters the ledger to exactly those structures, so
-          the gap is a morning's work rather than a number nobody can act on.
-        */}
         <MetricCard
           label={en ? 'No entrance placed' : 'بلا مدخل مُثبت'}
           value={(summary?.withoutEntrance ?? 0).toLocaleString('en-US')}
-          subtext={
-            en
-              ? 'Not on the map until someone pins the door'
-              : 'لا تظهر على الخريطة حتى يُحدَّد بابها'
-          }
           loading={query.loading}
           icon={<MapPinOff className="size-6 text-muted-foreground" />}
+          className="col-span-2 xl:col-span-1"
         />
       </div>
 
@@ -1103,35 +1042,29 @@ function FilterSelect({
   );
 }
 
+/**
+ * One figure: the icon at the start, its label over its value beside it.
+ * Label and value only — a line under the number is one more thing to read
+ * on a row that is meant to be taken in at a glance.
+ */
 function MetricCard({
   label,
   value,
-  subtext,
   loading,
   icon,
   accent,
+  className,
 }: {
   label: string;
   value: React.ReactNode;
-  subtext?: string;
   loading: boolean;
   icon: React.ReactNode;
   accent?: string;
+  className?: string;
 }) {
   return (
-    <Card>
-      <CardContent className="flex items-center justify-between gap-3 p-5">
-        <div className="min-w-0 space-y-1">
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {loading ? (
-            <Skeleton className="h-7 w-20" />
-          ) : (
-            <div className="text-xl font-bold tracking-tight text-foreground">{value}</div>
-          )}
-          {subtext && !loading ? (
-            <p className="text-[11px] leading-relaxed text-muted-foreground">{subtext}</p>
-          ) : null}
-        </div>
+    <Card className={className}>
+      <CardContent className="flex items-center gap-3 p-4">
         <div
           className={cn(
             'flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10',
@@ -1139,6 +1072,16 @@ function MetricCard({
           )}
         >
           {icon}
+        </div>
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="text-xs font-medium leading-snug text-muted-foreground">{label}</p>
+          {loading ? (
+            <Skeleton className="h-7 w-20" />
+          ) : (
+            <div className="break-words text-lg font-bold tracking-tight tabular-nums text-foreground sm:text-xl">
+              {value}
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

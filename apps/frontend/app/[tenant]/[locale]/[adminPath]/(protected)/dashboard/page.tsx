@@ -848,7 +848,7 @@ function KpiCard({
   children: React.ReactNode;
 }) {
   return (
-    <article className="flex h-full flex-col rounded-2xl border border-border/70 bg-card p-5 shadow-sm transition-shadow hover:shadow-md">
+    <article className="flex h-full flex-col rounded-2xl border border-border/70 bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
       <div className="flex items-start justify-between gap-3">
         <p className="min-w-0 pt-1 text-sm font-medium text-muted-foreground">{label}</p>
         <span

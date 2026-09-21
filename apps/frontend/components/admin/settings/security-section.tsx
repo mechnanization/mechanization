@@ -281,7 +281,7 @@ export function SecuritySection({
 
           {showEmailForm && (
             <form onSubmit={handleSendEmailChange} className="rounded-xl border border-primary/20 bg-primary/[0.02] p-4 space-y-4">
-              <AlignedFieldGrid columns={2}>
+              <AlignedFieldGrid>
                 <SettingsField
                   label={copy.security.newEmail}
                   htmlFor="new-email"

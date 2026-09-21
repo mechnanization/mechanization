@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Building2,
+  Check,
+  CheckCircle2,
   CloudOff,
   FileQuestion,
   IdCard,
@@ -27,6 +29,7 @@ import {
 import type { PublicTenantConfig } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/states';
 import { Textarea } from '@/components/ui/textarea';
 import {
   ContactStep,
@@ -45,14 +48,13 @@ import {
   type PropertyDraft,
   type UnitDraft,
 } from '@/components/citizen/property-card';
-import { Field, FieldFlagProvider, flagsToArray } from '@/components/ui/field';
+import { Field, FieldFlagProvider, FieldFocusProvider, flagsToArray } from '@/components/ui/field';
 import { UnverifiedFieldsDialog } from './unverified-fields-dialog';
 import { QuickSaveDialog } from './quick-save-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
-import { useSectionNav } from '@/lib/use-section-nav';
 
 export interface CitizenFormValues {
   /**
@@ -104,27 +106,14 @@ export interface CitizenFormValues {
 }
 
 /**
- * The three sections, in one list.
+ * The wizard's three pages.
  *
- * Declared once and read by both the jump-link bar and the section headings
- * so the two cannot fall out of step — a nav entry pointing at an `id` no
- * heading renders is a link that silently does nothing, and it is exactly the
- * kind of drift that survives review because nothing about it looks wrong.
- *
- * The `id` is also the error-key prefix (`personal.firstName`,
- * `properties.0.neighborhood`), which is what lets the bar mark a section as
- * holding a problem without a second mapping.
+ * The id is also the error-key prefix (`personal.firstName`,
+ * `properties.0.neighborhood`), which is what lets the step bar mark a page as
+ * holding a problem without a second mapping. Their titles, icons and numbers
+ * are `sections` inside the component, where the locale is known.
  */
-const SECTIONS = [
-  { id: 'personal', step: '١', icon: IdCard, title: 'البيانات الشخصية' },
-  { id: 'contact', step: '٢', icon: UsersRound, title: 'التواصل والأسرة' },
-  { id: 'properties', step: '٣', icon: Building2, title: 'العقارات' },
-] as const;
-
-type SectionId = (typeof SECTIONS)[number]['id'];
-
-/** Stable identity for the nav hook's observer dependency. */
-const SECTION_IDS = SECTIONS.map((section) => section.id) as readonly SectionId[];
+type SectionId = 'personal' | 'contact' | 'properties';
 
 /**
  * A brand new record — one blank property card, Lebanese by default.
@@ -819,31 +808,29 @@ export function CitizenForm({
   const [rosterParcel, setRosterParcel] = useState<string | null>(null);
   /** Which property cards are folded shut. */
   const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
-  /**
-   * The jump bar's highlight and scroll handler.
-   *
-   * Re-observed when a property card is added or removed: the sections keep
-   * their ids, but the page height under them changes enough that a stale
-   * observer would highlight against the old layout.
-   */
-  const { active, jumpTo } = useSectionNav(SECTION_IDS, [values.properties.length]);
 
   // Re-seeds when the record finishes loading. Keyed on the object identity,
   // so a parent that fetches once does not clobber what has been typed since.
   useEffect(() => {
     setValues(initial);
     /*
-      Every card opens expanded, on a correction exactly as on a new filing.
+      Saved properties open folded; a card not yet saved opens expanded.
 
-      An existing record used to open with its cards folded, on the reasoning
-      that a clerk fixing a phone number should not scroll past four properties
-      to reach «حفظ». It made the two forms different screens: the same section,
-      with the same heading, showing its contents on one and a row of shut
-      drawers on the other — and a field an officer cannot see is a field they
-      do not check. Folding is still one tap away per card, and the jump bar
-      reaches «حفظ» without passing them.
+      On the wizard's own «العقارات» page, each property is a heading the
+      officer opens — and opened, it leads with its building's matrix, their
+      flats lit. The earlier worry about folding («a field an officer cannot
+      see is a field they do not check») is met elsewhere now: a folded card
+      opens on its own on «خانات غير مؤكَّدة» when a field inside it is still
+      open, and an error lands the officer on the page that holds it.
+
+      A card with no id is the blank one a new filing starts with, or one just
+      added — folding that would hide the very thing the page is for.
     */
-    setCollapsed(new Set());
+    setCollapsed(
+      new Set(
+        initial.properties.flatMap((property, index) => (property.id ? [index] : [])),
+      ),
+    );
   }, [initial]);
 
   /*
@@ -1045,7 +1032,7 @@ export function CitizenForm({
             draft={property}
             citizenId={citizenId}
             allowedTypes={allowedTypes}
-            collapsed={collapsed.has(index)}
+            collapsed={!reviewing && collapsed.has(index)}
             onToggleCollapse={() => toggleCollapsed(index)}
             onChange={(update) => setProperty(index, update)}
             onAddOnSameParcel={() => addProperty(index)}
@@ -1073,11 +1060,8 @@ export function CitizenForm({
       }
 
       return (
-        <div
-          key={group.propertyNumber}
-          className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3"
-        >
-          <div className="flex items-center gap-2 px-1 text-primary">
+        <div key={group.propertyNumber} className="review-body review-group space-y-3">
+          <div className="flex items-center gap-2 border-b-2 border-primary/30 pb-2 text-primary">
             <Building2 className="size-4 shrink-0" aria-hidden />
             <span className="text-sm font-semibold">
               {locale === 'en'
@@ -1096,7 +1080,7 @@ export function CitizenForm({
                 draft={property}
                 citizenId={citizenId}
                 allowedTypes={allowedTypes}
-                collapsed={collapsed.has(index)}
+                collapsed={!reviewing && collapsed.has(index)}
                 onToggleCollapse={() => toggleCollapsed(index)}
                 onChange={(update) => setProperty(index, update)}
                 onViewParcel={token ? setRosterParcel : undefined}
@@ -1262,40 +1246,11 @@ export function CitizenForm({
   }, [values]);
 
   const shown = useMemo(() => (showErrors ? fieldErrors : {}), [showErrors, fieldErrors]);
-  const messages = [...new Set(Object.values(shown))];
 
   const sectionInvalid = useCallback(
     (prefix: string) => Object.keys(shown).some((key) => key.startsWith(`${prefix}.`)),
     [shown],
   );
-
-  /**
-   * The «غير مؤكَّد» fields, named, above the save button.
-   *
-   * A flag is a per-field control, so a form with six of them scattered across
-   * three sections gives no sense of how much of the record is actually
-   * missing. This is the whole list in one place, read at the moment it
-   * matters: the officer is about to file the person, and this is what the
-   * record will say about itself when someone opens it next month.
-   */
-  const flagSummary = useMemo(() => {
-    const labels = getLabels(locale);
-    return [...values.flags].map(([path, reason]) => {
-      const segments = path.split('.');
-      const field = labels.citizenField[segments.at(-1) ?? ''] ?? segments.at(-1) ?? path;
-      const card = segments[0] === 'properties' ? Number(segments[1]) + 1 : null;
-      return {
-        path,
-        reason,
-        label:
-          card === null
-            ? field
-            : locale === 'en'
-              ? `${field} — property ${card}`
-              : `${field} — العقار ${card}`,
-      };
-    });
-  }, [values.flags, locale]);
 
   /** «غير مقيم في البلدة» — the stored value still reads OWNER; see `CITIZEN_RESIDENCE`. */
   const isNonResident = values.residence === 'NON_RESIDENT_OWNER';
@@ -1364,13 +1319,6 @@ export function CitizenForm({
           : locale === 'en'
             ? 'Personal Info'
             : 'البيانات الشخصية',
-        description: isNonResident
-          ? locale === 'en'
-            ? 'Name, and where the person lives'
-            : 'الاسم ومكان الإقامة'
-          : locale === 'en'
-            ? 'Full name, nationality and residency status'
-            : 'الاسم الكامل والجنسية وصفة الإقامة',
       },
       {
         id: 'contact',
@@ -1383,55 +1331,108 @@ export function CitizenForm({
           : locale === 'en'
             ? 'Contact & Family'
             : 'التواصل والأسرة',
-        description: isNonResident
-          ? locale === 'en'
-            ? 'How to reach them, and who can be contacted locally'
-            : 'وسيلة التواصل، ومن يمكن الرجوع إليه محلياً'
-          : locale === 'en'
-            ? 'Phone number used by citizen for login and tracking submissions'
-            : 'رقم الهاتف الذي يستخدمه المواطن للدخول ومتابعة طلبه',
       },
       {
         id: 'properties',
         step: locale === 'en' ? '3' : '٣',
         icon: Building2,
         title: locale === 'en' ? 'Properties' : 'العقارات',
-        description:
-          locale === 'en'
-            ? 'Property parcel number verified against municipality records'
-            : 'رقم العقار يُطابَق مع السجل العقاري للبلدية أثناء الكتابة',
       },
     ],
     [locale, isNonResident],
   );
 
-  const [mobileStep, setMobileStep] = useState<SectionId>('personal');
+  /** The wizard's page — one of the three, on every screen size. */
+  const [step, setStep] = useState<SectionId>('personal');
+  /** Whether the fourth step, «خانات غير مؤكَّدة», is showing in place of the pages. */
+  const [reviewing, setReviewing] = useState(false);
+  /**
+   * The flagged paths as they were when the fourth step opened.
+   *
+   * A field stays on the step after its flag is lifted, so the value just
+   * typed into it is still there to read — it would otherwise vanish the
+   * moment «إدخال القيمة» was pressed, before anything had been entered.
+   */
+  const [reviewPaths, setReviewPaths] = useState<ReadonlySet<string>>(new Set());
 
-  /** The form's outermost element — what a mobile step change scrolls back
-   *  to. `window.scrollTo` was used here and did nothing: inside the admin
+  /** The form's outermost element — what a step change scrolls back to.
+   *  `window.scrollTo` was used here and did nothing: inside the admin
    *  shell the scroller is an inner `<main>`, not the document. */
   const formRootRef = useRef<HTMLDivElement | null>(null);
 
   const stepIndex = useMemo(
-    () => sections.findIndex((s) => s.id === mobileStep),
-    [sections, mobileStep],
+    () => sections.findIndex((s) => s.id === step),
+    [sections, step],
   );
 
-  const goToNextStep = useCallback(() => {
-    const nextIdx = stepIndex + 1;
-    if (nextIdx < sections.length) {
-      setMobileStep(sections[nextIdx].id as SectionId);
-      scrollElementToTop(formRootRef.current);
-    }
-  }, [stepIndex, sections]);
+  /** Any page, from the step bar — and out of the unverified list if it was open. */
+  const goToStep = useCallback((id: SectionId) => {
+    setReviewing(false);
+    setStep(id);
+    scrollElementToTop(formRootRef.current);
+  }, []);
 
+  /** The fourth step: only the fields still marked «غير مؤكَّد». */
+  const openReview = useCallback(() => {
+    setReviewPaths(new Set(values.flags.keys()));
+    setReviewing(true);
+    scrollElementToTop(formRootRef.current);
+  }, [values.flags]);
+
+  /**
+   * What the fourth step shows: every field flagged when it opened, and any
+   * flagged since («تعليم خانة أخرى» on the step itself). Null on the other
+   * three, which is what tells every `Field` to render normally.
+   */
+  const focus = useMemo(
+    () => (reviewing ? { paths: new Set([...reviewPaths, ...values.flags.keys()]) } : null),
+    [reviewing, reviewPaths, values.flags],
+  );
+
+  /** «التالي» from العقارات is the unverified list; from the list there is nowhere further. */
+  const goToNextStep = useCallback(() => {
+    if (reviewing) return;
+    const nextIdx = stepIndex + 1;
+    if (nextIdx < sections.length) goToStep(sections[nextIdx].id as SectionId);
+    else openReview();
+  }, [reviewing, stepIndex, sections, goToStep, openReview]);
+
+  /** «السابق» from the unverified list is العقارات. */
   const goToPrevStep = useCallback(() => {
-    const prevIdx = stepIndex - 1;
-    if (prevIdx >= 0) {
-      setMobileStep(sections[prevIdx].id as SectionId);
-      scrollElementToTop(formRootRef.current);
+    if (reviewing) {
+      goToStep(sections[sections.length - 1].id as SectionId);
+      return;
     }
-  }, [stepIndex, sections]);
+    const prevIdx = stepIndex - 1;
+    if (prevIdx >= 0) goToStep(sections[prevIdx].id as SectionId);
+  }, [reviewing, stepIndex, sections, goToStep]);
+
+  /**
+   * The four steps the bar draws: the three pages, then the unverified list,
+   * which carries its count — the one number worth knowing before opening it.
+   */
+  const wizardSteps = useMemo(
+    () => [
+      ...sections.map((section) => ({
+        id: section.id,
+        icon: section.icon,
+        title: section.title,
+        count: 0,
+        invalid: sectionInvalid(section.id),
+        go: () => goToStep(section.id as SectionId),
+      })),
+      {
+        id: 'unverified',
+        icon: FileQuestion,
+        title: locale === 'en' ? 'Unverified fields' : 'خانات غير مؤكَّدة',
+        count: values.flags.size,
+        invalid: false,
+        go: openReview,
+      },
+    ],
+    [sections, sectionInvalid, goToStep, openReview, locale, values.flags.size],
+  );
+  const wizardIndex = reviewing ? sections.length : stepIndex;
 
   function handleSubmit(withBlanketReason?: string) {
     const candidate = withBlanketReason
@@ -1452,10 +1453,37 @@ export function CitizenForm({
       */
       if (withBlanketReason) setQuickSaveOpen(false);
 
-      const firstInvalidSection = sections.find((s) => sectionInvalid(s.id));
-      if (firstInvalidSection) {
-        setMobileStep(firstInvalidSection.id as SectionId);
+      /*
+        The page to show is read from `errors`, not from `sectionInvalid`:
+        that one reads the errors of the *previous* render, which on a first
+        save is none — harmless while every section was on one page, but in a
+        wizard it left the officer on a page with nothing wrong on it. «ملاحظات»
+        is on the last page, so an error nowhere else lands there.
+
+        Saved from «خانات غير مؤكَّدة» with only its own fields to fix, it
+        stays there: those fields are on that step, errors and all.
+      */
+      const erroredKeys = Object.keys(errors);
+      // Saved properties open folded, so a complaint inside one would land
+      // on a page with nothing wrong in sight. Every card holding one opens.
+      const erroredCards = new Set(
+        erroredKeys
+          .filter((key) => key.startsWith('properties.'))
+          .map((key) => Number(key.split('.')[1])),
+      );
+      if (erroredCards.size > 0) {
+        setCollapsed((current) => {
+          const next = new Set(current);
+          for (const index of erroredCards) next.delete(index);
+          return next;
+        });
       }
+      if (focus && erroredKeys.every((key) => focus.paths.has(key))) return;
+      const firstInvalidSection =
+        sections.find((s) => erroredKeys.some((key) => key.startsWith(`${s.id}.`))) ??
+        sections[sections.length - 1];
+      setReviewing(false);
+      setStep(firstInvalidSection.id as SectionId);
       setTimeout(() => {
         document
           .querySelector('[data-section-invalid="true"]')
@@ -1486,156 +1514,141 @@ export function CitizenForm({
 
   return (
     <FieldFlagProvider value={flagging}>
-    <div ref={formRootRef} className="space-y-4 pb-20 sm:space-y-5 sm:pb-0">
-      {/* ── Desktop Section Nav (hidden on mobile) ── */}
+    <div ref={formRootRef} className="flex flex-1 flex-col space-y-4 pb-20 sm:space-y-5 sm:pb-0">
+      {/*
+        ── One wizard, on every screen ─────────────────────────────────────
+
+        Four steps, drawn the way the building editor draws its own — a circle
+        per step, its label, a line to the next: البيانات الشخصية, التواصل
+        والأسرة, العقارات, and last «خانات غير مؤكَّدة», which lists only the
+        fields still marked unverified. One page at a time, with «السابق» and
+        «التالي» in the bar below and every step clickable here. A phone used
+        to get a stepper and a desktop the whole record on one scroll, which
+        meant two copies of every section in the page at once; every property
+        card, with its census picker and its fetches, was mounted twice.
+
+        Every page stays mounted and the ones not shown are `hidden`. A step
+        change must not unmount a property card: its census picker keeps
+        «بدون ربط» and what it has fetched in its own state, and re-mounting it
+        is how a card the officer deliberately left unlinked could quietly
+        queue a building for creation (see the fold note in `PropertyCard`).
+      */}
       <nav
-        aria-label={locale === 'en' ? 'Form sections' : 'أقسام النموذج'}
-        className="sticky top-0 z-20 hidden sm:flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/80 bg-background/95 p-1.5 shadow-2xs backdrop-blur supports-[backdrop-filter]:bg-background/80"
+        aria-label={locale === 'en' ? 'Form steps' : 'خطوات النموذج'}
+        className="sticky top-0 z-20 space-y-2 bg-background/95 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80"
       >
-        <ul className="flex flex-wrap items-center gap-1.5">
-          {sections.map((section) => {
-            const Icon = section.icon;
-            const invalid = sectionInvalid(section.id);
-            const isActive = active === section.id;
+        <ol className="flex w-full items-center gap-2 sm:gap-4">
+          {wizardSteps.map((item, index) => {
+            const Icon = item.icon;
+            const state = index < wizardIndex ? 'done' : index === wizardIndex ? 'current' : 'upcoming';
+            const last = index === wizardSteps.length - 1;
             return (
-              <li key={section.id}>
+              <li
+                key={item.id}
+                className={cn('flex min-w-0 items-center gap-2 sm:gap-3', last ? 'flex-none' : 'flex-1')}
+              >
                 <button
                   type="button"
-                  onClick={() => jumpTo(section.id as SectionId)}
-                  aria-current={isActive ? 'true' : undefined}
+                  onClick={item.go}
+                  aria-current={state === 'current' ? 'step' : undefined}
+                  aria-label={item.title}
                   className={cn(
-                    'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors select-none',
-                    isActive
-                      ? 'bg-primary text-primary-foreground shadow-2xs'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                    invalid &&
-                      !isActive &&
-                      'border border-destructive/30 bg-destructive/10 text-destructive',
+                    'flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border text-xs font-semibold transition-colors sm:size-9',
+                    state === 'done' && 'border-primary bg-primary text-primary-foreground',
+                    state === 'current' && 'border-primary bg-primary/10 text-primary ring-2 ring-primary/30',
+                    state === 'upcoming' && 'border-border bg-muted/40 text-muted-foreground hover:bg-muted',
+                    // A page holding an error says so on its circle, whatever its state.
+                    item.invalid && 'border-destructive bg-destructive/10 text-destructive ring-destructive/30',
                   )}
                 >
-                  <span
-                    aria-hidden
-                    className={cn(
-                      'rounded px-1 text-[10px] font-semibold',
-                      isActive ? 'bg-primary-foreground/20' : 'bg-muted-foreground/10',
-                    )}
-                  >
-                    {section.step}
-                  </span>
-                  <Icon className="size-3.5 shrink-0" aria-hidden />
-                  <span className="whitespace-nowrap">
-                    {section.id === 'properties'
-                      ? `${section.title} (${values.properties.length})`
-                      : section.title}
-                  </span>
-                  {invalid ? (
-                    <TriangleAlert
-                      className={cn(
-                        'size-3 shrink-0',
-                        isActive ? 'text-primary-foreground' : 'text-destructive',
-                      )}
-                      aria-hidden
-                    />
+                  {item.invalid ? (
+                    <TriangleAlert className="size-4" />
+                  ) : state === 'done' ? (
+                    <Check className="size-4" />
+                  ) : (
+                    <Icon className="size-4" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={item.go}
+                  tabIndex={-1}
+                  /*
+                    From `md`, and allowed to shrink: four labels beside four
+                    circles do not fit a phone, and on a laptop with the
+                    sidebar open the form is narrower than on a tablet — so a
+                    label gives way to «…» rather than pushing the bar off the
+                    edge. Below `md` the current step is named under the bar.
+                  */
+                  className={cn(
+                    'hidden min-w-0 items-center gap-1.5 text-xs font-medium md:inline-flex',
+                    item.invalid
+                      ? 'text-destructive'
+                      : state === 'upcoming'
+                        ? 'text-muted-foreground'
+                        : 'text-foreground',
+                  )}
+                >
+                  <span className="truncate">{item.title}</span>
+                  {item.count ? (
+                    <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-bold text-warning">
+                      {item.count}
+                    </span>
                   ) : null}
                 </button>
+                {!last ? (
+                  <div className={cn('h-px min-w-3 flex-1', index < wizardIndex ? 'bg-primary' : 'bg-border')} />
+                ) : null}
               </li>
             );
           })}
-        </ul>
+        </ol>
 
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setUnverifiedDialogOpen(true)}
-          className={cn(
-            'h-8 gap-1.5 px-2 sm:px-3 text-xs font-medium transition-colors shrink-0',
-            values.flags.size > 0
-              ? 'border-warning/50 bg-warning/10 text-warning hover:bg-warning/20'
-              : 'text-muted-foreground hover:text-foreground',
-          )}
-          title={locale === 'en' ? 'Unverified Fields' : 'خانات غير مؤكَّدة'}
-        >
-          <FileQuestion className="size-3.5 shrink-0" aria-hidden />
-          <span className="hidden sm:inline">
-            {locale === 'en' ? 'Unverified Fields' : 'خانات غير مؤكَّدة'}
+        {/* On a phone the labels do not fit beside the circles: the current one is said here. */}
+        <div className="flex items-center justify-between px-1 text-xs text-muted-foreground md:hidden">
+          <span className="font-semibold text-foreground">
+            {locale === 'en'
+              ? `Step ${wizardIndex + 1}: ${wizardSteps[wizardIndex]?.title}`
+              : `الخطوة ${wizardIndex + 1}: ${wizardSteps[wizardIndex]?.title}`}
+            {wizardSteps[wizardIndex]?.count ? ` (${wizardSteps[wizardIndex]?.count})` : ''}
           </span>
-          {values.flags.size > 0 ? (
-            <span className="rounded-full bg-warning/20 px-1.5 py-0.5 text-[10px] font-bold text-warning">
-              {values.flags.size}
-            </span>
-          ) : null}
-        </Button>
+          <span className="font-mono" dir="ltr">
+            {wizardIndex + 1} / {wizardSteps.length}
+          </span>
+        </div>
 
         {duplicatesBar}
       </nav>
 
-      {/* ── Mobile Step Header (visible on mobile only) ── */}
-      <div className="sm:hidden space-y-2 sticky top-0 z-20 rounded-xl border border-border/80 bg-background/95 p-2 shadow-xs backdrop-blur">
-        <div className="flex items-center justify-between text-xs font-semibold px-1">
-          <span className="text-muted-foreground">
-            {locale === 'en' ? `Step ${stepIndex + 1} of 3` : `الخطوة ${sections[stepIndex].step} من ٣`}
-          </span>
-          <span className="text-primary font-bold">{sections[stepIndex].title}</span>
-        </div>
 
-        <div className="grid grid-cols-3 gap-1.5">
-          {sections.map((section, idx) => {
-            const isCurrent = mobileStep === section.id;
-            const isCompleted = stepIndex > idx;
-            const invalid = sectionInvalid(section.id);
 
-            return (
-              <button
-                key={section.id}
-                type="button"
-                onClick={() => setMobileStep(section.id as SectionId)}
-                className={cn(
-                  'flex items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-medium transition-all select-none',
-                  isCurrent
-                    ? 'bg-primary text-primary-foreground shadow-2xs font-semibold'
-                    : isCompleted
-                      ? 'bg-muted/70 text-foreground'
-                      : 'bg-muted/30 text-muted-foreground',
-                  invalid && !isCurrent && 'border border-destructive/40 text-destructive',
-                )}
-              >
-                <span>{section.step}.</span>
-                <span className="truncate">{section.title}</span>
-                {invalid ? (
-                  <TriangleAlert className="size-3 shrink-0 text-destructive" />
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
 
-        {duplicatesBar}
-      </div>
+      {/*
+        Nothing flagged: the step says so, rather than showing an empty page
+        that reads as a form that failed to load.
+      */}
+      {reviewing && focus && focus.paths.size === 0 ? (
+        <EmptyState
+          className="rounded-xl border border-border/80 bg-card"
+          iconNode={<CheckCircle2 className="text-emerald-600 dark:text-emerald-400" />}
+          title={locale === 'en' ? 'No unverified fields' : 'لا توجد خانات غير مؤكَّدة'}
+          description={
+            locale === 'en'
+              ? 'Every field in this record is answered — nothing is marked «unverified».'
+              : 'كل خانات هذا السجل مُجابة — لا توجد خانة معلَّمة «غير مؤكَّد».'
+          }
+        />
+      ) : null}
 
-      {/* ── Mobile View: Active Step Only ── */}
-      <div className="block space-y-4 sm:hidden">
-        {mobileStep === 'personal' && (
+      <FieldFocusProvider value={focus}>
+      <div data-review={reviewing ? '' : undefined} className="space-y-4 sm:space-y-5">
+      {/* ── Page 1 — البيانات الشخصية ── */}
+      <div className={cn(!reviewing && step !== 'personal' && 'hidden')}>
           <FormSection
-            /*
-              `-step`, so this copy and the desktop one below do not both
-              answer to `personal`.
-
-              Both layouts are in the DOM at once — `sm:hidden` and
-              `hidden sm:block` are CSS, not removal — and this block comes
-              first, so `document.getElementById('personal')` was returning
-              *this* element on a desktop screen, where it has no layout box.
-              That is why the jump bar's first pill never highlighted and never
-              scrolled: the observer was watching, and `jumpTo` was scrolling
-              to, an element that is `display:none` on the only layout that has
-              a jump bar. The canonical ids now belong to the desktop column,
-              which is the column that uses them.
-            */
-            id="personal-step"
+            id="personal"
             step={locale === 'en' ? '1' : '١'}
             icon={IdCard}
             title={sections[0].title}
-            description={sections[0].description}
             invalid={sectionInvalid('personal')}
           >
             <ResidenceChooser value={values.residence ?? 'RESIDENT'} onChange={setResidence} locale={locale} />
@@ -1645,16 +1658,15 @@ export function CitizenForm({
               <PersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
             )}
           </FormSection>
-        )}
+      </div>
 
-        {mobileStep === 'contact' && (
+      {/* ── Page 2 — التواصل والأسرة ── */}
+      <div className={cn(!reviewing && step !== 'contact' && 'hidden')}>
           <FormSection
-            // `-step` — see the personal section above.
-            id="contact-step"
+            id="contact"
             step={locale === 'en' ? '2' : '٢'}
             icon={UsersRound}
             title={sections[1].title}
-            description={sections[1].description}
             invalid={sectionInvalid('contact')}
           >
             {isNonResident ? (
@@ -1663,12 +1675,12 @@ export function CitizenForm({
               <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
             )}
           </FormSection>
-        )}
+      </div>
 
-        {mobileStep === 'properties' && (
+      {/* ── Page 3 — العقارات, then ملاحظات ── */}
+      <div className={cn('space-y-4 sm:space-y-5', !reviewing && step !== 'properties' && 'hidden')}>
           <FormSection
-            // `-step` — see the personal section above.
-            id="properties-step"
+            id="properties"
             step={locale === 'en' ? '3' : '٣'}
             icon={Building2}
             title={
@@ -1676,16 +1688,12 @@ export function CitizenForm({
                 ? `Properties (${values.properties.length})`
                 : `العقارات (${values.properties.length})`
             }
-            description={
-              locale === 'en'
-                ? 'Property parcel number verified against municipality records'
-                : 'رقم العقار يُطابَق مع السجل العقاري للبلدية أثناء الكتابة'
-            }
+
             invalid={sectionInvalid('properties')}
           >
-            <div className="space-y-4">
+            <div className="review-body space-y-4">
               {values.properties.length === 0 ? (
-                <p className="rounded-lg border border-dashed border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   {locale === 'en'
                     ? 'No property to add? Leave this empty for a citizen who owns nothing and only rents.'
                     : 'لا يملك المواطن أي عقار؟ يمكن ترك هذا القسم فارغاً إذا كان يستأجر فقط.'}
@@ -1694,13 +1702,7 @@ export function CitizenForm({
 
               {renderPropertyGroups()}
 
-              {mode === 'edit' && values.properties.some((property) => property.id) ? (
-                <p className="rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs">
-                  {locale === 'en'
-                    ? 'Deleting a registered property will also delete associated attachments (title deed or lease).'
-                    : 'حذف عقار مسجّل يحذف معه المستندات المرفقة به (سند الملكية أو عقد الإيجار).'}
-                </p>
-              ) : null}
+
 
               <Button
                 variant="outline"
@@ -1719,167 +1721,78 @@ export function CitizenForm({
               </Button>
             </div>
           </FormSection>
-        )}
 
-        {/*
-          Outside the step switch on purpose — this is what puts «ملاحظات»
-          under all three steps rather than only after the last one. One
-          instance, so the three steps share a single box and a note typed in
-          العقارات is still there when the officer steps back to البيانات
-          الشخصية to fix a surname.
-        */}
-        <StepNotesField
-          value={values.notes ?? ''}
-          error={shown['notes']}
-          onChange={(notes) => update({ notes })}
-          locale={locale}
-        />
+        {/* On a phone, «ملاحظات» is the box under every page instead — see `StepNotesField`. */}
+        <div className="hidden sm:block">
+            {/*
+              «ملاحظات» — the back of the paper form.
+
+              Deliberately *not* a fourth entry in `SECTIONS`. That array drives the
+              wizard's step nav, its «الخطوة ٣ من ٣» counter and the next/back
+              buttons, and a field nobody is required to fill in must not become a
+              step somebody has to pass through. It sits after the last step, says
+              «اختياري» where the others carry a number, and gates nothing.
+
+              Not `blanketFlagReason`, which is the box officers were using for this
+              because it was the only free text on the form. That one is a *reason
+              data is missing*: it is copied onto every gap in the record and its
+              presence is part of what lands a registration at «يتطلب مراجعة», so
+              writing «الأسرة تنتقل نهاية الشهر» into it flags a clean record for
+              review and attaches that sentence to fields it does not describe.
+            */}
+            <FormSection
+              id="notes"
+              step={locale === 'en' ? 'Optional' : 'اختياري'}
+              icon={StickyNote}
+              title={locale === 'en' ? 'Notes' : 'ملاحظات'}
+
+              invalid={Boolean(shown['notes'])}
+            >
+              <Field
+                label={locale === 'en' ? 'Notes' : 'ملاحظات'}
+                /*
+                  `notes-input`, not `notes`. The `FormSection` card above already
+                  carries `id="notes"` as the page's scroll anchor, so the textarea
+                  was a second element with the same id and `htmlFor="notes"`
+                  resolved to the card — meaning tapping the label focused nothing.
+                */
+                htmlFor="notes-input"
+                error={shown['notes']}
+              >
+                <Textarea
+                  id="notes-input"
+                  rows={3}
+                  maxLength={2000}
+                  placeholder={
+                    locale === 'en'
+                      ? 'e.g. the family is moving at the end of the month; the stairs are broken, use the back entrance.'
+                      : 'مثال: الأسرة تنتقل نهاية الشهر · الدرج مكسور، الزيارة القادمة من الخلف.'
+                  }
+                  value={values.notes ?? ''}
+                  onChange={(event) => update({ notes: event.target.value })}
+                />
+              </Field>
+            </FormSection>
+        </div>
       </div>
 
-      {/* ── Desktop View: All Sections Sequentially ── */}
-      <div className="hidden sm:block space-y-5">
-        <FormSection
-          id="personal"
-          step={locale === 'en' ? '1' : '١'}
-          icon={IdCard}
-          title={sections[0].title}
-          description={sections[0].description}
-          invalid={sectionInvalid('personal')}
-        >
-          <ResidenceChooser value={values.residence ?? 'RESIDENT'} onChange={setResidence} locale={locale} />
-          {isNonResident ? (
-            <OwnerPersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
-          ) : (
-            <PersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
-          )}
-        </FormSection>
+      </div>
+      </FieldFocusProvider>
 
-        <FormSection
-          id="contact"
-          step={locale === 'en' ? '2' : '٢'}
-          icon={UsersRound}
-          title={sections[1].title}
-          description={sections[1].description}
-          invalid={sectionInvalid('contact')}
-        >
-          {isNonResident ? (
-            <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
-          ) : (
-            <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
-          )}
-        </FormSection>
-
-        <FormSection
-          id="properties"
-          step={locale === 'en' ? '3' : '٣'}
-          icon={Building2}
-          title={
-            locale === 'en'
-              ? `Properties (${values.properties.length})`
-              : `العقارات (${values.properties.length})`
-          }
-          description={
-            locale === 'en'
-              ? 'Property parcel number verified against municipality records'
-              : 'رقم العقار يُطابَق مع السجل العقاري للبلدية أثناء الكتابة'
-          }
-          invalid={sectionInvalid('properties')}
-        >
-          <div className="space-y-4">
-            {values.properties.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
-                {locale === 'en'
-                  ? 'No property to add? Leave this empty for a citizen who owns nothing and only rents.'
-                  : 'لا يملك المواطن أي عقار؟ يمكن ترك هذا القسم فارغاً إذا كان يستأجر فقط.'}
-              </p>
-            ) : null}
-
-            {renderPropertyGroups()}
-
-            {mode === 'edit' && values.properties.some((property) => property.id) ? (
-              <p className="rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs">
-                {locale === 'en'
-                  ? 'Deleting a registered property will also delete associated attachments (title deed or lease).'
-                  : 'حذف عقار مسجّل يحذف معه المستندات المرفقة به (سند الملكية أو عقد الإيجار).'}
-              </p>
-            ) : null}
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => addProperty()}
-              className="w-full border-dashed border-primary/60 text-primary hover:bg-primary/5 h-9 text-xs sm:text-sm font-medium"
-            >
-              <Plus className="size-4" aria-hidden />
-              {locale === 'en'
-                ? values.properties.length === 0
-                  ? 'Add Property'
-                  : 'Add Another Property'
-                : values.properties.length === 0
-                  ? 'إضافة عقار'
-                  : 'إضافة عقار آخر'}
-            </Button>
-          </div>
-        </FormSection>
-
-        {/*
-          «ملاحظات» — the back of the paper form.
-
-          Deliberately *not* a fourth entry in `SECTIONS`. That array drives the
-          wizard's step nav, its «الخطوة ٣ من ٣» counter and the next/back
-          buttons, and a field nobody is required to fill in must not become a
-          step somebody has to pass through. It sits after the last step, says
-          «اختياري» where the others carry a number, and gates nothing.
-
-          Not `blanketFlagReason`, which is the box officers were using for this
-          because it was the only free text on the form. That one is a *reason
-          data is missing*: it is copied onto every gap in the record and its
-          presence is part of what lands a registration at «يتطلب مراجعة», so
-          writing «الأسرة تنتقل نهاية الشهر» into it flags a clean record for
-          review and attaches that sentence to fields it does not describe.
-        */}
-        <FormSection
-          id="notes"
-          step={locale === 'en' ? 'Optional' : 'اختياري'}
-          icon={StickyNote}
-          title={locale === 'en' ? 'Notes' : 'ملاحظات'}
-          description={
-            locale === 'en'
-              ? 'Anything about this visit that no field above asks for.'
-              : 'أي ملاحظة عن هذه الزيارة لا يسأل عنها أي حقل أعلاه.'
-          }
-          invalid={Boolean(shown['notes'])}
-        >
-          <Field
-            label={locale === 'en' ? 'Notes' : 'ملاحظات'}
-            /*
-              `notes-input`, not `notes`. The `FormSection` card above already
-              carries `id="notes"` as the page's scroll anchor, so the textarea
-              was a second element with the same id and `htmlFor="notes"`
-              resolved to the card — meaning tapping the label focused nothing.
-            */
-            htmlFor="notes-input"
+      <div className={cn('sm:hidden', reviewing && 'hidden')}>
+          {/*
+            Outside the step switch on purpose — this is what puts «ملاحظات»
+            under all three steps rather than only after the last one. One
+            instance, so the three steps share a single box and a note typed in
+            العقارات is still there when the officer steps back to البيانات
+            الشخصية to fix a surname.
+          */}
+          <StepNotesField
+            value={values.notes ?? ''}
             error={shown['notes']}
-            hint={
-              locale === 'en'
-                ? 'Optional. Does not flag the record or change its status.'
-                : 'اختياري. لا يضع علامة على السجل ولا يغيّر حالته.'
-            }
-          >
-            <Textarea
-              id="notes-input"
-              rows={3}
-              maxLength={2000}
-              placeholder={
-                locale === 'en'
-                  ? 'e.g. the family is moving at the end of the month; the stairs are broken, use the back entrance.'
-                  : 'مثال: الأسرة تنتقل نهاية الشهر · الدرج مكسور، الزيارة القادمة من الخلف.'
-              }
-              value={values.notes ?? ''}
-              onChange={(event) => update({ notes: event.target.value })}
-            />
-          </Field>
-        </FormSection>
+            onChange={(notes) => update({ notes })}
+            locale={locale}
+          />
       </div>
 
       {/* ── Mobile Sticky Bottom Action Bar ── */}
@@ -1887,17 +1800,22 @@ export function CitizenForm({
           of screen iOS reserves for its own gesture, and every tap there is a
           swipe up instead. */}
       <div className="fixed bottom-0 left-0 right-0 z-40 block sm:hidden border-t border-border/80 bg-background/95 p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-background/90">
-        <div className="flex items-center justify-between gap-2">
-          {stepIndex > 0 ? (
+        {/*
+          Four equal quarters, whatever the labels say. Sized to their own words
+          they were four different buttons and «غير مؤكَّد» was squeezed to fit
+          what was left; equal, the bar reads as one control with four parts.
+        */}
+        <div className="grid grid-flow-col auto-cols-fr gap-2">
+          {wizardIndex > 0 ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={goToPrevStep}
-              className="h-10 px-3 text-xs font-semibold gap-1 shrink-0"
+              className="h-10 w-full min-w-0 gap-1 px-1.5 text-xs font-semibold"
             >
-              <ArrowRight className="size-4 rtl:rotate-180" />
-              <span>{locale === 'en' ? 'Back' : 'السابق'}</span>
+              <ArrowRight className="size-4 shrink-0 rtl:rotate-180" />
+              <span className="truncate">{locale === 'en' ? 'Back' : 'السابق'}</span>
             </Button>
           ) : (
             <Button
@@ -1905,9 +1823,9 @@ export function CitizenForm({
               variant="ghost"
               size="sm"
               onClick={onCancel}
-              className="h-10 px-3 text-xs text-muted-foreground shrink-0"
+              className="h-10 w-full min-w-0 px-1.5 text-xs text-muted-foreground"
             >
-              {locale === 'en' ? 'Cancel' : 'إلغاء'}
+              <span className="truncate">{locale === 'en' ? 'Cancel' : 'إلغاء'}</span>
             </Button>
           )}
 
@@ -1917,7 +1835,7 @@ export function CitizenForm({
             size="sm"
             onClick={() => setUnverifiedDialogOpen(true)}
             className={cn(
-              'h-10 px-2.5 text-xs font-medium gap-1 flex-1 max-w-[150px] truncate',
+              'h-10 w-full min-w-0 gap-1 px-1.5 text-xs font-medium',
               values.flags.size > 0 && 'border-warning/50 bg-warning/10 text-warning',
             )}
           >
@@ -1951,21 +1869,21 @@ export function CitizenForm({
             size="sm"
             onClick={() => setQuickSaveOpen(true)}
             disabled={submitting}
-            className="h-10 shrink-0 gap-1 px-2.5 text-xs font-medium"
+            className="h-10 w-full min-w-0 gap-1 px-1.5 text-xs font-medium"
           >
             <Zap className="size-3.5 shrink-0" aria-hidden />
             <span className="truncate">{locale === 'en' ? 'Quick save' : 'حفظ سريع'}</span>
           </Button>
 
-          {stepIndex < sections.length - 1 ? (
+          {!reviewing ? (
             <Button
               type="button"
               size="sm"
               onClick={goToNextStep}
-              className="h-10 px-4 text-xs font-semibold gap-1 bg-primary text-primary-foreground shadow-sm shrink-0"
+              className="h-10 w-full min-w-0 gap-1 bg-primary px-1.5 text-xs font-semibold text-primary-foreground shadow-sm"
             >
-              <span>{locale === 'en' ? 'Next' : 'التالي'}</span>
-              <ArrowLeft className="size-4 rtl:rotate-180" />
+              <span className="truncate">{locale === 'en' ? 'Next' : 'التالي'}</span>
+              <ArrowLeft className="size-4 shrink-0 rtl:rotate-180" />
             </Button>
           ) : (
             <Button
@@ -1973,17 +1891,19 @@ export function CitizenForm({
               size="sm"
               onClick={() => handleSubmit()}
               disabled={submitting}
-              className="h-10 px-4 text-xs font-semibold gap-1.5 bg-primary text-primary-foreground shadow-sm shrink-0"
+              className="h-10 w-full min-w-0 gap-1 bg-primary px-1.5 text-xs font-semibold text-primary-foreground shadow-sm"
             >
               {submitting ? (
-                <Loader2 className="size-4 animate-spin" />
+                <Loader2 className="size-4 shrink-0 animate-spin" />
               ) : offline ? (
-                <CloudOff className="size-4" />
+                <CloudOff className="size-4 shrink-0" />
               ) : (
-                <Save className="size-4" />
+                <Save className="size-4 shrink-0" />
               )}
-              <span>
-                {offline
+              {/* «حفظ» on a correction: «حفظ وإنشاء» on a record that already
+                  exists promised a second file. */}
+              <span className="truncate">
+                {offline || mode === 'edit'
                   ? locale === 'en'
                     ? 'Save'
                     : 'حفظ'
@@ -1996,6 +1916,14 @@ export function CitizenForm({
         </div>
       </div>
 
+      {/*
+        Takes up whatever height the step leaves, so the bar below sits at the
+        bottom of the screen on a short step — an empty «خانات غير مؤكَّدة»
+        above all — rather than halfway up it. On a long step it is nothing,
+        and the bar sticks to the bottom as it scrolls, as it always did.
+      */}
+      <div aria-hidden className="flex-1" />
+
       {/* ── Desktop Fixed Bottom Actions Bar ── */}
       <div className="sticky bottom-0 z-30 hidden sm:block -mx-4 -mb-6 mt-8 border-t border-border/80 bg-background/95 px-4 py-3 shadow-md backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
         {error ? (
@@ -2007,57 +1935,38 @@ export function CitizenForm({
           </p>
         ) : null}
 
-        {messages.length > 0 ? (
-          <div
-            role="alert"
-            className="mb-2.5 space-y-1 rounded-lg border border-destructive/30 bg-destructive/5 p-2.5 text-xs text-destructive"
-          >
-            <p className="flex items-center gap-1.5 font-semibold">
-              <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
-              {locale === 'en'
-                ? 'Please correct the following fields before saving:'
-                : 'يرجى إكمال وتصحيح الحقول التالية قبل الحفظ:'}
-            </p>
-            <ul className="list-inside list-disc ps-1 grid gap-0.5 sm:grid-cols-2">
-              {messages.map((message) => (
-                <li key={message}>{message}</li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        {flagSummary.length > 0 ? (
-          <div className="mb-2.5 space-y-1.5 rounded-lg border border-warning/40 bg-warning/5 p-2.5 text-xs">
-            <div className="flex items-center justify-between gap-2">
-              <p className="flex items-center gap-1.5 font-semibold text-warning">
-                <FileQuestion className="size-3.5 shrink-0" aria-hidden />
-                {locale === 'en'
-                  ? `Saving with ${flagSummary.length} unverified field(s) — marked "Requires Review".`
-                  : `سيُحفظ السجل مع ${flagSummary.length} خانة غير مؤكَّدة بحالة «يتطلب مراجعة».`}
-              </p>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setUnverifiedDialogOpen(true)}
-                className="h-6 px-2 text-[11px] text-warning hover:bg-warning/15 hover:text-warning"
-              >
-                {locale === 'en' ? 'Manage' : 'تعديل الخانات'}
-              </Button>
-            </div>
-            <ul className="grid gap-0.5 ps-1 sm:grid-cols-2">
-              {flagSummary.map((flag) => (
-                <li key={flag.path} className="truncate text-muted-foreground">
-                  <span className="font-medium text-foreground">{flag.label}</span>
-                  {flag.reason ? ` — ${flag.reason}` : ''}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
+          {/*
+            The wizard's own controls, at the start of the row: «السابق» and
+            «التالي» across all four steps. Equal widths, like the three on the
+            other side.
+          */}
+          <div className="inline-grid grid-flow-col auto-cols-fr gap-2.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={goToPrevStep}
+              disabled={wizardIndex === 0}
+              className="h-8 w-full gap-1.5 rounded-lg px-4 text-xs font-medium"
+            >
+              <ArrowRight className="size-3.5 rtl:rotate-180" aria-hidden />
+              {locale === 'en' ? 'Back' : 'السابق'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={goToNextStep}
+              disabled={reviewing}
+              className="h-8 w-full gap-1.5 rounded-lg px-4 text-xs font-medium"
+            >
+              {locale === 'en' ? 'Next' : 'التالي'}
+              <ArrowLeft className="size-3.5 rtl:rotate-180" aria-hidden />
+            </Button>
+          </div>
+
+          <div className="hidden lg:flex items-center gap-2 text-xs text-muted-foreground">
             <span
               className={cn(
                 'inline-block size-2 rounded-full',
@@ -2075,7 +1984,12 @@ export function CitizenForm({
             </span>
           </div>
 
-          <div className="flex items-center gap-2.5 ms-auto">
+          {/*
+            One width for all three — the widest label's — rather than three
+            buttons sized to their own words. `auto-cols-fr` in a grid that
+            sizes to its content makes every column as wide as the widest.
+          */}
+          <div className="inline-grid grid-flow-col auto-cols-fr gap-2.5">
             {/* Both modes, for the reason the mobile bar above gives. */}
             <Button
               type="button"
@@ -2083,7 +1997,7 @@ export function CitizenForm({
               size="sm"
               onClick={() => setQuickSaveOpen(true)}
               disabled={submitting}
-              className="h-8 gap-1.5 rounded-lg px-4 text-xs font-medium"
+              className="h-8 w-full gap-1.5 rounded-lg px-4 text-xs font-medium"
             >
               <Zap className="size-3.5" aria-hidden />
               {locale === 'en' ? 'Quick save' : 'حفظ سريع'}
@@ -2094,7 +2008,7 @@ export function CitizenForm({
               size="sm"
               onClick={onCancel}
               disabled={submitting}
-              className="h-8 px-4 text-xs font-medium rounded-lg hover:bg-muted"
+              className="h-8 w-full px-4 text-xs font-medium rounded-lg hover:bg-muted"
             >
               {locale === 'en' ? 'Cancel' : 'إلغاء'}
             </Button>
@@ -2103,7 +2017,7 @@ export function CitizenForm({
               size="sm"
               onClick={() => handleSubmit()}
               disabled={submitting}
-              className="h-8 px-4 text-xs font-medium rounded-lg shadow-2xs gap-1.5"
+              className="h-8 w-full px-4 text-xs font-medium rounded-lg shadow-2xs gap-1.5"
             >
               {submitting ? (
                 <Loader2 className="size-3.5 animate-spin" aria-hidden />
@@ -2220,15 +2134,6 @@ function ResidenceChooser({
           ]}
         />
       </Field>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        {value === 'NON_RESIDENT_OWNER'
-          ? en
-            ? 'Lives elsewhere, and owns something here or rents a shop, office, clinic, warehouse or land here. Name, contact and place of residence only — no ID, household or blood type. Someone who rents a home here and lives in it is a household file.'
-            : 'يقيم خارج البلدة، ويملك فيها عقاراً أو يستأجر فيها محلاً أو مكتباً أو عيادة أو مستودعاً أو أرضاً. الاسم ووسيلة التواصل ومكان الإقامة فقط — دون وثيقة أو بيانات أسرة أو فئة دم. من يستأجر مسكناً في البلدة ويسكنه يُسجَّل بملف أسرة.'
-          : en
-            ? 'A household file. Choose «Lives outside the town» for an owner who only visits, or someone who only works or farms here.'
-            : 'ملف أسرة كامل. اختر «غير مقيم في البلدة» لمالك لا يأتي إلا زائراً، أو لمن يعمل أو يزرع في البلدة ويسكن خارجها.'}
-      </p>
     </div>
   );
 }
@@ -2281,10 +2186,10 @@ function StepNotesField({
   return (
     <div
       /*
-        Not `id="notes"`. The desktop card owns that, it comes *second* in the
-        document, and `getElementById` returns the first match — so sharing the
-        id would point the page's `notes` anchor at this element on desktop,
-        where it is `display:none` and `scrollIntoView` is a silent no-op.
+        Not `id="notes"`. The desktop card on page 3 owns that, and both are in
+        the document at once — sharing the id would give the page two elements
+        answering to `notes`, one of them `display:none` on any given screen,
+        where `scrollIntoView` is a silent no-op.
       */
       id="notes-mobile"
       className={cn(
@@ -2300,11 +2205,6 @@ function StepNotesField({
         label={en ? 'Notes' : 'ملاحظات'}
         htmlFor="notes-mobile-input"
         error={error}
-        hint={
-          en
-            ? 'Anything this visit showed that no field above asks for. Does not flag the record.'
-            : 'أي ما أظهرته هذه الزيارة ولا يسأل عنه أي حقل. لا يضع علامة على السجل.'
-        }
       >
         <Textarea
           id="notes-mobile-input"
@@ -2339,7 +2239,7 @@ function FormSection({
   step: string;
   icon: React.ComponentType<{ className?: string }>;
   title: string;
-  description: string;
+  description?: string;
   invalid: boolean;
   children: React.ReactNode;
 }) {
@@ -2348,7 +2248,7 @@ function FormSection({
       id={id}
       data-section-invalid={invalid || undefined}
       className={cn(
-        'scroll-mt-24 rounded-xl border border-border/80 bg-card shadow-2xs overflow-hidden',
+        'review-group scroll-mt-24 rounded-xl border border-border/80 bg-card shadow-2xs overflow-hidden',
         invalid && 'border-destructive/50 ring-1 ring-destructive/20',
       )}
     >
@@ -2369,10 +2269,10 @@ function FormSection({
             </span>
             {title}
           </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+          {description ? <p className="text-xs text-muted-foreground mt-0.5">{description}</p> : null}
         </div>
       </CardHeader>
-      <CardContent className="p-4 sm:p-5">{children}</CardContent>
+      <CardContent className="review-body p-4 sm:p-5">{children}</CardContent>
     </Card>
   );
 }

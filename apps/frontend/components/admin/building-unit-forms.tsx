@@ -90,6 +90,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
 import {
   AfterTenancyQuestion,
@@ -443,6 +444,44 @@ export function withDeclaredBasements<T>(
   if (empties.length === 0) return grouped;
 
   return [...grouped, ...empties].sort((a, b) => b.floor - a.floor);
+}
+
+/** One unit placed on its floor's column grid — see `layoutFloor`. */
+export interface LaidOutUnit<T = UnitWithOccupants> {
+  unit: T;
+  startCol: number;
+  endCol: number;
+}
+
+/**
+ * Reconstructs the floor plan a unit was painted on. Units carrying a stored
+ * `startCol`/`endCol` (painted through the creation wizard's grid) keep their
+ * exact span; a unit with neither (the blueprint generator, a hand-added
+ * single unit) is laid out as one column, appended after the highest
+ * positioned column, in `sequence` order — an honest default rather than a
+ * guess at a layout that was never drawn.
+ */
+export function layoutFloor<T extends { startCol?: number | null; endCol?: number | null }>(
+  units: T[],
+): { blocks: Array<LaidOutUnit<T>>; width: number } {
+  const positioned = units.filter((u) => u.startCol != null && u.endCol != null);
+  const unpositioned = units.filter((u) => u.startCol == null || u.endCol == null);
+
+  const blocks: Array<LaidOutUnit<T>> = positioned.map((unit) => ({
+    unit,
+    startCol: unit.startCol as number,
+    endCol: unit.endCol as number,
+  }));
+
+  let nextCol = blocks.reduce((max, b) => Math.max(max, b.endCol), 0) + 1;
+  for (const unit of unpositioned) {
+    blocks.push({ unit, startCol: nextCol, endCol: nextCol });
+    nextCol += 1;
+  }
+
+  blocks.sort((a, b) => a.startCol - b.startCol);
+  const width = blocks.reduce((max, b) => Math.max(max, b.endCol), 1);
+  return { blocks, width };
 }
 
 /** What a structure is, in the badges every census surface shows it with. */
@@ -1009,9 +1048,7 @@ export function AddPersonForm({
 
           {!term.trim() ? (
             <p className="text-xs text-muted-foreground">
-              {en
-                ? 'Search the register first. If the person is not on file, you can open a new file for this unit.'
-                : 'ابحث في السجل أولاً. إن لم يكن الشخص مسجَّلاً يمكنك فتح ملف جديد لهذه الوحدة.'}
+              
             </p>
           ) : searching ? (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -1127,7 +1164,7 @@ export function AddPersonForm({
         </>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3">
         <Field label={en ? 'Their relation to the unit' : 'صفته في الوحدة'} htmlFor="occupant-role" required>
           <Select value={role} onValueChange={(value) => setRole(value as OccupancyRole)}>
             <SelectTrigger id="occupant-role">
@@ -1149,7 +1186,6 @@ export function AddPersonForm({
           <Field
             label={en ? 'Shares (of 2400)' : 'الأسهم (من ٢٤٠٠)'}
             htmlFor="occupant-shares"
-            hint={en ? 'Leave empty if not known' : 'اتركه فارغاً إن لم يكن معروفاً'}
           >
             <Input
               id="occupant-shares"
@@ -1195,11 +1231,7 @@ export function AddPersonForm({
                 ? 'The area must be greater than zero.'
                 : 'المساحة يجب أن تكون أكبر من صفر.'
           }
-          hint={
-            en
-              ? 'The census has no area for this unit. If it has not been measured, press «Unverified» and say why — never guess: a guess would be billed.'
-              : 'لا توجد مساحة مسجَّلة لهذه الوحدة. إن لم تُقَس فاضغط «غير مؤكَّد» واذكر السبب — لا تُقدِّر: الرقم المُقدَّر تُحتسب عليه الرسوم.'
-          }
+
         >
           <Input
             id="occupant-unit-area"
@@ -1215,8 +1247,8 @@ export function AddPersonForm({
 
       {/*
         Asked of an owner alone, and asked plainly: «ومن يشغلها؟». A مستأجر or
-        a شاغل بتسامح has already answered it by being recorded, and is shown
-        the answer instead of a second question — see the docblock.
+        a شاغل بتسامح has already answered it by being recorded, and is not
+        asked a second time — see the docblock.
       */}
       {role === 'OWNER' ? (
         <Field
@@ -1224,11 +1256,6 @@ export function AddPersonForm({
           htmlFor="occupant-unit-status"
           path={STATUS_FLAG_PATH}
           required
-          hint={
-            en
-              ? 'Owning a flat is not living in it. If you could not find out, press «Unverified» and say why — never guess.'
-              : 'الملكية لا تعني السكن. إن لم تعرف من يشغلها فاضغط «غير مؤكَّد» واذكر السبب — لا تُخمِّن.'
-          }
         >
           <Select
             value={unitStatus || undefined}
@@ -1246,12 +1273,6 @@ export function AddPersonForm({
             </SelectContent>
           </Select>
         </Field>
-      ) : role ? (
-        <p className="text-xs text-muted-foreground">
-          {en
-            ? `The unit will be recorded as ${labels.unitStatus[unitStatusForRole(role) as UnitStatus]}.`
-            : `ستُسجَّل الوحدة «${labels.unitStatus[unitStatusForRole(role) as UnitStatus]}».`}
-        </p>
       ) : null}
       </FieldFlagProvider>
 
@@ -1321,11 +1342,10 @@ export function AddPersonForm({
             </div>
           ) : null}
           {landlordChoice === 'OTHER' ? (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3">
               <Field
                 label={en ? 'Owner’s name' : 'اسم المالك'}
                 htmlFor="occupant-landlord-name"
-                hint={en ? 'Optional' : 'اختياري'}
               >
                 <Input
                   id="occupant-landlord-name"
@@ -1336,11 +1356,6 @@ export function AddPersonForm({
               <Field
                 label={en ? 'Owner’s phone' : 'هاتف المالك'}
                 htmlFor="occupant-landlord-phone"
-                hint={
-                  en
-                    ? 'Offered for linking once the owner is registered on this number'
-                    : 'يُعرض الربط للتأكيد عندما يُسجَّل المالك على هذا الرقم'
-                }
               >
                 <Input
                   id="occupant-landlord-phone"
@@ -1533,7 +1548,7 @@ export function VisitForm({
         </div>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3">
         <Field label={en ? 'What happened' : 'نتيجة الزيارة'} htmlFor="visit-outcome" required>
           <Select value={outcome} onValueChange={(value) => setOutcome(value as SurveyStatus)}>
             <SelectTrigger id="visit-outcome">
@@ -1552,7 +1567,6 @@ export function VisitForm({
         <Field
           label={en ? 'Visited on' : 'تاريخ الزيارة'}
           htmlFor="visit-date"
-          hint={en ? 'Defaults to today' : 'الافتراضي اليوم'}
         >
           <Input
             id="visit-date"
@@ -1584,11 +1598,6 @@ export function VisitForm({
         <Field
           label={en ? 'Come back on' : 'موعد إعادة الزيارة'}
           htmlFor="visit-revisit"
-          hint={
-            en
-              ? `Optional — opens a follow-up case («${labels.caseType[followUp]}») with this date`
-              : `اختياري — يفتح حالة متابعة «${labels.caseType[followUp]}» بهذا الموعد`
-          }
         >
           <Input
             id="visit-revisit"
@@ -1601,12 +1610,6 @@ export function VisitForm({
           />
         </Field>
       ) : null}
-
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        {en
-          ? 'The unit moves to this outcome — one visit, one status, recorded together.'
-          : 'تنتقل حالة الوحدة إلى هذه النتيجة — زيارة واحدة وحالة واحدة تُسجَّلان معاً.'}
-      </p>
 
       {myRecentVisit ? (
         <label className="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs">
@@ -1811,11 +1814,9 @@ export function CaseForm({
   return (
     <div className="space-y-3 rounded-md border bg-background p-3">
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        {en
-          ? 'Nobody answered, or they refused? Use «Log a visit» — it counts the attempt and can set the return date.'
-          : 'لم يُرَدّ على الباب أو رُفض إعطاء البيانات؟ استخدم «تسجيل زيارة» — تُحتسب المحاولة ويمكن تحديد موعد العودة.'}
+        
       </p>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3">
         <Field label={en ? 'What needs following up' : 'نوع الحالة'} htmlFor="case-type" required>
           <Select value={caseType} onValueChange={(value) => setCaseType(value as CaseType)}>
             <SelectTrigger id="case-type">
@@ -1834,11 +1835,7 @@ export function CaseForm({
         <Field
           label={en ? 'Revisit on' : 'موعد إعادة الزيارة'}
           htmlFor="case-revisit"
-          hint={
-            en
-              ? 'Optional — records the promise to come back'
-              : 'اختياري — يسجّل موعد العودة المتفق عليه'
-          }
+
         >
           <Input
             id="case-revisit"
@@ -1911,7 +1908,7 @@ export function DamageForm({
 
   return (
     <div className="space-y-3 rounded-md border bg-background p-3">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3">
         <Field label={en ? 'Damage level' : 'مستوى الضرر'} htmlFor="damage-level" required>
           <Select value={level} onValueChange={(value) => setLevel(value as DamageLevel)}>
             <SelectTrigger id="damage-level">
@@ -1947,7 +1944,6 @@ export function DamageForm({
         <Field
           label={en ? 'Inspected on' : 'تاريخ الكشف'}
           htmlFor="damage-date"
-          hint={en ? 'Defaults to today' : 'الافتراضي اليوم'}
         >
           <Input
             id="damage-date"
@@ -2669,225 +2665,166 @@ function LinkOwnerDialog({
  * — and the law distinguishes them: a تصريح بالشغور filed by the owner is the
  * strongest, a neighbour's word the weakest, and a unit is presumed occupied
  * until something says otherwise (هيئة التشريع والاستشارات 725/2003). **When**
- * it was seen empty, back-datable from a paper round. **Who said so**, required
- * for hearsay alone. And it states the consequence — including naming the owner
+ * it was seen empty, back-datable from a paper round. **What shows it**, in the
+ * notes, required whatever the basis — and for hearsay, who said so. And it
+ * states the consequence — including naming the owner
  * whose bill this changes, because that is the fact an officer can check
  * against the person standing in front of them.
  *
  * It also says what it will overwrite where the flat already claims to be
  * occupied: «مؤجرة» on the register and «شاغرة» at the door is a contradiction
  * worth a second look before it is resolved silently.
+ *
+ * It opens under the unit's actions like «كشف ضرر» and «فتح حالة متابعة» rather
+ * than as a dialog: it is one more thing recorded against the unit on screen,
+ * and the panel above it already names which one.
  */
-export function ConfirmVacancyDialog({
+export function ConfirmVacancyForm({
   unit,
-  unitCode,
   locale,
-  open,
-  onOpenChange,
-  onConfirm,
+  busy,
+  onSubmit,
 }: {
   unit: UnitWithOccupants;
-  /** The building-qualified code, so the title names the flat the way the panel does. */
-  unitCode: string;
   locale: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onConfirm: (input: { basis: VacancyBasis; observedAt?: string; notes: string }) => Promise<void>;
+  busy: boolean;
+  /**
+   * Handed to the panel's `run`, like every other form under a unit. A refusal
+   * — «يسكنها مستأجر مسجَّل» — lands in the panel's error line directly under
+   * this form, and the form stays open to be corrected.
+   */
+  onSubmit: (input: { basis: VacancyBasis; observedAt?: string; notes: string }) => void;
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
+  // A fresh question every time it opens — the form mounts when its button is
+  // pressed, and the panel keys it on the unit so never the previous flat's.
   const [basis, setBasis] = useState<VacancyBasis | null>(null);
   const [observedAt, setObservedAt] = useState(today());
   const [notes, setNotes] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
-
-  // A fresh question every time it opens — never the previous flat's answer.
-  useEffect(() => {
-    if (open) {
-      setBasis(null);
-      setObservedAt(today());
-      setNotes('');
-      setFailure(null);
-      setBusy(false);
-    }
-  }, [open]);
-
-  if (!open) return null;
 
   const owners = liveSpells(unit).filter((occupant) => occupant.role === 'OWNER');
   const status = effectiveUnitStatus(unit);
   const overwriting = status && !isUnoccupied(status) ? status : null;
-  // Hearsay names its source; the server refuses it otherwise.
-  const needsSource = basis === 'NEIGHBOUR_OR_CARETAKER';
-
-  const confirm = async () => {
-    if (!basis || busy || (needsSource && !notes.trim())) return;
-    setBusy(true);
-    setFailure(null);
-    try {
-      await onConfirm({
-        basis,
-        ...(observedAt && observedAt !== today() ? { observedAt } : {}),
-        notes: notes.trim(),
-      });
-      onOpenChange(false);
-    } catch (caught) {
-      setFailure(
-        caught instanceof Error && caught.message
-          ? caught.message
-          : en
-            ? 'Could not confirm the vacancy.'
-            : 'تعذّر تأكيد الشغور.',
-      );
-      setBusy(false);
-    }
-  };
+  /*
+    Every basis says what it saw, not only hearsay. The notes are what a
+    disputed exemption is read against a year later, and «معاينة ميدانية» with
+    nothing under it says no more than the button did. The server insists only
+    for hearsay (`confirmVacancySchema`), so this is the stricter of the two.
+  */
+  const notesMissing = !notes.trim();
 
   return (
-    <Dialog open onOpenChange={busy ? undefined : onOpenChange}>
-      <DialogContent className="max-w-md" closeLabel={en ? 'Cancel' : 'إلغاء'}>
-        <DialogHeader>
-          <div className="flex items-start gap-3">
-            <span
-              aria-hidden
-              className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-sky-500/10 text-sky-700 dark:text-sky-400"
-            >
-              <DoorClosed className="size-5" />
-            </span>
-            <div className="min-w-0 space-y-1.5 text-start">
-              <DialogTitle>
-                {en ? 'Confirm unit ' : 'تأكيد شغور الوحدة '}
-                <span dir="ltr" className="font-mono">
-                  {unitCode}
-                </span>
-                {en ? ' vacant?' : '؟'}
-              </DialogTitle>
-              <DialogDescription>
-                {en
-                  ? 'The unit is recorded as vacant and stops being billed to its owner as occupied. You can lift this at any time.'
-                  : 'تُسجَّل الوحدة «شاغرة» وتتوقف عنها رسوم الإشغال على مالكها. يمكنك إلغاء التأكيد في أي وقت.'}
-              </DialogDescription>
-            </div>
-          </div>
-        </DialogHeader>
+    <div className="space-y-3 rounded-md border bg-background p-3">
+      {owners.length > 0 ? (
+        <SummaryList>
+          <SummaryRow label={en ? 'Owner on record' : 'المالك المسجَّل'}>
+            {owners
+              .map((owner) => owner.citizenName ?? (en ? 'Unnamed' : 'بلا اسم'))
+              .join(en ? ', ' : '، ')}
+          </SummaryRow>
+        </SummaryList>
+      ) : null}
 
-        <div className="space-y-3">
-          {owners.length > 0 ? (
-            <p className="rounded-md bg-accent/40 px-2.5 py-2 text-xs">
-              {en ? 'Owner on record: ' : 'المالك المسجَّل: '}
-              <span className="font-medium">
-                {owners
-                  .map((owner) => owner.citizenName ?? (en ? 'Unnamed' : 'بلا اسم'))
-                  .join('، ')}
-              </span>
-            </p>
-          ) : null}
+      {overwriting ? (
+        <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs leading-relaxed">
+          <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+          {en
+            ? `The register currently says «${labels.unitStatus[overwriting]}». Confirming replaces that.`
+            : `الوحدة مسجَّلة حالياً «${labels.unitStatus[overwriting]}». التأكيد يستبدل هذه الحالة.`}
+        </p>
+      ) : null}
 
-          {overwriting ? (
-            <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs leading-relaxed">
-              <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
-              {en
-                ? `The register currently says «${labels.unitStatus[overwriting]}». Confirming replaces that.`
-                : `الوحدة مسجَّلة حالياً «${labels.unitStatus[overwriting]}». التأكيد يستبدل هذه الحالة.`}
-            </p>
-          ) : null}
-
-          <fieldset className="space-y-1.5">
-            <legend className="text-xs font-medium">
-              {en ? 'What says it is empty?' : 'ما الذي يثبت شغورها؟'}{' '}
-              <span className="text-destructive">*</span>
-            </legend>
-            <div className="grid gap-2" role="radiogroup">
-              {VACANCY_BASIS.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  role="radio"
-                  aria-checked={basis === option}
-                  onClick={() => setBasis(option)}
+      <fieldset className="space-y-1.5">
+        <legend className="text-xs font-medium">
+          {en ? 'What says it is empty?' : 'ما الذي يثبت شغورها؟'}{' '}
+          <span className="text-destructive">*</span>
+        </legend>
+        {/*
+          Rows under a rule rather than four outlined boxes. Boxed, every option
+          looked like a separate button of equal weight and the one chosen
+          differed only by a tint; here each has a radio mark, so the choice
+          reads as one answer to one question — and it still has no default,
+          see above.
+        */}
+        <div className="divide-y divide-border/60" role="radiogroup">
+          {VACANCY_BASIS.map((option) => {
+            const checked = basis === option;
+            return (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                aria-checked={checked}
+                onClick={() => setBasis(option)}
+                className={cn(
+                  'flex min-h-11 w-full items-center gap-3 px-1 py-2 text-start text-sm transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  checked ? 'font-medium text-primary' : 'text-foreground',
+                )}
+              >
+                <span
+                  aria-hidden
                   className={cn(
-                    'min-h-11 rounded-md border px-3 py-2 text-start text-sm transition-colors',
-                    basis === option
-                      ? 'border-primary bg-primary/10 font-medium text-primary'
-                      : 'hover:bg-accent',
+                    'flex size-4 shrink-0 items-center justify-center rounded-full border',
+                    checked ? 'border-primary' : 'border-muted-foreground/50',
                   )}
                 >
-                  {labels.vacancyBasis[option]}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <Field
-            label={en ? 'Seen empty on' : 'تاريخ المعاينة'}
-            htmlFor="vacancy-observed"
-            hint={en ? 'Defaults to today' : 'الافتراضي اليوم'}
-          >
-            <Input
-              id="vacancy-observed"
-              type="date"
-              max={today()}
-              value={observedAt}
-              onChange={(event) => setObservedAt(event.target.value)}
-              dir="ltr"
-              className="text-start"
-            />
-          </Field>
-
-          <Field
-            label={en ? 'Notes' : 'ملاحظات'}
-            htmlFor="vacancy-notes"
-            required={needsSource}
-            hint={
-              needsSource
-                ? en
-                  ? 'Name who said so — it is what the record rests on'
-                  : 'اذكر من أفاد بذلك — عليه يستند التأكيد'
-                : undefined
-            }
-          >
-            <Textarea
-              id="vacancy-notes"
-              rows={2}
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              placeholder={
-                en ? 'Locked, no furniture, no meter reading' : 'مقفلة، بلا أثاث، والعداد متوقف'
-              }
-            />
-          </Field>
-
-          {failure ? (
-            <p
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-            >
-              {failure}
-            </p>
-          ) : null}
+                  {checked ? <span className="size-2 rounded-full bg-primary" /> : null}
+                </span>
+                {labels.vacancyBasis[option]}
+              </button>
+            );
+          })}
         </div>
+      </fieldset>
 
-        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={busy}
-            className="w-full sm:w-auto"
-          >
-            {en ? 'Cancel' : 'إلغاء'}
-          </Button>
-          <Button
-            onClick={() => void confirm()}
-            disabled={busy || !basis || (needsSource && !notes.trim())}
-            className="w-full sm:w-auto"
-          >
-            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-            {en ? 'Confirm vacant' : 'تأكيد الشغور'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      <Field
+        label={en ? 'Seen empty on' : 'تاريخ المعاينة'}
+        htmlFor="vacancy-observed"
+      >
+        <Input
+          id="vacancy-observed"
+          type="date"
+          max={today()}
+          value={observedAt}
+          onChange={(event) => setObservedAt(event.target.value)}
+          dir="ltr"
+          className="text-start"
+        />
+      </Field>
+
+      <Field label={en ? 'Notes' : 'ملاحظات'} htmlFor="vacancy-notes" required>
+        <Textarea
+          id="vacancy-notes"
+          rows={2}
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+          placeholder={
+            en ? 'Locked, no furniture, no meter reading' : 'مقفلة، بلا أثاث، والعداد متوقف'
+          }
+        />
+      </Field>
+
+      <Button
+        size="sm"
+        disabled={busy || !basis || notesMissing}
+        onClick={() => {
+          if (!basis || notesMissing) return;
+          onSubmit({
+            basis,
+            ...(observedAt && observedAt !== today() ? { observedAt } : {}),
+            notes: notes.trim(),
+          });
+        }}
+      >
+        {busy ? (
+          <Loader2 className="size-4 animate-spin" aria-hidden />
+        ) : (
+          <DoorClosed className="size-4" aria-hidden />
+        )}
+        {en ? 'Confirm vacant' : 'تأكيد الشغور'}
+      </Button>
+    </div>
   );
 }
 
@@ -3293,7 +3230,7 @@ export function SeasonalHomePanel({
         </div>
       </fieldset>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3">
         <Field label={en ? 'Last stayed' : 'آخر إقامة لأصحابه'} htmlFor="seasonal-last-stay">
           <Input
             id="seasonal-last-stay"
@@ -3309,11 +3246,6 @@ export function SeasonalHomePanel({
         <Field
           label={en ? 'Vacancy declaration filed on' : 'تاريخ تقديم تصريح بالشغور'}
           htmlFor="seasonal-declared"
-          hint={
-            en
-              ? 'Leave empty if none — the full year is then owed.'
-              : 'اتركه فارغاً إن لم يُقدَّم — تُستحق عندها رسوم السنة كاملة.'
-          }
         >
           <Input
             id="seasonal-declared"

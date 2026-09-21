@@ -259,7 +259,7 @@ export default function SettlePaymentPage({
       <div className="grid gap-6 lg:grid-cols-12 lg:items-stretch">
         {/* Left Column (8 cols): Form Controls */}
         <div className="h-full lg:col-span-8">
-          <div className="flex flex-col justify-between h-full space-y-5 rounded-2xl border bg-card p-6 shadow-sm">
+          <div className="flex flex-col justify-between h-full space-y-5 rounded-2xl border bg-card p-4 shadow-sm">
             <div className="space-y-5">
               {/* Payment Method */}
               <Field label={locale === 'en' ? 'Payment Method' : 'طريقة الدفع'} htmlFor="settle-method" required>
@@ -289,7 +289,6 @@ export default function SettlePaymentPage({
                   label={locale === 'en' ? 'Transaction Reference Number' : 'رقم عملية التحويل'}
                   htmlFor="settle-reference"
                   required
-                  hint={locale === 'en' ? 'As shown on Whish receipt.' : 'كما يظهر في إشعار تطبيق Whish.'}
                 >
                   <Input
                     id="settle-reference"
@@ -308,7 +307,6 @@ export default function SettlePaymentPage({
                   label={locale === 'en' ? 'Collector' : 'المحصّل'}
                   htmlFor="settle-collector"
                   required
-                  hint={locale === 'en' ? 'Staff member who collected the payment.' : 'الموظف الذي استلم المبلغ.'}
                 >
                   {collectors.length === 0 ? (
                     <p className="rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning">
@@ -413,7 +411,7 @@ export default function SettlePaymentPage({
 
             {/* Note at bottom of left card */}
             <div className="pt-2">
-              <Field label={locale === 'en' ? 'Notes' : 'ملاحظة'} htmlFor="settle-note" hint={locale === 'en' ? 'Optional' : 'اختياري'}>
+              <Field label={locale === 'en' ? 'Notes' : 'ملاحظة'} htmlFor="settle-note">
                 <Textarea
                   id="settle-note"
                   rows={2}
@@ -428,7 +426,7 @@ export default function SettlePaymentPage({
 
         {/* Right Column (4 cols): Summary & Submission */}
         <div className="h-full lg:col-span-4">
-          <div className="flex flex-col justify-between h-full rounded-2xl border bg-card p-6 shadow-sm">
+          <div className="flex flex-col justify-between h-full rounded-2xl border bg-card p-4 shadow-sm">
             {/* Top: Details List */}
             <div className="space-y-4">
               <h3 className="font-bold text-sm text-foreground border-b pb-3">

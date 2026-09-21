@@ -300,7 +300,7 @@ export function UsersSection({
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <p className="rounded-xl border border-border/70 bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+          <p className="rounded-xl border border-border/70 bg-muted/20 p-4 text-center text-sm text-muted-foreground">
             {search ? copy.users.emptySearch : copy.users.empty}
           </p>
         ) : (
@@ -380,7 +380,7 @@ export function UsersSection({
             <DialogDescription>{copy.users.newAccountHint}</DialogDescription>
           </DialogHeader>
 
-          <div className="grid min-h-0 flex-1 items-start gap-5 overflow-y-auto p-5 sm:grid-cols-2 sm:p-6">
+          <div className="grid min-h-0 flex-1 items-start gap-5 overflow-y-auto p-5 sm:p-6">
             <SettingsField label={copy.users.firstName} htmlFor="new-first" required>
               <Input
                 id="new-first"
@@ -418,7 +418,7 @@ export function UsersSection({
                 onChange={(e) => setDraft({ ...draft, password: e.target.value })}
               />
             </SettingsField>
-            <div className="sm:col-span-2">
+            <div>
               <SettingsField
                 label={copy.users.role}
                 htmlFor="new-role"

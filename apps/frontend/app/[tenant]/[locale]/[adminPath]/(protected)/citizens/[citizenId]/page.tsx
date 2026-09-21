@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useCallback, useEffect, useState } from 'react';
+import { isValidElement, use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -65,6 +65,7 @@ import { describeAssessment } from '@/lib/fee-assessment';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { findLocatedProperty, mapHref } from '@/lib/map-link';
 import { ActivityTrail } from '@/components/admin/activity-trail';
+import { BuildingHoldings } from '@/components/admin/citizen-building-holdings';
 import { AUDIT_ENTITY } from '@/lib/audit-labels';
 import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
@@ -76,6 +77,8 @@ import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { LoadingState } from '@/components/ui/states';
+import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
+import { formatPhone } from '@/lib/phone';
 import {
   SettlePaymentDialog,
   type SettleValues,
@@ -323,9 +326,12 @@ function RetainedHouseholdSection({
             ? 'This record was filed as a household before it became a non-resident record. These values are kept as history — the form no longer asks for them and nothing updates them, so do not rely on them as current.'
             : 'سُجِّل هذا الملف كملف أسرة قبل أن يصبح ملف «غير مقيم في البلدة». هذه القيم محفوظة كتاريخ — لم تعد تُطلب في النموذج ولا يحدّثها شيء، فلا يُعتمد عليها كبيانات حالية.'}
         </p>
-        <div className="grid gap-x-6 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
-          <FactSection stack title={en ? 'Identity' : 'الهوية'} facts={identity} />
-          <FactSection stack title={en ? 'Household' : 'الأسرة'} facts={household} />
+        {/* One section above the other, split by the same coloured rule the
+            property cards use between their sections (`SECTION_RULE`, spelled
+            out here because Tailwind only generates classes written literally). */}
+        <div className="[&>*+*]:border-t-2 [&>*+*]:border-primary/30 [&>*+*]:pt-3">
+          <FactSection title={en ? 'Identity' : 'الهوية'} facts={identity} />
+          <FactSection title={en ? 'Household' : 'الأسرة'} facts={household} />
         </div>
       </div>
     </CollapsibleSection>
@@ -356,6 +362,16 @@ const UNIT_ROW =
   'flex flex-wrap items-baseline justify-between gap-x-4 border-b border-border/50 py-2 last:border-0';
 
 /**
+ * Where one section of a card ends and the next begins — the unit's facts,
+ * then «المالك», then a vacancy or seasonal finding.
+ *
+ * Coloured, and heavier than the hairline between rows, so the two kinds of
+ * line cannot be confused: a grey rule says «next fact», this one says «next
+ * subject». With both grey, «هاتف المالك» read as one more fact about the flat.
+ */
+const SECTION_RULE = 'border-t-2 border-primary/30';
+
+/**
  * A responsive grid of cards that stops before it becomes a scroll.
  *
  * One per منشأة means a household with twelve flats gets twelve cards, and
@@ -368,6 +384,22 @@ const UNIT_ROW =
  * Nothing is hidden from a browser's find-in-page that was not already: the
  * cards beyond the cap are not rendered, the same as any paginated list. The
  * count on the button is what tells a reader to open it.
+ *
+ * ## The columns follow the count
+ *
+ * A fixed two- or three-column grid left one card in a half-width box beside
+ * nothing, and four as three-and-an-orphan. So the shape is chosen from how
+ * many cards are shown, and no row is ever left part-empty:
+ *
+ *   1 → one card, the full width
+ *   2 → two halves
+ *   3 → three across on a wide screen
+ *   4 and up → two per row; with an odd count the last card takes the row
+ *
+ * Responsive underneath: one card per row on a phone, at most two from `md`
+ * (a tablet, or a laptop with the sidebar open), and three only from `xl`,
+ * where a third of the content column is still wide enough for a card's
+ * label-and-value rows.
  */
 function CardGrid({
   items,
@@ -381,11 +413,35 @@ function CardGrid({
   const [showAll, setShowAll] = useState(false);
   const en = locale === 'en';
   const hidden = items.length - initial;
+  const shown = showAll ? items : items.slice(0, initial);
+  const count = shown.length;
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {showAll ? items : items.slice(0, initial)}
+      <div
+        className={cn(
+          'grid gap-3',
+          count === 2 && 'md:grid-cols-2',
+          count === 3 && 'md:grid-cols-2 xl:grid-cols-3',
+          count >= 4 && 'md:grid-cols-2',
+        )}
+      >
+        {shown.map((item, index) => {
+          // The odd card out on a two-column row takes the whole row. With
+          // three, that is only until `xl`, where all three fit across.
+          const loneLast = index === count - 1 && count >= 3 && count % 2 === 1;
+          return (
+            <div
+              key={isValidElement(item) && item.key != null ? item.key : index}
+              className={cn(
+                'min-w-0',
+                loneLast && (count === 3 ? 'md:col-span-2 xl:col-span-1' : 'md:col-span-2'),
+              )}
+            >
+              {item}
+            </div>
+          );
+        })}
       </div>
       {hidden > 0 ? (
         <Button
@@ -1044,6 +1100,7 @@ export default function CitizenProfilePage({
           <CollapsibleSection
             id="properties"
             icon={Building2}
+            defaultOpen={false}
             title={locale === 'en' ? 'Properties' : 'العقارات'}
             summary={
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
@@ -1064,7 +1121,7 @@ export default function CitizenProfilePage({
               <Card key={registration.id} className="overflow-hidden">
                 <CardHeader className="flex-row items-center justify-between space-y-0 gap-3 border-b bg-muted/30 py-3">
                   <CardTitle className="font-mono text-sm font-semibold">
-                    {/* Inline `<bdi>` for the same reason as `Fact` below. */}
+                    {/* Inline `<bdi>` for the same reason as `FactRow` below. */}
                     <bdi dir="ltr">{registration.referenceNumber}</bdi>
                   </CardTitle>
                   <p className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -1091,14 +1148,23 @@ export default function CitizenProfilePage({
                           ? `Requires review — ${registration.flags.length} unverified field(s)`
                           : `يتطلب مراجعة — ${registration.flags.length} حقلاً غير مؤكَّد`}
                       </p>
-                      <ul className="space-y-1 text-sm">
+                      {/*
+                        One field per row — the field at the start, why it was
+                        left open at the far edge — the way «ملخص المنشأة» and
+                        the building page read, rather than a dash-joined line
+                        per field that left the other half of the box empty.
+                      */}
+                      <SummaryList className="divide-warning/25">
                         {registration.flags.map((flag) => (
-                          <li key={flag.path}>
-                            <span className="font-medium">{flagFieldLabel(flag.path, locale)}</span>
-                            <span className="text-muted-foreground"> — {flag.reason}</span>
-                          </li>
+                          <SummaryRow
+                            key={flag.path}
+                            label={flagFieldLabel(flag.path, locale)}
+                            className="font-normal text-muted-foreground"
+                          >
+                            {flag.reason}
+                          </SummaryRow>
                         ))}
-                      </ul>
+                      </SummaryList>
                       {canEdit ? (
                         <Link
                           href={`${base}/citizens/${citizen.id}/edit`}
@@ -1135,20 +1201,24 @@ export default function CitizenProfilePage({
                   ) : null}
 
                   {/*
-                    Tiles in a grid, not a stack of full-width bars.
+                    By building, each folded shut; then whatever stands on no
+                    censused building (a plot, a tent, a card never linked) as
+                    tiles, the way the file lays cards out everywhere else.
 
-                    A file with four properties used to be four rectangles you
-                    scrolled past one at a time, each one as tall as everything
-                    it could possibly say. As tiles they are comparable at a
-                    glance — which is how somebody actually reads a list of
-                    properties: they are looking for one of them.
+                    A household with flats in several buildings used to read as
+                    one run of cards with nothing to say which building each was
+                    in. Opened, a building shows its matrix with this citizen's
+                    flats marked, and a tap on one shows its card — see
+                    `BuildingHoldings`.
                   */}
-                  <CardGrid
-                    locale={locale}
-                    items={registration.properties
-                      .filter((property) => !property.endedAt)
-                      .flatMap((property) =>
-                        unitCards(property).map(({ unit, siblings }) => (
+                  {(() => {
+                    const current = registration.properties.filter((property) => !property.endedAt);
+                    const lines = current.flatMap((property) =>
+                      unitCards(property).map(({ unit, siblings }) => ({
+                        key: unit ? `${property.id}:${unit.id}` : property.id,
+                        property,
+                        unit,
+                        card: (
                           <PropertyCard
                             key={unit ? `${property.id}:${unit.id}` : property.id}
                             property={property}
@@ -1161,9 +1231,50 @@ export default function CitizenProfilePage({
                             canEdit={canEdit}
                             onChanged={() => void reload()}
                           />
-                        )),
-                      )}
-                  />
+                        ),
+                      })),
+                    );
+                    const buildings = new Map<string, typeof lines>();
+                    const loose: typeof lines = [];
+                    for (const line of lines) {
+                      const id = line.property.buildingId;
+                      if (!id) {
+                        loose.push(line);
+                        continue;
+                      }
+                      buildings.set(id, [...(buildings.get(id) ?? []), line]);
+                    }
+                    return (
+                      <div className="space-y-3">
+                        {[...buildings].map(([buildingId, group]) => {
+                          const first = group[0]!.property;
+                          return (
+                            <BuildingHoldings
+                              key={buildingId}
+                              tenant={tenant}
+                              token={token}
+                              base={base}
+                              locale={locale}
+                              buildingId={buildingId}
+                              buildingCode={first.buildingCode}
+                              subtitle={first.buildingName ?? first.buildingPostedNumber}
+                              holdings={group.map((line) => ({
+                                key: line.key,
+                                unitId: line.unit?.unitId ?? null,
+                                occupancyType: line.property.occupancyType,
+                                ended: Boolean(line.unit?.endedAt),
+                                card: line.card,
+                              }))}
+                              renderGrid={(cards) => <CardGrid locale={locale} items={cards} />}
+                            />
+                          );
+                        })}
+                        {loose.length > 0 ? (
+                          <CardGrid locale={locale} items={loose.map((line) => line.card)} />
+                        ) : null}
+                      </div>
+                    );
+                  })()}
 
                   {registration.properties.every((property) => property.endedAt) ? (
                     <p className="text-sm text-muted-foreground">
@@ -1372,16 +1483,13 @@ function InfoCard({
 }
 
 /**
- * The rail's facts, one per line, label and value sharing it.
+ * One fact per line, label and value sharing it — the rail, the «المالك»
+ * section of a property card, and the kept household file all use it.
  *
- * `Fact` stacks the value under its caption, which is right in the property
- * cards it was built for — a three-column grid where a long Arabic label and a
- * Latin document number would otherwise fight over one baseline. In a narrow
- * rail that same stacking turns five facts into ten lines, each with its own
- * icon, and the card stops reading as a record and starts reading as a form.
- *
- * So the rail gets rows instead: caption at the inline start, value at the
- * inline end, a hairline between. No icons — a person glyph repeated beside
+ * Caption-over-value, with an icon each, was the old shape: it turned five
+ * facts into ten lines and the card stopped reading as a record and started
+ * reading as a form. So: caption at the inline start, value at the inline end,
+ * a hairline between. No icons — a person glyph repeated beside
  * الاسم, اسم الأم and الجنس distinguishes nothing, and three of them in a column
  * is just texture. The card's own heading carries the only icon that says
  * anything.
@@ -1391,7 +1499,12 @@ function FactRow({ label, value, ltr, hint }: FactItem) {
     <div className="flex items-baseline justify-between gap-4 border-b border-border/50 py-2.5 last:border-0">
       <dt className="shrink-0 text-xs text-muted-foreground">{label}</dt>
       <dd className="min-w-0 break-words text-end text-sm font-medium">
-        {/* `<bdi>`, not `dir` on the block — see `Fact` for why. */}
+        {/*
+          `dir` belongs on an inline `<bdi>`, never on the block `<dd>`: a
+          block carrying dir="ltr" also flips its text-align, so a document
+          number jumped to the opposite edge from the Arabic values around it.
+          `<bdi>` keeps the digits left-to-right without moving the line.
+        */}
         {ltr ? <bdi dir="ltr">{value}</bdi> : value}
         {hint ? (
           <span className="mt-0.5 block text-[11px] font-normal leading-snug text-muted-foreground">
@@ -1680,16 +1793,14 @@ function FeesPanel({
       <CollapsibleSection
         id="fees"
         /*
-          Open when there is something owed, folded when there is not.
+          Folded on arrival, like «العقارات» and «سجل الموظفين» beside it, so
+          the file opens as three headings rather than three walls.
 
-          It used to be folded always, which made the commonest reason to open
-          this page — «شو عليّي؟» at the counter — a click away on every file.
-          The headline tile above now answers the *amount*; this is the working
-          out, and it is worth unfolding exactly when the amount is not zero. A
-          file with nothing due still shows the ledger's own «لا مستحقات» on the
-          fold, so nothing is hidden, only quiet.
+          Nothing is lost by it: the headline tile above already answers the
+          amount — «شو عليّي؟» at the counter — and the fold itself carries
+          «لا مستحقات» or what is owed. This is the working out, one tap away.
         */
-        defaultOpen={fees.outstandingTotal > 0}
+        defaultOpen={false}
         title={locale === 'en' ? 'Fees & Ledger' : 'الرسوم والمدفوعات'}
         icon={Wallet}
         summary={
@@ -2269,8 +2380,10 @@ function PropertyCard({
     <div
       className={cn(
         // `h-full` so a tile stretches to its row — see the grid that holds these.
-        'flex h-full flex-col overflow-hidden rounded-lg border',
-        ended ? 'border-dashed bg-background' : 'bg-card',
+        'flex h-full flex-col overflow-hidden rounded-lg border bg-card',
+        // The dashed border and «منتهية» say it ended. A darker fill on top
+        // made it read as a hole in the page rather than a card.
+        ended && 'border-dashed',
       )}
     >
       {/*
@@ -2453,10 +2566,15 @@ function PropertyCard({
         </dl>
       ) : null}
 
-        <div className="divide-y">
+      {/*
+        «المالك» — its own section under a coloured rule, and its facts in the
+        same rows as the flat's above: label at the start, value at the far
+        edge. Stacked caption-over-value with an icon each, three facts took
+        nine lines and looked like a different kind of card.
+      */}
       {isNonOwner && landlord.length > 0 ? (
-        <div className="space-y-3 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className={cn(SECTION_RULE, 'px-4 pt-3')}>
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
             <SubHeading icon={UserCheck}>{locale === 'en' ? 'Landlord' : 'المالك'}</SubHeading>
             {property.landlordCitizenId && !ended && canEdit && token ? (
               <Button variant="outline" size="sm" className="h-9" onClick={() => setUnlinkOpen(true)}>
@@ -2465,10 +2583,9 @@ function PropertyCard({
               </Button>
             ) : null}
           </div>
-          {/* One column: this is inside a tile now, not a full-width card. */}
-          <dl className="space-y-4">
+          <dl>
             {landlord.map((fact) => (
-              <Fact key={fact.label} {...fact} />
+              <FactRow key={fact.label} {...fact} />
             ))}
           </dl>
           {property.landlordCitizenId && !ended && canEdit && token ? (
@@ -2490,7 +2607,6 @@ function PropertyCard({
         rows above already carry everything that fits in a row.
       */}
       {unit ? <UnitNotes unit={unit} locale={locale} ended={ended || Boolean(unit.endedAt)} /> : null}
-        </div>
     </div>
   );
 }
@@ -2645,9 +2761,15 @@ function UnitNotes({
   const seasonalMonths = unit.presenceMonths?.length
     ? formatMonthList(unit.presenceMonths, locale)
     : null;
+  const showVacancy = Boolean(unit.vacancy) && !ended;
+  const showSeasonal =
+    !ended && (unit.unitStatus === 'SEASONAL' || unit.censusUnitStatus === 'SEASONAL');
+  // Nothing at all rather than an empty section: each one opens with a
+  // coloured rule, and a rule over nothing is a line that means nothing.
+  if (!showVacancy && !showSeasonal) return null;
 
   return (
-    <div className="space-y-1.5 text-sm">
+    <div className="text-sm">
 
       {/*
         «تأكيد الشغور» — the reason nobody is being billed for this flat.
@@ -2659,8 +2781,8 @@ function UnitNotes({
         518/2007 — failing to file a declaration does not make an occupied flat
         vacant, and a neighbour's word is not the same evidence as a تصريح).
       */}
-      {unit.vacancy && !ended ? (
-        <dl className="px-4 text-sm">
+      {showVacancy && unit.vacancy ? (
+        <dl className={cn(SECTION_RULE, 'px-4 text-sm')}>
           <div className={UNIT_ROW}>
             <dt className="text-muted-foreground">{en ? 'Confirmed vacant' : 'شغور مؤكَّد'}:</dt>
             <dd className="min-w-0 break-words text-end font-medium">
@@ -2688,8 +2810,8 @@ function UnitNotes({
         exactly that and read by nothing else, so this page is where they are
         readable at all.
       */}
-      {!ended && (unit.unitStatus === 'SEASONAL' || unit.censusUnitStatus === 'SEASONAL') ? (
-        <dl className="px-4 text-sm">
+      {showSeasonal ? (
+        <dl className={cn(SECTION_RULE, 'px-4 text-sm')}>
           {seasonalMonths ? (
             <div className={UNIT_ROW}>
               <dt className="text-muted-foreground">{en ? 'Present' : 'أشهر الحضور'}:</dt>
@@ -2729,27 +2851,18 @@ function UnitNotes({
 /**
  * A labelled block of facts, absent entirely when the citizen has none of them.
  *
- * `stack` is for the narrow groups that sit side by side as columns: they
- * supply their own spacing from the parent grid, so this adds neither padding
- * nor a second grid inside a grid cell one column wide.
+ * Rows, like `FactList` beside it: label at the start, value at the far edge,
+ * a hairline between. The parent separates one section from the next.
  */
-function FactSection({
-  title,
-  facts,
-  stack = false,
-}: {
-  title: string;
-  facts: FactItem[];
-  stack?: boolean;
-}) {
+function FactSection({ title, facts }: { title: string; facts: FactItem[] }) {
   const shown = present(facts);
   if (shown.length === 0) return null;
   return (
-    <div className={stack ? 'space-y-3' : 'space-y-3 p-6'}>
+    <div className="space-y-1">
       <h3 className="text-xs font-semibold text-muted-foreground">{title}</h3>
-      <dl className={stack ? 'space-y-4' : 'grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3'}>
+      <dl>
         {shown.map((fact) => (
-          <Fact key={fact.label} {...fact} />
+          <FactRow key={fact.label} {...fact} />
         ))}
       </dl>
     </div>
@@ -2776,7 +2889,7 @@ function SubHeading({
 function PhoneLink({ phone }: { phone: string }) {
   return (
     <a href={`tel:${phone}`} dir="ltr" className="font-medium text-primary hover:underline">
-      {phone}
+      {formatPhone(phone)}
     </a>
   );
 }
@@ -2794,42 +2907,7 @@ function WhatsAppPhoneLink({ phone, message }: { phone: string; message?: string
       title="فتح في واتساب"
     >
       <MessageCircle className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
-      <span>{phone}</span>
+      <span>{formatPhone(phone)}</span>
     </a>
-  );
-}
-
-/** One labelled value: caption above, value below, so long Arabic labels and
- *  Latin numbers never have to share a baseline. */
-function Fact({ icon: Icon, label, value, ltr, hint }: FactItem) {
-  return (
-    <div className="min-w-0">
-      <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon className="size-3.5 shrink-0" aria-hidden />
-        {label}
-      </dt>
-      <dd className="mt-1 break-words font-medium">
-        {/*
-          `dir` belongs on an inline `<bdi>`, never on the block `<dd>`. A
-          block element carrying dir="ltr" also flips its text-align to left,
-          so a document number sat at the far edge of its cell while the
-          Arabic caption above stayed at the right — the two looked like they
-          belonged to different fields. `<bdi>` isolates the digits so they
-          still read left-to-right, while the line itself keeps the page's RTL
-          alignment and stays under its own label.
-        */}
-        {ltr ? <bdi dir="ltr">{value}</bdi> : value}
-        {/*
-          Inside the `<dd>`, not after it: the caveat is part of the value, and
-          a `<dl>` that puts loose text between a definition and the next term
-          is both invalid and read out as an orphan by a screen reader.
-        */}
-        {hint ? (
-          <span className="mt-0.5 block text-[11px] font-normal leading-snug text-muted-foreground">
-            {hint}
-          </span>
-        ) : null}
-      </dd>
-    </div>
   );
 }

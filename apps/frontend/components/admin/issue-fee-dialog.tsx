@@ -262,11 +262,6 @@ export function IssueFeeDialog({
                 label={locale === 'en' ? 'Fee / Bill Type' : 'نوع الرسم / الفاتورة'}
                 htmlFor="fee-title"
                 required
-                hint={
-                  locale === 'en'
-                    ? 'Select from predefined municipal bill types or search to type a custom name.'
-                    : 'اختر من أنواع الرسوم البلدية المعتمدة أو ابحث لكتابة اسم مخصص.'
-                }
               >
                 <BillTypeSelect
                   id="fee-title"
@@ -282,7 +277,7 @@ export function IssueFeeDialog({
                 />
               </Field>
 
-              <div className="grid gap-5 sm:grid-cols-2">
+              <div className="grid gap-5">
                 <Field
                   label={
                     values.basis === 'FLAT'
@@ -308,15 +303,6 @@ export function IssueFeeDialog({
                 <Field
                   label={locale === 'en' ? 'Charged' : 'طريقة الاحتساب'}
                   htmlFor="fee-basis"
-                  hint={
-                    values.basis === 'FLAT'
-                      ? (locale === 'en'
-                          ? 'Every targeted citizen owes the same amount, however much they own.'
-                          : 'كل مواطن مستهدف يدفع المبلغ نفسه مهما بلغ عدد وحداته.')
-                      : (locale === 'en'
-                          ? 'Each citizen is billed from what the register says they hold. Records still awaiting a field survey are reported instead of billed.'
-                          : 'يُحتسب المبلغ من واقع ما هو مسجَّل لكل مواطن. السجلات التي تنتظر الجرد الميداني يتم إبلاغك بها بدل احتسابها.')
-                  }
                   required
                 >
                   <Select
@@ -356,7 +342,7 @@ export function IssueFeeDialog({
                 {values.basis === 'FLAT' ? null : (
                   // Spans the row: two cards each carrying a sentence do not fit
                   // in half a dialog, and the sentences are the whole point.
-                  <div className="sm:col-span-2">
+                  <div>
                   <Field
                     label={locale === 'en' ? 'Levied on' : 'الرسم مترتّب على'}
                     htmlFor="fee-bearer"
@@ -420,11 +406,6 @@ export function IssueFeeDialog({
                 label={locale === 'en' ? 'Frequency' : 'الدورية'}
                 htmlFor="fee-frequency"
                 required
-                hint={
-                  locale === 'en'
-                    ? 'Recurring fees automatically issue a new claim every period until cancelled.'
-                    : 'الرسوم المتكرّرة تُصدر مطالبة جديدة تلقائياً كل دورة حتى إيقافها.'
-                }
               >
                 <Select
                   value={values.frequency}
@@ -473,11 +454,6 @@ export function IssueFeeDialog({
                   label={locale === 'en' ? 'Property Category' : 'نوع العقارات'}
                   htmlFor="fee-category"
                   required
-                  hint={
-                    locale === 'en'
-                      ? 'Includes citizens who registered this property type.'
-                      : 'يشمل المواطنين الذين سجّلوا عقاراً من هذا النوع.'
-                  }
                 >
                   <Select
                     value={values.targetCategory}
@@ -502,7 +478,6 @@ export function IssueFeeDialog({
                   label={locale === 'en' ? 'Citizen' : 'المواطن'}
                   htmlFor="fee-citizen"
                   required
-                  hint={locale === 'en' ? 'Search by name or reference number.' : 'ابحث بالاسم أو بالرقم المرجعي.'}
                 >
                   <div className="space-y-2">
                     <Input
@@ -547,7 +522,6 @@ export function IssueFeeDialog({
               <Field
                 label={locale === 'en' ? 'Payment Instructions / Notes' : 'تعليمات الدفع / ملاحظات'}
                 htmlFor="fee-instructions"
-                hint={locale === 'en' ? 'Shown to the citizen above payment options.' : 'تظهر للمواطن أعلى خيارات الدفع.'}
               >
                 <Textarea
                   id="fee-instructions"

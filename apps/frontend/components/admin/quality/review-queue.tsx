@@ -209,12 +209,13 @@ export function ReviewQueue({
                 when, the property claimed, the fields left unconfirmed, the
                 review history — and run together with `space-y` they read as
                 one wall of small text a reviewer has to parse before they can
-                decide anything. A rule between them says where each answer
-                stops, and every band lays its facts on the same column rhythm
-                so «النوع» sits under «سجَّله» down the whole page.
+                decide anything. A coloured rule between them says where each
+                answer stops — heavier than the grey hairline between one fact
+                and the next inside a band, so the two cannot be confused — and
+                every band lays its facts as rows, values on the far edge.
               */
               <li key={item.registrationId} className="overflow-hidden rounded-xl border bg-card">
-                <div className="divide-y [&>*]:px-4 [&>*]:py-3">
+                <div className="divide-y-2 divide-primary/30 [&>*]:px-4 [&>*]:py-3">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                     <Link
                       href={`${base}/citizens/${encodeURIComponent(item.citizen.id)}`}
@@ -242,7 +243,7 @@ export function ReviewQueue({
                     it, when it last moved, how many doors it claims) are
                     stated rather than left for whoever thinks to open the file.
                   */}
-                  <FactRow columns>
+                  <FactRow>
                     <FactCell
                       label={en ? 'Filed by' : 'سجَّله'}
                       value={item.officer?.name ?? (en ? 'unknown' : 'غير معروف')}
@@ -301,7 +302,7 @@ export function ReviewQueue({
                             ? 'Property'
                             : 'العقار'}
                       </p>
-                      <FactRow columns>
+                      <FactRow>
                         <FactCell
                           label={en ? 'Type' : 'النوع'}
                           value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
@@ -342,7 +343,7 @@ export function ReviewQueue({
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-warning">
                         {en ? 'Fields left unconfirmed' : 'حقول غير مؤكَّدة'}
                       </p>
-                      <FactRow columns>
+                      <FactRow>
                         {item.flags.map((flag) => (
                           <FactCell
                             key={flag.path}

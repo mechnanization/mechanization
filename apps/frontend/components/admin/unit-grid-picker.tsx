@@ -734,27 +734,8 @@ export function UnitGridPicker({
       */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
         <div className="max-w-sm space-y-1">
-          <p className="text-xs text-muted-foreground leading-snug">
-            {en
-              ? 'Drag across blocks to paint a unit, or tap to place and adjust its size. Click any unit to edit or delete.'
-              : 'اسحب عبر الخانات لتحديد وحدة، أو انقر لإضافتها وتعديل حجمها. انقر أي وحدة لتعديلها أو حذفها.'}
-          </p>
-          {/*
-            The height and the depth are asked *here* and nowhere else.
 
-            They used to be two number inputs on the previous step as well, and
-            the duplication was the problem rather than the wording: an officer
-            typed «٦» into a box on one screen and then painted five floors on
-            another, and the two disagreed with nothing on either screen to say
-            so. The count is a fact about the matrix, so it is asked where the
-            matrix is — the steppers beside this text move the grid itself, and
-            what the grid shows is what gets saved.
-          */}
-          <p className="text-[11px] leading-snug text-muted-foreground">
-            {en
-              ? 'The floor and basement counts are set here — the grid is what gets saved.'
-              : 'عدد الطوابق وعدد الطوابق تحت الأرض يُحدَّدان من هنا — والمصفوفة هي ما يُحفظ.'}
-          </p>
+
           {existingCount > 0 ? (
             <p className="text-[11px] leading-snug text-muted-foreground">
               {en

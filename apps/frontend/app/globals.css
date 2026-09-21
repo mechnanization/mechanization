@@ -347,3 +347,32 @@
     margin: 10mm;
   }
 }
+
+/*
+ * «خانات غير مؤكَّدة» — the citizen form's fourth step (see `FieldFocusProvider`).
+ *
+ * The step shows the form's first three pages with every field outside the
+ * list rendered `hidden`. These two rules fold what is left that is not a
+ * field, and only under `[data-review]`, so they do nothing on any other page:
+ *
+ *   .review-body  — its direct children that hold no visible field go: a
+ *                   heading, a notice, the census picker, the duplicates panel.
+ *   .review-group — goes whole when it holds no visible field: a section card,
+ *                   a property card.
+ *   .review-hide  — always goes: an action that is not the step's job, like
+ *                   «حذف» on a property card.
+ *
+ * `:has()` does the work. A browser without it shows those blocks as well —
+ * the step still works, it is only less tidy.
+ */
+[data-review] .review-body > :not([data-field-path]):not(:has([data-field-path]:not(.hidden))) {
+  display: none !important;
+}
+
+[data-review] .review-group:not(:has([data-field-path]:not(.hidden))) {
+  display: none !important;
+}
+
+[data-review] .review-hide {
+  display: none !important;
+}

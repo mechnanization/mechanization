@@ -67,7 +67,7 @@ import {
   BuildingSummaryBadges,
   CaseForm,
   cellBadge,
-  ConfirmVacancyDialog,
+  ConfirmVacancyForm,
   DamageForm,
   effectiveUnitStatus,
   floorLabel,
@@ -119,7 +119,7 @@ const DAMAGED_LEVELS: readonly DamageLevel[] = [
 ];
 
 /** Which unit action is open, if any. `null` = just the matrix. */
-type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | null;
+type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | 'vacancy' | null;
 
 export function BuildingUnitMatrixDrawer({
   open,
@@ -197,8 +197,6 @@ export function BuildingUnitMatrixDrawer({
   const [action, setAction] = useState<ActionKind>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  /** Whether «تأكيد الشغور» is asking its questions. */
-  const [confirmingVacancy, setConfirmingVacancy] = useState(false);
 
   const load = useCallback(async () => {
     if (!buildingId) return;
@@ -234,7 +232,6 @@ export function BuildingUnitMatrixDrawer({
       setSelectedUnitId(null);
       setAction(null);
       setActionError(null);
-      setConfirmingVacancy(false);
       return;
     }
     void load();
@@ -408,48 +405,40 @@ export function BuildingUnitMatrixDrawer({
     );
 
   /*
-    Both halves of «تأكيد الشغور» are dialogs, so neither goes through `run`:
-    a refusal belongs in the dialog the officer is looking at — «يسكنها مستأجر
-    مسجَّل» is a thing to act on, not a toast behind a closed dialog — and each
-    rethrows for the dialog to show.
+    «تأكيد الشغور» is a form under the unit now, like «كشف ضرر», so it goes
+    through `run`: a refusal — «يسكنها مستأجر مسجَّل» is a thing to act on —
+    lands in the error line under the form, which stays open.
   */
-  const saveVacancy = async (
+  const saveVacancy = (
     unit: UnitWithOccupants,
     input: { basis: VacancyBasis; observedAt?: string; notes: string },
-  ) => {
-    let result;
-    try {
-      result = await confirmVacancy(tenant, token, unit.id, {
-        basis: input.basis,
-        ...(input.observedAt ? { observedAt: input.observedAt } : {}),
-        ...(input.notes ? { notes: input.notes } : {}),
-      });
-    } catch (caught) {
-      logApiError(caught);
-      throw new Error(
-        caught instanceof ApiRequestError
-          ? caught.payload.message
-          : en
-            ? 'Could not confirm the vacancy.'
-            : 'تعذّر تأكيد الشغور.',
-      );
-    }
-    await load();
-    onChanged?.();
-    toast.success(
-      [
-        en ? `Unit ${unit.unitCode} confirmed vacant` : `تم تأكيد شغور الوحدة ${unit.unitCode}`,
-        result.casesResolved > 0
-          ? en
-            ? `${result.casesResolved} case(s) closed`
-            : `أُغلقت ${result.casesResolved} حالة`
-          : null,
-      ]
-        .filter(Boolean)
-        .join('، '),
+  ) =>
+    run(
+      async () => {
+        const result = await confirmVacancy(tenant, token, unit.id, {
+          basis: input.basis,
+          ...(input.observedAt ? { observedAt: input.observedAt } : {}),
+          ...(input.notes ? { notes: input.notes } : {}),
+        });
+        return [
+          en ? `Unit ${unit.unitCode} confirmed vacant` : `تم تأكيد شغور الوحدة ${unit.unitCode}`,
+          result.casesResolved > 0
+            ? en
+              ? `${result.casesResolved} case(s) closed`
+              : `أُغلقت ${result.casesResolved} حالة`
+            : null,
+        ]
+          .filter(Boolean)
+          .join('، ');
+      },
+      en ? 'Could not confirm the vacancy.' : 'تعذّر تأكيد الشغور.',
     );
-  };
 
+  /*
+    Lifting a vacancy is still a dialog (`EndVacancyDialog`), so it does not go
+    through `run`: a refusal belongs in the dialog the officer is looking at,
+    not a toast behind it, and this rethrows for the dialog to show.
+  */
   const liftVacancy = async (
     unit: UnitWithOccupants,
     input: { reason: VacancyEndReason; endedAt?: string; notes: string },
@@ -686,7 +675,7 @@ export function BuildingUnitMatrixDrawer({
                     <div className="space-y-2 border-b bg-background px-3 py-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <Select value={addingType} onValueChange={setAddingType}>
-                          <SelectTrigger className="h-8 w-44 text-xs">
+                          <SelectTrigger className="h-8 min-w-0 flex-1 basis-full text-xs sm:basis-0">
                             <SelectValue placeholder={en ? 'Unit type…' : 'نوع الوحدة…'} />
                           </SelectTrigger>
                           <SelectContent>
@@ -951,15 +940,6 @@ export function BuildingUnitMatrixDrawer({
                 />
               ) : null}
 
-              <ConfirmVacancyDialog
-                unit={selectedUnit}
-                unitCode={`${building.code}-${selectedUnit.unitCode}`}
-                locale={locale}
-                open={confirmingVacancy}
-                onOpenChange={setConfirmingVacancy}
-                onConfirm={(values) => saveVacancy(selectedUnit, values)}
-              />
-
               {canWrite ? (
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -1005,16 +985,16 @@ export function BuildingUnitMatrixDrawer({
                   {activeVacancy(selectedUnit) ? null : (
                     <Button
                       size="sm"
-                      variant="outline"
+                      variant={action === 'vacancy' ? 'default' : 'outline'}
                       disabled={busy || vacancyBlocked !== null}
                       title={vacancyBlocked ?? undefined}
                       onClick={() => {
                         setActionError(null);
-                        setConfirmingVacancy(true);
+                        setAction(action === 'vacancy' ? null : 'vacancy');
                       }}
                     >
                       <DoorClosed className="size-4" aria-hidden />
-                      {en ? 'Confirm vacant…' : 'تأكيد الشغور…'}
+                      {en ? 'Confirm vacant' : 'تأكيد الشغور'}
                     </Button>
                   )}
                   <Button
@@ -1168,6 +1148,16 @@ export function BuildingUnitMatrixDrawer({
                       en ? 'Could not log the visit.' : 'تعذّر تسجيل الزيارة.',
                     )
                   }
+                />
+              ) : null}
+
+              {action === 'vacancy' ? (
+                <ConfirmVacancyForm
+                  key={selectedUnit.id}
+                  unit={selectedUnit}
+                  locale={locale}
+                  busy={busy}
+                  onSubmit={(values) => void saveVacancy(selectedUnit, values)}
                 />
               ) : null}
 

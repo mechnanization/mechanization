@@ -127,7 +127,6 @@ export function ChargeCitizenDialog({
             label={locale === 'en' ? 'Citizen' : 'المواطن'}
             htmlFor="charge-citizen"
             required
-            hint={locale === 'en' ? 'Search by name or reference number.' : 'ابحث بالاسم أو بالرقم المرجعي.'}
           >
             <div className="space-y-2">
               <Input
@@ -167,11 +166,6 @@ export function ChargeCitizenDialog({
             label={locale === 'en' ? 'Fee / Bill Type' : 'نوع الرسم / سبب المطالبة'}
             htmlFor="charge-title"
             required
-            hint={
-              locale === 'en'
-                ? 'Select from predefined municipal bill types or search to type a custom name.'
-                : 'اختر من أنواع الرسوم البلدية المعتمدة أو ابحث لكتابة اسم مخصص.'
-            }
           >
             <BillTypeSelect
               id="charge-title"
@@ -187,7 +181,7 @@ export function ChargeCitizenDialog({
             />
           </Field>
 
-          <div className="grid gap-5 sm:grid-cols-2">
+          <div className="grid gap-5">
             <Field
               label={locale === 'en' ? 'Amount (LBP)' : 'المبلغ بالليرة اللبنانية'}
               htmlFor="charge-amount"

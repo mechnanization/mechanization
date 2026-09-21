@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   CalendarDays,
   ChevronDown,
@@ -26,7 +26,7 @@ import {
 import type { UnitStatus, UnitType } from '@mechanization/shared-schemas';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Field, useFieldFlags } from '@/components/ui/field';
+import { Field, useFieldFlags, useFieldFocus } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -151,11 +151,6 @@ export function UnitStatusChoice({
     <Field
       label={label ?? (isEnglish ? 'Unit Status' : 'حالة الوحدة')}
       htmlFor={idPrefix}
-      hint={
-        isEnglish
-          ? 'Optional. Leave blank if not established — a blank unit is treated as occupied.'
-          : 'اختياري. اتركه فارغاً إذا لم يُتحقَّق منه — الوحدة غير المحدَّدة تُعامَل كمشغولة.'
-      }
     >
       <div id={idPrefix} className="flex flex-wrap gap-2 pt-1">
         {UNIT_STATUS.filter((option) => option === value || !omit.includes(option)).map((option) => {
@@ -211,9 +206,12 @@ export function SharedRightsField({
   path,
   selected,
   onChange,
+  compact = false,
   locale = 'ar',
 }: {
   idPrefix: string;
+  /** Two across at every width — for a unit card that may be half the form wide. */
+  compact?: boolean;
   /**
    * Absent for a unit's own shared rights — those live inside a building's
    * units, and this form flags the unit collection as a whole rather than
@@ -234,7 +232,7 @@ export function SharedRightsField({
       htmlFor={idPrefix}
       path={path}
     >
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 pt-1">
+      <div className={cn('grid grid-cols-2 gap-2 pt-1', !compact && 'sm:grid-cols-4')}>
         {sharedRightsOptions.map((right, rightIndex) => {
           const checked = selected.includes(right);
           const id = `${idPrefix}-${rightIndex}`;
@@ -288,6 +286,7 @@ export function UnitsEditor({
   nonResident = false,
   errors,
   onChange,
+  hideLinked = false,
   locale = 'ar',
 }: {
   index: number;
@@ -344,10 +343,44 @@ export function UnitsEditor({
    * render and the click.
    */
   onChange: (update: (current: UnitDraft[]) => UnitDraft[]) => void;
+  /**
+   * Set while the card's matrix is in charge of the linked flats: each is
+   * opened and edited from there, so their rows step out of this list, which
+   * keeps what the matrix cannot show — flats typed by hand — and «إضافة».
+   */
+  hideLinked?: boolean;
   locale?: string;
 }) {
   const labels = getLabels(locale);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
+  /*
+    A row already on the record opens folded — this is the correction form, and
+    a building's flats are read by their headings first («0101 · شقة · الأول»)
+    and opened one at a time. A row not saved yet (a new card's first flat, one
+    just added) opens, because filling it in is the reason it is there.
+  */
+  const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(
+    () => new Set(units.flatMap((unit, unitIndex) => (unit.id || unit.unitId ? [unitIndex] : []))),
+  );
+
+  /*
+    A folded row cannot show its own complaint, so a save that finds one opens
+    the row that holds it.
+  */
+  const erroredRows = Object.keys(errors)
+    .map((key) => Number(key.split('.')[0]))
+    .filter((position) => Number.isInteger(position));
+  const erroredKey = [...new Set(erroredRows)].sort((a, b) => a - b).join(',');
+
+  useEffect(() => {
+    if (!erroredKey) return;
+    const open = erroredKey.split(',').map(Number);
+    setCollapsed((current) => {
+      if (!open.some((position) => current.has(position))) return current;
+      const next = new Set(current);
+      for (const position of open) next.delete(position);
+      return next;
+    });
+  }, [erroredKey]);
 
   /*
     The whole unit list is flaggable; the fields inside one are not.
@@ -359,6 +392,7 @@ export function UnitsEditor({
     a time would turn a building into a list of half-units nobody can bill.
   */
   const flagging = useFieldFlags();
+  const focus = useFieldFocus();
   const path = flagPath(index, 'units');
   const flaggable = Boolean(flagging && isFlaggablePath(path));
   const reason = flaggable ? flagging?.flags.get(path) : undefined;
@@ -423,17 +457,24 @@ export function UnitsEditor({
   };
 
   return (
-    <section className="space-y-4">
+    /*
+      One field on the fourth step: the section is the answer to
+      `properties.N.units`, so it carries that path, stands or folds whole, and
+      reads red while flagged like any other «غير مؤكَّد» field.
+    */
+    <section
+      data-field-path={path}
+      className={cn(
+        'space-y-4',
+        focus && !focus.paths.has(path) && 'hidden',
+      )}
+    >
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 space-y-1">
           <h3 className="text-lg font-semibold">
             {locale === 'en' ? 'Building Units' : 'وحدات المبنى'}
           </h3>
-          <p className="text-sm text-muted-foreground">
-            {locale === 'en'
-              ? 'If you own the entire building, add each unit separately. Property number and building name remain the same for all units.'
-              : 'إذا كنت تملك المبنى بالكامل، أضف كل وحدة فيه على حدة. رقم العقار واسم المبنى يبقيان كما هما لجميع الوحدات.'}
-          </p>
+
         </div>
 
         {flaggable ? (
@@ -444,7 +485,7 @@ export function UnitsEditor({
             className={cn(
               'inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium transition-colors',
               flagged
-                ? 'bg-warning/15 text-warning ring-1 ring-warning/40'
+                ? 'bg-destructive/10 text-destructive ring-1 ring-destructive/40'
                 : 'text-muted-foreground/70 hover:bg-muted hover:text-foreground',
             )}
           >
@@ -465,10 +506,10 @@ export function UnitsEditor({
       </header>
 
       {flagged ? (
-        <div className="space-y-1.5 rounded-lg border border-warning/40 bg-warning/5 p-2">
+        <div className="space-y-1.5">
           <label
             htmlFor={`units-reason-${index}`}
-            className="text-[11px] font-medium text-warning"
+            className="text-[11px] font-medium text-destructive"
           >
             {locale === 'en'
               ? 'Why were the units not recorded? (required)'
@@ -483,7 +524,7 @@ export function UnitsEditor({
                 ? 'e.g. Caretaker absent — return visit scheduled'
                 : 'مثال: الناطور غير موجود — زيارة لاحقة'
             }
-            className="h-9 w-full rounded-md border border-warning/40 bg-background px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
+            className="h-9 w-full rounded-md border border-destructive/50 bg-background px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
           />
         </div>
       ) : null}
@@ -526,100 +567,114 @@ export function UnitsEditor({
         What a linked row keeps is its identity — see the header below, which
         heads it with the code the matrix gave it rather than «الوحدة ١».
       */}
-      {flagged ? null : units.map((unit, unitIndex) => {
-        const unitCollapsed = collapsed.has(unitIndex);
-        const unitErrors = scopeErrors(errors, String(unitIndex));
+      {/*
+        Several flats in one building sit side by side from a tablet up, two
+        to a row, and one under another on a phone. Inside a unit its shared
+        rights go two across, so the four fit a half-width card. `items-start`, so
+        opening one row does not stretch the folded one beside it.
+      */}
+      {flagged ? null : (
+      <div className={cn('grid grid-cols-1 items-start gap-3', units.length > 1 && 'md:grid-cols-2')}>
+        {units.map((unit, unitIndex) => {
+          const unitCollapsed = collapsed.has(unitIndex);
+          const unitErrors = scopeErrors(errors, String(unitIndex));
 
-        return (
-          /*
-            One hairline border and a tinted ground — no accent rail.
+          return (
+            /*
+              One hairline border and a tinted ground — no accent rail.
 
-            The 2px `border-s-primary` this used to carry was doing a job the
-            row does not need: these are siblings in a list, all of equal
-            weight, and a coloured edge on every one of them says "important"
-            about all of them and therefore about none. The chain icon in the
-            header already marks the distinction that matters — which rows the
-            census knows about — and it marks only the rows it applies to.
-          */
+              The 2px `border-s-primary` this used to carry was doing a job the
+              row does not need: these are siblings in a list, all of equal
+              weight, and a coloured edge on every one of them says "important"
+              about all of them and therefore about none. The chain icon in the
+              header already marks the distinction that matters — which rows the
+              census knows about — and it marks only the rows it applies to.
+            */
           <div
             key={unitIndex}
-            className="space-y-5 rounded-lg border border-border/70 bg-muted/20 p-4"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => toggleCollapsed(unitIndex)}
-                aria-expanded={!unitCollapsed}
-                className="-m-2 flex min-w-0 flex-1 items-center gap-2 rounded-md p-2 text-start transition-colors hover:bg-accent"
-              >
-                <ChevronDown
-                  className={cn(
-                    'size-4 shrink-0 text-muted-foreground transition-transform',
-                    unitCollapsed && '-rotate-90 rtl:rotate-90',
-                  )}
-                  aria-hidden
-                />
-                <span className="min-w-0">
-                  {/*
-                    A linked row is headed by the code the matrix gave it.
-
-                    «الوحدة ٢» is a position in this form and means nothing to
-                    an officer who picked `0202` off the building's matrix —
-                    and when a card holds four flats, matching the four forms
-                    back to the four chips by counting is exactly the step that
-                    gets done wrong. The chain icon also marks, at a glance,
-                    which rows the census knows about and which are this card's
-                    own account of a flat nobody has surveyed.
-                  */}
-                  <h4 className="flex items-center gap-1.5 font-semibold">
-                    {unit.unitId && unitCodes[unit.unitId] ? (
-                      <>
-                        <Link2 className="size-3.5 shrink-0 text-primary" aria-hidden />
-                        <span className="font-mono" dir="ltr">
-                          {unitCodes[unit.unitId]}
-                        </span>
-                      </>
-                    ) : (
-                      (locale === 'en' ? `Unit ${unitIndex + 1}` : `الوحدة ${unitIndex + 1}`)
-                    )}
-                  </h4>
-                  {unitCollapsed ? (
-                    <span className="mt-0.5 block truncate text-sm font-normal text-muted-foreground">
-                      {summariseUnit(unit, locale)}
-                    </span>
-                  ) : null}
-                </span>
-              </button>
-
-              {units.length > 1 ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  onClick={() => removeUnit(unitIndex)}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                  {locale === 'en' ? 'Delete' : 'حذف'}
-                </Button>
-              ) : null}
-            </div>
-
-            {unitCollapsed ? null : (
-              <UnitFields
-                idPrefix={`${index}-${unitIndex}`}
-                unit={unit}
-                census={unit.unitId ? censusUnits[unit.unitId] : undefined}
-                errors={unitErrors}
-                asksUnitStatus={asksUnitStatus}
-                unitTypes={unitTypes}
-                nonResident={nonResident}
-                onPatch={(patch) => setUnit(unitIndex, patch)}
-                locale={locale}
-              />
+            id={`unit-row-${index}-${unitIndex}`}
+            className={cn(
+              'scroll-mt-24 space-y-5 rounded-lg border border-border/70 bg-muted/20 p-4',
+              hideLinked && unit.unitId && 'hidden',
             )}
-          </div>
-        );
-      })}
+          >
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => toggleCollapsed(unitIndex)}
+                  aria-expanded={!unitCollapsed}
+                  className="-m-2 flex min-w-0 flex-1 items-center gap-2 rounded-md p-2 text-start transition-colors hover:bg-accent"
+                >
+                  <ChevronDown
+                    className={cn(
+                      'size-4 shrink-0 text-muted-foreground transition-transform',
+                      unitCollapsed && '-rotate-90 rtl:rotate-90',
+                    )}
+                    aria-hidden
+                  />
+                  <span className="min-w-0">
+                    {/*
+                      A linked row is headed by the code the matrix gave it.
+
+                      «الوحدة ٢» is a position in this form and means nothing to
+                      an officer who picked `0202` off the building's matrix —
+                      and when a card holds four flats, matching the four forms
+                      back to the four chips by counting is exactly the step that
+                      gets done wrong. The chain icon also marks, at a glance,
+                      which rows the census knows about and which are this card's
+                      own account of a flat nobody has surveyed.
+                    */}
+                    <h4 className="flex items-center gap-1.5 font-semibold">
+                      {unit.unitId && unitCodes[unit.unitId] ? (
+                        <>
+                          <Link2 className="size-3.5 shrink-0 text-primary" aria-hidden />
+                          <span className="font-mono" dir="ltr">
+                            {unitCodes[unit.unitId]}
+                          </span>
+                        </>
+                      ) : (
+                        (locale === 'en' ? `Unit ${unitIndex + 1}` : `الوحدة ${unitIndex + 1}`)
+                      )}
+                    </h4>
+                    {unitCollapsed ? (
+                      <span className="mt-0.5 block truncate text-sm font-normal text-muted-foreground">
+                        {summariseUnit(unit, locale)}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+
+                {units.length > 1 ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => removeUnit(unitIndex)}
+                  >
+                    <Trash2 className="size-4" aria-hidden />
+                    {locale === 'en' ? 'Delete' : 'حذف'}
+                  </Button>
+                ) : null}
+              </div>
+
+              {unitCollapsed ? null : (
+                <UnitFields
+                  idPrefix={`${index}-${unitIndex}`}
+                  unit={unit}
+                  census={unit.unitId ? censusUnits[unit.unitId] : undefined}
+                  errors={unitErrors}
+                  asksUnitStatus={asksUnitStatus}
+                  unitTypes={unitTypes}
+                  nonResident={nonResident}
+                  onPatch={(patch) => setUnit(unitIndex, patch)}
+                  locale={locale}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+      )}
 
       {flagged ? null : (
         <Button variant="outline" className="w-full border-dashed" onClick={addUnit}>
@@ -654,10 +709,17 @@ export function UnitFields({
   unitTypes = BUILDING_UNIT_TYPES,
   nonResident = false,
   onPatch,
+  layout = 'stack',
   locale = 'ar',
 }: {
   /** Disambiguates every `id`/`htmlFor` on the page — a card index and a row. */
   idPrefix: string;
+  /**
+   * `wide` for a flat opened full width under the matrix: type beside floor,
+   * area beside side, the shared rights four across. `stack` for a row in
+   * the list, which may be half the form wide.
+   */
+  layout?: 'stack' | 'wide';
   unit: UnitDraft;
   /**
    * What the census records about this flat, when the row is linked to one.
@@ -722,28 +784,35 @@ export function UnitFields({
     and a flat the census recorded without measuring must still be measurable
     from here.
   */
-  const showType = !lockedType;
-  const showFloor = !lockedFloor;
-  const showArea = !lockedArea;
-  const showSide = !lockedSide;
+  /*
+    Shown, with the census's own value, and locked.
+
+    They were withheld while the «من سجل المباني» strip printed each flat's
+    facts; the strip names the building now and the flats are on the matrix,
+    so a row that hid them left نوع الوحدة and الطابق nowhere on the form. They
+    stay read-only because the census answer is the one billing reads
+    (`preferLinked`): a value typed over it here would save and change
+    nothing. The title says where it is changed — on the unit, from the
+    building's own page.
+  */
+  const censusValue = (locked: string | undefined, value: string | null | undefined, own: string | undefined) =>
+    locked ? (value ?? '') : (own ?? '');
 
   return (
     <div className="space-y-5">
-                <div className={cn('grid gap-3.5 sm:grid-cols-2', !showType && !showFloor && 'hidden')}>
+                <div className={cn('grid grid-cols-1 items-start gap-3.5', layout === 'wide' && 'md:grid-cols-2')}>
                   <Field
                     label={locale === 'en' ? 'Unit Type' : 'نوع الوحدة'}
                     htmlFor={`ut-${idPrefix}`}
                     required
                     error={errors.unitType}
-                    hint={lockedType}
-                    className={cn(!showType && 'hidden')}
                   >
                     <Select
-                      value={unit.unitType ?? ''}
+                      value={censusValue(lockedType, census?.unitType, unit.unitType)}
                       onValueChange={(next) => onPatch({ unitType: next as UnitType })}
                       disabled={Boolean(lockedType)}
                     >
-                      <SelectTrigger id={`ut-${idPrefix}`}>
+                      <SelectTrigger id={`ut-${idPrefix}`} title={lockedType}>
                         <SelectValue placeholder={locale === 'en' ? 'Select…' : 'اختر…'} />
                       </SelectTrigger>
                       {/*
@@ -774,13 +843,12 @@ export function UnitFields({
                     htmlFor={`fl-${idPrefix}`}
                     required
                     error={errors.floor}
-                    hint={lockedFloor}
-                    className={cn(!showFloor && 'hidden')}
                   >
                     <Input
                       id={`fl-${idPrefix}`}
+                      title={lockedFloor}
                       invalid={Boolean(errors.floor)}
-                      value={unit.floor ?? ''}
+                      value={censusValue(lockedFloor, census?.floor, unit.floor)}
                       onChange={(e) => onPatch({ floor: e.target.value })}
                       readOnly={Boolean(lockedFloor)}
                       aria-readonly={Boolean(lockedFloor) || undefined}
@@ -789,22 +857,19 @@ export function UnitFields({
                   </Field>
                 </div>
 
-                <div
-                  className={cn('grid gap-3.5 sm:grid-cols-2', !showArea && !showSide && 'hidden')}
-                >
+                <div className={cn('grid grid-cols-1 items-start gap-3.5', layout === 'wide' && 'md:grid-cols-2')}>
                   <Field
                     label={locale === 'en' ? 'Unit Area (sq. meters)' : 'مساحة الوحدة (متر مربع)'}
                     htmlFor={`ua-${idPrefix}`}
                     required
                     error={errors.unitArea}
-                    hint={lockedArea}
-                    className={cn(!showArea && 'hidden')}
                   >
                     <Input
                       id={`ua-${idPrefix}`}
+                      title={lockedArea}
                       inputMode="decimal"
                       invalid={Boolean(errors.unitArea)}
-                      value={unit.unitArea ?? ''}
+                      value={censusValue(lockedArea, census?.unitArea, unit.unitArea)}
                       onChange={(e) => onPatch({ unitArea: e.target.value })}
                       readOnly={Boolean(lockedArea)}
                       aria-readonly={Boolean(lockedArea) || undefined}
@@ -815,13 +880,12 @@ export function UnitFields({
                   <Field
                     label={locale === 'en' ? 'Side / Orientation' : 'الجهة'}
                     htmlFor={`sd-${idPrefix}`}
-                    hint={lockedSide}
-                    className={cn(!showSide && 'hidden')}
                   >
                     <Input
                       id={`sd-${idPrefix}`}
+                      title={lockedSide}
                       placeholder={locale === 'en' ? 'e.g. North, South' : 'مثال: شمالي، جنوبي'}
-                      value={unit.side ?? ''}
+                      value={censusValue(lockedSide, census?.side, unit.side)}
                       onChange={(e) => onPatch({ side: e.target.value })}
                       readOnly={Boolean(lockedSide)}
                       aria-readonly={Boolean(lockedSide) || undefined}
@@ -832,6 +896,7 @@ export function UnitFields({
 
                 <SharedRightsField
                   idPrefix={`sr-${idPrefix}`}
+                  compact={layout !== 'wide'}
                   selected={unit.sharedRights ?? []}
                   onChange={(sharedRights) => onPatch({ sharedRights })}
                   locale={locale}
