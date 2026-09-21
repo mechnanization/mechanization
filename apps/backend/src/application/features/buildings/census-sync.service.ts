@@ -3,6 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import {
   contradictsVacancy,
+  isStructuralUnitType,
   isUnoccupied,
   unitStatusForRole,
 } from '@mechanization/shared-schemas';
@@ -333,6 +334,7 @@ export class CensusSyncService {
         id: true,
         buildingId: true,
         unitCode: true,
+        unitType: true,
         surveyStatus: true,
         unitStatus: true,
       },
@@ -371,6 +373,35 @@ export class CensusSyncService {
       filed, which is the record that matters.
     */
     if (!unit) return { created: false, surveyed: 0, casesResolved: 0, vacancyEnded: false };
+
+    /*
+      A card pointing at a طابق أعمدة.
+
+      The other half of `assertOccupiableUnit`, which `recordOccupancy` calls on
+      the matrix path. Both doors refuse the same thing or the weaker one
+      becomes the way round the stronger — the argument
+      `assertNonResidentOccupancy` is built on, and it applies here with the
+      same force: an occupancy minted on a pilotis would be claimed back onto
+      the citizen's file and billed like any other.
+
+      Reachable even though `buildingUnitSchema` refuses the *type* on a card,
+      because `unitId` is a bare uuid pointing into the census: a client
+      holding a stale unit list, or a grid re-render after a block was retyped
+      to «طابق أعمدة», can name one. It is a mis-link, not a bad registration.
+
+      Skipped quietly rather than thrown, unlike the matrix path — and the
+      difference is deliberate. There the officer is at a screen and can pick
+      another block. Here the registration has already committed and
+      `syncQuietly` runs after the fact, so a throw would fail nothing except
+      the census half of a record the citizen correctly filed. The warning is
+      what makes it findable; the card keeps saying what the officer wrote.
+    */
+    if (isStructuralUnitType(unit.unitType)) {
+      this.logger.warn(
+        `census sync: unit ${input.unitId} (${unit.unitCode}) is a ${unit.unitType} — no occupant is recorded on a structural unit; the card's link is ignored`,
+      );
+      return { created: false, surveyed: 0, casesResolved: 0, vacancyEnded: false };
+    }
 
     const current = await this.db.unitOccupancy.findFirst({
       where: { unitId: input.unitId, citizenId: input.citizenId, toDate: null },

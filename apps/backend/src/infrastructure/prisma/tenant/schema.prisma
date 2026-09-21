@@ -449,6 +449,23 @@ enum UnitType {
   /// filing a household's garage as one puts it on the assessment roll as
   /// commercial floor space. Never a dwelling.
   GARAGE
+  /// طابق أعمدة — the open, column-carried level a block stands on. The one
+  /// value here that names no premises: it exists so the matrix can draw the
+  /// structure with its floors in the right places, and nothing else.
+  ///
+  /// Never occupiable — `isStructuralUnitType` in shared-schemas is what every
+  /// guard asks, and both `recordOccupancy` and the census-sync claim refuse
+  /// it. Never on a citizen's card (`buildingUnitSchema` refuses it), never a
+  /// fee target, and excluded from `buildings.unitsTotal` / `unitsSurveyed` by
+  /// `sync_building_unit_counts` — see migrations 0051 and 0052.
+  PILOTIS
+  /// طابق فارغ — a floor that is built but holds no unit yet: a slab left
+  /// «على العظم», a level nobody has partitioned. Structural like PILOTIS and
+  /// for a different reason — this one is a *stage*, and retyping it into شقق
+  /// is the ordinary end of its life. Deliberately not `UnitStatus.VACANT`,
+  /// which says a unit exists and is empty; here there is no unit to bill,
+  /// exempt or survey. Migrations 0053 and 0054.
+  EMPTY_FLOOR
 }
 
 enum LandType {

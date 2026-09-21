@@ -592,6 +592,76 @@ function fromCaseDraft(item: CaseSummary): PropertyDraft {
 }
 
 /**
+ * A stored file as the form's values — the one reading of `/citizens/:id/form`.
+ *
+ * Extracted from this editor's own load effect and exported rather than left
+ * inline, because it is no longer the only screen that opens a record for
+ * editing: `CompleteRecordDialog` fills the «يتطلب مراجعة» gaps without opening
+ * the whole form, and it has to start from the *same* values or the two screens
+ * disagree about what is on the record.
+ *
+ * Every line below is a normalisation with a reason, which is exactly why a
+ * second hand-rolled copy would have been a bug rather than duplication: a
+ * dialog that read `form.contact.actualHouseholdMembers` as a number would
+ * render an empty box and then fail the save as «required» on a field that was
+ * never blank.
+ */
+export function toFormValues(form: CitizenFormData): CitizenFormValues {
+  return {
+    residence: form.residence ?? 'RESIDENT',
+    // The record's existing «غير مؤكَّد» flags, so whoever opens it to
+    // finish sees which blanks were deliberate and what was said about
+    // each — and clears one simply by filling the field in.
+    flags: flagsFromArray(form.flags ?? []),
+    /*
+      The note from the last visit, restored into the box.
+
+      A save replaces the note rather than merging it — an officer who
+      clears the box means to delete it — so opening the form with an
+      empty box would make every ordinary edit silently destroy what the
+      previous visit wrote.
+    */
+    notes: form.notes ?? undefined,
+    /*
+      And, separately, the fields the server could not confirm against
+      its cadastre.
+
+      Kept apart from `flags` deliberately: these name fields that *have*
+      a value. Folding them in would hide that value behind a reason box
+      and then send it back as an officer's flag, which the server honours
+      by blanking the field — the record would lose its رقم العقار as a
+      side effect of someone opening it to check.
+    */
+    unverified: unverifiedFromArray(form.flags ?? []),
+    personal: {
+      ...form.personal,
+      /**
+       * `isLebanese` is nullable in the database — a citizen created
+       * before the column existed, or by an import that skipped it —
+       * and `PersonalStep` reads any non-`false` value as لبناني. Left
+       * as null it renders the Lebanese branch, hides الجنسية, and then
+       * fails the save on `isLebanese: null` with a message about a
+       * question the form never asked. Resolving it here makes what is
+       * displayed and what is sent the same answer.
+       */
+      isLebanese: form.personal.isLebanese !== false,
+    },
+    contact: {
+      ...form.contact,
+      // Every text input reads its value as a string; a numeric value
+      // would render as an empty box and then fail validation as
+      // "required" on a field that was never blank.
+      actualHouseholdMembers:
+        text(form.contact.actualHouseholdMembers ?? form.contact.totalRegisteredMembers) ?? '',
+      totalRegisteredMembers:
+        text(form.contact.totalRegisteredMembers ?? form.contact.actualHouseholdMembers) ?? '',
+    },
+    properties:
+      form.properties.length > 0 ? form.properties.map(toDraft) : emptyCitizen().properties,
+  };
+}
+
+/**
  * A stored property row as the form's draft shape.
  *
  * The inputs are all text, so every number crosses back as a string here and
@@ -997,58 +1067,7 @@ export function CitizenEditor({
         setReference(form.referenceNumber);
         fileVersionRef.current = form.version ?? null;
         setLastStaffEdit(form.lastStaffEdit ?? null);
-        setInitial({
-          residence: form.residence ?? 'RESIDENT',
-          // The record's existing «غير مؤكَّد» flags, so whoever opens it to
-          // finish sees which blanks were deliberate and what was said about
-          // each — and clears one simply by filling the field in.
-          flags: flagsFromArray(form.flags ?? []),
-          /*
-            The note from the last visit, restored into the box.
-
-            A save replaces the note rather than merging it — an officer who
-            clears the box means to delete it — so opening the form with an
-            empty box would make every ordinary edit silently destroy what the
-            previous visit wrote.
-          */
-          notes: form.notes ?? undefined,
-          /*
-            And, separately, the fields the server could not confirm against
-            its cadastre.
-
-            Kept apart from `flags` deliberately: these name fields that *have*
-            a value. Folding them in would hide that value behind a reason box
-            and then send it back as an officer's flag, which the server honours
-            by blanking the field — the record would lose its رقم العقار as a
-            side effect of someone opening it to check.
-          */
-          unverified: unverifiedFromArray(form.flags ?? []),
-          personal: {
-            ...form.personal,
-            /**
-             * `isLebanese` is nullable in the database — a citizen created
-             * before the column existed, or by an import that skipped it —
-             * and `PersonalStep` reads any non-`false` value as لبناني. Left
-             * as null it renders the Lebanese branch, hides الجنسية, and then
-             * fails the save on `isLebanese: null` with a message about a
-             * question the form never asked. Resolving it here makes what is
-             * displayed and what is sent the same answer.
-             */
-            isLebanese: form.personal.isLebanese !== false,
-          },
-          contact: {
-            ...form.contact,
-            // Every text input reads its value as a string; a numeric value
-            // would render as an empty box and then fail validation as
-            // "required" on a field that was never blank.
-            actualHouseholdMembers:
-              text(form.contact.actualHouseholdMembers ?? form.contact.totalRegisteredMembers) ?? '',
-            totalRegisteredMembers:
-              text(form.contact.totalRegisteredMembers ?? form.contact.actualHouseholdMembers) ?? '',
-          },
-          properties:
-            form.properties.length > 0 ? form.properties.map(toDraft) : emptyCitizen().properties,
-        });
+        setInitial(toFormValues(form));
       } catch (caught) {
         if (cancelled) return;
         logApiError(caught);
