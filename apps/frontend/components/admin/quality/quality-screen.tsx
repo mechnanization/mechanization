@@ -49,7 +49,18 @@ export function QualityScreen({
   icon: LucideIcon;
   title: string;
   subtitle: string;
-  children: (context: { token: string; base: string; locale: string }) => React.ReactNode;
+  /**
+   * `role` rides along with the token because who is asking decides what a
+   * screen may *offer*, not only what it may read. «ملاحظات الجودة» is open to
+   * an auditor, while correcting a citizen's file is not — and a screen that
+   * cannot tell the two apart draws an «تعديل» button the endpoint will refuse.
+   */
+  children: (context: {
+    token: string;
+    base: string;
+    locale: string;
+    role: string;
+  }) => React.ReactNode;
 }): React.JSX.Element {
   const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
@@ -88,7 +99,7 @@ export function QualityScreen({
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader icon={icon} title={title} subtitle={subtitle} />
-      {children({ token, base, locale })}
+      {children({ token, base, locale, role: user.role })}
     </div>
   );
 }

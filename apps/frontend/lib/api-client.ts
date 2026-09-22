@@ -2588,6 +2588,16 @@ export interface CitizenWriteInput {
    */
   flags?: FieldFlag[];
   /**
+   * «ملاحظات» on the registration this submission writes.
+   *
+   * Stated here because a save *replaces* the note rather than merging it, so
+   * anything editing a record outside the full form has to carry the stored one
+   * back or silently delete what the last visit wrote. `CitizenForm` has always
+   * sent it; it reached the wire through a spread, which is why the field was
+   * missing from the type for so long.
+   */
+  notes?: string;
+  /**
    * The browser's own id for this submission, sent only when it was queued
    * offline. It is what lets a retry after a lost response be recognised
    * rather than registering the household a second time.
