@@ -1,9 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { PARCEL_REPOSITORY } from '../../../domain/interfaces/base-repository.interface';
+import {
+  CADASTRE_STORAGE_SERVICE,
+  PARCEL_REPOSITORY,
+} from '../../../domain/interfaces/base-repository.interface';
+import type { CadastreStorage } from '../../../domain/interfaces/cadastre-storage.interface';
 import type { ParcelRepository } from '../../../domain/interfaces/parcel-repository.interface';
 import { ValidationError } from '../../common/exceptions';
-import { CadastreStorageService } from '../../../infrastructure/cadastre/cadastre-storage.service';
 import { buildCadastreGeometryAssets } from '../../../infrastructure/cadastre/parcel-geometry';
 
 /** Six decimal places is ~0.11m at this latitude — finer than any survey's own
@@ -45,7 +48,7 @@ export interface CadastreImportResult {
 export class CadastreImportService {
   constructor(
     @Inject(PARCEL_REPOSITORY) private readonly parcels: ParcelRepository,
-    private readonly storage: CadastreStorageService,
+    @Inject(CADASTRE_STORAGE_SERVICE) private readonly storage: CadastreStorage,
     private readonly events: EventEmitter2,
   ) {}
 

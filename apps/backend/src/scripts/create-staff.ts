@@ -23,7 +23,6 @@
  */
 import * as bcrypt from 'bcrypt';
 import { authenticator } from 'otplib';
-import { createClient } from '@supabase/supabase-js';
 import { PrismaClient as RegistryPrismaClient } from '../generated/registry-client';
 import { PrismaClient as TenantPrismaClient } from '../generated/tenant-client';
 import { TenantSlug } from '../domain/value-objects/tenant-slug.vo';
@@ -102,60 +101,6 @@ function tenantClient(schemaName: string): TenantPrismaClient {
   return new TenantPrismaClient({ datasources: { db: { url: url.toString() } } });
 }
 
-/**
- * Mirrors the account into Supabase Auth, which is what actually checks the
- * password at login. Failing here is fatal rather than swallowed: an account
- * that exists in the tenant schema but not in Supabase cannot sign in, and
- * discovering that at the counter is worse than discovering it now.
- */
-async function syncToSupabase(input: {
-  email: string;
-  password: string;
-  tenantSlug: string;
-  role: Role;
-  firstName: string;
-  lastName: string;
-}): Promise<void> {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
-    throw new Error(
-      'SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set — the password is checked by Supabase Auth',
-    );
-  }
-
-  const supabase = createClient(url, key, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-
-  const metadata = {
-    firstName: input.firstName,
-    lastName: input.lastName,
-    role: input.role,
-    tenantSlug: input.tenantSlug,
-  };
-
-  const { error } = await supabase.auth.admin.createUser({
-    email: input.email,
-    password: input.password,
-    email_confirm: true,
-    user_metadata: metadata,
-  });
-
-  if (!error) return;
-
-  // Already present: reset the password and metadata so the printed credentials
-  // are the ones that work.
-  const { data } = await supabase.auth.admin.listUsers();
-  const existing = data?.users.find((u) => u.email?.toLowerCase() === input.email);
-  if (!existing) throw new Error(`Supabase createUser failed: ${error.message}`);
-
-  const { error: updateError } = await supabase.auth.admin.updateUserById(existing.id, {
-    password: input.password,
-    user_metadata: metadata,
-  });
-  if (updateError) throw new Error(`Supabase updateUser failed: ${updateError.message}`);
-}
 
 export async function createStaff(args: Args): Promise<void> {
   const slug = TenantSlug.parse(args.slug);
@@ -217,15 +162,6 @@ export async function createStaff(args: Args): Promise<void> {
           lastName: args.lastName!,
           ...(secret ? { totpSecret: secret, totpConfirmedAt: new Date() } : {}),
         },
-      });
-
-      await syncToSupabase({
-        email: args.email,
-        password: args.password!,
-        tenantSlug: slug.value,
-        role: args.role,
-        firstName: args.firstName!,
-        lastName: args.lastName!,
       });
 
       report(args.email, secret, slug.value, args.role);
