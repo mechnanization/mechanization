@@ -1902,6 +1902,23 @@ export interface AfterTenancyAnswer {
   vacancyNotes?: string;
 }
 
+/**
+ * What «إنهاء الملكية» changed — the spell always, and what the flat says now
+ * when that spell was the last one standing on it.
+ *
+ * Every field but the first is optional on the wire: a server from before the
+ * unit was asked about at all answers with the flag alone, and the toast then
+ * says only what it can vouch for.
+ */
+export interface OwnerSpellEnded {
+  ownerSpellEnded: true;
+  statusApplied?: AfterTenancyStatus | null;
+  vacanciesConfirmed?: number;
+  casesOpened?: number;
+  /** «مشغولة من المالك» or «مسكن موسمي» stood on the unit and no longer does. */
+  statusCleared?: boolean;
+}
+
 /** What ending a tenancy changed. */
 export interface EndTenancyResult {
   occupanciesEnded: number;
@@ -1929,7 +1946,7 @@ export async function endOccupancy(
   input: { reason: OccupancyEndReason; toDate?: string } & AfterTenancyAnswer,
 ) {
   const { toDate, ...rest } = input;
-  const result = await apiFetch<EndTenancyResult | { ownerSpellEnded: true }>(
+  const result = await apiFetch<EndTenancyResult | OwnerSpellEnded>(
     tenant,
     `/buildings/occupancies/${encodeURIComponent(occupancyId)}/end`,
     {
