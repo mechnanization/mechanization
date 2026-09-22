@@ -33,6 +33,7 @@ import {
   cellBadge,
   floorLabel,
   groupUnitsByFloor,
+  unitOwners,
   withDeclaredBasements,
 } from '@/components/admin/building-unit-forms';
 import { Badge } from '@/components/ui/badge';
@@ -529,6 +530,109 @@ export function BuildingUnitPicker({
     () => new Set((draft.units ?? []).map((unit) => unit.unitId).filter(Boolean) as string[]),
     [draft.units],
   );
+
+  /**
+   * «اسم المالك» و«هاتف المالك», stated from the register when the flat this
+   * card names has exactly one recorded owner.
+   *
+   * The gap this closes is the one the matrix closed on its own side and left
+   * open here. A cell reading «مؤجرة — المستأجر غير مسجَّل» carries the owner
+   * on its second line, and «ملف جديد» beside it opens this form on that very
+   * flat — where the officer was then asked to retype the name they had just
+   * read and to produce a number the register is already holding. Both are
+   * required of a مستأجر (`occupancyBranch`), answered from memory at a
+   * doorstep. 2026-09-15 is the bill for that: one owner named on five cards in
+   * three spellings, four left unlinked and the fifth linked through a
+   * relative's number.
+   *
+   * The rule is the add-person form's, deliberately the same one: **one**
+   * recorded owner is stated, co-owners are left unanswered. Which co-owner a
+   * tenant deals with is exactly the question, and a preselected answer to it
+   * is indistinguishable from an answered one.
+   *
+   * Nothing here links. `landlordCitizenId` is an *agreement*, and the only
+   * thing that ever writes that column is `LandlordLinkService.confirm`, which
+   * re-derives the match from the committed card and runs every block over it.
+   * On screen it is the register's answer, locked, with «ليس المالك — تغيير»
+   * beside it.
+   */
+  const ownerToState = useMemo(() => {
+    if (!detail) return null;
+    // An owner's card names no landlord but the person filing it, and the
+    // fields are not rendered on one.
+    if (draft.occupancyType !== 'TENANT' && draft.occupancyType !== 'FREE_OCCUPANT') return null;
+
+    /*
+      A مبنى states the owner of the flats it ticks. A منزل ticks nothing —
+      `CensusSyncService` infers its unit — so it reads that unit, and only
+      where the structure really has exactly one, which is the same condition
+      the sync applies before inferring anything.
+    */
+    const named =
+      draft.propertyType === 'BUILDING'
+        ? detail.units.filter((unit) => linkedUnitIds.has(unit.id))
+        : detail.units.length === 1
+          ? detail.units
+          : [];
+
+    const owners = new Map<string, { name: string | null; phone: string | null }>();
+    for (const unit of named) {
+      // `unitOwners` rather than a second copy of "current, and OWNER" — the
+      // matrix's own definition of who owns a flat is the one being read.
+      for (const owner of unitOwners(unit)) {
+        owners.set(owner.citizenId, { name: owner.citizenName, phone: owner.citizenPhone ?? null });
+      }
+    }
+    if (owners.size !== 1) return null;
+
+    const [ownerId, owner] = [...owners.entries()][0]!;
+    // Renting from yourself is what the schema and `confirm` both refuse.
+    if (citizenId && ownerId === citizenId) return null;
+
+    /*
+      Both halves or neither.
+
+      A مستأجر card requires the number, and the registration path applies the
+      agreement only where the card carries the pair (`landlordClaimsQuietly`).
+      Stating the name against a blank, required number would lock the name,
+      leave the card invalid, and then unlock it the moment the officer typed a
+      number — because typing one withdraws the agreement made about the old
+      one. An owner the register holds no number for is left to «روابط
+      المالكين», which matches on the name.
+    */
+    const name = owner.name?.trim();
+    const phone = owner.phone?.trim();
+    if (!name || !phone) return null;
+    return { citizenId: ownerId, name, phone };
+  }, [detail, draft.occupancyType, draft.propertyType, linkedUnitIds, citizenId]);
+
+  useEffect(() => {
+    if (!ownerToState) return;
+    onChange((current) => {
+      /*
+        A blank is filled; an answer is never overwritten. A standing link, an
+        agreement already made, and anything typed into either field all stand
+        — and the *phone* counts as an answer, which is what stops «ليس المالك
+        — تغيير» from being undone by this effect on the very next render.
+      */
+      if (current.landlordLink || current.landlordCitizenId) return current;
+      if (current.landlordName?.trim() || current.landlordPhone?.trim()) return current;
+      return {
+        ...current,
+        landlordCitizenId: ownerToState.citizenId,
+        /*
+          The registered name, shown in place of the tenant's own words — which
+          stay empty, so withdrawing the agreement hands back a blank field
+          rather than a name nobody said. Exactly what `LandlordMatchHint`
+          writes when «نعم، هو المالك» is pressed.
+        */
+        landlordAgreedName: ownerToState.name,
+        landlordPhone: ownerToState.phone,
+      };
+    });
+    // `onChange` is a fresh closure each render; see the effects above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownerToState?.citizenId, ownerToState?.name, ownerToState?.phone]);
 
   /**
    * The matrix drawn the way the building sheet draws it — floors top-down,
