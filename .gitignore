@@ -21,6 +21,24 @@ apps/*/coverage/
 !.env.example
 !.env.*.example
 
+# Backup encryption keys — the other half of the credentials above, and the
+# one with no way back.
+#
+# `age` encrypts the nightly production dump to a public key. Only the matching
+# AGE-SECRET-KEY can read it, and there is no recovery path: lose the secret
+# and every backup ever taken becomes permanently unreadable, while committing
+# it hands whoever clones this repository every citizen record the backups
+# hold. Both failures are silent until the day of a restore.
+#
+# Added because a `backup-key.txt` holding an AGE-SECRET-KEY was sitting
+# untracked in the repository root, one `git add -A` from being pushed.
+# The secret key belongs in a password manager, offline, and *not* in the same
+# place as the dumps it decrypts.
+backup-key.txt
+*.age
+*.agekey
+age-key*.txt
+
 # Generated Prisma clients — two of them, one per schema kind. Regenerate with
 # `pnpm db:generate`; they are build output, not source.
 apps/backend/src/generated/

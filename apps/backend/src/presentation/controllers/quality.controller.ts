@@ -16,6 +16,7 @@ import {
 import { z } from 'zod';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { ValidationError } from '../../application/common/exceptions';
+import { requireDate } from './query-params';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { DataQualityService } from '../../application/features/quality/data-quality.service';
 import {
@@ -40,13 +41,6 @@ function optionalUuid(value: string | undefined, name: string): string | undefin
   if (!value) return undefined;
   if (!UUID.test(value)) throw new ValidationError(`${name} غير صالح`);
   return value;
-}
-
-function optionalDate(value: string | undefined): Date | undefined {
-  if (!value) return undefined;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw new ValidationError('تاريخ غير صالح');
-  return date;
 }
 
 /**
@@ -160,8 +154,8 @@ export class QualityController {
     const reviewer = (REVIEWER_ROLES as readonly string[]).includes(user.role ?? '');
     return this.dataQuality.officerQuality({
       officerId: reviewer ? optionalUuid(officerId, 'الموظف') : user.sub,
-      from: optionalDate(from),
-      to: optionalDate(to),
+      from: requireDate(from),
+      to: requireDate(to),
     });
   }
 

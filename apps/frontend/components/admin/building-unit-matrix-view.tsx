@@ -50,8 +50,6 @@ import {
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatDate } from '@/lib/dates';
-import { ActivityTrail } from '@/components/admin/activity-trail';
-import { AUDIT_ENTITY } from '@/lib/audit-labels';
 import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -64,7 +62,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
-import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import {
   type EndOccupancyAnswer,
@@ -874,7 +872,7 @@ export function BuildingUnitMatrixView({
                     <SelectValue placeholder={en ? 'Unit type…' : 'نوع الوحدة…'} />
                   </SelectTrigger>
                   <SelectContent>
-                    {BUILDING_UNIT_TYPES.map((option) => (
+                    {MATRIX_UNIT_TYPES.map((option) => (
                       <SelectItem key={option} value={option}>
                         {labels.unitType[option]}
                       </SelectItem>
@@ -1365,15 +1363,21 @@ export function BuildingUnitMatrixView({
         </div>
       ) : null}
 
-      {/* «إنشاء مبنى», «تسجيل إشغال», «تعديل وحدة» — every step taken on this
-          building, by whom. Renders nothing for roles that may not read it. */}
-      <ActivityTrail
-        tenant={tenant}
-        locale={locale}
-        base={base}
-        entityType={AUDIT_ENTITY.building}
-        entityId={buildingId}
-      />
+      {/*
+        «سجل الموظفين على هذا القيد» used to sit here.
+
+        Creating a building lands the officer on this page, and the first thing
+        under their new record was a panel telling them they had just created
+        it — the one moment the trail has nothing to say that the person
+        reading it does not already know. It also only ever rendered for
+        SUPER_ADMIN and AUDITOR, so for everyone else it was a request that
+        returned nothing on every visit.
+
+        The trail itself is not gone: «سجل النشاطات» filters to this building
+        by record type and date, and the citizen profile still carries its own
+        panel. Removed here rather than hidden behind a flag, because a flag
+        would keep firing the request.
+      */}
     </div>
   );
 }

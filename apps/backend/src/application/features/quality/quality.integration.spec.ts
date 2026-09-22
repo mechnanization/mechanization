@@ -64,7 +64,17 @@ describeIfDb('Quality review', () => {
     context = new TenantContextService();
     events = new EventEmitter2();
 
-    const cache = { get: async () => null, set: async () => undefined };
+    /*
+      Always a miss, so every assertion below reads the register rather than
+      whatever a previous case left behind. `DataQualityService` caches its
+      eight scans in production; a test that shared them could not tell a
+      finding that was fixed from one that was merely remembered.
+    */
+    const cache = {
+      get: async () => null,
+      set: async () => undefined,
+      invalidatePrefix: async () => undefined,
+    };
     audit = new AuditService(new PrismaAuditRepository(context), context, cache as never, { get: () => 0 } as never);
     events.on('building.changed', (payload) => audit.onBuildingChanged(payload));
     events.on('citizen.changed', (payload) => audit.onCitizenChanged(payload));
@@ -73,8 +83,8 @@ describeIfDb('Quality review', () => {
     const cases = new CasesService(new PrismaCaseRepository(context), {} as never, events);
     buildings = new BuildingsService(context, cases, events);
     const links = new LandlordLinkService(context, buildings, events);
-    reviews = new RecordReviewService(context, events);
-    quality = new DataQualityService(context, links, events);
+    reviews = new RecordReviewService(context, events, cache as never, { get: () => 0 } as never);
+    quality = new DataQualityService(context, links, events, cache as never, { get: () => 0 } as never);
     events.on('citizen.changed', (payload) => reviews.onCitizenChanged(payload));
 
     for (const [key, first, role] of [
@@ -151,9 +161,28 @@ describeIfDb('Quality review', () => {
     ]);
     expect((await within(() => reviews.openReturnFor(citizenId)))?.reason).toBe('اسم الأم ناقص');
 
-    // The officer saves the record: the edit form's own event closes the return.
+    /*
+      A save that does not fill the gap leaves the return open.
+
+      This assertion used to be the opposite, and the fixture is why it is worth
+      keeping: the officer writes a note *saying* «أُضيف اسم الأم» and never
+      touches `motherName`. Any save by anyone closed every open return, so the
+      record came back marked corrected with the column still null and the
+      reviewer none the wiser.
+
+      `MOTHER_NAME` is one of the flags that can be checked against the row, so
+      it now is. The categorical flags — PROPERTY, OTHER — cannot be, and keep
+      the old behaviour deliberately; see docs/open-decisions.md §14.
+    */
     await within(async () => {
       await db.registration.update({ where: { id: registrationId }, data: { notes: 'أُضيف اسم الأم' } });
+      await reviews.onCitizenChanged({ citizenId, action: 'CITIZEN_UPDATED', actorId: staff.jawad });
+    });
+    expect((await within(() => reviews.openReturnFor(citizenId)))?.reason).toBe('اسم الأم ناقص');
+
+    // The officer actually fills it in. Now the return closes.
+    await within(async () => {
+      await db.user.update({ where: { id: citizenId }, data: { motherName: 'سعاد' } });
       await reviews.onCitizenChanged({ citizenId, action: 'CITIZEN_UPDATED', actorId: staff.jawad });
     });
     const corrected = await within(() => reviews.queue({ states: ['CORRECTED'], officerId: staff.jawad }));

@@ -6,6 +6,7 @@ import {
   propertyTypeSchema,
   unitStatusSchema,
   unitTypeSchema,
+  isStructuralUnitType,
   type PropertyType,
 } from './enums';
 import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
@@ -243,7 +244,26 @@ export const buildingUnitSchema = z.object({
    * surveyed — and that is permanent rather than transitional.
    */
   unitId: uuid.optional(),
-  unitType: unitTypeSchema,
+  /**
+   * Narrowed against `unitTypeSchema`, which is the whole enum.
+   *
+   * A طابق أعمدة or a طابق فارغ is a level of the structure, not a space
+   * anyone holds, so it belongs on the matrix and cannot appear on a card: a
+   * citizen's card is by construction a claim that somebody occupies or owns
+   * the thing it names.
+   *
+   * Refused here rather than only hidden from the form, for the reason
+   * `assertNonResidentOccupancy` gives about its own rule — a rule enforced on
+   * one side only makes the other side the way round it. The form's list is
+   * `BUILDING_UNIT_TYPES`, which never carried this value; the doors that do
+   * not read that list are the CSV import, the offline queue replaying a
+   * submission built by an older client, and anything posting to the API
+   * directly. This is what those meet.
+   */
+  unitType: unitTypeSchema.refine(
+    (type) => !isStructuralUnitType(type),
+    'هذا طابق من البناء وليس وحدة تُسجَّل على ملف — يُرسم في مصفوفة المبنى فقط',
+  ),
   floor: z.string({ required_error: 'الطابق مطلوب' }).trim().min(1, 'الطابق مطلوب').max(20),
   side: z.string().trim().max(60).optional(),
   unitArea: areaField,

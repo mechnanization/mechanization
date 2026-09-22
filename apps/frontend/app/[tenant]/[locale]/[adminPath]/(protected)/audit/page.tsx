@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronLeft, ChevronRight, History, ShieldCheck, X } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, History, ListTree, ShieldCheck, X } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import { getAuditFacets, getAuditLog, type AuditEntry, type Session } from '@/lib/api-client';
 import { auditEntityLabel } from '@/lib/audit-labels';
@@ -10,8 +10,10 @@ import { AUDIT_FAMILIES, auditFamilyOf } from '@/lib/audit-describe';
 import { formatMonth } from '@/lib/dates';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { AuditDaily } from '@/components/admin/audit-daily';
 import { AuditEntryItem } from '@/components/admin/audit-entry';
 import { Button } from '@/components/ui/button';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { PageHeader } from '@/components/ui/page-header';
@@ -49,6 +51,15 @@ export default function AuditTrailPage({
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [page, setPage] = useState(0);
+  /*
+    Two readings of the same filtered trail.
+
+    «التقرير اليومي» answers «who was working, and on what» — a row per person
+    per day, with the day openable underneath. «مفصّل» is the entry-by-entry
+    timeline, which is what you want once you know which day to look at. The
+    filters below belong to both, so switching never loses the narrowing.
+  */
+  const [view, setView] = useState<'daily' | 'detailed'>('daily');
 
   useEffect(() => {
     const existing = loadSession(tenant);
@@ -106,7 +117,9 @@ export default function AuditTrailPage({
       ),
     tenant,
     base,
-    token: session?.accessToken ?? null,
+    // `null` is how `useStaffQuery` is told not to run: the summary view has no
+    // use for the entry list, and fetching both would double every filter change.
+    token: view === 'detailed' ? (session?.accessToken ?? null) : null,
     errorMessage: en ? 'Failed to load the audit trail.' : 'تعذّر تحميل سجل النشاطات.',
     keepPrevious: true,
   });
@@ -225,6 +238,37 @@ export default function AuditTrailPage({
         </Button>
       </section>
 
+      <SegmentedControl
+        className="sm:inline-flex sm:w-auto"
+        fullWidth={false}
+        value={view}
+        onChange={(value) => {
+          setView(value as 'daily' | 'detailed');
+          setPage(0);
+        }}
+        aria-label={en ? 'How to read the log' : 'طريقة عرض السجل'}
+        options={[
+          { value: 'daily', label: en ? 'Daily report' : 'التقرير اليومي', icon: CalendarDays },
+          { value: 'detailed', label: en ? 'Detailed' : 'مفصّل', icon: ListTree },
+        ]}
+      />
+
+      {view === 'daily' ? (
+        <AuditDaily
+          tenant={tenant}
+          base={base}
+          locale={locale}
+          token={session.accessToken}
+          filter={{
+            actorId: actorId || undefined,
+            entityType: entityType || undefined,
+            actions: familyActions,
+            from: from ? new Date(`${from}T00:00:00`).toISOString() : undefined,
+            to: to ? new Date(`${to}T23:59:59.999`).toISOString() : undefined,
+          }}
+        />
+      ) : (
+      <>
       <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground" aria-live="polite">
         <span className="flex items-center gap-1.5">
           <History className="size-4" aria-hidden />
@@ -321,6 +365,8 @@ export default function AuditTrailPage({
           </Button>
         </nav>
       ) : null}
+      </>
+      )}
     </div>
   );
 }

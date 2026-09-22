@@ -106,6 +106,84 @@ function partEdits(a: string, b: string): number | null {
   return distance <= 1 ? distance : null;
 }
 
+/** Whether two single parts are the same one — `partEdits`' rule, without the count. */
+function samePart(a: string, b: string): boolean {
+  return partEdits(a, b) !== null;
+}
+
+/**
+ * One name split into folded parts: «نوال محمود شعبان» → [نوال, محمود, شعبان].
+ *
+ * Folded first and split second, because the fold is what decides where the
+ * parts are: `normalizeSearchText` turns every separator — a hyphen, a comma,
+ * a double space — into one space, so «منيرة-عواضة» splits into the same two
+ * parts as «منيرة عواضة» rather than staying one. Splitting first left the
+ * two sides of a comparison cut in different places, which is the one thing
+ * a part-by-part rule cannot survive.
+ */
+function nameParts(value: string | null | undefined): string[] {
+  return value ? normalizeSearchText(value).split(' ').filter(Boolean) : [];
+}
+
+/** Whether every part of the shorter name appears in the longer, in order. */
+function isSubsequence(shorter: readonly string[], longer: readonly string[]): boolean {
+  let index = 0;
+  for (const part of longer) {
+    if (index < shorter.length && samePart(shorter[index]!, part)) index += 1;
+  }
+  return index === shorter.length;
+}
+
+/** The same woman, a different one, or unknown where one side has no mother on file. */
+export type MotherMatch = 'SAME' | 'DIFFERENT' | 'UNKNOWN';
+
+/**
+ * Whether two records name the same mother.
+ *
+ * This is the one signal that *stops* the duplicate question being asked, so
+ * reading it wrong is expensive in a way the others are not: a wrong SAME costs
+ * one question somebody answers in a second, a wrong DIFFERENT costs the
+ * question altogether and the duplicate lands.
+ *
+ * Compared part by part rather than as one string, because the same woman is
+ * routinely written at two lengths — «منيرة عواضة» at one door and «منيرة
+ * ابراهيم عواضة» at the next, her father's name included or left out. As single
+ * strings those are seven edits apart and read as two women. Production
+ * 2026-09-19: «سمير عبد الكريم عواضة» and «سمير عبد المريم عواضة», one phone,
+ * one officer, three minutes apart, never asked about because their one mother
+ * was written both ways; «تهاني محمد مرزوق» and «…مرزوء» the same afternoon, on
+ * «نوال شعبان» and «نوال محمود شعبان».
+ *
+ * So a name that is the other with parts left out is the same woman: her own
+ * name and her family name agree, and everything the shorter says the longer
+ * says too, in order. A part the other contradicts is a different woman, and
+ * that still ends the matter.
+ *
+ * A single part on one side (just «فاطمة», or just «دياب») is matched against
+ * any part of the other, because it asserts too little to refuse on.
+ */
+export function compareMothers(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): MotherMatch {
+  const left = nameParts(a);
+  const right = nameParts(b);
+  if (!left.length || !right.length) return 'UNKNOWN';
+
+  /*
+    The whole folded string a slip apart — «زينب سعد»/«زينب سعيد», where the
+    typo falls in a part too short to be allowed one of its own.
+  */
+  if (editDistance(left.join(''), right.join('')) <= 1) return 'SAME';
+
+  const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+  if (shorter.length > 1) {
+    if (!samePart(shorter[0]!, longer[0]!)) return 'DIFFERENT';
+    if (!samePart(shorter[shorter.length - 1]!, longer[longer.length - 1]!)) return 'DIFFERENT';
+  }
+  return isSubsequence(shorter, longer) ? 'SAME' : 'DIFFERENT';
+}
+
 /**
  * How two names compare, and whether the middle name took part.
  *
@@ -151,24 +229,18 @@ export function duplicateSignals(incoming: PersonKey, existing: PersonKey): Dupl
   const theirs = numbers(existing);
   const samePhone = [...numbers(incoming)].some((number) => theirs.has(number));
 
-  const motherA = foldNamePart(incoming.motherName);
-  const motherB = foldNamePart(existing.motherName);
-  const bothMothers = Boolean(motherA && motherB);
   /*
-    A typo in the mother's name is not a different mother. Compared on the whole
-    folded string with the same one-slip allowance a name part gets, so
-    «نظميه سرور» and «نظمية سرور» (already equal after the fold) and
-    «فاطمه دياب»/«فاطة دياب» read as one woman.
+    A typo in the mother's name is not a different mother, and neither is the
+    same woman written at two lengths. See `compareMothers`.
   */
-  const motherEdits = bothMothers ? editDistance(motherA, motherB) : null;
-  const sameMother = motherEdits !== null && motherEdits <= 1;
+  const mother = compareMothers(incoming.motherName, existing.motherName);
 
   return {
     name: match,
     middleCompared,
     samePhone,
-    sameMother,
-    motherDiffers: motherEdits !== null && motherEdits > 1,
+    sameMother: mother === 'SAME',
+    motherDiffers: mother === 'DIFFERENT',
   };
 }
 

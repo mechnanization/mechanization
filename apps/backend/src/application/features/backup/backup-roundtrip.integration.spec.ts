@@ -24,7 +24,7 @@ import { BackupService } from './backup.service';
  *
  * Set `TEST_DATABASE_URL` to run it. CI always does; locally:
  *   docker run -d --name mech-test-pg -e POSTGRES_PASSWORD=test \
- *     -e POSTGRES_USER=test -e POSTGRES_DB=test -p 55432:5432 postgres:16-alpine
+ *     -e POSTGRES_USER=test -e POSTGRES_DB=test -p 55432:5432 postgres:17-alpine
  *   TEST_DATABASE_URL=postgresql://test:test@localhost:55432/test pnpm test
  */
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;

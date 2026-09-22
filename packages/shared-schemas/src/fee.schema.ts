@@ -94,6 +94,21 @@ export const FEE_TARGET_CATEGORY = [
      `matchesCategory` compares a category to `unit.unitType` directly, so a
      unit type with no category here is one no per-category fee can reach. */
   'GARAGE',
+  /*
+    `UNIT_TYPE.PILOTIS` is deliberately **not** here, and this note exists
+    because the comment above says the two lists have to move together.
+
+    They do, for every value that names premises. A طابق أعمدة names none: it
+    is the open level a block stands on, it can hold no occupant (see
+    `isStructuralUnitType`), and a fee is owed by somebody for something. Adding
+    it would create a category that resolves to rows no notice can lawfully be
+    addressed to — the failure mode being a municipality that aims a fee at
+    «طوابق الأعمدة», matches every pilotis in town, and finds no one to bill.
+
+    So the invariant is narrower than «every unit type appears here»: every
+    *occupiable* unit type does. A new structural type belongs in
+    `STRUCTURAL_UNIT_TYPE` and out of this list, for the same reason.
+  */
 ] as const;
 export const feeTargetCategorySchema = z.enum(FEE_TARGET_CATEGORY);
 export type FeeTargetCategory = (typeof FEE_TARGET_CATEGORY)[number];

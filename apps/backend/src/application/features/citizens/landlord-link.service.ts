@@ -10,6 +10,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../../../domain/e
 import { BuildingsService } from '../buildings/buildings.service';
 import type { FileLinkResult } from '../buildings/building.types';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
+import { cardClaiming } from '../../../domain/entities/census-claim';
 import { foldNamePart } from './possible-duplicates';
 
 /**
@@ -1125,7 +1126,14 @@ export class LandlordLinkService {
 
   /**
    * The current tenancy card that carries this spell's flat — the same claim
-   * shapes the census reads, itemised row first.
+   * `claimOnFile` makes, read through the same rule.
+   *
+   * It has to be the same rule and not a second copy of it. This is called
+   * immediately after `ensureOnFile` to pick up the card it just filed, and a
+   * reader that recognised fewer shapes than the filer answered «nothing on
+   * their file claims this flat» about a card `ensureOnFile` had reported as
+   * `ALREADY_CLAIMED` — and the link died on «تعذّر إيجاد بطاقة المستأجر» with
+   * nothing wrong and nothing a refresh would fix.
    */
   private async tenancyCardFor(spell: {
     unitId: string;
@@ -1133,7 +1141,7 @@ export class LandlordLinkService {
     role: string;
     unit: { buildingId: string };
   }) {
-    const [cards, unitsInBuilding] = await Promise.all([
+    const [cards, spellsHere] = await Promise.all([
       this.db.propertyEntry.findMany({
         where: {
           buildingId: spell.unit.buildingId,
@@ -1156,17 +1164,17 @@ export class LandlordLinkService {
           },
         },
       }),
-      this.db.unit.count({ where: { buildingId: spell.unit.buildingId } }),
+      this.db.unitOccupancy.findMany({
+        where: {
+          citizenId: spell.citizenId,
+          toDate: null,
+          unit: { buildingId: spell.unit.buildingId },
+        },
+        select: { unitId: true, role: true },
+      }),
     ]);
 
-    const named = (card: (typeof cards)[number]) => card.units.some((row) => row.unitId === spell.unitId);
-    return (
-      cards.find((card) => card.occupancyType === spell.role && named(card)) ??
-      cards.find(named) ??
-      cards.find((card) => card.propertyType === 'HOUSE' && unitsInBuilding === 1) ??
-      cards.find((card) => card.propertyType === 'BUILDING' && card.units.length === 0) ??
-      null
-    );
+    return cardClaiming(cards, spellsHere, spell.unitId, spell.role) ?? null;
   }
 
   /**

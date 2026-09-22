@@ -1,5 +1,6 @@
 import { randomInt } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
   QUALITY_CHECK_ROLES,
@@ -10,6 +11,7 @@ import {
   type ReturnRecordInput,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
+import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
@@ -53,6 +55,19 @@ const canCheck = (role: string | null | undefined): boolean =>
 
 const MAX_PAGE = 100;
 
+/**
+ * One page of the queue, named so it can be cached.
+ *
+ * Derived from `hydrate` rather than written out: the card carries eighteen
+ * fields across four joins, and a hand-kept copy of that shape is a copy that
+ * drifts the first time a column is added to the card.
+ */
+export interface QueuePage {
+  items: Array<Awaited<ReturnType<RecordReviewService['hydrate']>>[number] & { state: ReviewState }>;
+  total: number;
+  counts: Record<ReviewState, number>;
+}
+
 const fullName = (row: { firstName: string; middleName?: string | null; lastName: string }) =>
   [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' ');
 
@@ -79,6 +94,8 @@ export class RecordReviewService {
   constructor(
     private readonly tenantContext: TenantContextService,
     private readonly events: EventEmitter2,
+    private readonly cache: RedisCacheService,
+    private readonly config: ConfigService,
   ) {}
 
   private get db() {
@@ -87,6 +104,48 @@ export class RecordReviewService {
 
   private get S() {
     return tenantSchemaRef(this.tenantContext.schemaName);
+  }
+
+  private queuePrefix(slug = this.tenantContext.tenantSlug): string {
+    return `quality:${slug}:queue:`;
+  }
+
+  /** Shares `QUALITY_CACHE_TTL_SECONDS`; zero or less turns caching off. */
+  private ttl(): number {
+    return this.config.get<number>('QUALITY_CACHE_TTL_SECONDS') ?? 180;
+  }
+
+  /**
+   * Clears the cached queue.
+   *
+   * Driven by events rather than by a short TTL, because this list is an action
+   * surface: a reviewer approves a record and the next thing they look at is
+   * the list it should have left. The three events below are every way a row's
+   * state can move — a decision, an officer's correcting edit, and a new
+   * filing — so the TTL is only a backstop for a write this process did not
+   * see.
+   *
+   * From inside a transaction, cleared once it commits. Cleared before, a
+   * concurrent read re-caches the queue the decision is about to change and
+   * serves it for the whole TTL — see `ReportingService`, which states the
+   * rule, and `DataQualityService.invalidate`, which follows it.
+   */
+  @OnEvent('quality.changed')
+  @OnEvent('citizen.changed')
+  @OnEvent('registration.submitted')
+  async onQueueChanged(): Promise<void> {
+    const scope = this.tenantContext.peek();
+    if (!scope?.tenantSlug) return;
+    const prefix = this.queuePrefix(scope.tenantSlug);
+    try {
+      if (scope.transaction) {
+        scope.transaction.afterCommit.push(() => this.cache.invalidatePrefix(prefix));
+        return;
+      }
+      await this.cache.invalidatePrefix(prefix);
+    } catch {
+      // A queue that lingers until the TTL is not worth failing a write over.
+    }
   }
 
   // ─────────────────────────────  The queue  ─────────────────────────────
@@ -105,6 +164,30 @@ export class RecordReviewService {
     const limit = Math.min(Math.max(filter.limit ?? 20, 1), MAX_PAGE);
     const offset = Math.max(filter.offset ?? 0, 0);
     const S = this.S;
+
+    /*
+      Cached because the `classified` CTE below is evaluated twice per call —
+      once for the page, once for the per-state counts the tabs show — and each
+      pass is a `DISTINCT ON` over every registration with a LATERAL lookup of
+      its newest review. Paging back and forth, or switching tabs and back,
+      used to repeat both. `onQueueChanged` clears this on any decision, edit
+      or new filing, so what is being traded away is only the seconds between
+      another clerk's write and this reader's next request.
+    */
+    const ttl = this.ttl();
+    const cacheKey =
+      this.queuePrefix() +
+      [
+        [...filter.states].join('|'),
+        filter.officerId ?? 'ALL',
+        filter.flaggedOnly ? 'FLAGGED' : 'ALL',
+        limit,
+        offset,
+      ].join(':');
+    if (ttl > 0) {
+      const cached = await this.cache.get<QueuePage>(cacheKey);
+      if (cached) return cached;
+    }
 
     const narrow = Prisma.join(
       [
@@ -160,13 +243,16 @@ export class RecordReviewService {
     const stateById = new Map(page.map((row) => [row.id, row.state]));
     const items = await this.hydrate(page.map((row) => row.id));
 
-    return {
+    const result: QueuePage = {
       items: items.map((item) => ({ ...item, state: stateById.get(item.registrationId)! })),
       total: page[0]?.total ?? 0,
       counts: Object.fromEntries(
         REVIEW_STATES.map((state) => [state, counts.find((row) => row.state === state)?.count ?? 0]),
       ) as Record<ReviewState, number>,
     };
+
+    if (ttl > 0) await this.cache.set(cacheKey, result, ttl);
+    return result;
   }
 
   /** What a reviewer needs on one card to decide without opening the file. */
@@ -356,14 +442,80 @@ export class RecordReviewService {
         select: { id: true },
       });
       if (!latest) return;
-      const closed = await this.db.recordReview.updateMany({
+
+      const open = await this.db.recordReview.findMany({
         where: { registrationId: latest.id, outcome: 'RETURNED', resolvedAt: null },
+        select: { id: true, fields: true, reviewedById: true },
+      });
+      if (open.length === 0) return;
+
+      /*
+        A save used to close every open return unconditionally. Two things were
+        wrong with that, and only one of them is fully fixable here.
+
+        The fixable one: a return that named a *gap* was closed by a save that
+        did not fill it. «اسم الأم ناقص» was answered by an officer correcting a
+        phone number, and the record came back marked corrected with the mother
+        name still null. Those flags are checkable against the row, so they are
+        checked — a return naming MOTHER_NAME or PHONE stays open while that
+        column is still empty.
+
+        The one that is not: `REVIEW_FIELD` is a coarse vocabulary — PROPERTY
+        covers a whole card, OTHER covers prose a human typed. No mechanical
+        comparison can show that a save addressed «العنوان على الشارع الخطأ».
+        Those keep the old behaviour, deliberately, rather than being given a
+        check that looks like verification and is not. See
+        docs/open-decisions.md.
+      */
+      const citizen = await this.db.user.findUnique({
+        where: { id: payload.citizenId },
+        select: { motherName: true, phone: true },
+      });
+
+      const stillMissing = new Set<string>();
+      if (!citizen?.motherName?.trim()) stillMissing.add('MOTHER_NAME');
+      if (!citizen?.phone?.trim()) stillMissing.add('PHONE');
+
+      const resolvable = open.filter((review) => !review.fields.some((f) => stillMissing.has(f)));
+      if (resolvable.length === 0) return;
+
+      const closed = await this.db.recordReview.updateMany({
+        where: { id: { in: resolvable.map((review) => review.id) }, resolvedAt: null },
         data: { resolvedAt: new Date(), resolvedById: payload.actorId },
       });
-      if (closed.count > 0) {
-        const actor = await this.db.user.findUnique({ where: { id: payload.actorId }, select: { role: true } });
-        this.announce('RECORD_CORRECTED', payload.citizenId, { id: payload.actorId, role: actor?.role ?? '' }, {});
-      }
+      if (closed.count === 0) return;
+
+      const actor = await this.db.user.findUnique({
+        where: { id: payload.actorId },
+        select: { role: true },
+      });
+
+      /*
+        Who closed it matters as much as that it closed.
+
+        The fill-in-the-gaps dialog saves through `updateCitizen` like any other
+        edit, so a reviewer who fills a gap themselves triggers this handler
+        under their own id — and the record was then announced as
+        RECORD_CORRECTED, which reads as "the officer went back and fixed it".
+        Nobody went back. The audit trail now says which it was.
+      */
+      const selfResolved = resolvable.every((review) => review.reviewedById === payload.actorId);
+
+      this.announce(
+        'RECORD_CORRECTED',
+        payload.citizenId,
+        { id: payload.actorId, role: actor?.role ?? '' },
+        {
+          reviewsClosed: closed.count,
+          // The grounds, so an auto-close is legible in the trail rather than
+          // appearing as an unexplained state change.
+          fields: [...new Set(resolvable.flatMap((review) => review.fields))],
+          resolvedByReviewer: selfResolved,
+          ...(open.length > resolvable.length
+            ? { leftOpen: open.length - resolvable.length, leftOpenBecause: [...stillMissing] }
+            : {}),
+        },
+      );
     } catch {
       // The save already succeeded; a return left open is visible and can be
       // closed by saving again. Failing here must not look like a failed save.

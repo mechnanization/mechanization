@@ -8,7 +8,9 @@ import {
   OCCUPIABLE_LIFECYCLE,
   STRUCTURE_TYPE_MAP,
   contradictsVacancy,
+  getLabels,
   isDwellingUnitType,
+  isStructuralUnitType,
   isUnoccupied,
   SURVEYED_STATUS,
   unitStatusForRole,
@@ -28,6 +30,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { cardClaiming, takesAnotherFlat } from '../../../domain/entities/census-claim';
 import { CasesService } from '../cases/cases.service';
 import type {
   BuildingLedgerRow,
@@ -894,9 +897,10 @@ export class BuildingsService {
    * from, according to their own tenancy card — and whether that owner is an
    * owner of the flat. See `OccupancyOwnerLink`.
    *
-   * One read for the building. The card is found by the claim shapes
-   * `claimsBackingOccupancies` uses, itemised row first, because that is the
-   * card the flat is billed and ended through.
+   * One read for the building. The card is found by `claimsFlat` — the rule
+   * `claimOnFile` files by — because that is the card the flat is billed and
+   * ended through, and a column here saying «لا توجد بطاقة» about a card that
+   * exists sends an officer to file a second one.
    */
   private async occupancyOwnerLinks(
     buildingId: string,
@@ -928,6 +932,7 @@ export class BuildingsService {
       select: {
         id: true,
         propertyType: true,
+        occupancyType: true,
         landlordName: true,
         landlordCitizenId: true,
         landlordCitizen: { select: { firstName: true, middleName: true, lastName: true } },
@@ -935,6 +940,29 @@ export class BuildingsService {
         units: { where: { endedAt: null }, select: { unitId: true } },
       },
     });
+
+    /*
+      Each tenant's cards and current spells, grouped once rather than scanned
+      per flat. `claimsFlat` needs the spells because a card that names no flat
+      is read against what the census says they hold here — and every one of
+      them is already in `units`, so the grouping costs no read at all.
+    */
+    const cardsByCitizen = new Map<string, Array<(typeof cards)[number]>>();
+    for (const card of cards) {
+      const theirs = cardsByCitizen.get(card.registration.citizenId);
+      if (theirs) theirs.push(card);
+      else cardsByCitizen.set(card.registration.citizenId, [card]);
+    }
+    const spellsByCitizen = new Map<string, Array<{ unitId: string; role: string }>>();
+    for (const unit of units) {
+      for (const row of unit.occupancies) {
+        if (row.toDate !== null) continue;
+        const theirs = spellsByCitizen.get(row.citizenId);
+        const spell = { unitId: unit.id, role: row.role };
+        if (theirs) theirs.push(spell);
+        else spellsByCitizen.set(row.citizenId, [spell]);
+      }
+    }
 
     for (const unit of units) {
       const owners = new Set(
@@ -944,11 +972,13 @@ export class BuildingsService {
       );
       for (const spell of unit.occupancies) {
         if (spell.toDate !== null || spell.role === 'OWNER') continue;
-        const theirs = cards.filter((card) => card.registration.citizenId === spell.citizenId);
-        const card =
-          theirs.find((entry) => entry.units.some((row) => row.unitId === unit.id)) ??
-          theirs.find((entry) => entry.propertyType === 'HOUSE' && units.length === 1) ??
-          theirs.find((entry) => entry.propertyType === 'BUILDING' && entry.units.length === 0);
+        const theirs = cardsByCitizen.get(spell.citizenId) ?? [];
+        const card = cardClaiming(
+          theirs,
+          spellsByCitizen.get(spell.citizenId) ?? [],
+          unit.id,
+          spell.role,
+        );
 
         links.set(`${unit.id}:${spell.citizenId}`, {
           state: !card
@@ -2021,6 +2051,89 @@ export class BuildingsService {
       await this.assertMayBeCalledEmpty(before);
     }
 
+    /*
+      Retyping a real unit into «طابق أعمدة».
+
+      The correction this exists to allow is the common one: a block painted
+      مستودع before this type existed, which is what the grid offered for a
+      column floor. The correction it must refuse is the same edit made on a
+      flat somebody is recorded in — that would leave `unit_occupancies` rows
+      hanging off a unit the two occupancy doors would now refuse to create,
+      and nothing would ever revisit them. Billing would go on reading the
+      cards those rows produced.
+
+      Refused rather than cascaded into ending the spells, for the reason
+      `assertMayBeCalledEmpty` gives about the same choice: «this level is
+      columns» and «these people live here» are opposite statements about
+      people, and only the officer knows which is true.
+
+      Historical spells are left alone and counted as no obstacle — a flat that
+      was let until it was demolished into a car park is exactly the history D2
+      keeps, and refusing on it would make the correction impossible rather than
+      careful.
+    */
+    const becomingStructural =
+      input.unitType !== undefined &&
+      isStructuralUnitType(input.unitType) &&
+      !isStructuralUnitType(before.unitType);
+
+    if (becomingStructural) {
+      /*
+        Two tables, not one.
+
+        `unit_occupancies` is the obvious one, and counting it alone was the
+        original guard. But a citizen's property card links to this same unit
+        through `building_units.unitId`, and that link is what *billing* reads:
+        `billableUnits` flattens the card's rows and `preferLinked` takes the
+        census unit's type over the card's. So the row this guard is meant to
+        protect against can exist with no occupancy at all.
+
+        The census sync creates exactly that state on purpose — it skips a
+        structural unit with a warning and deliberately leaves the card link in
+        place — so the state the old guard was blind to is one the system
+        produces itself.
+
+        An ended link (`endedAt`) is history and no obstacle, for the same
+        reason a closed occupancy spell is not: a flat that was let until it was
+        demolished into a car park is exactly what migration 0046 keeps.
+      */
+      const [liveOccupancies, liveCardLinks] = await Promise.all([
+        this.db.unitOccupancy.count({ where: { unitId, toDate: null } }),
+        this.db.buildingUnit.count({ where: { unitId, endedAt: null } }),
+      ]);
+
+      if (liveOccupancies > 0 || liveCardLinks > 0) {
+        // Named separately because they are undone differently: one is ended
+        // from the occupancy panel, the other unlinked from the citizen's card.
+        const reasons = [
+          liveOccupancies > 0 ? `مسجَّل عليها ${liveOccupancies} شاغل حالي` : null,
+          liveCardLinks > 0 ? `مرتبطة بـ ${liveCardLinks} بطاقة عقارية` : null,
+        ].filter(Boolean);
+
+        throw new ConflictError(
+          `لا يمكن تحويل الوحدة ${before.unitCode} إلى ${structuralLabel(input.unitType!)}: ` +
+            `${reasons.join(' و')}. ` +
+            `${liveOccupancies > 0 ? 'أنهِ الإشغال' : 'أزل الربط'} أولاً`,
+        );
+      }
+    }
+
+    /*
+      حالة الوحدة on a structural row has no meaning — «مشغولة» and «شاغرة» are
+      both answers to a question about a space that can be occupied. Cleared on
+      the way in rather than left to the form, so a unit retyped from مستودع
+      carries none of «مؤجرة» forward, and refused rather than ignored when one
+      is sent alongside the type: silently dropping a value the officer chose is
+      how a form comes to disagree with the row it just wrote.
+    */
+    const structuralAfter = isStructuralUnitType(input.unitType ?? before.unitType);
+    if (structuralAfter && input.unitStatus) {
+      throw new ValidationError(
+        `${structuralLabel(input.unitType ?? before.unitType)} ليس مسكناً ولا محلاً — لا تُسجَّل له حالة إشغال`,
+        { unitStatus: input.unitStatus, unitType: input.unitType ?? before.unitType },
+      );
+    }
+
     const updated = await this.db.unit.update({
       where: { id: unitId },
       data: {
@@ -2033,7 +2146,14 @@ export class BuildingsService {
           : {}),
         ...(input.side !== undefined ? { side: input.side?.trim() || null } : {}),
         ...(input.unitArea !== undefined ? { unitArea: input.unitArea ?? null } : {}),
-        ...(input.unitStatus !== undefined ? { unitStatus: input.unitStatus as never } : {}),
+        /* Becoming structural clears it — see `becomingStructural` above. The
+           refusal there covers an officer *sending* one; this covers the value
+           already sitting on the row being retyped. */
+        ...(becomingStructural
+          ? { unitStatus: null }
+          : input.unitStatus !== undefined
+            ? { unitStatus: input.unitStatus as never }
+            : {}),
         ...(input.surveyStatus !== undefined
           ? { surveyStatus: input.surveyStatus as never }
           : {}),
@@ -2166,6 +2286,23 @@ export class BuildingsService {
   ): Promise<{ vacancy: VacancyRow; unit: UnitRow; casesResolved: number }> {
     const unit = await this.db.unit.findUnique({ where: { id: unitId } });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+
+    /*
+      A طابق أعمدة is not empty — it is not a space that can be full.
+
+      «تأكيد الشغور» exists to exempt an owner from the occupancy fee on a
+      dwelling or premises nobody is using (Law 60/1988 Art. 11). A column floor
+      was never going to be charged one, so a confirmation on it would be a
+      finding with nothing to find and an exemption from nothing — while still
+      producing the audit rows, the survey-status change and the undo path that
+      a real confirmation carries.
+    */
+    if (isStructuralUnitType(unit.unitType)) {
+      throw new ValidationError(
+        `الوحدة ${unit.unitCode} ${structuralLabel(unit.unitType)} — لا يُسجَّل لها تأكيد شغور، فهي ليست مسكناً ولا محلاً يُشغل`,
+        { unitType: unit.unitType, unitCode: unit.unitCode },
+      );
+    }
 
     const standing = await activeVacancy(this.db, unitId);
     if (standing) {
@@ -2511,6 +2648,14 @@ export class BuildingsService {
       },
     });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+
+    /*
+      Ahead of the citizen lookup, because it is a fact about the unit alone.
+      Whether the person exists does not change the answer, and the officer who
+      tapped the wrong block wants to be told which block, not told about a
+      citizen they had already picked correctly.
+    */
+    assertOccupiableUnit({ unitType: unit.unitType, unitCode: unit.unitCode });
 
     const citizen = await this.db.user.findUnique({ where: { id: input.citizenId } });
     if (!citizen || citizen.kind !== 'CITIZEN') {
@@ -2875,66 +3020,77 @@ export class BuildingsService {
     /** Non-owner capacities only: who the flat is held from. */
     landlord?: LandlordSpec | null;
   }): Promise<FileLinkResult> {
-    const building = await this.db.building.findUnique({
-      where: { id: input.buildingId },
-      select: { id: true, parcelNumber: true, name: true, structureType: true },
-    });
-    if (!building) return { backed: false, outcome: 'NO_BUILDING' };
-
     /*
-      The citizen’s current file *is* their latest registration — the convention
-      `CitizensService.update` and `declareOwnership` both follow. A citizen with
-      none cannot receive a card, which is barely reachable through the register
-      (a citizen exists because a registration created them) but is refused
-      rather than assumed.
+      Five reads with nothing to say to each other, issued together.
+
+      They used to be five round-trips in a row on a path that runs once per tap
+      on the matrix and once per flat on an owner link — a link over a
+      twelve-flat block paid for sixty. Two of them can still end the call and
+      the other three are reads, so nothing is wasted by having asked.
     */
-    const registration = await this.db.registration.findFirst({
-      where: { citizenId: input.citizenId },
-      orderBy: { submittedAt: 'desc' },
-      select: { id: true },
-    });
+    const [building, registration, unitsInBuilding, cards, spellsHere] = await Promise.all([
+      this.db.building.findUnique({
+        where: { id: input.buildingId },
+        select: { id: true, parcelNumber: true, name: true, structureType: true },
+      }),
+      /*
+        The citizen’s current file *is* their latest registration — the convention
+        `CitizensService.update` and `declareOwnership` both follow. A citizen with
+        none cannot receive a card, which is barely reachable through the register
+        (a citizen exists because a registration created them) but is refused
+        rather than assumed.
+      */
+      this.db.registration.findFirst({
+        where: { citizenId: input.citizenId },
+        orderBy: { submittedAt: 'desc' },
+        select: { id: true },
+      }),
+      this.db.unit.count({ where: { buildingId: input.buildingId } }),
+      /*
+        Current cards only. An ended tenancy is the citizen's history on this
+        structure, not a card to tick a new flat onto — somebody who rented here,
+        left, and now owns a flat gets a card saying so, not a row on the old lease.
+      */
+      this.db.propertyEntry.findMany({
+        where: {
+          buildingId: input.buildingId,
+          endedAt: null,
+          registration: { citizenId: input.citizenId },
+        },
+        select: {
+          id: true,
+          propertyType: true,
+          occupancyType: true,
+          landlordCitizenId: true,
+          landlordPhone: true,
+          landlordLinkDismissedIds: true,
+          units: { where: { endedAt: null }, select: { id: true, unitId: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      /*
+        What the census says this citizen holds in this structure — the only
+        thing a card that names no flat can be read against. See `claimsFlat`.
+      */
+      this.db.unitOccupancy.findMany({
+        where: { citizenId: input.citizenId, toDate: null, unit: { buildingId: input.buildingId } },
+        select: { unitId: true, role: true },
+      }),
+    ]);
+    if (!building) return { backed: false, outcome: 'NO_BUILDING' };
     if (!registration) return { backed: false, outcome: 'NO_FILE' };
 
-    const unitsInBuilding = await this.db.unit.count({ where: { buildingId: building.id } });
-
     /*
-      Current cards only. An ended tenancy is the citizen's history on this
-      structure, not a card to tick a new flat onto — somebody who rented here,
-      left, and now owns a flat gets a card saying so, not a row on the old lease.
+      Already ticked, or already backed by one of the shapes that claim a flat
+      without naming it. Nothing to write, and nothing to warn about either.
+
+      `claimsFlat` is shared with every other reader of the same question — the
+      matrix's owner-link column, the tenancy card an owner link attaches to,
+      the card «إنهاء الإيجار» ends a row on — because a claim this path makes
+      and those paths cannot see is a card that bills a flat nothing can end,
+      correct or unlink.
     */
-    const cards = await this.db.propertyEntry.findMany({
-      where: {
-        buildingId: building.id,
-        endedAt: null,
-        registration: { citizenId: input.citizenId },
-      },
-      select: {
-        id: true,
-        propertyType: true,
-        occupancyType: true,
-        landlordCitizenId: true,
-        landlordPhone: true,
-        landlordLinkDismissedIds: true,
-        units: { where: { endedAt: null }, select: { id: true, unitId: true } },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    const claims = (card: (typeof cards)[number]) =>
-      card.units.some((row) => row.unitId === input.unitId) ||
-      (card.propertyType === 'HOUSE' && unitsInBuilding === 1) ||
-      (card.propertyType === 'BUILDING' && card.units.length === 0);
-
-    /*
-      Already ticked, or already backed by one of the two whole-structure shapes.
-      Nothing to write, and nothing to warn about either.
-
-      Any capacity counts, the same-capacity card first. A second card claiming
-      the same flat would bill it twice; the flat on a card of the wrong capacity
-      is a correction for a person, not for this path to make by duplicating it.
-    */
-    const holder =
-      cards.find((card) => card.occupancyType === input.role && claims(card)) ?? cards.find(claims);
+    const holder = cardClaiming(cards, spellsHere, input.unitId, input.role);
     if (holder) {
       return { backed: true, outcome: 'ALREADY_CLAIMED', propertyEntryId: holder.id };
     }
@@ -2958,8 +3114,15 @@ export class BuildingsService {
     /*
       The card this flat may join: same capacity — rows bill in the card's نوع
       الإشغال — and for a non-owner, the same owner. See the docblock.
+
+      And one that can take a row without losing what it already bills:
+      `takesAnotherFlat` passes over a card that bills from its own columns, for
+      the reason it gives. The flat gets a card of its own below, and both are
+      billed.
     */
-    const sameCapacity = cards.filter((card) => card.occupancyType === input.role);
+    const sameCapacity = cards.filter(
+      (card) => card.occupancyType === input.role && takesAnotherFlat(card),
+    );
     const existing = nonOwner
       ? await this.cardHeldFrom(sameCapacity, input.landlord ?? null, owner)
       : sameCapacity[0];
@@ -2973,9 +3136,9 @@ export class BuildingsService {
         list by gaining flat 3; it stopped the moment it listed anything, so a
         row here is the only way this occupancy can be backed at all.
 
-        A منزل card on a multi-unit structure falls through to the same tick: it
-        itemises nothing and infers nothing (the inference is single-unit only),
-        so without a row here it claims no flat whatever.
+        Only a card that already itemises reaches here — `takesAnotherFlat`
+        above — so the tick can never be the row that stops a card billing its
+        own columns.
       */
       const described = await this.unitDescription(input.unitId);
       await this.db.buildingUnit.create({
@@ -3015,6 +3178,23 @@ export class BuildingsService {
     const described = await this.unitDescription(input.unitId);
 
     /*
+      نوع العقار is decided by the census, not by the structure type alone.
+
+      `STRUCTURE_TYPE_MAP` calls a منزل مستقل a HOUSE, and that is right for a
+      structure holding one flat: the card bills that flat from its own columns
+      and needs no units array. Where the matrix holds several — an officer who
+      found the منزل had been built up, Z-5-201-A — such a card cannot say
+      *which* of them it is about, and there is no honest way to make it say so:
+      a HOUSE card is forbidden a units array by `PropertyEntry` («a house
+      cannot be divided into units»), the منزل branch of `propertyEntrySchema`
+      has no such field for a form to round-trip, and a row written past both is
+      deleted by the first save of the citizen's file. So the flat is filed as a
+      مبنى card naming it — the shape every reader of a claim already
+      understands, and the honest one: several units are standing there.
+    */
+    const cardType = mapped.propertyType === 'HOUSE' && unitsInBuilding === 1 ? 'HOUSE' : 'BUILDING';
+
+    /*
       نوع الإشغال is the officer’s answer, carried straight across.
 
       `OccupancyRole` and `OccupancyType` are the same three values by design —
@@ -3029,7 +3209,7 @@ export class BuildingsService {
       data: {
         registrationId: registration.id,
         occupancyType: input.role as never,
-        propertyType: mapped.propertyType as never,
+        propertyType: cardType as never,
         buildingId: building.id,
         // The parcel is the building’s own. الحي is left null rather than
         // guessed: the cadastre has no neighbourhood layer to ask, and this
@@ -3066,7 +3246,7 @@ export class BuildingsService {
           claim for a landlord whose holding nobody has enumerated and the wrong
           one for an officer who has just named a single flat.
         */
-        ...(mapped.propertyType === 'HOUSE'
+        ...(cardType === 'HOUSE'
           ? {
               unitType: mapped.defaultUnitType as never,
               unitStatus: (input.unitStatus ?? null) as never,
@@ -4039,6 +4219,49 @@ export function assertNonResidentOccupancy(input: {
       { unitStatus: input.unitStatus },
     );
   }
+}
+
+/**
+ * Nobody is recorded in a طابق أعمدة.
+ *
+ * A structural row draws a level of the building — see `STRUCTURAL_UNIT_TYPE`.
+ * It has no door, so «من يسكنها» has no answer, and an occupancy on one would
+ * propagate exactly like a real one: `claimOnFile` would mint a card for it,
+ * `assessCitizen` would bill that card, and a fee notice would go out for a
+ * floor of columns.
+ *
+ * Placed beside `assertNonResidentOccupancy` and called from the same two
+ * places for the same stated reason — **both doors must refuse the same
+ * thing**. The matrix's occupant panel and a registration claiming a flat are
+ * separate code paths to one table, and a rule on one of them is not a rule,
+ * it is a preference the other path ignores.
+ *
+ * The message names the correction rather than only the refusal. An officer
+ * who reaches this has almost always picked the wrong block on a grid where
+ * the pilotis sits directly under the flat they wanted.
+ */
+export function assertOccupiableUnit(input: { unitType: string; unitCode: string }): void {
+  if (!isStructuralUnitType(input.unitType)) return;
+
+  throw new ValidationError(
+    `الوحدة ${input.unitCode} ${structuralLabel(input.unitType)} — لا يُسجَّل عليها شاغل. اختر وحدة في أحد الطوابق الأخرى، أو صحّح نوع الوحدة إن كانت مقسَّمة ومستعملة`,
+    { unitType: input.unitType, unitCode: input.unitCode },
+  );
+}
+
+/**
+ * «طابق أعمدة» or «طابق فارغ (بلا وحدات)», as the case may be.
+ *
+ * Read from the shared labels rather than written into each message, because
+ * there are two structural types now and telling an officer their block is a
+ * طابق أعمدة when they marked it فارغ is the kind of wrongness that makes
+ * people distrust the rest of the sentence. The Arabic label is the only one
+ * used: these messages go to `ValidationError`, which this API returns in
+ * Arabic throughout.
+ */
+function structuralLabel(unitType: string): string {
+  const labels = getLabels('ar').unitType as Record<string, string | undefined>;
+  return labels[unitType] ?? 'وحدة إنشائية';
 }
 
 function toUnitRow(row: {

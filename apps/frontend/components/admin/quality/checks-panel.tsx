@@ -15,6 +15,7 @@ import {
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { Badge } from '@/components/ui/badge';
+import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
@@ -192,16 +193,36 @@ export function ChecksPanel({
             <li key={check.id} className="rounded-xl border bg-card p-4">
               <CheckHeader check={check} base={base} locale={locale} />
 
-              <ul className="mt-2 flex flex-wrap gap-1.5">
+              {/* Aligned pairs, not chips — the same treatment «السجلات» uses,
+                  so a property reads identically on both tabs. */}
+              <div className="mt-2 space-y-2">
                 {check.properties.map((card, index) => (
-                  <li key={`${check.id}-${index}`} className="rounded-md bg-muted/50 px-2 py-1 text-xs">
-                    {labels.propertyType[card.propertyType as never] ?? card.propertyType}
-                    {card.occupancyType ? ` · ${labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}` : ''}
-                    {card.propertyNumber ? ` · ${en ? 'parcel' : 'عقار'} ${card.propertyNumber}` : ''}
-                    {card.buildingCode ? ` · ${card.buildingCode}` : ''}
-                  </li>
+                  <FactRow columns key={`${check.id}-${index}`} className="text-xs">
+                    <FactCell
+                      label={en ? 'Type' : 'النوع'}
+                      value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
+                    />
+                    {card.occupancyType ? (
+                      <FactCell
+                        label={en ? 'Occupancy' : 'صفة الإشغال'}
+                        value={labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}
+                      />
+                    ) : null}
+                    {card.propertyNumber ? (
+                      <FactCell label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
+                    ) : null}
+                    {card.buildingCode || card.buildingName ? (
+                      <FactCell
+                        label={en ? 'Building' : 'المبنى'}
+                        value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
+                      />
+                    ) : null}
+                    {card.units.length > 0 ? (
+                      <FactCell label={en ? 'Units' : 'الوحدات'} value={card.units.join('، ')} />
+                    ) : null}
+                  </FactRow>
                 ))}
-              </ul>
+              </div>
 
               {check.status === 'DONE' ? (
                 <div className="mt-3 space-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs">
@@ -300,14 +321,21 @@ function CheckHeader({ check, base, locale }: { check: QualityCheck; base: strin
       <span dir="ltr" className="font-mono text-xs text-muted-foreground">
         {check.referenceNumber}
       </span>
+      {/*
+        The result keeps its badge — it is the one state of the record this
+        card is about, and a check with no marker is a check you have to read
+        to know the answer to. Who it is assigned to is a name, so it is a name.
+      */}
       {check.status === 'DONE' ? (
         <Badge variant={check.result === 'MATCHES' ? 'soft-success' : 'soft-destructive'}>
           {quality.checkResult[check.result ?? 'MATCHES']}
         </Badge>
       ) : check.assignedTo ? (
-        <Badge variant="soft-info">{en ? `For ${check.assignedTo.name}` : `لـ ${check.assignedTo.name}`}</Badge>
+        <span className="text-xs text-muted-foreground">
+          {en ? `For ${check.assignedTo.name}` : `لـ ${check.assignedTo.name}`}
+        </span>
       ) : (
-        <Badge variant="soft-muted">{en ? 'Unassigned' : 'غير مُسنَد'}</Badge>
+        <span className="text-xs text-muted-foreground">{en ? 'Unassigned' : 'غير مُسنَد'}</span>
       )}
       <span className="ms-auto text-xs text-muted-foreground">
         {en ? 'Filed by' : 'سجَّله'} {check.originalOfficer?.name ?? '—'} · {formatDate(check.filedAt)}
