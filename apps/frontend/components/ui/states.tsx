@@ -53,7 +53,7 @@ export function LoadingState({
       aria-live="polite"
       className={cn(
         'flex flex-col items-center justify-center gap-3 px-6 text-center',
-        fullHeight ? 'min-h-[60vh] py-10' : compact ? 'py-8' : 'py-14',
+        fullHeight ? 'min-h-[60dvh] py-10' : compact ? 'py-8' : 'py-14',
         className,
       )}
     >

@@ -197,7 +197,7 @@ export function OfflineQueuePanel({
             <span className="min-w-0 flex-1 truncate font-medium">{item.displayName}</span>
 
             {item.payload.flags.length > 0 ? (
-              <span className="shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+              <span className="shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">
                 {locale === 'en'
                   ? `${item.payload.flags.length} unverified`
                   : `${item.payload.flags.length} غير مؤكَّد`}

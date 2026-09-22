@@ -72,23 +72,3 @@ export function compareNames(typed: string | null | undefined, registered: strin
 
   return 'DIFFERENT';
 }
-
-/**
- * A stored E.164 number, grouped for reading aloud: `+96170964631` →
- * `+961 70 964 631`. Always rendered inside `dir="ltr"` by the caller; the
- * grouping only inserts spaces, so copying it back into a form still parses.
- */
-export function formatPhone(value: string): string {
-  const digits = value.replace(/[^\d+]/g, '');
-  const lebanese = /^\+961(\d{7,8})$/.exec(digits);
-  if (lebanese) {
-    const local = lebanese[1]!;
-    const head = local.length === 8 ? local.slice(0, 2) : local.slice(0, 1);
-    const rest = local.slice(head.length);
-    return `+961 ${head} ${rest.slice(0, 3)} ${rest.slice(3)}`;
-  }
-  const international = /^\+(\d{1,3})(\d+)$/.exec(digits);
-  if (!international) return value;
-  const groups = international[2]!.match(/.{1,3}/g) ?? [];
-  return `+${international[1]} ${groups.join(' ')}`;
-}

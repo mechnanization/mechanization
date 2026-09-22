@@ -40,11 +40,11 @@ import { ChangeValue, FactCell, FactRow } from '@/components/ui/facts';
  */
 
 const TONE_CLASS: Record<AuditTone, string> = {
-  create: 'bg-emerald-600/10 text-emerald-700 dark:text-emerald-400',
+  create: 'bg-success/10 text-success',
   change: 'bg-primary/10 text-primary',
   remove: 'bg-destructive/10 text-destructive',
-  review: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
-  correction: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  review: 'bg-info/10 text-info',
+  correction: 'bg-warning/15 text-warning',
   money: 'bg-primary/10 text-primary',
   access: 'bg-muted text-muted-foreground',
 };
@@ -152,40 +152,55 @@ export function AuditEntryItem({
               {secondaryLabel(target.secondary, labels)}
             </span>
           ) : null}
-          <time
-            dateTime={entry.createdAt}
-            title={formatDateTime(entry.createdAt)}
-            className="ms-auto shrink-0 text-xs tabular-nums text-muted-foreground"
-            dir="ltr"
-          >
-            {formatTime(entry.createdAt)}
-          </time>
+          {/*
+            `ms-auto` on a wrapper, not on the `<time>`: the time carries its own
+            `dir="ltr"`, and a logical margin resolves against the element's own
+            direction — on the `<time>` itself `ms-auto` became a *left* margin
+            in an Arabic row and held the time against the title instead of
+            sending it to the far edge.
+          */}
+          <span className="ms-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+            <time dateTime={entry.createdAt} title={formatDateTime(entry.createdAt)} dir="ltr">
+              {formatTime(entry.createdAt)}
+            </time>
+          </span>
         </div>
 
-        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
-          <UserRound className="size-3.5 shrink-0" aria-hidden />
-          <span className="font-medium text-foreground/80">{actorName}</span>
-          {/* Plain, not a chip: a role is a fact about the actor, and a filled
-              pill around it reads as a control on a line of running text. */}
-          {roleLabel ? (
-            <>
-              <span aria-hidden>·</span>
-              <span>{roleLabel}</span>
-            </>
-          ) : null}
-          <span aria-hidden>·</span>
-          <span>{formatRelative(entry.createdAt, locale)}</span>
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            <UserRound className="size-3.5 shrink-0" aria-hidden />
+            <span className="font-medium text-foreground/80">{actorName}</span>
+            {/* Plain, not a chip: a role is a fact about the actor, and a filled
+                pill around it reads as a control on a line of running text. */}
+            {roleLabel ? (
+              <>
+                <span aria-hidden>·</span>
+                <span>{roleLabel}</span>
+              </>
+            ) : null}
+            {compact ? null : (
+              <>
+                <span aria-hidden>·</span>
+                <span>{formatRelative(entry.createdAt, locale)}</span>
+              </>
+            )}
+          </p>
+          {/* On a record's own trail the line splits: who at the start, how
+              long ago at the far edge under the time, so the width is used. */}
+          {compact ? <span className="shrink-0">{formatRelative(entry.createdAt, locale)}</span> : null}
+        </div>
 
         {description.quotes.map((quote) => (
           <figure key={`${quote.label}-${quote.value}`} className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
-            <figcaption className="mb-0.5 text-[11px] font-medium text-muted-foreground">{quote.label}</figcaption>
+            <figcaption className="mb-0.5 text-xs font-medium text-muted-foreground">{quote.label}</figcaption>
             <blockquote className="leading-relaxed text-foreground">{quote.value}</blockquote>
           </figure>
         ))}
 
+        {/* Rows — the label at the start, its value at the far edge — under a
+            rule that separates the facts from the who-and-when above. */}
         {shown.length > 0 ? (
-          <FactRow>
+          <FactRow className="border-t border-border/60">
             {shown.map((line) => (
               <Line key={`${line.kind}-${line.label}`} line={line} en={en} />
             ))}
@@ -198,7 +213,7 @@ export function AuditEntryItem({
               {en ? `All details (${detailCount})` : `كل التفاصيل (${detailCount})`}
             </summary>
             {/* The fold keeps its own surface — it is a panel, not a value. */}
-            <FactRow className="mt-2 rounded-lg bg-muted/30 px-3 py-2">
+            <FactRow className="mt-2 rounded-lg bg-muted/30 px-3">
               {folded.map((line) => (
                 <Line key={`folded-${line.kind}-${line.label}`} line={line} en={en} />
               ))}
@@ -207,7 +222,7 @@ export function AuditEntryItem({
               ))}
               <FactCell
                 label={en ? 'Action code' : 'رمز الإجراء'}
-                className="font-mono text-[11px] text-muted-foreground"
+                className="font-mono text-xs font-normal text-muted-foreground"
                 value={`${entry.action}${entry.entityId ? ` · ${entry.entityType} ${entry.entityId}` : ''}`}
               />
             </FactRow>
@@ -230,22 +245,13 @@ function Line({
     to the far edge while «مبنى سكني» stayed on the near one — see `FactGrid`,
     which isolates the value with `<bdi>` instead so the column holds.
   */
-  return (
-    <FactCell
-      label={line.label}
-      value={
-        line.kind === 'change' ? (
-          <ChangeValue
-            before={line.before}
-            after={line.after}
-            becameLabel={en ? 'became' : 'أصبح'}
-          />
-        ) : (
-          line.value
-        )
-      }
-    />
-  );
+  const value =
+    line.kind === 'change' ? (
+      <ChangeValue before={line.before} after={line.after} becameLabel={en ? 'became' : 'أصبح'} />
+    ) : (
+      line.value
+    );
+  return <FactCell label={line.label} value={value} />;
 }
 
 function linkFor(base: string, link: NonNullable<NonNullable<AuditEntry['target']>['link']>): string {

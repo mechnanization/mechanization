@@ -27,7 +27,7 @@ const PARCEL_LABEL_MIN_ZOOM = 15;
  * are rendered for why they sit top-right.
  */
 const MAP_NOTE_CLASS =
-  'pointer-events-none absolute right-2 top-2 inline-flex max-w-[calc(100%-3.75rem)] items-center gap-1.5 rounded-full bg-background/90 px-2.5 py-1 text-[11px] font-medium leading-snug text-foreground shadow-sm ring-1 ring-border backdrop-blur-sm animate-in fade-in';
+  'pointer-events-none absolute right-2 top-2 inline-flex max-w-[calc(100%-3.75rem)] items-center gap-1.5 rounded-full bg-background/90 px-2.5 py-1 text-xs font-medium leading-snug text-foreground shadow-sm ring-1 ring-border backdrop-blur-sm animate-in fade-in';
 
 /**
  * Every layer this map draws, bottom to top.
@@ -720,7 +720,7 @@ export function ParcelPinPicker({
         <button
           type="button"
           onClick={recentre}
-          className="absolute bottom-2 right-2 inline-flex items-center gap-1.5 rounded-md bg-background/90 px-2 py-1.5 text-[11px] font-medium text-foreground shadow-sm ring-1 ring-border backdrop-blur-sm transition-colors hover:bg-background"
+          className="absolute bottom-2 right-2 inline-flex items-center gap-1.5 rounded-md bg-background/90 px-2 py-1.5 text-xs font-medium text-foreground shadow-sm ring-1 ring-border backdrop-blur-sm transition-colors hover:bg-background"
         >
           <Crosshair className="size-3.5" aria-hidden />
           {outline

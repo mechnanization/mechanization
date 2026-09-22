@@ -771,7 +771,7 @@ export function DataTable<TData, TValue = unknown>({
               {isDraft ? (
                 <kbd
                   aria-hidden
-                  className="pointer-events-none absolute end-2 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none text-muted-foreground"
+                  className="pointer-events-none absolute end-2 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-xs font-medium leading-none text-muted-foreground"
                 >
                   {labels.searchHint ?? 'Enter'}
                 </kbd>
@@ -805,7 +805,7 @@ export function DataTable<TData, TValue = unknown>({
                 <Filter className="size-3.5" aria-hidden />
                 {labels.filters ?? (labels.searchAriaLabel?.includes('بحث') ? 'الفلاتر' : 'Filters')}
                 {(activeFiltersCount ?? 0) > 0 ? (
-                  <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary">
+                  <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-bold text-primary">
                     {activeFiltersCount}
                   </span>
                 ) : null}

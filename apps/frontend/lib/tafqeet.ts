@@ -109,6 +109,83 @@ function convertThreeDigits(num: number, feminine = false): string {
 }
 
 /**
+ * The four forms a counted scale word takes: ألف / ألفان / آلاف / ألفاً.
+ *
+ * Arabic picks between them by the *numeral*, not by the quantity, which is why
+ * this cannot be a simple singular/plural switch.
+ */
+interface ScaleForms {
+  /** 1, and any count ending in a round hundred — the genitive تمييز. */
+  singular: string;
+  /** Exactly 2 — the dual. */
+  dual: string;
+  /** 3–10, and counts ending in 3–10 — the plural of paucity. */
+  plural: string;
+  /** Counts ending in 11–99 — the accusative تمييز. */
+  accusative: string;
+}
+
+const THOUSAND: ScaleForms = {
+  singular: 'ألف',
+  dual: 'ألفان',
+  plural: 'آلاف',
+  accusative: 'ألفاً',
+};
+
+const MILLION: ScaleForms = {
+  singular: 'مليون',
+  dual: 'مليونان',
+  plural: 'ملايين',
+  accusative: 'مليوناً',
+};
+
+const BILLION: ScaleForms = {
+  singular: 'مليار',
+  dual: 'ملياران',
+  plural: 'مليارات',
+  accusative: 'ملياراً',
+};
+
+/**
+ * Writes one scale chunk — `234` + million — with the right تمييز.
+ *
+ * The rule Arabic actually applies is that the counted noun agrees with the
+ * **last numeral spoken**, not with the size of the whole number. So in
+ * «مائتان وأربعة وثلاثون» the operative numeral is ثلاثون (30), which is in the
+ * 11–99 band and takes the accusative singular «مليوناً» — *not* the plural
+ * «ملايين», which belongs only to 3–10. And «خمسمائة» ends on a round hundred,
+ * which takes the genitive singular «ألف».
+ *
+ * This replaces three hand-written if-ladders that each had the 1 / 2 / 3–10
+ * cases right and everything above ten wrong in two different ways:
+ *
+ * - thousands always took «ألفاً», so 500,000 read «خمسمائة ألفاً» where it
+ *   should read «خمسمائة ألف» — contradicting this module's own documented
+ *   example of 2,500,000, which is the same case.
+ * - millions above ten took the *plural* «ملايين», so 234,000,000 read
+ *   «مائتان وأربعة وثلاثون ملايين» instead of «… مليوناً».
+ *
+ * On a screen that is a typo. On a وصل it is the legally operative figure: where
+ * the words and the digits disagree on a Lebanese receipt, the words are what
+ * the document says.
+ */
+function writeScale(count: number, forms: ScaleForms): string {
+  if (count === 1) return forms.singular;
+  if (count === 2) return forms.dual;
+  if (count <= 10) return `${ONES_MASCULINE[count]!} ${forms.plural}`;
+
+  const words = convertThreeDigits(count, false);
+  // The last two digits are what carries the agreement: 0 means the number
+  // ended on a hundred, 3–10 keeps the paucity plural, everything else in
+  // 11–99 takes the accusative.
+  const last = count % 100;
+
+  if (last === 0) return `${words} ${forms.singular}`;
+  if (last >= 3 && last <= 10) return `${words} ${forms.plural}`;
+  return `${words} ${forms.accusative}`;
+}
+
+/**
  * Converts any non-negative integer into Arabic words with the currency unit and "فقط لا غير".
  *
  * @param amount - Non-negative integer (in LBP)
@@ -128,44 +205,10 @@ export function tafqeet(amount: number, currency = 'ليرة لبنانية'): s
 
   const chunks: string[] = [];
 
-  // Billions (مليار - مذكر)
-  if (billions > 0) {
-    if (billions === 1) {
-      chunks.push('مليار');
-    } else if (billions === 2) {
-      chunks.push('ملياران');
-    } else if (billions >= 3 && billions <= 10) {
-      chunks.push(`${ONES_MASCULINE[billions]} مليارات`);
-    } else {
-      chunks.push(`${convertThreeDigits(billions, false)} ملياراً`);
-    }
-  }
-
-  // Millions (مليون - مذكر)
-  if (millions > 0) {
-    if (millions === 1) {
-      chunks.push('مليون');
-    } else if (millions === 2) {
-      chunks.push('مليونان');
-    } else if (millions >= 3 && millions <= 10) {
-      chunks.push(`${ONES_MASCULINE[millions]} ملايين`);
-    } else {
-      chunks.push(`${convertThreeDigits(millions, false)} ملايين`);
-    }
-  }
-
-  // Thousands (ألف - مذكر)
-  if (thousands > 0) {
-    if (thousands === 1) {
-      chunks.push('ألف');
-    } else if (thousands === 2) {
-      chunks.push('ألفان');
-    } else if (thousands >= 3 && thousands <= 10) {
-      chunks.push(`${ONES_MASCULINE[thousands]} آلاف`);
-    } else {
-      chunks.push(`${convertThreeDigits(thousands, false)} ألفاً`);
-    }
-  }
+  // Each scale is مذكر, and each picks its form the same way — see `writeScale`.
+  if (billions > 0) chunks.push(writeScale(billions, BILLION));
+  if (millions > 0) chunks.push(writeScale(millions, MILLION));
+  if (thousands > 0) chunks.push(writeScale(thousands, THOUSAND));
 
   // Remainder (0-999)
   if (remainder > 0) {

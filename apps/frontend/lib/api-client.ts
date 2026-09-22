@@ -21,6 +21,8 @@ import type {
   NumberingSequence,
   OccupancyEndReason,
   OccupancyRole,
+  PaymentMethod,
+  PaymentStatus,
   RecordInspectorPayoutInput,
   SequenceKey,
   BuildingLifecycle,
@@ -189,6 +191,62 @@ export class ApiRequestError extends Error {
  */
 export function logApiError(caught: unknown): void {
   console.error(caught);
+  reportApiError(caught);
+}
+
+/**
+ * Forwards the failures that mean a bug, and drops the ones that mean the
+ * system is working.
+ *
+ * `logApiError` is called from every catch block in the app, so it is the one
+ * funnel every API failure already passes through — which makes it the right
+ * place to report from, and the wrong place to report *everything* from. The
+ * filtering below is the whole value of this function:
+ *
+ * - **`status === 0`** — no connection. This is the single most common error
+ *   this app produces and it is not an error: the portal is built for officers
+ *   working off a phone in a village with no signal, and the offline queue in
+ *   `lib/offline-sync.ts` treats it as the expected case. Reporting it would
+ *   bury everything else under the condition the app was designed around.
+ * - **401** — an expired session. Handled everywhere by redirecting to the
+ *   login page; it happens to every staff member every morning.
+ * - **Other 4xx** — the server read the request and refused it. A 404 on a
+ *   citizen who was never registered and a 409 on a duplicate filing are the
+ *   rules working. They are also, by volume, almost all of what this sees.
+ *
+ * What is left is 5xx and anything that is not an `ApiRequestError` at all —
+ * a `TypeError` from a bad assumption about a response shape, an IndexedDB
+ * failure inside the queue. Those are bugs.
+ *
+ * The API reports its own 5xx from `DomainExceptionFilter`, so a server fault
+ * arrives twice — once from each side. That is deliberate rather than
+ * redundant: the two carry different halves of the story, and the pair is what
+ * shows an error the API thinks it handled but the browser could not act on.
+ */
+function reportApiError(caught: unknown): void {
+  if (caught instanceof ApiRequestError) {
+    if (caught.status < 500) return;
+  }
+
+  /*
+    Imported where it is used rather than at the top of the file.
+
+    `api-client.ts` is imported by nearly every screen in the portal; a
+    top-level `import * as Sentry` would put the SDK in the first chunk any of
+    them loads, on an app whose users are frequently on a phone connection slow
+    enough that the offline queue exists. This way the SDK is fetched when
+    something has actually gone wrong, and a `void` on the promise keeps the
+    caller's catch block synchronous — `logApiError` is called from paths that
+    must not start awaiting anything.
+  */
+  void import('@sentry/nextjs')
+    .then((Sentry) => {
+      Sentry.captureException(caught);
+    })
+    .catch(() => {
+      // The reporter failing has nowhere useful to report to. The
+      // `console.error` above already happened, which is the floor.
+    });
 }
 
 /**
@@ -196,12 +254,66 @@ export function logApiError(caught: unknown): void {
  * the path, so a request cannot be made without naming which municipality it
  * belongs to.
  */
+/**
+ * Exchanges an expiring staff token for a fresh one.
+ *
+ * One flight per municipality. A staff screen fires several reads at once —
+ * the header badge, the table, the filter options — so an expiry is met by all
+ * of them within the same tick. Without this map each would exchange the token
+ * separately, and the last one to finish would overwrite the stored session
+ * with a token the others had already replaced: a self-inflicted logout on a
+ * session that was perfectly valid.
+ *
+ * Resolves to the new token, or `null` when the session cannot be extended —
+ * the cap has passed, the account was dismissed, its `tokenVersion` was bumped.
+ * `null` means the caller should let the original 401 through.
+ */
+const refreshInFlight = new Map<string, Promise<string | null>>();
+
+async function exchangeStaffToken(tenant: string): Promise<string | null> {
+  const existing = refreshInFlight.get(tenant);
+  if (existing) return existing;
+
+  const flight = (async (): Promise<string | null> => {
+    const { loadSession, updateSession } = await import('./session');
+    const session = loadSession(tenant);
+
+    // Citizens have no exchange path — the server refuses their tokens — and a
+    // signed-out tab has nothing to exchange.
+    if (!session || session.user.kind !== 'STAFF') return null;
+
+    try {
+      const refreshed = await apiFetch<Session>(tenant, '/auth/staff/refresh', {
+        method: 'POST',
+        token: session.accessToken,
+        // Stops the recursion: a 401 from the exchange is the answer, not a
+        // reason to exchange again.
+        skipTokenRefresh: true,
+      });
+
+      updateSession(tenant, refreshed);
+      return refreshed.accessToken;
+    } catch {
+      // Any failure means the same thing to the caller: this session is over.
+      // The original 401 is what the screens already know how to handle.
+      return null;
+    }
+  })();
+
+  refreshInFlight.set(tenant, flight);
+  try {
+    return await flight;
+  } finally {
+    refreshInFlight.delete(tenant);
+  }
+}
+
 export async function apiFetch<T>(
   tenant: string,
   path: string,
-  init: RequestInit & { token?: string } = {},
+  init: RequestInit & { token?: string; skipTokenRefresh?: boolean } = {},
 ): Promise<T> {
-  const { token, headers, ...rest } = init;
+  const { token, headers, skipTokenRefresh, ...rest } = init;
 
   let response: Response;
   try {
@@ -235,6 +347,38 @@ export async function apiFetch<T>(
       code: 'NETWORK_ERROR',
       message: 'تعذّر الاتصال. تحقّق من الشبكة وحاول مرة أخرى.',
     });
+  }
+
+  /*
+    A 401 that may simply mean "this token has aged out".
+
+    Staff tokens are short now and slide forward as they are used, so the
+    ordinary way a working session meets a 401 is that it crossed the idle
+    window between two clicks. Exchanging the token and replaying the request
+    here is what makes that invisible — the alternative is what this replaced: a
+    hard logout mid-form, with whatever was typed still on screen and now
+    unsaveable.
+
+    It runs once. If the exchange fails, or the replay comes back 401 again, the
+    error goes to the screens that already know what to do with it — there are
+    two dozen of them, and none needed changing for this.
+
+    Replaying is safe because `rest.body` is a string or a `FormData`, both of
+    which can be sent twice. A streaming body could not, and nothing here uses
+    one; if that changes, this is the line that has to know.
+  */
+  if (
+    response.status === 401 &&
+    token &&
+    !skipTokenRefresh &&
+    // Not for public routes — `login` answering 401 means the password was
+    // wrong, and there is no session to exchange.
+    !path.startsWith('/auth/staff/login')
+  ) {
+    const fresh = await exchangeStaffToken(tenant);
+    if (fresh && fresh !== token) {
+      return apiFetch<T>(tenant, path, { ...init, token: fresh, skipTokenRefresh: true });
+    }
   }
 
   if (!response.ok) {
@@ -358,6 +502,22 @@ export function peekPropertyNumberCheck(tenant: string, propertyNumber: string) 
 export interface Session {
   accessToken: string;
   expiresIn: string;
+  /**
+   * When `accessToken` stops being accepted, ISO — STAFF only.
+   *
+   * Short, and not the end of the session: see `sessionExpiresAt`. Nothing
+   * reads this yet, because the exchange below is driven by the 401 rather than
+   * by a clock; it is stored so that a proactive refresh can be added later
+   * without another round of changes to what a session is.
+   */
+  expiresAt?: string;
+  /**
+   * When the session ends for good, ISO — STAFF only.
+   *
+   * The wall-clock moment the clerk signs in again, unchanged at 8h (or 30d
+   * with "تذكّرني"). No exchange is possible past it.
+   */
+  sessionExpiresAt?: string;
   user: { id: string; name: string; kind: 'STAFF' | 'CITIZEN'; role?: string };
 }
 
@@ -1393,6 +1553,18 @@ export interface RecordDamageInput {
 }
 
 /**
+ * What «سجل المباني»'s selects may offer — every list is the set of values the
+ * census actually holds, so choosing one can never return an empty table for
+ * the reason that nothing was ever filed under it.
+ */
+export interface BuildingFilterOptions {
+  structureTypes: StructureType[];
+  lifecycleStatuses: BuildingLifecycle[];
+  surveyStatuses: SurveyStatus[];
+  damageLevels: DamageLevel[];
+}
+
+/**
  * Every building matching the filters, with the totals for that same set.
  *
  * Not cached: this is what an officer reloads after creating a building from
@@ -1415,6 +1587,20 @@ export function getBuildings(
     `/buildings${qs ? `?${qs}` : ''}`,
     { token, signal },
   );
+}
+
+/**
+ * The values «سجل المباني»'s filters may offer, as found in the census.
+ *
+ * A *reference* read, not a data read: it describes the municipality's
+ * vocabulary — which kinds of structure it has entered, which conditions it
+ * has assessed — rather than the rows on screen. It changes when somebody
+ * records the first building of a kind, which is a handful of times in a
+ * register's life, so the caller reads it once per session (see
+ * `useStaffQuery`'s `reference` option) instead of on every visit to the page.
+ */
+export function getBuildingFilterOptions(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<BuildingFilterOptions>(tenant, '/buildings/filter-options', { token, signal });
 }
 
 /** One building with its whole unit matrix and each unit's occupants. */
@@ -2559,6 +2745,16 @@ export interface CitizenWriteInput {
    * decides what a flag excuses — this only carries them.
    */
   flags?: FieldFlag[];
+  /**
+   * «ملاحظات» on the registration this submission writes.
+   *
+   * Stated here because a save *replaces* the note rather than merging it, so
+   * anything editing a record outside the full form has to carry the stored one
+   * back or silently delete what the last visit wrote. `CitizenForm` has always
+   * sent it; it reached the wire through a spread, which is why the field was
+   * missing from the type for so long.
+   */
+  notes?: string;
   /**
    * The browser's own id for this submission, sent only when it was queued
    * offline. It is what lets a retry after a lost response be recognised
@@ -3846,6 +4042,36 @@ export interface AdminPaymentItem {
  */
 export function getFeeTitles(tenant: string, token: string, signal?: AbortSignal) {
   return apiFetch<string[]>(tenant, '/fees/titles', { token, signal });
+}
+
+/**
+ * What the two money screens' filters may offer, as found in the ledger.
+ *
+ * The same kind of read as `getBuildingFilterOptions`: a vocabulary, not a
+ * page. A municipality that has never taken a Whish transfer has no «Whish»
+ * tab, because there is no answer behind it.
+ */
+export interface FeeFilterOptions {
+  /**
+   * Which status tabs the register can actually answer.
+   *
+   * Not simply "the stored values present". OVERDUE is never stored — nothing
+   * writes it, it is derived from `dueDate` on read — and UNPAID is split
+   * against the same boundary, so these two are counted rather than grouped.
+   * See `paymentStatusWhere` on the server for the predicate behind each.
+   *
+   * Consequently this half of the read is time-dependent and must not be held
+   * for the session the way `titles` and `methods` may be.
+   */
+  statuses: PaymentStatus[];
+  /** Stored `paymentMethod` values present. Never null: an unpaid row has none. */
+  methods: PaymentMethod[];
+  /** Distinct bill titles, for the searchable «نوع الرسم» filter. */
+  titles: string[];
+}
+
+export function getFeeFilterOptions(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<FeeFilterOptions>(tenant, '/fees/filter-options', { token, signal });
 }
 
 export function getAllPayments(

@@ -21,6 +21,7 @@ import {
 import {
   getLabels,
   defaultUnitTypeFor,
+  isOccupiableLifecycle,
   type DamageLevel,
   type UpsertUnitInput,
   type VacancyBasis,
@@ -60,6 +61,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
@@ -68,14 +70,14 @@ import {
   type EndOccupancyAnswer,
   activeVacancy,
   AddPersonForm,
-  BuildingSummaryBadges,
   CaseForm,
   cellBadge,
-  ConfirmVacancyDialog,
+  ConfirmVacancyForm,
   DamageForm,
   effectiveUnitStatus,
   floorLabel,
   groupUnitsByFloor,
+  layoutFloor,
   logVisitWithFollowUp,
   occupancyMessage,
   OccupantList,
@@ -97,7 +99,7 @@ const DAMAGED_LEVELS: readonly DamageLevel[] = [
   'TOTAL_COLLAPSE',
 ];
 
-type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | null;
+type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | 'vacancy' | null;
 
 /**
  * One colour per confirmed-unit *status*, not identity — the inverse of the
@@ -110,18 +112,12 @@ const STATUS_BLOCK_CLASSES: Record<
   'soft-success' | 'soft-warning' | 'soft-destructive' | 'soft-info' | 'soft-muted',
   string
 > = {
-  'soft-success': 'bg-emerald-600/15 text-emerald-700 dark:text-emerald-400 ring-emerald-600/40',
-  'soft-warning': 'bg-amber-500/15 text-amber-700 dark:text-amber-400 ring-amber-500/40',
+  'soft-success': 'bg-success/15 text-success ring-success/40',
+  'soft-warning': 'bg-warning/15 text-warning ring-warning/40',
   'soft-destructive': 'bg-destructive/15 text-destructive ring-destructive/40',
-  'soft-info': 'bg-sky-500/15 text-sky-700 dark:text-sky-400 ring-sky-500/40',
+  'soft-info': 'bg-info/15 text-info ring-info/40',
   'soft-muted': 'bg-muted text-muted-foreground ring-border',
 };
-
-interface LaidOutUnit {
-  unit: UnitWithOccupants;
-  startCol: number;
-  endCol: number;
-}
 
 /**
  * The height of one floor's row, in all three of the matrix's columns.
@@ -140,35 +136,6 @@ interface LaidOutUnit {
  * the fullest tile is the one whose state disappears.
  */
 const MATRIX_ROW_HEIGHT = 'h-20';
-
-/**
- * Reconstructs the floor plan a unit was painted on. Units carrying a stored
- * `startCol`/`endCol` (painted through the creation wizard's grid) keep their
- * exact span; a unit with neither (the blueprint generator, a hand-added
- * single unit) is laid out as one column, appended after the highest
- * positioned column, in `sequence` order — an honest default rather than a
- * guess at a layout that was never drawn.
- */
-function layoutFloor(units: UnitWithOccupants[]): { blocks: LaidOutUnit[]; width: number } {
-  const positioned = units.filter((u) => u.startCol != null && u.endCol != null);
-  const unpositioned = units.filter((u) => u.startCol == null || u.endCol == null);
-
-  const blocks: LaidOutUnit[] = positioned.map((unit) => ({
-    unit,
-    startCol: unit.startCol as number,
-    endCol: unit.endCol as number,
-  }));
-
-  let nextCol = blocks.reduce((max, b) => Math.max(max, b.endCol), 0) + 1;
-  for (const unit of unpositioned) {
-    blocks.push({ unit, startCol: nextCol, endCol: nextCol });
-    nextCol += 1;
-  }
-
-  blocks.sort((a, b) => a.startCol - b.startCol);
-  const width = blocks.reduce((max, b) => Math.max(max, b.endCol), 1);
-  return { blocks, width };
-}
 
 export function BuildingUnitMatrixView({
   tenant,
@@ -217,8 +184,6 @@ export function BuildingUnitMatrixView({
   const [action, setAction] = useState<ActionKind>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  /** Whether «تأكيد الشغور» is asking its questions. */
-  const [confirmingVacancy, setConfirmingVacancy] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -352,47 +317,41 @@ export function BuildingUnitMatrixView({
     );
 
   /*
-    Both halves of «تأكيد الشغور» are dialogs, so neither goes through `run`: a
-    refusal belongs in the dialog the officer is looking at, and each rethrows
-    for the dialog to show. The drawer does the same.
+    «تأكيد الشغور» is a form under the unit now, like «كشف ضرر», so it goes
+    through `run`: a refusal lands in the error line under the form, which
+    stays open. The drawer does the same.
   */
-  const saveVacancy = async (
+  const saveVacancy = (
     unit: UnitWithOccupants,
     input: { basis: VacancyBasis; observedAt?: string; notes: string },
-  ) => {
-    if (!token) throw new Error('unauthenticated');
-    let result;
-    try {
-      result = await confirmVacancy(tenant, token, unit.id, {
-        basis: input.basis,
-        ...(input.observedAt ? { observedAt: input.observedAt } : {}),
-        ...(input.notes ? { notes: input.notes } : {}),
-      });
-    } catch (caught) {
-      logApiError(caught);
-      throw new Error(
-        caught instanceof ApiRequestError
-          ? caught.payload.message
-          : en
-            ? 'Could not confirm the vacancy.'
-            : 'تعذّر تأكيد الشغور.',
-      );
-    }
-    await load();
-    toast.success(
-      [
-        en ? `Unit ${unit.unitCode} confirmed vacant` : `تم تأكيد شغور الوحدة ${unit.unitCode}`,
-        result.casesResolved > 0
-          ? en
-            ? `${result.casesResolved} case(s) closed`
-            : `أُغلقت ${result.casesResolved} حالة`
-          : null,
-      ]
-        .filter(Boolean)
-        .join('، '),
+  ) =>
+    run(
+      async () => {
+        if (!token) throw new Error('unauthenticated');
+        const result = await confirmVacancy(tenant, token, unit.id, {
+          basis: input.basis,
+          ...(input.observedAt ? { observedAt: input.observedAt } : {}),
+          ...(input.notes ? { notes: input.notes } : {}),
+        });
+        return [
+          en ? `Unit ${unit.unitCode} confirmed vacant` : `تم تأكيد شغور الوحدة ${unit.unitCode}`,
+          result.casesResolved > 0
+            ? en
+              ? `${result.casesResolved} case(s) closed`
+              : `أُغلقت ${result.casesResolved} حالة`
+            : null,
+        ]
+          .filter(Boolean)
+          .join('، ');
+      },
+      en ? 'Could not confirm the vacancy.' : 'تعذّر تأكيد الشغور.',
     );
-  };
 
+  /*
+    Lifting a vacancy is still a dialog (`EndVacancyDialog`), so it does not go
+    through `run`: a refusal belongs in the dialog the officer is looking at,
+    and this rethrows for the dialog to show.
+  */
   const liftVacancy = async (
     unit: UnitWithOccupants,
     input: { reason: VacancyEndReason; endedAt?: string; notes: string },
@@ -491,7 +450,7 @@ export function BuildingUnitMatrixView({
   const cancelHref = `${base}/buildings`;
 
   return (
-    <div className="w-full max-w-5xl mx-auto space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+    <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       {/*
         Wraps rather than overflows. On a phone this row can carry «رجوع», the
         section, a building code and the current step at once — more than 343px
@@ -529,8 +488,8 @@ export function BuildingUnitMatrixView({
         </div>
       ) : building ? (
         <div className="space-y-6">
-          <div className="flex flex-col gap-4 border-b border-border/80 pb-5 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-2">
+          <div className="space-y-4 border-b border-border/80 pb-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="font-mono text-xl font-bold text-foreground" dir="ltr">
                   {building.code}
@@ -539,111 +498,189 @@ export function BuildingUnitMatrixView({
                   <span className="text-sm font-medium text-muted-foreground">{building.name}</span>
                 ) : null}
               </div>
-              <BuildingSummaryBadges
-                building={building}
-                locale={locale}
-                damageLevel={damage?.current ?? null}
-              />
+
               {/*
-                Where the structure stands, cadastrally — all of it.
+                The actions come before the facts, and all three are one width.
 
-                The two facts added beside the parcel are the two the wizard now
-                asks for, and a field somebody fills in and can never see again
-                is a field they stop filling in. Both are stated only when there
-                is something to state:
-
-                  • فرز is three-valued, and «لم يُسأل» is the default answer for
-                    every building recorded before the column existed. Printing
-                    «غير مفروزة» for those would be asserting a finding nobody
-                    made — see `Building.isPartitioned`.
-                  • The shared parcels are empty for the overwhelming majority,
-                    which stand on exactly one عقار, and «— لا عقارات أخرى» on
-                    every building in the register would be noise.
+                Packed to their own labels they were three different buttons of
+                three different sizes, which reads as a ranking nobody intended;
+                on a phone they are a stack, on a desk a row of equal thirds.
               */}
-              <p className="text-xs text-muted-foreground">
-                {[
-                  en ? `Parcel ${building.parcelNumber}` : `عقار ${building.parcelNumber}`,
-                  building.sharedParcelNumbers?.length
-                    ? en
-                      ? `also on ${building.sharedParcelNumbers.join(', ')}`
-                      : `وعلى العقارات ${building.sharedParcelNumbers.join('، ')}`
-                    : null,
-                  /*
-                    The فرز, with its أقسام where they have been collected.
-
-                    «مفروزة» on its own does not answer the question anybody
-                    asks it — «which قسم?» — so the numbers are printed beside
-                    it rather than left to the editor. A ticked فرز with no
-                    numbers yet is still stated: a block is visibly مفروزة long
-                    before somebody has the صحيفة in front of them.
-                  */
-                  building.isPartitioned == null
-                    ? null
-                    : building.isPartitioned
-                      ? building.partitionNumbers?.length
-                        ? en
-                          ? `Partitioned — parts ${building.partitionNumbers.join(', ')}`
-                          : `مفروزة — الأقسام ${building.partitionNumbers.join('، ')}`
-                        : en
-                          ? 'Partitioned'
-                          : 'مفروزة'
-                      : en
-                        ? 'Not partitioned'
-                        : 'غير مفروزة',
-                  building.zoneName,
-                ]
-                  .filter(Boolean)
-                  .join(' — ')}
-              </p>
+              {canWrite ? (
+                <div className="grid grid-cols-1 gap-2 sm:shrink-0 sm:grid-cols-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      setSelectedUnitId(null);
+                      setActionError(null);
+                      setAction('damage');
+                    }}
+                  >
+                    <ShieldAlert className="size-4" aria-hidden />
+                    {en ? 'Assess the building' : 'كشف ضرر على المبنى'}
+                  </Button>
+                  {/*
+                    Two buttons where there was one, because they were two jobs
+                    behind a single label. «تعديل معلومات المبنى» corrects the
+                    shell and never opens the matrix; «تعديل مصفوفة الوحدات»
+                    lands directly on the grid, which is what someone reading
+                    this screen usually came to change.
+                  */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() =>
+                      router.push(
+                        `${base}/buildings/${encodeURIComponent(building.id)}/edit?step=units`,
+                      )
+                    }
+                  >
+                    <Grid2X2 className="size-4" aria-hidden />
+                    {en ? 'Edit unit matrix' : 'تعديل مصفوفة الوحدات'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() =>
+                      router.push(
+                        `${base}/buildings/${encodeURIComponent(building.id)}/edit?scope=info`,
+                      )
+                    }
+                  >
+                    <Pencil className="size-4" aria-hidden />
+                    {en ? 'Edit building details' : 'تعديل معلومات المبنى'}
+                  </Button>
+                </div>
+              ) : null}
             </div>
 
-            {canWrite ? (
-              <div className="flex flex-wrap gap-2 shrink-0">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setSelectedUnitId(null);
-                    setActionError(null);
-                    setAction('damage');
-                  }}
+            {/*
+              What the structure is, then where it stands cadastrally — one fact
+              per row, as «ملخص المنشأة» shows it before saving, so a building
+              reads the same on the way in and on the way back.
+
+              «قائم ومستعمل» is left unsaid, as it was on the badges: it is the
+              answer on nineteen buildings in twenty. The same goes for the rows
+              that are empty for most of the register — shared parcels, a posted
+              number, damage — and for the فرز, which is three-valued: «لم يُسأل»
+              is the default for every building recorded before the column
+              existed, and printing «غير مفروزة» for those would be asserting a
+              finding nobody made — see `Building.isPartitioned`.
+
+              Capped in width: on a desk, a label at one edge of the page and its
+              value at the other are too far apart to read as a pair.
+            */}
+            <SummaryList>
+              <SummaryRow label={en ? 'Structure Type' : 'نوع المنشأة'}>
+                {labels.structureType[building.structureType]}
+              </SummaryRow>
+
+              {building.lifecycleStatus !== 'IN_USE' ? (
+                <SummaryRow
+                  label={en ? 'Construction Status' : 'الحالة الإنشائية'}
+                  className="text-warning"
                 >
-                  <ShieldAlert className="size-4" aria-hidden />
-                  {en ? 'Assess the building' : 'كشف ضرر على المبنى'}
-                </Button>
-                {/*
-                  Two buttons where there was one, because they were two jobs
-                  behind a single label. «تعديل معلومات المبنى» corrects the
-                  shell and never opens the matrix; «تعديل مصفوفة الوحدات»
-                  lands directly on the grid, which is what someone reading
-                  this screen usually came to change.
-                */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    router.push(
-                      `${base}/buildings/${encodeURIComponent(building.id)}/edit?step=units`,
-                    )
-                  }
-                >
-                  <Grid2X2 className="size-4" aria-hidden />
-                  {en ? 'Edit unit matrix' : 'تعديل مصفوفة الوحدات'}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    router.push(
-                      `${base}/buildings/${encodeURIComponent(building.id)}/edit?scope=info`,
-                    )
-                  }
-                >
-                  <Pencil className="size-4" aria-hidden />
-                  {en ? 'Edit building details' : 'تعديل معلومات المبنى'}
-                </Button>
-              </div>
-            ) : null}
+                  {labels.buildingLifecycle[building.lifecycleStatus]}
+                </SummaryRow>
+              ) : null}
+
+              <SummaryRow label={en ? 'Floors' : 'الطوابق'}>
+                {en ? `${building.floorsCount} floors` : `${building.floorsCount} طابق`}
+                {/* The range the floors are labelled by — «B1–B2» — so it names the rows the matrix shows. */}
+                {building.basementsCount
+                  ? ` · ${building.basementsCount === 1 ? 'B1' : `B1–B${building.basementsCount}`}`
+                  : ''}
+              </SummaryRow>
+
+              {/*
+                A matrix on a structure nobody can be inside is an inventory, not
+                outstanding work — and the ledger's figures leave it out.
+              */}
+              <SummaryRow
+                label={en ? 'Units' : 'الوحدات'}
+                className={
+                  isOccupiableLifecycle(building.lifecycleStatus) &&
+                  building.unitsTotal > 0 &&
+                  building.unitsSurveyed === building.unitsTotal
+                    ? 'text-success'
+                    : undefined
+                }
+              >
+                {!isOccupiableLifecycle(building.lifecycleStatus)
+                  ? en
+                    ? `${building.unitsTotal} units recorded — not counted as survey work`
+                    : `${building.unitsTotal} وحدة مسجَّلة — غير محتسبة ضمن أعمال المسح`
+                  : en
+                    ? `${building.unitsSurveyed} of ${building.unitsTotal} units surveyed`
+                    : `${building.unitsSurveyed} من ${building.unitsTotal} وحدة ممسوحة`}
+              </SummaryRow>
+
+              {damage?.current ? (
+                <SummaryRow label={en ? 'Damage level' : 'مستوى الضرر'} className="text-destructive">
+                  {labels.damageLevel[damage.current]}
+                </SummaryRow>
+              ) : null}
+
+              {building.postedNumber ? (
+                <SummaryRow label={en ? 'Posted number' : 'الرقم المكتوب'} className="font-mono">
+                  {building.postedNumber}
+                </SummaryRow>
+              ) : null}
+
+              <SummaryRow label={en ? 'Parcel Number' : 'رقم العقار'} className="font-mono">
+                {building.parcelNumber}
+              </SummaryRow>
+
+              {building.sharedParcelNumbers?.length ? (
+                <SummaryRow label={en ? 'Shared parcels' : 'عقارات مشتركة'} className="font-mono">
+                  {building.sharedParcelNumbers.join(en ? ', ' : '، ')}
+                </SummaryRow>
+              ) : null}
+
+              {/*
+                The فرز with its أقسام where they have been collected: «مفروزة»
+                on its own does not answer the question anybody asks it — «which
+                قسم?». A ticked فرز with no numbers yet is still stated.
+              */}
+              {building.isPartitioned != null ? (
+                <SummaryRow label={en ? 'Partition' : 'الفرز'}>
+                  {building.isPartitioned
+                    ? building.partitionNumbers?.length
+                      ? en
+                        ? `Partitioned — parts ${building.partitionNumbers.join(', ')}`
+                        : `مفروزة — الأقسام ${building.partitionNumbers.join('، ')}`
+                      : en
+                        ? 'Partitioned'
+                        : 'مفروزة'
+                    : en
+                      ? 'Not partitioned'
+                      : 'غير مفروزة'}
+                </SummaryRow>
+              ) : null}
+
+              {building.zoneName ? (
+                <SummaryRow label={en ? 'Sector' : 'القطاع'}>
+                  {building.zoneCode ? `${building.zoneCode} · ${building.zoneName}` : building.zoneName}
+                </SummaryRow>
+              ) : null}
+
+              <SummaryRow
+                label={en ? 'Location' : 'الموقع'}
+                className={building.latitude != null ? undefined : 'text-muted-foreground'}
+              >
+                {building.latitude != null
+                  ? en
+                    ? 'Located'
+                    : 'محدَّد الموقع'
+                  : en
+                    ? 'Not on the map'
+                    : 'غير محدَّد على الخريطة'}
+              </SummaryRow>
+            </SummaryList>
           </div>
 
           {/* ── The matrix, painted the way it was drawn ─────────────── */}
@@ -715,7 +752,7 @@ export function BuildingUnitMatrixView({
                     key={floor}
                     className={cn(
                       MATRIX_ROW_HEIGHT,
-                      'flex w-12 items-center justify-end text-[11px] font-medium tabular-nums text-muted-foreground sm:w-20',
+                      'flex w-12 items-center justify-end text-xs font-medium tabular-nums text-muted-foreground sm:w-20',
                       floor < 0 && 'font-mono text-foreground/70',
                     )}
                   >
@@ -793,16 +830,16 @@ export function BuildingUnitMatrixView({
                               not show. Truncated rather than wrapped so a
                               narrow block keeps its height.
                             */}
-                            <span className="block max-w-full truncate text-[10px] font-medium leading-tight">
+                            <span className="block max-w-full truncate text-xs font-medium leading-tight">
                               {badge.short}
                             </span>
                             {badge.detail ? (
-                              <span className="hidden max-w-full truncate text-[10px] leading-tight opacity-80 sm:block">
+                              <span className="hidden max-w-full truncate text-xs leading-tight opacity-80 sm:block">
                                 {badge.detail}
                               </span>
                             ) : null}
                             {unit.visitCount > 0 ? (
-                              <span className="flex items-center gap-0.5 text-[10px] opacity-80">
+                              <span className="flex items-center gap-0.5 text-xs opacity-80">
                                 <Footprints className="size-2.5 shrink-0" aria-hidden />
                                 {unit.visitCount}
                               </span>
@@ -868,7 +905,7 @@ export function BuildingUnitMatrixView({
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <Select value={addingType} onValueChange={setAddingType}>
-                  <SelectTrigger className="h-9 w-44 text-xs">
+                  <SelectTrigger className="h-9 min-w-0 flex-1 basis-full text-xs sm:basis-0">
                     <SelectValue placeholder={en ? 'Unit type…' : 'نوع الوحدة…'} />
                   </SelectTrigger>
                   <SelectContent>
@@ -899,14 +936,14 @@ export function BuildingUnitMatrixView({
                 >
                   {en ? 'Cancel' : 'إلغاء'}
                 </Button>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   {en ? 'The code is assigned from the floor.' : 'يُشتق رمز الوحدة من الطابق.'}
                 </span>
               </div>
 
               {duplicateUnits && duplicateUnits.floor === addingFloor ? (
                 <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2.5">
-                  <p className="flex items-start gap-1.5 text-[11px] font-medium leading-relaxed">
+                  <p className="flex items-start gap-1.5 text-xs font-medium leading-relaxed">
                     <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
                     {en
                       ? 'This floor already has a unit of the same type. Is the one you are adding different?'
@@ -916,7 +953,7 @@ export function BuildingUnitMatrixView({
                     {duplicateUnits.candidates.map((row) => (
                       <li
                         key={row.id}
-                        className="rounded-md bg-background/70 px-2 py-1.5 text-[11px] leading-relaxed"
+                        className="rounded-md bg-background/70 px-2 py-1.5 text-xs leading-relaxed"
                       >
                         <span className="font-mono font-medium" dir="ltr">
                           {row.unitCode}
@@ -985,134 +1022,107 @@ export function BuildingUnitMatrixView({
 
           {/* ── The selected unit, and what can be done with it ─ */}
           {selectedUnit ? (
-            <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/[0.03] p-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <p className="text-sm font-semibold">
-                  <span dir="ltr" className="font-mono">
-                    {building.code}-{selectedUnit.unitCode}
-                  </span>
-                  <span className="ms-2 text-xs font-normal text-muted-foreground">
-                    {floorLabel(selectedUnit.floor, en)} · {labels.unitType[selectedUnit.unitType]}
-                  </span>
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {labels.surveyStatus[selectedUnit.surveyStatus]}
-                </p>
-              </div>
+            /*
+              Laid out the way the building above it is: the code, then what can
+              be done, then what is known — so the form a button opens lands
+              directly under that button rather than under a list of occupants.
+            */
+            <div className="space-y-4 rounded-lg border border-primary/40 bg-primary/[0.03] p-4">
+              <p className="text-base font-bold">
+                <span dir="ltr" className="font-mono">
+                  {building.code}-{selectedUnit.unitCode}
+                </span>
+              </p>
 
-              <OccupantList
-                unit={selectedUnit}
-                locale={locale}
-                canWrite={canWrite}
-                busy={busy}
-                citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
-                onEnd={closeSpell}
-                onLinkOwner={linkOwner}
-              />
-
-              {/* Why the flat reads «شاغرة», and the control that lifts it. */}
-              <VacancyPanel
-                unit={selectedUnit}
-                unitCode={`${building.code}-${selectedUnit.unitCode}`}
-                locale={locale}
-                busy={busy}
-                canWrite={canWrite}
-                onEnd={(values) => liftVacancy(selectedUnit, values)}
-              />
-
-              {effectiveUnitStatus(selectedUnit) === 'SEASONAL' ? (
-                <SeasonalHomePanel
-                  unit={selectedUnit}
-                  locale={locale}
-                  busy={busy}
-                  canWrite={canWrite}
-                  onSave={(values) => void saveSeasonal(selectedUnit, values)}
-                />
-              ) : null}
-
-              <ConfirmVacancyDialog
-                unit={selectedUnit}
-                unitCode={`${building.code}-${selectedUnit.unitCode}`}
-                locale={locale}
-                open={confirmingVacancy}
-                onOpenChange={setConfirmingVacancy}
-                onConfirm={(values) => saveVacancy(selectedUnit, values)}
-              />
-
+              {/*
+                One width for every action: a stack on a phone, where «إضافة
+                شخص إلى الوحدة» does not fit half a screen, and even columns from
+                `sm` up.
+              */}
               {canWrite ? (
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant={action === 'occupant' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'occupant' ? null : 'occupant');
-                    }}
-                  >
-                    <UserPlus className="size-4" aria-hidden />
-                    {en ? 'Add a person to this unit' : 'إضافة شخص إلى الوحدة'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={action === 'visit' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'visit' ? null : 'visit');
-                    }}
-                  >
-                    <Footprints className="size-4" aria-hidden />
-                    {en ? 'Log a visit' : 'تسجيل زيارة'}
-                  </Button>
-                  {/*
-                    Hidden once a confirmation is standing: the panel above
-                    carries it and the control that lifts it, and a greyed-out
-                    «تأكيد الشغور» beside it would read as unavailable rather
-                    than already done.
-                  */}
-                  {activeVacancy(selectedUnit) ? null : (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     <Button
                       size="sm"
-                      variant="outline"
-                      disabled={busy || vacancyBlocked !== null}
-                      title={vacancyBlocked ?? undefined}
+                      className="w-full"
+                      variant={action === 'occupant' ? 'default' : 'outline'}
+                      disabled={busy}
                       onClick={() => {
                         setActionError(null);
-                        setConfirmingVacancy(true);
+                        setAction(action === 'occupant' ? null : 'occupant');
                       }}
                     >
-                      <DoorClosed className="size-4" aria-hidden />
-                      {en ? 'Confirm vacant…' : 'تأكيد الشغور…'}
+                      <UserPlus className="size-4" aria-hidden />
+                      {en ? 'Add a person to this unit' : 'إضافة شخص إلى الوحدة'}
                     </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant={action === 'damage' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'damage' ? null : 'damage');
-                    }}
-                  >
-                    <ShieldAlert className="size-4" aria-hidden />
-                    {en ? 'Assess this unit' : 'كشف ضرر على الوحدة'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={action === 'case' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'case' ? null : 'case');
-                    }}
-                  >
-                    <ClipboardList className="size-4" aria-hidden />
-                    {en ? 'Open a follow-up case' : 'فتح حالة متابعة'}
-                  </Button>
-                  {canWrite &&
-                  selectedUnit.occupants.length === 0 &&
-                  selectedUnit.visitCount === 0 ? (
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      variant={action === 'visit' ? 'default' : 'outline'}
+                      disabled={busy}
+                      onClick={() => {
+                        setActionError(null);
+                        setAction(action === 'visit' ? null : 'visit');
+                      }}
+                    >
+                      <Footprints className="size-4" aria-hidden />
+                      {en ? 'Log a visit' : 'تسجيل زيارة'}
+                    </Button>
+                    {/*
+                      Hidden once a confirmation is standing: the panel above
+                      carries it and the control that lifts it, and a greyed-out
+                      «تأكيد الشغور» beside it would read as unavailable rather
+                      than already done.
+                    */}
+                    {activeVacancy(selectedUnit) ? null : (
+                      <Button
+                        size="sm"
+                        className="w-full"
+                        variant={action === 'vacancy' ? 'default' : 'outline'}
+                        disabled={busy || vacancyBlocked !== null}
+                        title={vacancyBlocked ?? undefined}
+                        onClick={() => {
+                          setActionError(null);
+                          setAction(action === 'vacancy' ? null : 'vacancy');
+                        }}
+                      >
+                        <DoorClosed className="size-4" aria-hidden />
+                        {en ? 'Confirm vacant' : 'تأكيد الشغور'}
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      variant={action === 'damage' ? 'default' : 'outline'}
+                      disabled={busy}
+                      onClick={() => {
+                        setActionError(null);
+                        setAction(action === 'damage' ? null : 'damage');
+                      }}
+                    >
+                      <ShieldAlert className="size-4" aria-hidden />
+                      {en ? 'Assess this unit' : 'كشف ضرر على الوحدة'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      variant={action === 'case' ? 'default' : 'outline'}
+                      disabled={busy}
+                      onClick={() => {
+                        setActionError(null);
+                        setAction(action === 'case' ? null : 'case');
+                      }}
+                    >
+                      <ClipboardList className="size-4" aria-hidden />
+                      {en ? 'Open a follow-up case' : 'فتح حالة متابعة'}
+                    </Button>
+                  </div>
+                  {/*
+                    Out of the grid on purpose. It deletes on a single tap, with no
+                    dialog behind it, so it does not get a cell the same size as
+                    «تسجيل زيارة» right beside the thumb that meant to press that.
+                  */}
+                  {selectedUnit.occupants.length === 0 && selectedUnit.visitCount === 0 ? (
                     <Button
                       size="sm"
                       variant="ghost"
@@ -1225,6 +1235,16 @@ export function BuildingUnitMatrixView({
                 />
               ) : null}
 
+              {action === 'vacancy' ? (
+                <ConfirmVacancyForm
+                  key={selectedUnit.id}
+                  unit={selectedUnit}
+                  locale={locale}
+                  busy={busy}
+                  onSubmit={(values) => void saveVacancy(selectedUnit, values)}
+                />
+              ) : null}
+
               {action === 'damage' ? (
                 <DamageForm
                   busy={busy}
@@ -1257,6 +1277,55 @@ export function BuildingUnitMatrixView({
                   <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
                   {actionError}
                 </p>
+              ) : null}
+
+              <SummaryList>
+                <SummaryRow label={en ? 'Floor' : 'الطابق'}>
+                  {floorLabel(selectedUnit.floor, en)}
+                </SummaryRow>
+                <SummaryRow label={en ? 'Unit type' : 'نوع الوحدة'}>
+                  {labels.unitType[selectedUnit.unitType]}
+                </SummaryRow>
+                <SummaryRow
+                  label={en ? 'Survey status' : 'حالة المسح'}
+                  className={
+                    selectedUnit.surveyStatus === 'COMPLETE'
+                      ? 'text-success'
+                      : undefined
+                  }
+                >
+                  {labels.surveyStatus[selectedUnit.surveyStatus]}
+                </SummaryRow>
+              </SummaryList>
+
+              <OccupantList
+                unit={selectedUnit}
+                locale={locale}
+                canWrite={canWrite}
+                busy={busy}
+                citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
+                onEnd={closeSpell}
+                onLinkOwner={linkOwner}
+              />
+
+              {/* Why the flat reads «شاغرة», and the control that lifts it. */}
+              <VacancyPanel
+                unit={selectedUnit}
+                unitCode={`${building.code}-${selectedUnit.unitCode}`}
+                locale={locale}
+                busy={busy}
+                canWrite={canWrite}
+                onEnd={(values) => liftVacancy(selectedUnit, values)}
+              />
+
+              {effectiveUnitStatus(selectedUnit) === 'SEASONAL' ? (
+                <SeasonalHomePanel
+                  unit={selectedUnit}
+                  locale={locale}
+                  busy={busy}
+                  canWrite={canWrite}
+                  onSave={(values) => void saveSeasonal(selectedUnit, values)}
+                />
               ) : null}
             </div>
           ) : null}
@@ -1299,7 +1368,7 @@ export function BuildingUnitMatrixView({
                   <ShieldAlert className="size-3.5 text-muted-foreground" aria-hidden />
                   {en ? 'Damage history' : 'سجل الأضرار'}
                 </p>
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   {en
                     ? `${damage.history.length} assessment(s) · current: ${
                         damage.current ? labels.damageLevel[damage.current] : '—'
@@ -1343,7 +1412,7 @@ export function BuildingUnitMatrixView({
                         <p className="leading-relaxed text-muted-foreground">{row.observations}</p>
                       ) : null}
                       {row.assessedByName ? (
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                           {en ? 'Assessed by ' : 'الكاشف: '}
                           {row.assessedByName}
                         </p>

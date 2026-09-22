@@ -41,7 +41,6 @@ import {
   loadCitizenDraft,
   saveCitizenDraft,
 } from '@/lib/citizen-draft';
-import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import type { PropertyDraft, UnitDraft } from '@/components/citizen/property-card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -1749,7 +1748,7 @@ export function CitizenEditor({
 
   if (loadError) {
     return (
-      <div className="w-full space-y-4 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <p
           role="alert"
           className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
@@ -1772,7 +1771,9 @@ export function CitizenEditor({
   const Icon = isQueuedEdit ? CloudOff : editing ? UserRoundPen : UserPlus;
 
   return (
-    <div className="w-full space-y-3.5 sm:space-y-6 px-3 py-3 sm:px-6 sm:py-6 lg:px-8 pb-20 sm:pb-8">
+    // At least as tall as the scrolling area, so the form below can stretch
+    // and put its save bar at the bottom of the screen on a short step.
+    <div className="flex min-h-full w-full flex-col space-y-3.5 sm:space-y-6 px-3 py-3 sm:px-6 sm:py-6 lg:px-8 pb-20 sm:pb-8">
       <ShellLink
         href={cancelHref}
         className="inline-flex items-center gap-1.5 text-xs sm:text-sm text-muted-foreground transition-colors hover:text-foreground"
@@ -1799,26 +1800,16 @@ export function CitizenEditor({
                   ? (locale === 'en' ? 'Edit Citizen Information' : 'تعديل بيانات مواطن')
                   : (locale === 'en' ? 'Register New Citizen' : 'تسجيل مواطن جديد')}
             </h1>
-            <p className="text-[11px] sm:text-xs text-muted-foreground hidden sm:block">
-              {isQueuedEdit
-                ? (locale === 'en'
-                    ? 'This record is stored only on this device and has not reached the municipality. Saving here updates the local copy and retries sending it automatically.'
-                    : 'هذا السجل محفوظ على هذا الجهاز فقط ولم يصل إلى البلدية بعد. الحفظ هنا يُحدّث النسخة المحلية ويعيد محاولة إرسالها تلقائياً.')
-                : editing
-                  ? (locale === 'en'
-                      ? "Edits apply to this citizen's latest application. Prior submissions are preserved in their history."
-                      : 'التعديلات تُطبَّق على أحدث طلب لهذا المواطن. الطلبات السابقة تبقى كما هي في ملفه.')
-                  : (locale === 'en'
-                      ? 'The application is registered with status "Pending" and appears in the verification queue.'
-                      : 'يُسجَّل الطلب بحالة «قيد الانتظار» ويظهر في قائمة المراجعة كأي طلب آخر.')}
-            </p>
+
           </div>
         </div>
 
+        {/* Plain text, not an outlined chip — a reference is a value, and a
+            border around a value reads as a control. */}
         {reference ? (
-          <Badge variant="outline" className="font-mono text-xs" dir="ltr">
-            {reference}
-          </Badge>
+          <span className="font-mono text-sm font-semibold text-primary">
+            <bdi dir="ltr">{reference}</bdi>
+          </span>
         ) : null}
       </div>
 
@@ -1879,12 +1870,15 @@ export function CitizenEditor({
           </p>
           {openReturn.reason ? <p className="leading-relaxed">{openReturn.reason}</p> : null}
           {openReturn.fields.length > 0 ? (
-            <p className="flex flex-wrap gap-1">
-              {openReturn.fields.map((field) => (
-                <Badge key={field} variant="soft-warning" className="text-[10px]">
-                  {qualityLabels(locale).reviewField[field] ?? field}
-                </Badge>
-              ))}
+            <p className="text-sm">
+              <span className="text-muted-foreground">
+                {locale === 'en' ? 'Fields to correct: ' : 'الحقول المطلوب تصحيحها: '}
+              </span>
+              <span className="font-medium">
+                {openReturn.fields
+                  .map((field) => qualityLabels(locale).reviewField[field] ?? field)
+                  .join(locale === 'en' ? ', ' : '، ')}
+              </span>
             </p>
           ) : null}
           <p className="text-xs text-muted-foreground">
@@ -1942,13 +1936,6 @@ export function CitizenEditor({
                 maxLength={300}
                 className="min-h-[56px] text-sm"
               />
-              {duplicateClearedReason.trim().length < 4 ? (
-                <p className="text-[11px] text-muted-foreground">
-                  {locale === 'en'
-                    ? 'Without a reason the note stays on the record after saving.'
-                    : 'بدون سبب يبقى التنبيه على السجل بعد الحفظ.'}
-                </p>
-              ) : null}
             </div>
           ) : null}
         </div>

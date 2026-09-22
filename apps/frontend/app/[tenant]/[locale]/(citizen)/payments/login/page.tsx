@@ -90,11 +90,6 @@ export default function PaymentsLogin({
             label={locale === 'en' ? 'Reference Number' : 'الرقم المرجعي'}
             htmlFor="reference"
             required
-            hint={
-              locale === 'en'
-                ? 'The reference number received when submitting your application.'
-                : 'الرقم الذي استلمته عند تسجيل طلبك.'
-            }
           >
             <Input
               id="reference"

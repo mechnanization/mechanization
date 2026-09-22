@@ -27,7 +27,8 @@ import {
   type LinkBlock,
   type LinkOutcome,
 } from '@/lib/api-client';
-import { compareNames, formatPhone, type NameMatch } from '@/lib/landlord-display';
+import { compareNames, type NameMatch } from '@/lib/landlord-display';
+import { formatPhone } from '@/lib/phone';
 import { formatDate } from '@/lib/dates';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';

@@ -179,7 +179,7 @@ export function DuplicateReviewDialog({
 
   return (
     <Dialog open onOpenChange={(next) => (next ? undefined : onCancel())}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UsersRound className="size-5 shrink-0 text-warning" aria-hidden />
@@ -235,7 +235,7 @@ export function DuplicateReviewDialog({
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       {row.matchedOn.map((key) => (
-                        <Badge key={key} variant="soft-warning" className="text-[10px]">
+                        <Badge key={key} variant="soft-warning" className="text-xs">
                           {matchLabel(key)}
                         </Badge>
                       ))}

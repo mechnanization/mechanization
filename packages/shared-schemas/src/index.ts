@@ -16,3 +16,4 @@ export * from './building.schema';
 export * from './staff.schema';
 export * from './case.schema';
 export * from './quality.schema';
+export * from './payout-policy';

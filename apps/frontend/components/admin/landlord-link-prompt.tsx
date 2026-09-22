@@ -85,7 +85,7 @@ export function LandlordLinkPrompt({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="-mx-1 max-h-[60vh] space-y-3 overflow-y-auto px-1">
+        <div className="-mx-1 max-h-[60dvh] space-y-3 overflow-y-auto px-1">
           {proposals.map((proposal) => {
             const resolution = resolved[proposal.propertyEntryId];
             return resolution ? (

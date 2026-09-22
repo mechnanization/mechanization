@@ -29,7 +29,7 @@ export default function AdminNotFound({
   const pathname = usePathname();
 
   return (
-    <div className="relative flex min-h-[65vh] flex-col items-center justify-center gap-7 overflow-hidden px-6 text-center">
+    <div className="relative flex min-h-[65dvh] flex-col items-center justify-center gap-7 overflow-hidden px-6 text-center">
       {/* Same soft primary glow the sign-in screen uses — a plain grey icon on
           an otherwise blank page reads as broken; this reads as designed. */}
       <div
@@ -41,7 +41,7 @@ export default function AdminNotFound({
 
       <span
         aria-hidden
-        className="flex size-16 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/15"
+        className="flex size-16 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15"
       >
         <Compass className="size-8" />
       </span>

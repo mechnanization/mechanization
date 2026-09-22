@@ -30,7 +30,7 @@ export default function NotFound() {
         >
           <span
             aria-hidden
-            className="flex size-16 items-center justify-center rounded-2xl bg-muted text-muted-foreground"
+            className="flex size-16 items-center justify-center rounded-xl bg-muted text-muted-foreground"
           >
             <FileQuestion className="size-8" />
           </span>

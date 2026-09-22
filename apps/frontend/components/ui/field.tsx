@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useId } from 'react';
-import { FileQuestion, ShieldQuestion, X } from 'lucide-react';
+import { FileQuestion, PencilLine, ShieldQuestion, X } from 'lucide-react';
 import { isFlaggablePath, isUnestablished, type FieldFlag } from '@mechanization/shared-schemas';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
@@ -62,6 +62,44 @@ export function useFieldFlags(): FieldFlagApi | null {
   return useContext(FieldFlagContext);
 }
 
+/**
+ * «خانات غير مؤكَّدة» — the citizen form's fourth step, which is not a second
+ * copy of any field but the first three pages shown with everything else
+ * folded away.
+ *
+ * Given a set of paths, every `Field` outside it renders `hidden` (and so
+ * does every field with no path at all). The fields inside it are the real
+ * ones — the same control, the same handlers, the same id — so correcting a
+ * value there runs exactly what correcting it on its own page runs: الجنسية
+ * clearing رقم السجل, the landlord lookup off the phone, the census checks.
+ * A second copy would have needed all of that duplicated, and would have put
+ * two elements with the same id on the page.
+ *
+ * What is not a field — headings, notices, pickers — is folded by the two
+ * rules under `[data-review]` in `globals.css`, keyed on the markers
+ * `review-body` and `review-group`.
+ */
+export interface FieldFocus {
+  paths: ReadonlySet<string>;
+}
+
+const FieldFocusContext = createContext<FieldFocus | null>(null);
+
+export function FieldFocusProvider({
+  value,
+  children,
+}: {
+  value: FieldFocus | null;
+  children: React.ReactNode;
+}) {
+  return <FieldFocusContext.Provider value={value}>{children}</FieldFocusContext.Provider>;
+}
+
+/** Null outside the fourth step. For a control that is a field without being a `Field`. */
+export function useFieldFocus(): FieldFocus | null {
+  return useContext(FieldFocusContext);
+}
+
 /** The flags as the wire wants them: an array, in the order fields appear. */
 export function flagsToArray(flags: ReadonlyMap<string, string>): FieldFlag[] {
   return [...flags].map(([path, reason]) => ({
@@ -117,17 +155,16 @@ export function unverifiedFromArray(flags: readonly FieldFlag[]): Map<string, st
  */
 export function Field({
   label,
-  hint,
   error,
   required,
   optionalLabel,
+  caution,
   htmlFor,
   path,
   className,
   children,
 }: {
   label: string;
-  hint?: string;
   error?: string;
   required?: boolean;
   /**
@@ -139,6 +176,27 @@ export function Field({
    * what lets a number be skipped that was sitting in the person's hand.
    */
   optionalLabel?: string;
+  /**
+   * An anti-guessing line, for a field whose guessed value is charged for.
+   *
+   * Not `hint` returning by the back door. `hint` was standing guidance under
+   * every input — the text people stopped reading first, and the reason it
+   * was removed. This is the opposite case, and there are two of them in the
+   * whole portal: «مساحة الوحدة» and «ومن يشغلها؟», the two answers a fee is
+   * computed from. Both have a correct response when the officer does not
+   * know — press «غير مؤكَّد» and say why — and both have a wrong one that is
+   * indistinguishable from the right one afterwards, because a guessed area
+   * is a number like any other once it is saved and the assessment reads it.
+   *
+   * So it is not guidance about how to use a control; it is the field saying
+   * what happens to a value nobody measured. It withdraws the moment the
+   * officer flags the field, because at that point they have done the thing
+   * it was asking for and the reason box below carries the rest.
+   *
+   * Before adding a third: if the sentence would still be true of a field
+   * nobody is billed over, it is a hint, and it does not go here.
+   */
+  caution?: string;
   htmlFor: string;
   /** This field's dot-path — `personal.civilRecordNumber`, `properties.0.unitArea`. */
   path?: string;
@@ -172,9 +230,23 @@ export function Field({
   */
   const unverifiedNote = path ? flagging?.unverified.get(path) : undefined;
   const locale = flagging?.locale ?? 'ar';
+  const focus = useContext(FieldFocusContext);
+  const outOfFocus = focus !== null && !(path && focus.paths.has(path));
 
   return (
-    <div className={cn('space-y-1.5', className)}>
+    /*
+      `data-field-path` is how «الخانات غير المؤكَّدة» finds a field to take
+      the officer to: the page it is on, then the field itself, scrolled into
+      view and focused. Markup only — nothing reads it but that jump.
+    */
+    <div
+      className={cn(
+        'space-y-1.5',
+        className,
+        outOfFocus && 'hidden',
+      )}
+      data-field-path={path}
+    >
       <div className="flex items-baseline justify-between gap-2">
         <Label
           htmlFor={htmlFor}
@@ -201,34 +273,24 @@ export function Field({
           it.
         */}
         {unverifiedNote !== undefined ? (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/30">
+          <span className="inline-flex shrink-0 items-center gap-1 rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning ring-1 ring-warning/30">
             <ShieldQuestion className="size-3 shrink-0" aria-hidden />
             <span>{locale === 'en' ? 'Needs verification' : 'بانتظار التحقق'}</span>
           </span>
-        ) : flaggable && path ? (
+        ) : flaggable && path && !flagged ? (
+          /*
+            Offered only while the field is answerable. Once flagged, the
+            reason box below carries its own «تراجع», and a second one up here
+            was the same button twice.
+          */
           <button
             type="button"
-            onClick={() => (flagged ? flagging?.clear(path) : flagging?.set(path, ''))}
-            aria-pressed={flagged}
-            className={cn(
-              'inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium transition-colors select-none',
-              flagged
-                ? 'bg-warning/15 text-warning ring-1 ring-warning/40'
-                : 'text-muted-foreground/70 hover:bg-muted hover:text-foreground',
-            )}
+            onClick={() => flagging?.set(path, '')}
+            aria-pressed={false}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-muted-foreground/70 transition-colors select-none hover:bg-muted hover:text-foreground"
           >
-            {flagged ? (
-              <X className="size-3 shrink-0" aria-hidden />
-            ) : (
-              <FileQuestion className="size-3 shrink-0" aria-hidden />
-            )}
-            {flagged
-              ? locale === 'en'
-                ? 'Undo'
-                : 'تراجع'
-              : locale === 'en'
-                ? 'Unverified'
-                : 'غير مؤكَّد'}
+            <FileQuestion className="size-3 shrink-0" aria-hidden />
+            {locale === 'en' ? 'Unverified' : 'غير مؤكَّد'}
           </button>
         ) : null}
       </div>
@@ -248,17 +310,35 @@ export function Field({
                   ? 'Why is this missing? (required)...'
                   : 'سبب عدم توفّر هذه المعلومة (إلزامي)...'
               }
-              className="flex h-10 w-full rounded-md border border-warning/50 bg-warning/5 px-3 py-2 text-xs text-foreground placeholder:text-warning/70 outline-none ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50 focus-visible:ring-offset-2"
+              className="flex h-10 w-full rounded-md border border-destructive/50 bg-background px-3 py-2 text-xs text-foreground placeholder:text-destructive/60 outline-none ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40 focus-visible:ring-offset-2"
             />
           </div>
           <button
             type="button"
             onClick={() => flagging?.clear(path)}
             title={locale === 'en' ? 'Undo unverified status' : 'تراجع عن غير مؤكَّد'}
-            className="inline-flex h-10 shrink-0 items-center justify-center gap-1 rounded-md border border-warning/40 bg-warning/15 px-2.5 py-1 text-xs font-medium text-warning hover:bg-warning/25 transition-colors select-none"
+            className={cn(
+              'inline-flex h-10 shrink-0 items-center justify-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors select-none',
+              focus
+                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                : 'border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20',
+            )}
           >
-            <X className="size-3.5 shrink-0" aria-hidden />
-            <span>{locale === 'en' ? 'Undo' : 'تراجع'}</span>
+            {focus ? (
+              <PencilLine className="size-3.5 shrink-0" aria-hidden />
+            ) : (
+              <X className="size-3.5 shrink-0" aria-hidden />
+            )}
+            {/* On the fourth step this is the way to answer the field, so it says so. */}
+            <span>
+              {focus
+                ? locale === 'en'
+                  ? 'Enter the value'
+                  : 'إدخال القيمة'
+                : locale === 'en'
+                  ? 'Undo'
+                  : 'تراجع'}
+            </span>
           </button>
         </div>
       ) : (
@@ -271,33 +351,25 @@ export function Field({
         officer is looking at rather than as a refusal of it.
       */}
       {unverifiedNote !== undefined && !flagged ? (
-        <p className="rounded-md border border-warning/30 bg-warning/5 px-2.5 py-1 text-[11px] leading-normal text-warning">
+        <p className="rounded-md border border-warning/30 bg-warning/5 px-2.5 py-1 text-xs leading-normal text-warning">
           {unverifiedNote}
         </p>
       ) : null}
 
       {/*
-        The hint sits *under* the control, and that position is load-bearing
-        rather than cosmetic.
-
-        Above it, a hint pushed its own control down by a line — so two fields
-        side by side in a `sm:grid-cols-2` row, one with a hint and one without,
-        put their two inputs at different heights. That is not a quirk of one
-        screen: there are some sixty-odd hints across two dozen such rows, and
-        the mismatch appeared wherever the two happened not to agree. Worse, it
-        was unfixable from the outside — the row cannot align what it cannot
-        measure, and `items-end` only works while neither field is showing an
-        error.
-
-        Below, every field has the same shape whatever it carries: a one-line
-        label, then the control. Two of them in a grid align by construction,
-        and nothing the parent does has to know about it.
-
-        After the error rather than before, because an error is the thing that
-        has to be adjacent to the control the moment it appears; a hint is
-        standing guidance and can sit at the foot of the block. With no error —
-        the ordinary case — it is directly under the control anyway.
+        No hint under the control, by decision: a field is its label and its
+        input. Standing guidance under every other input was the text people
+        stopped reading first, and it pushed the fields beside it out of line.
+        Only an error — something that is wrong now — gets a line down here,
+        and `caution`, which is not guidance but a statement of what a guessed
+        value costs. See its prop docs for why the two are not the same thing.
       */}
+      {caution !== undefined && !flagged && unverifiedNote === undefined ? (
+        <p className="rounded-md border border-warning/30 bg-warning/5 px-2.5 py-1 text-xs leading-normal text-warning">
+          {caution}
+        </p>
+      ) : null}
+
       {error ? (
         <p
           role="alert"
@@ -306,8 +378,6 @@ export function Field({
           {error}
         </p>
       ) : null}
-
-      {hint ? <p className="text-xs leading-normal text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }

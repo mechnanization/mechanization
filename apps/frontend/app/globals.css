@@ -75,6 +75,26 @@
     --success: 142 71% 29%;
 
     /**
+     * `--info` completes the set, and it exists because 60-odd places were
+     * spelling it `text-sky-700 dark:text-sky-400` by hand — a hint, a
+     * "this is how it works" note, an audit entry that is neither good news
+     * nor bad. Chosen the same way `--warning` was: 36% is the lightness at
+     * which sky clears 4.5:1 on the cream card (4.69) and on the page (4.59).
+     * A step lighter fails both.
+     *
+     * The three foregrounds are what goes *on* a solid `bg-success` /
+     * `bg-warning` / `bg-info`. White works in the light theme (5.1, 5.0,
+     * 5.5) and fails in the dark one, where the same hues sit much lighter —
+     * white on dark success is 2.9:1. So the dark block flips them to the
+     * near-black `--destructive-foreground` already uses, for the same
+     * reason and with the same result: 6.7:1 and better.
+     */
+    --info: 199 89% 36%;
+    --success-foreground: 0 0% 100%;
+    --warning-foreground: 0 0% 100%;
+    --info-foreground: 0 0% 100%;
+
+    /**
      * Arabic-first, so these are the `sans` stack rather than a separate family —
      * every `font-sans` component inherits them. Loaded in the tenant layout's
      * <head>; the system-ui fallback in tailwind.config keeps the page readable
@@ -172,6 +192,11 @@
     --ring: var(--brand-primary, 213 76% 56%);
     --warning: 32 95% 55%;
     --success: 142 71% 40%;
+    --info: 199 89% 55%;
+    /* White fails on all three at these lightnesses; near-black clears 6.7:1. */
+    --success-foreground: 60 2% 5%;
+    --warning-foreground: 60 2% 5%;
+    --info-foreground: 60 2% 5%;
 
     /**
      * The dark steps are *selected*, not an automatic flip of the light ones:
@@ -346,4 +371,33 @@
     size: A5 landscape;
     margin: 10mm;
   }
+}
+
+/*
+ * «خانات غير مؤكَّدة» — the citizen form's fourth step (see `FieldFocusProvider`).
+ *
+ * The step shows the form's first three pages with every field outside the
+ * list rendered `hidden`. These two rules fold what is left that is not a
+ * field, and only under `[data-review]`, so they do nothing on any other page:
+ *
+ *   .review-body  — its direct children that hold no visible field go: a
+ *                   heading, a notice, the census picker, the duplicates panel.
+ *   .review-group — goes whole when it holds no visible field: a section card,
+ *                   a property card.
+ *   .review-hide  — always goes: an action that is not the step's job, like
+ *                   «حذف» on a property card.
+ *
+ * `:has()` does the work. A browser without it shows those blocks as well —
+ * the step still works, it is only less tidy.
+ */
+[data-review] .review-body > :not([data-field-path]):not(:has([data-field-path]:not(.hidden))) {
+  display: none !important;
+}
+
+[data-review] .review-group:not(:has([data-field-path]:not(.hidden))) {
+  display: none !important;
+}
+
+[data-review] .review-hide {
+  display: none !important;
 }

@@ -112,7 +112,7 @@ export function Sheet({
       />
       <div
         className={cn(
-          'relative z-10 flex h-full w-full max-w-md flex-col bg-background shadow-xl',
+          'relative z-10 flex h-full w-full max-w-md flex-col bg-card shadow-xl',
           side === 'left'
             ? 'border-e animate-in slide-in-from-left'
             : side === 'right'

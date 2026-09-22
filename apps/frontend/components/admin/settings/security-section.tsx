@@ -28,6 +28,7 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import type { SettingsCopy } from '@/lib/settings-i18n';
 import { Badge } from '@/components/ui/badge';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -281,7 +282,7 @@ export function SecuritySection({
 
           {showEmailForm && (
             <form onSubmit={handleSendEmailChange} className="rounded-xl border border-primary/20 bg-primary/[0.02] p-4 space-y-4">
-              <AlignedFieldGrid columns={2}>
+              <AlignedFieldGrid>
                 <SettingsField
                   label={copy.security.newEmail}
                   htmlFor="new-email"
@@ -432,7 +433,7 @@ export function SecuritySection({
                     {copy.security.twoFactorApp}
                   </p>
                   {is2FAEnabled ? (
-                    <Badge variant="soft-success" className="text-[10px] px-1.5 py-0">
+                    <Badge variant="soft-success" className="text-xs px-1.5 py-0">
                       {locale === 'en' ? 'Active' : 'مفعّل'}
                     </Badge>
                   ) : null}
@@ -543,7 +544,7 @@ export function SecuritySection({
                       />
                     )}
                   </div>
-                  <span className="text-[11px] font-semibold text-slate-700">
+                  <span className="text-xs font-semibold text-slate-700">
                     {locale === 'en' ? 'Scan with Authenticator' : 'امسح بتطبيق المصادقة'}
                   </span>
                 </div>
@@ -721,19 +722,19 @@ export function SecuritySection({
                   <TableCell className="whitespace-nowrap">
                     {dateFormat.format(new Date(Date.now() - row.minutesAgo * 60_000))}
                   </TableCell>
-                  <TableCell dir="ltr" className="text-start font-mono text-xs">
-                    {row.ip}
+                  <TableCell className="font-mono text-xs">
+                    <bdi dir="ltr">{row.ip}</bdi>
                   </TableCell>
-                  <TableCell dir="ltr" className="whitespace-nowrap text-start">
-                    {row.device}
+                  <TableCell className="whitespace-nowrap">
+                    <bdi dir="ltr">{row.device}</bdi>
                   </TableCell>
-                  <TableCell dir="ltr" className="whitespace-nowrap text-start">
-                    {row.location}
+                  <TableCell className="whitespace-nowrap">
+                    <bdi dir="ltr">{row.location}</bdi>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={row.ok ? 'soft-success' : 'soft-destructive'}>
+                    <CellTag tone={row.ok ? 'success' : 'destructive'}>
                       {row.ok ? copy.security.resultSuccess : copy.security.resultFailed}
-                    </Badge>
+                    </CellTag>
                   </TableCell>
                 </TableRow>
               ))}

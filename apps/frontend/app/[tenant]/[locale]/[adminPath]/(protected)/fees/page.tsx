@@ -23,7 +23,7 @@ import {
   getAllPayments,
   getCitizenProfile,
   getFeeSummary,
-  getFeeTitles,
+  getFeeFilterOptions,
   getMunicipalitySettings,
   getTenantConfig,
   issueFeeNotice,
@@ -41,11 +41,12 @@ import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatLbp } from '@/lib/currency';
 import { describeAssessment } from '@/lib/fee-assessment';
 import { formatDate } from '@/lib/dates';
-import { Badge } from '@/components/ui/badge';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { ChargeCitizenDialog, type ChargeValues } from '@/components/admin/charge-citizen-dialog';
@@ -107,23 +108,37 @@ function getTableLabels(locale: string): DataTableLabels {
   };
 }
 
-function getStatusFilters(locale: string) {
-  if (locale === 'en') {
-    return [
-      { id: '', label: 'All' },
-      { id: 'UNPAID', label: 'Unpaid' },
-      { id: 'OVERDUE', label: 'Overdue' },
-      { id: 'PENDING_REVIEW', label: 'Under Review' },
-      { id: 'PAID', label: 'Paid' },
-    ] as const;
-  }
+/**
+ * The order the status tabs read in, which is not alphabetical and not the
+ * enum's.
+ *
+ * It is the collection story: what is owed, what is late, what somebody says
+ * they have paid, what is settled. Kept here as an *ordering* only — which of
+ * these four actually appear is answered by the register (see
+ * `filterOptionsQuery`), because a municipality that has never marked an
+ * invoice «قيد المراجعة» should not be offered a tab that empties the table.
+ */
+const STATUS_TAB_ORDER = ['UNPAID', 'OVERDUE', 'PENDING_REVIEW', 'PAID'] as const;
+
+/**
+ * The tab row: «الكل» plus one tab per status the ledger actually holds.
+ *
+ * «الكل» is always there — it is not a status, it is the absence of the
+ * filter, and it is what clears one.
+ */
+function buildStatusFilters(
+  locale: string,
+  present: readonly string[],
+  labels: ReturnType<typeof getLabels>,
+): Array<{ id: string; label: string }> {
+  const seen = new Set(present);
   return [
-    { id: '', label: 'الكل' },
-    { id: 'UNPAID', label: 'غير مسددة' },
-    { id: 'OVERDUE', label: 'متأخرة' },
-    { id: 'PENDING_REVIEW', label: 'قيد المراجعة' },
-    { id: 'PAID', label: 'مدفوعة' },
-  ] as const;
+    { id: '', label: locale === 'en' ? 'All' : 'الكل' },
+    ...STATUS_TAB_ORDER.filter((status) => seen.has(status)).map((status) => ({
+      id: status,
+      label: labels.paymentStatus[status as never] ?? status,
+    })),
+  ];
 }
 
 function initials(fullName: string): string {
@@ -177,14 +192,35 @@ export default function FeesPage({
     setRole(session.user.role);
   }, [tenant, base, router]);
 
-  const feeTitlesQuery = useStaffQuery({
-    queryKey: ['fees-titles', tenant],
-    queryFn: (accessToken, signal) => getFeeTitles(tenant, accessToken, signal),
+  /**
+   * What the filters above the ledger may offer — the bill titles that exist
+   * and the statuses the register has actually reached.
+   *
+   * Deliberately **not** `reference` here, unlike سجل العمليات, which asks for
+   * the same key and may hold it for the session.
+   *
+   * `titles` and `methods` really are the municipality's vocabulary: only a
+   * write changes them, which is why one read per session was right and why
+   * `load()` invalidating the key was enough. `statuses` stopped being that
+   * the moment «متأخرة» became a predicate rather than a column — whether the
+   * register holds an overdue invoice now depends on the clock, and no write
+   * happens when midnight passes. Held for the session it would go stale with
+   * nothing to invalidate it, and the failure would be the exact one the tab
+   * was fixed to remove: rows reading «متأخرة» with no tab to filter them by.
+   *
+   * So this screen takes the ordinary policy and re-reads on focus. It is
+   * three counts and a DISTINCT, and the screen that shows the tabs is the one
+   * that has to be right about them.
+   */
+  const filterOptionsQuery = useStaffQuery({
+    queryKey: ['fee-filter-options', tenant],
+    queryFn: (accessToken, signal) => getFeeFilterOptions(tenant, accessToken, signal),
     tenant,
     base,
     token,
-    errorMessage: 'تعذّر تحميل أنواع الرسوم.',
+    errorMessage: 'تعذّر تحميل خيارات التصفية.',
   });
+  const feeTitles = filterOptionsQuery.data?.titles ?? [];
 
   const paymentsQuery = useStaffQuery({
     queryKey: [
@@ -277,6 +313,14 @@ export default function FeesPage({
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ['fees-payments', tenant] }),
         queryClient.invalidateQueries({ queryKey: ['fees-context', tenant] }),
+        /*
+          The filter vocabulary too, because a write can extend it: the first
+          invoice under a new «نوع رسم», or the first one anyone settles, adds
+          a value that was not there when the session started. Held forever
+          otherwise — that is what `reference` means — so this is the line that
+          keeps "fetched once" from turning into "never updated".
+        */
+        queryClient.invalidateQueries({ queryKey: ['fee-filter-options', tenant] }),
       ]),
     [queryClient, tenant],
   );
@@ -421,14 +465,14 @@ export default function FeesPage({
                 </Link>
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   {payment.citizenReference ? (
-                    <span className="font-mono text-[11px]" dir="ltr">
+                    <span className="font-mono text-xs" dir="ltr">
                       {payment.citizenReference}
                     </span>
                   ) : null}
                   {payment.citizenPhone ? (
                     <>
                       <span>•</span>
-                      <span className="font-mono text-[11px]" dir="ltr">
+                      <span className="font-mono text-xs" dir="ltr">
                         {payment.citizenPhone}
                       </span>
                     </>
@@ -454,14 +498,14 @@ export default function FeesPage({
             <div className="space-y-1">
               <p className="font-medium text-foreground">{payment.title}</p>
               {breakdown ? (
-                <p className="font-mono text-[11px] text-muted-foreground" dir="ltr">
-                  {breakdown}
+                <p className="font-mono text-xs text-muted-foreground">
+                  <bdi dir="ltr">{breakdown}</bdi>
                 </p>
               ) : null}
               {payment.frequency ? (
-                <Badge variant="soft-muted" className="text-[10px] px-1.5 py-0">
+                <CellTag tone="muted" className="text-xs">
                   {labels.feeFrequency[payment.frequency as never] ?? payment.frequency}
-                </Badge>
+                </CellTag>
               ) : null}
             </div>
           );
@@ -535,21 +579,19 @@ export default function FeesPage({
         cell: ({ row }) => {
           const status = row.original.paymentStatus;
           return (
-            <Badge
-              variant="outline"
-              className={cn(
-                'whitespace-nowrap px-2.5 py-0.5 text-xs font-medium',
+            <CellTag
+              tone={
                 status === 'PAID'
-                  ? 'border-success/40 bg-success/10 text-success'
+                  ? 'success'
                   : status === 'OVERDUE'
-                    ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                    ? 'destructive'
                     : status === 'PENDING_REVIEW'
-                      ? 'border-warning/40 bg-warning/10 text-warning'
-                      : 'border-border bg-muted/50 text-muted-foreground',
-              )}
+                      ? 'warning'
+                      : 'muted'
+              }
             >
               {labels.paymentStatus[status as never] ?? status}
-            </Badge>
+            </CellTag>
           );
         },
       },
@@ -632,7 +674,7 @@ export default function FeesPage({
   if (!token) return null;
 
   const tableLabels = getTableLabels(locale);
-  const statusFilters = getStatusFilters(locale);
+  const statusFilters = buildStatusFilters(locale, filterOptionsQuery.data?.statuses ?? [], labels);
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -693,12 +735,24 @@ export default function FeesPage({
           icon={<Wallet className="size-6 text-success" />}
           accent="bg-success/10"
         />
+        {/*
+          «قائمة» rather than «مطلوبة», and the difference is not wording.
+
+          This figure is every unpaid invoice, late ones included —
+          `summary()` counts the column with no date predicate. The tab row
+          directly below it splits that same set in two: «غير مدفوعة» is the
+          invoices not yet due and «متأخرة» the ones past due. Left saying
+          «مطالبة مطلوبة», the card was the tab's label over a larger number,
+          on the same screen, which is how a clerk comes to distrust both.
+        */}
         <MetricCard
           label={locale === 'en' ? 'Unpaid Balance' : 'المستحقات غير المسددة'}
           value={formatLbp(summary?.unpaidTotal ?? 0, locale)}
           subtext={
             summary
-              ? (locale === 'en' ? `${summary.unpaidCount} demands due` : `${summary.unpaidCount} مطالبة مطلوبة`)
+              ? (locale === 'en'
+                  ? `${summary.unpaidCount} outstanding, due and overdue`
+                  : `${summary.unpaidCount} مطالبة قائمة، مستحقة ومتأخرة`)
               : undefined
           }
           loading={loading}
@@ -741,32 +795,26 @@ export default function FeesPage({
                   );
                 }}
                 locale={locale}
-                existingTitles={(feeTitlesQuery.data as string[] | undefined) ?? []}
+                existingTitles={feeTitles}
               />
 
               {/* Status Tabs Filter */}
-              <div className="flex flex-wrap items-center gap-1 rounded-xl bg-muted p-1">
-                {statusFilters.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => {
-                      setStatusFilter(tab.id);
-                      setPagination((previous) =>
-                        previous.pageIndex === 0 ? previous : { ...previous, pageIndex: 0 },
-                      );
-                    }}
-                    className={cn(
-                      'rounded-lg px-3 py-1 text-xs font-semibold transition-all cursor-pointer',
-                      statusFilter === tab.id
-                        ? 'bg-card text-foreground shadow-xs'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
+              {/* Same control as سجل العمليات' method filter — see the note
+                  there. Two screens that filter the same ledger should not
+                  have two different-looking ways of doing it. */}
+              <SegmentedControl
+                aria-label={locale === 'en' ? 'Filter by status' : 'تصفية حسب الحالة'}
+                value={statusFilter}
+                size="sm"
+                fullWidth={false}
+                options={statusFilters.map((tab) => ({ value: tab.id, label: tab.label }))}
+                onChange={(next) => {
+                  setStatusFilter(next);
+                  setPagination((previous) =>
+                    previous.pageIndex === 0 ? previous : { ...previous, pageIndex: 0 },
+                  );
+                }}
+              />
             </div>
           </div>
         </CardHeader>
@@ -804,7 +852,7 @@ export default function FeesPage({
         error={null}
         onSubmit={handleIssueNotice}
         locale={locale}
-        existingTitles={(feeTitlesQuery.data as string[] | undefined) ?? []}
+        existingTitles={feeTitles}
       />
 
       {/* Charge Citizen Dialog */}
@@ -816,7 +864,7 @@ export default function FeesPage({
         error={null}
         onSubmit={handleChargeCitizen}
         locale={locale}
-        existingTitles={(feeTitlesQuery.data as string[] | undefined) ?? []}
+        existingTitles={feeTitles}
       />
 
       {/* Receipt Modal Dialog */}
@@ -870,7 +918,7 @@ function MetricCard({
             <div className="text-xl font-bold tracking-tight text-foreground">{value}</div>
           )}
           {subtext && !loading ? (
-            <p className="text-[11px] text-muted-foreground">{subtext}</p>
+            <p className="text-xs text-muted-foreground">{subtext}</p>
           ) : null}
         </div>
         <div

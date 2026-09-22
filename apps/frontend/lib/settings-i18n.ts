@@ -74,7 +74,6 @@ export interface SettingsCopy {
     website: string;
     regionHeading: string;
     councilDecisionRef: string;
-    councilDecisionHint: string;
     regionHint: string;
     governorate: string;
     district: string;
@@ -455,8 +454,6 @@ const AR: SettingsCopy = {
     website: 'الموقع الإلكتروني',
     regionHeading: 'الموقع الإداري',
     councilDecisionRef: 'قرار المجلس البلدي لاعتماد الترقيم',
-    councilDecisionHint:
-      'اختياري — تاريخ ورقم القرار إن صدر. بدونه تُذيَّل الإشعارات باستناد الترقيم إلى صلاحية المسح والتخمين البلدي.',
     regionHint: 'المحافظة والقضاء والبلدة كما ترد في السجلات الرسمية.',
     governorate: 'المحافظة',
     district: 'القضاء',
@@ -822,8 +819,6 @@ const EN: SettingsCopy = {
     website: 'Website',
     regionHeading: 'Administrative location',
     councilDecisionRef: 'Council decision adopting the numbering',
-    councilDecisionHint:
-      'Optional — the date and number of the decision, if one was issued. Without it, notices cite the municipal survey authority instead.',
     regionHint: 'Governorate, district, and town as they appear in official records.',
     governorate: 'Governorate',
     district: 'District',

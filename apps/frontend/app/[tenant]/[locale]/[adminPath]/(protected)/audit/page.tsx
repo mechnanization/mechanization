@@ -153,7 +153,7 @@ export default function AuditTrailPage({
   const actors = facets.data?.actors ?? [];
 
   return (
-    <div className="w-full space-y-5 px-4 py-6 sm:px-6 lg:px-8">
+    <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={ShieldCheck}
         title={en ? 'Audit trail' : 'سجل النشاطات'}

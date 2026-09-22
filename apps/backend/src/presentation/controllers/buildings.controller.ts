@@ -90,6 +90,23 @@ export class BuildingsController {
     return this.buildings.list(query);
   }
 
+  /**
+   * What the ledger's filter selects may offer — read off the census itself.
+   *
+   * **Declared before `:id`.** Nest matches routes in declaration order, so
+   * below it this path would be swallowed by the parameterised route and
+   * arrive as a lookup for a building whose id is the literal string
+   * "filter-options".
+   *
+   * Same roles as the ledger: a filter offering values the reader cannot then
+   * apply is a worse answer than no filter at all.
+   */
+  @Roles(...READ_ROLES)
+  @Get('filter-options')
+  async filterOptions() {
+    return this.buildings.filterOptions();
+  }
+
   /** One building with its whole unit matrix and each unit's occupants. */
   @Roles(...READ_ROLES)
   @Get(':id')

@@ -40,7 +40,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import type { CitizenListItem } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { Badge } from '@/components/ui/badge';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -50,11 +50,33 @@ import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
+import { formatPhone } from '@/lib/phone';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
 import { getLabels } from '@mechanization/shared-schemas';
 
 /** Roles allowed to write. Mirrors the server; the server is the enforcement. */
 const CAN_WRITE = ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'];
+
+/**
+ * The row actions: borderless, each on a soft wash of its own colour.
+ *
+ * Outlined, five icon buttons read as five identical boxes and the eye had to
+ * find the icon inside each one to tell «تعديل» from «حذف». A hue per job does
+ * that before the icon is read — the file in the primary colour, WhatsApp in
+ * its green, editing in blue, disabling in amber, deleting in red — and without
+ * the outline the row stops looking like a toolbar.
+ */
+const ACTION_TINT = {
+  view: 'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary',
+  whatsapp:
+    'bg-success/10 text-success hover:bg-success/20 hover:text-success',
+  edit: 'bg-info/10 text-info hover:bg-info/20 hover:text-info',
+  disable:
+    'bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning',
+  enable:
+    'bg-success/10 text-success hover:bg-success/20 hover:text-success',
+  remove: 'bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive',
+} as const;
 
 function getTableLabels(locale: string): DataTableLabels {
   if (locale === 'en') {
@@ -336,50 +358,90 @@ export default function CitizensPage({
               >
                 <UserRound className="size-4" />
               </span>
-              <div className="min-w-0 space-y-0.5">
-                <p className="flex items-center gap-2 font-medium">
-                  <span className="truncate">{citizen.fullName}</span>
-                  {/*
-                    «غير مقيم في البلدة» on the name, like «معطّل»: the record is
-                    short by design, and the badge is what stops a clerk reading
-                    its empty household fields as a record left unfinished.
-                  */}
-                  {citizen.residence === 'NON_RESIDENT_OWNER' ? (
-                    <Badge variant="soft-info" className="shrink-0 py-0">
-                      {getLabels(locale).citizenResidence.NON_RESIDENT_OWNER}
-                    </Badge>
-                  ) : null}
-                  {!citizen.isActive ? (
-                    <Badge variant="outline" className="shrink-0 gap-1 py-0">
-                      <Ban className="size-3" aria-hidden />
-                      {locale === 'en' ? 'Disabled' : 'معطّل'}
-                    </Badge>
-                  ) : null}
-                  {/*
-                    On the name rather than in a column of its own, and never
-                    hideable: an incomplete record is a fact about the person,
-                    not a statistic about them, and it has to reach whoever
-                    opens their file to bill them — including the desk that
-                    turned every optional column off months ago.
-                  */}
-                  {citizen.latestStatus === 'REQUIRES_REVIEW' ? (
-                    <Badge
-                      variant="outline"
-                      className="shrink-0 gap-1 border-warning/40 bg-warning/10 py-0 text-warning"
-                    >
-                      <FileQuestion className="size-3" aria-hidden />
-                      {locale === 'en'
-                        ? `Requires review (${citizen.unestablishedFieldCount})`
-                        : `يتطلب مراجعة (${citizen.unestablishedFieldCount})`}
-                    </Badge>
-                  ) : null}
+              <p className="min-w-0 truncate font-medium">{citizen.fullName}</p>
+            </div>
+          );
+        },
+      },
+      /*
+        The reference number in a column of its own, beside the name rather
+        than in small print under it: it is what a citizen reads out at the
+        desk and what the portal logs in with, so it is looked up across rows —
+        and a column is what the eye can run down.
+      */
+      {
+        accessorKey: 'referenceNumber',
+        header: locale === 'en' ? 'Reference No.' : 'الرقم المرجعي',
+        meta: {
+          label: locale === 'en' ? 'Reference No.' : 'الرقم المرجعي',
+          cellClassName: 'whitespace-nowrap',
+        },
+        enableSorting: false,
+        cell: ({ row }) =>
+          row.original.referenceNumber ? (
+            <span className="font-mono text-sm">
+              <bdi dir="ltr">{row.original.referenceNumber}</bdi>
+            </span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      },
+      /*
+        الحالة — what used to ride on the name as badges, now a column, and
+        still never hideable: an incomplete record is a fact about the person,
+        not a statistic about them, and it has to reach whoever opens their file
+        to bill them — including the desk that turned every optional column off
+        months ago.
+
+        Plain coloured text, no chips. «غير مقيم في البلدة» is what stops a
+        clerk reading a short record's empty household fields as unfinished;
+        «يتطلب مراجعة» carries how many fields are still unestablished.
+      */
+      {
+        id: 'status',
+        header: locale === 'en' ? 'Status' : 'الحالة',
+        enableHiding: false,
+        enableSorting: false,
+        meta: { label: locale === 'en' ? 'Status' : 'الحالة' },
+        cell: ({ row }) => {
+          const citizen = row.original;
+          const nonResident = citizen.residence === 'NON_RESIDENT_OWNER';
+          const review = citizen.latestStatus === 'REQUIRES_REVIEW';
+          /*
+            Nothing to flag is itself the answer: an active file with no review
+            outstanding. Said as «نشط» — the counterpart of «معطّل», and true of
+            every row that reaches here — in the same quiet shape as «لا
+            متأخرات» beside it, so the flagged rows are the ones that stand out.
+          */
+          if (!nonResident && citizen.isActive && !review) {
+            return (
+              <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+                <CheckCircle2 className="size-3.5 shrink-0 text-success" aria-hidden />
+                {locale === 'en' ? 'Active' : 'نشط'}
+              </span>
+            );
+          }
+          return (
+            <div className="space-y-0.5 text-sm font-medium">
+              {review ? (
+                <p className="flex items-center gap-1.5 text-warning">
+                  <FileQuestion className="size-3.5 shrink-0" aria-hidden />
+                  {locale === 'en'
+                    ? `Requires review (${citizen.unestablishedFieldCount})`
+                    : `يتطلب مراجعة (${citizen.unestablishedFieldCount})`}
                 </p>
-                {citizen.referenceNumber ? (
-                  <p className="font-mono text-xs text-muted-foreground text-start">
-                    <bdi dir="ltr">{citizen.referenceNumber}</bdi>
-                  </p>
-                ) : null}
-              </div>
+              ) : null}
+              {!citizen.isActive ? (
+                <p className="flex items-center gap-1.5 text-muted-foreground">
+                  <Ban className="size-3.5 shrink-0" aria-hidden />
+                  {locale === 'en' ? 'Disabled' : 'معطّل'}
+                </p>
+              ) : null}
+              {nonResident ? (
+                <p className="text-info">
+                  {labels.citizenResidence.NON_RESIDENT_OWNER}
+                </p>
+              ) : null}
             </div>
           );
         },
@@ -399,7 +461,7 @@ export default function CitizensPage({
               className="inline-flex items-center gap-1.5 font-medium text-primary hover:underline"
             >
               <Phone className="size-3.5 shrink-0" aria-hidden />
-              {phone}
+              {formatPhone(phone)}
             </a>
           );
         },
@@ -421,7 +483,7 @@ export default function CitizensPage({
               className="inline-flex items-center gap-1.5 font-medium text-primary hover:underline"
             >
               <MessageCircle className="size-3.5 shrink-0" aria-hidden />
-              {whatsapp}
+              {formatPhone(whatsapp)}
               {whatsapp === phone ? (
                 <span className="text-xs text-muted-foreground">
                   {locale === 'en' ? '(same)' : '(نفس الهاتف)'}
@@ -464,8 +526,8 @@ export default function CitizensPage({
           if (!identityDocNumber) return <span className="text-muted-foreground">—</span>;
           return (
             <div className="space-y-0.5">
-              <p className="font-mono text-sm" dir="ltr">
-                {identityDocNumber}
+              <p className="font-mono text-sm">
+                <bdi dir="ltr">{identityDocNumber}</bdi>
               </p>
               {identityDocType ? (
                 <p className="text-xs text-muted-foreground">
@@ -485,9 +547,9 @@ export default function CitizensPage({
           const { residentStatus } = row.original;
           if (!residentStatus) return <span className="text-muted-foreground">—</span>;
           return (
-            <Badge variant="soft-muted">
+            <CellTag>
               {labels.residentStatus?.[residentStatus as never] ?? residentStatus}
-            </Badge>
+            </CellTag>
           );
         },
       },
@@ -517,17 +579,9 @@ export default function CitizensPage({
             );
           }
           return (
-            <div className="space-y-0.5">
-              <p className="font-medium tabular-nums">
-                {citizen.propertyCount} {locale === 'en' ? 'properties' : 'عقار'}
-              </p>
-              {citizen.latestSubmittedAt ? (
-                <p className="whitespace-nowrap text-xs text-muted-foreground">
-                  {locale === 'en' ? 'Last registered ' : 'آخر تسجيل '}
-                  {formatDate(citizen.latestSubmittedAt)}
-                </p>
-              ) : null}
-            </div>
+            <p className="font-medium tabular-nums">
+              {citizen.propertyCount} {locale === 'en' ? 'properties' : 'عقار'}
+            </p>
           );
         },
       },
@@ -566,7 +620,7 @@ export default function CitizensPage({
           if (citizen.outstandingTotal === 0) {
             return (
               <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-                <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" aria-hidden />
+                <CheckCircle2 className="size-3.5 shrink-0 text-success" aria-hidden />
                 {locale === 'en' ? 'No arrears' : 'لا متأخرات'}
               </span>
             );
@@ -598,10 +652,10 @@ export default function CitizensPage({
                   <span>{locale === 'en' ? 'Not yet due' : 'غير مستحقة بعد'}</span>
                 )}
                 {citizen.pendingReviewCount > 0 ? (
-                  <Badge variant="outline" className="gap-1 py-0 text-[0.7rem]">
+                  <CellTag tone="warning" className="gap-1 text-xs">
                     <Clock3 className="size-3" aria-hidden />
                     {citizen.pendingReviewCount} {locale === 'en' ? 'under review' : 'قيد التحقق'}
-                  </Badge>
+                  </CellTag>
                 ) : null}
               </p>
             </div>
@@ -631,7 +685,7 @@ export default function CitizensPage({
                 <Link
                   href={`${base}/citizens/${citizen.id}`}
                   aria-label={locale === 'en' ? 'View details' : 'عرض التفاصيل'}
-                  className={buttonVariants({ variant: 'secondary', size: 'icon-sm' })}
+                  className={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), ACTION_TINT.view)}
                 >
                   <UserRound className="size-4" aria-hidden />
                 </Link>
@@ -644,12 +698,7 @@ export default function CitizensPage({
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label={locale === 'en' ? 'Send via WhatsApp' : 'إرسال عبر واتساب'}
-                    className={buttonVariants({
-                      variant: 'outline',
-                      size: 'icon-sm',
-                      className:
-                        'border-emerald-600/30 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/70',
-                    })}
+                    className={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), ACTION_TINT.whatsapp)}
                   >
                     <MessageCircle className="size-4" aria-hidden />
                   </a>
@@ -661,7 +710,7 @@ export default function CitizensPage({
                   <Link
                     href={`${base}/citizens/${citizen.id}/edit`}
                     aria-label={locale === 'en' ? 'Edit' : 'تعديل'}
-                    className={buttonVariants({ variant: 'outline', size: 'icon-sm' })}
+                    className={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), ACTION_TINT.edit)}
                   >
                     <Pencil className="size-4" aria-hidden />
                   </Link>
@@ -677,8 +726,9 @@ export default function CitizensPage({
                   }
                 >
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="icon-sm"
+                    className={citizen.isActive ? ACTION_TINT.disable : ACTION_TINT.enable}
                     aria-label={citizen.isActive ? (locale === 'en' ? 'Disable' : 'تعطيل') : (locale === 'en' ? 'Re-activate' : 'إعادة التفعيل')}
                     disabled={busy}
                     onClick={() => void toggleActive(citizen)}
@@ -697,10 +747,10 @@ export default function CitizensPage({
               {canDelete && citizen.registrationCount === 0 ? (
                 <ActionTooltip label={locale === 'en' ? 'Permanent delete — no applications on file' : 'حذف نهائي — لا طلبات على هذا الملف'}>
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="icon-sm"
                     aria-label={locale === 'en' ? 'Permanent delete' : 'حذف نهائي'}
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    className={ACTION_TINT.remove}
                     disabled={busy}
                     onClick={() => setPendingDelete(citizen)}
                   >

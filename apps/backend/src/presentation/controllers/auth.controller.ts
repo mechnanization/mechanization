@@ -13,6 +13,7 @@ import {
   verifyOtpSchema,
 } from '@mechanization/shared-schemas';
 import { IdentityService } from '../../application/features/identity/identity.service';
+import { UnauthorizedError } from '../../application/common/exceptions';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
@@ -58,6 +59,43 @@ export class AuthController {
       remember: body.remember,
       context: { ip: request.ip, userAgent: request.header('user-agent') },
     });
+  }
+
+  /**
+   * Exchanges a staff token for a fresh one — the sliding half of the session.
+   *
+   * `@Public()` is load-bearing and is *not* a hole. The guard cannot run here
+   * for the reason the route exists: the token being presented is usually
+   * expired, and the guard rejects expired tokens by design. So the checks move
+   * inside `refreshStaffSession`, which verifies the signature, the tenant, the
+   * session cap, the account's `tokenVersion` and whether it is still active —
+   * every one of the guard's, plus the cap the guard knows nothing about.
+   *
+   * The token travels in the `Authorization` header rather than the body, so a
+   * refresh looks like every other authenticated call to anything sitting in
+   * front of this — a proxy log, a WAF rule, the browser's own devtools — and
+   * so that no caller has to special-case how it sends its credential.
+   *
+   * Throttled like the login: this route mints credentials, so it is worth the
+   * same protection against someone grinding at it with stolen material.
+   */
+  @Public()
+  @Post('staff/refresh')
+  @Throttle({
+    default: {
+      limit: APP_CONFIG.throttle.staffLogin.limit,
+      ttl: APP_CONFIG.throttle.staffLogin.ttlSeconds * 1000,
+    },
+  })
+  async refreshStaff(@Param('tenantSlug') tenantSlug: string, @Req() request: Request) {
+    const header = request.header('authorization') ?? '';
+    const [scheme, token] = header.split(' ');
+
+    if (scheme?.toLowerCase() !== 'bearer' || !token) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    return this.identity.refreshStaffSession({ token, tenantSlug });
   }
 
   /**

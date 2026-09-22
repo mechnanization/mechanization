@@ -318,7 +318,7 @@ export function ProfileSection({
           </FieldGroup>
 
           <FieldGroup icon={MapPin} title={copy.profile.regionHeading}>
-            <AlignedFieldGrid columns={3}>
+            <AlignedFieldGrid>
               <SettingsField label={copy.profile.governorate} htmlFor="governorate">
                 <Input
                   id="governorate"
@@ -361,11 +361,6 @@ export function ProfileSection({
                   value={draft.councilDecisionRef}
                   onChange={(e) => setDraft({ ...draft, councilDecisionRef: e.target.value })}
                 />
-                {/* Spelled out under the input rather than passed as `hint`,
-                    which `SettingsField` accepts and does not render. */}
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {copy.profile.councilDecisionHint}
-                </p>
               </SettingsField>
             </AlignedFieldGrid>
           </FieldGroup>
@@ -398,7 +393,7 @@ export function ProfileSection({
             with the file already in a folder should not have to go through a
             file dialog to get it here.
           */}
-          <div className="space-y-3 rounded-xl border bg-muted/10 p-4 sm:p-5">
+          <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <UploadCloud className="size-4 text-primary" aria-hidden />

@@ -46,29 +46,22 @@ const AlignedRows = createContext(false);
  * `AlignedFieldGrid`, which solved the same problem more completely than the
  * hint-below-input workaround it replaces here — labels stay above their
  * controls, which is where a form reader looks for them.
+ *
+ * One field per row, at every width, by decision: every input across the app
+ * takes the full width of its form, so a settings field reads the same as the
+ * one in the dialog beside it. The shared tracks still hold each label over
+ * its control.
  */
 export function AlignedFieldGrid({
-  columns = 2,
   className,
   children,
 }: {
-  columns?: 1 | 2 | 3 | 4;
   className?: string;
   children: React.ReactNode;
 }) {
   return (
     <AlignedRows.Provider value>
-      <div
-        className={cn(
-          'grid gap-x-4 gap-y-4',
-          // `sm` is 640px: three inputs across it are 190px each, narrower than
-          // the text most of them hold. Two at `sm`, three at `md`, four at `xl`.
-          columns === 2 && 'sm:grid-cols-2',
-          columns === 3 && 'sm:grid-cols-2 md:grid-cols-3',
-          columns === 4 && 'sm:grid-cols-2 xl:grid-cols-4',
-          className,
-        )}
-      >
+      <div className={cn('grid gap-y-4', className)}>
         {children}
       </div>
     </AlignedRows.Provider>
@@ -92,7 +85,6 @@ export function AlignedFieldGrid({
 export function SettingsField({
   label,
   htmlFor,
-  hint: _hint,
   error,
   required,
   className,
@@ -100,7 +92,6 @@ export function SettingsField({
 }: {
   label: string;
   htmlFor?: string;
-  hint?: string;
   error?: string;
   required?: boolean;
   className?: string;

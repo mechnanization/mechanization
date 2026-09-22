@@ -166,7 +166,6 @@ export default function CitizenLogin({
             label={locale === 'en' ? 'Verification Code' : 'رمز التحقق'}
             htmlFor="code"
             required
-            hint={locale === 'en' ? '6 digits sent via SMS' : 'ستة أرقام وصلتك برسالة نصية'}
           >
             <Input
               id="code"
