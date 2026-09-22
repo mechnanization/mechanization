@@ -9,12 +9,14 @@ import {
   DoorClosed,
   EllipsisVertical,
   Footprints,
+  KeyRound,
   Loader2,
   MapPin,
   Ruler,
   Search,
   ShieldAlert,
   Undo2,
+  UserMinus,
   UserRound,
   UsersRound,
 } from 'lucide-react';
@@ -93,11 +95,6 @@ import {
 } from '@/components/ui/select';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  AfterTenancyQuestion,
-  afterTenancyComplete,
-  afterTenancyPayload,
-} from '@/components/admin/after-tenancy-question';
 
 /**
  * The per-unit forms and small display helpers shared by
@@ -833,6 +830,7 @@ export function AddPersonForm({
   vacancy,
   owners = [],
   unitArea: recordedArea,
+  initialRole,
   onSubmit,
 }: {
   tenant: string;
@@ -870,6 +868,19 @@ export function AddPersonForm({
    * silently dropping the only one that can fill the gap.
    */
   unitArea: number | null | undefined;
+  /**
+   * «صفته في الوحدة», answered before the form opened.
+   *
+   * Set only where the officer has already said which capacity they are
+   * recording — «نعم، أضف المالك الجديد» after a sale — never as a guess. The
+   * field is otherwise deliberately unanswered: a preset صفة is an assumption
+   * about somebody at a door, and «مالك» is the costliest one to get wrong.
+   *
+   * Read once, when the form mounts. A caller that changes it on an open form
+   * must remount it (a `key`), because overwriting a صفة an officer has since
+   * chosen is worse than the preset it was.
+   */
+  initialRole?: OccupancyRole;
   onSubmit: (values: AddPersonValues) => void;
 }) {
   const en = locale === 'en';
@@ -920,7 +931,7 @@ export function AddPersonForm({
   /** The shown results answer what is typed now, not a term since changed. */
   const settled = !searching && searched !== '' && searched === term.trim();
   const offerNewFile = settled && (failed || results.length === 0 || notAmong === searched);
-  const [role, setRole] = useState<OccupancyRole | ''>('');
+  const [role, setRole] = useState<OccupancyRole | ''>(initialRole ?? '');
   const [shares, setShares] = useState('');
   /**
    * Deliberately unset rather than pre-filled with «مشغولة من المالك».
@@ -1646,7 +1657,7 @@ export function VisitForm({
           <Input
             id="visit-revisit"
             type="date"
-            min={today()}
+            min={todayIso()}
             value={revisitAt}
             onChange={(event) => setRevisitAt(event.target.value)}
             dir="ltr"
@@ -2030,7 +2041,7 @@ export function DamageForm({
 // ─────────────────────────  Who is, and was, in a unit  ─────────────────────────
 
 /** «إنهاء الملكية» / «إنهاء الإيجار» / «خروج الشاغل» — the action named for what it ends. */
-function endActionLabel(role: OccupancyRole, en: boolean): string {
+export function endActionLabel(role: OccupancyRole, en: boolean): string {
   if (role === 'OWNER') return en ? 'End ownership' : 'إنهاء الملكية';
   if (role === 'TENANT') return en ? 'End tenancy' : 'إنهاء الإيجار';
   return en ? 'Occupant left' : 'خروج الشاغل';
@@ -2041,233 +2052,53 @@ function endActionLabel(role: OccupancyRole, en: boolean): string {
  * rest. An owner does not «move out» (the deed is not a residence) and a tenant
  * does not sell; «سُجِّل بالخطأ» fits everyone.
  */
-function reasonsFor(role: OccupancyRole): OccupancyEndReason[] {
+export function reasonsFor(role: OccupancyRole): OccupancyEndReason[] {
   return role === 'OWNER'
     ? ['OWNERSHIP_TRANSFERRED', 'RECORDED_IN_ERROR']
     : ['MOVED_OUT', 'RECORDED_IN_ERROR'];
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+/**
+ * Whether ending this spell leaves the flat with nobody to speak for its
+ * status — and so has to be asked what it is now.
+ *
+ * The server's two rules, held here because two surfaces ask them and a screen
+ * that asks a question the server will not accept, or withholds one it
+ * requires, is worse than either alone.
+ *
+ * They differ because the capacities describe different things. A tenancy asks
+ * when nobody else is *living* there — an owner on the deed does not answer
+ * «من يسكنها», and a second row of the same person is not another person. An
+ * ownership asks only when nothing at all is left standing: a co-owner or a
+ * sitting tenant each leave the flat's status theirs to speak for, and the
+ * ending is then a change of deed that says nothing about the door.
+ */
+export function asksUnitStatus(unit: UnitWithOccupants, occupant: UnitOccupant): boolean {
+  const current = unit.occupants.filter((other) => other.toDate === null);
+  if (occupant.role === 'OWNER') {
+    return !current.some((other) => other.id !== occupant.id);
+  }
+  return !current.some(
+    (other) => other.citizenId !== occupant.citizenId && other.role !== 'OWNER',
+  );
+}
+
+/** Today, as the date inputs and the "only send a back-dated end" rule read it. */
+export const todayIso = () => new Date().toISOString().slice(0, 10);
 
 /** What «إنهاء الإشغال» sends — the reason, the date, and for a tenancy what the flat is now. */
 export type EndOccupancyAnswer = { reason: OccupancyEndReason; toDate?: string } & AfterTenancyAnswer;
 
 /**
- * The confirmation «إنهاء الإشغال» never had.
- *
- * Field inspectors pressed the old text link by mistake — it sat on the same
- * row as the person's name, on a phone — and the spell ended on the spot,
- * releasing the flat from the citizen's own file and stopping its bill. So this
- * asks three things before anything is written: that this is the person meant
- * (the name and unit are in the title), when they left, and **why** — a choice
- * with no default, because a pre-selected answer is exactly what muscle memory
- * confirms. It does not ask the person to type a name: this is a correction an
- * inspector makes standing in a stairwell, not the deletion of a record.
- */
-export function EndOccupancyDialog({
-  occupant,
-  unitCode,
-  asksStatus = false,
-  locale,
-  onOpenChange,
-  onConfirm,
-}: {
-  /** The spell being ended; the dialog is open while this is set. */
-  occupant: UnitOccupant | null;
-  unitCode: string;
-  /**
-   * A tenant or occupant is leaving and nobody else is recorded living in the
-   * flat, so what it is now has to be said — see `AfterTenancyQuestion`.
-   */
-  asksStatus?: boolean;
-  locale: string;
-  onOpenChange: (open: boolean) => void;
-  onConfirm: (input: EndOccupancyAnswer) => Promise<void>;
-}) {
-  const en = locale === 'en';
-  const labels = getLabels(locale);
-  const [reason, setReason] = useState<OccupancyEndReason | null>(null);
-  const [toDate, setToDate] = useState(today());
-  const [after, setAfter] = useState<AfterTenancyAnswer>({});
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
-
-  // A fresh question every time it opens — never the previous person's answer.
-  useEffect(() => {
-    if (occupant) {
-      setReason(null);
-      setToDate(today());
-      setAfter({});
-      setFailure(null);
-      setBusy(false);
-    }
-  }, [occupant]);
-
-  if (!occupant) return null;
-
-  const name = occupant.citizenName ?? (en ? 'this person' : 'هذا الشخص');
-  const action = endActionLabel(occupant.role, en);
-  const tenancy = occupant.role !== 'OWNER';
-  const ready = Boolean(reason) && (!asksStatus || afterTenancyComplete(after));
-
-  const confirm = async () => {
-    if (!reason || !ready || busy) return;
-    setBusy(true);
-    setFailure(null);
-    try {
-      // Today is the server's default; only a back-dated end is sent.
-      await onConfirm({
-        reason,
-        ...(toDate && toDate !== today() ? { toDate } : {}),
-        ...(asksStatus ? afterTenancyPayload(after) : {}),
-      });
-      onOpenChange(false);
-    } catch (caught) {
-      setFailure(
-        caught instanceof Error && caught.message
-          ? caught.message
-          : en
-            ? 'Could not end the occupancy.'
-            : 'تعذّر إنهاء الإشغال.',
-      );
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog open onOpenChange={busy ? undefined : onOpenChange}>
-      <DialogContent className="max-w-md" closeLabel={en ? 'Cancel' : 'إلغاء'}>
-        <DialogHeader>
-          <div className="flex items-start gap-3">
-            <span
-              aria-hidden
-              className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive"
-            >
-              <AlertTriangle className="size-5" />
-            </span>
-            <div className="min-w-0 space-y-1.5 text-start">
-              <DialogTitle>
-                {en ? `${action}: ${name} in unit ` : `${action}: ${name} في الوحدة `}
-                <span dir="ltr" className="font-mono">
-                  {unitCode}
-                </span>
-                {en ? '?' : '؟'}
-              </DialogTitle>
-              <DialogDescription>
-                {tenancy
-                  ? en
-                    ? 'They move to «Former» on this unit and stop being charged for it. Their card stays on their file as an ended tenancy, documents included, and the owner stays the owner.'
-                    : 'ينتقل إلى «سابق» على هذه الوحدة وتتوقف رسومها عليه. تبقى بطاقته في ملفه كإيجار منتهٍ مع مستنداتها، ويبقى المالك مالكاً.'
-                  : en
-                    ? 'They move to «Former» on this unit, the unit is released from their file, and fees for it stop being charged to them.'
-                    : 'ينتقل إلى «سابق» على هذه الوحدة، وتُفصل الوحدة عن ملفه، وتتوقف الرسوم عليه عنها.'}
-              </DialogDescription>
-            </div>
-          </div>
-        </DialogHeader>
-
-        <div className="space-y-3">
-          <fieldset className="space-y-1.5">
-            <legend className="text-xs font-medium">
-              {en ? 'Why?' : 'السبب'} <span className="text-destructive">*</span>
-            </legend>
-            <div className="grid gap-2" role="radiogroup">
-              {reasonsFor(occupant.role).map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  role="radio"
-                  aria-checked={reason === option}
-                  onClick={() => setReason(option)}
-                  className={cn(
-                    'min-h-11 rounded-md border px-3 py-2 text-start text-sm transition-colors',
-                    reason === option
-                      ? 'border-primary bg-primary/10 font-medium text-primary'
-                      : 'hover:bg-accent',
-                  )}
-                >
-                  {labels.occupancyEndReason[option]}
-                </button>
-              ))}
-            </div>
-            {reason === 'RECORDED_IN_ERROR' ? (
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                {en
-                  ? 'Kept on record as what was entered, and hidden from the unit’s history.'
-                  : 'يبقى محفوظاً كسجل لما أُدخل، ولا يظهر في تاريخ الوحدة.'}
-              </p>
-            ) : null}
-          </fieldset>
-
-          {reason !== 'RECORDED_IN_ERROR' ? (
-            <Field label={en ? 'Left on' : 'تاريخ الانتهاء'} htmlFor="end-occupancy-date">
-              <Input
-                id="end-occupancy-date"
-                type="date"
-                min={occupant.fromDate.slice(0, 10)}
-                max={today()}
-                value={toDate}
-                onChange={(event) => setToDate(event.target.value)}
-                dir="ltr"
-                className="text-start"
-              />
-            </Field>
-          ) : null}
-
-          {asksStatus && reason ? (
-            <AfterTenancyQuestion value={after} onChange={setAfter} locale={locale} />
-          ) : null}
-          {tenancy && !asksStatus && reason ? (
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              {en
-                ? 'Someone else is still recorded living in this unit, so its status stays as it is.'
-                : 'ما زال شخص آخر مسجَّلاً ساكناً في هذه الوحدة، فتبقى حالتها كما هي.'}
-            </p>
-          ) : null}
-
-          {failure ? (
-            <p
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-            >
-              {failure}
-            </p>
-          ) : null}
-        </div>
-
-        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={busy}
-            className="w-full sm:w-auto"
-          >
-            {en ? 'Cancel' : 'إلغاء'}
-          </Button>
-          <Button
-            variant="destructive"
-            onClick={() => void confirm()}
-            disabled={busy || !ready}
-            className="w-full sm:w-auto"
-          >
-            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-            {action}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/**
  * Everyone recorded against a unit, current first — shared by the drawer and
- * the full-page matrix so the two cannot disagree about what ending a spell
- * asks, or which history rows are shown.
+ * the full-page matrix so the two cannot disagree about which history rows are
+ * shown, or where ending a spell is answered.
  *
  * The end action lives behind a ⋯ menu with a finger-sized target, away from
- * the name link it used to sit beside, and opens `EndOccupancyDialog` rather
- * than acting. Spells ended «سُجِّل بالخطأ» are left out of the list — they are
- * not history — and counted underneath so nothing disappears silently.
+ * the name link it used to sit beside, and is a link to the unit's end page
+ * rather than a button that acts. Spells ended «سُجِّل بالخطأ» are left out of
+ * the list — they are not history — and counted underneath so nothing
+ * disappears silently.
  */
 export function OccupantList({
   unit,
@@ -2275,7 +2106,7 @@ export function OccupantList({
   canWrite,
   busy,
   citizenHref,
-  onEnd,
+  endHref,
   onLinkOwner,
 }: {
   unit: UnitWithOccupants;
@@ -2284,7 +2115,16 @@ export function OccupantList({
   busy: boolean;
   /** Where a name links to; plain text when absent. */
   citizenHref?: (citizenId: string) => string;
-  onEnd: (occupant: UnitOccupant, input: EndOccupancyAnswer) => Promise<void>;
+  /**
+   * The page that ends this spell — «إنهاء الملكية» / «إنهاء الإيجار», which is
+   * a route of its own rather than a dialog over the matrix.
+   *
+   * Built by the caller, for the reason `citizenHref` is: three routes render
+   * this list and none of their admin base paths are this component's to
+   * reconstruct. Absent, the action is not offered at all — a menu row that
+   * goes nowhere is worse than one that is not there.
+   */
+  endHref?: (occupant: UnitOccupant) => string;
   /**
    * «ربط بالمالك» — links a tenant to one of the flat's owners. `confirmRecordedAfter`
    * is the officer's confirmation for an owner recorded after the tenant. Throws
@@ -2294,12 +2134,24 @@ export function OccupantList({
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
-  const [ending, setEnding] = useState<UnitOccupant | null>(null);
   const [linking, setLinking] = useState<UnitOccupant | null>(null);
   const owners = unitOwners(unit);
   /** The flat's owners a tenant may be linked to — anyone but themselves. */
   const ownersFor = (occupant: UnitOccupant) =>
     owners.filter((owner) => owner.citizenId !== occupant.citizenId);
+  /*
+    Offered to a tenant whose card names no registered owner, whenever the flat
+    has an owner recorded. An owner recorded after the tenant is linked only
+    once the officer confirms it in the dialog.
+  */
+  const offersOwnerLink = (occupant: UnitOccupant) =>
+    Boolean(
+      onLinkOwner &&
+        occupant.role !== 'OWNER' &&
+        occupant.ownerLink &&
+        (occupant.ownerLink.state === 'UNLINKED' || occupant.ownerLink.state === 'NO_CARD') &&
+        ownersFor(occupant).length > 0,
+    );
 
   const shown = unit.occupants.filter((occupant) => occupant.endReason !== 'RECORDED_IN_ERROR');
   const hidden = unit.occupants.length - shown.length;
@@ -2382,7 +2234,7 @@ export function OccupantList({
                     {en ? 'No file yet' : 'لا ملف له بعد'}
                   </span>
                 ) : null}
-                {canWrite && current ? (
+                {canWrite && current && (endHref || offersOwnerLink(occupant)) ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button
@@ -2395,33 +2247,30 @@ export function OccupantList({
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      {/*
-                        Offered to a tenant whose card names no registered owner,
-                        whenever the flat has an owner recorded. An owner recorded
-                        after the tenant is linked only once the officer confirms
-                        it in the dialog.
-                      */}
-                      {onLinkOwner &&
-                      occupant.role !== 'OWNER' &&
-                      occupant.ownerLink &&
-                      (occupant.ownerLink.state === 'UNLINKED' || occupant.ownerLink.state === 'NO_CARD') &&
-                      ownersFor(occupant).length > 0 ? (
+                      {offersOwnerLink(occupant) ? (
                         <DropdownMenuItem className="min-h-10" onSelect={() => setLinking(occupant)}>
                           {en ? 'Link to the owner…' : 'ربط بالمالك…'}
                         </DropdownMenuItem>
                       ) : null}
-                      <DropdownMenuItem
-                        className="min-h-10 text-destructive focus:text-destructive"
-                        onSelect={() => setEnding(occupant)}
-                      >
-                        {endActionLabel(occupant.role, en)}…
-                      </DropdownMenuItem>
+                      {endHref ? (
+                        <DropdownMenuItem
+                          asChild
+                          className="min-h-10 text-destructive focus:text-destructive"
+                        >
+                          <Link href={endHref(occupant)}>{endActionLabel(occupant.role, en)}…</Link>
+                        </DropdownMenuItem>
+                      ) : null}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}
                 {/* After the menu, so it wraps onto its own line and the ⋮ stays beside the name. */}
                 {current && occupant.ownerLink ? (
-                  <OwnerLinkLine link={occupant.ownerLink} owners={owners} en={en} />
+                  <OwnerLinkLine
+                    link={occupant.ownerLink}
+                    owners={owners}
+                    en={en}
+                    tenantHref={citizenHref?.(occupant.citizenId)}
+                  />
                 ) : null}
               </li>
             );
@@ -2436,25 +2285,6 @@ export function OccupantList({
             : `${hidden} إشغال سُجِّل بالخطأ — محفوظ ولا يُعرض.`}
         </p>
       ) : null}
-
-      <EndOccupancyDialog
-        occupant={ending}
-        unitCode={unit.unitCode}
-        asksStatus={
-          Boolean(ending) &&
-          ending!.role !== 'OWNER' &&
-          !unit.occupants.some(
-            // The server's rule: another person, not another row of the same one.
-            (other) =>
-              other.citizenId !== ending!.citizenId && other.toDate === null && other.role !== 'OWNER',
-          )
-        }
-        locale={locale}
-        onOpenChange={(open) => {
-          if (!open) setEnding(null);
-        }}
-        onConfirm={(input) => onEnd(ending!, input)}
-      />
 
       {onLinkOwner ? (
         <LinkOwnerDialog
@@ -2473,6 +2303,145 @@ export function OccupantList({
 }
 
 /**
+ * «إنهاء الملكية» / «إنهاء الإيجار», beside the unit's other actions.
+ *
+ * The same act as the ⋯ menu on an occupant's row, put where an officer is
+ * already looking. An owner recorded on the wrong flat was correctable only
+ * from that menu — which on the full-page matrix sits below the action grid,
+ * below the forms those buttons open and below the summary — so the commonest
+ * correction in the census read as impossible, and inspectors went looking for
+ * a delete instead.
+ *
+ * ## Offered on what the unit records, never on its survey status
+ *
+ * Recording an occupancy lifts a unit out of «غير ممسوحة», «زيارة بلا رد» and
+ * «بيانات ناقصة» and no further (`BuildingsService.recordOccupancy`), so a flat
+ * that refused the survey or could not be reached can hold a wrongly recorded
+ * owner while never reading as «ممسوحة». Keying the button on the survey would
+ * withhold it from precisely the units that are hardest to correct. A current
+ * spell of the capacity is the fact that matters, and it is the same fact the
+ * server ends on.
+ *
+ * ## Why it asks whose
+ *
+ * A link, not a button: ending a spell is a page of its own, and this is the
+ * way in. With one candidate it goes straight there. With co-owners, or a flat
+ * let to two people, it asks whose spell first rather than choosing — ending
+ * the wrong person's is exactly the mistake this exists to undo, and the أسهم
+ * and the start date are what tell them apart at the door.
+ */
+export function EndSpellButton({
+  unit,
+  kind,
+  locale,
+  busy,
+  className,
+  endHref,
+}: {
+  unit: UnitWithOccupants;
+  /** Whose spell — the flat's owners, or the people living in it. */
+  kind: 'OWNERSHIP' | 'TENANCY';
+  locale: string;
+  busy: boolean;
+  className?: string;
+  /** The page that ends one spell. See `OccupantList`'s copy of this prop. */
+  endHref: (occupant: UnitOccupant) => string;
+}) {
+  const en = locale === 'en';
+  const labels = getLabels(locale);
+  const [choosing, setChoosing] = useState(false);
+
+  const candidates = kind === 'OWNERSHIP' ? unitOwners(unit) : livingOccupants(unit);
+  if (candidates.length === 0) return null;
+
+  /*
+    «إنهاء الإيجار» only when every candidate holds a lease. A شاغل بتسامح does
+    not, and a button naming one over their row is the kind of wording that
+    ends up quoted back in a dispute about what the register said.
+  */
+  const label =
+    kind === 'OWNERSHIP'
+      ? en
+        ? 'End ownership'
+        : 'إنهاء الملكية'
+      : candidates.every((occupant) => occupant.role === 'TENANT')
+        ? en
+          ? 'End tenancy'
+          : 'إنهاء الإيجار'
+        : candidates.length === 1
+          ? endActionLabel(candidates[0]!.role, en)
+          : en
+            ? 'End an occupancy'
+            : 'إنهاء إشغال';
+  const Icon = kind === 'OWNERSHIP' ? KeyRound : UserMinus;
+  const only = candidates.length === 1 ? candidates[0]! : null;
+  const face = (
+    <>
+      <Icon className="size-4" aria-hidden />
+      {label}
+    </>
+  );
+  const look = cn('text-destructive hover:bg-destructive/10 hover:text-destructive', className);
+
+  return (
+    <>
+      {only ? (
+        <Button size="sm" variant="outline" asChild className={look}>
+          <Link href={endHref(only)}>{face}</Link>
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          className={look}
+          onClick={() => setChoosing(true)}
+        >
+          {face}
+        </Button>
+      )}
+
+      <Dialog open={choosing} onOpenChange={setChoosing}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{label}</DialogTitle>
+            <DialogDescription>
+              {en
+                ? `Whose spell on unit ${unit.unitCode} is ending?`
+                : `إشغال مَن الذي ينتهي على الوحدة ${unit.unitCode}؟`}
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-1.5">
+            {candidates.map((occupant) => (
+              <li key={occupant.id}>
+                <Link
+                  href={endHref(occupant)}
+                  className="flex min-h-12 w-full flex-wrap items-center gap-2 rounded-md border border-input px-3 py-2 text-start text-sm transition-colors hover:bg-accent"
+                >
+                  <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  <span className="font-medium">
+                    {occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم')}
+                  </span>
+                  <Badge variant="soft-muted">{labels.occupancyRole[occupant.role]}</Badge>
+                  {occupant.shares ? (
+                    <span className="text-xs text-muted-foreground">
+                      {en ? `${occupant.shares}/2400 shares` : `${occupant.shares}/٢٤٠٠ سهم`}
+                    </span>
+                  ) : null}
+                  <span className="text-xs text-muted-foreground">
+                    {en ? 'since' : 'منذ'} {formatDate(occupant.fromDate)}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/**
  * Who a current tenant holds the flat from, as their own card says — beside
  * their name on the unit, so an owner and a tenant recorded on the same flat
  * are visibly connected, or visibly not.
@@ -2481,10 +2450,13 @@ function OwnerLinkLine({
   link,
   owners,
   en,
+  tenantHref,
 }: {
   link: OccupantOwnerLink;
   owners: UnitOccupant[];
   en: boolean;
+  /** The tenant's own file — where «إلغاء الربط» lives. */
+  tenantHref?: string;
 }) {
   if (link.state === 'NO_CARD') return null;
 
@@ -2507,11 +2479,28 @@ function OwnerLinkLine({
 
   if (link.state === 'LINKED_ELSEWHERE') {
     return (
-      <span className="inline-flex basis-full items-center gap-1 text-xs text-warning">
+      <span className="inline-flex basis-full flex-wrap items-center gap-1 text-xs text-warning">
         <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
         {en
           ? `Linked to ${link.ownerName}, who is not recorded as an owner of this unit`
           : `مربوط بـ${link.ownerName}، وهو غير مسجَّل مالكاً لهذه الوحدة`}
+        {/*
+          The way out — not a second way in.
+
+          This is the ordinary aftermath of a sale: the flat changed hands and
+          the tenant's card still names who sold it. «ربط بالمالك» is refused on
+          a card that already names an owner, deliberately —
+          `LandlordLinkService.linkRecordedOwner` leaves undoing a link to the
+          tenant's own file, where the preview says which flats leave the
+          owner's file and whether bills have been raised since. So the officer
+          is sent to that file rather than left reading a warning with nothing
+          under it.
+        */}
+        {tenantHref ? (
+          <Link href={tenantHref} className="font-medium underline underline-offset-2">
+            {en ? 'Fix on their file' : 'التصحيح من ملفه'}
+          </Link>
+        ) : null}
       </span>
     );
   }
@@ -2744,7 +2733,7 @@ export function ConfirmVacancyForm({
   // A fresh question every time it opens — the form mounts when its button is
   // pressed, and the panel keys it on the unit so never the previous flat's.
   const [basis, setBasis] = useState<VacancyBasis | null>(null);
-  const [observedAt, setObservedAt] = useState(today());
+  const [observedAt, setObservedAt] = useState(todayIso());
   const [notes, setNotes] = useState('');
 
   const owners = liveSpells(unit).filter((occupant) => occupant.role === 'OWNER');
@@ -2829,7 +2818,7 @@ export function ConfirmVacancyForm({
         <Input
           id="vacancy-observed"
           type="date"
-          max={today()}
+          max={todayIso()}
           value={observedAt}
           onChange={(event) => setObservedAt(event.target.value)}
           dir="ltr"
@@ -2856,7 +2845,7 @@ export function ConfirmVacancyForm({
           if (!basis || notesMissing) return;
           onSubmit({
             basis,
-            ...(observedAt && observedAt !== today() ? { observedAt } : {}),
+            ...(observedAt && observedAt !== todayIso() ? { observedAt } : {}),
             notes: notes.trim(),
           });
         }}
@@ -2903,7 +2892,7 @@ export function EndVacancyDialog({
   const en = locale === 'en';
   const labels = getLabels(locale);
   const [reason, setReason] = useState<VacancyEndReason | null>(null);
-  const [endedAt, setEndedAt] = useState(today());
+  const [endedAt, setEndedAt] = useState(todayIso());
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -2911,7 +2900,7 @@ export function EndVacancyDialog({
   useEffect(() => {
     if (vacancy) {
       setReason(null);
-      setEndedAt(today());
+      setEndedAt(todayIso());
       setNotes('');
       setFailure(null);
       setBusy(false);
@@ -3014,7 +3003,7 @@ export function EndVacancyDialog({
                 id="vacancy-ended"
                 type="date"
                 min={vacancy.observedAt.slice(0, 10)}
-                max={today()}
+                max={todayIso()}
                 value={endedAt}
                 onChange={(event) => setEndedAt(event.target.value)}
                 dir="ltr"
@@ -3279,7 +3268,7 @@ export function SeasonalHomePanel({
           <Input
             id="seasonal-last-stay"
             type="date"
-            max={today()}
+            max={todayIso()}
             disabled={!canWrite}
             value={lastStay}
             onChange={(event) => setLastStay(event.target.value)}
@@ -3294,7 +3283,7 @@ export function SeasonalHomePanel({
           <Input
             id="seasonal-declared"
             type="date"
-            max={today()}
+            max={todayIso()}
             disabled={!canWrite}
             value={declared}
             onChange={(event) => setDeclared(event.target.value)}
