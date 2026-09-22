@@ -137,11 +137,6 @@ export function QuickSaveDialog({
             label={en ? 'Reason' : 'السبب'}
             htmlFor="blanket-reason"
             required
-            hint={
-              en
-                ? 'A reviewer reads this on every gap — say what a return visit needs.'
-                : 'يقرأ المراجع هذا السبب على كل حقل ناقص — اذكر ما تحتاجه الزيارة القادمة.'
-            }
           >
             <Textarea
               id="blanket-reason"

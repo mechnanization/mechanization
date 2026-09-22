@@ -2,9 +2,18 @@ import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
-/** Ported verbatim from the Albazourieh platform's shadcn/ui badge. */
+/**
+ * Ported from the Albazourieh platform's shadcn/ui badge, reshaped to the
+ * sibling Solar system's chip: a squared `rounded-md` rather than a full pill,
+ * `font-medium` rather than `font-semibold`, and a hair less horizontal padding.
+ *
+ * The pill shape reads as a *button* — it is the same geometry as the rounded
+ * controls beside it — which is misleading on a column of status labels nobody
+ * can click. Squaring it off and dropping the weight settles the badge back
+ * into the row as an annotation on the data rather than an object above it.
+ */
 const badgeVariants = cva(
-  'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+  'inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
   {
     variants: {
       variant: {
@@ -14,8 +23,8 @@ const badgeVariants = cva(
         destructive:
           'border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80',
         outline: 'text-foreground',
-        success: 'border-transparent bg-emerald-600 text-white hover:bg-emerald-600/80',
-        warning: 'border-transparent bg-amber-500 text-white hover:bg-amber-500/80',
+        success: 'border-transparent bg-success text-success-foreground hover:bg-success/80',
+        warning: 'border-transparent bg-warning text-warning-foreground hover:bg-warning/80',
 
         /*
          * Soft variants.
@@ -30,15 +39,19 @@ const badgeVariants = cva(
          * state still reads at a glance without competing with the data. The
          * solid set is untouched — nothing using it today changes.
          *
-         * The dark-mode text steps up (`dark:text-*-400`): the 700 weights
-         * that clear 4.5:1 on the cream page fall under 3:1 on a dark card.
+         * The tone comes from the design token, which is re-declared in the
+         * `.dark` block — so there is no `dark:` half to write here and none to
+         * forget. That was the failure this replaced: these variants carried
+         * `dark:text-*-400` by hand because a raw palette colour cannot know
+         * which theme it is in, and forty places across the app wrote the light
+         * half and not the dark one.
          */
         'soft-default': 'border-transparent bg-primary/10 text-primary',
         'soft-success':
-          'border-transparent bg-emerald-600/10 text-emerald-700 dark:text-emerald-400',
-        'soft-warning': 'border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-400',
+          'border-transparent bg-success/10 text-success',
+        'soft-warning': 'border-transparent bg-warning/15 text-warning',
         'soft-destructive': 'border-transparent bg-destructive/10 text-destructive',
-        'soft-info': 'border-transparent bg-sky-500/10 text-sky-700 dark:text-sky-400',
+        'soft-info': 'border-transparent bg-info/10 text-info',
         'soft-muted': 'border-transparent bg-muted text-muted-foreground',
       },
     },

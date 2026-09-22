@@ -41,6 +41,8 @@ import {
   type ZipEntry,
 } from '@/lib/zip';
 import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/states';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 
 import { Input } from '@/components/ui/input';
@@ -662,7 +664,7 @@ export function BackupSection({
         title={copy.backup.scheduleHeading}
         hint={copy.backup.scheduleHint}
       >
-        <AlignedFieldGrid columns={4}>
+        <AlignedFieldGrid>
           <SettingsField label={copy.backup.frequency} htmlFor="backup-frequency">
             <Select
               value={schedule.frequency}
@@ -1043,11 +1045,13 @@ export function BackupSection({
                               <TableCell className="font-medium">
                                 {copy.backup.tables[name] ?? name}
                               </TableCell>
-                              <TableCell className="tabular-nums text-destructive" dir="ltr">
-                                {(report.deleted[name] ?? 0).toLocaleString('en-US')}
+                              <TableCell className="tabular-nums text-destructive">
+                                <bdi dir="ltr">
+                                  {(report.deleted[name] ?? 0).toLocaleString('en-US')}
+                                </bdi>
                               </TableCell>
-                              <TableCell className="tabular-nums" dir="ltr">
-                                {report.written[name].toLocaleString('en-US')}
+                              <TableCell className="tabular-nums">
+                                <bdi dir="ltr">{report.written[name].toLocaleString('en-US')}</bdi>
                               </TableCell>
                             </TableRow>
                           ))}
@@ -1119,9 +1123,7 @@ export function BackupSection({
         hint={copy.backup.historyHint}
       >
         {history.entries.length === 0 ? (
-          <p className="rounded-xl border border-border/70 bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-            {copy.backup.historyEmpty}
-          </p>
+          <EmptyState compact icon={History} title={copy.backup.historyEmpty} />
         ) : (
           <ScrollableTable minWidth="40rem">
             <Table>
@@ -1145,16 +1147,16 @@ export function BackupSection({
                         ? copy.backup.actionBackup
                         : copy.backup.actionRestore}
                     </TableCell>
-                    <TableCell dir="ltr" className="text-start tabular-nums">
-                      {entry.scope}
+                    <TableCell className="tabular-nums">
+                      <bdi dir="ltr">{entry.scope}</bdi>
                     </TableCell>
-                    <TableCell dir="ltr" className="whitespace-nowrap text-start tabular-nums">
-                      {formatBytes(entry.bytes)}
+                    <TableCell className="whitespace-nowrap tabular-nums">
+                      <bdi dir="ltr">{formatBytes(entry.bytes)}</bdi>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={entry.ok ? 'soft-success' : 'soft-destructive'}>
+                      <CellTag tone={entry.ok ? 'success' : 'destructive'}>
                         {entry.ok ? copy.backup.outcomeOk : copy.backup.outcomeFailed}
-                      </Badge>
+                      </CellTag>
                     </TableCell>
                   </TableRow>
                 ))}

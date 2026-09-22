@@ -303,6 +303,7 @@ export function DatePicker({
               size="icon"
               className="h-7 w-7 shrink-0"
               onClick={() => shiftMonth(-1)}
+              aria-label={locale === 'ar' ? 'الشهر السابق' : 'Previous month'}
             >
               <ChevronLeft className="h-4 w-4 rtl:rotate-180" />
             </Button>
@@ -327,6 +328,7 @@ export function DatePicker({
               size="icon"
               className="h-7 w-7 shrink-0"
               onClick={() => shiftMonth(1)}
+              aria-label={locale === 'ar' ? 'الشهر التالي' : 'Next month'}
             >
               <ChevronRight className="h-4 w-4 rtl:rotate-180" />
             </Button>
@@ -360,7 +362,7 @@ export function DatePicker({
                   aria-pressed={isSelectedDay(day)}
                   onClick={() => pick(day)}
                   className={cn(
-                    'mx-auto flex h-8 w-8 items-center justify-center rounded-md text-sm tabular-nums transition-colors',
+                    'mx-auto flex h-8 w-8 coarse:h-12 coarse:w-12 items-center justify-center rounded-md text-sm tabular-nums transition-colors',
                     isSelectedDay(day)
                       ? 'bg-primary font-semibold text-primary-foreground'
                       : dayDisabled

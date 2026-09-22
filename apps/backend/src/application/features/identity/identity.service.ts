@@ -40,12 +40,35 @@ export interface SessionClaims {
    * is every account's starting version.
    */
   tokenVersion?: number;
+  /**
+   * When this **session** ends for good, epoch seconds — STAFF only.
+   *
+   * Distinct from the token's own `exp`, and that distinction is the whole
+   * refresh design. `exp` is short and slides forward each time the token is
+   * exchanged; this does not move. It is stamped once at login from
+   * `JWT_STAFF_TTL` (or `JWT_STAFF_REMEMBER_TTL`) and copied unchanged into
+   * every token the session goes on to produce, so a clerk who works through
+   * the day still signs in again at the same wall-clock moment they do today.
+   *
+   * Without it, "re-issue the token when it expires" is an session that never
+   * ends — which is strictly worse than the hard 401 it replaces.
+   *
+   * Optional because tokens minted before this existed do not carry it.
+   * `refreshStaffSession` treats a missing value as "cap at this token's own
+   * `exp`", so a session already in flight when this deploys keeps exactly the
+   * lifetime it was issued with and simply cannot be extended.
+   */
+  sessionExpiresAt?: number;
 }
 
 export interface SessionResult {
   accessToken: string;
   supabaseAccessToken?: string;
   expiresIn: string;
+  /** When `accessToken` stops being accepted, ISO. The client refreshes before this. */
+  expiresAt?: string;
+  /** When the session ends for good, ISO — STAFF only. No refresh past it. */
+  sessionExpiresAt?: string;
   user: { id: string; name: string; kind: 'STAFF' | 'CITIZEN'; role?: StaffRole };
 }
 
@@ -593,6 +616,109 @@ export class IdentityService {
   // ────────────────────────────  Shared  ────────────────────────────
 
   /**
+   * Exchanges a staff token for a fresh one, without a new sign-in.
+   *
+   * Deliberately accepts an **expired** token, which is the only thing that
+   * makes this useful and is worth being explicit about. The alternative —
+   * requiring a live token — means the exchange has to happen before the idle
+   * window closes, so a clerk who steps away for lunch returns to the same hard
+   * 401 this exists to remove, just at half an hour instead of eight hours.
+   * Worse than what it replaced.
+   *
+   * What bounds it instead is `sessionExpiresAt`, stamped at login and never
+   * moved. Past that there is no exchange at any price, so the credential's
+   * total life is exactly what it was before this change — a stolen token is
+   * usable for no longer than it already was. It is **not** shortened either:
+   * anyone holding the token can exchange it, so this buys convenience and
+   * costs nothing, rather than buying security. Reducing the theft window needs
+   * a second, separately-stored credential that only this endpoint accepts —
+   * i.e. real refresh tokens with server-side rotation and reuse detection.
+   *
+   * Three things are re-checked on every exchange, none of which the token can
+   * speak for:
+   *
+   * 1. **Revocation** — `tokenVersion` and `isActive`, via the same service the
+   *    guard uses. A dismissal still takes effect within the cache window, and
+   *    a revoked session cannot refresh its way back.
+   * 2. **Role** — re-read from the row, so a promotion or demotion reaches the
+   *    session at the next exchange rather than at the next sign-in. `role`
+   *    travels in the token and `RolesGuard` authorises from it, so a stale one
+   *    is an authorisation decision made on old information.
+   * 3. **The tenant** — compared against the URL, as everywhere else.
+   */
+  async refreshStaffSession(input: {
+    token: string;
+    tenantSlug: string;
+  }): Promise<SessionResult> {
+    let claims: SessionClaims & { exp?: number };
+    try {
+      /*
+        `ignoreExpiration`, and nothing else relaxed.
+
+        The signature is still verified, so this accepts only tokens this
+        service minted. Everything expiry would have caught is caught below by
+        the cap, which is the stricter of the two for any token worth
+        refusing.
+      */
+      claims = this.jwt.verify<SessionClaims & { exp?: number }>(input.token, {
+        ignoreExpiration: true,
+      });
+    } catch {
+      throw new UnauthorizedError('Invalid or expired session');
+    }
+
+    // Citizens have no refresh path — see `issueSession`. Answering this for
+    // them would silently extend a 7-day token forever.
+    if (claims.kind !== 'STAFF') {
+      throw new UnauthorizedError('Invalid or expired session');
+    }
+
+    if (claims.tenantSlug !== input.tenantSlug) {
+      throw new UnauthorizedError('Invalid or expired session');
+    }
+
+    /**
+     * The cap, and the legacy case folded into it.
+     *
+     * A token minted before `sessionExpiresAt` existed falls back to its own
+     * `exp`, which means it can never be extended: the comparison below is
+     * already false by the time anything would want to refresh it. That is the
+     * right answer rather than a special case — a session in flight when this
+     * deploys keeps precisely the lifetime it was issued with, and the clerk
+     * signs in once at the moment they would have anyway.
+     */
+    const cap = claims.sessionExpiresAt ?? claims.exp ?? 0;
+    if (cap <= Math.floor(Date.now() / 1000)) {
+      throw new UnauthorizedError('انتهت الجلسة. يرجى تسجيل الدخول مجدداً.');
+    }
+
+    const user = await this.users.findById(claims.sub);
+    if (!user || user.kind !== 'STAFF' || user.tenantSlug !== input.tenantSlug) {
+      throw new UnauthorizedError('Invalid or expired session');
+    }
+
+    // Deactivated accounts refuse here as well as in the guard. The guard does
+    // not run on this route — it cannot, because the token may be expired — so
+    // this is the check, not a duplicate of one.
+    user.assertMayStartSession();
+
+    if ((claims.tokenVersion ?? 0) !== user.tokenVersion) {
+      throw new UnauthorizedError('انتهت الجلسة. يرجى تسجيل الدخول مجدداً.');
+    }
+
+    return this.issueSession({
+      id: user.id,
+      name: user.fullName,
+      kind: 'STAFF',
+      // Re-read, not copied from the token — see (2) above.
+      role: user.role,
+      tenantSlug: input.tenantSlug,
+      tokenVersion: user.tokenVersion,
+      sessionExpiresAt: cap,
+    });
+  }
+
+  /**
    * One issuer, one signing key, one claim shape for both kinds of user — which
    * is the entire reason v2 merged the two auth systems.
    */
@@ -607,27 +733,87 @@ export class IdentityService {
     supabaseAccessToken?: string;
     /** Stamped into the token and compared on every request thereafter. */
     tokenVersion: number;
+    /**
+     * STAFF only, and only on a refresh: the cap the original login set.
+     *
+     * Passed through rather than recomputed, which is what stops a refreshed
+     * session from walking its own deadline forward every time it is exchanged.
+     */
+    sessionExpiresAt?: number;
   }): SessionResult {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    if (input.kind !== 'STAFF') {
+      // Citizens are unchanged: one token, one lifetime, no refresh. They open
+      // the portal to check a fee and close it, so a mid-session expiry costs
+      // them a sign-in they were about to do anyway.
+      const expiresIn = this.config.get<string>('JWT_CITIZEN_TTL', '7d');
+      const claims: SessionClaims = {
+        sub: input.id,
+        tenantSlug: input.tenantSlug,
+        kind: input.kind,
+        tokenVersion: input.tokenVersion,
+      };
+
+      return {
+        accessToken: this.jwt.sign(claims, { expiresIn }),
+        ...(input.supabaseAccessToken ? { supabaseAccessToken: input.supabaseAccessToken } : {}),
+        expiresIn,
+        user: { id: input.id, name: input.name, kind: input.kind, role: input.role },
+      };
+    }
+
+    /**
+     * The session's hard deadline, set once and carried forward.
+     *
+     * `JWT_STAFF_TTL` and `JWT_STAFF_REMEMBER_TTL` keep the values they have
+     * always had and keep meaning the same thing to an operator — how long a
+     * sign-in lasts. What changed is which expiry they name: they used to be
+     * the token's, and are now the session's. A clerk still signs in again
+     * after eight hours; they no longer get thrown out mid-form at hour eight
+     * and lose what was on screen.
+     */
+    const sessionExpiresAt =
+      input.sessionExpiresAt ??
+      nowSeconds +
+        durationToSeconds(
+          this.config.get<string>(
+            input.remember ? 'JWT_STAFF_REMEMBER_TTL' : 'JWT_STAFF_TTL',
+            input.remember ? '30d' : '8h',
+          ),
+          input.remember ? 30 * 24 * 3600 : 8 * 3600,
+        );
+
+    /**
+     * The token's own life: the idle window, clamped to the cap.
+     *
+     * Clamping is what makes the last token of a session expire exactly at the
+     * deadline instead of a half-hour past it. Without it the final refresh
+     * before the cap would mint a token outliving the session it belongs to,
+     * and `refreshStaffSession` would be the only thing refusing it — one
+     * check standing where two should.
+     */
+    const idleSeconds = durationToSeconds(
+      this.config.get<string>('JWT_STAFF_IDLE_TTL', '30m'),
+      30 * 60,
+    );
+    const expiresIn = Math.max(1, Math.min(idleSeconds, sessionExpiresAt - nowSeconds));
+
     const claims: SessionClaims = {
       sub: input.id,
       tenantSlug: input.tenantSlug,
       kind: input.kind,
       ...(input.role ? { role: input.role } : {}),
       tokenVersion: input.tokenVersion,
+      sessionExpiresAt,
     };
-
-    const expiresIn =
-      input.kind === 'STAFF'
-        ? this.config.get<string>(
-            input.remember ? 'JWT_STAFF_REMEMBER_TTL' : 'JWT_STAFF_TTL',
-            input.remember ? '30d' : '8h',
-          )
-        : this.config.get<string>('JWT_CITIZEN_TTL', '7d');
 
     return {
       accessToken: this.jwt.sign(claims, { expiresIn }),
       ...(input.supabaseAccessToken ? { supabaseAccessToken: input.supabaseAccessToken } : {}),
-      expiresIn,
+      expiresIn: `${expiresIn}s`,
+      expiresAt: new Date((nowSeconds + expiresIn) * 1000).toISOString(),
+      sessionExpiresAt: new Date(sessionExpiresAt * 1000).toISOString(),
       user: { id: input.id, name: input.name, kind: input.kind, role: input.role },
     };
   }
@@ -637,6 +823,32 @@ export class IdentityService {
       this.events.emit(event.name, { ...event.payload, tenantSlug });
     }
   }
+}
+
+/**
+ * Reads the duration strings the JWT options already use — `8h`, `30d`, `30m`.
+ *
+ * This exists because the session cap has to be a *number* the claim can carry
+ * and the refresh can compare, while `JWT_STAFF_TTL` has always been a string
+ * handed straight to `jsonwebtoken`. Rather than change the variable's format —
+ * which would break every existing deployment's configuration for no gain —
+ * the same string is parsed here.
+ *
+ * Accepts the subset `ms` supports that these settings have ever used, and
+ * falls back rather than throwing: a typo in a TTL must not take the login
+ * route down with it, and the default is the documented value.
+ */
+function durationToSeconds(value: string, fallbackSeconds: number): number {
+  const match = /^(\d+)\s*(s|m|h|d)?$/.exec(value.trim());
+  if (!match) return fallbackSeconds;
+
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return fallbackSeconds;
+
+  // A bare number is seconds, which is what `jsonwebtoken` does with one too.
+  const unit = match[2] ?? 's';
+  const multiplier = { s: 1, m: 60, h: 3600, d: 86400 }[unit] ?? 1;
+  return amount * multiplier;
 }
 
 /**

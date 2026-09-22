@@ -126,7 +126,7 @@ const AXIS_H = 30;
  * Nothing is lost to the reader: the hover target, its tooltip and the data
  * table under `ChartCard` all still carry every bucket by name.
  */
-const AXIS_LABEL_FONT_PX = 10; // matches the `text-[10px]` on the tick
+const AXIS_LABEL_FONT_PX = 10; // matches the `text-xs` on the tick
 const AXIS_LABEL_EM = 0.55; // average Arabic glyph advance, rounded up
 const AXIS_LABEL_GUTTER = 8; // clear air between two neighbouring ticks
 
@@ -373,7 +373,7 @@ export function ColumnChart({
                     x={width - 6}
                     y={y + 4}
                     textAnchor="end"
-                    className="fill-muted-foreground text-[10px] tabular-nums"
+                    className="fill-muted-foreground text-xs tabular-nums"
                   >
                     {formatValue(tick)}
                   </text>
@@ -399,7 +399,7 @@ export function ColumnChart({
                       x={x + barW / 2}
                       y={y - 6}
                       textAnchor="middle"
-                      className="fill-foreground text-[10px] font-semibold tabular-nums"
+                      className="fill-foreground text-xs font-semibold tabular-nums"
                     >
                       {formatValue(datum.value)}
                     </text>
@@ -410,7 +410,7 @@ export function ColumnChart({
                       x={bandX + band / 2}
                       y={PLOT_H + 18}
                       textAnchor="middle"
-                      className="fill-muted-foreground text-[10px]"
+                      className="fill-muted-foreground text-xs"
                     >
                       {datum.label}
                     </text>
@@ -539,7 +539,7 @@ export function GroupedColumnChart({
                     x={width - 6}
                     y={y + 4}
                     textAnchor="end"
-                    className="fill-muted-foreground text-[10px] tabular-nums"
+                    className="fill-muted-foreground text-xs tabular-nums"
                   >
                     {formatTick(tick)}
                   </text>
@@ -574,7 +574,7 @@ export function GroupedColumnChart({
                       x={bandX + band / 2}
                       y={PLOT_H + 18}
                       textAnchor="middle"
-                      className="fill-muted-foreground text-[10px]"
+                      className="fill-muted-foreground text-xs"
                     >
                       {group.label}
                     </text>

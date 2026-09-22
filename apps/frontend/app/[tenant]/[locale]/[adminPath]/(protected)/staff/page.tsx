@@ -38,6 +38,7 @@ import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate } from '@/lib/dates';
 import { Badge } from '@/components/ui/badge';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -50,6 +51,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { StaffForm, type StaffFormValues } from '@/components/admin/staff-form';
@@ -303,7 +305,7 @@ export default function StaffPage({
           <div className="flex items-center gap-2">
             <span className="font-medium">{row.original.fullName}</span>
             {row.original.id === selfId ? (
-              <Badge variant="outline">{locale === 'en' ? 'You' : 'أنت'}</Badge>
+              <CellTag tone="muted">{locale === 'en' ? 'You' : 'أنت'}</CellTag>
             ) : null}
           </div>
         ),
@@ -326,9 +328,9 @@ export default function StaffPage({
         accessorKey: 'role',
         header: locale === 'en' ? 'Role' : 'الصلاحية',
         cell: ({ row }) => (
-          <Badge variant={row.original.role === 'SUPER_ADMIN' ? 'default' : 'secondary'}>
+          <CellTag tone={row.original.role === 'SUPER_ADMIN' ? 'primary' : 'neutral'}>
             {labels.staffRole?.[row.original.role as never] ?? row.original.role}
-          </Badge>
+          </CellTag>
         ),
       },
       {
@@ -336,15 +338,15 @@ export default function StaffPage({
         header: locale === 'en' ? 'Status' : 'الحالة',
         cell: ({ row }) =>
           row.original.isActive ? (
-            <Badge className="gap-1.5 border-emerald-600/30 bg-emerald-600/10 py-1 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" variant="outline">
+            <CellTag tone="success">
               <CheckCircle2 className="size-3.5" aria-hidden />
               {locale === 'en' ? 'Active' : 'فعّال'}
-            </Badge>
+            </CellTag>
           ) : (
-            <Badge className="gap-1.5 py-1" variant="outline">
+            <CellTag tone="muted">
               <Ban className="size-3.5" aria-hidden />
               {locale === 'en' ? 'Disabled' : 'معطّل'}
-            </Badge>
+            </CellTag>
           ),
       },
       {
@@ -362,16 +364,16 @@ export default function StaffPage({
           return (
             <div className="flex flex-col gap-1 text-xs">
               <div className="flex items-center gap-1.5 font-semibold">
-                <span className="text-emerald-600 dark:text-emerald-400">
+                <span className="text-success">
                   {citizens} {locale === 'en' ? 'citizens' : 'مواطن'}
                 </span>
                 <span className="text-muted-foreground">•</span>
-                <span className="text-blue-600 dark:text-blue-400">
+                <span className="text-info">
                   {properties} {locale === 'en' ? 'properties' : 'عقار'}
                 </span>
               </div>
-              <div className="text-[11px] text-muted-foreground font-medium" dir="ltr">
-                ${earnings.toFixed(2)} USD
+              <div className="text-xs text-muted-foreground font-medium">
+                <bdi dir="ltr">${earnings.toFixed(2)} USD</bdi>
               </div>
             </div>
           );
@@ -403,7 +405,7 @@ export default function StaffPage({
                   <Button
                     variant="outline"
                     size="icon-sm"
-                    className="border-emerald-600/30 text-emerald-700 bg-emerald-600/5 hover:bg-emerald-600/15 dark:text-emerald-400 dark:border-emerald-500/30"
+                    className="border-success/30 text-success bg-success/5 hover:bg-success/15"
                     aria-label={locale === 'en' ? 'Performance & Earnings' : 'لوحة الأداء والعمولات'}
                     onClick={() => router.push(`${base}/inspector/profile/${staff.id}`)}
                   >
@@ -486,29 +488,27 @@ export default function StaffPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <div className="flex flex-col items-start justify-between gap-4 border-b pb-6 md:flex-row md:items-center">
-        <div className="space-y-2">
-          <h1 className="flex items-center gap-3 text-3xl font-bold tracking-tight">
-            <UsersRound className="size-7 text-primary" aria-hidden />
-            {locale === 'en' ? 'Staff Members' : 'الموظفون'}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {locale === 'en'
-              ? 'Manage municipal staff accounts and roles'
-              : 'إنشاء حسابات موظفي البلدية وتعديل صلاحياتها'}
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setFormError(null);
-            setFormOpen(true);
-          }}
-        >
-          <UserPlus className="size-4" aria-hidden />
-          {locale === 'en' ? 'Add Staff Member' : 'إضافة موظف'}
-        </Button>
-      </div>
+      <PageHeader
+        icon={UsersRound}
+        title={locale === 'en' ? 'Staff Members' : 'الموظفون'}
+        subtitle={
+          locale === 'en'
+            ? 'Manage municipal staff accounts and roles'
+            : 'إنشاء حسابات موظفي البلدية وتعديل صلاحياتها'
+        }
+        actions={
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setFormError(null);
+              setFormOpen(true);
+            }}
+          >
+            <UserPlus className="size-4" aria-hidden />
+            {locale === 'en' ? 'Add Staff Member' : 'إضافة موظف'}
+          </Button>
+        }
+      />
 
       {error ? (
         <p
@@ -563,17 +563,17 @@ export default function StaffPage({
                           </div>
                           <div>
                             <h3 className="font-bold text-sm">{insp.fullName}</h3>
-                            <p className="text-[11px] text-muted-foreground" dir="ltr">
+                            <p className="text-xs text-muted-foreground" dir="ltr">
                               {insp.email}
                             </p>
                           </div>
                         </div>
                         {insp.isActive ? (
-                          <Badge variant="outline" className="text-[10px] border-emerald-600/30 text-emerald-700 bg-emerald-600/10">
+                          <Badge variant="outline" className="text-xs border-success/30 text-success bg-success/10">
                             {locale === 'en' ? 'Active' : 'فعّال'}
                           </Badge>
                         ) : (
-                          <Badge variant="outline" className="text-[10px] text-destructive">
+                          <Badge variant="outline" className="text-xs text-destructive">
                             {locale === 'en' ? 'Disabled' : 'معطّل'}
                           </Badge>
                         )}
@@ -581,27 +581,27 @@ export default function StaffPage({
 
                       <div className="grid grid-cols-2 gap-2 pt-1 border-t text-xs">
                         <div className="flex flex-col bg-muted/30 p-2 rounded-lg">
-                          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                            <Users className="size-3 text-emerald-600" />
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Users className="size-3 text-success" />
                             {locale === 'en' ? 'Citizens' : 'المواطنون'}
                           </span>
-                          <span className="font-bold text-sm text-emerald-600 dark:text-emerald-400 mt-0.5">
+                          <span className="font-bold text-sm text-success mt-0.5">
                             {citizens} {locale === 'en' ? 'cit.' : 'مواطن'}
                           </span>
                         </div>
 
                         <div className="flex flex-col bg-muted/30 p-2 rounded-lg">
-                          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                            <Home className="size-3 text-blue-600" />
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Home className="size-3 text-info" />
                             {locale === 'en' ? 'Properties' : 'العقارات'}
                           </span>
-                          <span className="font-bold text-sm text-blue-600 dark:text-blue-400 mt-0.5">
+                          <span className="font-bold text-sm text-info mt-0.5">
                             {properties} {locale === 'en' ? 'prop.' : 'عقار'}
                           </span>
                         </div>
 
                         <div className="flex flex-col bg-muted/30 p-2 rounded-lg">
-                          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
                             <TrendingUp className="size-3 text-purple-600" />
                             {locale === 'en' ? 'Earnings' : 'الأرباح'}
                           </span>
@@ -611,11 +611,11 @@ export default function StaffPage({
                         </div>
 
                         <div className="flex flex-col bg-muted/30 p-2 rounded-lg">
-                          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                            <Clock className="size-3 text-amber-600" />
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Clock className="size-3 text-warning" />
                             {locale === 'en' ? 'Pending' : 'المتبقي'}
                           </span>
-                          <span className="font-bold text-xs text-amber-600 dark:text-amber-400 mt-0.5" dir="ltr">
+                          <span className="font-bold text-xs text-warning mt-0.5" dir="ltr">
                             ${pending.toFixed(2)}
                           </span>
                         </div>
@@ -726,7 +726,7 @@ export default function StaffPage({
       >
         <DialogContent className="max-w-md" closeLabel={locale === 'en' ? 'Close' : 'إغلاق'}>
           <DialogHeader>
-            <div className="mx-auto mb-2 flex size-12 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-600 ring-1 ring-amber-500/20">
+            <div className="mx-auto mb-2 flex size-12 items-center justify-center rounded-xl bg-warning/10 text-warning ring-1 ring-warning/20">
               <KeyRound className="size-6" />
             </div>
             <DialogTitle className="text-center text-xl font-bold">
@@ -770,7 +770,7 @@ export default function StaffPage({
                 >
                   {copiedSecret ? (
                     <>
-                      <Check className="size-4 text-emerald-600" />
+                      <Check className="size-4 text-success" />
                       <span className="text-xs">{locale === 'en' ? 'Copied' : 'تم النسخ'}</span>
                     </>
                   ) : (
@@ -783,7 +783,7 @@ export default function StaffPage({
               </div>
             </div>
 
-            <div className="rounded-lg bg-amber-500/5 p-3 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+            <div className="rounded-lg bg-warning/5 p-3 border border-warning/20 text-xs text-warning leading-relaxed">
               {locale === 'en' ? (
                 <>⚠️ <strong>Notice:</strong> This key is displayed <strong>only once</strong> now and cannot be retrieved later from the site. If lost, it can be reset via the CLI.</>
               ) : (

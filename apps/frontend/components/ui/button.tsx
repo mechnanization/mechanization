@@ -26,15 +26,27 @@ const buttonVariants = cva(
         ghost: 'hover:bg-accent hover:text-accent-foreground',
         link: 'text-primary underline-offset-4 hover:underline',
       },
+      /**
+       * Every size carries a `coarse:` floor of 48px (`h-12`).
+       *
+       * Staff work these screens on phones and tablets in the field, where 40px
+       * is a miss waiting to happen — and the smaller sizes below were well
+       * under even that. On a coarse pointer the distinction between `default`,
+       * `sm` and the two icon sizes deliberately collapses: they are all one
+       * fingertip, and a toolbar button being visually smaller than a primary
+       * one is a desk affordance, not a field one. With a mouse, every size
+       * keeps its dense desktop height.
+       */
       size: {
-        default: 'h-10 px-4 py-2',
-        sm: 'h-9 rounded-md px-3',
+        default: 'h-10 coarse:h-12 px-4 py-2',
+        sm: 'h-9 coarse:h-12 rounded-md px-3',
         lg: 'h-14 rounded-lg px-8 text-lg',
         xl: 'h-20 rounded-xl px-8 text-xl',
-        icon: 'h-10 w-10',
+        icon: 'h-10 w-10 coarse:h-12 coarse:w-12',
         /** Icon-only control inside a table row, where `icon`'s 40px is
-         *  taller than the row's own text line. */
-        'icon-sm': 'h-8 w-8',
+         *  taller than the row's own text line. Rows get taller on a tablet,
+         *  which is the correct trade when the row is being tapped. */
+        'icon-sm': 'h-8 w-8 coarse:h-12 coarse:w-12',
       },
     },
     defaultVariants: {

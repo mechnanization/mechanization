@@ -168,7 +168,7 @@ export default function InspectorPayoutHistoryPage({
             {isSuperAdmin && data ? (
               <Button
                 size="sm"
-                className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-800"
+                className="gap-1.5 bg-success text-success-foreground hover:bg-success/90"
                 onClick={() => setPayoutOpen(true)}
               >
                 <HandCoins className="size-4" aria-hidden />
@@ -243,7 +243,7 @@ export default function InspectorPayoutHistoryPage({
                     isSuperAdmin ? (
                       <Button
                         size="sm"
-                        className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-800"
+                        className="gap-1.5 bg-success text-success-foreground hover:bg-success/90"
                         onClick={() => setPayoutOpen(true)}
                       >
                         <HandCoins className="size-4" aria-hidden />
@@ -286,7 +286,7 @@ export default function InspectorPayoutHistoryPage({
                             payout amount is: it is a value being read off a
                             paper slip, not a control.
                           */}
-                          <TableCell className="whitespace-nowrap font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                          <TableCell className="whitespace-nowrap font-bold tabular-nums text-success">
                             <bdi>
                               ${money(payout.amount)} {payout.currency}
                             </bdi>
@@ -331,7 +331,6 @@ export default function InspectorPayoutHistoryPage({
             token={token}
             locale={locale}
             staff={{ id: data.inspector.id, name: data.inspector.name }}
-            pendingBalance={data.pendingBalance}
             onRecorded={async () => {
               await Promise.all([
                 queryClient.invalidateQueries({ queryKey }),
@@ -373,7 +372,7 @@ function Stat({
       */}
       <div
         className={`mt-2 text-2xl font-bold tabular-nums ${
-          emphasis ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'
+          emphasis ? 'text-warning' : 'text-foreground'
         }`}
       >
         <bdi>{value}</bdi>

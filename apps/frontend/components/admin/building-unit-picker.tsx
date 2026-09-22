@@ -29,13 +29,14 @@ import {
 } from '@/lib/api-client';
 import type { PropertyDraft, UnitDraft } from '@/components/citizen/property-card';
 import {
-  BuildingSummaryBadges,
   cellBadge,
   floorLabel,
   groupUnitsByFloor,
+  layoutFloor,
   unitOwners,
   withDeclaredBasements,
 } from '@/components/admin/building-unit-forms';
+import { UnitHoldingsGrid } from '@/components/admin/unit-holdings-grid';
 import { Badge } from '@/components/ui/badge';
 import {
   Select,
@@ -136,6 +137,8 @@ export function BuildingUnitPicker({
   onChange,
   onLinkedBuilding,
   locked,
+  onMatrixState,
+  aside,
   locale = 'ar',
 }: {
   tenant: string;
@@ -182,6 +185,18 @@ export function BuildingUnitPicker({
    * not have been asked.
    */
   locked?: LockedCensusTarget | null;
+  /**
+   * Whether the locked matrix is showing this citizen's flats, and which one
+   * is tapped. The card follows it: nothing below the matrix until a flat is
+   * chosen, then that flat's own fields directly under it.
+   */
+  onMatrixState?: (state: { active: boolean; unitId: string | null }) => void;
+  /**
+   * The card's «من سجل المباني» box, set beside this control's own head — the
+   * two say what the card is linked to, one as facts and one as the choice,
+   * so they sit as one row. The flats follow underneath, full width.
+   */
+  aside?: React.ReactNode;
   locale?: string;
 }) {
   const en = locale === 'en';
@@ -653,6 +668,41 @@ export function BuildingUnitPicker({
   );
 
 
+  const [editingLinks] = useState(
+    () => !(draft.units ?? []).some((unit) => unit.unitId),
+  );
+  const [shownUnitId, setShownUnitId] = useState<string | null>(null);
+  const gridFloors = useMemo(
+    () => floors.map(({ floor, units }) => ({ floor, ...layoutFloor(units) })),
+    [floors],
+  );
+  /*
+    Active only while there is something of theirs to tap. A card whose matrix
+    lights nothing, or that is choosing its flats, is not driven by it — there
+    would be no flat to open and no way to release what it held back.
+  */
+  const matrixActive =
+    Boolean(buildingId) &&
+    isBuilding &&
+    Boolean(detail?.units.length) &&
+    linkedUnitIds.size > 0 &&
+    !editingLinks &&
+    !locked?.unitId;
+  const tappedUnitId = matrixActive && shownUnitId && linkedUnitIds.has(shownUnitId) ? shownUnitId : null;
+  useEffect(() => {
+    onMatrixState?.({ active: matrixActive, unitId: tappedUnitId });
+  }, [matrixActive, tappedUnitId, onMatrixState]);
+  useEffect(() => () => onMatrixState?.({ active: false, unitId: null }), [onMatrixState]);
+
+  const heldRoles = useMemo(
+    () =>
+      new Map<string, string>(
+        [...linkedUnitIds].map((unitId) => [unitId, draft.occupancyType ?? 'OWNER']),
+      ),
+    [linkedUnitIds, draft.occupancyType],
+  );
+
+
   /**
    * Adds or removes the card line that names this canonical unit.
    *
@@ -1036,239 +1086,247 @@ export function BuildingUnitPicker({
 
 
   return (
-    <div className="space-y-2 rounded-lg border border-dashed p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="flex items-center gap-1.5 text-xs font-medium">
-          <Building2 className="size-3.5 text-muted-foreground" aria-hidden />
-          {en ? 'Censused structure' : 'المنشأة في سجل المباني'}
-          {locked ? (
-            <Badge variant="soft-muted" className="gap-1">
-              <Lock className="size-3" aria-hidden />
-              {en ? 'From the matrix' : 'من مصفوفة الوحدات'}
-            </Badge>
+    <div className="space-y-3">
+    {/*
+      Side by side from a tablet up — the card's census facts and the
+      structure it is linked to — one under the other on a phone. The two boxes
+      stretch to one height, so the row reads as a row.
+    */}
+    <div className={cn('grid grid-cols-1 gap-3', aside && 'md:grid-cols-2')}>
+      {aside}
+      <div className="space-y-2 rounded-lg border border-dashed p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-xs font-medium">
+            <Building2 className="size-3.5 text-muted-foreground" aria-hidden />
+            {en ? 'Censused structure' : 'المنشأة في سجل المباني'}
+            {locked ? (
+              <Badge variant="soft-muted" className="gap-1">
+                <Lock className="size-3" aria-hidden />
+                {en ? 'From the matrix' : 'من مصفوفة الوحدات'}
+              </Badge>
+            ) : null}
+          </p>
+
+          {buildingId && !locked ? (
+            <button
+              type="button"
+              onClick={unlink}
+              className="flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+            >
+              <Unlink className="size-3" aria-hidden />
+              {en ? 'Unlink' : 'إلغاء الربط'}
+            </button>
           ) : null}
-        </p>
-
-        {buildingId && !locked ? (
-          <button
-            type="button"
-            onClick={unlink}
-            className="flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
-          >
-            <Unlink className="size-3" aria-hidden />
-            {en ? 'Unlink' : 'إلغاء الربط'}
-          </button>
-        ) : null}
-      </div>
-
-      {loading ? (
-        <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          <Loader2 className="size-3 animate-spin" aria-hidden />
-          {en ? 'Checking the census…' : 'جاري مراجعة سجل المباني…'}
-        </p>
-      ) : options.length === 0 ? (
-        <div className="space-y-1.5">
-          {/*
-            Two different sentences, because they are two different facts.
-
-            An empty listing used to be printed as "nothing is censused here"
-            whether the census said so or could not be reached — and offline,
-            where this form mostly lives, it could never say anything else.
-            Now that the control can *create* a structure, that conflation is
-            the difference between a safe default and one that mints a building
-            on every field registration.
-          */}
-          {lookup === 'failed' ? (
-            <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-[11px] leading-relaxed">
-              <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-              {en
-                ? `The census could not be reached, so what stands on parcel ${parcelNumber} is unknown — there may already be a structure recorded here.`
-                : `تعذّر الوصول إلى سجل المباني، فلا يُعرف ما هو مسجَّل على العقار ${parcelNumber} — قد تكون هناك منشأة مسجَّلة بالفعل.`}
-            </p>
-          ) : (
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              {en
-                ? `No structure has been censused on parcel ${parcelNumber} yet. The card is valid without one — the link can be made later from the census ledger.`
-                : `لا توجد منشأة مسجَّلة على العقار ${parcelNumber} بعد. البطاقة صالحة بدون ربط — يمكن ربطها لاحقاً من سجل المباني.`}
-            </p>
-          )}
-
-          <NewStructureBranch
-            en={en}
-            labels={labels}
-            locked={Boolean(locked)}
-            pending={pending}
-            offerable={Boolean(defaultStructureType && parcelNumber)}
-            /*
-              The tap is required whenever the answer might be "yes, there is
-              one already". On a parcel the census confirmed is empty there is
-              nothing to duplicate, so this is a one-tap action rather than an
-              acknowledgement — but it is still a tap: a building is a row on
-              the municipality's register, and creating one is not something a
-              form should do because a control went untouched.
-            */
-            acknowledge={lookup === 'failed'}
-            onStart={() => startNew(lookup === 'failed')}
-            onCancel={unlink}
-            onStructureType={(structureType) =>
-              pending
-                ? onChange((current) => applyStructureType(current, pending, structureType))
-                : undefined
-            }
-          />
-
-          <NoLinkOption
-            en={en}
-            active={declined}
-            hidden={Boolean(locked) || Boolean(pending)}
-            onSelect={decline}
-          />
         </div>
-      ) : (
-        <>
-          <ul className="flex flex-wrap gap-1.5">
-            {options.map((row) => {
-              const active = row.id === buildingId;
-              return (
-                <li key={row.id}>
-                  <button
-                    type="button"
-                    disabled={Boolean(locked)}
-                    onClick={() =>
-                      onChange((current) => ({
-                        ...current,
-                        buildingId: active ? undefined : row.id,
-                      }))
-                    }
-                    aria-pressed={active}
-                    className={cn(
-                      'flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition-colors',
-                      active
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'hover:bg-accent disabled:opacity-50',
-                    )}
-                  >
-                    {active ? <Check className="size-3" aria-hidden /> : null}
-                    <span dir="ltr" className="font-mono font-semibold">
-                      {row.code}
-                    </span>
-                    {row.name ? <span className="truncate">{row.name}</span> : null}
-                    <span className="text-muted-foreground">
-                      {labels.structureType[row.structureType]}
-                    </span>
-                    {/* Filed under a neighbouring parcel and covering this one —
-                        said, because its code names a different عقار. */}
-                    {parcelNumber && row.parcelNumber !== parcelNumber ? (
-                      <span className="text-[10px] text-sky-700 dark:text-sky-400">
-                        {en
-                          ? `shared — filed under ${row.parcelNumber}`
-                          : `مشترك — عقاره الأساسي ${row.parcelNumber}`}
-                      </span>
-                    ) : null}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
 
-          {/*
-            No structure summary here, deliberately.
+        {loading ? (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" aria-hidden />
+            {en ? 'Checking the census…' : 'جاري مراجعة سجل المباني…'}
+          </p>
+        ) : options.length === 0 ? (
+          <div className="space-y-1.5">
+            {/*
+              Two different sentences, because they are two different facts.
 
-            The building sheet leads with «٤ طوابق · ٣ من ٧ ممسوحة» because that
-            screen is *about* the structure. This one is about a household: the
-            officer has already picked the building above, and a row of census
-            statistics between that choice and the flats they came to tick is
-            answering a question nobody on this screen asked. The matrix below
-            carries what is actually needed per unit.
-          */}
-          {chosen ? (
-            <div className="space-y-2">
-              <BuildingSummaryBadges building={detail ?? chosen} locale={locale} />
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
+              An empty listing used to be printed as "nothing is censused here"
+              whether the census said so or could not be reached — and offline,
+              where this form mostly lives, it could never say anything else.
+              Now that the control can *create* a structure, that conflation is
+              the difference between a safe default and one that mints a building
+              on every field registration.
+            */}
+            {lookup === 'failed' ? (
+              <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs leading-relaxed">
+                <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
                 {en
-                  ? `Linked to ${chosen.code}. Where a unit is linked below, the census record is authoritative for the fields it holds.`
-                  : `مرتبطة بـ ${chosen.code}. حيث تُربط وحدة أدناه، يكون سجل المباني هو المرجع في الحقول التي يحملها.`}
+                  ? `The census could not be reached, so what stands on parcel ${parcelNumber} is unknown — there may already be a structure recorded here.`
+                  : `تعذّر الوصول إلى سجل المباني، فلا يُعرف ما هو مسجَّل على العقار ${parcelNumber} — قد تكون هناك منشأة مسجَّلة بالفعل.`}
               </p>
-            </div>
-          ) : null}
+            ) : (
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {en
+                  ? `No structure has been censused on parcel ${parcelNumber} yet. The card is valid without one — the link can be made later from the census ledger.`
+                  : `لا توجد منشأة مسجَّلة على العقار ${parcelNumber} بعد. البطاقة صالحة بدون ربط — يمكن ربطها لاحقاً من سجل المباني.`}
+              </p>
+            )}
 
-          {/*
-            A second structure on an occupied parcel — D18's moment of noticing.
-
-            The candidates are listed *above* this, which is the whole point:
-            the officer has been shown what is already recorded here and is
-            saying this is none of them. That statement is what the server's
-            guard asks for, and tapping this is what sets it — which is also
-            why nothing here is preselected. Not touching a control is evidence
-            of a control below the fold, never of a new building.
-          */}
-          {!locked && !chosen ? (
             <NewStructureBranch
               en={en}
               labels={labels}
-              locked={false}
+              locked={Boolean(locked)}
               pending={pending}
               offerable={Boolean(defaultStructureType && parcelNumber)}
-              acknowledge
-              occupied={options.length}
-              onStart={() => startNew(true)}
+              /*
+                The tap is required whenever the answer might be "yes, there is
+                one already". On a parcel the census confirmed is empty there is
+                nothing to duplicate, so this is a one-tap action rather than an
+                acknowledgement — but it is still a tap: a building is a row on
+                the municipality's register, and creating one is not something a
+                form should do because a control went untouched.
+              */
+              acknowledge={lookup === 'failed'}
+              onStart={() => startNew(lookup === 'failed')}
               onCancel={unlink}
               onStructureType={(structureType) =>
                 pending
-                ? onChange((current) => applyStructureType(current, pending, structureType))
-                : undefined
+                  ? onChange((current) => applyStructureType(current, pending, structureType))
+                  : undefined
               }
             />
-          ) : null}
 
-          <NoLinkOption
-            en={en}
-            active={declined}
-            hidden={Boolean(locked) || Boolean(chosen) || Boolean(pending)}
-            onSelect={decline}
-          />
-        </>
-      )}
+            <NoLinkOption
+              en={en}
+              active={declined}
+              hidden={Boolean(locked) || Boolean(pending)}
+              onSelect={decline}
+            />
+          </div>
+        ) : (
+          <>
+            <ul className="flex flex-wrap gap-1.5">
+              {options.map((row) => {
+                const active = row.id === buildingId;
+                return (
+                  <li key={row.id}>
+                    <button
+                      type="button"
+                      disabled={Boolean(locked)}
+                      onClick={() =>
+                        onChange((current) => ({
+                          ...current,
+                          buildingId: active ? undefined : row.id,
+                        }))
+                      }
+                      aria-pressed={active}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+                        active
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'hover:bg-accent disabled:opacity-50',
+                      )}
+                    >
+                      {active ? <Check className="size-3" aria-hidden /> : null}
+                      <span dir="ltr" className="font-mono font-semibold">
+                        {row.code}
+                      </span>
+                      {row.name ? <span className="truncate">{row.name}</span> : null}
+                      <span className="text-muted-foreground">
+                        {labels.structureType[row.structureType]}
+                      </span>
+                      {/* Filed under a neighbouring parcel and covering this one —
+                          said, because its code names a different عقار. */}
+                      {parcelNumber && row.parcelNumber !== parcelNumber ? (
+                        <span className="text-xs text-info">
+                          {en
+                            ? `shared — filed under ${row.parcelNumber}`
+                            : `مشترك — عقاره الأساسي ${row.parcelNumber}`}
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
 
-      {/*
-        The card says «منزل مستقل»; the structure it is linked to has a matrix.
+            {/*
+              No structure summary here, deliberately.
 
-        Only a بناية card carries unit lines — a منزل is one dwelling, described
-        by the side/area/shared-rights fields on the card itself — so the picker
-        below correctly renders nothing here. Said out loud because the silence
-        was the bug: an officer linked a block, saw it had flats, and had no
-        unit list and no reason given. They ticked nothing, the card saved with
-        a `buildingId` and no `unitId`, and the matrix stayed empty with nobody
-        anywhere told why.
-      */}
-      {buildingId && !isBuilding && detail && detail.units.length > 1 ? (
-        <div className="space-y-1 border-t pt-2">
-          <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-[11px] leading-relaxed">
-            <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-            <span>
-              {en
-                ? `${chosen?.code ?? 'This structure'} has ${detail.units.length} units on the census. A «house» card describes one dwelling, so no unit can be named on it — set نوع العقار above to «بناية» to record which of them this citizen holds.`
-                : `${chosen?.code ?? 'هذه المنشأة'} تحتوي ${detail.units.length} وحدة في سجل المباني. بطاقة «منزل مستقل» تصف مسكناً واحداً ولا يمكن ربط وحدة بها — اختر «بناية» في نوع العقار أعلاه لتحديد الوحدات التي يملكها هذا المواطن.`}
-            </span>
-          </p>
-        </div>
-      ) : null}
+              The building sheet leads with «٤ طوابق · ٣ من ٧ ممسوحة» because that
+              screen is *about* the structure. This one is about a household: the
+              officer has already picked the building above, and a row of census
+              statistics between that choice and the flats they came to tick is
+              answering a question nobody on this screen asked. The matrix below
+              carries what is actually needed per unit.
+            */}
+            {/*
+              A second structure on an occupied parcel — D18's moment of noticing.
 
-      {/* ── The flats this citizen actually holds ────────────────── */}
+              The candidates are listed *above* this, which is the whole point:
+              the officer has been shown what is already recorded here and is
+              saying this is none of them. That statement is what the server's
+              guard asks for, and tapping this is what sets it — which is also
+              why nothing here is preselected. Not touching a control is evidence
+              of a control below the fold, never of a new building.
+            */}
+            {!locked && !chosen ? (
+              <NewStructureBranch
+                en={en}
+                labels={labels}
+                locked={false}
+                pending={pending}
+                offerable={Boolean(defaultStructureType && parcelNumber)}
+                acknowledge
+                occupied={options.length}
+                onStart={() => startNew(true)}
+                onCancel={unlink}
+                onStructureType={(structureType) =>
+                  pending
+                  ? onChange((current) => applyStructureType(current, pending, structureType))
+                  : undefined
+                }
+              />
+            ) : null}
+
+            <NoLinkOption
+              en={en}
+              active={declined}
+              hidden={Boolean(locked) || Boolean(chosen) || Boolean(pending)}
+              onSelect={decline}
+            />
+          </>
+        )}
+
+        {/*
+          The card says «منزل مستقل»; the structure it is linked to has a matrix.
+
+          Only a بناية card carries unit lines — a منزل is one dwelling, described
+          by the side/area/shared-rights fields on the card itself — so the picker
+          below correctly renders nothing here. Said out loud because the silence
+          was the bug: an officer linked a block, saw it had flats, and had no
+          unit list and no reason given. They ticked nothing, the card saved with
+          a `buildingId` and no `unitId`, and the matrix stayed empty with nobody
+          anywhere told why.
+        */}
+        {buildingId && !isBuilding && detail && detail.units.length > 1 ? (
+          <div className="space-y-1 border-t pt-2">
+            <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs leading-relaxed">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
+              <span>
+                {en
+                  ? `${chosen?.code ?? 'This structure'} has ${detail.units.length} units on the census. A «house» card describes one dwelling, so no unit can be named on it — set نوع العقار above to «بناية» to record which of them this citizen holds.`
+                  : `${chosen?.code ?? 'هذه المنشأة'} تحتوي ${detail.units.length} وحدة في سجل المباني. بطاقة «منزل مستقل» تصف مسكناً واحداً ولا يمكن ربط وحدة بها — اختر «بناية» في نوع العقار أعلاه لتحديد الوحدات التي يملكها هذا المواطن.`}
+              </span>
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </div>
+
+      {/* ── The flats this citizen actually holds — full width, under the row ── */}
       {buildingId && isBuilding ? (
-        <div className="space-y-1.5 border-t pt-2">
-          <p className="text-[11px] font-medium">
-            {en ? 'Which units does this citizen hold?' : 'أي وحدات يملك/يشغل هذا المواطن؟'}
-          </p>
+        <div className="space-y-2 rounded-lg border border-dashed p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium">
+              {editingLinks
+                ? en
+                  ? 'Which units does this citizen hold?'
+                  : 'أي وحدات يملك/يشغل هذا المواطن؟'
+                : en
+                  ? "This citizen's units in the building"
+                  : 'وحدات هذا المواطن في المبنى'}
+            </p>
+            
+          </div>
 
           {detailLoading ? (
-            <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="size-3 animate-spin" aria-hidden />
               {en ? 'Loading the matrix…' : 'جاري تحميل المصفوفة…'}
             </p>
           ) : !detail || detail.units.length === 0 ? (
             <>
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <p className="text-xs leading-relaxed text-muted-foreground">
                 {en
                   ? 'This structure has no unit matrix yet. Add the flats here to put them in the census, or record them on the card below.'
                   : 'لا توجد مصفوفة وحدات لهذه المنشأة بعد. أضف الوحدات هنا لتدخل سجل المباني، أو سجّلها في البطاقة أدناه.'}
@@ -1293,6 +1351,17 @@ export function BuildingUnitPicker({
                 />
               ) : null}
             </>
+          ) : !editingLinks ? (
+            <div className="space-y-3">
+              <UnitHoldingsGrid
+                floors={gridFloors}
+                held={heldRoles}
+                selectedUnitId={shownUnitId}
+                onSelect={setShownUnitId}
+                locale={locale}
+              />
+              {/* The flat tapped opens its own fields under this box — see the card. */}
+            </div>
           ) : (
             <>
               {/*
@@ -1305,9 +1374,9 @@ export function BuildingUnitPicker({
                 {floors.map(({ floor, units }) => (
                   <div key={floor} className="rounded-lg border">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-2.5 py-1.5">
-                      <p className="text-[11px] font-semibold">{floorLabel(floor, en)}</p>
+                      <p className="text-xs font-semibold">{floorLabel(floor, en)}</p>
                       <div className="flex items-center gap-2">
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                           {en ? `${units.length} units` : `${units.length} وحدة`}
                         </p>
                         {/*
@@ -1321,7 +1390,7 @@ export function BuildingUnitPicker({
                             type="button"
                             disabled={addingBusy}
                             onClick={() => openAdd(floor, floor)}
-                            className="inline-flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                            className="inline-flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
                           >
                             <Plus className="size-3" aria-hidden />
                             {en ? 'Add unit' : 'إضافة وحدة'}
@@ -1350,7 +1419,7 @@ export function BuildingUnitPicker({
                     ) : null}
 
                     {units.length === 0 ? (
-                      <p className="px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                      <p className="px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
                         {en
                           ? 'The register says this level exists but no unit has been recorded on it yet.'
                           : 'سجل المباني يذكر هذا الطابق لكن لم تُسجَّل عليه أي وحدة بعد.'}
@@ -1443,7 +1512,7 @@ export function BuildingUnitPicker({
                                   ) : null}
                                   <span dir="ltr">{unit.unitCode}</span>
                                 </span>
-                                <span className="text-[11px] text-muted-foreground">
+                                <span className="text-xs text-muted-foreground">
                                   {labels.unitType[unit.unitType]}
                                 </span>
                               </div>
@@ -1476,7 +1545,7 @@ export function BuildingUnitPicker({
                                 shop on the ground floor» saw «0001» and had no
                                 way to tell whether that *was* their shop.
                               */}
-                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                                 {unit.postedNumber && unit.postedNumber !== unit.unitCode ? (
                                   <span>
                                     {en ? 'Door: ' : 'الباب: '}
@@ -1498,7 +1567,7 @@ export function BuildingUnitPicker({
                                 person being edited — stops reading as a clash.
                               */}
                               {mine.length > 0 ? (
-                                <p className="text-[11px] font-medium text-primary">
+                                <p className="text-xs font-medium text-primary">
                                   {en ? 'Already linked to this citizen' : 'مسجَّل لهذا المواطن'}
                                   {' · '}
                                   {mine.map((row) => labels.occupancyRole[row.role]).join('، ')}
@@ -1509,10 +1578,10 @@ export function BuildingUnitPicker({
                                 <p
                                   key={occupant.id}
                                   className={cn(
-                                    'text-[11px]',
+                                    'text-xs',
                                     occupant.role === 'OWNER'
                                       ? 'text-muted-foreground'
-                                      : 'font-medium text-amber-700 dark:text-amber-500',
+                                      : 'font-medium text-warning',
                                   )}
                                 >
                                   {labels.occupancyRole[occupant.role]}
@@ -1534,7 +1603,7 @@ export function BuildingUnitPicker({
                                 occupancy fee for one flat.
                               */}
                               {heldByOccupant ? (
-                                <p className="text-[11px] text-amber-700 dark:text-amber-500">
+                                <p className="text-xs text-warning">
                                   {en
                                     ? 'Occupied by someone else — this card will record it as such'
                                     : `تُسجَّل على هذه البطاقة «${
@@ -1551,7 +1620,7 @@ export function BuildingUnitPicker({
                 ))}
               </div>
 
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <p className="text-xs leading-relaxed text-muted-foreground">
                 {en
                   ? 'Nothing is selected by default — a twelve-flat building says nothing about how many of them one person holds.'
                   : 'لا شيء محدَّد افتراضياً — وجود اثنتي عشرة شقة في مبنى لا يعني أن الشخص يملكها كلها.'}
@@ -1649,7 +1718,7 @@ function NoLinkOption({
       onClick={onSelect}
       aria-pressed={active}
       className={cn(
-        'flex w-full items-center gap-1.5 rounded-md border px-2.5 py-2 text-start text-[11px] transition-colors',
+        'flex w-full items-center gap-1.5 rounded-md border px-2.5 py-2 text-start text-xs transition-colors',
         active ? 'border-primary bg-primary/10 text-primary' : 'border-dashed hover:bg-accent',
       )}
     >
@@ -1726,14 +1795,14 @@ function NewStructureBranch({
     return (
       <div className="space-y-1.5 rounded-md border border-primary/40 bg-primary/5 px-2.5 py-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="flex items-center gap-1.5 text-[11px] font-medium text-primary">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-primary">
             <Plus className="size-3" aria-hidden />
             {en ? 'A new structure will be created' : 'ستُنشأ منشأة جديدة على هذا العقار'}
           </p>
           <button
             type="button"
             onClick={onCancel}
-            className="text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+            className="text-xs text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
           >
             {en ? 'Cancel' : 'تراجع'}
           </button>
@@ -1751,12 +1820,6 @@ function NewStructureBranch({
             ))}
           </SelectContent>
         </Select>
-
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          {en
-            ? 'Its code is allocated on save. No entrance is placed for you — the middle of the parcel is not where any building stands, and two structures sharing that point draw as one dot. Place it later from the census ledger.'
-            : 'يُخصَّص رمزها عند الحفظ. لا يوضَع المدخل تلقائياً — مركز العقار ليس مكان أي مبنى، ووضع النقطة نفسها لمنشأتين يجعلهما نقطة واحدة. حدِّده لاحقاً من سجل المباني.'}
-        </p>
       </div>
     );
   }
@@ -1765,7 +1828,7 @@ function NewStructureBranch({
     <button
       type="button"
       onClick={onStart}
-      className="flex w-full items-center gap-1.5 rounded-md border border-dashed px-2.5 py-2 text-start text-[11px] transition-colors hover:bg-accent"
+      className="flex w-full items-center gap-1.5 rounded-md border border-dashed px-2.5 py-2 text-start text-xs transition-colors hover:bg-accent"
     >
       <Plus className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
       <span>
@@ -1920,7 +1983,7 @@ function AddUnitInline({
       <button
         type="button"
         onClick={onOpen}
-        className="inline-flex items-center gap-1 rounded-md border border-dashed px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        className="inline-flex items-center gap-1 rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         <Plus className="size-3" aria-hidden />
         {en ? 'Add a unit to this building' : 'إضافة وحدة إلى هذا المبنى'}
@@ -1932,7 +1995,7 @@ function AddUnitInline({
     <div className="space-y-2 rounded-md border border-dashed bg-muted/20 p-2.5">
       <div className="flex flex-wrap items-end gap-2">
         <label className="space-y-1">
-          <span className="block text-[11px] font-medium">{en ? 'Floor' : 'الطابق'}</span>
+          <span className="block text-xs font-medium">{en ? 'Floor' : 'الطابق'}</span>
           <input
             type="number"
             inputMode="numeric"
@@ -1945,13 +2008,13 @@ function AddUnitInline({
           />
           {/* The one place the signed floor is typed rather than clicked, so
               the mapping between it and the B-prefixed label is stated. */}
-          <span className="block text-[10px] leading-snug text-muted-foreground">
+          <span className="block text-xs leading-snug text-muted-foreground">
             {en ? '0 = ground · -1 = B1' : '0 = الأرضي · ‎-1 = B1'}
           </span>
         </label>
 
         <label className="min-w-40 flex-1 space-y-1">
-          <span className="block text-[11px] font-medium">
+          <span className="block text-xs font-medium">
             {en ? 'Unit type' : 'نوع الوحدة'}
           </span>
           <Select
@@ -1980,7 +2043,7 @@ function AddUnitInline({
           type="button"
           disabled={busy || duplicates !== null}
           onClick={onSubmit}
-          className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-2.5 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+          className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {busy ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
           {en ? 'Add' : 'إضافة'}
@@ -1990,13 +2053,13 @@ function AddUnitInline({
           type="button"
           disabled={busy}
           onClick={onCancel}
-          className="h-8 px-1.5 text-[11px] text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+          className="h-8 px-1.5 text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
         >
           {en ? 'Cancel' : 'إلغاء'}
         </button>
       </div>
 
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
+      <p className="text-xs leading-relaxed text-muted-foreground">
         {en
           ? 'The unit is added to the census and ticked for this citizen. Its code is assigned from the floor.'
           : 'تُضاف الوحدة إلى سجل المباني وتُحدَّد لهذا المواطن. يُشتق رمزها من الطابق.'}
@@ -2018,7 +2081,7 @@ function AddUnitInline({
       */}
       {duplicates && duplicates.length > 0 ? (
         <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2.5">
-          <p className="flex items-start gap-1.5 text-[11px] font-medium leading-relaxed">
+          <p className="flex items-start gap-1.5 text-xs font-medium leading-relaxed">
             <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
             {en
               ? 'This floor already has a unit of the same type. Is the one you are adding different?'
@@ -2029,7 +2092,7 @@ function AddUnitInline({
             {duplicates.map((row) => (
               <li
                 key={row.id}
-                className="rounded-md bg-background/70 px-2 py-1.5 text-[11px] leading-relaxed"
+                className="rounded-md bg-background/70 px-2 py-1.5 text-xs leading-relaxed"
               >
                 <span className="font-mono font-medium" dir="ltr">
                   {row.unitCode}
@@ -2082,7 +2145,7 @@ function AddUnitInline({
               type="button"
               disabled={busy}
               onClick={onConfirmDuplicates}
-              className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2.5 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {busy ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
               {en ? 'Yes, it is a different unit' : 'نعم، هذه وحدة مختلفة'}
@@ -2091,7 +2154,7 @@ function AddUnitInline({
               type="button"
               disabled={busy}
               onClick={onDeclineDuplicates}
-              className="h-7 px-1.5 text-[11px] text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+              className="h-7 px-1.5 text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
             >
               {en ? 'No — it is one of these' : 'لا، إنها إحدى هذه الوحدات'}
             </button>
@@ -2100,7 +2163,7 @@ function AddUnitInline({
       ) : null}
 
       {error ? (
-        <p role="alert" className="text-[11px] text-destructive">
+        <p role="alert" className="text-xs text-destructive">
           {error}
         </p>
       ) : null}

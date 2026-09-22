@@ -1610,7 +1610,7 @@ export function FullscreenMap({
         <div className="flex items-center gap-2 sm:contents">
           {/* Search by رقم العقار */}
           <div className="relative min-w-0 flex-1 shrink sm:w-[15rem] sm:flex-none md:w-[17rem]">
-            <div className="flex items-center gap-1.5 rounded-2xl border border-border/80 bg-card/95 p-1 shadow-lg backdrop-blur-md transition-all focus-within:ring-2 focus-within:ring-primary/20">
+            <div className="flex items-center gap-1.5 rounded-xl border border-border/80 bg-card/95 p-1 shadow-lg backdrop-blur-md transition-all focus-within:ring-2 focus-within:ring-primary/20">
               <Search className="ms-2.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
               <Input
                 value={query}
@@ -1654,7 +1654,7 @@ export function FullscreenMap({
 
             {/* Typeahead match list */}
             {matchesOpen && localMatches.length > 0 ? (
-              <ul className="absolute left-0 right-0 top-full mt-1.5 overflow-hidden rounded-2xl border bg-card/95 shadow-xl backdrop-blur-md z-50">
+              <ul className="absolute left-0 right-0 top-full mt-1.5 overflow-hidden rounded-xl border bg-card/95 shadow-xl backdrop-blur-md z-50">
                 {localMatches.map((parcel) => (
                   <li key={parcel.propertyNumber}>
                     <button
@@ -1682,7 +1682,7 @@ export function FullscreenMap({
             ) : null}
 
             {searchStatus === 'not-found' ? (
-              <div className="absolute left-0 right-0 top-full mt-1.5 rounded-2xl border bg-card/95 px-3.5 py-2.5 shadow-xl backdrop-blur-md z-50">
+              <div className="absolute left-0 right-0 top-full mt-1.5 rounded-xl border bg-card/95 px-3.5 py-2.5 shadow-xl backdrop-blur-md z-50">
                 <p className="text-xs font-medium text-destructive">
                   {locale === 'en' ? 'No parcel found with this number' : 'لا يوجد عقار بهذا الرقم'}
                 </p>
@@ -1720,7 +1720,7 @@ export function FullscreenMap({
             aria-expanded={toolsOpen}
             aria-label={locale === 'en' ? 'Map tools' : 'أدوات الخريطة'}
             className={cn(
-              'size-11 shrink-0 rounded-2xl border border-border/80 bg-card/95 shadow-lg backdrop-blur-md sm:hidden transition-all flex items-center justify-center',
+              'size-11 shrink-0 rounded-xl border border-border/80 bg-card/95 shadow-lg backdrop-blur-md sm:hidden transition-all flex items-center justify-center',
               toolsOpen || colorMode !== 'default' || measureMode !== 'none' || !registeredVisible
                 ? 'border-primary/60 bg-primary/10 text-primary ring-2 ring-primary/20'
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent',
@@ -1735,7 +1735,7 @@ export function FullscreenMap({
         */}
         <div
           className={cn(
-            'relative overflow-x-auto max-w-full items-center gap-1.5 rounded-2xl border border-border/80 bg-card/95 p-1.5 shadow-lg backdrop-blur-md no-scrollbar animate-in fade-in-0 slide-in-from-top-1 duration-200',
+            'relative overflow-x-auto max-w-full items-center gap-1.5 rounded-xl border border-border/80 bg-card/95 p-1.5 shadow-lg backdrop-blur-md no-scrollbar animate-in fade-in-0 slide-in-from-top-1 duration-200',
             'sm:flex sm:flex-nowrap sm:shrink-0 sm:rounded-xl sm:p-1 sm:shadow-md sm:animate-none',
             toolsOpen ? 'flex' : 'hidden',
           )}
@@ -1849,7 +1849,7 @@ export function FullscreenMap({
 
             {financeMenuOpen ? (
               <div className="absolute inset-x-0 top-full mt-1.5 z-50 w-auto rounded-xl sm:inset-x-auto sm:end-0 sm:w-60 border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl backdrop-blur-md outline-hidden animate-in fade-in-0 zoom-in-95">
-                <div className="px-2 py-1 text-[11px] font-bold text-muted-foreground border-b border-border/40 mb-1">
+                <div className="px-2 py-1 text-xs font-bold text-muted-foreground border-b border-border/40 mb-1">
                   {locale === 'en' ? 'Point Color Mode' : 'وضع تلوين وتصنيف النقاط'}
                 </div>
 
@@ -1911,7 +1911,7 @@ export function FullscreenMap({
 
                 {colorMode === 'paymentStatus' ? (
                   <div className="mt-2 pt-2 border-t border-border/40 space-y-1">
-                    <div className="px-2 text-[10px] font-bold text-muted-foreground">
+                    <div className="px-2 text-xs font-bold text-muted-foreground">
                       {locale === 'en' ? 'Filter on map:' : 'تصفية العرض:'}
                     </div>
 
@@ -1930,7 +1930,7 @@ export function FullscreenMap({
                           setFinanceMenuOpen(false);
                         }}
                         className={cn(
-                          'flex w-full items-center justify-between rounded-md px-2 py-1 text-[11px] text-start cursor-pointer transition-colors',
+                          'flex w-full items-center justify-between rounded-md px-2 py-1 text-xs text-start cursor-pointer transition-colors',
                           statusFilter === f.id ? 'bg-accent font-bold text-foreground' : 'text-muted-foreground hover:bg-accent/50',
                         )}
                       >
@@ -1943,7 +1943,7 @@ export function FullscreenMap({
 
                 {colorMode === 'propertyType' ? (
                   <div className="mt-2 pt-2 border-t border-border/40 space-y-1">
-                    <div className="px-2 text-[10px] font-bold text-muted-foreground">
+                    <div className="px-2 text-xs font-bold text-muted-foreground">
                       {locale === 'en' ? 'Filter usage:' : 'تصفية الإشغال:'}
                     </div>
 
@@ -1961,7 +1961,7 @@ export function FullscreenMap({
                           setFinanceMenuOpen(false);
                         }}
                         className={cn(
-                          'flex w-full items-center justify-between rounded-md px-2 py-1 text-[11px] text-start cursor-pointer transition-colors',
+                          'flex w-full items-center justify-between rounded-md px-2 py-1 text-xs text-start cursor-pointer transition-colors',
                           propertyTypeFilter === f.id ? 'bg-accent font-bold text-foreground' : 'text-muted-foreground hover:bg-accent/50',
                         )}
                       >
@@ -2006,7 +2006,7 @@ export function FullscreenMap({
 
             {measureMenuOpen ? (
               <div className="absolute inset-x-0 top-full mt-1.5 z-50 w-auto rounded-xl sm:inset-x-auto sm:end-0 sm:w-52 border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl backdrop-blur-md outline-hidden animate-in fade-in-0 zoom-in-95">
-                <div className="px-2 py-1 text-[11px] font-bold text-muted-foreground border-b border-border/40 mb-1">
+                <div className="px-2 py-1 text-xs font-bold text-muted-foreground border-b border-border/40 mb-1">
                   {locale === 'en' ? 'Measurement Mode' : 'نوع القياس'}
                 </div>
 
@@ -2094,13 +2094,13 @@ export function FullscreenMap({
 
       {/* Floating Measurement HUD */}
       {measureMode !== 'none' ? (
-        <div className="absolute inset-x-2 bottom-[4.5rem] z-20 flex flex-wrap items-center justify-center gap-3 rounded-2xl sm:inset-x-auto sm:bottom-16 sm:left-1/2 sm:-translate-x-1/2 sm:justify-start border border-border/80 bg-card/95 px-4 py-2.5 shadow-2xl backdrop-blur-md animate-in fade-in-0 slide-in-from-bottom-2">
+        <div className="absolute inset-x-2 bottom-[4.5rem] z-20 flex flex-wrap items-center justify-center gap-3 rounded-xl sm:inset-x-auto sm:bottom-16 sm:left-1/2 sm:-translate-x-1/2 sm:justify-start border border-border/80 bg-card/95 px-4 py-2.5 shadow-2xl backdrop-blur-md animate-in fade-in-0 slide-in-from-bottom-2">
           <div className="flex items-center gap-2">
             <span className="flex size-7 items-center justify-center rounded-lg bg-primary/15 text-primary">
               <Ruler className="size-4" />
             </span>
             <div>
-              <p className="text-[11px] font-medium text-muted-foreground">
+              <p className="text-xs font-medium text-muted-foreground">
                 {measureMode === 'distance'
                   ? (locale === 'en' ? 'Distance Measurement' : 'قياس المسافة')
                   : (locale === 'en' ? 'Area Measurement' : 'قياس المساحة')}
@@ -2272,7 +2272,7 @@ export function FullscreenMap({
         )}
 
         {/* Parcel count badge: Compact chip on mobile, full card on desktop */}
-        <div className="self-end rounded-2xl border border-border/80 bg-card/95 px-3 py-1.5 shadow-lg backdrop-blur-md sm:w-full sm:rounded-xl sm:shadow-md">
+        <div className="self-end rounded-xl border border-border/80 bg-card/95 px-3 py-1.5 shadow-lg backdrop-blur-md sm:w-full sm:rounded-xl sm:shadow-md">
           <p className="text-xs font-bold text-foreground pointer-events-none flex items-center gap-1.5">
             <span className="size-2 rounded-full bg-primary inline-block shrink-0 sm:hidden" />
             <span>
@@ -2284,7 +2284,7 @@ export function FullscreenMap({
           </p>
           {activeZoneId ? (
             <div className="flex items-center justify-between gap-1 pt-0.5 border-t border-border/40 mt-1">
-              <p className="text-[11px] text-primary font-semibold truncate pointer-events-none">
+              <p className="text-xs text-primary font-semibold truncate pointer-events-none">
                 {locale === 'en'
                   ? `Sector: ${zones.find((zone) => zone.id === activeZoneId)?.name ?? ''}`
                   : `قطاع ${zones.find((zone) => zone.id === activeZoneId)?.name ?? ''}`}
@@ -2298,13 +2298,13 @@ export function FullscreenMap({
                     setZoneInfoOpen(true);
                   }
                 }}
-                className="text-[10px] font-bold text-primary hover:underline flex items-center gap-0.5 shrink-0 cursor-pointer"
+                className="text-xs font-bold text-primary hover:underline flex items-center gap-0.5 shrink-0 cursor-pointer"
               >
                 <span>{locale === 'en' ? 'Area & Info' : 'المساحة'}</span>
               </button>
             </div>
           ) : cadastreReady ? (
-            <p className="hidden sm:block text-[11px] text-muted-foreground truncate pointer-events-none">
+            <p className="hidden sm:block text-xs text-muted-foreground truncate pointer-events-none">
               {locale === 'en' ? 'Pins on registered parcels' : 'النقاط على العقارات المسجّلة'}
             </p>
           ) : null}
@@ -2313,11 +2313,11 @@ export function FullscreenMap({
         {/* Financial Mini Legend when Payment Status mode is active */}
         {colorMode === 'paymentStatus' ? (
           <div className="pointer-events-none rounded-xl border border-border/80 bg-card/95 p-2 shadow-md backdrop-blur text-xs space-y-1 animate-in fade-in-0 duration-200">
-            <div className="flex items-center gap-1 font-bold text-[10px] text-muted-foreground">
+            <div className="flex items-center gap-1 font-bold text-xs text-muted-foreground">
               <Coins className="size-3 text-primary" />
               <span>{locale === 'en' ? 'Payment Legend' : 'دليل حالة الرسوم'}</span>
             </div>
-            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs">
               <span className="flex items-center gap-1">
                 <span className="size-2 rounded-full bg-emerald-500" />
                 <span>{locale === 'en' ? 'Paid' : 'مسدد'}</span>
@@ -2341,11 +2341,11 @@ export function FullscreenMap({
         {/* Usage Mini Legend when Property Type mode is active */}
         {colorMode === 'propertyType' ? (
           <div className="pointer-events-none rounded-xl border border-border/80 bg-card/95 p-2 shadow-md backdrop-blur text-xs space-y-1 animate-in fade-in-0 duration-200">
-            <div className="flex items-center gap-1 font-bold text-[10px] text-muted-foreground">
+            <div className="flex items-center gap-1 font-bold text-xs text-muted-foreground">
               <Coins className="size-3 text-primary" />
               <span>{locale === 'en' ? 'Usage Legend' : 'دليل نوع الإشغال'}</span>
             </div>
-            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs">
               <span className="flex items-center gap-1">
                 <span className="size-2 rounded-full bg-blue-500" />
                 <span>{locale === 'en' ? 'Residential' : 'سكني'}</span>

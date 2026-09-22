@@ -415,6 +415,96 @@ export class BuildingsService {
   }
 
   /**
+   * The filter vocabularies this municipality's census actually uses.
+   *
+   * The four selects above «سجل المباني» were built from the enum arrays in
+   * `shared-schemas`, which is the *type* system's answer to "what values are
+   * possible" and not the register's answer to "what values are here". A
+   * municipality with no collapsed buildings was still offered «انهيار كامل»,
+   * and choosing it returned an empty table — a filter that can only ever say
+   * "nothing", presented as though it were a question worth asking.
+   *
+   * So these are read off the rows. Each list is the set of values present,
+   * which means it is also the set that can return something.
+   *
+   * Sequential, like `list` and for the same reason: against a pooler with
+   * `connection_limit=1` a fan-out of `Promise.all` queues and hits P2024.
+   * This read is cached hard by the client, so its latency is paid once.
+   */
+  async filterOptions(): Promise<{
+    structureTypes: string[];
+    lifecycleStatuses: string[];
+    surveyStatuses: string[];
+    damageLevels: string[];
+  }> {
+    const structures = await withConnectionRetry(() =>
+      this.db.building.groupBy({ by: ['structureType'], orderBy: { structureType: 'asc' } }),
+    );
+    const lifecycles = await withConnectionRetry(() =>
+      this.db.building.groupBy({ by: ['lifecycleStatus'], orderBy: { lifecycleStatus: 'asc' } }),
+    );
+
+    /*
+      Survey status is a *unit* column that the ledger filters *buildings* by,
+      so the options have to be collected the way the filter resolves them —
+      over the units of occupiable structures only. `buildWhere` narrows to
+      `OCCUPIABLE_LIFECYCLE` for exactly this filter; offering a status that
+      only a demolished block's units carry would put a value in the list that
+      the filter itself then excludes.
+    */
+    const surveys = await withConnectionRetry(() =>
+      this.db.unit.groupBy({
+        by: ['surveyStatus'],
+        where: { building: { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never } } },
+        orderBy: { surveyStatus: 'asc' },
+      }),
+    );
+
+    /*
+      And «غير ممسوح» covers one more case than any unit row does: a building
+      with no matrix yet is unsurveyed — that is what an empty shell is, and
+      `buildWhere` says so explicitly (`{ units: { none: {} } }`). Without this
+      the option would be missing on exactly the census that needs it most: a
+      municipality that has entered its buildings and not yet been inside one.
+    */
+    const unsurveyedShells = await withConnectionRetry(() =>
+      this.db.building.count({
+        where: {
+          lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never },
+          units: { none: {} },
+        },
+      }),
+    );
+
+    const surveyStatuses = new Set(surveys.map((row) => String(row.surveyStatus)));
+    if (unsurveyedShells > 0) surveyStatuses.add('NOT_SURVEYED');
+
+    return {
+      structureTypes: structures.map((row) => String(row.structureType)),
+      lifecycleStatuses: lifecycles.map((row) => String(row.lifecycleStatus)),
+      surveyStatuses: [...surveyStatuses].sort(),
+      damageLevels: await this.currentDamageLevelsPresent(),
+    };
+  }
+
+  /**
+   * The damage levels buildings are at **now**, deduplicated.
+   *
+   * Not `groupBy` on `damage_assessments`: that log is append-only, so it
+   * still holds «غير صالح للسكن» for a building repaired and reassessed since.
+   * Offering that level would be offering a filter that matches nothing, which
+   * is the failure this whole method exists to remove — so it resolves current
+   * levels the same way `buildingIdsAtCurrentLevel` does, through the one
+   * `DISTINCT ON` query that defines what "current" means here.
+   */
+  private async currentDamageLevelsPresent(): Promise<string[]> {
+    const candidates = await this.assessedBuildingIds();
+    if (candidates.length === 0) return [];
+    const current = await this.currentDamageLevels(candidates);
+    return [...new Set(current.values())].sort();
+  }
+
+  /**
    * How many of the filtered buildings currently sit at one of these levels.
    *
    * Two steps rather than a join, because "current" is the newest row of an
@@ -449,6 +539,24 @@ export class BuildingsService {
   private async buildingIdsAtCurrentLevel(levels: readonly string[]): Promise<string[]> {
     if (levels.length === 0) return [];
 
+    const candidates = await this.assessedBuildingIds();
+    if (candidates.length === 0) return [];
+
+    const wanted = new Set(levels);
+    const current = await this.currentDamageLevels(candidates);
+    return [...current.entries()]
+      .filter(([, level]) => wanted.has(level))
+      .map(([buildingId]) => buildingId);
+  }
+
+  /**
+   * Every building anybody has ever recorded an assessment against.
+   *
+   * The candidate set for "what is the current level", shared by the filter
+   * and by `filterOptions` so the two cannot disagree about which buildings
+   * are even in the running.
+   */
+  private async assessedBuildingIds(): Promise<string[]> {
     const direct = await this.db.damageAssessment.findMany({
       where: { buildingId: { not: null } },
       select: { buildingId: true },
@@ -463,19 +571,12 @@ export class BuildingsService {
       distinct: ['unitId'],
     });
 
-    const candidates = [
+    return [
       ...new Set([
         ...direct.map((row) => row.buildingId).filter((id): id is string => Boolean(id)),
         ...viaUnit.map((row) => row.unit?.buildingId).filter((id): id is string => Boolean(id)),
       ]),
     ];
-    if (candidates.length === 0) return [];
-
-    const wanted = new Set(levels);
-    const current = await this.currentDamageLevels(candidates);
-    return [...current.entries()]
-      .filter(([, level]) => wanted.has(level))
-      .map(([buildingId]) => buildingId);
   }
 
   private async buildWhere(filter: BuildingListFilter): Promise<Prisma.BuildingWhereInput> {

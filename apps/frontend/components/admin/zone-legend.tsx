@@ -49,7 +49,7 @@ export function ZoneLegend({
           <span className="flex items-center gap-1 text-xs font-bold text-foreground truncate">
             <Layers className="size-3.5 text-primary shrink-0" aria-hidden />
             <span>{isEnglish ? 'Sectors' : 'القطاعات'}</span>
-            <span className="text-[11px] text-muted-foreground font-normal">({zones.length})</span>
+            <span className="text-xs text-muted-foreground font-normal">({zones.length})</span>
           </span>
         </div>
 
@@ -172,7 +172,7 @@ export function ZoneLegend({
                     aria-hidden
                   />
                   <span className="min-w-0 flex-1 truncate">{zone.name}</span>
-                  <span className="shrink-0 text-[11px] text-muted-foreground font-mono" dir="ltr">
+                  <span className="shrink-0 text-xs text-muted-foreground font-mono" dir="ltr">
                     {zone.parcelCount}
                   </span>
                 </button>

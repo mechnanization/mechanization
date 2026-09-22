@@ -89,7 +89,7 @@ export function ZoneInfoDialog({
                   : (isEnglish ? 'Not calculated' : 'غير محددة')}
               </p>
               {area && area.squareKilometers > 0.01 ? (
-                <p className="text-[11px] text-muted-foreground mt-0.5 font-medium">
+                <p className="text-xs text-muted-foreground mt-0.5 font-medium">
                   {area.squareKilometers.toFixed(2)} {isEnglish ? 'km²' : 'كم²'}
                 </p>
               ) : null}

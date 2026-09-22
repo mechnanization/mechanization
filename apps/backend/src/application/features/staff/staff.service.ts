@@ -18,13 +18,21 @@ import {
 import { StaffRole } from '../../../domain/entities/user.entity';
 import { SessionRevocationService } from '../identity/session-revocation.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
-import type {
-  InspectorPayoutItem,
-  InspectorProfileResponse,
-  InspectorPropertyBreakdown,
-  RecordInspectorPayoutInput,
+import {
+  payoutAllowance,
+  payoutRefusal,
+  type InspectorPayoutItem,
+  type InspectorProfileResponse,
+  type InspectorPropertyBreakdown,
+  type RecordInspectorPayoutInput,
 } from '@mechanization/shared-schemas';
-import { ConflictError, ForbiddenError, NotFoundError, UnauthorizedError } from '../../common/exceptions';
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  UnauthorizedError,
+  ValidationError,
+} from '../../common/exceptions';
 
 /**
  * Staff accounts, managed by a SUPER_ADMIN.
@@ -600,6 +608,12 @@ export class StaffService {
 
   /**
    * Super Admin records a commission payment made to a Field Inspector.
+   *
+   * Refused unless `payoutAllowance` accepts it: nothing before $100 of
+   * lifetime earnings, at most $50 per week counted from the first payout, and
+   * never more than is still owed. The figures are the ones the inspector's
+   * dashboard shows, read through the same method, so the refusal and the
+   * screen cannot disagree about what is owed.
    */
   async recordInspectorPayout(input: {
     tenantSlug: string;
@@ -607,13 +621,24 @@ export class StaffService {
     payload: RecordInspectorPayoutInput;
     actor: { id: string; role: string };
   }): Promise<InspectorPayoutItem> {
-    const inspector = await this.db.user.findFirst({
-      where: { id: input.inspectorId, kind: 'STAFF' },
-      select: { id: true, firstName: true, lastName: true },
-    });
+    // Throws NotFoundError for anything that is not a staff account.
+    const profile = await this.getInspectorProfile(input.tenantSlug, input.inspectorId);
 
-    if (!inspector) {
-      throw new NotFoundError('Staff user', input.inspectorId);
+    const paidAt = input.payload.paidAt ? new Date(input.payload.paidAt) : new Date();
+    if (Number.isNaN(paidAt.getTime())) {
+      throw new ValidationError('تاريخ الدفع غير صالح.');
+    }
+    const refusal = payoutRefusal(
+      payoutAllowance({
+        totalEarnings: profile.totalEarnings,
+        pendingBalance: profile.pendingBalance,
+        payouts: profile.payouts,
+        paidAt,
+      }),
+      input.payload.amount,
+    );
+    if (refusal) {
+      throw new ValidationError(refusal);
     }
 
     const payout = await this.db.inspectorPayout.create({
@@ -621,7 +646,7 @@ export class StaffService {
         inspectorId: input.inspectorId,
         amount: input.payload.amount,
         currency: input.payload.currency || 'USD',
-        paidAt: input.payload.paidAt ? new Date(input.payload.paidAt) : new Date(),
+        paidAt,
         note: input.payload.note ?? null,
         reference: input.payload.reference ?? null,
         recordedById: input.actor.id,

@@ -68,32 +68,6 @@ export function StaffForm({
 }) {
   const labels = getLabels(locale);
 
-  const roleHints: Record<string, string> = {
-    SUPER_ADMIN:
-      locale === 'en'
-        ? 'Full administrative access: final approvals, municipality settings, and staff account management.'
-        : 'صلاحية كاملة: الموافقة النهائية وإدارة حسابات الموظفين.',
-    AUDITOR:
-      locale === 'en'
-        ? 'Read-only access: review files, inspect audit logs, and export records.'
-        : 'الاطلاع والمراجعة وتصدير البيانات، دون الموافقة النهائية.',
-    FIELD_INSPECTOR:
-      locale === 'en'
-        ? 'Field operations: inspect and verify citizen applications on-site.'
-        : 'مراجعة الطلبات ميدانياً، دون الاطلاع على سجل النشاطات.',
-    COLLECTOR:
-      locale === 'en'
-        ? 'Finance collection: collect fees and issue official receipts in the field.'
-        : 'جباية الرسوم وتسجيل المقبوضات، دون تعديل سجل المواطنين.',
-    ACCOUNTANT:
-      locale === 'en'
-        ? 'Accounting: issue fee notices, manage receivables, review transfers, and generate financial reports.'
-        : 'إدارة الرسوم والمقبوضات والتقارير المالية ومتابعة التحصيل.',
-    ADMINISTRATIVE_OFFICER:
-      locale === 'en'
-        ? 'Administration: manage civil registry, review submissions, and configure municipal zones.'
-        : 'إدارة السجل المدني والقطاعات، دون البتّ المالي.',
-  };
   const [values, setValues] = useState<StaffFormValues>(EMPTY);
   const [showPassword, setShowPassword] = useState(false);
   const [touched, setTouched] = useState(false);
@@ -147,7 +121,7 @@ export function StaffForm({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent closeLabel={locale === 'en' ? 'Close' : 'إغلاق'} className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-lg">
+      <DialogContent closeLabel={locale === 'en' ? 'Close' : 'إغلاق'} className="flex max-h-[85dvh] flex-col gap-0 p-0 sm:max-w-lg">
         <DialogHeader className="shrink-0 space-y-1 border-b p-6 text-start">
           <DialogTitle>
             {editing
@@ -175,7 +149,7 @@ export function StaffForm({
             </p>
           ) : null}
 
-          <div className="grid gap-5 sm:grid-cols-2">
+          <div className="grid gap-5">
             <Field label={locale === 'en' ? 'First Name' : 'الاسم الأول'} htmlFor="firstName" required>
               <Input
                 id="firstName"
@@ -208,7 +182,6 @@ export function StaffForm({
             label={locale === 'en' ? 'Password' : 'كلمة المرور'}
             htmlFor="password"
             required={!editing}
-            hint={locale === 'en' ? 'At least 10 characters' : '10 أحرف على الأقل'}
             error={passwordError ?? undefined}
           >
             <div className="relative">
@@ -267,7 +240,6 @@ export function StaffForm({
             label={locale === 'en' ? 'Role & Permissions' : 'الصلاحية'}
             htmlFor="role"
             required
-            hint={roleHints[values.role]}
           >
             <Select value={values.role} onValueChange={(next) => set({ role: next })}>
               <SelectTrigger id="role">

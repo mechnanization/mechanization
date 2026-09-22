@@ -63,7 +63,7 @@ export function PayDialog({
 
   return (
     <Dialog open={payment !== null} onOpenChange={onOpenChange}>
-      <DialogContent closeLabel={locale === 'en' ? 'Close' : 'إغلاق'} className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-lg">
+      <DialogContent closeLabel={locale === 'en' ? 'Close' : 'إغلاق'} className="flex max-h-[85dvh] flex-col gap-0 p-0 sm:max-w-lg">
         <DialogHeader className="shrink-0 space-y-1 border-b p-6 text-start">
           <DialogTitle>
             {locale === 'en' ? `Pay ${payment?.title}` : `دفع ${payment?.title}`}

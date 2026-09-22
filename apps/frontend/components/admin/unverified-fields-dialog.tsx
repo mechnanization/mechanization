@@ -256,7 +256,7 @@ export function UnverifiedFieldsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-0 gap-0">
+      <DialogContent className="max-w-2xl max-h-[85dvh] flex flex-col p-0 gap-0">
         <DialogHeader className="p-5 border-b border-border/80">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
@@ -359,7 +359,7 @@ export function UnverifiedFieldsDialog({
                           </label>
 
                           {isChecked ? (
-                            <span className="text-[11px] font-semibold text-warning">
+                            <span className="text-xs font-semibold text-warning">
                               {locale === 'en' ? 'Unverified' : 'غير مؤكَّد'}
                             </span>
                           ) : null}
@@ -369,7 +369,7 @@ export function UnverifiedFieldsDialog({
                           <div className="mt-2.5 ps-6 space-y-1">
                             <Label
                               htmlFor={`reason-${field.path}`}
-                              className="text-[11px] font-medium text-warning"
+                              className="text-xs font-medium text-warning"
                             >
                               {locale === 'en'
                                 ? 'Why is this information unavailable? (required)'

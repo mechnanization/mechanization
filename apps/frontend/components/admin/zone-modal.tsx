@@ -124,7 +124,6 @@ export function ZoneModal({
             label={locale === 'en' ? 'Sector Code' : 'رمز القطاع'}
             htmlFor="zone-code"
             required
-            hint={locale === 'en' ? 'Short code used in reports' : 'رمز مختصر يستخدم في التقارير'}
             error={fieldErrors.code}
           >
             <Input

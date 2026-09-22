@@ -500,6 +500,43 @@ export function attachOccupancies<T extends OccupancyClaimable, U>(
   });
 }
 
+/**
+ * The status tab, as a predicate — because «متأخرة» is not a column.
+ *
+ * `toAdminPaymentItem` renders an UNPAID row past its due date as OVERDUE, and
+ * **nothing writes that value**: `PaymentStatus.OVERDUE` exists in the enum
+ * and no code path assigns it. So a raw `paymentStatus: 'OVERDUE'` predicate
+ * matched nothing, and the tab returned an empty table over a register full of
+ * late invoices — while the rows behind it went on displaying «متأخرة».
+ *
+ * The two have to be translated together, not just OVERDUE:
+ *
+ *   غير مدفوعة  → UNPAID and not yet due
+ *   متأخرة      → UNPAID and past due
+ *
+ * Partitioning matters more than the new tab. If «غير مدفوعة» kept meaning
+ * "every unpaid row", a late invoice would answer to two tabs while its own
+ * status cell named only one of them, and the per-tab counts would not add up
+ * to a total anybody could check them against.
+ *
+ * `now` is a parameter rather than read here, so the boundary is fixed by the
+ * caller for the whole request — a row must not fall out of «غير مدفوعة» and
+ * into «متأخرة» between the count query and the page query — and so this is
+ * testable without freezing the clock.
+ *
+ * Exported for its own tests: the rule is one line of `where`, invisible in an
+ * integration suite that has to reach a database to see it at all.
+ */
+export function paymentStatusWhere(
+  status: string | undefined,
+  now: Date,
+): Record<string, unknown> {
+  if (!status) return {};
+  if (status === 'OVERDUE') return { paymentStatus: 'UNPAID', dueDate: { lt: now } };
+  if (status === 'UNPAID') return { paymentStatus: 'UNPAID', dueDate: { gte: now } };
+  return { paymentStatus: status };
+}
+
 @Injectable()
 export class FeesService {
   private readonly logger = new Logger(FeesService.name);
@@ -1901,6 +1938,92 @@ export class FeesService {
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ar'));
   }
 
+  /**
+   * The filter vocabularies إدارة الرسوم and سجل العمليات actually need.
+   *
+   * Both screens built their filter rows out of arrays written into the page —
+   * four status tabs, four method tabs — which is the enum restated in a
+   * second place rather than the register described. A municipality that has
+   * never taken a Whish transfer was still shown a «Whish» tab, and pressing
+   * it emptied the table; a status the state machine has not reached yet was
+   * offered the same way.
+   *
+   * Read off the rows instead, so every option on screen is one that can
+   * return something.
+   *
+   * `paymentMethod` is a stored column and answers for itself. `paymentStatus`
+   * does not, and assuming it did is what hid «متأخرة» from every municipality
+   * in the country: OVERDUE is derived on read — `toAdminPaymentItem` returns
+   * it for an UNPAID row past its due date — and **nothing writes it**, so a
+   * `groupBy(['paymentStatus'])` can never yield it however many late invoices
+   * the register holds. The screen went on rendering rows as متأخرة with no tab
+   * to filter them by.
+   *
+   * So it is asked the way it is derived, with the same predicate
+   * `listAllPayments` applies, which is what keeps the offered tab and the
+   * filter behind it from drifting apart. UNPAID is asked the same way for the
+   * same reason: once «متأخرة» is its own tab, «غير مدفوعة» means the invoices
+   * that are not yet late, and a municipality whose every unpaid bill is
+   * overdue should not be offered a tab that comes back empty.
+   *
+   * Sequential rather than `Promise.all`: a pooler with `connection_limit=1`
+   * queues a fan-out and hits P2024. The client caches this for the session,
+   * so the round trips are paid once.
+   */
+  async filterOptions(): Promise<{ statuses: string[]; methods: string[]; titles: string[] }> {
+    const now = new Date();
+    const stored = await withConnectionRetry(() =>
+      this.db.citizenPayment.groupBy({
+        by: ['paymentStatus'],
+        orderBy: { paymentStatus: 'asc' },
+      }),
+    );
+    // Split the stored UNPAID bucket the way the list and the status cell do.
+    const overdue = await withConnectionRetry(() =>
+      this.db.citizenPayment.count({
+        where: { paymentStatus: 'UNPAID', dueDate: { lt: now } },
+      }),
+    );
+    const notYetDue = await withConnectionRetry(() =>
+      this.db.citizenPayment.count({
+        where: { paymentStatus: 'UNPAID', dueDate: { gte: now } },
+      }),
+    );
+    const storedStatuses = stored.map((row) => String(row.paymentStatus));
+    const statuses = [
+      // Only UNPAID is re-derived from scratch; every other stored value
+      // answers for itself.
+      ...storedStatuses.filter((status) => status !== 'UNPAID' && status !== 'OVERDUE'),
+      ...(notYetDue > 0 ? ['UNPAID'] : []),
+      /*
+        Unioned rather than overwritten. Nothing in this codebase writes
+        OVERDUE and nothing in its history did — but the column accepts the
+        value, and this repository does run hand-written data repairs against
+        production. If one ever lands there, dropping it here would leave a row
+        that no tab can reach, which is the failure this whole change is about.
+      */
+      ...(overdue > 0 || storedStatuses.includes('OVERDUE') ? ['OVERDUE'] : []),
+    ];
+    const methods = await withConnectionRetry(() =>
+      this.db.citizenPayment.groupBy({
+        by: ['paymentMethod'],
+        // A row nobody has paid has no method. It is not a fifth method, and
+        // listing `null` as one would put an unselectable tab on the screen.
+        where: { paymentMethod: { not: null } },
+        orderBy: { paymentMethod: 'asc' },
+      }),
+    );
+
+    return {
+      statuses,
+      methods: methods
+        .map((row) => row.paymentMethod)
+        .filter((method): method is NonNullable<typeof method> => method !== null)
+        .map(String),
+      titles: await this.listDistinctTitles(),
+    };
+  }
+
   async listAllPayments(
     filter: {
       status?: string;
@@ -1944,9 +2067,20 @@ export class FeesService {
     const take = Math.min(Math.max(filter.limit ?? (filter.citizenId ? 500 : 25), 1), 500);
     const skip = Math.max(filter.offset ?? 0, 0);
 
-    const where = {
+    /*
+      Everything except the status tab.
+
+      Split out because the «بانتظار المراجعة» tile below counts PENDING_REVIEW
+      *whatever tab is selected*, and it used to do that by spreading `where`
+      and overriding the one `paymentStatus` key. That trick stops working the
+      moment a status is more than one key: «متأخرة» is `paymentStatus` **and**
+      `dueDate`, so an override would replace the status and leave the date
+      behind, and the tile would quietly report "pending review, and not yet
+      due" — a smaller number, on a tile whose whole job is to be the count
+      nobody has dealt with yet.
+    */
+    const whereWithoutStatus = {
       ...(filter.citizenId ? { citizenId: filter.citizenId } : {}),
-      ...(filter.status ? { paymentStatus: filter.status as never } : {}),
       ...(filter.method ? { paymentMethod: filter.method as never } : {}),
       ...(filter.feeTitle
         ? {
@@ -1996,6 +2130,19 @@ export class FeesService {
             }
           : {}),
     };
+
+    /*
+      One clock for the whole request.
+
+      The tab predicate and the status cell both compare `dueDate` against
+      "now", and they have to be the same "now": read twice, they are separated
+      by the `$transaction` round trip below, and an invoice due in that gap
+      would be filtered as «غير مدفوعة» and then rendered «متأخرة» in its own
+      row. It is a narrow window and it is the one this function is judged on,
+      because the two numbers a clerk compares are on the same screen.
+    */
+    const now = new Date();
+    const where = { ...whereWithoutStatus, ...paymentStatusWhere(filter.status, now) };
 
     /**
      * The page and the count in one round trip.
@@ -2047,12 +2194,13 @@ export class FeesService {
           _count: { _all: true },
         }),
         this.db.citizenPayment.count({
-          where: { ...where, paymentStatus: 'PENDING_REVIEW' },
+          // `whereWithoutStatus`, not `where` — see the note on its declaration.
+          where: { ...whereWithoutStatus, paymentStatus: 'PENDING_REVIEW' },
         }),
       ]),
     );
 
-    const now = new Date();
+    // The same `now` the tab predicate used — see the note above `where`.
     const items = rows.map((row) => this.toAdminPaymentItem(row, now));
 
     const methodCount = (method: string) =>

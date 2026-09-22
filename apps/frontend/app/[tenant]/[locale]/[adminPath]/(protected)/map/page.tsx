@@ -120,6 +120,10 @@ export default function FullscreenMapPage({
 
   return (
     <div className="flex h-full flex-col">
+      {/* The map takes the whole screen by design, so the heading is for
+          assistive technology only — see the sector editor, which does the
+          same. A page without an `<h1>` has nothing to be announced by. */}
+      <h1 className="sr-only">{locale === 'en' ? 'Municipality map' : 'خريطة البلدية'}</h1>
       <div className="relative flex-1">
         {!token ? null : error ? (
           <div className="flex h-full w-full flex-col items-center justify-center gap-4">

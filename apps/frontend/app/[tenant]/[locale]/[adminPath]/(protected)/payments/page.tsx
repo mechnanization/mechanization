@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   ArrowLeftRight,
@@ -14,10 +15,11 @@ import {
   Receipt,
   UserCheck,
 } from 'lucide-react';
-import { ar } from '@mechanization/shared-schemas';
+import { getLabels } from '@mechanization/shared-schemas';
 import {
   getAllPayments,
   getCitizenProfile,
+  getFeeFilterOptions,
   getMunicipalitySettings,
   getTenantConfig,
   logApiError,
@@ -31,39 +33,67 @@ import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatLbp } from '@/lib/currency';
 import { formatDateTime, formatRelative } from '@/lib/dates';
-import { Badge } from '@/components/ui/badge';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { cn } from '@/lib/utils';
 
-const TABLE_LABELS: DataTableLabels = {
-  searchAriaLabel: 'بحث في العمليات',
-  searchPlaceholder: 'ابحث باسم الدافع، رقم الهاتف، الرقم المرجعي، أو رقم العملية…',
-  clearSearch: 'مسح البحث',
-  searchHint: 'Enter',
-  searchApplied: 'بحث: «{term}»',
-  empty: 'لا توجد عمليات دفع بعد.',
-  emptySearch: 'لا نتائج مطابقة لبحثك.',
-  loadError: 'تعذّر تحميل سجل العمليات.',
-  retry: 'إعادة المحاولة',
-  previous: 'السابق',
-  next: 'التالي',
-  pageOf: 'صفحة {current} من {total}',
-  rowsPerPage: 'عدد الصفوف',
-  totalRows: '{count} عملية',
-  sortAscending: 'ترتيب تصاعدي',
-  sortDescending: 'ترتيب تنازلي',
-  sortNone: 'إلغاء الترتيب',
-  columns: 'الأعمدة',
-  columnsHint: 'الأعمدة الظاهرة',
-  resetColumns: 'استعادة الافتراضي',
-};
+/**
+ * The table chrome, from the shared `table` catalogue plus this screen's own
+ * two strings.
+ *
+ * This was a module-level `const` of twenty Arabic literals, which is why an
+ * English visitor saw an Arabic table: a value computed once at import time
+ * cannot depend on the request's locale. Nineteen of those literals were also
+ * *already* in `messages/*.json` under `table` — the catalogue had been written
+ * and then not used — so the fix is mostly deletion.
+ *
+ * Built inside the component rather than at module scope for that same reason,
+ * and memoised on the two translators so the object is stable across renders:
+ * `DataTable` takes `labels` by reference, and a fresh one every keystroke
+ * would re-render the whole grid.
+ */
+function useTableLabels(): DataTableLabels {
+  const t = useTranslations('table');
+  const tPayments = useTranslations('payments');
 
-/** The method filter, as a segmented row above the table. */
+  return useMemo(
+    () => ({
+      // The two that are genuinely about payments rather than about tables: the
+      // placeholder names this screen's searchable fields, and the row count is
+      // «١٢ عملية» rather than a bare total.
+      searchAriaLabel: tPayments('searchAria'),
+      searchPlaceholder: tPayments('searchPlaceholder'),
+      searchApplied: tPayments('searchApplied'),
+      empty: tPayments('empty'),
+      loadError: tPayments('loadError'),
+      totalRows: tPayments('totalRows'),
+
+      clearSearch: t('clearSearch'),
+      // Not translated: it is the name of a key on the keyboard.
+      searchHint: 'Enter',
+      emptySearch: t('emptySearch'),
+      retry: t('retry'),
+      previous: t('previous'),
+      next: t('next'),
+      pageOf: t('pageOf'),
+      rowsPerPage: t('rowsPerPage'),
+      sortAscending: t('sortAsc'),
+      sortDescending: t('sortDesc'),
+      sortNone: t('sortNone'),
+      columns: t('columns'),
+      columnsHint: t('columnsHint'),
+      resetColumns: t('resetColumns'),
+    }),
+    [t, tPayments],
+  );
+}
+
 /**
  * What the tiles show before the first response, and after a failed one.
  *
@@ -84,18 +114,39 @@ const EMPTY_TOTALS = {
   awaiting: 0,
 } as const;
 
-const METHOD_FILTERS = [
-  { id: '', label: 'الكل', icon: ArrowLeftRight },
-  { id: 'CASH', label: 'نقداً', icon: Banknote },
-  { id: 'WHISH_MONEY', label: 'Whish', icon: CreditCard },
-  { id: 'COLLECTOR', label: 'المحصّل', icon: UserCheck },
-] as const;
+/**
+ * The order the method tabs read in, and the glyph each one carries.
+ *
+ * Which of them appear is not decided here — see `filterOptionsQuery`. A
+ * municipality that has never taken a Whish transfer had a «Whish» tab anyway,
+ * and pressing it emptied the ledger: a question with only one possible
+ * answer, and that answer "nothing". The tabs are now the methods money has
+ * actually arrived by.
+ */
+const METHOD_TAB_ORDER = ['CASH', 'WHISH_MONEY', 'COLLECTOR'] as const;
 
-/** Badge tone and glyph per method — one place, so the filter and the row agree. */
+/**
+ * The glyph and the catalogue key per method — no label text.
+ *
+ * The labels used to live here as Arabic literals. They cannot: a module-level
+ * constant is evaluated once per process, before any request has a locale, so
+ * whatever language was written here was the language every visitor got. What
+ * stays is the part that genuinely does not vary — the order, and the icon.
+ */
+const METHOD_TAB = {
+  CASH: { key: 'methodCash', icon: Banknote },
+  WHISH_MONEY: { key: 'methodWhish', icon: CreditCard },
+  COLLECTOR: { key: 'methodCollector', icon: UserCheck },
+} as const;
+
+/** «الكل» is not a method — it is the absence of the filter — so it is always here. */
+const ALL_METHODS_TAB = { id: '', key: 'methodAll', icon: ArrowLeftRight } as const;
+
+/** Text tone and glyph per method — one place, so the filter and the row agree. */
 const METHOD_STYLE = {
-  CASH: { icon: Banknote, className: 'border-success/40 bg-success/10 text-success' },
-  WHISH_MONEY: { icon: CreditCard, className: 'border-primary/40 bg-primary/10 text-primary' },
-  COLLECTOR: { icon: UserCheck, className: 'border-warning/40 bg-warning/10 text-warning' },
+  CASH: { icon: Banknote, tone: 'success' },
+  WHISH_MONEY: { icon: CreditCard, tone: 'primary' },
+  COLLECTOR: { icon: UserCheck, tone: 'warning' },
 } as const;
 
 /** Opening letters of the first and last name — what goes on a folder tab. */
@@ -128,6 +179,20 @@ export default function PaymentsPage({
   const { tenant, locale, adminPath } = use(params);
   const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
+
+  const t = useTranslations('payments');
+  const tableLabels = useTableLabels();
+  /**
+   * Enum labels — payment method, and anything else this screen renders from a
+   * server enum.
+   *
+   * Was `import { ar }`, which is the same bug as the table labels in a
+   * different costume: a direct import of the Arabic label set, so an English
+   * visitor got Arabic method names inside an otherwise English page. `getLabels`
+   * is the accessor the citizen-facing payments screen already uses, and it
+   * takes the locale.
+   */
+  const labels = getLabels(locale);
 
   const [token, setToken] = useState<string | null>(null);
   const [method, setMethod] = useState<string>('');
@@ -199,9 +264,40 @@ export default function PaymentsPage({
     tenant,
     base,
     token,
-    errorMessage: 'تعذّر تحميل سجل العمليات.',
+    errorMessage: t('loadError'),
     keepPrevious: true,
   });
+
+  /**
+   * The methods money has actually arrived by, for the tab row.
+   *
+   * `reference`: read once and held for the session, and shared with إدارة
+   * الرسوم, which asks for the same key. This screen is read-only by design —
+   * it takes no payments — so nothing it does can extend the vocabulary, and
+   * it never needs to invalidate the key. The screen that *can* extend it does
+   * (see the fees ledger's `load`).
+   */
+  const filterOptionsQuery = useStaffQuery({
+    queryKey: ['fee-filter-options', tenant],
+    queryFn: (accessToken, signal) => getFeeFilterOptions(tenant, accessToken, signal),
+    tenant,
+    base,
+    token,
+    errorMessage: t('filterOptionsError'),
+    reference: true,
+  });
+
+  const methodTabs = useMemo(() => {
+    const present = new Set(filterOptionsQuery.data?.methods ?? []);
+    return [
+      { id: ALL_METHODS_TAB.id, label: t(ALL_METHODS_TAB.key), icon: ALL_METHODS_TAB.icon },
+      ...METHOD_TAB_ORDER.filter((method) => present.has(method)).map((method) => ({
+        id: method,
+        label: t(METHOD_TAB[method].key),
+        icon: METHOD_TAB[method].icon,
+      })),
+    ];
+  }, [filterOptionsQuery.data, t]);
 
   /** The office details a reprinted وصل carries. Neither is rendered on this page. */
   const receiptContextQuery = useStaffQuery({
@@ -216,7 +312,7 @@ export default function PaymentsPage({
     tenant,
     base,
     token,
-    errorMessage: 'تعذّر تحميل بيانات البلدية.',
+    errorMessage: t('municipalityError'),
   });
 
   const items = paymentsQuery.data?.items ?? [];
@@ -249,12 +345,12 @@ export default function PaymentsPage({
         setReceipt({ citizen: profile, payment: row, received: payment.paidAmount });
       } catch (caught) {
         logApiError(caught);
-        setActionError('تعذّر فتح الوصل — يمكن إصداره من ملف المواطن.');
+        setActionError(t('receiptError'));
       } finally {
         setReceiptBusyId(null);
       }
     },
-    [tenant, token],
+    [tenant, token, t],
   );
 
   const copyId = useCallback((id: string) => {
@@ -277,7 +373,7 @@ export default function PaymentsPage({
       {
         id: 'reference',
         accessorFn: (row) => row.id,
-        header: 'رقم العملية',
+        header: t('colReference'),
         enableSorting: false,
         meta: { align: 'start', cellClassName: 'whitespace-nowrap' },
         cell: ({ row }) => {
@@ -287,23 +383,25 @@ export default function PaymentsPage({
           // gets the whole thing into a message or a ticket.
           const short = payment.id.split('-').at(-1) ?? payment.id;
           return (
-            // Set as a quiet chip rather than plain text at row weight: this is
-            // a lookup key someone reaches for once a week, and at the same
-            // size as the payer's name it competed with every column that gets
-            // read on every row.
+            // Held down in size and colour rather than in a grey chip: this
+            // is a lookup key someone reaches for once a week, and at the
+            // payer's name's weight it competed with every column that gets
+            // read on every row. The box did that job and cost more than it
+            // was worth — it inset the value from the cell's edge, so «رقم
+            // العملية» no longer sat over its own column.
             <div className="flex items-center gap-1">
               <span
-                className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-tight text-muted-foreground"
+                className="font-mono text-xs uppercase tracking-tight text-muted-foreground"
                 dir="ltr"
               >
                 {short}
               </span>
-              <ActionTooltip label={copiedId === payment.id ? 'تم النسخ' : 'نسخ الرقم الكامل'}>
+              <ActionTooltip label={copiedId === payment.id ? t('copied') : t('copyFull')}>
                 <Button
                   variant="ghost"
                   size="icon-sm"
                   onClick={() => copyId(payment.id)}
-                  aria-label="نسخ رقم العملية"
+                  aria-label={t('copyAria')}
                 >
                   {copiedId === payment.id ? (
                     <CheckCircle2 className="size-3.5 text-success" aria-hidden />
@@ -318,7 +416,7 @@ export default function PaymentsPage({
       },
       {
         accessorKey: 'citizenName',
-        header: 'الدافع',
+        header: t('colPayer'),
         meta: { align: 'start' },
         cell: ({ row }) => {
           const payment = row.original;
@@ -351,7 +449,7 @@ export default function PaymentsPage({
       },
       {
         accessorKey: 'paidAmount',
-        header: 'المبلغ',
+        header: t('colAmount'),
         // The one column genuinely read *as a column*: aligning the figures to
         // the same edge as their heading is what lets a run of amounts be
         // compared down the page rather than each one found individually.
@@ -378,13 +476,13 @@ export default function PaymentsPage({
                   claimed ? 'font-medium text-muted-foreground' : 'font-bold',
                 )}
               >
-                {formatLbp(claimed ? payment.amount : payment.paidAmount)}
+                {formatLbp(claimed ? payment.amount : payment.paidAmount, locale)}
               </p>
               {claimed ? (
-                <p className="text-xs text-muted-foreground">مبلغ المطالبة</p>
+                <p className="text-xs text-muted-foreground">{t('claimedAmount')}</p>
               ) : partial ? (
                 <p className="text-xs text-warning">
-                  دفعة جزئية · متبقٍ {formatLbp(payment.remaining)}
+                  {t('partial', { remaining: formatLbp(payment.remaining, locale) })}
                 </p>
               ) : null}
             </div>
@@ -393,7 +491,7 @@ export default function PaymentsPage({
       },
       {
         accessorKey: 'paymentMethod',
-        header: 'طريقة الدفع',
+        header: t('colMethod'),
         meta: { align: 'start' },
         cell: ({ row }) => {
           const payment = row.original;
@@ -404,20 +502,20 @@ export default function PaymentsPage({
           const Icon = style.icon;
           return (
             <div className="space-y-1">
-              <Badge variant="outline" className={cn('gap-1.5', style.className)}>
+              <CellTag tone={style.tone}>
                 <Icon className="size-3" aria-hidden />
-                {ar.paymentMethod[payment.paymentMethod as never] ?? payment.paymentMethod}
-              </Badge>
-              {/* Each method's one auditable fact, under its badge: the
+                {labels.paymentMethod[payment.paymentMethod as never] ?? payment.paymentMethod}
+              </CellTag>
+              {/* Each method's one auditable fact, under the method: the
                   transfer's number, or the name of whoever is holding the
                   cash until he hands it in. */}
               {payment.whishTransactionRef ? (
-                <p className="font-mono text-[11px] text-muted-foreground" dir="ltr">
+                <p className="font-mono text-xs text-muted-foreground" dir="ltr">
                   {payment.whishTransactionRef}
                 </p>
               ) : payment.collectedByName ? (
-                <p className="text-[11px] text-muted-foreground">
-                  بعهدة {payment.collectedByName}
+                <p className="text-xs text-muted-foreground">
+                  {t('heldBy', { name: payment.collectedByName })}
                 </p>
               ) : null}
             </div>
@@ -427,7 +525,7 @@ export default function PaymentsPage({
       {
         id: 'receipt',
         accessorFn: (row) => (row.paidAmount > 0 ? 1 : 0),
-        header: 'الوصل',
+        header: t('colReceipt'),
         meta: { align: 'start', cellClassName: 'whitespace-nowrap' },
         cell: ({ row }) => {
           const payment = row.original;
@@ -437,10 +535,10 @@ export default function PaymentsPage({
           // exactly when money has been received against the row.
           if (payment.paidAmount <= 0) {
             return (
-              <Badge variant="outline" className="gap-1.5 text-muted-foreground">
+              <CellTag tone="muted">
                 <Clock className="size-3" aria-hidden />
-                بانتظار التأكيد
-              </Badge>
+                {t('awaitingConfirmation')}
+              </CellTag>
             );
           }
           return (
@@ -461,7 +559,7 @@ export default function PaymentsPage({
               ) : (
                 <Receipt className="size-3.5" aria-hidden />
               )}
-              إصدار الوصل
+              {t('issueReceipt')}
             </Button>
           );
         },
@@ -469,7 +567,7 @@ export default function PaymentsPage({
       {
         id: 'stamp',
         accessorFn: (row) => row.paidAt ?? row.updatedAt,
-        header: 'التاريخ والوقت',
+        header: t('colStamp'),
         meta: { align: 'start', cellClassName: 'whitespace-nowrap' },
         cell: ({ row }) => {
           const payment = row.original;
@@ -482,10 +580,10 @@ export default function PaymentsPage({
                   stamp underneath is what identifies the transaction. */}
               <p className="text-sm">
                 {exact ? '' : '≈ '}
-                {formatRelative(stampedAt)}
+                {formatRelative(stampedAt, locale)}
               </p>
-              <p className="text-xs tabular-nums text-muted-foreground" dir="ltr">
-                {formatDateTime(stampedAt)}
+              <p className="text-xs tabular-nums text-muted-foreground">
+                <bdi dir="ltr">{formatDateTime(stampedAt)}</bdi>
               </p>
             </div>
           );
@@ -498,7 +596,7 @@ export default function PaymentsPage({
           return exact ? (
             stamp
           ) : (
-            <ActionTooltip label="وقت آخر تحديث للسجل — لا يُسجَّل وقت دقيق للدفعات الجزئية">
+            <ActionTooltip label={t('approximateStamp')}>
               <span className="cursor-help border-b border-dashed border-muted-foreground/40">
                 {stamp}
               </span>
@@ -507,18 +605,14 @@ export default function PaymentsPage({
         },
       },
     ],
-    [copiedId, copyId, openReceipt, receiptBusyId],
+    [copiedId, copyId, openReceipt, receiptBusyId, t, labels, locale],
   );
 
   if (!token) return null;
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <PageHeader
-        icon={ArrowLeftRight}
-        title="سجل العمليات"
-        subtitle="كل عملية دفع في البلدية — من دفع، وبأي طريقة، ومتى"
-      />
+      <PageHeader icon={ArrowLeftRight} title={t('title')} subtitle={t('subtitle')} />
 
       {error ? (
         <p
@@ -530,15 +624,15 @@ export default function PaymentsPage({
       ) : null}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <SummaryTile label="عدد العمليات" value={total.toLocaleString('en-US')} />
-        <SummaryTile label="إجمالي المحصّل" value={formatLbp(totals.collected)} />
+        <SummaryTile label={t('tileCount')} value={total.toLocaleString('en-US')} />
+        <SummaryTile label={t('tileCollected')} value={formatLbp(totals.collected, locale)} />
         <SummaryTile
-          label="نقداً / Whish / محصّل"
+          label={t('tileByMethod')}
           value={`${totals.cash} / ${totals.whish} / ${totals.collector}`}
-          hint="عمليات مؤكّدة"
+          hint={t('tileByMethodHint')}
         />
         <SummaryTile
-          label="بانتظار التأكيد"
+          label={t('tileAwaiting')}
           value={totals.awaiting.toLocaleString('en-US')}
           tone={totals.awaiting > 0 ? 'warning' : undefined}
         />
@@ -549,46 +643,42 @@ export default function PaymentsPage({
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <CardTitle className="flex items-center gap-2 text-base font-bold">
               <ArrowLeftRight className="size-5 text-primary" aria-hidden />
-              سجل العمليات
+              {t('cardTitle')}
             </CardTitle>
 
-            {/* Method Tabs Filter */}
-            <div className="flex flex-wrap items-center gap-1 rounded-xl bg-muted p-1">
-              {METHOD_FILTERS.map((tab) => {
-                const Icon = tab.icon;
-                const active = method === tab.id;
-                return (
-                  <button
-                    key={tab.id || 'all'}
-                    type="button"
-                    /*
-                      Narrowing to one method returns to the first page, here
-                      rather than in an effect watching `method`: two state
-                      updates in one render make one query key and one request,
-                      where the effect made two — the first at an offset that no
-                      longer existed.
-                    */
-                    onClick={() => {
-                      setMethod(tab.id);
-                      setPagination((previous) =>
-                        previous.pageIndex === 0
-                          ? previous
-                          : { ...previous, pageIndex: 0 },
-                      );
-                    }}
-                    className={cn(
-                      'flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-semibold transition-all',
-                      active
-                        ? 'bg-card text-foreground shadow-xs'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    {Icon ? <Icon className="size-3.5" aria-hidden /> : null}
-                    <span>{tab.label}</span>
-                  </button>
+            {/*
+              The method filter, as the shared segmented control rather than a
+              hand-rolled tab row.
+
+              The row it replaces was 26px tall — `px-3 py-1` on 12px text —
+              which is half the 48px a finger needs, on a screen a collector
+              uses standing up. `SegmentedControl` carries `coarse:min-h-touch`
+              and the app's one selected-segment treatment, so this stops being
+              a fourth thing that looks almost like the other three.
+            */}
+            <SegmentedControl
+              aria-label={t('filterAria')}
+              value={method}
+              size="sm"
+              fullWidth={false}
+              options={methodTabs.map((tab) => ({
+                value: tab.id,
+                label: tab.label,
+                icon: tab.icon,
+              }))}
+              /*
+                Narrowing to one method returns to the first page, here rather
+                than in an effect watching `method`: two state updates in one
+                render make one query key and one request, where the effect
+                made two — the first at an offset that no longer existed.
+              */
+              onChange={(next) => {
+                setMethod(next);
+                setPagination((previous) =>
+                  previous.pageIndex === 0 ? previous : { ...previous, pageIndex: 0 },
                 );
-              })}
-            </div>
+              }}
+            />
           </div>
         </CardHeader>
 
@@ -596,7 +686,7 @@ export default function PaymentsPage({
           <DataTable
             columns={columns}
             data={items}
-            labels={TABLE_LABELS}
+            labels={tableLabels}
             columnStorageKey="payments"
             getRowId={(row) => row.id}
             loading={paymentsQuery.loading}

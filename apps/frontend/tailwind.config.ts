@@ -1,5 +1,6 @@
 import type { Config } from 'tailwindcss';
 import animate from 'tailwindcss-animate';
+import plugin from 'tailwindcss/plugin';
 
 /**
  * Mirrors the Albazourieh platform's Tailwind theme so components copied
@@ -54,8 +55,21 @@ const config: Config = {
           DEFAULT: 'hsl(var(--popover))',
           foreground: 'hsl(var(--popover-foreground))',
         },
-        warning: 'hsl(var(--warning))',
-        success: 'hsl(var(--success))',
+        // The status trio. Each carries a `-foreground` for the rare solid
+        // fill, so `bg-success text-success-foreground` is legible in both
+        // themes — plain `text-white` on these is not, in the dark one.
+        warning: {
+          DEFAULT: 'hsl(var(--warning))',
+          foreground: 'hsl(var(--warning-foreground))',
+        },
+        success: {
+          DEFAULT: 'hsl(var(--success))',
+          foreground: 'hsl(var(--success-foreground))',
+        },
+        info: {
+          DEFAULT: 'hsl(var(--info))',
+          foreground: 'hsl(var(--info-foreground))',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',
@@ -70,12 +84,34 @@ const config: Config = {
       },
       // 48px: the minimum comfortable target for the audience this serves.
       spacing: { touch: '3rem' },
+      minHeight: { touch: '3rem' },
+      minWidth: { touch: '3rem' },
     },
   },
   // The reference platform's animation plugin. The Radix components carry
   // `data-[state=open]:animate-in` / `fade-in-0` / `zoom-in-95` classes that are
   // inert without it — the dialog and select would pop rather than transition.
-  plugins: [animate],
+  plugins: [
+    animate,
+    /**
+     * `coarse:` — styles that apply only when the primary pointer is a finger.
+     *
+     * Staff use this in the field on phones and tablets, so controls need a
+     * comfortable tap target there; on a desk with a mouse the same controls
+     * should stay dense. A width breakpoint is the wrong instrument for that
+     * distinction — an iPad Pro is 1366px wide and still a finger, while a
+     * 1280px laptop is a cursor. `pointer: coarse` asks the question that
+     * actually matters, and it answers correctly for both.
+     *
+     * Tailwind v4 ships this as `pointer-coarse:`; this project is on 3.4, so
+     * it is declared here. Keep the name if upgrading — v4's built-in variant
+     * is spelled differently, and a silent rename would drop every tap target
+     * back to its desktop size.
+     */
+    plugin(({ addVariant }) => {
+      addVariant('coarse', '@media (pointer: coarse)');
+    }),
+  ],
 };
 
 export default config;

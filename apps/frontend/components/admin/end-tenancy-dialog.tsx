@@ -234,7 +234,7 @@ export function EndTenancyDialog({
         </span>
       ) : null}
       {!row.unitId ? (
-        <span className="ms-2 text-[11px] text-muted-foreground">
+        <span className="ms-2 text-xs text-muted-foreground">
           {en ? '(not linked to the building register)' : '(غير مربوطة بسجل المباني)'}
         </span>
       ) : null}

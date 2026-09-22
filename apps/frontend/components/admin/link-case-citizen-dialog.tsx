@@ -102,8 +102,8 @@ export function LinkCaseCitizenDialog({
         </DialogHeader>
 
         {currentCitizenName ? (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-600/30 bg-emerald-600/5 p-3">
-            <span className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-success/30 bg-success/5 p-3">
+            <span className="flex items-center gap-2 text-sm font-medium text-success">
               <Link2 className="size-4 shrink-0" aria-hidden />
               {locale === 'en' ? 'Linked to' : 'مرتبطة بـ'} {currentCitizenName}
             </span>

@@ -43,9 +43,15 @@ const TableBody = React.forwardRef<
 TableBody.displayName = 'TableBody';
 
 /**
- * Hover is a primary tint rather than another step of `muted`: zebra striping
- * below already spends `muted`, and this palette resolves `accent` and `muted`
- * to the same colour — so a muted hover over a muted stripe is invisible.
+ * Hover is a neutral `muted` wash, matching the sibling Solar system.
+ *
+ * This carried a primary tint (`hover:bg-primary/10`) for a reason that has
+ * since expired: the rows were zebra-striped in `muted`, so a muted hover over
+ * a muted stripe was invisible. The striping is gone — nothing in this codebase
+ * sets `odd:`/`even:` on a row any more — which leaves the tint painting a blue
+ * band across a row on every mouse move, competing with the `bg-primary/10`
+ * that actually means something here (the selected state, the KPI icon tiles).
+ * A hover is transient feedback and should read as a shadow, not as a status.
  */
 const TableRow = React.forwardRef<
   HTMLTableRowElement,
@@ -54,7 +60,7 @@ const TableRow = React.forwardRef<
   <tr
     ref={ref}
     className={cn(
-      'border-b transition-colors hover:bg-primary/10 data-[state=selected]:bg-primary/15',
+      'border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted',
       className,
     )}
     {...props}
@@ -75,7 +81,7 @@ const TableHead = React.forwardRef<
   <th
     ref={ref}
     className={cn(
-      'h-11 whitespace-nowrap px-4 text-start align-middle text-xs font-semibold text-muted-foreground',
+      'h-10 whitespace-nowrap px-3 text-start align-middle font-medium text-muted-foreground',
       className,
     )}
     {...props}
@@ -103,7 +109,7 @@ const TableCell = React.forwardRef<
      * A cell that genuinely wants to wrap — a long note, an audit summary —
      * opts out with `meta.cellClassName: 'whitespace-normal'`.
      */
-    className={cn('whitespace-nowrap px-4 py-3 align-middle', className)}
+    className={cn('whitespace-nowrap p-3 align-middle', className)}
     {...props}
   />
 ));

@@ -30,3 +30,9 @@ overrides:
   # Next's optional image-optimisation dependency; inherits libvips CVEs below
   # 0.35.0.
   sharp: ^0.35.4
+  # Reached through ajv, which declares `^3.0.1` and resolved to 3.1.4. Five
+  # high advisories land below 3.1.6 — host confusion via backslash and via
+  # skipped IDN, and three SSRF paths. ajv's own range already admits this, so
+  # the override raises the resolved version rather than forcing one the tree
+  # does not expect.
+  fast-uri: ^3.1.8

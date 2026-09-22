@@ -20,11 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import {
-  BUILDING_LIFECYCLE,
-  DAMAGE_LEVEL,
   getLabels,
-  STRUCTURE_TYPE,
-  SURVEY_STATUS,
   type BuildingLifecycle,
   type DamageLevel,
   type StructureType,
@@ -33,6 +29,7 @@ import {
 import {
   ApiRequestError,
   deleteBuilding,
+  getBuildingFilterOptions,
   getBuildings,
   getZones,
   logApiError,
@@ -41,7 +38,7 @@ import {
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { Badge } from '@/components/ui/badge';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -271,6 +268,16 @@ export default function BuildingsPage({
     });
 
   // ── Data ──────────────────────────────────────────────────────────
+  /*
+    The sectors, read once.
+
+    A municipality's قطاعات are set up when it is onboarded and changed a
+    handful of times after that; the default read policy re-asked for them on
+    every visit to this page and again on every window focus, to be told the
+    same four names. `reference` holds the answer for the session — and holds
+    it across screens, so خريطة البلدية and سجل الحالات, which ask for the same
+    key, get it for free.
+  */
   const zonesQuery = useStaffQuery({
     queryKey: ['zones', tenant],
     queryFn: (accessToken) => getZones(tenant, accessToken),
@@ -278,8 +285,36 @@ export default function BuildingsPage({
     base,
     token,
     errorMessage: en ? 'Could not load the sectors.' : 'تعذّر تحميل القطاعات.',
+    reference: true,
   });
   const zones: ZoneSummary[] = useMemo(() => zonesQuery.data?.zones ?? [], [zonesQuery.data]);
+
+  /**
+   * What the four selects below may offer — read off the census, not off the
+   * enum.
+   *
+   * The lists used to be `STRUCTURE_TYPE`, `BUILDING_LIFECYCLE`,
+   * `SURVEY_STATUS` and `DAMAGE_LEVEL` — the *type* system's answer to "what
+   * is possible", which is not the register's answer to "what is here". A
+   * municipality with no collapsed buildings was offered «انهيار كامل» all the
+   * same, and choosing it emptied the ledger. Every option here is now one the
+   * census can answer.
+   *
+   * Keyed under `['buildings', tenant, …]` on purpose: `reload` below already
+   * invalidates that prefix after a write, so filing the first مبنى تجاري or
+   * deleting the last one brings the list back into step without this screen
+   * having to remember a second key.
+   */
+  const filterOptionsQuery = useStaffQuery({
+    queryKey: ['buildings', tenant, 'filter-options'],
+    queryFn: (accessToken, signal) => getBuildingFilterOptions(tenant, accessToken, signal),
+    tenant,
+    base,
+    token,
+    errorMessage: en ? 'Could not load the filters.' : 'تعذّر تحميل خيارات التصفية.',
+    reference: true,
+  });
+  const filterOptions = filterOptionsQuery.data;
 
   const query = useStaffQuery({
     queryKey: [
@@ -511,11 +546,20 @@ export default function BuildingsPage({
         header: en ? 'Code' : 'الرمز',
         cell: ({ row }) => (
           <div className="space-y-0.5">
-            <span dir="ltr" className="block font-mono text-sm font-bold">
-              {row.original.code}
+            {/*
+              `<bdi>` inside the block, never `dir` on the block itself.
+              `dir="ltr"` on a block-level element also decides which edge its
+              text starts at, so the code flew to the left of its column while
+              «الرمز» stayed on the right — the heading and its own values on
+              opposite sides. `<bdi>` is inline: it isolates «A1-411-H» so the
+              Latin reads left-to-right without moving where it sits. Same rule
+              as `FactCell`.
+            */}
+            <span className="block font-mono text-sm font-bold">
+              <bdi dir="ltr">{row.original.code}</bdi>
             </span>
             {row.original.postedNumber ? (
-              <span className="block text-[11px] text-muted-foreground">
+              <span className="block text-xs text-muted-foreground">
                 {en ? 'Door: ' : 'مكتوب: '}
                 <span dir="ltr">{row.original.postedNumber}</span>
               </span>
@@ -565,20 +609,39 @@ export default function BuildingsPage({
         accessorKey: 'structureType',
         header: en ? 'Structure' : 'المنشأة',
         cell: ({ row }) => (
-          <div className="flex flex-wrap items-center gap-1">
-            <Badge variant="soft-muted">{labels.structureType[row.original.structureType]}</Badge>
+          <div className="space-y-0.5">
             {/*
-              Beside the type rather than in a column of its own, and only when
+              Each on its own block, with the tag left inline inside it.
+              `CellTag` is `inline-flex`, so it goes where the containing
+              block's text alignment puts it — the start edge in the table, the
+              end edge in the phone card's `<dd>`. Making the tag itself a
+              flex block would pin it to one of those and leave it out of line
+              with every other value on the other.
+            */}
+            <div>
+              <CellTag>{labels.structureType[row.original.structureType]}</CellTag>
+            </div>
+            {/*
+              Under the type rather than in a column of its own, and only when
               it is not the ordinary answer.
 
               «قائم ومستعمل» is nineteen rows in twenty; printing it on all of
               them would add a column of noise to hide the one row that says
               «قيد الإنشاء». The exception is what the reader is scanning for.
+
+              On its own line, not beside it. These were two badges, and the
+              boxes were what kept them apart — set as plain text on one line
+              they run together into «سكني - تجاري قيد الإنشاء», which reads as
+              a single phrase describing a single thing. Stacking says what the
+              boxes used to: two facts, the second qualifying the first. Same
+              shape as «الرمز», which puts the posted number under the code.
             */}
             {row.original.lifecycleStatus !== 'IN_USE' ? (
-              <Badge variant="soft-warning">
-                {labels.buildingLifecycle[row.original.lifecycleStatus]}
-              </Badge>
+              <div>
+                <CellTag tone="warning" className="text-xs">
+                  {labels.buildingLifecycle[row.original.lifecycleStatus]}
+                </CellTag>
+              </div>
             ) : null}
           </div>
         ),
@@ -612,7 +675,7 @@ export default function BuildingsPage({
                 />
               </div>
               {unitsTotal === 0 ? (
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   {en ? 'No matrix yet' : 'لا مصفوفة بعد'}
                 </p>
               ) : null}
@@ -633,11 +696,9 @@ export default function BuildingsPage({
             );
           }
           return (
-            <Badge
-              variant={DAMAGED_LEVELS.includes(level) ? 'soft-destructive' : 'soft-success'}
-            >
+            <CellTag tone={DAMAGED_LEVELS.includes(level) ? 'destructive' : 'success'}>
               {labels.damageLevel[level]}
-            </Badge>
+            </CellTag>
           );
         },
       },
@@ -694,21 +755,12 @@ export default function BuildingsPage({
 
   if (!token) return null;
 
-  const surveyPercent =
-    summary && summary.unitsTotal > 0
-      ? Math.round((summary.unitsSurveyed / summary.unitsTotal) * 100)
-      : 0;
-
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={Building2}
         title={en ? 'Building Census' : 'سجل المباني'}
-        subtitle={
-          en
-            ? 'Every structure standing on a parcel, and how much of it has been surveyed. A building exists here before anyone inside it is registered.'
-            : 'كل منشأة قائمة على عقار، وما أُنجز من مسحها. المبنى مسجَّل هنا قبل أن يُسجَّل أحد من ساكنيه.'
-        }
+
         actions={
           <>
             <Button
@@ -742,33 +794,23 @@ export default function BuildingsPage({
       */}
       <BuildingQueueNotice tenant={tenant} locale={locale} />
 
-      {/* ── The dispatch decision, in four numbers ─────────────────── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {/*
+        ── The dispatch decision, in five numbers ───────────────────
+        Two across until five fit — the sidebar takes a quarter of a laptop —
+        and the fifth takes the whole last row rather than sitting alone at
+        half width.
+      */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
         <MetricCard
           label={en ? 'Buildings' : 'عدد المباني'}
           value={(summary?.buildings ?? 0).toLocaleString('en-US')}
-          subtext={
-            activeFilters > 0
-              ? en
-                ? 'Matching the current filters'
-                : 'ضمن الفلاتر المطبّقة'
-              : en
-                ? 'Across the whole municipality'
-                : 'في كامل نطاق البلدية'
-          }
           loading={query.loading}
           icon={<Building2 className="size-6 text-primary" />}
         />
+        {/* The count behind the share, which a percentage hides: «12 من 40». */}
         <MetricCard
-          label={en ? 'Units surveyed' : 'نسبة المسح'}
-          value={`${surveyPercent}%`}
-          subtext={
-            summary
-              ? en
-                ? `${summary.unitsSurveyed.toLocaleString('en-US')} of ${summary.unitsTotal.toLocaleString('en-US')} units`
-                : `${summary.unitsSurveyed.toLocaleString('en-US')} من ${summary.unitsTotal.toLocaleString('en-US')} وحدة`
-              : undefined
-          }
+          label={en ? 'Units surveyed' : 'الوحدات الممسوحة'}
+          value={`${(summary?.unitsSurveyed ?? 0).toLocaleString('en-US')} ${en ? 'of' : 'من'} ${(summary?.unitsTotal ?? 0).toLocaleString('en-US')}`}
           loading={query.loading}
           icon={<ClipboardCheck className="size-6 text-success" />}
           accent="bg-success/10"
@@ -776,11 +818,6 @@ export default function BuildingsPage({
         <MetricCard
           label={en ? 'Damaged buildings' : 'مبانٍ متضررة'}
           value={(summary?.damaged ?? 0).toLocaleString('en-US')}
-          subtext={
-            en
-              ? 'Restricted use, unsafe or collapsed'
-              : 'استخدام مقيّد أو غير آمن أو منهار'
-          }
           loading={query.loading}
           icon={<ShieldAlert className="size-6 text-destructive" />}
           accent="bg-destructive/10"
@@ -788,55 +825,41 @@ export default function BuildingsPage({
         <MetricCard
           label={en ? 'Unsurveyed units' : 'وحدات غير ممسوحة'}
           value={(summary?.unitsUnsurveyed ?? 0).toLocaleString('en-US')}
-          /*
-            Says why the number is smaller than the matrix totals suggest.
-
-            Units in structures nobody can be inside — permitted, going up,
-            demolished, never built — are out of these figures, and a coverage
-            percentage that improved because somebody marked a block demolished
-            has to be explainable on the screen showing it rather than only in
-            the audit log.
-          */
-          subtext={
-            summary && summary.unitsOutOfScope > 0
-              ? en
-                ? `Doors still to be knocked on · ${summary.unitsOutOfScope.toLocaleString('en-US')} excluded (not standing)`
-                : `أبواب لم يُطرق عليها بعد · ${summary.unitsOutOfScope.toLocaleString('en-US')} مستثناة (منشآت غير قائمة)`
-              : en
-                ? 'Doors still to be knocked on'
-                : 'أبواب لم يُطرق عليها بعد'
-          }
           loading={query.loading}
           icon={<DoorOpen className="size-6 text-warning" />}
           accent="bg-warning/10"
         />
-        {/*
-          «بلا مدخل مُثبت» — the doors nobody has stood at.
-
-          No entrance is ever guessed for a building (D19): the parcel centroid
-          is the middle of a plot where no structure stands, it is the same
-          point for every structure on that plot, and stored in the column that
-          means "the entrance" a guess is indistinguishable from a surveyed
-          fact. So a building created from a desk — or from the registration
-          form, which always creates one this way — has no pin until a person
-          places it.
-
-          That is honest and it is also invisible, which is what this tile
-          fixes. Tapping it filters the ledger to exactly those structures, so
-          the gap is a morning's work rather than a number nobody can act on.
-        */}
         <MetricCard
           label={en ? 'No entrance placed' : 'بلا مدخل مُثبت'}
           value={(summary?.withoutEntrance ?? 0).toLocaleString('en-US')}
-          subtext={
-            en
-              ? 'Not on the map until someone pins the door'
-              : 'لا تظهر على الخريطة حتى يُحدَّد بابها'
-          }
           loading={query.loading}
           icon={<MapPinOff className="size-6 text-muted-foreground" />}
+          className="col-span-2 xl:col-span-1"
         />
       </div>
+
+      {/*
+        Says why the figures above are smaller than the matrix totals suggest.
+
+        Units in structures nobody can be inside — permitted, going up,
+        demolished, never built — are out of these figures, and a coverage
+        percentage that improved because somebody marked a block demolished has
+        to be explainable on the screen showing it rather than only in the
+        audit log.
+
+        Under the row rather than on a tile: it qualifies «الوحدات الممسوحة»
+        and «وحدات غير ممسوحة» equally, and `MetricCard` is label-and-value by
+        decision — a caveat that belongs to two tiles is not a subtext of
+        either. Shown only when something is actually excluded, so a register
+        with nothing out of scope carries no line at all.
+      */}
+      {!query.loading && summary && summary.unitsOutOfScope > 0 ? (
+        <p className="-mt-2 text-xs text-muted-foreground">
+          {en
+            ? `${summary.unitsOutOfScope.toLocaleString('en-US')} units excluded from these figures (structures not standing)`
+            : `${summary.unitsOutOfScope.toLocaleString('en-US')} وحدة مستثناة من هذه الأرقام (منشآت غير قائمة)`}
+        </p>
+      ) : null}
 
       <Card className="overflow-hidden">
         <CardHeader className="border-b px-4 py-3.5 sm:px-6">
@@ -909,7 +932,7 @@ export default function BuildingsPage({
                     label={en ? 'Structure' : 'المنشأة'}
                     value={structureType}
                     onChange={(value) => setFilter(() => setStructureType(value))}
-                    options={STRUCTURE_TYPE.map((value) => ({
+                    options={(filterOptions?.structureTypes ?? []).map((value) => ({
                       value,
                       label: labels.structureType[value],
                     }))}
@@ -919,7 +942,7 @@ export default function BuildingsPage({
                     label={en ? 'Construction' : 'الحالة الإنشائية'}
                     value={lifecycleStatus}
                     onChange={(value) => setFilter(() => setLifecycleStatus(value))}
-                    options={BUILDING_LIFECYCLE.map((value) => ({
+                    options={(filterOptions?.lifecycleStatuses ?? []).map((value) => ({
                       value,
                       label: labels.buildingLifecycle[value],
                     }))}
@@ -929,7 +952,7 @@ export default function BuildingsPage({
                     label={en ? 'Survey' : 'المسح'}
                     value={surveyStatus}
                     onChange={(value) => setFilter(() => setSurveyStatus(value))}
-                    options={SURVEY_STATUS.map((value) => ({
+                    options={(filterOptions?.surveyStatuses ?? []).map((value) => ({
                       value,
                       label: labels.surveyStatus[value],
                     }))}
@@ -939,7 +962,7 @@ export default function BuildingsPage({
                     label={en ? 'Condition' : 'الضرر'}
                     value={damageLevel}
                     onChange={(value) => setFilter(() => setDamageLevel(value))}
-                    options={DAMAGE_LEVEL.map((value) => ({
+                    options={(filterOptions?.damageLevels ?? []).map((value) => ({
                       value,
                       label: labels.damageLevel[value],
                     }))}
@@ -1078,8 +1101,24 @@ function FilterSelect({
     query builder already treats as absent.
   */
   const ALL = '__all__';
+  /*
+    Nothing to choose between.
+
+    The options are now the values the census holds, so an empty list is a real
+    statement: no building has been assessed yet, nobody has recorded a
+    lifecycle other than the default. A select that opens onto «كل الأنواع» and
+    nothing else is a control that cannot change the answer, and offering it
+    invites the reader to look for a filter that is not there. It is also the
+    state while the list is still loading, which is the same thing from the
+    reader's side — there is nothing to pick yet.
+  */
+  const empty = options.length === 0;
   return (
-    <Select value={value || ALL} onValueChange={(next) => onChange(next === ALL ? '' : next)}>
+    <Select
+      value={value || ALL}
+      onValueChange={(next) => onChange(next === ALL ? '' : next)}
+      disabled={empty}
+    >
       <SelectTrigger
         aria-label={label}
         className={cn(
@@ -1103,35 +1142,29 @@ function FilterSelect({
   );
 }
 
+/**
+ * One figure: the icon at the start, its label over its value beside it.
+ * Label and value only — a line under the number is one more thing to read
+ * on a row that is meant to be taken in at a glance.
+ */
 function MetricCard({
   label,
   value,
-  subtext,
   loading,
   icon,
   accent,
+  className,
 }: {
   label: string;
   value: React.ReactNode;
-  subtext?: string;
   loading: boolean;
   icon: React.ReactNode;
   accent?: string;
+  className?: string;
 }) {
   return (
-    <Card>
-      <CardContent className="flex items-center justify-between gap-3 p-5">
-        <div className="min-w-0 space-y-1">
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {loading ? (
-            <Skeleton className="h-7 w-20" />
-          ) : (
-            <div className="text-xl font-bold tracking-tight text-foreground">{value}</div>
-          )}
-          {subtext && !loading ? (
-            <p className="text-[11px] leading-relaxed text-muted-foreground">{subtext}</p>
-          ) : null}
-        </div>
+    <Card className={className}>
+      <CardContent className="flex items-center gap-3 p-4">
         <div
           className={cn(
             'flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10',
@@ -1139,6 +1172,16 @@ function MetricCard({
           )}
         >
           {icon}
+        </div>
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="text-xs font-medium leading-snug text-muted-foreground">{label}</p>
+          {loading ? (
+            <Skeleton className="h-7 w-20" />
+          ) : (
+            <div className="break-words text-lg font-bold tracking-tight tabular-nums text-foreground sm:text-xl">
+              {value}
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

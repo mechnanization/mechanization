@@ -177,7 +177,7 @@ export function ImportCitizensDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         closeLabel="إغلاق"
-        className="flex max-h-[88vh] flex-col gap-0 p-0 sm:max-w-2xl"
+        className="flex max-h-[88dvh] flex-col gap-0 p-0 sm:max-w-2xl"
       >
         <DialogHeader className="shrink-0 space-y-3 border-b p-6 text-start">
           <div className="space-y-1">
@@ -445,7 +445,7 @@ export function ImportCitizensDialog({
 
           {current.id === 'result' && outcome ? (
             <>
-              <div className="rounded-lg border bg-muted/30 p-6 text-center">
+              <div className="rounded-lg border bg-muted/30 p-4 text-center">
                 <Users className="mx-auto size-8 text-success" aria-hidden />
                 <p className="mt-2 text-3xl font-bold tabular-nums">{outcome.created}</p>
                 <p className="text-sm text-muted-foreground">مواطن تمت إضافته إلى السجل</p>

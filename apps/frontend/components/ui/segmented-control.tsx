@@ -15,7 +15,13 @@ export interface SegmentedControlProps {
   onChange: (value: string) => void;
   options: readonly SegmentedOption[] | SegmentedOption[];
   className?: string;
-  size?: 'sm' | 'default' | 'lg';
+  /**
+   * `field` is the input's own height — 40px, 48px under a finger — for a
+   * segmented control sharing a row with text inputs and selects. The other
+   * sizes pad their buttons inside the box, which made the box ten pixels
+   * taller than the input beside it and put the row's bottoms out of line.
+   */
+  size?: 'sm' | 'default' | 'lg' | 'field';
   fullWidth?: boolean;
   disabled?: boolean;
   invalid?: boolean;
@@ -38,7 +44,8 @@ export function SegmentedControl({
       role="radiogroup"
       aria-label={ariaLabel}
       className={cn(
-        'inline-flex items-center rounded-lg border bg-muted/30 p-1 text-muted-foreground select-none',
+        'inline-flex items-center rounded-lg border bg-muted/30 text-muted-foreground select-none',
+        size === 'field' ? 'h-10 p-0.5 coarse:h-12' : 'p-1',
         invalid && 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30',
         fullWidth && 'w-full',
         className,
@@ -66,9 +73,10 @@ export function SegmentedControl({
                 390px screen, which is the width of the phones this is used on.
               */
               fullWidth ? 'min-w-0 flex-1' : 'shrink-0',
-              size === 'sm' && 'min-h-[34px] px-2.5 py-1 text-xs',
-              size === 'default' && 'min-h-[40px] px-3 py-1.5 text-xs sm:text-sm',
-              size === 'lg' && 'min-h-[46px] px-4 py-2 text-sm',
+              size === 'sm' && 'min-h-[34px] coarse:min-h-touch px-2.5 py-1 text-xs',
+              size === 'default' && 'min-h-[40px] coarse:min-h-touch px-3 py-1.5 text-xs sm:text-sm',
+              size === 'lg' && 'min-h-[46px] coarse:min-h-touch px-4 py-2 text-sm',
+              size === 'field' && 'h-full px-3 text-xs sm:text-sm',
               isSelected
                 ? 'bg-primary text-primary-foreground shadow-xs font-semibold'
                 : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
@@ -130,8 +138,8 @@ export function ChipGroup({
             onClick={() => onChange(option.value)}
             className={cn(
               'inline-flex items-center justify-center gap-1.5 rounded-lg border font-medium transition-all select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-              size === 'sm' && 'min-h-[34px] px-3 py-1 text-xs',
-              size === 'default' && 'min-h-[40px] px-3.5 py-1.5 text-xs sm:text-sm',
+              size === 'sm' && 'min-h-[34px] coarse:min-h-touch px-3 py-1 text-xs',
+              size === 'default' && 'min-h-[40px] coarse:min-h-touch px-3.5 py-1.5 text-xs sm:text-sm',
               isSelected
                 ? 'border-primary bg-primary text-primary-foreground font-semibold shadow-xs'
                 : 'border-border/80 bg-card text-foreground/80 hover:border-border hover:bg-muted/50',

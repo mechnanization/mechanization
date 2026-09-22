@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { Loader2, Plus, Trash2, X } from 'lucide-react';
 import {
   ApiRequestError,
@@ -99,18 +100,30 @@ export default function ZonesPage({
     [tenant, base, router],
   );
 
+  /**
+   * Re-reads this screen's own list, and tells the rest of the portal.
+   *
+   * The sector list is a *reference* read elsewhere — «سجل المباني» holds it
+   * for the whole session rather than asking again on every visit, because the
+   * names of a municipality's قطاعات do not change while a clerk works. This
+   * is the screen where they do change, so it is the screen that has to say
+   * so: without the invalidation, renaming a sector here would leave the
+   * census filter offering the old name until the tab was closed.
+   */
+  const queryClient = useQueryClient();
   const reload = useCallback(async () => {
     if (!token) return;
     try {
       const response = await getZones(tenant, token);
       setZones(response.zones);
       setError(null);
+      await queryClient.invalidateQueries({ queryKey: ['zones', tenant] });
     } catch (caught) {
       setError(handleApiError(caught, 'تعذّر تحميل القطاعات.'));
     } finally {
       setLoading(false);
     }
-  }, [tenant, token, handleApiError]);
+  }, [tenant, token, handleApiError, queryClient]);
 
   useEffect(() => {
     if (!token) return;
@@ -270,7 +283,12 @@ export default function ZonesPage({
         sits at the foot of the sector panel, next to the list it adds to,
         rather than in a bar at the top of the screen that existed only to
         carry it.
+
+        The heading stays, `sr-only`. Removing the bar is a layout decision;
+        leaving the page with no `<h1>` at all is not — it is what a screen
+        reader announces the screen by, and every other screen here has one.
       */}
+      <h1 className="sr-only">{locale === 'en' ? 'Zones / Sectors' : 'القطاعات'}</h1>
       {error ? (
         <p role="alert" className="border-b bg-destructive/5 px-4 py-2 text-sm text-destructive">
           {error}
