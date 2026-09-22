@@ -19,6 +19,7 @@ import {
   getLabels,
   isDwellingUnitType,
   isFlaggablePath,
+  isStructuralUnitType,
   isUnoccupied,
   UNIT_STATUS,
   UNIT_TYPE,
@@ -94,7 +95,38 @@ export interface CensusUnitFacts {
  * reachable from nothing. Subtracting from the enum keeps this correct the next
  * time it widens.
  */
-export const BUILDING_UNIT_TYPES = UNIT_TYPE.filter((type) => type !== 'INDEPENDENT_HOUSE');
+export const BUILDING_UNIT_TYPES = UNIT_TYPE.filter(
+  (type) => type !== 'INDEPENDENT_HOUSE' && !isStructuralUnitType(type),
+);
+
+/**
+ * The unit types the **building matrix** offers — `BUILDING_UNIT_TYPES` plus
+ * the structural ones.
+ *
+ * A second list because the two screens are asking different questions, and
+ * until now they happened to have the same answer.
+ *
+ * The citizen form asks «which space does this household hold». A طابق أعمدة is
+ * not an answer to that — nobody holds it, `buildingUnitSchema` refuses it on a
+ * card, and both occupancy doors refuse it on the matrix. Offering it on a form
+ * whose every option leads to a registration would be offering an officer a
+ * dead end they can only discover by hitting it.
+ *
+ * The matrix asks «what is on this level of the building», and there it is the
+ * only true answer: a block drawn without its column floor has every storey
+ * above it off by one, which is the drawing a collector is holding when they
+ * cannot find flat 0304.
+ *
+ * Appended rather than interleaved. Every list of unit types in the UI is
+ * ordered by its own labels, and this one deliberately puts the structural
+ * types last — they are the rare choice, and a grid panel that opens with
+ * «طابق أعمدة» near the top invites the mis-tap that `assertOccupiableUnit`
+ * then has to refuse.
+ */
+export const MATRIX_UNIT_TYPES = [
+  ...BUILDING_UNIT_TYPES,
+  ...UNIT_TYPE.filter(isStructuralUnitType),
+];
 
 /**
  * A card's dot-path for one of its fields — `properties.2.propertyNumber`.

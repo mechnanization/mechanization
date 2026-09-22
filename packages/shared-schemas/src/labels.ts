@@ -189,6 +189,15 @@ export const ar = {
     SHOP: 'محل تجاري',
     WAREHOUSE: 'مستودع',
     GARAGE: 'كراج',
+    /* Not «أعمدة». The floor is the thing being named — an officer picking
+       this from a list of شقة / محل / مستودع is saying «this whole level is
+       columns», and the shorter word reads as a material. */
+    PILOTIS: 'طابق أعمدة',
+    /* «فارغ», not «شاغر». The two are one word apart in Arabic and opposite in
+       meaning here: شاغرة is a flat nobody is in (billable, exemptible), فارغ
+       is a floor with no flat on it at all. The parenthetical is what stops an
+       officer picking this for a floor whose flats happen to be empty. */
+    EMPTY_FLOOR: 'طابق فارغ (بلا وحدات)',
   } satisfies Record<UnitType, string>,
 
   landType: {
@@ -536,6 +545,8 @@ export const en = {
     SHOP: 'Commercial Shop',
     WAREHOUSE: 'Warehouse',
     GARAGE: 'Garage',
+    PILOTIS: 'Pilotis (columns floor)',
+    EMPTY_FLOOR: 'Empty floor (no units)',
   } satisfies Record<UnitType, string>,
 
   landType: {

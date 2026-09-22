@@ -7,6 +7,7 @@ import {
   STRUCTURE_TYPE,
   defaultUnitTypeFor,
   STRUCTURE_TYPE_MAP,
+  isStructuralUnitType,
   structureTypeForProperty,
   type StructureType,
   type UnitStatus,
@@ -1285,18 +1286,50 @@ export function BuildingUnitPicker({
                           (occupant) => occupant.role !== 'OWNER',
                         );
 
+                        /*
+                          A طابق أعمدة is shown and cannot be ticked.
+
+                          Hiding it would have been less code and worse: a floor
+                          whose only block is the pilotis would render as «لم
+                          تُسجَّل عليه أي وحدة بعد» — «nobody has recorded a unit
+                          here yet» — which is a statement that the survey is
+                          incomplete, about the one level where it is finished.
+                          The officer would go looking for the flat that is not
+                          there.
+
+                          Shown greyed with its reason, it does the opposite
+                          work: it tells them the ground level is columns, which
+                          is usually exactly why the flat they want is on the
+                          row above. The server refuses the link anyway
+                          (`buildingUnitSchema`, and `applyOccupancy` on the
+                          census side) — this is so nobody meets that refusal.
+                        */
+                        const structural = isStructuralUnitType(unit.unitType);
+
                         return (
                           <li key={unit.id}>
                             <button
                               type="button"
-                              disabled={Boolean(locked?.unitId) && locked?.unitId !== unit.id}
+                              disabled={
+                                structural ||
+                                (Boolean(locked?.unitId) && locked?.unitId !== unit.id)
+                              }
                               onClick={() => toggleUnit(unit)}
-                              aria-pressed={active}
+                              aria-pressed={structural ? undefined : active}
+                              title={
+                                structural
+                                  ? en
+                                    ? 'A columns floor holds no unit — nobody can be registered against it.'
+                                    : 'طابق الأعمدة لا يحوي وحدة — لا يُسجَّل عليه أحد.'
+                                  : undefined
+                              }
                               className={cn(
                                 'w-full space-y-1 rounded-md border p-2.5 text-start transition-colors',
-                                active
-                                  ? 'border-primary bg-primary/10 ring-1 ring-primary'
-                                  : 'hover:bg-accent/50 disabled:opacity-40',
+                                structural
+                                  ? 'cursor-not-allowed border-dashed bg-muted/30 opacity-70'
+                                  : active
+                                    ? 'border-primary bg-primary/10 ring-1 ring-primary'
+                                    : 'hover:bg-accent/50 disabled:opacity-40',
                               )}
                             >
                               <div className="flex items-center justify-between gap-2">
@@ -1313,10 +1346,24 @@ export function BuildingUnitPicker({
 
                               {/* The same classification the building sheet
                                   colours its cells by — «شاغرة», «غير ممسوحة»,
-                                  «مسجلة (المستأجر: فلان)». */}
-                              <Badge variant={badge.variant} className="max-w-full truncate">
-                                {badge.text}
-                              </Badge>
+                                  «مسجلة (المستأجر: فلان)».
+
+                                  Replaced outright for a structural row rather
+                                  than shown beside its own note: every value
+                                  that badge can carry is a survey finding, and
+                                  «غير ممسوحة» on a column floor reads as work
+                                  outstanding on a level where there is none to
+                                  do. It is the tile that would send an officer
+                                  back to the building. */}
+                              {structural ? (
+                                <Badge variant="soft-muted" className="max-w-full truncate">
+                                  {en ? 'Structure — not a unit' : 'جزء من البناء — ليست وحدة'}
+                                </Badge>
+                              ) : (
+                                <Badge variant={badge.variant} className="max-w-full truncate">
+                                  {badge.text}
+                                </Badge>
+                              )}
 
                               {/*
                                 What the officer needs to recognise the flat

@@ -46,6 +46,12 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=4000
+# The process clock is part of the contract, not an ambient property of the
+# host: billing period keys are built with getUTC*, and a container inheriting
+# a local zone would put the 1st-of-the-month run in the previous period. The
+# @Cron decorators pin UTC too — this pins everything else that reads the clock.
+# No tzdata package needed: UTC is the one zone musl resolves without it.
+ENV TZ=UTC
 
 # Never run as root: this process holds the service-role storage key and a
 # connection to every municipality's data.

@@ -27,7 +27,6 @@ import {
   type SystemSettingsInput,
 } from '@mechanization/shared-schemas';
 import { FeesService } from '../../application/features/fees/fees.service';
-import { RecurringBillingJob } from '../../application/background-jobs/recurring-billing.job';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
@@ -48,10 +47,10 @@ import type { SessionClaims } from '../../application/features/identity/identity
 export class FeesController {
   private readonly logger = new Logger(FeesController.name);
 
-  constructor(
-    private readonly fees: FeesService,
-    private readonly recurring: RecurringBillingJob,
-  ) {}
+  // `RecurringBillingJob` is deliberately not injected here. It is the
+  // cross-tenant job, and this controller is mounted under `t/:tenantSlug`;
+  // having it in reach is how `recurring/run` came to bill every municipality.
+  constructor(private readonly fees: FeesService) {}
 
   // ───────────────────────────  Settings  ───────────────────────────
 
@@ -127,17 +126,34 @@ export class FeesController {
   }
 
   /**
-   * Runs the recurring biller now, instead of waiting for tonight's cron.
+   * Runs the recurring biller now for **this municipality**, instead of waiting
+   * for tonight's cron.
    *
    * Deliberately safe to press twice: the job is idempotent within a period,
    * so a clerk who clicks it again gets "0 new invoices" rather than a second
-   * round of bills. Runs across every municipality, same as the schedule —
-   * this is the platform-level job, not a per-tenant one.
+   * round of bills.
+   *
+   * This used to call `runForAllTenants`, on a route that is otherwise
+   * tenant-scoped in every respect — the URL carries the municipality, the
+   * guard resolves its schema, and every other endpoint on this controller
+   * reads and writes only that one. An ACCOUNTANT in Albazourieh pressing it
+   * issued invoices in Zahle and in every other municipality on the platform,
+   * synchronously, with the audit rows there attributed to SYSTEM rather than
+   * to them. Nothing in the UI said so; the button reads «إصدار الفواتير».
+   *
+   * The platform-wide run has not been removed, it just is not here: the
+   * scheduler drives it through `InternalCronController`, behind `CRON_SECRET`
+   * and with no municipality in the URL to be misread. That is the right shape
+   * for a job that crosses tenants, and a staff role is the wrong key for it.
+   *
+   * `tenants: 1` is kept in the response so the existing client keeps reading
+   * it — and because "one" is now the honest answer.
    */
   @Roles('SUPER_ADMIN', 'ACCOUNTANT')
   @Post('recurring/run')
   async runRecurring() {
-    return this.recurring.runForAllTenants();
+    const result = await this.fees.runRecurringBilling();
+    return { tenants: 1, ...result };
   }
 
   // ──────────────────────  Staff payment ledger  ──────────────────────

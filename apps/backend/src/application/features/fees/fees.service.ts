@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { Prisma } from '../../../generated/tenant-client';
+import type { $Enums, Prisma } from '../../../generated/tenant-client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WHISH_GATEWAY } from '../../../domain/interfaces/whish-gateway.interface';
 import type {
@@ -295,8 +295,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SETTINGS_CACHE_TTL_SECONDS = 300;
 
-/** Guards the period walk below against an unreachable target date. */
-const MAX_PERIOD_STEPS = 600;
+/** Days in a UTC month. `day 0` of the next month is the last day of this one. */
+function daysInUtcMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+}
 
 /**
  * Which billing period a date falls in, for a given recurrence.
@@ -320,46 +322,85 @@ export function periodKeyFor(frequency: string, date: Date): string {
   }
 }
 
-/** Advances a date by exactly one billing period. */
-function addPeriod(date: Date, frequency: string): Date {
-  const next = new Date(date);
-  switch (frequency) {
-    case 'MONTHLY':
-      next.setUTCMonth(next.getUTCMonth() + 1);
-      break;
-    case 'HALF_YEARLY':
-      next.setUTCMonth(next.getUTCMonth() + 6);
-      break;
-    case 'ANNUALLY':
-      next.setUTCFullYear(next.getUTCFullYear() + 1);
-      break;
-    default:
-      break;
-  }
-  return next;
-}
-
 /**
  * The due date this notice carries in the period containing `now`.
  *
- * Walked forward from the original rather than reconstructed from the month:
- * `setUTCMonth` clamps 31 January + 1 month to early March, so rebuilding the
- * date each period would drift. Stepping from the original keeps a fee due on
- * the 15th due on the 15th.
+ * Rebuilt from the original's day-of-month, **clamped to the target month**.
+ *
+ * This used to walk forward one period at a time from the original, and the
+ * comment here defended that choice against "rebuilding from the month" on the
+ * grounds that `setUTCMonth` turns 31 January into 3 March. That overflow is
+ * real — but stepping does not escape it, it *compounds* it, because every step
+ * moves the accumulated value rather than the original:
+ *
+ *     notice due 2026-01-31, MONTHLY
+ *       run 2026-02-05  period 2026-02  due 2026-03-03   ← dated outside its own period
+ *       run 2026-03-05  period 2026-03  due 2026-03-03   ← February and March share a date
+ *       run 2026-04-05  period 2026-04  due 2026-04-03   ← moved to the 3rd, permanently
+ *
+ * Annual notices were worse: a fee due 29 February walked to 1 March and stayed
+ * in March for ever, including in the leap years it should have returned to.
+ *
+ * Rebuilding is correct as long as it clamps, which `setUTCMonth` does not do —
+ * it overflows into the next month instead of stopping at the last valid day.
+ * So the day is clamped explicitly: a fee due on the 31st falls due on the 30th
+ * in April and on the 28th or 29th in February, and is back on the 31st the
+ * next month it exists. A fee due on the 15th is due on the 15th, which is what
+ * the old comment wanted and what stepping delivered only for mid-month dates.
+ *
+ * `runRecurringBilling` skips a notice whose own period is the current one and
+ * any notice dated in the future, so `original <= now` whenever this is called.
  */
-function dueDateInCurrentPeriod(original: Date, frequency: string, now: Date): Date {
-  const target = periodKeyFor(frequency, now);
-  let due = new Date(original);
-
-  for (let step = 0; step < MAX_PERIOD_STEPS; step++) {
-    const key = periodKeyFor(frequency, due);
-    if (key === target) return due;
-    // Already past the current period — a notice dated in the future is not
-    // billable yet, so hand back what it has.
-    if (due > now) return due;
-    due = addPeriod(due, frequency);
+export function dueDateInCurrentPeriod(original: Date, frequency: string, now: Date): Date {
+  // A one-off fee has exactly one period and one due date, forever.
+  if (frequency !== 'MONTHLY' && frequency !== 'HALF_YEARLY' && frequency !== 'ANNUALLY') {
+    return new Date(original);
   }
-  return due;
+
+  const year = now.getUTCFullYear();
+  const month =
+    frequency === 'MONTHLY'
+      ? now.getUTCMonth()
+      : frequency === 'ANNUALLY'
+        ? original.getUTCMonth()
+        : // The same position within the half it started in: a fee first due in
+          // February (month 1 of H1) falls due in August (month 1 of H2).
+          (now.getUTCMonth() < 6 ? 0 : 6) + (original.getUTCMonth() % 6);
+
+  return new Date(
+    Date.UTC(
+      year,
+      month,
+      Math.min(original.getUTCDate(), daysInUtcMonth(year, month)),
+      original.getUTCHours(),
+      original.getUTCMinutes(),
+      original.getUTCSeconds(),
+      original.getUTCMilliseconds(),
+    ),
+  );
+}
+
+/**
+ * A short, safe classifier for a billing failure — never the driver's message.
+ *
+ * This string is stored in `billing_run_entries.failureKind`, and a Postgres
+ * error quotes the row that caused it: a unique violation on a citizen's
+ * national ID puts that number in `DETAIL`. Writing `error.message` into a
+ * column would make the ledger a citizen-data table by accident, so it never
+ * touches the message. A Prisma error code (`P2002`) and an error class name
+ * carry no row content and are what an operator actually needs to tell a
+ * timeout from a constraint. The message itself goes to the log, on a machine
+ * that is allowed to hold it.
+ */
+function classifyBillingFailure(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === 'string' && /^P\d{4}$/.test(code)) return `prisma:${code}`;
+
+    const name = (error as { name?: unknown }).name;
+    if (typeof name === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name)) return name;
+  }
+  return 'unknown';
 }
 
 export interface PaymentSummary {
@@ -856,6 +897,8 @@ export class FeesService {
   async runRecurringBilling(now = new Date()): Promise<{
     noticesConsidered: number;
     invoicesCreated: number;
+    /** Notices whose own run threw. The rest still ran; see `billing_run_entries`. */
+    noticesFailed: number;
   }> {
     const notices = await withConnectionRetry(() =>
       this.db.feeNotice.findMany({
@@ -865,13 +908,37 @@ export class FeesService {
 
     let invoicesCreated = 0;
 
+    let noticesFailed = 0;
+
     for (const notice of notices) {
       const periodKey = periodKeyFor(notice.frequency, now);
+      const startedAt = new Date();
 
-      // The notice's own first period. Anything earlier than the notice's
-      // start would be back-billing someone for a fee that did not exist.
-      if (periodKey === periodKeyFor(notice.frequency, notice.dueDate)) continue;
-      if (notice.dueDate > now) continue;
+      /*
+        One notice's failure must not abandon the rest.
+
+        `RecurringBillingJob` already catches per *tenant*, so one broken
+        municipality does not stop the others. This loop had no equivalent, so
+        a single notice that threw — a target query timing out, an assessment
+        hitting a bad row — abandoned every notice after it for that
+        municipality, for that period, silently. The job logged one error and
+        reported success for the tenants it had reached.
+
+        And because the biller only ever computes the period containing `now`,
+        an abandoned period is not retried: the next run computes the next
+        period and the gap closes over with no error and no row.
+      */
+      try {
+        // The notice's own first period. Anything earlier than the notice's
+        // start would be back-billing someone for a fee that did not exist.
+        if (periodKey === periodKeyFor(notice.frequency, notice.dueDate)) {
+          await this.recordBillingRun(notice.id, periodKey, startedAt, { outcome: 'SKIPPED' });
+          continue;
+        }
+        if (notice.dueDate > now) {
+          await this.recordBillingRun(notice.id, periodKey, startedAt, { outcome: 'SKIPPED' });
+          continue;
+        }
 
       const dueDate = dueDateInCurrentPeriod(notice.dueDate, notice.frequency, now);
 
@@ -884,7 +951,10 @@ export class FeesService {
         targetCitizenId: notice.targetCitizenId ?? undefined,
       } as never);
 
-      if (citizenIds.length === 0) continue;
+      if (citizenIds.length === 0) {
+        await this.recordBillingRun(notice.id, periodKey, startedAt, { outcome: 'SKIPPED' });
+        continue;
+      }
 
       /*
         Re-assessed every period, not carried over from the first issue.
@@ -906,7 +976,13 @@ export class FeesService {
       });
 
       const billable = assessed.filter((entry) => entry.amount > 0);
-      if (billable.length === 0) continue;
+      if (billable.length === 0) {
+        await this.recordBillingRun(notice.id, periodKey, startedAt, {
+          outcome: 'SKIPPED',
+          citizensConsidered: citizenIds.length,
+        });
+        continue;
+      }
 
       if (unassessable.length > 0) {
         this.logger.warn(
@@ -945,10 +1021,83 @@ export class FeesService {
         });
       }
 
-      invoicesCreated += created.count;
+        invoicesCreated += created.count;
+
+        await this.recordBillingRun(notice.id, periodKey, startedAt, {
+          outcome: 'ISSUED',
+          citizensConsidered: citizenIds.length,
+          invoicesCreated: created.count,
+        });
+      } catch (error) {
+        noticesFailed += 1;
+        this.logger.error(
+          `Recurring "${notice.title}" (${periodKey}) failed; continuing with the rest: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        await this.recordBillingRun(notice.id, periodKey, startedAt, {
+          outcome: 'FAILED',
+          failureKind: classifyBillingFailure(error),
+        });
+      }
     }
 
-    return { noticesConsidered: notices.length, invoicesCreated };
+    return { noticesConsidered: notices.length, invoicesCreated, noticesFailed };
+  }
+
+  /**
+   * Records what a run did to one notice in one period (migration 0056).
+   *
+   * **This does not back-bill.** A FAILED row is a fact for a human to act on,
+   * not an instruction to the next run. A citizen receiving a quarter of
+   * invoices at once because a pooler was down in February is a worse outcome
+   * than a municipality seeing a gap and deciding what to do about it; issuing
+   * a missed period stays a deliberate act. See docs/open-decisions.md.
+   *
+   * Upserted rather than inserted: the job is safe to run repeatedly within a
+   * period, so the second run updates the account of the attempt rather than
+   * appending a second one. The unique `(feeNoticeId, periodKey)` is what makes
+   * that the same row.
+   *
+   * Its own failure is swallowed. The ledger exists to make a billing failure
+   * visible, and a ledger write that could itself abort the run would have
+   * turned "one notice failed" into "the run died" — the failure it was added
+   * to prevent.
+   */
+  private async recordBillingRun(
+    feeNoticeId: string,
+    periodKey: string,
+    startedAt: Date,
+    result: {
+      outcome: 'ISSUED' | 'SKIPPED' | 'FAILED';
+      citizensConsidered?: number;
+      invoicesCreated?: number;
+      failureKind?: string;
+    },
+  ): Promise<void> {
+    const data = {
+      outcome: result.outcome,
+      citizensConsidered: result.citizensConsidered ?? 0,
+      invoicesCreated: result.invoicesCreated ?? 0,
+      failureKind: result.failureKind ?? null,
+      startedAt,
+      finishedAt: new Date(),
+    };
+
+    try {
+      await this.db.billingRunEntry.upsert({
+        where: { feeNoticeId_periodKey: { feeNoticeId, periodKey } },
+        create: { feeNoticeId, periodKey, ...data },
+        update: data,
+      });
+    } catch (error) {
+      this.logger.error(
+        `could not record the billing run for notice ${feeNoticeId} (${periodKey}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   /** Stops or resumes a recurring notice without touching its past invoices. */
@@ -1333,6 +1482,48 @@ export class FeesService {
    * receipt — so the money is only confirmed once a clerk has matched it
    * against the municipality's account.
    */
+  /**
+   * Moves an invoice between statuses, conditionally.
+   *
+   * The `WHERE` carries the status the caller decided on, so a settlement that
+   * commits between the read and this write is not overwritten: the update
+   * matches nothing and the caller is refused instead.
+   *
+   * `PaymentLedgerService` gets the same guarantee a different way — it holds
+   * the row with `SELECT … FOR UPDATE` and re-reads every value it decides on
+   * under that lock, which is why its own `update` needs no predicate and must
+   * not grow one. These paths move no money, so they take the guarantee from
+   * the predicate rather than from a lock.
+   *
+   * Without this, an invoice settled at the counter could be dragged back to
+   * PENDING_REVIEW or UNPAID by a citizen's portal click or a late provider
+   * callback — leaving `paidAmount == amount` and a real ledger row on a bill
+   * the register calls unpaid, which nothing in the system self-corrects.
+   */
+  private async transition(input: {
+    paymentId: string;
+    from: $Enums.PaymentStatus | $Enums.PaymentStatus[];
+    to: $Enums.PaymentStatus;
+    /** Extra predicate the caller already relied on: ownership, a live ref. */
+    guard?: Prisma.CitizenPaymentWhereInput;
+    // The `Unchecked` variant, because `reviewedById` is a relation scalar and
+    // Prisma keeps those out of the plain update-many input — `updateMany` has
+    // no `connect`, so the foreign key has to be assignable directly.
+    data?: Prisma.CitizenPaymentUncheckedUpdateManyInput;
+    conflictMessage: string;
+  }): Promise<void> {
+    const { count } = await this.db.citizenPayment.updateMany({
+      where: {
+        id: input.paymentId,
+        paymentStatus: Array.isArray(input.from) ? { in: input.from } : input.from,
+        ...input.guard,
+      },
+      data: { ...input.data, paymentStatus: input.to },
+    });
+
+    if (count === 0) throw new ConflictError(input.conflictMessage);
+  }
+
   async declare(input: {
     paymentId: string;
     citizenId: string;
@@ -1345,6 +1536,9 @@ export class FeesService {
     });
     if (!payment) throw new NotFoundError('Payment', input.paymentId);
 
+    // Kept ahead of the write: this is what separates "not yours / no such
+    // invoice" from the two specific states a citizen can act on. The
+    // predicate below only fires on the genuine race.
     if (payment.paymentStatus === 'PAID') {
       throw new ConflictError('هذه الدفعة مسدّدة بالفعل');
     }
@@ -1352,10 +1546,14 @@ export class FeesService {
       throw new ConflictError('هذه الدفعة قيد المراجعة بالفعل');
     }
 
-    await this.db.citizenPayment.update({
-      where: { id: payment.id },
+    await this.transition({
+      paymentId: payment.id,
+      // OVERDUE is derived on read and never stored, but naming it here means
+      // a stored one could not strand a citizen who wants to declare.
+      from: ['UNPAID', 'OVERDUE'],
+      to: 'PENDING_REVIEW',
+      guard: { citizenId: input.citizenId },
       data: {
-        paymentStatus: 'PENDING_REVIEW',
         paymentMethod: input.method as never,
         whishTransactionRef: input.whishTransactionRef ?? null,
         isSeen: false,
@@ -1363,6 +1561,7 @@ export class FeesService {
         // fresh claim as though it applied to it.
         reviewNote: null,
       },
+      conflictMessage: 'تغيّرت حالة هذه الدفعة. يرجى تحديث الصفحة',
     });
 
     this.events.emit('payment.declared', {
@@ -1482,16 +1681,24 @@ export class FeesService {
        * refused *claim* is not a movement of money, and it says nothing about
        * cash already taken at the counter on the same invoice. That history now
        * lives in its own rows, so refusing a claim can no longer disturb it.
+       *
+       * The status predicate matters most here: the guard above read the row
+       * before the clerk decided, and a counter settlement committing in that
+       * window would otherwise be overwritten with UNPAID — an invoice marked
+       * unpaid, with the cash in the drawer and a printed receipt, and a
+       * `reviewNote` that reads as a refusal of money the municipality holds.
        */
-      await this.db.citizenPayment.update({
-        where: { id: payment.id },
+      await this.transition({
+        paymentId: payment.id,
+        from: 'PENDING_REVIEW',
+        to: 'UNPAID',
         data: {
-          paymentStatus: 'UNPAID',
           paymentMethod: null,
           whishTransactionRef: null,
           reviewedById: input.actor.id,
           reviewNote: input.note ?? null,
         },
+        conflictMessage: 'تغيّرت حالة هذه الدفعة منذ فتح الشاشة. يرجى تحديثها',
       });
 
       this.events.emit('payment.reviewed', {
@@ -1923,15 +2130,70 @@ export class FeesService {
       returnUrl: input.returnUrl,
     });
 
-    await this.db.citizenPayment.update({
-      where: { id: payment.id },
-      data: {
-        paymentStatus: 'PENDING_REVIEW',
-        paymentMethod: 'WHISH_MONEY',
-        // The provider's handle for this attempt. Also what the clerk sees in
-        // the verification queue while a live callback is still in flight.
-        whishTransactionRef: checkout.externalRef,
-      },
+    /**
+     * The widest race in this service: the guard above was read before an
+     * outbound HTTP call to the provider, so hundreds of milliseconds — or
+     * seconds — separate the decision from this write. A counter settlement
+     * landing in that window would otherwise be pulled back to PENDING_REVIEW.
+     *
+     * Refusing here leaves a checkout live at the provider that no row
+     * references. That is a smaller problem than silently unsettling a paid
+     * invoice, but it is not nothing: see docs/open-decisions.md §15 — whether
+     * to reserve the row before calling the provider, or cancel the checkout on
+     * refusal, is a decision this code does not get to make.
+     *
+     * All three writes are one transaction. The `whish_checkouts` row is what a
+     * callback will be matched against, so an invoice that says PENDING_REVIEW
+     * with no checkout row — or a checkout row against an invoice that was never
+     * claimed — is a state no callback could be resolved from.
+     */
+    await this.db.$transaction(async (tx) => {
+      /*
+        Any earlier attempt on this invoice stops being live. A citizen who
+        abandons a checkout and starts again leaves the first one open at the
+        provider, and `whish_checkouts_one_open_per_payment_key` allows exactly
+        one — which is the point: two open checkouts on one bill are two ways to
+        pay it and a race to bank the second. The old row is marked, not
+        deleted, because the provider may still call back about it and "we know,
+        and we stopped waiting" is worth being able to say.
+      */
+      await tx.whishCheckout.updateMany({
+        where: { paymentId: payment.id, state: 'OPEN' },
+        data: { state: 'ABANDONED', settledAt: new Date() },
+      });
+
+      const { count } = await tx.citizenPayment.updateMany({
+        where: {
+          id: payment.id,
+          citizenId: input.citizenId,
+          paymentStatus: { in: ['UNPAID', 'OVERDUE'] },
+        },
+        data: {
+          paymentStatus: 'PENDING_REVIEW',
+          paymentMethod: 'WHISH_MONEY',
+          // Kept in step for now. `whish_checkouts.externalRef` is what the
+          // callback resolves by; this column is the pre-0057 path and is due
+          // to be dropped in its own later release.
+          whishTransactionRef: checkout.externalRef,
+        },
+      });
+
+      if (count === 0) {
+        throw new ConflictError('تغيّرت حالة هذه المطالبة أثناء تجهيز الدفع. يرجى تحديث الصفحة');
+      }
+
+      await tx.whishCheckout.create({
+        data: {
+          externalRef: checkout.externalRef,
+          paymentId: payment.id,
+          citizenId: input.citizenId,
+          // What was quoted to the provider, captured now. Not re-read off the
+          // invoice when the callback lands: by then the outstanding balance
+          // may have moved, and the callback answers what was asked for.
+          amount: outstanding,
+          currency: payment.currency,
+        },
+      });
     });
 
     return { redirectUrl: checkout.redirectUrl, pending: !this.whish.isLive };
@@ -1957,15 +2219,51 @@ export class FeesService {
    * PENDING_REVIEW that will never resolve.
    */
   async settleFromWhishCallback(callback: WhishCallback): Promise<{ applied: boolean }> {
-    const payment = await this.db.citizenPayment.findFirst({
-      where: { whishTransactionRef: callback.externalRef },
-      select: { id: true, amount: true, paidAmount: true, paymentStatus: true, citizenId: true },
+    /*
+      Resolved against `whish_checkouts`, not against
+      `citizen_payments.whishTransactionRef` (migration 0057).
+
+      That column was the wrong key in two compounding ways: it is not unique,
+      and it is mutable — the ledger overwrites it on settlement and the failure
+      path nulls it. So the handle the provider holds could stop existing on the
+      row it belonged to while the provider still believed it was live.
+
+      The shape that lost money: a citizen abandons checkout #1 and opens #2, so
+      the column now names #2. A late *failure* callback for #1 found the
+      invoice by that column, cleared it, and #2's own success callback then
+      arrived to a reference no row carried — logged as unknown, money never
+      banked.
+
+      A checkout row is immutable and uniquely keyed, so a callback resolves to
+      exactly one attempt or to none, for ever.
+    */
+    const checkout = await this.db.whishCheckout.findUnique({
+      where: { externalRef: callback.externalRef },
+      select: {
+        id: true,
+        state: true,
+        paymentId: true,
+        payment: {
+          select: { id: true, amount: true, paidAmount: true, paymentStatus: true, citizenId: true },
+        },
+      },
     });
 
-    if (!payment) {
+    if (!checkout) {
       this.logger.warn(`Whish callback for unknown reference ${callback.externalRef}`);
       return { applied: false };
     }
+
+    // A checkout the citizen walked away from. Recorded rather than deleted
+    // precisely so this answer exists: we know about it, and we stopped waiting.
+    if (checkout.state !== 'OPEN') {
+      this.logger.warn(
+        `Whish callback for reference ${callback.externalRef}, which is already ${checkout.state}`,
+      );
+      return { applied: false };
+    }
+
+    const payment = checkout.payment;
     /**
      * Idempotent by construction: a provider that does not get a 200 retries,
      * and a retry must not bank the money twice or stamp a second `paidAt`.
@@ -1973,15 +2271,55 @@ export class FeesService {
     if (payment.paymentStatus === 'PAID') return { applied: false };
 
     if (!callback.succeeded) {
-      // No money moved, so nothing is written to the ledger. The invoice goes
-      // back to UNPAID and releases the reference so the citizen can start
-      // again rather than being stuck behind a PENDING_REVIEW that will never
-      // resolve.
-      await this.db.citizenPayment.update({
-        where: { id: payment.id },
-        data: { paymentStatus: 'UNPAID', paymentMethod: null, whishTransactionRef: null },
+      /*
+        No money moved, so nothing is written to the ledger. The invoice goes
+        back to UNPAID so the citizen can start again rather than being stuck
+        behind a PENDING_REVIEW that will never resolve.
+
+        Two predicates on the invoice, not one. `paymentStatus` stops a counter
+        settlement that landed since the read above from being overwritten with
+        UNPAID — an invoice marked unpaid with the cash already in the drawer.
+        `whishTransactionRef` keeps this attempt from clearing a reference a
+        newer attempt has since claimed.
+
+        The checkout and the invoice move together: a FAILED checkout beside an
+        invoice still sitting at PENDING_REVIEW would leave the citizen unable
+        to retry and nothing to explain why.
+
+        This deliberately does not throw. The controller answers 200 to every
+        callback so the provider stops retrying, and a 409 here would be an
+        infinite retry loop. `{ applied: false }` is already this method's word
+        for "nothing to do".
+      */
+      const count = await this.db.$transaction(async (tx) => {
+        const invoice = await tx.citizenPayment.updateMany({
+          where: {
+            id: payment.id,
+            paymentStatus: 'PENDING_REVIEW',
+            whishTransactionRef: callback.externalRef,
+          },
+          data: { paymentStatus: 'UNPAID', paymentMethod: null, whishTransactionRef: null },
+        });
+
+        await tx.whishCheckout.updateMany({
+          where: { id: checkout.id, state: 'OPEN' },
+          data: {
+            state: 'FAILED',
+            settledAt: new Date(),
+            providerTxnRef: callback.transactionRef ?? null,
+          },
+        });
+
+        return invoice.count;
       });
-      return { applied: true };
+
+      if (count === 0) {
+        this.logger.warn(
+          `Whish failure callback for ${callback.externalRef} changed nothing: the invoice ` +
+            'moved on, or the reference is no longer live.',
+        );
+      }
+      return { applied: count > 0 };
     }
 
     /**
@@ -2011,6 +2349,33 @@ export class FeesService {
       externalRef: callback.transactionRef,
       note: 'دفع إلكتروني عبر Whish',
     });
+
+    /*
+      Closed after the ledger, not with it.
+
+      `ledger.record` holds the invoice under `SELECT … FOR UPDATE` and is the
+      authority on whether the money was banked; joining it to this write would
+      mean a failure to close the checkout could roll back a settlement that
+      genuinely happened. The wrong way round: money banked with a checkout
+      still OPEN is a retry that finds `state !== 'OPEN'` and declines, which is
+      correct. Money not banked because bookkeeping failed is not.
+    */
+    await this.db.whishCheckout
+      .updateMany({
+        where: { id: checkout.id, state: 'OPEN' },
+        data: {
+          state: 'SUCCEEDED',
+          settledAt: new Date(),
+          providerTxnRef: callback.transactionRef ?? null,
+        },
+      })
+      .catch((error: unknown) => {
+        this.logger.error(
+          `settled ${callback.externalRef} but could not close its checkout row: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
 
     this.events.emit('payment.reviewed', {
       tenantSlug: this.tenantContext.tenantSlug,

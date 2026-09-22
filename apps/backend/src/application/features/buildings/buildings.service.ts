@@ -8,7 +8,9 @@ import {
   OCCUPIABLE_LIFECYCLE,
   STRUCTURE_TYPE_MAP,
   contradictsVacancy,
+  getLabels,
   isDwellingUnitType,
+  isStructuralUnitType,
   isUnoccupied,
   SURVEYED_STATUS,
   unitStatusForRole,
@@ -2049,6 +2051,89 @@ export class BuildingsService {
       await this.assertMayBeCalledEmpty(before);
     }
 
+    /*
+      Retyping a real unit into «طابق أعمدة».
+
+      The correction this exists to allow is the common one: a block painted
+      مستودع before this type existed, which is what the grid offered for a
+      column floor. The correction it must refuse is the same edit made on a
+      flat somebody is recorded in — that would leave `unit_occupancies` rows
+      hanging off a unit the two occupancy doors would now refuse to create,
+      and nothing would ever revisit them. Billing would go on reading the
+      cards those rows produced.
+
+      Refused rather than cascaded into ending the spells, for the reason
+      `assertMayBeCalledEmpty` gives about the same choice: «this level is
+      columns» and «these people live here» are opposite statements about
+      people, and only the officer knows which is true.
+
+      Historical spells are left alone and counted as no obstacle — a flat that
+      was let until it was demolished into a car park is exactly the history D2
+      keeps, and refusing on it would make the correction impossible rather than
+      careful.
+    */
+    const becomingStructural =
+      input.unitType !== undefined &&
+      isStructuralUnitType(input.unitType) &&
+      !isStructuralUnitType(before.unitType);
+
+    if (becomingStructural) {
+      /*
+        Two tables, not one.
+
+        `unit_occupancies` is the obvious one, and counting it alone was the
+        original guard. But a citizen's property card links to this same unit
+        through `building_units.unitId`, and that link is what *billing* reads:
+        `billableUnits` flattens the card's rows and `preferLinked` takes the
+        census unit's type over the card's. So the row this guard is meant to
+        protect against can exist with no occupancy at all.
+
+        The census sync creates exactly that state on purpose — it skips a
+        structural unit with a warning and deliberately leaves the card link in
+        place — so the state the old guard was blind to is one the system
+        produces itself.
+
+        An ended link (`endedAt`) is history and no obstacle, for the same
+        reason a closed occupancy spell is not: a flat that was let until it was
+        demolished into a car park is exactly what migration 0046 keeps.
+      */
+      const [liveOccupancies, liveCardLinks] = await Promise.all([
+        this.db.unitOccupancy.count({ where: { unitId, toDate: null } }),
+        this.db.buildingUnit.count({ where: { unitId, endedAt: null } }),
+      ]);
+
+      if (liveOccupancies > 0 || liveCardLinks > 0) {
+        // Named separately because they are undone differently: one is ended
+        // from the occupancy panel, the other unlinked from the citizen's card.
+        const reasons = [
+          liveOccupancies > 0 ? `مسجَّل عليها ${liveOccupancies} شاغل حالي` : null,
+          liveCardLinks > 0 ? `مرتبطة بـ ${liveCardLinks} بطاقة عقارية` : null,
+        ].filter(Boolean);
+
+        throw new ConflictError(
+          `لا يمكن تحويل الوحدة ${before.unitCode} إلى ${structuralLabel(input.unitType!)}: ` +
+            `${reasons.join(' و')}. ` +
+            `${liveOccupancies > 0 ? 'أنهِ الإشغال' : 'أزل الربط'} أولاً`,
+        );
+      }
+    }
+
+    /*
+      حالة الوحدة on a structural row has no meaning — «مشغولة» and «شاغرة» are
+      both answers to a question about a space that can be occupied. Cleared on
+      the way in rather than left to the form, so a unit retyped from مستودع
+      carries none of «مؤجرة» forward, and refused rather than ignored when one
+      is sent alongside the type: silently dropping a value the officer chose is
+      how a form comes to disagree with the row it just wrote.
+    */
+    const structuralAfter = isStructuralUnitType(input.unitType ?? before.unitType);
+    if (structuralAfter && input.unitStatus) {
+      throw new ValidationError(
+        `${structuralLabel(input.unitType ?? before.unitType)} ليس مسكناً ولا محلاً — لا تُسجَّل له حالة إشغال`,
+        { unitStatus: input.unitStatus, unitType: input.unitType ?? before.unitType },
+      );
+    }
+
     const updated = await this.db.unit.update({
       where: { id: unitId },
       data: {
@@ -2061,7 +2146,14 @@ export class BuildingsService {
           : {}),
         ...(input.side !== undefined ? { side: input.side?.trim() || null } : {}),
         ...(input.unitArea !== undefined ? { unitArea: input.unitArea ?? null } : {}),
-        ...(input.unitStatus !== undefined ? { unitStatus: input.unitStatus as never } : {}),
+        /* Becoming structural clears it — see `becomingStructural` above. The
+           refusal there covers an officer *sending* one; this covers the value
+           already sitting on the row being retyped. */
+        ...(becomingStructural
+          ? { unitStatus: null }
+          : input.unitStatus !== undefined
+            ? { unitStatus: input.unitStatus as never }
+            : {}),
         ...(input.surveyStatus !== undefined
           ? { surveyStatus: input.surveyStatus as never }
           : {}),
@@ -2194,6 +2286,23 @@ export class BuildingsService {
   ): Promise<{ vacancy: VacancyRow; unit: UnitRow; casesResolved: number }> {
     const unit = await this.db.unit.findUnique({ where: { id: unitId } });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+
+    /*
+      A طابق أعمدة is not empty — it is not a space that can be full.
+
+      «تأكيد الشغور» exists to exempt an owner from the occupancy fee on a
+      dwelling or premises nobody is using (Law 60/1988 Art. 11). A column floor
+      was never going to be charged one, so a confirmation on it would be a
+      finding with nothing to find and an exemption from nothing — while still
+      producing the audit rows, the survey-status change and the undo path that
+      a real confirmation carries.
+    */
+    if (isStructuralUnitType(unit.unitType)) {
+      throw new ValidationError(
+        `الوحدة ${unit.unitCode} ${structuralLabel(unit.unitType)} — لا يُسجَّل لها تأكيد شغور، فهي ليست مسكناً ولا محلاً يُشغل`,
+        { unitType: unit.unitType, unitCode: unit.unitCode },
+      );
+    }
 
     const standing = await activeVacancy(this.db, unitId);
     if (standing) {
@@ -2539,6 +2648,14 @@ export class BuildingsService {
       },
     });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+
+    /*
+      Ahead of the citizen lookup, because it is a fact about the unit alone.
+      Whether the person exists does not change the answer, and the officer who
+      tapped the wrong block wants to be told which block, not told about a
+      citizen they had already picked correctly.
+    */
+    assertOccupiableUnit({ unitType: unit.unitType, unitCode: unit.unitCode });
 
     const citizen = await this.db.user.findUnique({ where: { id: input.citizenId } });
     if (!citizen || citizen.kind !== 'CITIZEN') {
@@ -4102,6 +4219,49 @@ export function assertNonResidentOccupancy(input: {
       { unitStatus: input.unitStatus },
     );
   }
+}
+
+/**
+ * Nobody is recorded in a طابق أعمدة.
+ *
+ * A structural row draws a level of the building — see `STRUCTURAL_UNIT_TYPE`.
+ * It has no door, so «من يسكنها» has no answer, and an occupancy on one would
+ * propagate exactly like a real one: `claimOnFile` would mint a card for it,
+ * `assessCitizen` would bill that card, and a fee notice would go out for a
+ * floor of columns.
+ *
+ * Placed beside `assertNonResidentOccupancy` and called from the same two
+ * places for the same stated reason — **both doors must refuse the same
+ * thing**. The matrix's occupant panel and a registration claiming a flat are
+ * separate code paths to one table, and a rule on one of them is not a rule,
+ * it is a preference the other path ignores.
+ *
+ * The message names the correction rather than only the refusal. An officer
+ * who reaches this has almost always picked the wrong block on a grid where
+ * the pilotis sits directly under the flat they wanted.
+ */
+export function assertOccupiableUnit(input: { unitType: string; unitCode: string }): void {
+  if (!isStructuralUnitType(input.unitType)) return;
+
+  throw new ValidationError(
+    `الوحدة ${input.unitCode} ${structuralLabel(input.unitType)} — لا يُسجَّل عليها شاغل. اختر وحدة في أحد الطوابق الأخرى، أو صحّح نوع الوحدة إن كانت مقسَّمة ومستعملة`,
+    { unitType: input.unitType, unitCode: input.unitCode },
+  );
+}
+
+/**
+ * «طابق أعمدة» or «طابق فارغ (بلا وحدات)», as the case may be.
+ *
+ * Read from the shared labels rather than written into each message, because
+ * there are two structural types now and telling an officer their block is a
+ * طابق أعمدة when they marked it فارغ is the kind of wrongness that makes
+ * people distrust the rest of the sentence. The Arabic label is the only one
+ * used: these messages go to `ValidationError`, which this API returns in
+ * Arabic throughout.
+ */
+function structuralLabel(unitType: string): string {
+  const labels = getLabels('ar').unitType as Record<string, string | undefined>;
+  return labels[unitType] ?? 'وحدة إنشائية';
 }
 
 function toUnitRow(row: {

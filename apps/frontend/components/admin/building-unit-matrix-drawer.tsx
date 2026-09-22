@@ -58,7 +58,7 @@ import {
 import { Sheet } from '@/components/ui/sheet';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
-import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import {
   type EndOccupancyAnswer,
@@ -690,7 +690,7 @@ export function BuildingUnitMatrixDrawer({
                             <SelectValue placeholder={en ? 'Unit type…' : 'نوع الوحدة…'} />
                           </SelectTrigger>
                           <SelectContent>
-                            {BUILDING_UNIT_TYPES.map((option) => (
+                            {MATRIX_UNIT_TYPES.map((option) => (
                               <SelectItem key={option} value={option}>
                                 {labels.unitType[option]}
                               </SelectItem>
