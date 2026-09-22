@@ -45,6 +45,8 @@ Set all of these for **Production** and **Preview**.
 | `PUBLIC_API_URL` | This project's origin + `/api/v1` |
 | `PUBLIC_PORTAL_URL` | The web project's origin |
 | `CRON_SECRET` | `openssl rand -hex 32` — see §4 |
+| `SCHEDULER_ENABLED` | Leave **unset** on Vercel. On any long-lived host, set it explicitly — see §4 |
+| `TZ` | `UTC` on a long-lived host. Not needed on Vercel, which is UTC already |
 
 `connection_limit=1` is not a typo. Every warm instance holds its own pool, and
 the tenant factory opens a further client per municipality it has served; the
@@ -107,10 +109,37 @@ routes are unchanged from local: `https://<api>/api/v1/health`.
 
 ## 4. Scheduled jobs
 
-`ScheduleModule` is skipped when `VERCEL` is set (`app.module.ts`). It cannot
-work there: the instance holding the timer is torn down moments after the
-response, so a registered `@Cron` would never fire while looking perfectly
-healthy in the logs.
+`ScheduleModule` is registered only when `isSchedulerEnabled()` says so
+(`app.module.ts` → `presentation/config/env.schema.ts`). On Vercel it must not
+be: the instance holding the timer is torn down moments after the response, so a
+registered `@Cron` would never fire while looking perfectly healthy in the logs.
+
+**`SCHEDULER_ENABLED` decides it.** Unset falls back to the rule this repository
+used before the flag existed — run the schedule unless `VERCEL` is set — so a
+Vercel deployment needs nothing, and no existing deployment changes behaviour by
+upgrading. Set it explicitly anywhere `VERCEL` is *not* the thing that makes the
+answer true:
+
+| Where | Value | Why |
+| --- | --- | --- |
+| Vercel | unset (or `false`) | The platform sets `VERCEL`; timers cannot fire there anyway. `crons` below is the schedule. |
+| One long-lived process (container, VM) | `true` | It owns the schedule. Say so rather than relying on the absence of a variable. |
+| Every further replica | `false` | Two processes with in-process timers are two schedulers. See `open-decisions.md` §5. |
+| `pnpm dev` | `false` is recommended | `apps/backend/.env` points at **staging**, so every developer machine left on the default is another scheduler writing to it. |
+
+An unrecognised value fails the boot. It is not defaulted in either direction:
+guessing `true` gives you a scheduler nobody asked for, guessing `false` stops
+billing, and neither is visible until someone goes looking.
+
+**`TZ` is pinned to `UTC`** in `apps/backend/Dockerfile` and `docker-compose.yml`.
+Both jobs also name `timeZone: 'UTC'` on their `@Cron` decorators, so the
+schedule is right whatever the host clock says — that pin is what keeps *logged*
+timestamps comparable between deployments, and `main.ts` warns at boot if `TZ`
+is set to anything else. The reason the decorators name a zone at all:
+`periodKeyFor` builds every billing period key from `getUTCFullYear` /
+`getUTCMonth`, so a job firing at 02:00 Beirut on the 1st runs at 23:00 UTC on
+the last day of the previous month and computes the **previous** period's key.
+Daily repetition hid that as "a day late", never as an error.
 
 The two jobs are reachable over HTTP instead, through
 `InternalCronController`, and `vercel.json` schedules them:
@@ -132,8 +161,11 @@ Two caveats:
   five minutes and are checked on use); billing is daily by design.
 - **02:00 UTC is 05:00 in Beirut** in summer. Vercel cron expressions are UTC.
 
-Docker and `pnpm dev` are unaffected: `VERCEL` is unset there, so the in-process
-schedule still runs, and the endpoints are simply an extra way in.
+Docker and `pnpm dev` keep the in-process schedule by default, and the endpoints
+are simply an extra way in. Note what that default means in practice: it is the
+*absence* of `VERCEL`, so it is true on every host that is not Vercel —
+including a developer's laptop pointed at staging. That is what
+`SCHEDULER_ENABLED` is for.
 
 ---
 

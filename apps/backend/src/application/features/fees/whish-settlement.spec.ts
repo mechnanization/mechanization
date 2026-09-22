@@ -30,8 +30,15 @@ interface Row {
   citizenId: string;
 }
 
-function build(row: Row | null) {
+function build(
+  row: Row | null,
+  {
+    updatedCount = 1,
+    checkoutState = 'OPEN',
+  }: { updatedCount?: number; checkoutState?: string } = {},
+) {
   const update = jest.fn().mockResolvedValue({});
+  const updateMany = jest.fn().mockResolvedValue({ count: updatedCount });
   const record = jest.fn().mockResolvedValue({
     receiptNumber: 'RCP-000001',
     transactionId: 'txn-1',
@@ -41,9 +48,25 @@ function build(row: Row | null) {
     paymentStatus: 'PAID',
   });
 
-  const prisma = {
-    citizenPayment: { findFirst: jest.fn().mockResolvedValue(row), update },
+  /**
+   * A callback now resolves through `whish_checkouts` (migration 0057) rather
+   * than through the mutable `citizenPayment.whishTransactionRef` column, so
+   * the fixture hands back a checkout carrying its invoice.
+   */
+  const checkoutUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+  const whishCheckout = {
+    findUnique: jest.fn().mockResolvedValue(
+      row ? { id: 'checkout-1', state: checkoutState, paymentId: row.id, payment: row } : null,
+    ),
+    updateMany: checkoutUpdateMany,
   };
+
+  const prisma: Record<string, unknown> = {
+    citizenPayment: { findFirst: jest.fn().mockResolvedValue(row), update, updateMany },
+    whishCheckout,
+  };
+  // The failure path writes the invoice and the checkout together.
+  prisma.$transaction = (fn: (tx: unknown) => unknown) => fn(prisma);
 
   const service = new FeesService(
     {
@@ -61,7 +84,7 @@ function build(row: Row | null) {
     { record } as unknown as PaymentLedgerService,
   );
 
-  return { service, update, record };
+  return { service, update, updateMany, record, whishCheckout };
 }
 
 const UNTOUCHED: Row = {
@@ -110,18 +133,83 @@ describe('settleFromWhishCallback — a payment adds to what was already banked'
   });
 
   it('writes nothing to the ledger for a failed payment', async () => {
-    const { service, record, update } = build(UNTOUCHED);
+    const { service, record, updateMany } = build(UNTOUCHED);
 
-    await service.settleFromWhishCallback(callback(100_000, /* succeeded */ false));
+    const result = await service.settleFromWhishCallback(callback(100_000, /* succeeded */ false));
 
     // No money moved, so there is no movement to record — but the invoice is
     // released so the citizen can try again.
     expect(record).not.toHaveBeenCalled();
-    expect(update.mock.calls[0][0].data).toMatchObject({
+    expect(result).toEqual({ applied: true });
+    expect(updateMany.mock.calls[0][0].data).toMatchObject({
       paymentStatus: 'UNPAID',
       paymentMethod: null,
       whishTransactionRef: null,
     });
+  });
+
+  it('releases the invoice only while it is still this attempt that holds it', async () => {
+    /*
+      The row is found by `whishTransactionRef` but updated by `id`, so both
+      have to be in the predicate. Without the status, a counter settlement
+      landing between the read and the write is dragged back to UNPAID with
+      the cash already in the drawer. Without the reference, a late failure
+      for an abandoned attempt #1 clears the live reference attempt #2 just
+      claimed — and attempt #2's own callback then arrives to an unknown
+      reference with its money never banked.
+    */
+    const { service, updateMany } = build(UNTOUCHED);
+
+    await service.settleFromWhishCallback(callback(100_000, false));
+
+    expect(updateMany.mock.calls[0][0].where).toEqual({
+      id: 'payment-1',
+      paymentStatus: 'PENDING_REVIEW',
+      whishTransactionRef: 'WSH-ABC',
+    });
+  });
+
+  it('does not throw when a failure callback matches nothing', async () => {
+    /*
+      The controller answers 200 to every callback so the provider stops
+      retrying. A refusal thrown from here would be a 409, and a 409 is an
+      infinite retry loop — so "changed nothing" has to come back as data.
+    */
+    const { service, record } = build(UNTOUCHED, { updatedCount: 0 });
+
+    await expect(
+      service.settleFromWhishCallback(callback(100_000, false)),
+    ).resolves.toEqual({ applied: false });
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('declines a callback for a checkout the citizen walked away from', async () => {
+    /*
+      The reason `whish_checkouts` keeps ABANDONED rows instead of deleting
+      them. A citizen who abandons attempt #1 and opens attempt #2 leaves #1
+      live at the provider; when its late callback arrives, the answer has to be
+      "we know about this one, and we stopped waiting" — not "unknown
+      reference", which is indistinguishable from a real lost payment.
+    */
+    const { service, record } = build(UNTOUCHED, { checkoutState: 'ABANDONED' });
+
+    await expect(service.settleFromWhishCallback(callback(100_000))).resolves.toEqual({
+      applied: false,
+    });
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('closes the checkout row when the money is banked', async () => {
+    const { service, whishCheckout } = build(UNTOUCHED);
+
+    await service.settleFromWhishCallback(callback(100_000));
+
+    expect(whishCheckout.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'checkout-1', state: 'OPEN' },
+        data: expect.objectContaining({ state: 'SUCCEEDED', providerTxnRef: 'TX-1' }),
+      }),
+    );
   });
 
   it('ignores a retry of a callback already applied', async () => {

@@ -884,7 +884,9 @@ export class CensusSyncService {
     scope?: 'CITIZEN' | 'REGISTRATION';
   }): Promise<CensusSyncResult | null> {
     try {
-      return await this.syncRegistration(input);
+      const result = await this.syncRegistration(input);
+      await this.markCensusSync(input.registrationId, true);
+      return result;
     } catch (error) {
       this.logger.error(
         `census sync failed for registration ${input.registrationId}: ${
@@ -892,7 +894,46 @@ export class CensusSyncService {
         }`,
         error instanceof Error ? error.stack : undefined,
       );
+      await this.markCensusSync(input.registrationId, false);
       return null;
+    }
+  }
+
+  /**
+   * Records that a sync ran, and whether it worked (migration 0055).
+   *
+   * The log line above is the only trace this used to leave, and it lives on
+   * whichever instance happened to serve the request. That is not a place
+   * anyone can query "which registrations does the census disagree with?" — so
+   * the answer goes in the register instead.
+   *
+   * Two columns rather than one boolean: `censusSyncFailedAt` later than
+   * `censusSyncedAt` is "they disagree right now", and the pair also says how
+   * long ago it started disagreeing, which is what decides whether it matters.
+   *
+   * No error text is stored. A Postgres error quotes the row that caused it,
+   * and these rows carry national ID numbers and residency status — a column
+   * for the message would be a citizen-data column nobody agreed to create.
+   *
+   * Its own failure is swallowed, and deliberately: this runs after the
+   * citizen's transaction has committed, and a marker that could not be written
+   * must not turn a successful save into an error the officer sees. A missing
+   * marker degrades to the behaviour that existed before this column did.
+   */
+  private async markCensusSync(registrationId: string, succeeded: boolean): Promise<void> {
+    try {
+      await this.db.registration.update({
+        where: { id: registrationId },
+        data: succeeded
+          ? { censusSyncedAt: new Date(), censusSyncFailedAt: null }
+          : { censusSyncFailedAt: new Date() },
+      });
+    } catch (error) {
+      this.logger.error(
+        `could not record census sync state for registration ${registrationId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
 }

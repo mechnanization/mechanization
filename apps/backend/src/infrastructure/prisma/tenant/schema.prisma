@@ -208,6 +208,7 @@ model User {
   recordedTransactions  PaymentTransaction[] @relation("TransactionRecordedBy")
   targetedFeeNotices    FeeNotice[]          @relation("FeeTargetCitizen")
   issuedFeeNotices      FeeNotice[]          @relation("FeeIssuedBy")
+  whishCheckouts        WhishCheckout[]      @relation("WhishCheckoutCitizen")
   createdRegistrations  Registration[]       @relation("RegistrationCreatedBy")
   inspectorPayouts      InspectorPayout[]    @relation("InspectorPayouts")
   recordedInspectorPayouts InspectorPayout[] @relation("RecordedInspectorPayouts")
@@ -368,6 +369,22 @@ model Registration {
   /// back of the paper form, which is where «الأسرة تنتقل نهاية الشهر» used to
   /// be written and lost.
   notes String?
+
+  /// When this registration was last pushed into the census successfully
+  /// (migration 0055).
+  ///
+  /// `syncQuietly` runs *after* the citizen transaction commits and swallows
+  /// its errors on purpose — a census failure must not be reported to the
+  /// officer as a failed save, because the save did succeed. The cost was that
+  /// a failure left no trace anywhere but a log line on one instance. These two
+  /// columns are that trace, in the register.
+  censusSyncedAt     DateTime?
+  /// When a push last failed. Later than `censusSyncedAt` — or set while that
+  /// is null — means the file and the census disagree right now.
+  ///
+  /// No error text is stored with it: a Postgres error quotes the row that
+  /// caused it, and these rows carry national ID numbers and residency status.
+  censusSyncFailedAt DateTime?
 
   properties      PropertyEntry[]
   documents       Document[]
@@ -1722,6 +1739,8 @@ model FeeNotice {
 
   createdAt DateTime         @default(now())
   payments  CitizenPayment[]
+  /// Every period this notice's recurring run attempted (migration 0056).
+  billingRuns BillingRunEntry[]
 
   @@index([targetType])
   @@map("fee_notices")
@@ -1810,11 +1829,19 @@ model CitizenPayment {
   /// One invoice per citizen, per notice, **per period**. Re-running July's
   /// billing is a no-op; August's is a new row. Without the period the
   /// monthly fee could only ever be charged once.
+  /// Checkouts opened at the provider against this invoice (migration 0057).
+  whishCheckouts WhishCheckout[]
+
   @@unique([citizenId, feeNoticeId, periodKey])
   /// The portal's main read: this citizen's outstanding balance.
   @@index([citizenId, paymentStatus])
   /// The Whish callback matches on this; without an index it was a sequential
   /// scan over every payment in the municipality, on every webhook.
+  ///
+  /// Superseded by `whish_checkouts.externalRef` (migration 0057), which is
+  /// unique and immutable. This column is mutable and is cleared on settlement,
+  /// so it could stop naming the attempt the provider still holds. Kept for now
+  /// — dropping a column is one-way and belongs in its own later release.
   @@index([whishTransactionRef])
   /// The admin queue: what is awaiting verification, oldest first.
   @@index([paymentStatus, dueDate])
@@ -2001,4 +2028,113 @@ model DataQualityDismissal {
 
   @@unique([kind, subjectKey])
   @@map("data_quality_dismissals")
+}
+
+/// What a recurring billing run did to one notice in one period.
+///
+/// SKIPPED is not a failure: a notice whose own first period is the current one,
+/// or one dated in the future, is correctly passed over. Recording it separately
+/// is what stops "no invoices" being read as "something broke".
+enum BillingRunOutcome {
+  ISSUED
+  SKIPPED
+  FAILED
+}
+
+/// One row per notice per period the recurring biller attempted (migration 0056).
+///
+/// The biller computes only the period containing `now`. Before this table, a
+/// tenant whose run threw on every day of a period lost that period with no
+/// trace: the next run computed the next period and the gap closed over, with
+/// no error, no row, and no number that was visibly wrong.
+///
+/// **It does not back-bill.** A gap recorded here is a fact for a human to act
+/// on, not an instruction to issue three months of invoices the next time the
+/// job succeeds — a citizen receiving a quarter of bills at once because a
+/// pooler was down in February is the worse outcome. Issuing a missed period
+/// stays a deliberate act.
+model BillingRunEntry {
+  id          String    @id @default(uuid()) @db.Uuid
+  feeNoticeId String    @db.Uuid
+  feeNotice   FeeNotice @relation(fields: [feeNoticeId], references: [id], onDelete: Cascade)
+
+  /// The same string `CitizenPayment.periodKey` carries: '2026-02', '2026-H1',
+  /// '2026'. Denormalised so the row still says what was missed after the
+  /// notice is gone, and because it is what a human reads.
+  periodKey String
+  outcome   BillingRunOutcome
+
+  citizensConsidered Int @default(0)
+  invoicesCreated    Int @default(0)
+
+  /// A short classifier this codebase chooses — never the driver's message,
+  /// which would quote the citizen row that caused it.
+  failureKind String?
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  /// One entry per notice per period: two rows disagreeing about one period
+  /// cannot answer the only question this table exists for.
+  ///
+  /// `map` is explicit because Prisma would otherwise call this
+  /// `billing_run_entries_feeNoticeId_periodKey_key`, and migration 0056 —
+  /// which is what actually creates it — names it this. Leaving them to differ
+  /// puts a spurious rename in every `migrate diff` from here on.
+  @@unique([feeNoticeId, periodKey], map: "billing_run_entries_notice_period_key")
+  @@map("billing_run_entries")
+}
+
+/// Where a checkout at the payment provider got to.
+///
+/// ABANDONED is what a checkout becomes when a later one is opened on the same
+/// invoice — recorded rather than deleted, because the provider may still call
+/// back about it and "we know, and we stopped waiting" is worth being able to say.
+enum WhishCheckoutState {
+  OPEN
+  SUCCEEDED
+  FAILED
+  ABANDONED
+}
+
+/// One immutable row per checkout opened at the provider (migration 0057).
+///
+/// Callbacks used to be matched on `CitizenPayment.whishTransactionRef`, which
+/// is neither unique nor stable: the ledger overwrites it on settlement and the
+/// failure path nulls it. So the handle the provider held could stop existing on
+/// the row it belonged to while the provider still believed it was live — and a
+/// late failure callback for an abandoned attempt could clear the reference a
+/// newer attempt had just claimed, orphaning money that had actually been taken.
+///
+/// A checkout is a fact about a moment. It does not change afterwards, so it
+/// does not live in a column the settlement path rewrites.
+model WhishCheckout {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// The provider's handle, and the only thing a callback carries. Unique, so a
+  /// callback resolves to exactly one checkout or to none.
+  externalRef String @unique
+
+  paymentId String         @db.Uuid
+  payment   CitizenPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  citizenId String         @db.Uuid
+  citizen   User           @relation("WhishCheckoutCitizen", fields: [citizenId], references: [id], onDelete: Cascade)
+
+  /// What was quoted to the provider, captured when it was quoted. Not read back
+  /// off the invoice later: by then the outstanding balance may have moved, and
+  /// a callback answers "did they pay what we asked", not "what do they owe now".
+  amount   Decimal @db.Decimal(14, 2)
+  currency String  @default("LBP")
+
+  state WhishCheckoutState @default(OPEN)
+
+  /// The provider's own transaction id. Not the same string as `externalRef`,
+  /// and it arrives only with the callback.
+  providerTxnRef String?
+
+  openedAt  DateTime  @default(now())
+  settledAt DateTime?
+
+  @@index([paymentId, openedAt])
+  @@map("whish_checkouts")
 }

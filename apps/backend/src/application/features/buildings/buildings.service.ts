@@ -2078,12 +2078,42 @@ export class BuildingsService {
       !isStructuralUnitType(before.unitType);
 
     if (becomingStructural) {
-      const live = await this.db.unitOccupancy.count({
-        where: { unitId, toDate: null },
-      });
-      if (live > 0) {
+      /*
+        Two tables, not one.
+
+        `unit_occupancies` is the obvious one, and counting it alone was the
+        original guard. But a citizen's property card links to this same unit
+        through `building_units.unitId`, and that link is what *billing* reads:
+        `billableUnits` flattens the card's rows and `preferLinked` takes the
+        census unit's type over the card's. So the row this guard is meant to
+        protect against can exist with no occupancy at all.
+
+        The census sync creates exactly that state on purpose — it skips a
+        structural unit with a warning and deliberately leaves the card link in
+        place — so the state the old guard was blind to is one the system
+        produces itself.
+
+        An ended link (`endedAt`) is history and no obstacle, for the same
+        reason a closed occupancy spell is not: a flat that was let until it was
+        demolished into a car park is exactly what migration 0046 keeps.
+      */
+      const [liveOccupancies, liveCardLinks] = await Promise.all([
+        this.db.unitOccupancy.count({ where: { unitId, toDate: null } }),
+        this.db.buildingUnit.count({ where: { unitId, endedAt: null } }),
+      ]);
+
+      if (liveOccupancies > 0 || liveCardLinks > 0) {
+        // Named separately because they are undone differently: one is ended
+        // from the occupancy panel, the other unlinked from the citizen's card.
+        const reasons = [
+          liveOccupancies > 0 ? `مسجَّل عليها ${liveOccupancies} شاغل حالي` : null,
+          liveCardLinks > 0 ? `مرتبطة بـ ${liveCardLinks} بطاقة عقارية` : null,
+        ].filter(Boolean);
+
         throw new ConflictError(
-          `لا يمكن تحويل الوحدة ${before.unitCode} إلى ${structuralLabel(input.unitType!)}: مسجَّل عليها ${live} شاغل حالي. أنهِ الإشغال أولاً`,
+          `لا يمكن تحويل الوحدة ${before.unitCode} إلى ${structuralLabel(input.unitType!)}: ` +
+            `${reasons.join(' و')}. ` +
+            `${liveOccupancies > 0 ? 'أنهِ الإشغال' : 'أزل الربط'} أولاً`,
         );
       }
     }

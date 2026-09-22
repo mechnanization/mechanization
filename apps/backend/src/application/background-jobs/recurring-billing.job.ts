@@ -32,22 +32,47 @@ export class RecurringBillingJob {
   ) {}
 
   /**
-   * 02:00 — after midnight so a fee due "on the 1st" is raised on the 1st, and
-   * late enough that it is not competing with whatever else runs at exactly
-   * midnight.
+   * 02:00 **UTC** — after midnight so a fee due "on the 1st" is raised on the
+   * 1st, and late enough that it is not competing with whatever else runs at
+   * exactly midnight.
+   *
+   * The zone is named, not inherited from `TZ`, and that is the whole point:
+   * `periodKeyFor` derives the period from `getUTCFullYear` / `getUTCMonth`,
+   * so a run at 02:00 *Beirut* on the 1st happens at 23:00 UTC on the last day
+   * of the month before and computes the **previous** period's key. The job is
+   * idempotent by repetition, so that showed up as a month's invoices landing a
+   * day late rather than as an error — the kind of thing nobody reports.
+   * Matching the decorator's zone to the key's zone removes the boundary
+   * entirely, on any host, whatever `TZ` is set to.
    */
-  @Cron(CronExpression.EVERY_DAY_AT_2AM)
+  @Cron(CronExpression.EVERY_DAY_AT_2AM, { timeZone: 'UTC' })
   async issueDueFees(): Promise<void> {
     await this.runForAllTenants();
   }
 
   /**
-   * Shared with the admin "run now" endpoint, so a clerk who has just created
-   * a fee does not have to wait until tomorrow to see it applied.
+   * Every municipality, in one pass.
+   *
+   * Driven by the schedule and by `InternalCronController` — **not** by the
+   * admin "run now" button. That endpoint used to call this, on a route mounted
+   * under `t/:tenantSlug`, so one municipality's accountant issued invoices in
+   * all the others. It now runs `FeesService.runRecurringBilling` inside its own
+   * tenant scope; a job that crosses tenants does not belong behind a staff role.
    */
-  async runForAllTenants(): Promise<{ tenants: number; invoicesCreated: number }> {
+  async runForAllTenants(): Promise<{
+    tenants: number;
+    invoicesCreated: number;
+    /**
+     * Municipalities whose whole run threw, plus notices that failed inside a
+     * run that otherwise succeeded. Non-zero means this pass did **not** cover
+     * everything, whatever `invoicesCreated` says — `billing_run_entries` holds
+     * which notice and which period.
+     */
+    failures: number;
+  }> {
     const tenants = await this.tenants.listActive();
     let invoicesCreated = 0;
+    let failures = 0;
 
     for (const tenant of tenants) {
       const prisma = this.clients.forSchema(tenant.schemaName);
@@ -63,10 +88,14 @@ export class RecurringBillingJob {
           () => this.fees.runRecurringBilling(),
         );
         invoicesCreated += result.invoicesCreated;
+        // Notices that threw inside a run that otherwise completed. Counted
+        // here so a partial pass cannot be reported as a clean one.
+        failures += result.noticesFailed;
       } catch (error) {
         // One municipality's failure must not stop the rest: a schema mid
         // migration, or a transient pooler timeout, should cost that tenant a
         // day of billing rather than costing every tenant one.
+        failures += 1;
         this.logger.error(
           `Recurring billing failed for '${tenant.slug}': ${
             error instanceof Error ? error.message : error
@@ -81,6 +110,20 @@ export class RecurringBillingJob {
       );
     }
 
-    return { tenants: tenants.length, invoicesCreated };
+    /*
+      Said out loud, because "0 invoices" and "0 invoices because it broke" look
+      identical in a log and mean opposite things. A period the biller never
+      covered is not retried — the next run computes the next period — so this
+      line is the prompt to go and read `billing_run_entries` while the gap is
+      still recent.
+    */
+    if (failures > 0) {
+      this.logger.warn(
+        `Recurring billing did not cover everything: ${failures} failure(s). ` +
+          'See billing_run_entries for which notice and which period. Nothing is back-billed automatically.',
+      );
+    }
+
+    return { tenants: tenants.length, invoicesCreated, failures };
   }
 }

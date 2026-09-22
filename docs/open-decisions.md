@@ -117,17 +117,63 @@ in a schema.
 
 ---
 
-## 5. Horizontal scaling → rate limiting
+## 5. Horizontal scaling → rate limiting **and the job schedule**
 
 **Status:** decided, with a documented trigger.
 
-`@nestjs/throttler` uses in-memory storage. This is correct for one instance and
-wrong the moment there are two: per-instance counters make the effective limit
-N× what is configured, so staff login would allow 5×N attempts per minute.
+**Two** things in this codebase assume a single long-lived backend process, not
+one. Both break on the same day, and this list was missing the second until
+2026-09-21.
 
-**Trigger to revisit:** the first time a second backend replica is deployed.
-That is the one piece Redis needs to come back for; nothing else in v2 depends
-on it.
+**Rate limiting.** `@nestjs/throttler` uses in-memory storage. This is correct
+for one instance and wrong the moment there are two: per-instance counters make
+the effective limit N× what is configured, so staff login would allow 5×N
+attempts per minute.
+
+**The job schedule.** `ScheduleModule` registers in-process `@Cron` timers, so
+every replica that boots with them is a *separate scheduler*. Two replicas is
+two `RecurringBillingJob` runs at 02:00 UTC.
+
+Worth stating precisely, because it is **not** the same severity as the
+throttler: no citizen gets billed twice. `runRecurringBilling` writes through
+`createMany({ skipDuplicates: true })` against the unique
+`(citizenId, feeNoticeId, periodKey)` triple, which Postgres serialises as
+`ON CONFLICT DO NOTHING` — the second run inserts nothing and, because the
+`fee.issued` event is emitted only when `created.count > 0`, does not
+double-announce either. OTP pruning is idempotent by construction.
+
+What a second scheduler does cost is real but quieter: every run re-resolves
+every notice's targets and re-assesses every citizen and building
+(`assessTargets`), so N replicas is N× that load against the pooler at the same
+minute, N copies of the "not assessed" warnings in the log, and N attempts at
+the same rows. And the operational point stands regardless of the blast radius:
+**nothing in the deployment says which process is supposed to run it.**
+
+`SCHEDULER_ENABLED` (`env.schema.ts` → `isSchedulerEnabled`) is what decides it.
+**Unset means the old behaviour — run unless `VERCEL` is set** — so the flag
+changes nothing until someone sets it; that default exists so that shipping the
+flag could not be the reason billing quietly stopped. It is not a safe default
+for a second replica, because the second replica's environment also does not
+set `VERCEL`.
+
+**Trigger to revisit — the first time a second backend replica is deployed.**
+On that day, both of these, not one:
+
+1. Move the throttler to Redis. That is the one piece Redis needs to come back
+   for; nothing else in v2 depends on it.
+2. Set `SCHEDULER_ENABLED=false` on every replica but one — or `false` on all of
+   them and drive the jobs from an external scheduler through
+   `InternalCronController`, which is what the Vercel deployment already does
+   and is the better answer once "which box is the one" stops being obvious.
+
+**Open, and not an engineering call:** which runtime owns the schedule. The
+repository contains a Vercel deployment (`apps/backend/vercel.json`, with
+`crons`) and a Docker deployment (`apps/backend/Dockerfile`,
+`docker-compose.yml`), and no artefact for any other host. If the API in fact
+runs somewhere else — a VM behind nginx, say — then nothing in this repository
+describes how it is started, `VERCEL` is unset there, and that box has been the
+scheduler by default since it was stood up. Someone has to say which it is and
+write it down here; it cannot be derived from the code.
 
 ---
 
@@ -517,3 +563,87 @@ cannot carry the link, a citizen with no registration to hang a card on.
 «روابط المالكين» prints it above the queue. Revenue absent by design is still
 revenue absent, and it has to be a number somebody can take to the council rather
 than a difference nobody can see.
+
+---
+
+## 🔴 14. What proves a returned record was actually corrected
+
+**Status:** open. The code does what it can and says so; the rest needs a
+decision about the vocabulary.
+
+Returning a record flags one or more `REVIEW_FIELD` values — `NAME`,
+`MOTHER_NAME`, `PHONE`, `HOUSEHOLD`, `RESIDENCE`, `PROPERTY`, `OCCUPANCY_ROLE`,
+`UNIT_LINK`, `AREA`, `UNIT_STATUS`, `LANDLORD`, `DUPLICATE`, `OTHER` — and a
+sentence of prose. Any subsequent save by anyone used to close every open return
+on the record, without looking at either.
+
+Two halves, and only one of them is decidable in code:
+
+**Fixed.** A return naming a flag that is *checkable against a column* now stays
+open while that column is still empty. `MOTHER_NAME` and `PHONE` are the two —
+both nullable, both gaps an officer is asked to fill. «اسم الأم ناقص» is no
+longer answered by a save that corrected a phone number.
+
+**Open.** The rest of the vocabulary is categorical, not a set of record paths.
+`PROPERTY` covers an entire card; `OTHER` covers whatever the reviewer typed.
+Nothing mechanical can show that a save addressed «العنوان على الشارع الخطأ», so
+those flags keep the old behaviour — the first save closes them. That is a
+known, deliberate gap, left visible rather than papered over with a check that
+would look like verification and would not be one.
+
+The choice is between:
+
+1. **Leave it.** A reviewer's return is a conversation, and the officer saving
+   the record is the reply. Cheap, and wrong whenever the officer saved for an
+   unrelated reason.
+2. **Narrow the vocabulary** so every flag names something checkable, and let
+   `OTHER` never auto-close — the reviewer closes it by hand. More honest, more
+   clicks, and it needs the field list re-cut with the people who use it.
+3. **Compare the saved payload to the flagged areas.** Needs `citizen.changed`
+   to carry which areas a save touched, which it does not today: the payload
+   carries an `after` summary, not a diff.
+
+**Also recorded here:** who closed it. The «إكمال السجل» dialog saves through
+`updateCitizen` like any other edit, so a reviewer filling a gap themselves
+triggered the auto-close under their own id and the record read as
+`RECORD_CORRECTED` — "the officer went back and fixed it", when nobody did. The
+announcement now carries `resolvedByReviewer`, the flags it closed, and what it
+left open. That does not decide the question above; it stops the trail being
+misleading while it is open.
+
+---
+
+## 🔴 15. An orphaned Whish checkout
+
+**Status:** open, and newly *visible* rather than newly created.
+
+`startWhishCheckout` creates a checkout at the provider, then marks the invoice
+`PENDING_REVIEW`. Those are two steps with a network round-trip between them,
+and the invoice can be settled at the counter in the gap.
+
+That write is now conditional — it carries the status it was quoted against — so
+a counter settlement can no longer be silently dragged back to `PENDING_REVIEW`
+with the cash already in the drawer. The citizen gets a refusal and is asked to
+refresh.
+
+What that leaves is a live checkout at the provider that no row references. If
+the citizen was already redirected and pays it, the success callback arrives
+with a reference no invoice carries, is logged as an unknown reference, and **the
+money is not banked**. The race is not new; the fix converted a silent
+corruption into a visible orphan, which is the better failure but not a
+resolved one.
+
+Three ways to close it, and the choice is the municipality's:
+
+1. **Accept the orphan.** Smallest change. It becomes a manual reconciliation
+   case, which needs somebody to own it and a way to spot it.
+2. **Reserve the invoice before calling the provider,** rolling back to `UNPAID`
+   if the provider call fails. Closes the orphan; leaves a stuck
+   `PENDING_REVIEW` if the process dies between the two.
+3. **Cancel the checkout at the provider on refusal.** Correct, and needs a
+   `WhishGateway` method that does not exist today.
+
+None of this is urgent while the provider is unimplemented —
+`whish-gateway.service.ts` throws unconditionally and both environments hold
+zero payments — which is exactly why it is cheap to decide now and expensive to
+decide after the first live checkout.

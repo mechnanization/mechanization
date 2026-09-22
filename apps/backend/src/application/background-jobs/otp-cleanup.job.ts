@@ -24,7 +24,14 @@ export class OtpCleanupJob {
     private readonly clients: TenantPrismaFactory,
   ) {}
 
-  @Cron(CronExpression.EVERY_HOUR)
+  /**
+   * `timeZone` is named rather than inherited: without it the hour boundary is
+   * whatever `TZ` the process happens to have, which differs between a
+   * developer's machine, a container and a VM. It matters less here than it
+   * does for billing — an hourly prune is an hourly prune in any zone — but
+   * the two jobs should not be reasoned about differently.
+   */
+  @Cron(CronExpression.EVERY_HOUR, { timeZone: 'UTC' })
   async pruneExpiredChallenges(): Promise<void> {
     const tenants = await this.tenants.listActive();
     let removed = 0;
@@ -32,20 +39,34 @@ export class OtpCleanupJob {
     for (const tenant of tenants) {
       const prisma = this.clients.forSchema(tenant.schemaName);
 
-      await this.tenantContext.run(
-        {
-          tenantId: tenant.id,
-          tenantSlug: tenant.slug,
-          schemaName: tenant.schemaName,
-          prisma,
-        },
-        async () => {
-          const result = await prisma.otpChallenge.deleteMany({
-            where: { expiresAt: { lt: new Date() } },
-          });
-          removed += result.count;
-        },
-      );
+      try {
+        await this.tenantContext.run(
+          {
+            tenantId: tenant.id,
+            tenantSlug: tenant.slug,
+            schemaName: tenant.schemaName,
+            prisma,
+          },
+          async () => {
+            const result = await prisma.otpChallenge.deleteMany({
+              where: { expiresAt: { lt: new Date() } },
+            });
+            removed += result.count;
+          },
+        );
+      } catch (error) {
+        // One municipality's failure must not stop the rest: a schema mid
+        // migration, or a transient pooler timeout, should cost that tenant an
+        // hour of pruning rather than costing every tenant after it in slug
+        // order — which is what an unguarded loop did, silently, because the
+        // rejection propagated out of the @Cron handler and nothing was left to
+        // report which tenants had been skipped.
+        this.logger.error(
+          `OTP prune failed for '${tenant.slug}': ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      }
     }
 
     if (removed > 0) {

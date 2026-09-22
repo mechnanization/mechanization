@@ -10,6 +10,10 @@ import {
   getLabels,
 } from '@mechanization/shared-schemas';
 import { assertOccupiableUnit } from './buildings.service';
+import {
+  billableUnits,
+  type BillablePropertyEntry,
+} from '../../../domain/entities/billable-unit';
 
 /**
  * «طابق أعمدة» — the one unit type nobody can be registered against.
@@ -170,5 +174,94 @@ describe('labels', () => {
   it('spells out that an empty floor has no units', () => {
     expect(getLabels('ar').unitType.EMPTY_FLOOR).toContain('بلا وحدات');
     expect(getLabels('en').unitType.EMPTY_FLOOR).toContain('no units');
+  });
+});
+
+/**
+ * The third door.
+ *
+ * Two doors create an occupancy and both refuse a structural unit:
+ * `assertOccupiableUnit` on the matrix panel, and an inline check in the census
+ * sync. The invariant written into the migration prose and the service comments
+ * is that *every* door refuses one.
+ *
+ * There is a third, and it is not an occupancy door at all: saving a citizen's
+ * property card writes `building_units.unitId`, a bare uuid that no server-side
+ * lookup validates against the unit it points at. The card's own `unitType` is
+ * narrowed by a zod refine; the id beside it is not.
+ *
+ * That link is what billing reads. `preferLinked` takes the *census* unit's
+ * type in preference to the card's, so a card saying APARTMENT while pointing
+ * at a pilotis arrives in assessment as a pilotis — and `unitMatches` opens
+ * with `if (!category) return true`, so any ALL_CITIZENS or single-citizen
+ * notice charges for it.
+ *
+ * Keeping the structural types out of `FEE_TARGET_CATEGORY` (above) stops a fee
+ * being *aimed* at one. These are what stop one being charged *for*.
+ */
+describe('no fee can be charged for one', () => {
+  const card = (units: BillablePropertyEntry['units']): BillablePropertyEntry => ({
+    propertyType: 'BUILDING',
+    propertyNumber: '1553',
+    occupancyType: 'OWNER',
+    unitType: null,
+    unitArea: null,
+    units,
+  });
+
+  it('drops a structural row the card itemised directly', () => {
+    const units = billableUnits(card([{ unitType: 'PILOTIS', unitArea: 200 }]));
+    expect(units).toEqual([]);
+  });
+
+  it('drops it when the card says APARTMENT but the link says pilotis', () => {
+    /*
+      The defect, exactly. The card is well-formed — it passes the zod refine,
+      because its own `unitType` is APARTMENT — and the link underneath it is
+      never checked against anything.
+    */
+    const units = billableUnits(
+      card([{ unitType: 'APARTMENT', unitArea: 120, unit: { unitType: 'PILOTIS', unitArea: 200 } }]),
+    );
+    expect(units).toEqual([]);
+  });
+
+  it('leaves the real flats on the same card alone', () => {
+    const units = billableUnits(
+      card([
+        { unitType: 'APARTMENT', unitArea: 120 },
+        { unitType: 'APARTMENT', unitArea: 95, unit: { unitType: 'EMPTY_FLOOR', unitArea: 300 } },
+        { unitType: 'SHOP', unitArea: 40 },
+      ]),
+    );
+
+    expect(units.map((unit) => unit.unitType)).toEqual(['APARTMENT', 'SHOP']);
+  });
+
+  it('drops one held through an occupancy row', () => {
+    // Belt and braces: the two occupancy doors should already make this
+    // unreachable, so it existing at all would mean one of them was bypassed.
+    const units = billableUnits({
+      ...card([]),
+      occupiedUnits: [
+        { role: 'OWNER', unitType: 'EMPTY_FLOOR', unitArea: 300 },
+        { role: 'OWNER', unitType: 'APARTMENT', unitArea: 110 },
+      ],
+    });
+
+    expect(units.map((unit) => unit.unitType)).toEqual(['APARTMENT']);
+  });
+
+  it('drops a single-unit card whose own type is structural', () => {
+    const units = billableUnits({
+      propertyType: 'BUILDING',
+      propertyNumber: '1553',
+      occupancyType: 'OWNER',
+      unitType: 'PILOTIS',
+      unitArea: 200,
+      units: [],
+    });
+
+    expect(units).toEqual([]);
   });
 });
