@@ -1,0 +1,69 @@
+-- 0051_pilotis_unit_type
+--
+-- «طابق أعمدة» as a unit type.
+--
+-- == What it is ==========================================================
+--
+-- The open, column-carried level a block stands on: no walls, no door, no
+-- address, and in most of the town it is where the cars go. Every other value
+-- in `UnitType` answers «what is this space used as». This one answers «why is
+-- there a level here with nothing in it».
+--
+-- == Why the census needs a row for it ===================================
+--
+-- Because the matrix is a *drawing* of the structure, and a drawing that omits
+-- the pilotis has every floor above it off by one. «الوحدة 0304» says third
+-- floor, fourth unit; if the ground level is columns and the grid does not say
+-- so, the third floor of the drawing is the fourth level of the building. An
+-- officer outside counting balconies and a collector looking for a door both
+-- resolve the code against the wall in front of them, and they were resolving
+-- it against a building one storey shorter than the one that is there.
+--
+-- Until now the only ways to draw that level were to leave the row empty —
+-- which reads as «a floor nobody has surveyed yet» and sits in the unsurveyed
+-- tile for ever — or to paint it as a مستودع, which is business premises and
+-- puts a floor of empty columns on the assessment roll at the 7% non-
+-- residential rate (Law 60/1988, Art. 12). Both are worse than a value.
+--
+-- == What it deliberately is not =========================================
+--
+-- It is a unit in one sense only — it occupies a row in `units` so the grid can
+-- draw it — and in none of the others:
+--
+--   • Not occupiable. `isStructuralUnitType` in shared-schemas is the predicate
+--     every guard asks, and both doors that create a `unit_occupancies` row
+--     refuse it: `recordOccupancy` (the matrix panel) and `CensusSyncService`
+--     (a registration claiming a flat). One door alone would make the other the
+--     way round it — the same reasoning `assertNonResidentOccupancy` is built
+--     on.
+--   • Not on a citizen's card. `buildingUnitSchema` refuses it, so the CSV
+--     import and an offline queue replaying an older client's submission meet
+--     the same refusal the form's list already expresses by omission.
+--   • Not a fee target. Absent from `FEE_TARGET_CATEGORY` on purpose — a note
+--     sits there saying so, because `GARAGE` in 0042 established the opposite
+--     habit and the invariant is narrower than it looked: every *occupiable*
+--     unit type appears there.
+--   • Not counted. `buildings.unitsTotal` and `unitsSurveyed` exclude it —
+--     migration 0052, which is separate for the reason below.
+--
+-- == Why this migration is alone in its folder ===========================
+--
+-- `ALTER TYPE … ADD VALUE` runs inside the migrator's transaction (allowed
+-- since Postgres 12), but the value it adds may not be *used* by that same
+-- transaction. 0052 replaces `sync_building_unit_counts()` with a body that
+-- names 'PILOTIS'. A plpgsql body is stored as text and its expressions are not
+-- resolved against the catalogue until the function first runs, so the two
+-- would in all likelihood have been fine in one file — «in all likelihood» is
+-- not a thing to find out about a migration that cannot be edited once it has
+-- run anywhere (AGENTS.md §3). Two folders, two transactions, no question.
+--
+-- Appended to the enum rather than positioned, as 0042 was: unit types are a
+-- set, and every list of them in the UI is ordered by its own labels.
+--
+-- No row is rewritten. Nothing reads the new value until the code that can
+-- produce it ships.
+--
+-- Written unqualified: the migrator sets `search_path` to the target tenant
+-- schema before running this.
+
+ALTER TYPE "UnitType" ADD VALUE IF NOT EXISTS 'PILOTIS';
