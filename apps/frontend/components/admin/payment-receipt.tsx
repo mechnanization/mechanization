@@ -6,6 +6,7 @@ import { ar } from '@mechanization/shared-schemas';
 import type { CitizenProfile, CitizenProfilePayment, CitizenProfileProperty } from '@/lib/api-client';
 import { formatLbp } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { downloadFile, renderReceiptPdf, shareFile } from '@/lib/receipt-pdf';
@@ -248,9 +249,9 @@ export function PaymentReceipt({
         {/* Modal Action Buttons Footer */}
         <footer className="shrink-0 space-y-2 border-t p-4 bg-card">
           {shareNote ? (
-            <p className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
+            <Alert tone="warning" size="sm" icon={false}>
               {shareNote}
-            </p>
+            </Alert>
           ) : null}
 
           <div className="flex flex-wrap items-center justify-between gap-2">

@@ -50,6 +50,7 @@ import { formatLbp } from '@/lib/currency';
 import { formatDate, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
 import { flagFieldLabel } from '@/lib/field-flags';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -265,12 +266,9 @@ export default function MyFilePage({
   return (
     <div className="space-y-6">
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert tone="error">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {/* ── Who this is ──

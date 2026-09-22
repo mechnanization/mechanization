@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Link2, Loader2, Search, Unlink, UserRound } from 'lucide-react';
 import type { CitizenListItem } from '@/lib/api-client';
 import { listCitizens, logApiError } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -121,9 +122,9 @@ export function LinkCaseCitizenDialog({
         ) : null}
 
         {error ? (
-          <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          <Alert tone="error">
             {error}
-          </p>
+          </Alert>
         ) : null}
 
         <div className="relative">

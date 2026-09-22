@@ -19,6 +19,7 @@ import { ApiRequestError, getMySummary, logApiError } from '@/lib/api-client';
 import type { MyCitizenSummary } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -91,12 +92,9 @@ export default function MyAccount({
       </header>
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert tone="error">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {summary === null && !error ? <LoadingState /> : null}

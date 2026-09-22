@@ -67,6 +67,7 @@ import {
 } from '@/lib/api-client';
 import { formatDate, monthNames } from '@/lib/dates';
 import { cn } from '@/lib/utils';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -2657,12 +2658,9 @@ function LinkOwnerDialog({
         ) : null}
 
         {failure ? (
-          <p
-            role="alert"
-            className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-          >
+          <Alert tone="error" size="sm">
             {failure}
-          </p>
+          </Alert>
         ) : null}
 
         <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -3025,12 +3023,9 @@ export function EndVacancyDialog({
           </Field>
 
           {failure ? (
-            <p
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-            >
+            <Alert tone="error" size="sm">
               {failure}
-            </p>
+            </Alert>
           ) : null}
         </div>
 

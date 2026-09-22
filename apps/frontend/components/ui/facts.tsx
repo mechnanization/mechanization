@@ -111,3 +111,57 @@ export function ChangeValue({
     </span>
   );
 }
+
+/**
+ * The same pairs, laid across instead of down.
+ *
+ * `FactRow` puts a label at one edge and its value at the other, which reads
+ * well in a narrow column and badly at the width of a page: the two halves of
+ * one fact end up a hand-span apart with nothing between them. Where the facts
+ * have the full width — a summary above an action, a header strip — they go in
+ * a grid instead, value under label, and the grid is what reflows.
+ *
+ * Four across on a desktop, two on a tablet, one on a phone. Put the cells
+ * that may be absent last: a grid with a hole in the middle of its first row
+ * reads as something failing to load.
+ */
+export function FactGrid({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <dl className={cn('grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4', className)}>
+      {children}
+    </dl>
+  );
+}
+
+/**
+ * One pair inside a `FactGrid`.
+ *
+ * `<bdi>` for the same reason `FactCell` uses it: a Latin code or a phone
+ * number reads left-to-right inside itself without dragging the cell around it
+ * to the other edge.
+ */
+export function FactGridCell({
+  label,
+  value,
+  className,
+}: {
+  label: React.ReactNode;
+  value: React.ReactNode;
+  /** Styles the value — `font-mono` for a code, a colour for a tone. */
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <div className="min-w-0 space-y-0.5">
+      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className={cn('min-w-0 break-words text-sm font-semibold text-foreground', className)}>
+        <bdi>{value}</bdi>
+      </dd>
+    </div>
+  );
+}

@@ -16,6 +16,7 @@ import {
   type FeeFrequency,
 } from '@mechanization/shared-schemas';
 
+import { Alert } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -209,12 +210,9 @@ export function FinanceSection({
   return (
     <div className="space-y-4">
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
-        >
+        <Alert tone="error">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       <SettingsCard icon={Coins} title={copy.finance.title} hint={copy.finance.description}>

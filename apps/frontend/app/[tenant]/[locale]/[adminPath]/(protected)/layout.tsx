@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { AdminShell } from '@/components/admin/admin-shell';
 import { QueryProvider } from '@/components/query-provider';
 import { StaffRouteGuard } from '@/components/admin/staff-route-guard';
+import { NetworkBanner } from '@/components/ui/network-banner';
 import { ToastProvider } from '@/components/ui/toast';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
@@ -110,6 +111,10 @@ export default async function ProtectedAdminLayout({
           >
             {/* Inside the shell rather than around it: the chrome is what makes
                 the redirect look like a page loading rather than a blank tab. */}
+            {/* Above the page and inside the shell: a dropped signal is a fact
+                about the whole screen, so it is said once here rather than by
+                each page that happens to notice its own fetch failed. */}
+            <NetworkBanner locale={locale} />
             <StaffRouteGuard tenant={tenant} base={`/${tenant}/${locale}/${adminPath}`}>
               {children}
             </StaffRouteGuard>

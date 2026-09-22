@@ -33,6 +33,7 @@ import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatLbp } from '@/lib/currency';
 import { formatDateTime, formatRelative } from '@/lib/dates';
+import { Alert } from '@/components/ui/alert';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -615,12 +616,9 @@ export default function PaymentsPage({
       <PageHeader icon={ArrowLeftRight} title={t('title')} subtitle={t('subtitle')} />
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert tone="error">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

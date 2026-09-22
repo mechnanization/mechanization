@@ -32,6 +32,8 @@ import type { CaseSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate } from '@/lib/dates';
+import { Alert } from '@/components/ui/alert';
+import { Tabs } from '@/components/ui/tabs';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -673,43 +675,20 @@ export default function CasesPage({
         knock again, escalate to a person with authority, or just read. The
         count rides on the tab so an empty queue is visible before it is opened.
       */}
-      <div
-        role="tablist"
-        aria-label={locale === 'en' ? 'Case queues' : 'قوائم الحالات'}
-        className="flex flex-wrap gap-1.5 border-b pb-2"
-      >
-        {CASE_TABS.map((entry) => {
-          const active = entry.id === tab;
-          return (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setTab(entry.id)}
-              className={cn(
-                // `min-h-9 coarse:min-h-touch`, matching `SegmentedControl`:
-                // padding alone left these at 30px, and this row is tapped on
-                // a phone in the field. Kept as a `tablist` rather than folded
-                // into the segmented control because the queues are tabs over
-                // one table, and the counts ride in the label.
-                'flex min-h-9 coarse:min-h-touch items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
-                active ? 'border-primary bg-primary/10 text-primary' : 'hover:bg-accent',
-              )}
-            >
-              {locale === 'en' ? entry.en : entry.ar}
-              <span
-                className={cn(
-                  'rounded-full px-1.5 text-xs font-bold',
-                  active ? 'bg-primary/20' : 'bg-muted text-muted-foreground',
-                )}
-              >
-                {tabCounts[entry.id] ?? 0}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+      {/*
+        `underline` rather than the enclosed strip: these sit over a full-width
+        table, where a filled block of primary out-shouts the rows it belongs to.
+      */}
+      <Tabs
+        items={CASE_TABS.map((entry) => ({
+          id: entry.id,
+          label: locale === 'en' ? entry.en : entry.ar,
+          count: tabCounts[entry.id] ?? 0,
+        }))}
+        value={tab}
+        onChange={setTab}
+        label={locale === 'en' ? 'Case queues' : 'قوائم الحالات'}
+      />
 
       {/* Zone, parcel and building — the three ways a dispatch list is cut. */}
       <div className="flex flex-wrap items-center gap-2">
@@ -816,12 +795,9 @@ export default function CasesPage({
       ) : null}
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert tone="error">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       <Card className="overflow-hidden">

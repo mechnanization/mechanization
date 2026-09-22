@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, UserPlus } from 'lucide-react';
 import type { CitizenListItem } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -115,12 +116,9 @@ export function ChargeCitizenDialog({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert tone="error">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           <Field

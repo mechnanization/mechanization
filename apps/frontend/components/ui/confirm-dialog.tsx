@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -144,12 +145,9 @@ export function ConfirmDialog({
         ) : null}
 
         {failure ? (
-          <p
-            role="alert"
-            className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-          >
+          <Alert tone="error" size="sm">
             {failure}
-          </p>
+          </Alert>
         ) : null}
 
         {/* Column-reversed on a phone so the confirming action is the one

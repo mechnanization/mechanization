@@ -16,6 +16,7 @@ import { flagFieldLabel } from '@/lib/field-flags';
 import { CompleteRecordDialog } from '@/components/admin/complete-record-dialog';
 import { formatDateTime, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { Tabs } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FactCell, FactRow } from '@/components/ui/facts';
@@ -118,27 +119,21 @@ export function ReviewQueue({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-3">
-        <div role="tablist" aria-label={en ? 'Review state' : 'حالة المراجعة'} className="flex rounded-lg border p-0.5">
-          {tabs.map((option) => (
-            <button
-              key={option.key}
-              role="tab"
-              aria-selected={tab === option.key}
-              onClick={() => setTab(option.key)}
-              className={cn(
-                'flex min-h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors',
-                tab === option.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent',
-              )}
-            >
-              {option.label}
-              {option.count !== undefined ? (
-                <span className={cn('tabular-nums', tab === option.key ? 'opacity-90' : 'text-muted-foreground')}>
-                  {option.count}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
+        {/*
+          `enclosed`: a small control in a toolbar row, where one filled group
+          reads as a single object rather than three loose chips.
+        */}
+        <Tabs
+          variant="enclosed"
+          items={tabs.map((option) => ({
+            id: option.key,
+            label: option.label,
+            count: option.count,
+          }))}
+          value={tab}
+          onChange={setTab}
+          label={en ? 'Review state' : 'حالة المراجعة'}
+        />
 
         <div className="min-w-[12rem] space-y-1">
           <Label htmlFor="review-officer" className="text-xs text-muted-foreground">

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Banknote, CreditCard, Loader2, UserCheck } from 'lucide-react';
 import { formatLbp } from '@/lib/currency';
 import { tafqeet } from '@/lib/tafqeet';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -129,12 +130,9 @@ export function SettlePaymentDialog({
 
         <div className="space-y-4">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert tone="error">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           <div className="flex items-center justify-between rounded-lg bg-muted/40 p-3 text-sm">
@@ -190,9 +188,9 @@ export function SettlePaymentDialog({
               required
             >
               {collectors.length === 0 ? (
-                <p className="rounded-lg border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
+                <Alert tone="warning" size="sm" icon={false}>
                   {locale === 'en' ? 'No staff accounts found.' : 'لا توجد حسابات موظفين.'}
-                </p>
+                </Alert>
               ) : (
                 <Select value={collectedById} onValueChange={setCollectedById}>
                   <SelectTrigger id="settle-collector">
@@ -243,7 +241,7 @@ export function SettlePaymentDialog({
           </div>
 
           {isPartial ? (
-            <p className="rounded-lg border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
+            <Alert tone="warning" size="sm" icon={false}>
               {locale === 'en' ? (
                 <>
                   Partial payment — <span className="font-bold">{formatLbp(payment.remaining - received, locale)}</span> will remain due.
@@ -253,7 +251,7 @@ export function SettlePaymentDialog({
                   دفعة جزئية — سيبقى <span className="font-bold">{formatLbp(payment.remaining - received, locale)}</span> مستحقاً.
                 </>
               )}
-            </p>
+            </Alert>
           ) : null}
 
           <Field label={locale === 'en' ? 'Notes' : 'ملاحظة'} htmlFor="settle-note">

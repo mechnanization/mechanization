@@ -60,6 +60,7 @@ import type {
   MunicipalitySettings,
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
+import { Alert } from '@/components/ui/alert';
 import { useToast } from '@/components/ui/toast';
 import { describeAssessment } from '@/lib/fee-assessment';
 import { flagFieldLabel } from '@/lib/field-flags';
@@ -600,9 +601,9 @@ export default function CitizenProfilePage({
   if (error) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive">
+        <Alert tone="error">
           {error}
-        </p>
+        </Alert>
         <Link href={`${base}/dashboard`} className={buttonVariants({ variant: 'outline' })}>
           {locale === 'en' ? 'Back to Dashboard' : 'رجوع إلى اللوحة'}
         </Link>

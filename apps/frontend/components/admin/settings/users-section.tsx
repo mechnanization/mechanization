@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Ban, Check, Copy, KeyRound, Loader2, Lock, RotateCcw, Search, ShieldCheck, UserPlus, UsersRound } from 'lucide-react';
+import { Alert } from '@/components/ui/alert';
 import { EmptyState } from '@/components/ui/states';
 import {
   ApiRequestError,
@@ -289,12 +290,9 @@ export function UsersSection({
         </div>
 
         {error ? (
-          <p
-            role="alert"
-            className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
-          >
+          <Alert tone="error">
             {error}
-          </p>
+          </Alert>
         ) : loading ? (
           <div className="space-y-2">
             {[0, 1, 2, 3].map((index) => (

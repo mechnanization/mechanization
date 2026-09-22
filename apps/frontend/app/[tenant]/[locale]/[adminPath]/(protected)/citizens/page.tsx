@@ -36,6 +36,7 @@ import {
 import { ImportCitizensDialog } from '@/components/admin/import-citizens-dialog';
 import { ShellLink } from '@/components/admin/shell-nav';
 import { OfflineQueuePanel } from '@/components/admin/offline-queue';
+import { Alert } from '@/components/ui/alert';
 import { PageHeader } from '@/components/ui/page-header';
 import type { CitizenListItem } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
@@ -793,12 +794,9 @@ export default function CitizensPage({
       />
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert tone="error">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

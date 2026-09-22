@@ -1,9 +1,9 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, KeyRound, Loader2, UserMinus, UserPlus, UserRound } from 'lucide-react';
+import { KeyRound, Loader2, UserMinus, UserPlus, UserRound } from 'lucide-react';
 import { getLabels, mayTransferOwnership } from '@mechanization/shared-schemas';
 import type { OccupancyEndReason } from '@mechanization/shared-schemas';
 import {
@@ -30,6 +30,7 @@ import {
   afterTenancyPayload,
   endTenancyMessage,
 } from '@/components/admin/after-tenancy-question';
+import { Alert } from '@/components/ui/alert';
 import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,12 +42,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FactGrid, FactGridCell } from '@/components/ui/facts';
 import { ChoiceCard, Field } from '@/components/ui/field';
+import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
 import { ErrorState, LoadingState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
-import { cn } from '@/lib/utils';
 
 /**
  * «إنهاء الملكية» / «إنهاء الإيجار» — one spell, on a page of its own.
@@ -70,31 +72,6 @@ import { cn } from '@/lib/utils';
  * sent only when it is not today, the after-status only when it was asked.
  * The server is the authority on all of it and refuses what this lets through.
  */
-/**
- * One label-and-value cell of the person's card.
- *
- * Stacked, rather than the `SummaryList` row this was while the card was a
- * narrow sidebar. At the width of a desktop that row would put its label and
- * its value at opposite ends of the screen — two halves of one fact with a
- * hand's span of nothing between them — and on a phone the pair wrapped anyway.
- */
-function Detail({
-  label,
-  className,
-  children,
-}: {
-  label: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="min-w-0 space-y-0.5">
-      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
-      <dd className={cn('truncate text-sm font-semibold', className)}>{children}</dd>
-    </div>
-  );
-}
-
 export default function EndOccupancyPage({
   params,
 }: {
@@ -287,15 +264,7 @@ export default function EndOccupancyPage({
         }
       />
 
-      {submitError ? (
-        <p
-          role="alert"
-          className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-        >
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          {submitError}
-        </p>
-      ) : null}
+      {submitError ? <Alert tone="error">{submitError}</Alert> : null}
 
       {/*
         One column, both cards the width of the page.
@@ -373,7 +342,7 @@ export default function EndOccupancyPage({
             have a reason and neither is obvious from a missing question.
           */}
           {reason && !asking ? (
-            <p className="rounded-lg border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
+            <Alert tone="muted" size="sm" icon={false}>
               {leavesUnspoken
                 ? en
                   ? 'The ownership never stood, so what it said about the unit’s use is cleared.'
@@ -385,14 +354,14 @@ export default function EndOccupancyPage({
                   : en
                     ? 'Someone else is still recorded on this unit, so its status stays as it is.'
                     : 'ما زال أحد مسجَّلاً على هذه الوحدة، فتبقى حالتها كما هي.'}
-            </p>
+            </Alert>
           ) : null}
         </div>
 
         {/* ── Who and what, and the way out ─ */}
         <div className="space-y-4 rounded-xl border bg-card p-4 shadow-sm sm:p-5">
           <div className="flex items-center gap-2 border-b pb-3">
-            <UserRound className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            <Icon as={UserRound} className="text-muted-foreground" />
             <p className="min-w-0 truncate text-sm font-semibold">{name}</p>
           </div>
 
@@ -401,31 +370,41 @@ export default function EndOccupancyPage({
             cells that may be absent are last, so a flat with no أسهم and no
             number does not leave a hole in the middle of the row.
           */}
-          <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Detail label={en ? 'Unit' : 'الوحدة'} className="font-mono">
-              <span dir="ltr">{unitCode}</span>
-            </Detail>
-            <Detail label={en ? 'Capacity' : 'الصفة'}>{labels.occupancyRole[occupant.role]}</Detail>
-            <Detail label={en ? 'Since' : 'منذ'}>{formatDate(occupant.fromDate)}</Detail>
+          <FactGrid>
+            <FactGridCell
+              label={en ? 'Unit' : 'الوحدة'}
+              className="font-mono"
+              value={unitCode}
+            />
+            <FactGridCell
+              label={en ? 'Capacity' : 'الصفة'}
+              value={labels.occupancyRole[occupant.role]}
+            />
+            <FactGridCell label={en ? 'Since' : 'منذ'} value={formatDate(occupant.fromDate)} />
             {occupant.shares ? (
-              <Detail label={en ? 'Shares' : 'الأسهم'}>
-                {en ? `${occupant.shares}/2400` : `${occupant.shares}/٢٤٠٠`}
-              </Detail>
+              <FactGridCell
+                label={en ? 'Shares' : 'الأسهم'}
+                value={en ? `${occupant.shares}/2400` : `${occupant.shares}/٢٤٠٠`}
+              />
             ) : null}
             {occupant.citizenPhone ? (
-              <Detail label={en ? 'Phone' : 'الهاتف'} className="font-mono">
-                {/*
-                  A link, not text: the officer reading this card is the person
-                  who has to ring whoever is recorded on the flat.
-                */}
-                <a href={`tel:${occupant.citizenPhone}`} dir="ltr" className="text-primary">
-                  {occupant.citizenPhone}
-                </a>
-              </Detail>
+              <FactGridCell
+                label={en ? 'Phone' : 'الهاتف'}
+                className="font-mono"
+                value={
+                  /*
+                    A link, not text: the officer reading this card is the
+                    person who has to ring whoever is recorded on the flat.
+                  */
+                  <a href={`tel:${occupant.citizenPhone}`} dir="ltr" className="text-primary">
+                    {occupant.citizenPhone}
+                  </a>
+                }
+              />
             ) : null}
-          </dl>
+          </FactGrid>
 
-          <p className="rounded-lg bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
+          <Alert tone="muted" size="sm" icon={false}>
             {tenancy
               ? en
                 ? 'They move to «Former» on this unit and stop being charged for it. Their card stays on their file as an ended tenancy, documents included, and the owner stays the owner.'
@@ -433,7 +412,7 @@ export default function EndOccupancyPage({
               : en
                 ? 'They move to «Former» on this unit, the unit is released from their file, and fees for it stop being charged to them.'
                 : 'ينتقل إلى «سابق» على هذه الوحدة، وتُفصل الوحدة عن ملفه، وتتوقف الرسوم عليه عنها.'}
-          </p>
+          </Alert>
 
           {/*
             The action, at the end of what it acts on.

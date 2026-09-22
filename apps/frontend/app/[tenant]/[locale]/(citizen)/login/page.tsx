@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ApiRequestError, logApiError, requestOtp, verifyOtp } from '@/lib/api-client';
 import type { CitizenChoice } from '@/lib/api-client';
 import { saveSession } from '@/lib/session';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ChoiceCard, Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -125,12 +126,9 @@ export default function CitizenLogin({
       </div>
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert tone="error">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {stage === 'phone' ? (

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Loader2, Receipt } from 'lucide-react';
 import { ApiRequestError, loginByReference, logApiError } from '@/lib/api-client';
 import { saveSession } from '@/lib/session';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Field } from '@/components/ui/field';
@@ -78,12 +79,9 @@ export default function PaymentsLogin({
       <Card>
         <CardContent className="space-y-5 p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-            >
+            <Alert tone="error">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           <Field

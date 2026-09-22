@@ -33,6 +33,7 @@ import { formatLbp } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
 import { tafqeet } from '@/lib/tafqeet';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
+import { Alert } from '@/components/ui/alert';
 import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -247,12 +248,9 @@ export default function SettlePaymentPage({
       />
 
       {submitError ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-        >
+        <Alert tone="error">
           {submitError}
-        </p>
+        </Alert>
       ) : null}
 
       {/* Full Page Width 2-Column Equal-Height Grid */}
@@ -309,9 +307,9 @@ export default function SettlePaymentPage({
                   required
                 >
                   {collectors.length === 0 ? (
-                    <p className="rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning">
+                    <Alert tone="warning" size="sm" icon={false}>
                       {locale === 'en' ? 'No staff accounts found.' : 'لا توجد حسابات موظفين لاختيار محصّل.'}
-                    </p>
+                    </Alert>
                   ) : (
                     <Select value={collectedById} onValueChange={setCollectedById}>
                       <SelectTrigger id="settle-collector">
@@ -394,7 +392,7 @@ export default function SettlePaymentPage({
                 ) : null}
 
                 {isPartial ? (
-                  <p className="rounded-lg border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
+                  <Alert tone="warning" size="sm" icon={false}>
                     {locale === 'en' ? (
                       <>
                         Partial payment — <span className="font-bold">{formatLbp(payment.remaining - received, locale)}</span> will remain due on this charge.
@@ -404,7 +402,7 @@ export default function SettlePaymentPage({
                         دفعة جزئية — سيبقى <span className="font-bold">{formatLbp(payment.remaining - received, locale)}</span> مستحقاً على هذه المطالبة.
                       </>
                     )}
-                  </p>
+                  </Alert>
                 ) : null}
               </div>
             </div>

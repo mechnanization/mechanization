@@ -18,6 +18,7 @@ import {
 import { IMPORT_COLUMNS } from '@mechanization/shared-schemas';
 import type { CitizenImportResult, ImportRow } from '@mechanization/shared-schemas';
 import { buildCitizenTemplate, downloadCsv, parseCitizenCsv } from '@/lib/csv';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -233,12 +234,9 @@ export function ImportCitizensDialog({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert tone="error">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           {/* A large file is sent in batches, so there is real progress to

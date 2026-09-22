@@ -4,6 +4,7 @@ import { Banknote, Loader2 } from 'lucide-react';
 import type { AdminPaymentItem } from '@/lib/api-client';
 import { formatLbp } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -75,12 +76,9 @@ export function ConfirmCashPaymentDialog({
         ) : null}
 
         {error ? (
-          <p
-            role="alert"
-            className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-          >
+          <Alert tone="error">
             {error}
-          </p>
+          </Alert>
         ) : null}
 
         <DialogFooter className="gap-2">

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, FileSearch, Loader2 } from 'lucide-react';
 import { ApiRequestError, logApiError, openByReference } from '@/lib/api-client';
 import { loadSession, saveSession } from '@/lib/session';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -97,12 +98,9 @@ export default function TenantHome({
       <Card>
         <CardContent className="space-y-4 p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert tone="error">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           <div className="space-y-2">

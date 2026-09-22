@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { getLabels, type QualityFindingKind } from '@mechanization/shared-schemas';
 import type { FindingSubject, QualityFinding } from '@/lib/quality-api';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -568,12 +569,9 @@ export function ResolveDialog({
           </div>
 
           {failure ? (
-            <p
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-            >
+            <Alert tone="error" size="sm">
               {failure}
-            </p>
+            </Alert>
           ) : null}
         </div>
 

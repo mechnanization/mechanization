@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -179,12 +180,9 @@ export function ZoneModal({
           </Field>
 
           {error ? (
-            <p
-              role="alert"
-              className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-            >
+            <Alert tone="error" size="sm">
               {error}
-            </p>
+            </Alert>
           ) : null}
         </div>
 

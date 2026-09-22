@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
-import { CheckCircle2, Loader2, Map as MapIcon, UploadCloud } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { CheckCircle2, Map as MapIcon } from 'lucide-react';
 import {
   ApiRequestError,
   importCadastre,
@@ -9,6 +9,8 @@ import {
   type CadastreImportResult,
 } from '@/lib/api-client';
 import type { SettingsCopy } from '@/lib/settings-i18n';
+import { Alert } from '@/components/ui/alert';
+import { FileDropZone } from '@/components/ui/file-upload';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
 import { Notice, SettingsCard, StatusTile } from './settings-ui';
@@ -36,12 +38,8 @@ export function CadastreSection({
   token: string;
   copy: SettingsCopy;
 }) {
-  const toast = useToast();
-  const fileInput = useRef<HTMLInputElement>(null);
-
-  const [uploading, setUploading] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [result, setResult] = useState<CadastreImportResult | null>(null);
+  const toast = useToast();
+  const [uploading, setUploading] = useState(false);  const [result, setResult] = useState<CadastreImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const upload = useCallback(
@@ -68,9 +66,7 @@ export function CadastreSection({
         setError(message);
         toast.error(message);
       } finally {
-        setUploading(false);
-        if (fileInput.current) fileInput.current.value = '';
-      }
+        setUploading(false);      }
     },
     [tenant, token, toast, copy.cadastre],
   );
@@ -86,71 +82,24 @@ export function CadastreSection({
           <Notice title={copy.cadastre.replaceWarning}>{copy.cadastre.replaceWarningWhy}</Notice>
 
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
-            >
+            <Alert tone="error">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
-          <input
-            ref={fileInput}
-            type="file"
+          {/*
+            The hidden input, the drag state, the key handling and the busy
+            treatment all live in `FileDropZone` now — four screens had their
+            own copy, and the keyboard half was the part that varied.
+          */}
+          <FileDropZone
             accept=".geojson,application/geo+json,application/json"
-            className="sr-only"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void upload(file);
-            }}
+            busy={uploading}
+            onFile={(file) => void upload(file)}
+            title={uploading ? copy.cadastre.uploading : copy.cadastre.upload}
+            hint={copy.cadastre.dropHint}
+            constraints={copy.cadastre.constraints}
           />
-
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => !uploading && fileInput.current?.click()}
-            onKeyDown={(e) => {
-              if ((e.key === 'Enter' || e.key === ' ') && !uploading) {
-                e.preventDefault();
-                fileInput.current?.click();
-              }
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              const file = e.dataTransfer.files?.[0];
-              if (file && !uploading) void upload(file);
-            }}
-            className={cn(
-              'group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-all',
-              dragging
-                ? 'border-primary/60 bg-muted/30'
-                : 'border-muted-foreground/25 bg-muted/10 hover:border-primary/60 hover:bg-muted/30',
-              uploading && 'pointer-events-none opacity-60',
-            )}
-          >
-            <div className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary transition-transform group-hover:scale-110">
-              {uploading ? (
-                <Loader2 className="size-6 animate-spin" aria-hidden />
-              ) : (
-                <UploadCloud className="size-6" aria-hidden />
-              )}
-            </div>
-            <p className="text-sm">
-              <span className="font-semibold group-hover:text-primary">
-                {uploading ? copy.cadastre.uploading : copy.cadastre.upload}
-              </span>{' '}
-              {!uploading ? (
-                <span className="text-muted-foreground">{copy.cadastre.dropHint}</span>
-              ) : null}
-            </p>
-            <p className="text-xs text-muted-foreground">{copy.cadastre.constraints}</p>
-          </div>
 
           {result ? (
             <div className="grid gap-3 sm:grid-cols-3">

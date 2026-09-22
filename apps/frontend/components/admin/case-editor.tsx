@@ -19,6 +19,7 @@ import {
   updateCase,
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
+import { Alert } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Field } from '@/components/ui/field';
@@ -209,12 +210,9 @@ export function CaseEditor({
   if (loadError) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert tone="error">
           {loadError}
-        </p>
+        </Alert>
         <Link href={cancelHref} className={buttonVariants({ variant: 'outline' })}>
           {locale === 'en' ? 'Back to Cases' : 'رجوع إلى الحالات'}
         </Link>
@@ -258,12 +256,9 @@ export function CaseEditor({
       <Card>
         <CardContent className="space-y-5 p-4 sm:p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert tone="error">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           <Field

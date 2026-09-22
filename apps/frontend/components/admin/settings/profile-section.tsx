@@ -10,6 +10,7 @@ import {
 } from '@/lib/api-client';
 import type { MunicipalitySettings } from '@/lib/api-client';
 import type { SettingsCopy } from '@/lib/settings-i18n';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 
 import { Input } from '@/components/ui/input';
@@ -213,12 +214,9 @@ export function ProfileSection({
   return (
     <div className="space-y-4">
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
-        >
+        <Alert tone="error">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {/*
