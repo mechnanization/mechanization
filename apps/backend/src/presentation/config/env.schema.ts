@@ -38,6 +38,22 @@ export const envSchema = z
      */
     JWT_STAFF_TTL: z.string().default('8h'),
     /**
+     * How long one staff **token** is accepted before it must be exchanged.
+     *
+     * Not the same thing as `JWT_STAFF_TTL`, which is now the *session's* cap —
+     * the wall-clock moment a clerk signs in again, unchanged at 8h. This is
+     * the sliding window in between: the portal swaps the token for a fresh one
+     * whenever a request meets an expired one, so the officer never sees the
+     * hard 401 mid-form that the single-token design produced at hour eight.
+     *
+     * The exchange accepts an expired token up to the session cap, so shortening
+     * this does **not** shorten how long a stolen token is useful — the cap
+     * does, and it has not moved. This is a UX bound, not a security one, and
+     * reading it as the latter is the mistake to avoid. Real theft-window
+     * reduction needs a separately stored refresh credential.
+     */
+    JWT_STAFF_IDLE_TTL: z.string().default('30m'),
+    /**
      * Issued instead of JWT_STAFF_TTL when a staff member checks
      * "تذكّرني على هذا الجهاز".
      *
@@ -130,6 +146,36 @@ export const envSchema = z
       .string()
       .default('http://localhost:3000')
       .transform((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean)),
+
+    /**
+     * Error reporting. Declared here so the variable is documented and
+     * typo-checked with the rest, though `config/sentry.ts` reads
+     * `process.env` directly — the SDK has to start before `ConfigService`
+     * exists, or it misses every boot failure.
+     *
+     * **Optional in production, deliberately.** Not demanding it here is the
+     * §8.7 lesson applied rather than quoted: that incident was an env guard
+     * that could only ever produce a boot failure, never a working path, and
+     * `SENTRY_DSN` is the same shape of temptation. A municipality's API
+     * refusing to start because an observability vendor's DSN is absent would
+     * make the register less available in exchange for nothing — the API runs
+     * fine without it, it just runs unobserved. What catches an unset DSN is
+     * the boot log line in `main.ts`, which says which of the two states it is
+     * in on every start.
+     *
+     * Not `.url()`: a DSN is URL-shaped but it is the SDK's to parse, and a
+     * schema that rejects a valid DSN format we did not anticipate would fail
+     * the boot for the exact reason above.
+     */
+    SENTRY_DSN: z.string().min(1).optional(),
+    /**
+     * Overrides the `NODE_ENV`-derived environment tag. Worth setting on
+     * Vercel, where preview and production deployments both run with
+     * `NODE_ENV=production` and would otherwise be one indistinguishable
+     * stream — the §8.5 failure mode, in the issue tracker instead of the
+     * database.
+     */
+    SENTRY_ENVIRONMENT: z.string().min(1).optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV !== 'production') return;

@@ -146,6 +146,30 @@ function newSubmissionId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/**
+ * The token to send with the next record, read fresh from storage.
+ *
+ * A drain holds one session object for its whole run, which was fine when a
+ * staff token lasted eight hours: it could not change mid-drain. It can now.
+ * `apiFetch` exchanges an aged-out token transparently and writes the new one
+ * back to storage, so a drain that kept using the token it started with would
+ * present a stale one for *every* record — each costing a 401 and an exchange
+ * that had already happened.
+ *
+ * That is thirty wasted round trips on a thirty-record backlog, on precisely
+ * the connection this whole feature exists because of. Re-reading per record
+ * costs one `localStorage` hit and makes the first exchange serve the rest.
+ *
+ * Falls back to the token the drain started with when storage has nothing —
+ * another tab signing out mid-drain — so the in-flight record is still
+ * attempted rather than sent with `undefined`.
+ */
+function currentToken(tenant: string, fallback?: string): string {
+  const session = loadSession(tenant);
+  if (session && session.user.kind === 'STAFF') return session.accessToken;
+  return fallback ?? '';
+}
+
 /** Re-reads the queue from IndexedDB and republishes it. */
 export async function refreshQueue(tenant: string): Promise<void> {
   if (!offlineStorageAvailable()) return;
@@ -274,14 +298,14 @@ export async function syncQueue(tenant: string): Promise<void> {
         building that is also still queued, and the id it names only becomes a
         row when that building lands.
       */
-      delivered += await drainBuildings(tenant, session.accessToken);
+      delivered += await drainBuildings(tenant);
 
       for (const item of await listQueued(tenant)) {
         if (item.status !== 'pending') continue;
         if (typeof navigator !== 'undefined' && !navigator.onLine) break;
 
         try {
-          await createCitizen(tenant, session.accessToken, {
+          await createCitizen(tenant, currentToken(tenant, session.accessToken), {
             ...item.payload,
             clientSubmissionId: item.id,
           });
@@ -340,12 +364,14 @@ export async function syncQueue(tenant: string): Promise<void> {
  * silently swapping it is how a resident ends up looking for a building that no
  * longer exists under that name.
  */
-async function drainBuildings(tenant: string, accessToken: string): Promise<number> {
+async function drainBuildings(tenant: string): Promise<number> {
   let delivered = 0;
 
   for (const item of await listQueuedBuildings(tenant)) {
     if (item.status !== 'pending') continue;
     if (typeof navigator !== 'undefined' && !navigator.onLine) break;
+
+    const accessToken = currentToken(tenant);
 
     try {
       const response = await createBuilding(tenant, accessToken, {

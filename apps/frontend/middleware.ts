@@ -106,6 +106,21 @@ export function middleware(request: NextRequest) {
 
   if (
     pathname.startsWith('/_next') ||
+    /**
+     * The Sentry tunnel (`tunnelRoute` in `next.config.mjs`).
+     *
+     * Without this line the route below reads `monitoring` as a municipality
+     * slug with no locale and 307s the request to `/monitoring/en` — so every
+     * error report the browser tried to send would be redirected into a page
+     * render and silently lost. The symptom is the worst kind: an error
+     * reporter that is installed, configured, and reports nothing.
+     *
+     * It has to be exempted *here* rather than by narrowing the matcher below,
+     * because the matcher is also what attaches the CSP, and this is a POST
+     * from the page's own origin — it needs to reach the handler untouched, not
+     * to be given a locale.
+     */
+    pathname.startsWith('/monitoring') ||
     pathname.includes('.')
   ) {
     return withCsp(NextResponse.next({ request: { headers } }));

@@ -11,6 +11,8 @@ import {
   UnauthorizedError,
   ValidationError,
 } from '../../application/common/exceptions';
+import { reportException } from '../config/sentry';
+import { redactUrl } from '../config/sentry-redaction';
 
 const STATUS_BY_ERROR: Array<[new (...args: never[]) => DomainError, HttpStatus]> = [
   [NotFoundError, HttpStatus.NOT_FOUND],
@@ -53,6 +55,29 @@ export class DomainExceptionFilter implements ExceptionFilter {
         `error (${status}): ${detail} — ${request.method} ${request.originalUrl} [${correlationId}]`,
         exception instanceof Error ? exception.stack : undefined,
       );
+
+      /*
+        Sentry gets 5xx and nothing else, and the boundary is the point.
+
+        A 404 on a citizen who was never registered, a 409 on a duplicate
+        filing, a 422 from Zod — these are the system working. They are the
+        overwhelming majority of what this filter sees, and routing them to an
+        issue tracker would bury the handful of events that mean a bug under
+        thousands that mean a clerk mistyped a number. What lands here at 500 is
+        the `INTERNAL_ERROR` branch of `describe` below: something unrecognised,
+        which is the definition of a bug.
+
+        `correlationId` is what ties the report to everything else. It is
+        already in the response the client holds and in the log line above, so a
+        citizen quoting "it said try again later" reaches the right issue
+        without anyone having to name the citizen.
+      */
+      reportException(exception, {
+        correlationId,
+        method: request.method,
+        route: redactUrl(request.originalUrl ?? ''),
+        tenant: request.tenant?.slug,
+      });
     } else {
       this.logger.warn(
         `error (${status}): ${body.message} — ${request.method} ${request.originalUrl} [${correlationId}]`,

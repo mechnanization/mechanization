@@ -35,9 +35,10 @@ Set all of these for **Production** and **Preview**.
 | `SUPABASE_SERVICE_ROLE_KEY` | Service-role key. Never in the web project. |
 | `SUPABASE_STORAGE_BUCKET` | `documents` |
 | `JWT_SECRET` | ≥32 chars. `openssl rand -base64 48` |
-| `JWT_STAFF_TTL` | `12h` |
-| `JWT_STAFF_REMEMBER_TTL` | `30d` |
-| `JWT_CITIZEN_TTL` | `7d` |
+| `JWT_STAFF_TTL` | `12h` — now the **session** cap, not the token's. See §8 |
+| `JWT_STAFF_REMEMBER_TTL` | `30d` — same, for "تذكّرني" |
+| `JWT_STAFF_IDLE_TTL` | Optional, `30m`. How long one token lasts before it is exchanged |
+| `JWT_CITIZEN_TTL` | `7d` — unchanged, citizens have no exchange |
 | `OTP_ENABLED` | `true` — production refuses to boot without it |
 | `SMS_PROVIDER_API_KEY` | Optional and currently inert — no provider is implemented |
 | `SMS_PROVIDER_FALLBACK_API_KEY` | Same (see `open-decisions.md` #2) |
@@ -45,6 +46,8 @@ Set all of these for **Production** and **Preview**.
 | `PUBLIC_API_URL` | This project's origin + `/api/v1` |
 | `PUBLIC_PORTAL_URL` | The web project's origin |
 | `CRON_SECRET` | `openssl rand -hex 32` — see §4 |
+| `SENTRY_DSN` | Optional. The **API** project's DSN — see §7 |
+| `SENTRY_ENVIRONMENT` | `production` or `preview`, scoped per environment — see §7 |
 
 `connection_limit=1` is not a typo. Every warm instance holds its own pool, and
 the tenant factory opens a further client per municipality it has served; the
@@ -71,9 +74,15 @@ connect on every cold start.
 | --- | --- |
 | `NEXT_PUBLIC_API_URL` | The API project's origin + `/api/v1` |
 | `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` | Your own token — the checked-in fallback is a personal one |
+| `NEXT_PUBLIC_SENTRY_DSN` | Optional. The **web** project's DSN — a different one from the API's. See §7 |
+| `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | Optional override; `VERCEL_ENV` is used when unset |
+| `SENTRY_ORG` / `SENTRY_PROJECT` | Build-time only, for source-map upload |
+| `SENTRY_AUTH_TOKEN` | Build-time only. Without it the build still succeeds, just without source maps |
 
-Both are inlined into the browser bundle at build time. Changing either needs a
-redeploy, not a restart. Neither may ever hold a secret.
+The `NEXT_PUBLIC_*` ones are inlined into the browser bundle at build time.
+Changing any of them needs a redeploy, not a restart. None may ever hold a
+secret — which includes `SENTRY_AUTH_TOKEN`, so note that it is deliberately
+*not* prefixed and stays server-side.
 
 **Order matters**: deploy the API first, take its URL, then set
 `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS` from the two real origins and redeploy
@@ -239,3 +248,148 @@ refusing connections; the build succeeding tells you nothing about either.
 Then open the web project and sign in. If the browser console shows a CORS
 failure, `CORS_ORIGINS` on the API does not contain the web origin exactly
 (scheme included, no trailing slash).
+
+---
+
+## 7. Error monitoring (Sentry)
+
+Two Sentry projects, one per Vercel project, because the two deployments fail
+for different reasons and a merged stream makes neither legible:
+
+| Vercel project | DSN variable | Covers |
+| --- | --- | --- |
+| `mechanization-api` | `SENTRY_DSN` | 5xx from `DomainExceptionFilter`, and cold-start boot failures |
+| `mechanization-web` | `NEXT_PUBLIC_SENTRY_DSN` | Browser errors, SSR and middleware failures |
+
+### It is optional, on purpose
+
+An unset DSN disables the SDK and changes nothing else. There is deliberately
+**no** production guard demanding one: §8.7 of `AGENTS.md` is an incident about
+an env check whose only possible effect was a boot failure, and a municipality's
+API refusing to start because an observability vendor's DSN is absent would make
+the register less available in exchange for nothing.
+
+What replaces the guard is a boot log line — the API prints either
+`Sentry error reporting enabled` or `Sentry disabled (no SENTRY_DSN)` on every
+start. Read it after deploying rather than assuming.
+
+### Scope each DSN to one environment
+
+Set `SENTRY_ENVIRONMENT` (API) and `NEXT_PUBLIC_SENTRY_ENVIRONMENT` (web)
+per Vercel environment, not once for both. Preview and production both run with
+`NODE_ENV=production`, so without this every pull-request preview reports into
+the production issue stream — §8.5 in a different system. The web project falls
+back to `VERCEL_ENV`, which is already per-environment; the API has no such
+fallback and needs the variable set explicitly.
+
+### What is deliberately not sent
+
+Sentry is a third party, and the tenant schemas hold national ID numbers, home
+addresses and residency status. `AGENTS.md` §4 forbids citizen data leaving
+staging; sending it to a SaaS index would be the same failure with extra steps.
+So both SDKs are configured to drop, before anything leaves:
+
+- request bodies, cookies, query strings and all headers outside a small allowlist
+- the `user` object, and the client IP (`sendDefaultPii: false`)
+- `console`, `http`/`fetch` and `ui.click` breadcrumbs — the click ones record
+  the text of the element clicked, which on a citizens table is a person's name
+- **Session Replay**, which is not enabled and should not be without a separate
+  decision: it records the DOM, and the DOM here is the register
+
+Everything that does go out is passed through a redaction pass that strips
+UUIDs, رقم مرجعي values (which are login credentials), runs of six or more
+digits, JWTs, email addresses and the `Key (col)=(value)` detail Postgres
+appends to a unique violation. The rules live in `sentry-redaction.ts` in each
+app and are covered by `sentry-redaction.spec.ts` on the API side.
+
+What is kept is the municipality slug, the route shape and the correlation id —
+enough to triage, and enough to match a citizen quoting an error reference at a
+counter to the report, without naming them anywhere.
+
+### Source maps
+
+`SENTRY_ORG`, `SENTRY_PROJECT` and `SENTRY_AUTH_TOKEN` are build-time only, on
+the web project. Without them the build still succeeds and simply ships without
+maps — a missing observability token must never fail a deploy. `hideSourceMaps`
+keeps the maps out of the public build output, so they are readable to Sentry
+and not to anyone opening devtools against the portal.
+
+### The tunnel route
+
+Browser events are POSTed to `/monitoring` on the portal's own origin and
+forwarded from there, rather than straight to `*.ingest.sentry.io`. This is not
+an ad-blocker workaround (though it is also that): `middleware.ts` builds a
+strict `connect-src` that enumerates every origin the portal may talk to,
+precisely so an injected script has nowhere to send what it reads. Adding a
+third-party collector to that list would be the exfiltration channel the policy
+exists to deny. The tunnel keeps `connect-src 'self'` intact.
+
+`middleware.ts` exempts `/monitoring` from tenant/locale routing. Without that
+exemption it is read as a municipality slug and redirected to `/monitoring/en`,
+and every error report is silently lost — an error reporter that is installed,
+configured, and reports nothing.
+
+---
+
+## 8. Staff sessions and the token exchange
+
+A staff sign-in used to produce one token with one lifetime — 8h, or 30d with
+"تذكّرني" — and when it ran out the next request came back 401. A clerk halfway
+through a citizen form at hour eight lost the form. There was no refresh token,
+so expiry was a hard stop wherever it landed.
+
+It is now **two bounds instead of one**:
+
+| Bound | Variable | Default | What it is |
+| --- | --- | --- | --- |
+| Token life | `JWT_STAFF_IDLE_TTL` | `30m` | How long one token is accepted before it must be exchanged |
+| Session cap | `JWT_STAFF_TTL` / `JWT_STAFF_REMEMBER_TTL` | `8h` / `30d` | When the clerk signs in again. Stamped at login, never moves |
+
+`JWT_STAFF_TTL` keeps the value and the meaning an operator already had for it —
+how long a sign-in lasts. What changed is which expiry it names: it used to be
+the token's, and is now the session's. Nobody has to change a variable.
+
+The portal exchanges the token for a fresh one whenever a request meets an
+expired one (`POST /t/:slug/auth/staff/refresh`), replays the request, and the
+screen never sees the 401. Past `sessionExpiresAt` there is no exchange at any
+price, so a session still ends at exactly the wall-clock moment it did before.
+
+### What this does and does not buy
+
+**It does not shrink the window a stolen token is useful for**, and it is worth
+being plain about that rather than letting the short TTL imply otherwise. The
+exchange has to accept an *expired* token — otherwise a clerk returning from
+lunch meets the same hard 401 at half an hour instead of eight, which is worse
+than what it replaced — so anyone holding the token can exchange it too. The
+credential's effective life is the session cap, exactly as it was.
+
+What it buys is that the cap is now the *only* thing that ends a session, rather
+than the token's own expiry ending it at an arbitrary moment mid-task.
+
+Reducing the theft window needs a second credential that only the exchange
+endpoint accepts, stored server-side, rotated on every use with reuse detection
+— i.e. real refresh tokens. That is a new tenant table and a migration applied
+per municipality, and it is deliberately not what this is. This change is a
+prerequisite for it, not a substitute.
+
+### What is still enforced on every exchange
+
+The exchange route is `@Public()` because the guard rejects expired tokens and
+an expired token is the normal input here. The checks move inside the service
+rather than disappearing — signature, tenant, session cap, plus:
+
+- **Revocation.** `tokenVersion` and `isActive` are re-read, so a dismissal
+  still takes effect within `SessionRevocationService`'s cache window and a
+  revoked session cannot refresh its way back.
+- **Role.** Re-read from the row rather than copied from the token, so a
+  promotion or demotion reaches the session at the next exchange instead of the
+  next sign-in. `RolesGuard` authorises from this claim, so a stale one is an
+  authorisation decision made on old information.
+
+### Deploying it
+
+No migration, and no coordination between the two projects. Sessions already in
+flight carry no `sessionExpiresAt`; the exchange falls back to the token's own
+`exp`, which means those sessions keep exactly the lifetime they were issued
+with and simply cannot be extended. Each clerk signs in once, at the moment they
+would have anyway, and gets the new shape.

@@ -1,7 +1,15 @@
 import 'reflect-metadata';
+/**
+ * First, and before `createApiApp` is imported — see `instrument.ts`. On this
+ * entry point it also covers the cold-start boot failures the `catch` below
+ * reports, which are the ones a serverless deployment is most likely to hit and
+ * least likely to notice.
+ */
+import './instrument';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Logger } from '@nestjs/common';
 import { createApiApp } from './bootstrap';
+import { flushSentry, reportException } from './config/sentry';
 
 /**
  * Serverless entry point (Vercel).
@@ -47,12 +55,51 @@ export default async function handler(
   }
 
   try {
-    (await app)(req, res);
+    const express = await app;
+
+    /*
+      Hand the request to Express, then wait for the response to finish before
+      returning — so that anything `DomainExceptionFilter` reported can be
+      flushed.
+
+      Without this, `handler` resolves the moment Express is *handed* the
+      request, Vercel treats the invocation as complete, and the instance is
+      frozen with the Sentry transport's queue still full. Every 500 the filter
+      captured would be dropped on the way out, and the symptom is the cruel
+      one: an error reporter that works perfectly in `pnpm dev` (long-lived
+      process, transport drains on its own timer) and silently reports nothing
+      in production, which is the only environment it was installed for.
+
+      `finish` for the ordinary path, `close` for a client that hung up
+      mid-response; `once` on both, since whichever fires first is the end of
+      this request either way.
+    */
+    await new Promise<void>((resolve) => {
+      res.once('finish', resolve);
+      res.once('close', resolve);
+      express(req, res);
+    });
+
+    await flushSentry();
   } catch (error: unknown) {
     Logger.error(
       'Failed to boot the API in the serverless handler',
       error instanceof Error ? error.stack : error,
     );
+
+    /*
+      The one failure `DomainExceptionFilter` can never see.
+
+      A boot that throws in here never reaches Nest, so no filter runs and no
+      correlation id exists — the request dies before the app that would have
+      handled it. Reported directly, and flushed before responding, because
+      Vercel freezes the instance the moment this response is sent: an event
+      still in the transport queue is simply lost, which looks exactly like an
+      error that never happened.
+    */
+    reportException(error, { method: req.method, route: 'serverless-boot' });
+    await flushSentry();
+
     res.statusCode = 500;
     res.setHeader('content-type', 'application/json; charset=utf-8');
     res.end(JSON.stringify({ statusCode: 500, message: 'Service unavailable' }));
