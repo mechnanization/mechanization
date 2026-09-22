@@ -91,11 +91,24 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Test
+      - name: Test (backend)
         env:
           # Present, so the integration suites run rather than skip.
           TEST_DATABASE_URL: postgresql://test:test@localhost:5432/test
         run: pnpm --filter @mechanization/backend test
+
+      # Its own step rather than the root `pnpm test`, so a failure names the
+      # app that failed in the check list instead of one line covering both.
+      #
+      # Until now nothing here ran the frontend suite at all: the vitest files
+      # over the API client, the offline queue, تفقيط and the citizen field
+      # patch were green because nobody executed them. A test that cannot fail
+      # is the thing §8.7 is about — coverage that looks like coverage.
+      #
+      # No `TEST_DATABASE_URL`: these are pure-logic suites over `lib/` and
+      # they must never acquire a database.
+      - name: Test (frontend)
+        run: pnpm --filter @mechanization/frontend test
 
       - name: Build
         run: pnpm build

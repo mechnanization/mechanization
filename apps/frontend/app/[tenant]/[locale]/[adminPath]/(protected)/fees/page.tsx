@@ -196,9 +196,21 @@ export default function FeesPage({
    * What the filters above the ledger may offer — the bill titles that exist
    * and the statuses the register has actually reached.
    *
-   * One read for both, and `reference` so it is one read for the whole
-   * session: this is the municipality's vocabulary, not its rows. سجل العمليات
-   * asks for the same key, so opening it costs nothing.
+   * Deliberately **not** `reference` here, unlike سجل العمليات, which asks for
+   * the same key and may hold it for the session.
+   *
+   * `titles` and `methods` really are the municipality's vocabulary: only a
+   * write changes them, which is why one read per session was right and why
+   * `load()` invalidating the key was enough. `statuses` stopped being that
+   * the moment «متأخرة» became a predicate rather than a column — whether the
+   * register holds an overdue invoice now depends on the clock, and no write
+   * happens when midnight passes. Held for the session it would go stale with
+   * nothing to invalidate it, and the failure would be the exact one the tab
+   * was fixed to remove: rows reading «متأخرة» with no tab to filter them by.
+   *
+   * So this screen takes the ordinary policy and re-reads on focus. It is
+   * three counts and a DISTINCT, and the screen that shows the tabs is the one
+   * that has to be right about them.
    */
   const filterOptionsQuery = useStaffQuery({
     queryKey: ['fee-filter-options', tenant],
@@ -207,7 +219,6 @@ export default function FeesPage({
     base,
     token,
     errorMessage: 'تعذّر تحميل خيارات التصفية.',
-    reference: true,
   });
   const feeTitles = filterOptionsQuery.data?.titles ?? [];
 
@@ -724,12 +735,24 @@ export default function FeesPage({
           icon={<Wallet className="size-6 text-success" />}
           accent="bg-success/10"
         />
+        {/*
+          «قائمة» rather than «مطلوبة», and the difference is not wording.
+
+          This figure is every unpaid invoice, late ones included —
+          `summary()` counts the column with no date predicate. The tab row
+          directly below it splits that same set in two: «غير مدفوعة» is the
+          invoices not yet due and «متأخرة» the ones past due. Left saying
+          «مطالبة مطلوبة», the card was the tab's label over a larger number,
+          on the same screen, which is how a clerk comes to distrust both.
+        */}
         <MetricCard
           label={locale === 'en' ? 'Unpaid Balance' : 'المستحقات غير المسددة'}
           value={formatLbp(summary?.unpaidTotal ?? 0, locale)}
           subtext={
             summary
-              ? (locale === 'en' ? `${summary.unpaidCount} demands due` : `${summary.unpaidCount} مطالبة مطلوبة`)
+              ? (locale === 'en'
+                  ? `${summary.unpaidCount} outstanding, due and overdue`
+                  : `${summary.unpaidCount} مطالبة قائمة، مستحقة ومتأخرة`)
               : undefined
           }
           loading={loading}

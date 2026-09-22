@@ -96,6 +96,44 @@ const numeric = (value: unknown): number | undefined => {
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 
 /**
+ * Drops the nulls the register stores and the schemas will not take.
+ *
+ * `GET /citizens/:id/form` hands back the columns as Prisma holds them, and a
+ * nullable column with no answer is `null`. Not one field on a property card
+ * is `.nullable()` — every optional one is `.optional()`, which accepts
+ * `undefined` and refuses `null` — so echoing the record back verbatim sends
+ * a value the save rejects on a field nobody touched.
+ *
+ * `unitStatus` is the one that would have been hit first and hardest: a unit
+ * nobody has marked is the common case (`property.schema.ts` says so — it is
+ * billed by default), so a reviewer correcting a phone number on «ملاحظات
+ * الجودة» would get «حالة الوحدة غير صالحة» back about a field the compare
+ * screen does not even draw a box for. `neighborhood`, `side`, `buildingName`,
+ * `landlordName`, `landlordPhone` and `tentLocation` are the same shape.
+ *
+ * Dropping rather than coercing is what preserves the record, by both of the
+ * two routes the server takes. Most columns it sets with `?? null`, so absent
+ * is written as null — the value that was already there. For `neighborhood`
+ * and `propertyNumber` on a card, and `unitType`, `floor` and `unitArea` on a
+ * unit, it passes the key straight through, so absent is Prisma's `undefined`
+ * and the stored column is left alone — again the value that was already
+ * there. Both answers preserve, because the null being dropped was read from
+ * this same record moments earlier and `expectedVersion` refuses the save if
+ * it moved. Coercing one to `''` or `0` would instead be this function
+ * inventing an answer, which is the failure it exists to prevent.
+ *
+ * That equivalence is the precondition, not a property of the filter: build a
+ * card from anything other than a fresh `GET /citizens/:id/form` of this
+ * citizen and "leave alone" stops meaning "write back what was there".
+ *
+ * One level deep, everywhere it is applied — the card, the unit, and the
+ * `personal`/`contact` sections. Nested `units` are handled by `toPayloadUnit`,
+ * and nothing else on a card is an object whose nulls matter.
+ */
+const withoutNulls = (row: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null));
+
+/**
  * One stored property card, back on the wire unchanged.
  *
  * Every identity it arrived with travels — `id`, `buildingId`, the units and
@@ -129,8 +167,8 @@ function toPayloadCard(card: Record<string, unknown>): Record<string, unknown> {
   return {
     ...(id ? { id } : {}),
     ...(buildingId ? { buildingId } : {}),
-    ...rest,
-    ...(landlordName !== undefined ? { landlordName } : {}),
+    ...withoutNulls(rest),
+    ...(landlordName !== undefined && landlordName !== null ? { landlordName } : {}),
     ...(area !== undefined ? { unitArea: area } : {}),
     // أسهم describe a share of the land itself — never sent on a tenant's card.
     ...(shareCount !== undefined && rest.occupancyType === 'OWNER' ? { shares: shareCount } : {}),
@@ -145,7 +183,7 @@ function toPayloadUnit(unit: unknown): Record<string, unknown> {
   return {
     ...(id ? { id } : {}),
     ...(unitId ? { unitId } : {}),
-    ...rest,
+    ...withoutNulls(rest),
     ...(area !== undefined ? { unitArea: area } : {}),
   };
 }
@@ -196,10 +234,34 @@ export function citizenFieldPatch(
 
   const submittedContact = nonResident ? pick(contact, NON_RESIDENT_CONTACT) : contact;
 
+  /*
+    The same null filter, on the other two sections.
+
+    `getEditable` guards the string columns it returns — `motherName ?? ''`,
+    `bloodType ?? ''` — and leaves nine others raw, every one of them nullable
+    in `schema.prisma`: `gender`, `maritalStatus`, `whatsapp`,
+    `identityDocType`, `residentStatus`, `nationality`, `phone` and the two
+    household counts. Echo one of those back as `null` and the save is refused
+    on a field «ملاحظات الجودة» does not draw a box for.
+
+    `totalRegisteredMembers` is the one that would have been hit in practice,
+    because it needs no «غير مؤكَّد» flag to be absent: it is `.optional()` and
+    nullable, so a household whose قيد عائلي nobody recorded holds NULL and
+    opens fine in the full form — `contactDetailsSchema`'s own transform fills
+    it from `actualHouseholdMembers` when the key is absent, which is exactly
+    what `toFormValues` does for the edit form. Dropping the null therefore
+    hands the server the same answer the edit form would, rather than a value
+    this function invented.
+
+    Applied here rather than at the top so it runs over what is actually sent:
+    `submittedPersonal` has already dropped a Lebanese file's legacy document
+    fields and pinned `isLebanese`, and a non-resident file has already been
+    narrowed to the questions its form asks.
+  */
   return {
     residence: form.residence ?? 'RESIDENT',
-    personal: submittedPersonal,
-    contact: submittedContact,
+    personal: withoutNulls(submittedPersonal),
+    contact: withoutNulls(submittedContact),
     properties: form.properties.map(toPayloadCard),
     flags: form.flags ?? [],
     ...(form.notes?.trim() ? { notes: form.notes.trim() } : {}),

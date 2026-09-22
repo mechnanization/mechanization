@@ -4052,7 +4052,17 @@ export function getFeeTitles(tenant: string, token: string, signal?: AbortSignal
  * tab, because there is no answer behind it.
  */
 export interface FeeFilterOptions {
-  /** Stored `paymentStatus` values present — OVERDUE included; it is a column. */
+  /**
+   * Which status tabs the register can actually answer.
+   *
+   * Not simply "the stored values present". OVERDUE is never stored — nothing
+   * writes it, it is derived from `dueDate` on read — and UNPAID is split
+   * against the same boundary, so these two are counted rather than grouped.
+   * See `paymentStatusWhere` on the server for the predicate behind each.
+   *
+   * Consequently this half of the read is time-dependent and must not be held
+   * for the session the way `titles` and `methods` may be.
+   */
   statuses: PaymentStatus[];
   /** Stored `paymentMethod` values present. Never null: an unpaid row has none. */
   methods: PaymentMethod[];
