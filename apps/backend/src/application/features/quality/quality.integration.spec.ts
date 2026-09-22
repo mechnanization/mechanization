@@ -161,9 +161,28 @@ describeIfDb('Quality review', () => {
     ]);
     expect((await within(() => reviews.openReturnFor(citizenId)))?.reason).toBe('اسم الأم ناقص');
 
-    // The officer saves the record: the edit form's own event closes the return.
+    /*
+      A save that does not fill the gap leaves the return open.
+
+      This assertion used to be the opposite, and the fixture is why it is worth
+      keeping: the officer writes a note *saying* «أُضيف اسم الأم» and never
+      touches `motherName`. Any save by anyone closed every open return, so the
+      record came back marked corrected with the column still null and the
+      reviewer none the wiser.
+
+      `MOTHER_NAME` is one of the flags that can be checked against the row, so
+      it now is. The categorical flags — PROPERTY, OTHER — cannot be, and keep
+      the old behaviour deliberately; see docs/open-decisions.md §14.
+    */
     await within(async () => {
       await db.registration.update({ where: { id: registrationId }, data: { notes: 'أُضيف اسم الأم' } });
+      await reviews.onCitizenChanged({ citizenId, action: 'CITIZEN_UPDATED', actorId: staff.jawad });
+    });
+    expect((await within(() => reviews.openReturnFor(citizenId)))?.reason).toBe('اسم الأم ناقص');
+
+    // The officer actually fills it in. Now the return closes.
+    await within(async () => {
+      await db.user.update({ where: { id: citizenId }, data: { motherName: 'سعاد' } });
       await reviews.onCitizenChanged({ citizenId, action: 'CITIZEN_UPDATED', actorId: staff.jawad });
     });
     const corrected = await within(() => reviews.queue({ states: ['CORRECTED'], officerId: staff.jawad }));

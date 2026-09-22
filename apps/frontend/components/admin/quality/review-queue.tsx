@@ -13,6 +13,7 @@ import {
   type ReviewTab,
 } from '@/lib/quality-api';
 import { flagFieldLabel } from '@/lib/field-flags';
+import { CompleteRecordDialog } from '@/components/admin/complete-record-dialog';
 import { formatDateTime, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { Badge } from '@/components/ui/badge';
@@ -67,6 +68,8 @@ export function ReviewQueue({
   const [flaggedOnly, setFlaggedOnly] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [returning, setReturning] = useState<string | null>(null);
+  /** The row whose «استكمال البيانات الناقصة» dialog is open, or none. */
+  const [completing, setCompleting] = useState<ReviewQueueItem | null>(null);
 
   const query = useStaffQuery({
     queryKey: ['quality-reviews', tenant, tab, officerId, flaggedOnly],
@@ -432,6 +435,44 @@ export function ReviewQueue({
                   />
                 ) : (
                   <div className="flex flex-wrap items-center justify-end gap-2 border-t bg-muted/20 px-4 py-3">
+                    {/*
+                      «استكمال» sits with the two decisions rather than in the
+                      flag list above it, because it is the third answer a
+                      reviewer has and the queue never offered it.
+
+                      «اعتماد» and «إعادة إلى الموظف» both assume the gap stays
+                      a gap: approve it as it is, or send the officer back out.
+                      A reviewer who can simply *fill it in* — they have the
+                      deed on the desk, they know the family — had to leave the
+                      queue, find the citizen, and open a four-step form, and
+                      the queue they left does not remember where they were. So
+                      the commonest resolution was the one that cost least to
+                      click, which is «اعتماد» on a record still missing
+                      something.
+
+                      Safe on every row here without checking which
+                      registration it is: `RecordReviewService.queue` is
+                      `DISTINCT ON (citizenId) … ORDER BY submittedAt DESC`, so
+                      a queue row *is* the citizen's latest registration — the
+                      one `/citizens/:id/form` returns and this dialog writes.
+
+                      Shown with flags only. A record at «عُدِّل بعد الاعتماد»
+                      with nothing open has no questions to put, and a dialog
+                      that opens to say «لا توجد معلومات ناقصة» is a button that
+                      wasted the click.
+                    */}
+                    {item.flags.length > 0 ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={busy === item.registrationId}
+                        onClick={() => setCompleting(item)}
+                      >
+                        <FileQuestion className="size-4" aria-hidden />
+                        {en ? 'Fill in the gaps' : 'استكمال الناقص'}
+                      </Button>
+                    ) : null}
                     {item.state !== 'RETURNED' ? (
                       <Button
                         variant="outline"
@@ -470,6 +511,32 @@ export function ReviewQueue({
           })}
         </ol>
       )}
+
+      {/*
+        One dialog for the whole list, keyed by the row it was opened from, so
+        it remounts — and therefore refetches — when a reviewer works two
+        records in a row. Rendered outside the `<ol>` because a dialog belonging
+        to a list item disappears with it when `refetch` replaces the list.
+      */}
+      {completing ? (
+        <CompleteRecordDialog
+          key={completing.registrationId}
+          open
+          onOpenChange={(next) => {
+            if (!next) setCompleting(null);
+          }}
+          tenant={tenant}
+          base={base}
+          token={token}
+          citizenId={completing.citizen.id}
+          citizenName={completing.citizen.name}
+          locale={locale}
+          onSaved={() => {
+            setCompleting(null);
+            query.refetch();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -5,10 +5,11 @@ import { AlertTriangle, Minus, Plus, Trash2 } from 'lucide-react';
 import {
   getLabels,
   defaultUnitTypeFor,
+  isStructuralUnitType,
   type StructureType,
   type UnitType,
 } from '@mechanization/shared-schemas';
-import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
@@ -467,10 +468,36 @@ export function UnitGridPicker({
    * So the type appears exactly while it is true, and disappears the moment a
    * second unit makes it false — at which point the host has asked whether the
    * structure is now a building (see `reconcileStructureType`).
+   *
+   * `MATRIX_UNIT_TYPES` is the base rather than `BUILDING_UNIT_TYPES` because
+   * this grid *is* the matrix: it is the one screen where «طابق أعمدة» is a
+   * true answer, and the only screen from which one can be created. The citizen
+   * form's own unit editor keeps the narrower list — see the note on
+   * `MATRIX_UNIT_TYPES`.
+   *
+   * The sole-unit case adds «منزل مستقل» and subtracts nothing.
+   *
+   * It used to subtract the structural types, on the argument that one block
+   * on its own *is* the structure and «a building consisting of nothing but
+   * its own pilotis» describes nothing. That is true of a finished drawing and
+   * false of the act of drawing one. `panelIsSoleUnit` is true on `create`
+   * when `units.length === 0` — which is the first cell of an empty matrix,
+   * the one an officer paints while standing in the building. A block on
+   * columns with four storeys over it is surveyed from the bottom, so the
+   * first true answer is «طابق أعمدة», and the list refused to offer it: the
+   * officer had to file a flat that is not there, paint the storeys, then come
+   * back and correct the ground floor. A rule about the finished state was
+   * being enforced against every intermediate one.
+   *
+   * Nothing downstream needed the subtraction. `assertOccupiableUnit` guards
+   * occupancy rather than creation, `buildingUnitSchema` refuses a structural
+   * type on a citizen's card, and `sync_building_unit_counts` (0052/0054)
+   * already leaves such a block out of `unitsTotal` — so a building part-way
+   * through its survey reads as zero habitable units, which is what it is.
    */
   const panelUnitTypes: readonly UnitType[] = panelIsSoleUnit
-    ? ['INDEPENDENT_HOUSE', ...BUILDING_UNIT_TYPES]
-    : BUILDING_UNIT_TYPES;
+    ? ['INDEPENDENT_HOUSE', ...MATRIX_UNIT_TYPES]
+    : MATRIX_UNIT_TYPES;
 
   /**
    * Widens the grid by one column if it has to, then opens the create panel on
@@ -1042,6 +1069,19 @@ export function UnitGridPicker({
               const end = Math.min(unit.endCol, colsCount);
               const span = Math.max(1, end - start + 1);
               const palette = PALETTE[unit.colorIndex % PALETTE.length];
+              /*
+                A طابق أعمدة is drawn as structure, not as a unit.
+
+                The palette exists to tell two adjacent flats apart at a glance;
+                a column floor has nothing to be told apart from, and giving it
+                a sky-blue block would make it read as the fifth flat on a
+                four-flat drawing — which is the misreading this type was added
+                to end. So it takes the hatch instead: no colour of its own,
+                diagonal ruling, and the label says what the level *is* rather
+                than naming it, because its `unitCode` is an address nobody will
+                ever knock on.
+              */
+              const structural = isStructuralUnitType(unit.unitType);
 
               cells.push(
                 <button
@@ -1050,10 +1090,20 @@ export function UnitGridPicker({
                   data-cell
                   data-floor={floor}
                   data-col={start}
-                  style={{ gridColumn: `span ${span} / span ${span}` }}
-                  title={[unit.unitCode, labels.unitType[unit.unitType]]
-                    .filter(Boolean)
-                    .join(' — ')}
+                  style={{
+                    gridColumn: `span ${span} / span ${span}`,
+                    ...(structural
+                      ? {
+                          backgroundImage:
+                            'repeating-linear-gradient(45deg, currentColor 0 1px, transparent 1px 7px)',
+                        }
+                      : {}),
+                  }}
+                  title={
+                    structural
+                      ? labels.unitType[unit.unitType]
+                      : [unit.unitCode, labels.unitType[unit.unitType]].filter(Boolean).join(' — ')
+                  }
                   onPointerDown={(event) => {
                     event.preventDefault();
                     startSelection(floor, start);
@@ -1061,9 +1111,9 @@ export function UnitGridPicker({
                   onClick={() => openEdit(unit)}
                   className={cn(
                     'relative h-11 sm:h-12 touch-none select-none cursor-pointer rounded-[4px] border border-transparent ring-1 px-1 transition-colors',
-                    palette?.bg,
-                    palette?.text,
-                    palette?.ring,
+                    structural
+                      ? 'bg-muted/40 text-muted-foreground ring-border'
+                      : [palette?.bg, palette?.text, palette?.ring],
                   )}
                 >
                   {/* Centred across the whole merged rectangle. The type name
@@ -1072,10 +1122,20 @@ export function UnitGridPicker({
                       it. Both are truncated rather than wrapped — a two-line
                       label would push the row taller than its neighbours. */}
                   <span className="absolute inset-0 flex flex-col items-center justify-center gap-px overflow-hidden px-0.5 text-center">
-                    <span className="max-w-full truncate text-[9px] font-bold leading-tight">
-                      {unit.unitCode ?? labels.unitType[unit.unitType]}
+                    {/* The hatch is behind the label, so the label gets the
+                        cell's own background back to sit on — ruled text at
+                        9px is unreadable. */}
+                    <span
+                      className={cn(
+                        'max-w-full truncate text-[9px] font-bold leading-tight',
+                        structural && 'rounded-sm bg-background/85 px-1',
+                      )}
+                    >
+                      {structural
+                        ? labels.unitType[unit.unitType]
+                        : (unit.unitCode ?? labels.unitType[unit.unitType])}
                     </span>
-                    {unit.unitCode && span > 1 ? (
+                    {!structural && unit.unitCode && span > 1 ? (
                       <span className="max-w-full truncate text-[8px] font-medium leading-tight opacity-80">
                         {labels.unitType[unit.unitType]}
                       </span>
@@ -1171,8 +1231,18 @@ export function UnitGridPicker({
           <span className="text-muted-foreground font-medium text-xs">
             {en ? 'Units Summary:' : 'ملخص الوحدات:'}
           </span>
+          {/*
+            Counts what the census will count, which is not how many blocks are
+            painted. A طابق أعمدة occupies a cell and is excluded from
+            `buildings.unitsTotal` by `sync_building_unit_counts` (migration
+            0052) — so a tally of cells here would read «5 إجمالي» beside a
+            building record saying four, and the officer who painted it would
+            have no way to tell which number was wrong. The structural cells are
+            not hidden: they get their own badge from the type breakdown below.
+          */}
           <Badge variant="secondary" className="font-mono text-xs h-5 px-2">
-            {units.length} {en ? 'Total' : 'إجمالي'}
+            {units.filter((unit) => !isStructuralUnitType(unit.unitType)).length}{' '}
+            {en ? 'Total' : 'إجمالي'}
           </Badge>
           {/* Only where the two kinds coexist — on a new building every cell is
               new, and saying so on all of them says nothing. */}

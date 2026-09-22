@@ -15,6 +15,18 @@
  * register chose to store what it is charging for.
  */
 
+/**
+ * Unit types that describe a floor rather than premises — «طابق أعمدة» and
+ * «طابق فارغ». Nobody occupies one and nobody is billed for one.
+ *
+ * Restated here rather than imported, because this layer imports nothing
+ * outside itself. That is exactly how `UnitType` in `property-entry.entity.ts`
+ * fell three values behind the schema — so `structural-unit.spec.ts` asserts
+ * this set equals `STRUCTURAL_UNIT_TYPE` in the shared enums, and the next
+ * structural type added will fail that test instead of arriving on a bill.
+ */
+const STRUCTURAL_UNIT_TYPES: ReadonlySet<string> = new Set(['PILOTIS', 'EMPTY_FLOOR']);
+
 /** The taxonomy values a card may hold; kept loose to avoid importing Prisma enums. */
 export interface BillableUnit {
   /** `APARTMENT`, `SHOP`, … or null where the card never recorded one. */
@@ -216,8 +228,39 @@ function preferLinked(line: {
   };
 }
 
-/** Every chargeable unit on one property card, in either storage shape. */
+/**
+ * Every chargeable unit on one property card, in either storage shape.
+ *
+ * Structural rows are removed here, once, rather than at each place a fee is
+ * decided. A طابق أعمدة or a طابق فارغ is a floor the matrix has to draw, not a
+ * flat: it has no occupant, no area anyone lives in, and nobody to bill.
+ *
+ * This is the predicate that actually closes it, and it has to be here rather
+ * than beside the two occupancy guards, because the guards protect
+ * `unit_occupancies` and billing does not read that table. It reads the card's
+ * `building_units` link — and `preferLinked` takes the *census* unit's type in
+ * preference to the card's, so a card that says APARTMENT while pointing at a
+ * pilotis arrives in assessment as a pilotis. Nothing downstream would catch
+ * it: `unitMatches` opens with `if (!category) return true`, so any
+ * ALL_CITIZENS or single-citizen notice charges for it.
+ *
+ * Keeping the structural types out of `FEE_TARGET_CATEGORY` stops a fee being
+ * *aimed* at them. Only this stops one being charged *for* them.
+ */
 export function billableUnits(entry: BillablePropertyEntry): BillableUnit[] {
+  // Filtered after the fact, not inside each branch, so a future third storage
+  // shape cannot reintroduce the hole by forgetting to ask.
+  return collectBillableUnits(entry).filter(
+    (unit) => unit.unitType === null || !STRUCTURAL_UNIT_TYPES.has(unit.unitType),
+  );
+}
+
+/** Whether a type describes a floor rather than premises. Exported for the drift guard. */
+export function isStructuralBillableType(type: string | null | undefined): boolean {
+  return type != null && STRUCTURAL_UNIT_TYPES.has(type);
+}
+
+function collectBillableUnits(entry: BillablePropertyEntry): BillableUnit[] {
   if (entry.units.length > 0) {
     return entry.units.map((line) => ({
       ...preferLinked(line),

@@ -442,14 +442,80 @@ export class RecordReviewService {
         select: { id: true },
       });
       if (!latest) return;
-      const closed = await this.db.recordReview.updateMany({
+
+      const open = await this.db.recordReview.findMany({
         where: { registrationId: latest.id, outcome: 'RETURNED', resolvedAt: null },
+        select: { id: true, fields: true, reviewedById: true },
+      });
+      if (open.length === 0) return;
+
+      /*
+        A save used to close every open return unconditionally. Two things were
+        wrong with that, and only one of them is fully fixable here.
+
+        The fixable one: a return that named a *gap* was closed by a save that
+        did not fill it. «اسم الأم ناقص» was answered by an officer correcting a
+        phone number, and the record came back marked corrected with the mother
+        name still null. Those flags are checkable against the row, so they are
+        checked — a return naming MOTHER_NAME or PHONE stays open while that
+        column is still empty.
+
+        The one that is not: `REVIEW_FIELD` is a coarse vocabulary — PROPERTY
+        covers a whole card, OTHER covers prose a human typed. No mechanical
+        comparison can show that a save addressed «العنوان على الشارع الخطأ».
+        Those keep the old behaviour, deliberately, rather than being given a
+        check that looks like verification and is not. See
+        docs/open-decisions.md.
+      */
+      const citizen = await this.db.user.findUnique({
+        where: { id: payload.citizenId },
+        select: { motherName: true, phone: true },
+      });
+
+      const stillMissing = new Set<string>();
+      if (!citizen?.motherName?.trim()) stillMissing.add('MOTHER_NAME');
+      if (!citizen?.phone?.trim()) stillMissing.add('PHONE');
+
+      const resolvable = open.filter((review) => !review.fields.some((f) => stillMissing.has(f)));
+      if (resolvable.length === 0) return;
+
+      const closed = await this.db.recordReview.updateMany({
+        where: { id: { in: resolvable.map((review) => review.id) }, resolvedAt: null },
         data: { resolvedAt: new Date(), resolvedById: payload.actorId },
       });
-      if (closed.count > 0) {
-        const actor = await this.db.user.findUnique({ where: { id: payload.actorId }, select: { role: true } });
-        this.announce('RECORD_CORRECTED', payload.citizenId, { id: payload.actorId, role: actor?.role ?? '' }, {});
-      }
+      if (closed.count === 0) return;
+
+      const actor = await this.db.user.findUnique({
+        where: { id: payload.actorId },
+        select: { role: true },
+      });
+
+      /*
+        Who closed it matters as much as that it closed.
+
+        The fill-in-the-gaps dialog saves through `updateCitizen` like any other
+        edit, so a reviewer who fills a gap themselves triggers this handler
+        under their own id — and the record was then announced as
+        RECORD_CORRECTED, which reads as "the officer went back and fixed it".
+        Nobody went back. The audit trail now says which it was.
+      */
+      const selfResolved = resolvable.every((review) => review.reviewedById === payload.actorId);
+
+      this.announce(
+        'RECORD_CORRECTED',
+        payload.citizenId,
+        { id: payload.actorId, role: actor?.role ?? '' },
+        {
+          reviewsClosed: closed.count,
+          // The grounds, so an auto-close is legible in the trail rather than
+          // appearing as an unexplained state change.
+          fields: [...new Set(resolvable.flatMap((review) => review.fields))],
+          resolvedByReviewer: selfResolved,
+          ...(open.length > resolvable.length
+            ? { leftOpen: open.length - resolvable.length, leftOpenBecause: [...stillMissing] }
+            : {}),
+        },
+      );
     } catch {
       // The save already succeeded; a return left open is visible and can be
       // closed by saving again. Failing here must not look like a failed save.

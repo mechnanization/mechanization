@@ -838,6 +838,29 @@ export default function BuildingsPage({
         />
       </div>
 
+      {/*
+        Says why the figures above are smaller than the matrix totals suggest.
+
+        Units in structures nobody can be inside — permitted, going up,
+        demolished, never built — are out of these figures, and a coverage
+        percentage that improved because somebody marked a block demolished has
+        to be explainable on the screen showing it rather than only in the
+        audit log.
+
+        Under the row rather than on a tile: it qualifies «الوحدات الممسوحة»
+        and «وحدات غير ممسوحة» equally, and `MetricCard` is label-and-value by
+        decision — a caveat that belongs to two tiles is not a subtext of
+        either. Shown only when something is actually excluded, so a register
+        with nothing out of scope carries no line at all.
+      */}
+      {!query.loading && summary && summary.unitsOutOfScope > 0 ? (
+        <p className="-mt-2 text-xs text-muted-foreground">
+          {en
+            ? `${summary.unitsOutOfScope.toLocaleString('en-US')} units excluded from these figures (structures not standing)`
+            : `${summary.unitsOutOfScope.toLocaleString('en-US')} وحدة مستثناة من هذه الأرقام (منشآت غير قائمة)`}
+        </p>
+      ) : null}
+
       <Card className="overflow-hidden">
         <CardHeader className="border-b px-4 py-3.5 sm:px-6">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

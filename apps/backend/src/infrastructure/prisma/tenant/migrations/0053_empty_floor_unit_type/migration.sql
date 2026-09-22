@@ -1,0 +1,67 @@
+-- 0053_empty_floor_unit_type
+--
+-- «طابق فارغ» — a floor that is built and holds no unit yet.
+--
+-- == Why it is not «شاغرة» ==============================================
+--
+-- This is the whole reason it is a unit *type* and not a unit *status*, and the
+-- two words are one letter apart in Arabic, so it is worth being exact.
+--
+-- `UnitStatus.VACANT` — شاغرة — says: a unit exists, and nobody is in it. It is
+-- a statement about a flat. That flat counts in the census, sits on the
+-- assessment roll, and its owner may be exempted from رسم الإشغال by a
+-- «تأكيد الشغور» (Law 60/1988, Art. 11 — the fee is owed for *actual*
+-- occupancy).
+--
+-- «طابق فارغ» says: there is no unit here. A slab was poured and left «على
+-- العظم»; a level has not been partitioned; a storey was finished after the
+-- ones above it. There is nothing to bill, nobody to exempt, and nothing to
+-- survey — so recording one as a «شقة شاغرة» invents a flat, and every unit
+-- count, coverage percentage and fee target in the register then carries it.
+-- That invented flat is also permanently unsurveyable, which is the same defect
+-- 0052 removed for طوابق الأعمدة.
+--
+-- Nor is it `BuildingLifecycle.UNDER_CONSTRUCTION`, which describes a whole
+-- structure. Three finished floors under two shells is the ordinary case here
+-- and no building-level value can say it.
+--
+-- == Why it is its own value beside PILOTIS =============================
+--
+-- Both are structural — neither can hold an occupant — and the difference is
+-- time rather than shape. A طابق أعمدة is what the building *is*: open columns,
+-- by design, permanently. An empty floor is what the building is *today*, and
+-- retyping the block into شقق is the ordinary end of its life rather than a
+-- correction of a mistake.
+--
+-- Folding them into one value would lose that, and lose it in the direction
+-- that matters to a census: «how much unbuilt capacity does this town have» is
+-- a question an empty floor answers and a pilotis does not.
+--
+-- == What it inherits ===================================================
+--
+-- Everything, without a line of new logic. `STRUCTURAL_UNIT_TYPE` in
+-- shared-schemas is a set and every guard asks `isStructuralUnitType` rather
+-- than comparing to a value, so this type arrives already refused by both
+-- occupancy doors, by `buildingUnitSchema` on a citizen's card, and by
+-- «تأكيد الشغور» — and already absent from `FEE_TARGET_CATEGORY`.
+--
+-- The one thing it does not inherit is the count filter, which names 'PILOTIS'
+-- literally because SQL cannot read a TypeScript constant. 0054 widens it.
+--
+-- == Why this is a new migration rather than an edit to 0051 ============
+--
+-- 0051 and 0052 were applied to staging at 17:07 UTC on 2026-09-20, before this
+-- was written. An applied migration is immutable (AGENTS.md §3) — the tenant
+-- migrator tracks by folder name, so an edited 0051 would never re-run and
+-- staging would silently diverge from production. Fix forward, always.
+--
+-- Split from 0054 for the same reason 0051 was split from 0052: `ALTER TYPE …
+-- ADD VALUE` may not have its new value *used* by the transaction that added
+-- it, and the migrator wraps each migration in one.
+--
+-- No row is rewritten. Nothing reads the new value until the code ships.
+--
+-- Written unqualified: the migrator sets `search_path` to the target tenant
+-- schema before running this.
+
+ALTER TYPE "UnitType" ADD VALUE IF NOT EXISTS 'EMPTY_FLOOR';

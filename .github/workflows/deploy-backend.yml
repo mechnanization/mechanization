@@ -1,0 +1,143 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma clients
+        run: |
+          cd apps/backend
+          npx prisma generate --schema=src/infrastructure/prisma/registry/schema.prisma
+          npx prisma generate --schema=src/infrastructure/prisma/tenant/schema.prisma
+
+      - name: Build shared packages and backend
+        run: |
+          pnpm --filter "./packages/*" build
+          pnpm --filter "@mechanization/backend" build
+
+      - name: Assemble deployment bundle
+        run: |
+          # Get production node_modules via pnpm deploy (resolves workspace deps into a self-contained tree)
+          pnpm --filter "@mechanization/backend" deploy --prod ./deploy-output
+
+          # pnpm deploy doesn't include dist/ — copy it in
+          cp -r apps/backend/dist ./deploy-output/dist
+
+          # Reconstruct the path layout the server expects: apps/backend/{dist,node_modules,package.json}
+          mkdir -p release/apps/backend
+          cp -r deploy-output/dist        release/apps/backend/dist
+          cp -r deploy-output/node_modules release/apps/backend/node_modules
+          cp    deploy-output/package.json release/apps/backend/package.json
+
+      - name: Package release
+        run: |
+          tar -czf release.tar.gz -C release .
+
+      - name: Set release name
+        id: vars
+        run: echo "release=$(date +%Y%m%d%H%M%S)-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Copy release to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "release.tar.gz"
+          target: "/var/www/municipality-app-releases/releases/${{ steps.vars.outputs.release }}-upload"
+
+      - name: Extract, boot candidate on port 4001, health-check, then cut over
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            RELEASE_DIR=/var/www/municipality-app-releases/releases/${{ steps.vars.outputs.release }}
+            UPLOAD_DIR=${RELEASE_DIR}-upload
+
+            mkdir -p $RELEASE_DIR
+            tar -xzf $UPLOAD_DIR/release.tar.gz -C $RELEASE_DIR
+            rm -rf $UPLOAD_DIR
+
+            # Sanity-check the entry point exists before touching anything
+            if [ ! -f "$RELEASE_DIR/apps/backend/dist/presentation/main.js" ]; then
+              echo "FATAL: main.js missing from release bundle — aborting"
+              ls -la $RELEASE_DIR/apps/backend/ || true
+              rm -rf $RELEASE_DIR
+              exit 1
+            fi
+
+            mkdir -p $RELEASE_DIR/apps/backend
+            ln -sfn /var/www/municipality-app-releases/shared/backend/.env $RELEASE_DIR/apps/backend/.env
+
+            # Clean up any stale candidate from a previous failed deploy
+            pm2 delete municipality-app-candidate 2>/dev/null || true
+
+            # Boot the NEW release as a single-instance candidate on port 4001.
+            # Production (port 4000) is completely untouched.
+            PORT=4001 pm2 start $RELEASE_DIR/apps/backend/dist/presentation/main.js \
+              --name municipality-app-candidate \
+              --cwd $RELEASE_DIR/apps/backend \
+              --update-env
+
+            HEALTHY=false
+            for i in $(seq 1 60); do
+              if curl -sf http://localhost:4001/api/v1/health > /dev/null; then
+                HEALTHY=true
+                echo "Candidate healthy after $((i*2))s"
+                break
+              fi
+              echo "Waiting for candidate to become healthy... ($i/60)"
+              sleep 2
+            done
+
+            if [ "$HEALTHY" != "true" ]; then
+              echo "Candidate FAILED health check after 120s — aborting deploy, production untouched"
+              pm2 logs municipality-app-candidate --lines 50 --nostream || true
+              pm2 delete municipality-app-candidate || true
+              rm -rf $RELEASE_DIR
+              exit 1
+            fi
+
+            echo "Cutting over production symlink and reloading main cluster"
+            pm2 delete municipality-app-candidate
+
+            ln -sfn $RELEASE_DIR /var/www/municipality-app-releases/current
+            pm2 reload /var/www/municipality-app-releases/ecosystem.config.js
+
+            sleep 3
+            POST_HEALTHY=false
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:4000/api/v1/health > /dev/null; then
+                POST_HEALTHY=true
+                break
+              fi
+              sleep 2
+            done
+
+            if [ "$POST_HEALTHY" = "true" ]; then
+              echo "Production healthy after cutover"
+              cd /var/www/municipality-app-releases/releases
+              ls -t | tail -n +6 | xargs -r rm -rf
+            else
+              echo "Production unhealthy after cutover — investigate immediately"
+              exit 1
+            fi

@@ -1,6 +1,51 @@
 import { z } from 'zod';
 
 /**
+ * Accepted spellings for `SCHEDULER_ENABLED`. Anything outside this set is a
+ * typo, and a typo here must not be *interpreted* — see `isSchedulerEnabled`.
+ */
+const TRUE_WORDS = new Set(['true', '1', 'yes', 'on']);
+const FALSE_WORDS = new Set(['false', '0', 'no', 'off']);
+
+/**
+ * Does this process own the in-process `@Cron` schedule?
+ *
+ * Read directly from the environment rather than through `ConfigService`
+ * because `AppModule`'s `imports` array is evaluated when the module file is
+ * loaded — before Nest has built an injector, and therefore before any
+ * provider exists to ask.
+ *
+ * **Unset means "decide the way this repository always has":** run the
+ * schedule unless `VERCEL` is set. That default is deliberate — shipping the
+ * flag must not be the reason a municipality's billing quietly stops. Set it
+ * explicitly the moment more than one long-lived backend process exists,
+ * because two processes with in-process timers are two schedulers, and the
+ * second one is not idempotent for free (OTP pruning is; billing is only
+ * idempotent *per period*, not against a concurrent run of itself).
+ *
+ * An unrecognised value throws rather than defaulting either way. Defaulting
+ * to `true` on a typo gives you a second scheduler you did not intend;
+ * defaulting to `false` silently stops billing. Neither is a failure anyone
+ * would notice, so the boot fails instead.
+ */
+export function isSchedulerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.SCHEDULER_ENABLED;
+
+  if (raw === undefined || raw.trim() === '') return !env.VERCEL;
+
+  const value = raw.trim().toLowerCase();
+  if (TRUE_WORDS.has(value)) return true;
+  if (FALSE_WORDS.has(value)) return false;
+
+  throw new Error(
+    `Invalid environment configuration:\n  SCHEDULER_ENABLED: expected one of ${[
+      ...TRUE_WORDS,
+      ...FALSE_WORDS,
+    ].join(', ')} (got '${raw}')`,
+  );
+}
+
+/**
  * Boot fails on a missing or malformed secret rather than surfacing it as a 500
  * on the first request that needs it — a JWT secret that is silently `undefined`
  * produces tokens anyone can forge.
@@ -132,6 +177,52 @@ export const envSchema = z
      * than opening it.
      */
     CRON_SECRET: z.string().min(16).optional(),
+
+    /**
+     * Whether this process runs the `@Cron` schedule in memory.
+     *
+     * Until this existed the answer was inferred from `process.env.VERCEL`,
+     * which made "who owns the schedule" a side effect of which platform
+     * happened to inject a variable — invisible on any host that does not, and
+     * unanswerable from the repository. It is now stated.
+     *
+     * Leaving it unset keeps the old behaviour exactly (`!VERCEL`), so nothing
+     * stops running the day this ships. `isSchedulerEnabled` above is the one
+     * place that reads it; the entry here exists so a misspelt value fails the
+     * boot with every other environment problem rather than on its own.
+     */
+    SCHEDULER_ENABLED: z
+      .string()
+      .optional()
+      .refine(
+        (value) =>
+          value === undefined ||
+          value.trim() === '' ||
+          TRUE_WORDS.has(value.trim().toLowerCase()) ||
+          FALSE_WORDS.has(value.trim().toLowerCase()),
+        {
+          message: `must be one of ${[...TRUE_WORDS, ...FALSE_WORDS].join(', ')}`,
+        },
+      ),
+
+    /**
+     * Pinned to `UTC` in every deployment artefact, and asserted here.
+     *
+     * Billing period keys are built with `getUTCFullYear` / `getUTCMonth`
+     * (`periodKeyFor`), while `@Cron` fires on the process's clock. Those two
+     * agree only when the process is in UTC — on Asia/Beirut the 02:00 run on
+     * the 1st of a month is still 23:00 on the last day of the previous month
+     * in UTC, so it computes the *previous* period's key. The jobs also name
+     * `timeZone: 'UTC'` on the decorator, which makes the *schedule* correct
+     * whatever `TZ` says — but every other date the process builds still moves
+     * with `TZ`, so it is pinned as well.
+     *
+     * Not enforced here on purpose: refusing to boot on a non-UTC `TZ` would
+     * take a running deployment down over a variable this repository cannot
+     * see being set. `main.ts` logs a warning instead, which is visible without
+     * being an outage.
+     */
+    TZ: z.string().optional(),
 
     /**
      * Absolute URLs this service hands to third parties (the Whish callback and

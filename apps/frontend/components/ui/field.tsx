@@ -158,6 +158,7 @@ export function Field({
   error,
   required,
   optionalLabel,
+  caution,
   htmlFor,
   path,
   className,
@@ -175,6 +176,27 @@ export function Field({
    * what lets a number be skipped that was sitting in the person's hand.
    */
   optionalLabel?: string;
+  /**
+   * An anti-guessing line, for a field whose guessed value is charged for.
+   *
+   * Not `hint` returning by the back door. `hint` was standing guidance under
+   * every input — the text people stopped reading first, and the reason it
+   * was removed. This is the opposite case, and there are two of them in the
+   * whole portal: «مساحة الوحدة» and «ومن يشغلها؟», the two answers a fee is
+   * computed from. Both have a correct response when the officer does not
+   * know — press «غير مؤكَّد» and say why — and both have a wrong one that is
+   * indistinguishable from the right one afterwards, because a guessed area
+   * is a number like any other once it is saved and the assessment reads it.
+   *
+   * So it is not guidance about how to use a control; it is the field saying
+   * what happens to a value nobody measured. It withdraws the moment the
+   * officer flags the field, because at that point they have done the thing
+   * it was asking for and the reason box below carries the rest.
+   *
+   * Before adding a third: if the sentence would still be true of a field
+   * nobody is billed over, it is a hint, and it does not go here.
+   */
+  caution?: string;
   htmlFor: string;
   /** This field's dot-path — `personal.civilRecordNumber`, `properties.0.unitArea`. */
   path?: string;
@@ -338,8 +360,16 @@ export function Field({
         No hint under the control, by decision: a field is its label and its
         input. Standing guidance under every other input was the text people
         stopped reading first, and it pushed the fields beside it out of line.
-        Only an error — something that is wrong now — gets a line down here.
+        Only an error — something that is wrong now — gets a line down here,
+        and `caution`, which is not guidance but a statement of what a guessed
+        value costs. See its prop docs for why the two are not the same thing.
       */}
+      {caution !== undefined && !flagged && unverifiedNote === undefined ? (
+        <p className="rounded-md border border-warning/30 bg-warning/5 px-2.5 py-1 text-xs leading-normal text-warning">
+          {caution}
+        </p>
+      ) : null}
+
       {error ? (
         <p
           role="alert"

@@ -300,9 +300,87 @@ export const UNIT_TYPE = [
    * non-resident may hold one without it making them a household in the town.
    */
   'GARAGE',
+  /**
+   * طابق أعمدة — the open floor a building stands on, and the one value here
+   * that describes no premises at all.
+   *
+   * Every other unit type answers «what is this space used as». This one
+   * answers «why is there a floor here with nothing in it»: a ground level of
+   * columns carrying the block above, with no walls, no door and no address.
+   * It exists in this enum for one reason — the matrix is a picture of the
+   * structure, and a building drawn without its pilotis has its floors off by
+   * one. Flat 5 on the third floor is the fourth level up from the street; an
+   * officer standing outside counting windows, and a collector looking for a
+   * door, both need the drawing to agree with the wall in front of them.
+   *
+   * So it is a unit in exactly one sense — it occupies a row in the grid — and
+   * in none of the others. It is not occupiable (`isStructuralUnitType` below
+   * is what says so, and both doors that create an occupancy consult it), not
+   * billable (deliberately absent from `FEE_TARGET_CATEGORY` — see the note
+   * there, because `GARAGE` established the opposite habit), not a dwelling,
+   * not counted in a building's `unitsTotal` or in the survey denominator
+   * (migration 0052), and never offered on the citizen form: a person cannot
+   * be registered against it, so asking an officer filling a household's file
+   * to consider it is offering them a mistake.
+   *
+   * `MATRIX_UNIT_TYPES` in `unit-fields.tsx` is the only list that carries it.
+   */
+  'PILOTIS',
+  /**
+   * طابق فارغ — a floor that is built but holds no unit yet.
+   *
+   * The sibling of `PILOTIS` and not the same thing, and the difference is
+   * *time* rather than shape. A طابق أعمدة is what the building is: open
+   * columns, by design, for ever. An empty floor is what the building is
+   * *today* — a slab poured and left «على العظم», a level the owner has not
+   * partitioned, a storey finished after the ones above it. It is expected to
+   * become real units, and retyping this block into شقق is the ordinary end of
+   * its life rather than a correction.
+   *
+   * Kept out of `UnitStatus` deliberately, and this is the distinction that
+   * matters most. «شاغرة» says *a unit exists and nobody is in it* — it is
+   * billable, its owner can claim the vacancy exemption (Law 60/1988 Art. 11),
+   * and it counts in the census as a unit. An empty floor has no unit at all:
+   * nothing to bill, nobody to exempt, nothing to survey. Recording one as a
+   * «شقة شاغرة» invents a flat, and every count, coverage figure and assessment
+   * roll then carries it.
+   *
+   * Nor is it `BuildingLifecycle.UNDER_CONSTRUCTION`, which describes a whole
+   * structure. A block with three finished floors and two shells is the common
+   * case here and neither value alone can say so.
+   */
+  'EMPTY_FLOOR',
 ] as const;
 export const unitTypeSchema = arabicEnum(UNIT_TYPE, 'نوع الوحدة مطلوب');
 export type UnitType = z.infer<typeof unitTypeSchema>;
+
+/**
+ * The unit types that describe structure rather than premises.
+ *
+ * A set rather than an `=== 'PILOTIS'`, because the question it answers is
+ * general and recurs — which it did, immediately: «طابق فارغ» was the second,
+ * and a roof plant room or a shared stairwell block would be the next. Every
+ * refusal in the codebase asks *this*, never the value, so the second one cost
+ * one entry here and no guard changed.
+ *
+ * `isDwellingUnitType` is a narrower question and not the complement of this
+ * one: a محل is neither a dwelling nor structural. The two are independent.
+ */
+export const STRUCTURAL_UNIT_TYPE = ['PILOTIS', 'EMPTY_FLOOR'] as const;
+
+/**
+ * Whether this unit is a part of the building rather than a space in it —
+ * which is to say, whether registering a person against it is meaningless.
+ *
+ * Deliberately total on `string`: the callers are guards, and a guard that
+ * only recognises the values its caller remembered to narrow to is a guard
+ * with a hole in it. An unknown type answers `false` — occupiable — because
+ * the safe default for a taxonomy that widens is to keep refusing only what is
+ * named here.
+ */
+export function isStructuralUnitType(type: string | null | undefined): boolean {
+  return type != null && (STRUCTURAL_UNIT_TYPE as readonly string[]).includes(type);
+}
 
 /**
  * The unit types somebody *lives* in — شقة and منزل مستقل.

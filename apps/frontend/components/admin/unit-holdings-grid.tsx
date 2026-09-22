@@ -1,6 +1,6 @@
 'use client';
 
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, isStructuralUnitType } from '@mechanization/shared-schemas';
 import type { UnitWithOccupants } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { floorLabel, type LaidOutUnit } from './building-unit-forms';
@@ -96,6 +96,18 @@ export function UnitHoldingsGrid({
                 {blocks.map(({ unit, startCol, endCol }) => {
                   const role = held.get(unit.id);
                   const selected = unit.id === selectedUnitId;
+                  /*
+                    A structural block is shown by what it is, not by its code.
+
+                    `unitCode` on a طابق أعمدة is an address nobody will ever
+                    knock on — the same reason the matrix prints the type there
+                    instead. Here the grid is the citizen's own holdings, so a
+                    grey tile reading «0001» beside their flat reads as someone
+                    else's unit rather than as the floor their building stands
+                    on. A structural block can never be `held`, so this branch
+                    only ever changes what a disabled cell says.
+                  */
+                  const structural = isStructuralUnitType(unit.unitType);
                   return (
                     <button
                       key={unit.id}
@@ -112,7 +124,14 @@ export function UnitHoldingsGrid({
                         selected && 'ring-2 ring-primary',
                       )}
                     >
-                      <span className="font-mono text-xs font-bold">{unit.unitCode}</span>
+                      <span
+                        className={cn(
+                          'text-xs font-bold',
+                          structural ? 'leading-tight' : 'font-mono',
+                        )}
+                      >
+                        {structural ? labels.unitType[unit.unitType] : unit.unitCode}
+                      </span>
                       {role ? (
                         <span className="block max-w-full truncate text-xs font-medium leading-tight">
                           {labels.occupancyType[role as never] ?? role}

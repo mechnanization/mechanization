@@ -11,6 +11,12 @@ export type PropertyType = 'BUILDING' | 'HOUSE' | 'LAND' | 'TENT';
  * per-unit, and never here. Nothing failed to compile, because every write
  * crosses into Prisma through an `as never`, so the drift was invisible until
  * a rate schedule tried to charge a مستودع differently from a محل.
+ *
+ * It then fell three behind again — `GARAGE`, and the two structural floor
+ * types — for exactly the same reason, and `UnitStatus` below was two behind.
+ * Writing "kept in step by hand" at the top of a list did not keep it in step.
+ * `domain-enum-drift.spec.ts` now asserts both against the shared enums, so
+ * the next value added fails a test rather than a rate schedule.
  */
 export type UnitType =
   | 'APARTMENT'
@@ -18,10 +24,28 @@ export type UnitType =
   | 'CLINIC'
   | 'OFFICE'
   | 'SHOP'
-  | 'WAREHOUSE';
+  | 'WAREHOUSE'
+  | 'GARAGE'
+  // Structural: a floor the matrix draws, never premises. Not occupiable and
+  // not billable — see `billableUnits`, which drops them before assessment.
+  | 'PILOTIS'
+  | 'EMPTY_FLOOR';
 export type LandType = 'AGRICULTURAL' | 'INDUSTRIAL';
-/** حالة الوحدة — about the unit. See `UNIT_STATUS` in the shared enums. */
-export type UnitStatus = 'OWNER_OCCUPIED' | 'RENTED' | 'VACANT' | 'UNDER_CONSTRUCTION';
+/**
+ * حالة الوحدة — about the unit. See `UNIT_STATUS` in the shared enums.
+ *
+ * `FREE_OCCUPIED` («مشغولة بتسامح») is the value whose absence let an owner and
+ * a شاغل بتسامح both be billed for one flat; `SEASONAL` («مسكن موسمي») arrived
+ * with migration 0040. Both were in the database and the shared enums long
+ * before they were here.
+ */
+export type UnitStatus =
+  | 'OWNER_OCCUPIED'
+  | 'RENTED'
+  | 'FREE_OCCUPIED'
+  | 'SEASONAL'
+  | 'VACANT'
+  | 'UNDER_CONSTRUCTION';
 
 /** Occupancies that describe someone living in a property they do not own. */
 const NON_OWNER: ReadonlySet<OccupancyType> = new Set(['TENANT', 'FREE_OCCUPANT']);

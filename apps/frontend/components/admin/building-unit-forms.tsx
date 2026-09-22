@@ -25,6 +25,7 @@ import {
   DAMAGE_SOURCE,
   getLabels,
   isOccupiableLifecycle,
+  isStructuralUnitType,
   isUnoccupied,
   OCCUPANCY_ROLE,
   SURVEY_STATUS,
@@ -276,6 +277,29 @@ export function cellBadge(
     variant,
   });
 
+  /*
+    A طابق أعمدة or طابق فارغ is not survey work, and must not be labelled as
+    any.
+
+    Every branch below asks a question about a unit — who lives in it, who owns
+    it, whether anyone has been to the door. A structural block answers none of
+    them, so it fell through to the default and came out «غير ممسوحة»: the
+    matrix telling an officer there is a door here they have not knocked on,
+    about a floor of open columns. That is the one tile that would send someone
+    back to a building for nothing, and `UnitStateLegend` now prints the
+    grey swatch's meaning underneath, which turned an unexplained colour into a
+    stated and wrong one.
+
+    Same wording as the picker's own structural branch, which said it first.
+  */
+  if (isStructuralUnitType(unit.unitType)) {
+    return badge(
+      en ? 'Structure — not a unit' : 'جزء من البناء — ليست وحدة',
+      'soft-muted',
+      labels.unitType[unit.unitType],
+    );
+  }
+
   if (living) {
     const who = `${labels.occupancyRole[living.role]}: ${named(living)}`;
     if (isUnoccupied(status)) {
@@ -335,11 +359,17 @@ export function cellBadge(
 }
 
 /**
- * What the four colours mean, said once under every matrix.
+ * What the colours mean, said once under every matrix.
  *
  * A colour code nobody explains is a colour code people guess at — and the
  * guess that matters here is amber, which is not "in progress" but "a bill
  * depends on something nobody has recorded".
+ *
+ * Grey carries two meanings and they are listed separately, because the
+ * difference between them is whether anyone should go back to the building:
+ * «غير ممسوحة» is a door nobody has knocked on, «جزء من البناء» is a floor
+ * with no door to knock on. One entry for both would have made the legend
+ * agree with the bug it exists to prevent.
  */
 export function UnitStateLegend({ locale, className }: { locale: string; className?: string }) {
   const en = locale === 'en';
@@ -355,14 +385,19 @@ export function UnitStateLegend({ locale, className }: { locale: string; classNa
     },
     { variant: 'soft-destructive', text: en ? 'Contradiction or refused' : 'تعارض أو رفض' },
     { variant: 'soft-muted', text: en ? 'Not surveyed' : 'غير ممسوحة' },
+    {
+      variant: 'soft-muted',
+      text: en ? 'Structure — not a unit' : 'جزء من البناء — ليست وحدة',
+    },
   ];
   return (
     <ul
       className={cn('flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground', className)}
       aria-label={en ? 'What the colours mean' : 'دلالة الألوان'}
     >
+      {/* Keyed by the text, not the variant: grey now has two entries. */}
       {entries.map((entry) => (
-        <li key={entry.variant} className="flex items-center gap-1.5">
+        <li key={entry.text} className="flex items-center gap-1.5">
           <Badge variant={entry.variant} className="size-3 rounded-sm p-0" aria-hidden />
 
           {entry.text}
@@ -1231,7 +1266,11 @@ export function AddPersonForm({
                 ? 'The area must be greater than zero.'
                 : 'المساحة يجب أن تكون أكبر من صفر.'
           }
-
+          caution={
+            en
+              ? 'The census has no area for this unit. If it has not been measured, press «Unverified» and say why — never guess: a guess would be billed.'
+              : 'لا توجد مساحة مسجَّلة لهذه الوحدة. إن لم تُقَس فاضغط «غير مؤكَّد» واذكر السبب — لا تُقدِّر: الرقم المُقدَّر تُحتسب عليه الرسوم.'
+          }
         >
           <Input
             id="occupant-unit-area"
@@ -1256,6 +1295,11 @@ export function AddPersonForm({
           htmlFor="occupant-unit-status"
           path={STATUS_FLAG_PATH}
           required
+          caution={
+            en
+              ? 'Owning a flat is not living in it. If you could not find out, press «Unverified» and say why — never guess.'
+              : 'الملكية لا تعني السكن. إن لم تعرف من يشغلها فاضغط «غير مؤكَّد» واذكر السبب — لا تُخمِّن.'
+          }
         >
           <Select
             value={unitStatus || undefined}

@@ -31,6 +31,15 @@ services:
       # value in .env is for `pnpm dev` on the host, where that name doesn't
       # resolve.
       REDIS_URL: redis://redis:6379
+      # Repeated from the Dockerfile so it survives `env_file` — a TZ line in
+      # apps/backend/.env would otherwise win and move the clock the billing
+      # period keys are read against.
+      TZ: UTC
+      # This stack is one backend process, so it owns the schedule. Stated
+      # rather than inferred from the absence of $VERCEL: the second replica
+      # anyone adds here must set this to false, and a value that is written
+      # down is a value someone can find.
+      SCHEDULER_ENABLED: 'true'
     ports: ['4000:4000']
     depends_on:
       redis:

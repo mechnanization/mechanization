@@ -76,6 +76,7 @@ import { Money } from '@/components/ui/money';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
+import { CompleteRecordDialog } from '@/components/admin/complete-record-dialog';
 import { EmptyState, LoadingState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { formatPhone } from '@/lib/phone';
@@ -536,6 +537,8 @@ export default function CitizenProfilePage({
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | undefined>();
   const [openingDocId, setOpeningDocId] = useState<string | null>(null);
+  /** «استكمال البيانات الناقصة» — always on the newest registration. */
+  const [completing, setCompleting] = useState(false);
   const toast = useToast();
   /** Printed on the receipt header — the tenant config is the only source. */
   const [municipalityName, setMunicipalityName] = useState('');
@@ -636,6 +639,20 @@ export default function CitizenProfilePage({
     (total, registration) =>
       total + registration.properties.filter((property) => !property.endedAt).length,
     0,
+  );
+
+  /**
+   * Whether any registration is carrying unverified fields.
+   *
+   * The «العقارات» fold is what closed over «يتطلب مراجعة» and its
+   * «استكمال البيانات الناقصة» button — the banner is the one thing on this
+   * page that says the record below it should not be read at face value, and a
+   * section that arrives shut says the opposite. So the fold is conditional:
+   * put away for a file with nothing outstanding, open for the file that is
+   * the reason this queue exists.
+   */
+  const hasUnverifiedFields = citizen.registrations.some(
+    (registration) => registration.flags.length > 0,
   );
 
   const locatedProperty = findLocatedProperty(
@@ -1090,9 +1107,14 @@ export default function CitizenProfilePage({
 
             It was the one long section that could not be put away, so a file
             with four properties buried «مالك لدى مستأجرين» and «سجل العمليات»
-            under a page of unit tables. Open by default, because it is what
-            most visits are actually about — the fold is there for the visit
-            that is not.
+            under a page of unit tables. Put away by default, because most
+            visits to a settled file are not about the unit tables.
+
+            Except when the record is carrying unverified fields: «يتطلب
+            مراجعة» and «استكمال البيانات الناقصة» live inside this section,
+            and a warning nobody can see is not a warning. Those files arrive
+            open, and the count chip wears the warning tone so the fold is
+            legible before it is opened.
 
             The count survives the fold, which is the only thing that makes a
             closed section worth closing.
@@ -1100,10 +1122,17 @@ export default function CitizenProfilePage({
           <CollapsibleSection
             id="properties"
             icon={Building2}
-            defaultOpen={false}
+            defaultOpen={hasUnverifiedFields}
             title={locale === 'en' ? 'Properties' : 'العقارات'}
             summary={
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+              <span
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-xs font-medium',
+                  hasUnverifiedFields
+                    ? 'bg-warning/10 text-warning'
+                    : 'bg-muted text-muted-foreground',
+                )}
+              >
                 {propertyCount}
               </span>
             }
@@ -1121,7 +1150,7 @@ export default function CitizenProfilePage({
               />
             ) : null}
 
-            {citizen.registrations.map((registration) => (
+            {citizen.registrations.map((registration, registrationIndex) => (
               <Card key={registration.id} className="overflow-hidden">
                 <CardHeader className="flex-row items-center justify-between space-y-0 gap-3 border-b bg-muted/30 py-3">
                   <CardTitle className="font-mono text-sm font-semibold">
@@ -1169,13 +1198,45 @@ export default function CitizenProfilePage({
                           </SummaryRow>
                         ))}
                       </SummaryList>
+                      {/*
+                        Two ways on, and which is offered depends on the record.
+
+                        «استكمال البيانات الناقصة» fills the gaps in place and
+                        is what this banner is actually for: the commonest work
+                        here is one value somebody phoned back with, and sending
+                        a clerk into the four-step form to type it is what left
+                        this queue unworked. It is offered only on the newest
+                        registration because that is the one the form owns —
+                        `/citizens/:id/form` returns the latest claim, so a
+                        dialog opened on an older one would silently write the
+                        answers onto a different record.
+
+                        The full form stays alongside it rather than being
+                        replaced. Some gaps are not one value: «لم نتمكن من جرد
+                        وحدات المبنى» is answered by going through the building,
+                        and a duplicate verdict is answered by the review the
+                        edit form carries.
+                      */}
                       {canEdit ? (
-                        <Link
-                          href={`${base}/citizens/${citizen.id}/edit`}
-                          className="inline-block pt-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
-                        >
-                          {locale === 'en' ? 'Complete this record' : 'استكمال بيانات السجل'}
-                        </Link>
+                        <div className="flex flex-wrap items-center gap-3 pt-1">
+                          {registrationIndex === 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => setCompleting(true)}
+                              className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+                            >
+                              {locale === 'en'
+                                ? 'Fill in the missing details'
+                                : 'استكمال البيانات الناقصة'}
+                            </button>
+                          ) : null}
+                          <Link
+                            href={`${base}/citizens/${citizen.id}/edit`}
+                            className="text-sm font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                          >
+                            {locale === 'en' ? 'Open the full form' : 'فتح نموذج التعديل الكامل'}
+                          </Link>
+                        </div>
                       ) : null}
                     </div>
                   ) : null}
@@ -1402,6 +1463,22 @@ export default function CitizenProfilePage({
           />
         </div>
       </div>
+
+      {/* Mounted once at the page root rather than inside the registration
+          card that opens it: the card sits in a `CollapsibleSection`, and a
+          dialog rendered inside a section the clerk can fold would unmount
+          mid-edit. It always edits the newest registration — see the banner. */}
+      <CompleteRecordDialog
+        open={completing}
+        onOpenChange={setCompleting}
+        tenant={tenant}
+        base={base}
+        token={token}
+        citizenId={citizenId}
+        citizenName={citizen.fullName}
+        locale={locale}
+        onSaved={() => void reload()}
+      />
     </div>
   );
 }
