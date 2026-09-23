@@ -13,8 +13,8 @@
  * something a municipality can be relied on to still have.
  *
  * The polygons themselves are not lost, though. They were derived at import
- * time and written to `parcel-polygons.geojson`, which is still sitting in
- * Supabase Storage and in the frontend's public assets. This reads that file
+ * time and written to `parcel-polygons.geojson`, which is still sitting in the
+ * cadastre bucket on S3 and in the frontend's public assets. This reads that file
  * and puts the shapes where the server can query them, so the outlines a
  * municipality already has stop being cartography the browser draws and become
  * something the API can answer questions with.

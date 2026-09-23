@@ -33,17 +33,40 @@ jobs:
 
       - name: Assemble deployment bundle
         run: |
-          # Get production node_modules via pnpm deploy (resolves workspace deps into a self-contained tree)
+          # Start from nothing, so a re-run on a warm runner cannot inherit a
+          # previous attempt's tree — the failure mode below is invisible when
+          # the destination happens not to exist yet.
+          rm -rf deploy-output release
+
+          # Production node_modules via pnpm deploy (resolves workspace deps into
+          # a self-contained tree). apps/backend/package.json declares no "files"
+          # field, so this carries everything unignored — dist/ included, since
+          # the build step above has already produced it.
           pnpm --filter "@mechanization/backend" deploy --prod ./deploy-output
 
-          # pnpm deploy doesn't include dist/ — copy it in
-          cp -r apps/backend/dist ./deploy-output/dist
-
-          # Reconstruct the path layout the server expects: apps/backend/{dist,node_modules,package.json}
+          # Reconstruct the layout the server expects: apps/backend/{dist,node_modules,package.json}
+          #
+          # dist comes straight from the build above rather than through
+          # deploy-output. It used to be copied into deploy-output/dist first,
+          # and `cp -r src dst` copies src *inside* dst when dst already exists —
+          # so on every run where pnpm deploy had produced a dist/, the result
+          # was dist/dist/, shipped to the server alongside the real one. The
+          # app still booted (main.js was at the right path either way), which is
+          # why it survived: what was actually deployed was a second, stale copy
+          # of the whole compiled app sitting where anyone debugging would read
+          # it by mistake.
           mkdir -p release/apps/backend
-          cp -r deploy-output/dist        release/apps/backend/dist
+          cp -r apps/backend/dist          release/apps/backend/dist
           cp -r deploy-output/node_modules release/apps/backend/node_modules
           cp    deploy-output/package.json release/apps/backend/package.json
+
+          # Assert the shape rather than trust it. Both halves matter: the entry
+          # point must exist, and there must be exactly one dist level — the bug
+          # above never broke the first check, only the second.
+          test -f release/apps/backend/dist/presentation/main.js \
+            || { echo "FATAL: main.js missing from bundle"; find release/apps/backend/dist -maxdepth 2; exit 1; }
+          test ! -e release/apps/backend/dist/dist \
+            || { echo "FATAL: nested dist/dist/ in bundle"; exit 1; }
 
       - name: Package release
         run: |

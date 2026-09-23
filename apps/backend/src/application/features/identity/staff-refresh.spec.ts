@@ -3,7 +3,6 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { StaffProps, User } from '../../../domain/entities/user.entity';
 import { PasswordHasher, TotpService } from '../../../domain/interfaces/otp-repository.interface';
-import { SupabaseAuthService } from '../../../domain/interfaces/supabase-auth.interface';
 import { UserRepository } from '../../../domain/interfaces/user-repository.interface';
 import { ForbiddenError, UnauthorizedError } from '../../common/exceptions';
 import { IdentityService, SessionClaims } from './identity.service';
@@ -31,11 +30,19 @@ import { OtpService } from './otp.service';
 
 const SECRET = 'test-secret-at-least-32-characters-long-xx';
 
+/**
+ * Shape-accurate and value-meaningless, as in `staff-login.spec.ts`: the two
+ * tests here that go through `loginStaff` to get a token now need a row that
+ * holds a credential at all, because the password is verified against this
+ * column rather than by Supabase. `PasswordHasher` below is mocked to accept.
+ */
+const PASSWORD_HASH = '$2b$12$u1Qn7bDPQ0v0sQJ0T8yR8eKZ9m2gq5gEr0CqJ0Lz7Yb6aW1nHc2Vu';
+
 const STAFF: StaffProps = {
   id: 'staff-1',
   tenantSlug: 'albazourieh',
   email: 'admin@albazourieh.gov.lb',
-  passwordHash: '',
+  passwordHash: PASSWORD_HASH,
   role: 'ADMINISTRATIVE_OFFICER',
   firstName: 'موظف',
   lastName: 'البلدية',
@@ -55,6 +62,26 @@ const TTLS: Record<string, string> = {
   JWT_CITIZEN_TTL: '7d',
 };
 
+/**
+ * Neither path in this file may reach Supabase — `loginStaff` verifies the
+ * password locally and `refreshStaffSession` never touched it — so every method
+ * on the port throws rather than being left absent. An absent method fails with
+ * "is not a function" from somewhere; this names what was called.
+ */
+/**
+ * Neither path in this file may send mail. `SupabaseAuthService` is not stubbed
+ * because `IdentityService` no longer accepts one — the constructor signature
+ * is the assertion now.
+ */
+function unreachableEmail(): { isConfigured: boolean; send: jest.Mock } {
+  return {
+    isConfigured: false,
+    send: jest.fn(() => {
+      throw new Error('EmailSender.send must not be reached from this path');
+    }),
+  };
+}
+
 function build(repository: Partial<UserRepository> = {}) {
   const jwt = new JwtService({ secret: SECRET });
 
@@ -69,15 +96,16 @@ function build(repository: Partial<UserRepository> = {}) {
 
   const service = new IdentityService(
     users,
-    { hash: jest.fn(), verify: jest.fn() } as unknown as PasswordHasher,
-    { verify: jest.fn().mockReturnValue(true) } as unknown as TotpService,
     {
-      authenticateStaff: jest.fn().mockResolvedValue({
-        user: { id: 'sb-1', email: STAFF.email, userMetadata: {}, appMetadata: {} },
-        accessToken: 'supabase-token',
-      }),
-    } as unknown as SupabaseAuthService,
+      hash: jest.fn().mockResolvedValue(PASSWORD_HASH),
+      // The subject here is expiry, not credentials: the password is accepted
+      // so the two `loginStaff` tests below reach the issuer they are about.
+      verify: jest.fn().mockResolvedValue(true),
+    } as unknown as PasswordHasher,
+    { verify: jest.fn().mockReturnValue(true) } as unknown as TotpService,
+    unreachableEmail() as unknown as never,
     {} as OtpService,
+    { forget: jest.fn().mockResolvedValue(undefined) } as unknown as never,
     jwt,
     {
       get: jest.fn((name: string, fallback?: string) => TTLS[name] ?? fallback),

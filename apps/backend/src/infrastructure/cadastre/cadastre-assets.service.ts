@@ -1,14 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import type { Feature, FeatureCollection, Polygon } from 'geojson';
-import { CadastreStorageService } from './cadastre-storage.service';
+import { CADASTRE_STORAGE_SERVICE } from '../../domain/interfaces/base-repository.interface';
+import type { CadastreStorage } from '../../domain/interfaces/cadastre-storage.interface';
 
 /**
  * Reads the derived cadastre layers the import writes — parcel shapes and the
  * municipality outline — for the code that has to reason about them rather than
  * merely draw them.
  *
- * Backed by Supabase Storage (`CadastreStorageService`) rather than local disk:
+ * Backed by S3 (the `CADASTRE_STORAGE_SERVICE` port) rather than local disk:
  * the import endpoint and this read may run in different serverless
  * invocations — even different deployments entirely, once the frontend and
  * backend are separate Vercel projects — so nothing on this process's own
@@ -24,7 +25,7 @@ export class CadastreAssetsService {
   private readonly logger = new Logger(CadastreAssetsService.name);
   private readonly cache = new Map<string, unknown>();
 
-  constructor(private readonly storage: CadastreStorageService) {}
+  constructor(@Inject(CADASTRE_STORAGE_SERVICE) private readonly storage: CadastreStorage) {}
 
   @OnEvent('cadastre.imported')
   handleImported(event: { tenantSlug: string }): void {

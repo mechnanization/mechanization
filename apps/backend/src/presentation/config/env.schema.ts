@@ -60,10 +60,96 @@ export const envSchema = z
     /** Session-mode connection — migrations and DDL only. */
     DIRECT_URL: z.string().url(),
 
-    SUPABASE_URL: z.string().url(),
-    /** Server-side only. Never sent to a browser; storage access, not auth. */
-    SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
-    SUPABASE_STORAGE_BUCKET: z.string().min(1).default('documents'),
+    /**
+     * Nothing in a running backend reads these any more.
+     *
+     * Storage moved to S3 and staff authentication moved to `users.passwordHash`
+     * with bcrypt, so the three adapters that call `getOrThrow` on them are no
+     * longer bound in `InfrastructureModule` and are never constructed. They are
+     * optional rather than deleted because `pnpm seed` still uses them when
+     * present (it guards on them itself), and because the files are due to be
+     * removed outright once the cutover has been watched in production.
+     *
+     * Required until now, which meant a boot could fail for want of a credential
+     * to a service the process no longer talks to. That is the shape of guard
+     * §8.7 is about, so it goes rather than lingering as reassurance.
+     */
+    SUPABASE_URL: z.string().url().optional(),
+    SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
+    SUPABASE_STORAGE_BUCKET: z.string().min(1).optional(),
+
+    /**
+     * S3. Citizen identity documents live here now, and the cadastre geojson
+     * with them — two buckets with deliberately opposite access postures:
+     * documents has "Block all public access" on and is read through presigned
+     * URLs only, cadastre is public-read because a parcel outline is a map, not
+     * a person. Nowhere else may name a bucket or a region in a literal —
+     * every caller reads them from here through `ConfigService` — because a
+     * hardcoded name that drifts from the configuration is how a scanned ID
+     * card ends up in the world-readable bucket instead of the private one.
+     *
+     * Optional at this level so a developer machine and the test suite still
+     * boot without AWS credentials — neither touches S3, and demanding keys
+     * from a laptop that will never call the API is the kind of guard people
+     * learn to route around. Production is a different claim, and it is made
+     * below: region and both buckets are required there, and unlike the SMS
+     * rule that used to sit at the bottom of this file, these *can* fail for
+     * the right reason — the S3 path works, and it is about to be the only one.
+     */
+    AWS_REGION: z.string().min(1).optional(),
+    /**
+     * `min(16)` is a shape check, not a strength one: an AWS access key id is
+     * 20 characters, so anything shorter is a truncated paste rather than a
+     * credential — and a truncated paste is much better caught at boot than as
+     * an AccessDenied on the first document an officer tries to open.
+     */
+    AWS_ACCESS_KEY_ID: z.string().min(16).optional(),
+    AWS_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    /**
+     * Only present with *temporary* credentials — SSO, an assumed role, an STS
+     * export — which always arrive as a triple. The server signs with a
+     * long-lived IAM user today, so this is unset there and that is correct.
+     *
+     * Declared rather than ignored because the adapters pass it through when it
+     * is set: carrying two thirds of a temporary credential produces requests
+     * without `x-amz-security-token`, which S3 rejects as InvalidAccessKeyId —
+     * an error naming the access key, which is the one part that was right.
+     */
+    AWS_SESSION_TOKEN: z.string().min(1).optional(),
+    /** Private bucket: identity documents. Presigned reads only, never a public URL. */
+    S3_DOCUMENTS_BUCKET: z.string().min(1).optional(),
+    /** Public-read bucket: cadastre geojson. Nothing that identifies a person goes here. */
+    S3_CADASTRE_BUCKET: z.string().min(1).optional(),
+
+    /**
+     * Transactional mail — one message exists, the staff password reset.
+     *
+     * All optional, and unset is a supported state: the municipality has no
+     * domain yet, and every provider wants one verified before it will deliver.
+     * Until these are set, `sendStaffPasswordResetEmail` **refuses** rather than
+     * falling back — an administrator sets the password directly instead. The
+     * fallback that used to sit there went through Supabase Auth, whose token
+     * check accepts any access token the project ever issued, and that was only
+     * safe while local password writes were mirrored into it. They are not any
+     * more, so the fallback would have been a standing way to rewrite a staff
+     * password with a credential the app can no longer revoke.
+     *
+     * No production requirement, which is the §8.7 rule rather than a quote of
+     * it: refusing the boot would take the whole register offline over a
+     * feature that has a working manual substitute.
+     */
+    SMTP_HOST: z.string().min(1).optional(),
+    SMTP_PORT: z.coerce.number().int().positive().max(65535).optional(),
+    SMTP_USER: z.string().min(1).optional(),
+    SMTP_PASSWORD: z.string().min(1).optional(),
+    /** RFC 5322 from-address, e.g. `بلدية البازورية <noreply@example.lb>`. */
+    MAIL_FROM: z.string().min(1).optional(),
+    /**
+     * How long a password-reset link works. Short on purpose: it is a
+     * bearer credential sitting in a mailbox, and the only thing standing
+     * between it and a staff account is that it expires.
+     */
+    PASSWORD_RESET_TTL: z.string().default('30m'),
 
     /**
      * One secret for both citizen and staff tokens — v2 unified the two auth
@@ -269,6 +355,75 @@ export const envSchema = z
     SENTRY_ENVIRONMENT: z.string().min(1).optional(),
   })
   .superRefine((env, ctx) => {
+    /**
+     * Deliberately above the production early-return: a half-set credential
+     * pair is wrong in every environment.
+     *
+     * With only one of the two, the AWS SDK does not fail. It falls through to
+     * the default credential provider chain — an instance role, a shared
+     * profile, whatever the host happens to carry — and signs as some other
+     * identity entirely. The typo then arrives as an AccessDenied against an
+     * account nobody meant to use, or, if that identity does have access, as a
+     * write into a bucket nobody meant to touch. Neither reads as "a variable
+     * is missing", which is what it actually is, and boot is the one cheap
+     * moment to say so.
+     *
+     * Both unset is fine and stays fine: that is the developer machine, and it
+     * is the case the checks below let through.
+     */
+    const hasAccessKeyId = env.AWS_ACCESS_KEY_ID !== undefined;
+    const hasSecretAccessKey = env.AWS_SECRET_ACCESS_KEY !== undefined;
+
+    if (hasAccessKeyId !== hasSecretAccessKey) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [hasAccessKeyId ? 'AWS_SECRET_ACCESS_KEY' : 'AWS_ACCESS_KEY_ID'],
+        message:
+          'AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set together — with only one of them the SDK falls back to the default credential chain and signs as a different identity instead of failing',
+      });
+    }
+
+    /**
+     * The two buckets are two buckets for one reason: the documents bucket has
+     * "block all public access" on, and the cadastre bucket is world-readable.
+     * That split is enforced nowhere in the code — it is two strings in a file.
+     *
+     * Naming the same bucket twice is a copy-paste away and breaks nothing
+     * visible: both adapters construct, every upload succeeds, presigning a
+     * public object still returns a working URL, and no test or log notices.
+     * What changes is that scans of national ID cards start landing in a bucket
+     * anyone with the key can read. Checked in every environment, because a
+     * developer pointed at the wrong pair is the same mistake.
+     */
+    if (
+      env.S3_DOCUMENTS_BUCKET &&
+      env.S3_CADASTRE_BUCKET &&
+      env.S3_DOCUMENTS_BUCKET === env.S3_CADASTRE_BUCKET
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['S3_DOCUMENTS_BUCKET'],
+        message:
+          'S3_DOCUMENTS_BUCKET and S3_CADASTRE_BUCKET must name different buckets — the cadastre bucket is public-read, so pointing both at it publishes every citizen identity document',
+      });
+    }
+
+    /**
+     * `SMTP_HOST` without `MAIL_FROM` (or the reverse) reads as "configured" to
+     * anyone looking at the file and as "not configured" to `SmtpEmailSender`,
+     * so password reset keeps refusing and the operator who just set one of
+     * them has no way to see why. Refused the way the AWS credential pair
+     * above is, and for the same reason.
+     */
+    if (Boolean(env.SMTP_HOST) !== Boolean(env.MAIL_FROM)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [env.SMTP_HOST ? 'MAIL_FROM' : 'SMTP_HOST'],
+        message:
+          'SMTP_HOST and MAIL_FROM must be set together — with only one of them the mail sender stays disabled and password resets silently keep going through Supabase',
+      });
+    }
+
     if (env.NODE_ENV !== 'production') return;
 
     /**
@@ -284,6 +439,45 @@ export const envSchema = z
         path: ['OTP_ENABLED'],
         message:
           'OTP cannot be disabled in production — a phone number alone would open a citizen record',
+      });
+    }
+
+    /**
+     * S3 in production. Three separate issues rather than one combined
+     * message, each with its own `path`, for the reason `validateEnv` exists at
+     * all: a deploy that learns about one missing variable per restart spends
+     * three deploys finding out what it needed.
+     *
+     * The credentials themselves are not demanded here — an EC2 instance role
+     * supplies them without either variable being set, and refusing to boot in
+     * that case would be a guard enforcing a spelling rather than an outcome.
+     * What is demanded is the configuration that has no fallback: the SDK
+     * cannot invent a region, and it certainly cannot invent a bucket name.
+     */
+    if (!env.AWS_REGION) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['AWS_REGION'],
+        message:
+          'AWS_REGION is required in production — the S3 client has no region to sign against, so every document read and every cadastre fetch fails at the first request',
+      });
+    }
+
+    if (!env.S3_DOCUMENTS_BUCKET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['S3_DOCUMENTS_BUCKET'],
+        message:
+          "S3_DOCUMENTS_BUCKET is required in production — without it the backend cannot store or retrieve a citizen's identity documents at all",
+      });
+    }
+
+    if (!env.S3_CADASTRE_BUCKET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['S3_CADASTRE_BUCKET'],
+        message:
+          'S3_CADASTRE_BUCKET is required in production — the parcel layer has nowhere to load its geojson from, so every map renders without a single boundary',
       });
     }
 

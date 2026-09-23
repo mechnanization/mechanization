@@ -2,17 +2,18 @@ import { Inject, Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { createHmac } from 'node:crypto';
 import {
+  EMAIL_SENDER,
   PASSWORD_HASHER,
-  SUPABASE_AUTH_SERVICE,
   TOTP_SERVICE,
   USER_REPOSITORY,
 } from '../../../domain/interfaces/base-repository.interface';
+import { EmailSender } from '../../../domain/interfaces/email-sender.interface';
 import {
   PasswordHasher,
   TotpService,
 } from '../../../domain/interfaces/otp-repository.interface';
-import { SupabaseAuthService } from '../../../domain/interfaces/supabase-auth.interface';
 import {
   CitizenChoice,
   UserRepository,
@@ -20,6 +21,23 @@ import {
 import { StaffRole, User } from '../../../domain/entities/user.entity';
 import { ConflictError, NotFoundError, UnauthorizedError } from '../../common/exceptions';
 import { OtpService } from './otp.service';
+import { SessionRevocationService } from './session-revocation.service';
+
+/**
+ * Compared against when a staff row has no `passwordHash`, so that a sign-in
+ * attempt for an account that cannot have one costs the same ~250ms as a real
+ * wrong password. A cost-12 bcrypt hash of a value nobody holds — it is never
+ * matched, and the only properties that matter are that it is well-formed and
+ * carries the same cost as the hashes `BcryptPasswordHasher` writes.
+ */
+/**
+ * The `purpose` every password-reset token carries, and the label its signing
+ * key is derived under. Bump the suffix to invalidate every outstanding link.
+ */
+const RESET_PURPOSE = 'PASSWORD_RESET';
+const RESET_KEY_LABEL = 'password-reset.v1';
+
+const ABSENT_PASSWORD_HASH = '$2b$12$0TQq.TFqu6SjurFnnRd/3eWT5wd9BsdSSqeoT8tSlia7rBFo8Pm6i';
 
 /** The single token shape. Both citizens and staff carry exactly this. */
 export interface SessionClaims {
@@ -63,7 +81,6 @@ export interface SessionClaims {
 
 export interface SessionResult {
   accessToken: string;
-  supabaseAccessToken?: string;
   expiresIn: string;
   /** When `accessToken` stops being accepted, ISO. The client refreshes before this. */
   expiresAt?: string;
@@ -97,8 +114,9 @@ export class IdentityService {
     @Inject(USER_REPOSITORY) private readonly users: UserRepository,
     @Inject(PASSWORD_HASHER) private readonly hasher: PasswordHasher,
     @Inject(TOTP_SERVICE) private readonly totp: TotpService,
-    @Inject(SUPABASE_AUTH_SERVICE) private readonly supabaseAuth: SupabaseAuthService,
+    @Inject(EMAIL_SENDER) private readonly email: EmailSender,
     private readonly otp: OtpService,
+    private readonly revocation: SessionRevocationService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly events: EventEmitter2,
@@ -107,7 +125,18 @@ export class IdentityService {
   // ────────────────────────────  Staff  ────────────────────────────
 
   /**
-   * Email + password, authenticated strictly via Supabase Auth.
+   * Email + password, verified against this municipality's own `users` row.
+   *
+   * Supabase Auth used to be the first call in this method, and it is now the
+   * only staff path that no longer touches it. Nothing was lost in the move:
+   * the session that comes back has always been this app's own JWT, signed with
+   * `JWT_SECRET` and checked by `JwtAuthGuard` — Supabase's access token was
+   * passed back to the caller and never read again, by anything. The hash is
+   * already local and already authoritative: `changeStaffPassword`,
+   * `StaffService.create` and `pnpm staff:create` all write `passwordHash` and
+   * every other password check in this file already verifies against it. The
+   * one remaining question Supabase answered here — "is this the right
+   * password" — is the one it answered from a copy.
    */
   async loginStaff(input: {
     tenantSlug: string;
@@ -118,11 +147,8 @@ export class IdentityService {
     remember?: boolean;
     context: { ip?: string; userAgent?: string };
   }): Promise<SessionResult | TotpChallengeRequired> {
-    // 1. Authenticate with Supabase Auth (throws UnauthorizedError if invalid credentials)
-    const supabaseResult = await this.supabaseAuth.authenticateStaff(input.email, input.password);
-
     /**
-     * 2. Resolve the staff profile that must already exist in this schema.
+     * 1. Resolve the staff profile that must already exist in this schema.
      *
      * A missing profile is a refusal, never a provisioning trigger. This block
      * used to create the row on the spot, taking the role and the municipality
@@ -141,7 +167,20 @@ export class IdentityService {
      */
     const user = await this.users.findStaffByEmail(input.email.toLowerCase());
 
-    if (!user) {
+    /**
+     * 2. Verify the password against this schema's own hash.
+     *
+     * Deliberately not short-circuited on a missing row. The lookup now happens
+     * *before* the password is checked, which it did not when Supabase answered
+     * first, and returning early here would make "no such account" the fast
+     * path and "wrong password" the slow one — a ~250ms bcrypt gap is a
+     * perfectly usable oracle for enumerating which emails hold accounts, which
+     * is the very thing the shared error message below exists to prevent.
+     * `verifyStaffPassword` spends the same work either way.
+     */
+    const passwordMatches = await this.verifyStaffPassword(user?.passwordHash, input.password);
+
+    if (!user || !passwordMatches) {
       // Same sentence as a wrong password, deliberately: distinguishing them
       // turns this route into a way to enumerate which emails hold accounts.
       throw new UnauthorizedError('بيانات الدخول غير صحيحة');
@@ -178,9 +217,127 @@ export class IdentityService {
       role: user.role,
       tenantSlug: input.tenantSlug,
       remember: input.remember,
-      supabaseAccessToken: supabaseResult.accessToken,
       tokenVersion: user.tokenVersion,
     });
+  }
+
+  /**
+   * The key password-reset tokens are signed with: HMAC(JWT_SECRET, label).
+   *
+   * Deliberately **not** `JWT_SECRET` itself. `JwtAuthGuard` authenticates any
+   * token that verifies against that secret, names the right tenant and carries
+   * a live `tokenVersion` — it never inspects `kind`, and `RolesGuard`
+   * authorises from whatever `role` claim it finds. A reset token signed with
+   * the session key would therefore *be* a session, and adding a `purpose`
+   * check to the guard would only work for as long as everyone remembers it.
+   * A separate key means a reset token fails at the signature, which is a
+   * property of the crypto rather than of anyone's diligence.
+   *
+   * Derived rather than configured so there is no second secret to distribute,
+   * and so an operator rotating `JWT_SECRET` rotates this with it.
+   */
+  private resetSigningKey(): string {
+    return createHmac('sha256', this.config.getOrThrow<string>('JWT_SECRET'))
+      .update(RESET_KEY_LABEL)
+      .digest('hex');
+  }
+
+  private signResetToken(user: User): string {
+    return this.jwt.sign(
+      {
+        sub: user.id,
+        tenantSlug: user.tenantSlug,
+        purpose: RESET_PURPOSE,
+        tokenVersion: user.tokenVersion ?? 0,
+      },
+      {
+        secret: this.resetSigningKey(),
+        expiresIn: this.config.get<string>('PASSWORD_RESET_TTL', '30m'),
+      },
+    );
+  }
+
+  private verifyResetToken(token: string): {
+    sub: string;
+    tenantSlug: string;
+    tokenVersion: number;
+  } {
+    let claims: { sub?: string; tenantSlug?: string; purpose?: string; tokenVersion?: number };
+    try {
+      claims = this.jwt.verify(token, { secret: this.resetSigningKey() });
+    } catch {
+      throw new UnauthorizedError('رابط إعادة التعيين غير صالح أو منتهي الصلاحية');
+    }
+
+    // Belt and braces. Nothing else is signed with this key today, so this can
+    // only fire if something later starts using it — at which point a token
+    // minted for that purpose must not be spendable here.
+    if (claims.purpose !== RESET_PURPOSE || !claims.sub || typeof claims.tokenVersion !== 'number') {
+      throw new UnauthorizedError('رابط إعادة التعيين غير صالح أو منتهي الصلاحية');
+    }
+
+    return {
+      sub: claims.sub,
+      tenantSlug: claims.tenantSlug ?? '',
+      tokenVersion: claims.tokenVersion,
+    };
+  }
+
+  /**
+   * Where the emailed link points.
+   *
+   * `redirectTo` is caller-supplied, and this mail carries a credential — an
+   * unchecked value here mails a working reset token to whatever host the
+   * caller names. Supabase enforced an allow-list of redirect URLs for exactly
+   * this reason; nothing would have enforced it once Supabase stopped being
+   * involved. Anything that is not same-origin with `PUBLIC_PORTAL_URL` is
+   * discarded rather than rejected, so a misconfigured client still produces a
+   * working link to the right place instead of an error.
+   */
+  private resetLink(token: string, redirectTo?: string): string {
+    const portal = this.config.get<string>('PUBLIC_PORTAL_URL');
+    const base = (() => {
+      if (!redirectTo || !portal) return portal;
+      try {
+        return new URL(redirectTo).origin === new URL(portal).origin ? redirectTo : portal;
+      } catch {
+        return portal;
+      }
+    })();
+
+    if (!base) {
+      // No portal URL configured: hand back the bare token rather than a link
+      // to nowhere, so the message is still actionable by someone who knows
+      // where the page lives.
+      return token;
+    }
+
+    const url = new URL(base);
+    url.searchParams.set('token', token);
+    return url.toString();
+  }
+
+  /**
+   * One bcrypt comparison, whatever the caller found.
+   *
+   * A staff row with no `passwordHash` cannot sign in — that is the whole
+   * answer, and it is the safe one: the column is nullable, so a row written
+   * before the hash existed, or by a path that skipped it, must not be treated
+   * as "no password required". It still costs a comparison, for the timing
+   * reason in `loginStaff`; the placeholder is a real cost-12 hash of a value
+   * nobody holds, because comparing against a malformed one returns early and
+   * would reintroduce the gap this exists to close.
+   */
+  private async verifyStaffPassword(
+    passwordHash: string | undefined,
+    password: string,
+  ): Promise<boolean> {
+    if (!passwordHash) {
+      await this.hasher.verify(password, ABSENT_PASSWORD_HASH);
+      return false;
+    }
+
+    return this.hasher.verify(password, passwordHash);
   }
 
   /**
@@ -313,7 +470,8 @@ export class IdentityService {
   }
 
   /**
-   * Change own password. Verifies current password first, updates passwordHash and Supabase Auth.
+   * Change own password. Verifies the current one, rewrites `passwordHash`,
+   * and drops the cached token version so live sessions end immediately.
    */
   async changeStaffPassword(
     userId: string,
@@ -333,18 +491,12 @@ export class IdentityService {
 
     const passwordHash = await this.hasher.hash(newPassword);
     await this.users.updateStaff(user.id, { passwordHash });
-
-    // Sync to Supabase Auth
-    try {
-      if (user.email) {
-        await this.supabaseAuth.updateStaffUser({
-          email: user.email,
-          password: newPassword,
-        });
-      }
-    } catch {
-      // Non-blocking
-    }
+    // `updateStaff` bumps tokenVersion, but the guard reads that through a
+    // cached copy — without this the old sessions keep working for the rest of
+    // the cache window, which is exactly the window that matters when someone
+    // changes their password because they think it leaked.
+    // `StaffService` has always done this; this path never did.
+    await this.revocation.forget(user.id);
 
     this.events.emit('staff.changed', {
       action: 'STAFF_PASSWORD_CHANGED',
@@ -356,7 +508,8 @@ export class IdentityService {
   }
 
   /**
-   * Change own email. Verifies current password first, checks uniqueness, and updates Supabase Auth.
+   * Change own email. Verifies the current password first, then checks the new
+   * address is not already taken in this municipality.
    */
   async changeStaffEmail(
     userId: string,
@@ -386,18 +539,6 @@ export class IdentityService {
 
     await this.users.updateStaff(user.id, { email: nextEmail });
 
-    // Sync to Supabase Auth
-    try {
-      if (user.email) {
-        await this.supabaseAuth.updateStaffUser({
-          email: user.email,
-          newEmail: nextEmail,
-        });
-      }
-    } catch {
-      // Non-blocking
-    }
-
     this.events.emit('staff.changed', {
       action: 'STAFF_EMAIL_CHANGED',
       tenantSlug,
@@ -410,46 +551,97 @@ export class IdentityService {
   }
 
   /**
-   * Sends password reset email via Supabase Auth with custom template.
+   * Mints a reset link and mails it.
+   *
+   * Supabase used to do both halves of this, and the token it minted was
+   * verified with `auth.getUser()` — which accepts **any** access token the
+   * project ever issued, not only one from a recovery link. That was survivable
+   * only while every local password write also rewrote the Supabase copy, so a
+   * rotated password invalidated both. Once that mirror stopped (the account
+   * methods are no-ops now), a password leaked before the cutover would have
+   * stayed a permanent key to this endpoint: sign in to Supabase with the old
+   * password, hand the resulting token to `confirm-password-reset`, and set the
+   * current one. The token below is ours, so that class of confusion is gone.
+   *
+   * Fails closed when no mail provider is configured. The tempting alternative
+   * — keep falling back to Supabase until SMTP exists — is the vulnerability
+   * above with a longer deadline. An administrator can still set a password
+   * directly through `StaffService.update`, which is the path to use until
+   * `SMTP_HOST` and `MAIL_FROM` are set.
    */
-  async sendStaffPasswordResetEmail(userId: string, redirectTo?: string): Promise<{ message: string }> {
+  async sendStaffPasswordResetEmail(
+    userId: string,
+    redirectTo?: string,
+  ): Promise<{ message: string }> {
     const user = await this.users.findById(userId);
-    if (!user || !user.email) {
+    if (!user || user.kind !== 'STAFF' || !user.email) {
       throw new NotFoundError('Staff user', userId);
     }
 
-    await this.supabaseAuth.sendPasswordResetEmail(user.email, redirectTo);
+    if (!this.email.isConfigured) {
+      throw new ConflictError(
+        'إعادة تعيين كلمة المرور بالبريد غير مُفعّلة — يرجى مراجعة مسؤول النظام لتعيين كلمة مرور جديدة',
+      );
+    }
+
+    const link = this.resetLink(this.signResetToken(user), redirectTo);
+
+    await this.email.send({
+      to: user.email,
+      subject: 'إعادة تعيين كلمة المرور',
+      text: [
+        `مرحباً ${user.fullName}،`,
+        '',
+        'لتعيين كلمة مرور جديدة، افتح الرابط التالي:',
+        link,
+        '',
+        'ينتهي هذا الرابط خلال وقت قصير ويُستخدم مرة واحدة فقط.',
+        'إذا لم تطلب ذلك، يمكنك تجاهل هذه الرسالة — لن يتغيّر شيء.',
+      ].join('\n'),
+    });
+
     return { message: 'تم إرسال بريد إعادة تعيين كلمة المرور بنجاح' };
   }
 
   /**
    * Sets a new password from the reset-password landing page.
    *
-   * `accessToken` is not this account's session — it is the short-lived
-   * Supabase token minted by the recovery link's own `/auth/v1/verify` step,
-   * proof the caller owns the inbox the email went to. `verifyToken` is the
-   * same call `JwtAuthGuard` never uses for staff (staff sessions are this
-   * app's own JWT); here it is the *only* thing standing in for a password,
-   * so an invalid or expired token is refused exactly like a wrong one.
+   * The token is this service's own, signed with a key derived from
+   * `JWT_SECRET` rather than `JWT_SECRET` itself — see `resetSigningKey`. It
+   * names the account, so nothing here is resolved from caller-supplied input,
+   * and it carries the `tokenVersion` current when it was minted. Writing the
+   * new password bumps that version, which is what makes the link single-use
+   * without a table to store it in: the second attempt fails the comparison.
    */
   async confirmStaffPasswordReset(accessToken: string, newPassword: string): Promise<void> {
-    const supabaseUser = await this.supabaseAuth.verifyToken(accessToken);
-    if (!supabaseUser?.email) {
+    const claims = this.verifyResetToken(accessToken);
+
+    const user = await this.users.findById(claims.sub);
+    // Every failure past this point answers with the same sentence as an
+    // expired link. Saying "no such account" or "this account is deactivated"
+    // turns a public endpoint into a way to ask questions about staff.
+    if (!user || user.kind !== 'STAFF' || !user.isActive) {
       throw new UnauthorizedError('رابط إعادة التعيين غير صالح أو منتهي الصلاحية');
     }
 
-    const user = await this.users.findStaffByEmail(supabaseUser.email);
-    if (!user) {
-      throw new NotFoundError('Staff user', supabaseUser.email);
+    /**
+     * Single use, and revoked by anything else that touched the account.
+     *
+     * A link mailed an hour ago is void if the password has since been changed,
+     * the role edited, or the account deactivated — every one of those bumps
+     * `tokenVersion`. That is the property a reset link needs and the reason
+     * this needs no storage: the account itself remembers.
+     */
+    if ((user.tokenVersion ?? 0) !== claims.tokenVersion) {
+      throw new UnauthorizedError('رابط إعادة التعيين غير صالح أو منتهي الصلاحية');
     }
 
     const passwordHash = await this.hasher.hash(newPassword);
     await this.users.updateStaff(user.id, { passwordHash });
-
-    await this.supabaseAuth.updateStaffUser({
-      email: supabaseUser.email,
-      password: newPassword,
-    });
+    // Reset is the case where a stale cache is least acceptable: it is the
+    // button someone presses when they believe an attacker holds their
+    // password, and that attacker's session is live right now.
+    await this.revocation.forget(user.id);
 
     this.events.emit('staff.changed', {
       action: 'STAFF_PASSWORD_CHANGED',
@@ -730,7 +922,6 @@ export class IdentityService {
     tenantSlug: string;
     /** STAFF only — see loginStaff. */
     remember?: boolean;
-    supabaseAccessToken?: string;
     /** Stamped into the token and compared on every request thereafter. */
     tokenVersion: number;
     /**
@@ -757,7 +948,6 @@ export class IdentityService {
 
       return {
         accessToken: this.jwt.sign(claims, { expiresIn }),
-        ...(input.supabaseAccessToken ? { supabaseAccessToken: input.supabaseAccessToken } : {}),
         expiresIn,
         user: { id: input.id, name: input.name, kind: input.kind, role: input.role },
       };
@@ -810,7 +1000,6 @@ export class IdentityService {
 
     return {
       accessToken: this.jwt.sign(claims, { expiresIn }),
-      ...(input.supabaseAccessToken ? { supabaseAccessToken: input.supabaseAccessToken } : {}),
       expiresIn: `${expiresIn}s`,
       expiresAt: new Date((nowSeconds + expiresIn) * 1000).toISOString(),
       sessionExpiresAt: new Date(sessionExpiresAt * 1000).toISOString(),

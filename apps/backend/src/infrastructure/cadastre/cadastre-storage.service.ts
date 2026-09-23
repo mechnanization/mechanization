@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient, createClient } from '@supabase/supabase-js';
+import { CadastreStorage } from '../../domain/interfaces/cadastre-storage.interface';
 
 /**
  * Supabase Storage adapter for a municipality's derived cadastre layers —
@@ -24,7 +25,7 @@ import { SupabaseClient, createClient } from '@supabase/supabase-js';
  * without a signed URL, which private documents must never allow.
  */
 @Injectable()
-export class CadastreStorageService {
+export class CadastreStorageService implements CadastreStorage {
   private readonly logger = new Logger(CadastreStorageService.name);
   private readonly client: SupabaseClient;
   private readonly bucket = 'cadastre';
