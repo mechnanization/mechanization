@@ -7,8 +7,8 @@ unlikely.
 | Target | Database | Role | Env file | Who runs it |
 | --- | --- | --- | --- | --- |
 | `local` | `municipality_db_staging` | `appuser_staging` | `apps/backend/.env` | `pnpm dev` and `db:*:local` on a laptop |
-| `staging` | `municipality_db_staging` | `appuser_staging` | `apps/backend/.env.staging` | CI only — see the note in §3 |
-| `production` | `municipality_db` | `appuser` | `apps/backend/.env.production` | CI, manual, with approval — see §3 |
+| `staging` | `municipality_db_staging` | `appuser_staging` | `apps/backend/.env.staging` | CI: push to `develop`, and before every production run — §3 |
+| `production` | `municipality_db` | `appuser` | `apps/backend/.env.production` | CI: every push to `main`, before the code ships — §3 |
 
 Both databases live on the Lightsail box that also runs the backend (moved off
 Supabase in September 2026). **Port 5432 there is closed to the internet and
@@ -86,11 +86,13 @@ production connection string into `apps/backend/.env` — to read one row, to
 reproduce one bug — the dev server stops starting instead of quietly attaching
 the whole application to live data.
 
-**Irreversible DDL blocks the deploy.** Pending migrations are scanned for
-`DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, `ALTER COLUMN … TYPE` and `RENAME`.
-Those refuse to run without `--allow-destructive`. Statements that merely take a
-heavy lock — `SET NOT NULL`, a non-concurrent `CREATE INDEX` — print a warning
-and continue.
+**Anything that loses data blocks the deploy.** Pending migrations are scanned
+for `DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, `ALTER COLUMN … TYPE`, `RENAME` and
+`DELETE FROM`. Those refuse to run without `--allow-destructive`, which only the
+manual *Deploy production* workflow can pass. Statements that take a heavy lock
+(`SET NOT NULL`, a non-concurrent `CREATE INDEX`) or rewrite existing rows
+(`UPDATE … SET`) print a warning and continue. A backfill is expected to fill
+new columns, and a scanner cannot tell that from an overwrite.
 
 **Production only accepts migrations staging has already applied.** The deploy
 reads staging's migration history and refuses anything staging has not seen.
@@ -112,15 +114,6 @@ None of this is a substitute for reading the SQL. It is a floor, not a ceiling.
 
 ## 3. The normal path
 
-> **Not working since the Lightsail move.** The *Deploy staging* and *Deploy
-> production* workflows below cannot reach either database: port 5432 is closed
-> to the internet (correctly), GitHub's runners have no tunnel, and the
-> `STAGING_*` / `PRODUCTION_*` secrets still name the Supabase projects. Until
-> migrations have a new route — running them over SSH on the box, or a tunnel
-> step in the workflow — staging is migrated from a laptop with
-> `pnpm db:deploy:local`, and production has no sanctioned path. Ask before
-> improvising one.
-
 ```
 feature branch
     ↓  pnpm db:migrate            author the migration
@@ -128,25 +121,72 @@ feature branch
   PR → develop
     ↓  CI: typecheck · test · db:test
   merge to develop
-    ↓  Actions: Deploy staging     (automatic)
-  PR → main, merge                 ships code only — no SQL runs
-    ↓  Actions: Deploy production  (manual, dry run first, then approved)
+    ↓  Actions: Deploy staging     migrates staging (automatic)
+  PR → main, merge
+    ↓  Actions: Deploy Backend     1. migrate staging, then production (automatic)
+                                   2. build, boot the candidate, cut over
 ```
 
-Merging to `main` deliberately does not migrate production. Shipping code and
-rewriting a database of citizen records are different decisions, and a branch
-protection rule is a poor place to conflate them.
+Every push to `main` migrates production **before** the code that needs the
+migration ships, and ships nothing if the migration fails. The migration job is
+[`migrate-database.yml`](../.github/workflows/migrate-database.yml). A GitHub
+runner opens an SSH tunnel to the Lightsail box (runner port 5433 → the box's
+5432), writes the env files from the `db-production` environment's secrets for
+the length of the job, and runs `scripts/db/deploy.mjs`: staging first, then
+production. The guard's checks all apply, unattended:
 
-### Deploying production
+- the connection strings must name the pinned database and role;
+- a live schema whose migration history is missing stops the run (see below);
+- production must report at least one municipality, since zero means the read
+  went to the wrong place;
+- every production migration must already be on staging, and staging must have
+  a municipality to have run tenant migrations on;
+- data-losing DDL is refused;
+- afterwards the registry and every tenant schema are read again and must have
+  nothing pending.
 
-1. `pnpm db:status:production` locally, or run the workflow with **dry run**
-   ticked. Read the list of migrations it prints.
-2. Confirm a backup exists — see §5.
-3. Actions → **Deploy production** → Run workflow. Type `municipality_db`, leave
-   `dry_run` on for the first run, then run again with it off.
-4. A reviewer approves the `production` environment.
-5. Afterwards: `curl https://<api>/api/v1/health/ready` should return
-   `{"status":"ready"}`.
+The previous release keeps serving traffic until the cutover, so it runs
+against the new schema for a few minutes. That is why the automatic path only
+ever applies additive migrations (§4).
+
+### The manual workflow
+
+Actions → **Deploy production** is for the two things that never happen
+automatically:
+
+- **A dry run.** Type `municipality_db`, leave `dry_run` on. It lists what is
+  pending on staging and production and changes nothing. Production's report
+  fails for anything staging still lacks; a real run migrates staging first.
+- **The contract step** of an expand/contract change (`DROP COLUMN`, `RENAME`, a
+  type change), with `allow_destructive` ticked. Confirm a backup exists first
+  (§5).
+
+Afterwards `curl https://<api>/api/v1/health/ready` should return
+`{"status":"ready"}`.
+
+### When the migration history is missing
+
+The databases on the Lightsail box are restores of the Supabase ones, so each
+one's schema and its migration history arrived together in the dump. Each has
+two histories: `public._prisma_migrations` for the registry (one migration,
+`0001_init`), and `tenant_<slug>._tenant_migrations` inside each municipality's
+own schema. The tenant migrator reads only the second.
+
+If a history did not survive, `deploy.mjs` refuses before running anything:
+"holds a live schema but not the history of how it got there". Re-running the
+migrations would re-create tables that already hold citizens' records. The
+repair is a production data correction, not a deploy:
+
+1. Prove the schema matches the migrations: every migration's objects exist, in
+   the right schema.
+2. Record the history in a guarded, reviewed transaction: the folder names into
+   `"<schema>"._tenant_migrations`, or `prisma migrate resolve --applied 0001_init`
+   for the registry, and nothing else.
+
+**Never `prisma migrate resolve` for tenant migrations**, and never `prisma
+migrate deploy --schema …/tenant/schema.prisma`. Both aim at `public`: the first
+writes rows the tenant migrator never reads, and the second runs tenant DDL in
+the registry's schema and then blocks every later deploy with P3009.
 
 ---
 
@@ -405,17 +445,43 @@ manifest is the file you have to hand and this document may not be.
 
 ## 6. Secrets
 
-> The GitHub Environment secrets below still hold the **Supabase** connection
-> strings and service-role keys. They need replacing with the Lightsail ones
-> once CI has a route to the database (§3); the `*_SUPABASE_URL` and
-> `*_SERVICE_ROLE_KEY` entries can then be deleted.
-
 | Where | What |
 | --- | --- |
 | `apps/backend/.env` | Staging credentials. Gitignored. |
 | `apps/backend/.env.staging` | Staging credentials. Gitignored. |
-| GitHub → Environments → `db-staging` | `STAGING_DATABASE_URL`, `STAGING_DIRECT_URL`, `STAGING_SUPABASE_URL`, `STAGING_SERVICE_ROLE_KEY` |
-| GitHub → Environments → `db-production` | The same four, `PRODUCTION_`-prefixed, **plus** the four `STAGING_` ones (the promotion check reads staging's history), plus required reviewers |
+| GitHub → Environments → `db-staging` | `STAGING_DATABASE_URL`, `STAGING_DIRECT_URL` |
+| GitHub → Environments → `db-production` | `PRODUCTION_DATABASE_URL`, `PRODUCTION_DIRECT_URL`, **plus** the two `STAGING_` ones: a production run migrates staging first and checks its history. |
+| GitHub → repository secrets | `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY` (the deploy, and the migration tunnel), `SSH_KNOWN_HOSTS` (the tunnel) |
+
+The database URLs name the **runner's end of the tunnel**, not the box. The
+`DIRECT_URL` is the same string, since there is no connection pooler:
+
+```
+PRODUCTION_DATABASE_URL  postgresql://appuser:<pw>@localhost:5433/municipality_db
+STAGING_DATABASE_URL     postgresql://appuser_staging:<pw>@localhost:5433/municipality_db_staging
+```
+
+URL-encode `@ : / ? #` in a password. The `*_SUPABASE_URL` and
+`*_SERVICE_ROLE_KEY` entries left from before the move are read by nothing and
+can be deleted.
+
+**`SSH_KNOWN_HOSTS`** is the box's public host keys. The tunnel checks the
+server against them before it sends a database password, and refuses to open
+without them: every runner is a fresh machine, so "trust the first key seen"
+would trust whatever answered at that address. Take the lines from the box
+itself, not from a network scan:
+
+```bash
+for f in /etc/ssh/ssh_host_*_key.pub; do echo "<SSH_HOST value> $(cut -d' ' -f1,2 "$f")"; done
+```
+
+The first word of each line must be exactly what `SSH_HOST` holds. A rebuilt
+box has new keys: update both secrets together, or every deploy stops at
+"Host key verification failed", which is the point.
+
+`db-production` has **no required reviewer**: migrations run unattended on every
+push to `main`. Reinstating one makes each push wait for an approval at the
+migration job, even when nothing is pending.
 
 The `db-` prefix is not decoration. The Vercel integration creates its own
 environments in this repository — `Production – mechanization-api`,

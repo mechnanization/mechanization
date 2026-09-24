@@ -4,8 +4,35 @@ on:
   push:
     branches: [main]
 
+# Two pushes in quick succession must not overlap: they share the candidate's
+# pm2 name, port 4001 and the `current` symlink on the box.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
 jobs:
+  # Schema first, then code. A release that needs a migration must never go
+  # live before it, which is the order this repository has kept by hand for
+  # every migration so far ("apply BEFORE code").
+  #
+  # The previous release keeps serving traffic while this runs, and until the
+  # cutover below, so every migration that runs here has to be additive:
+  # expand/contract, docs/database-environments.md §4. The guard enforces
+  # that. It refuses data-losing DDL here, and the contract step of such a
+  # change goes through the manual Deploy production workflow instead.
+  #
+  # If this job fails, `deploy` does not run: production keeps the previous
+  # release, against a schema that was either untouched or changed additively.
+  migrate:
+    name: migrate databases
+    uses: ./.github/workflows/migrate-database.yml
+    with:
+      target: production
+      confirm: municipality_db
+    secrets: inherit
+
   deploy:
+    needs: migrate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,0 +1,201 @@
+name: Migrate database
+
+# Called, never triggered on its own:
+#
+#   deploy-backend.yml     every push to main   target production, before the code ships
+#   deploy-production.yml  by hand              dry runs, and destructive contract steps
+#   deploy-staging.yml     push to develop      target staging
+#
+# Both databases live in one Postgres cluster on the Lightsail box, and its
+# port 5432 is closed to the internet. So the runner opens an SSH tunnel to the
+# box and runs `scripts/db/deploy.mjs` through it: the same script, with the
+# same checks, that a developer runs through their own tunnel. The credentials
+# stay in the GitHub environment and exist on the runner for the length of this
+# job only. Nothing is copied onto the server.
+#
+# What the script refuses, so this workflow does not have to: a connection
+# string naming the wrong database or role, a live schema whose migration
+# history is missing, production reporting no municipalities, a production
+# migration staging has not already run, and data-losing DDL unless
+# `allow_destructive` is passed, which only the manual workflow can do.
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: 'staging, or production (which migrates staging first)'
+        type: string
+        required: true
+      dry_run:
+        description: 'Report what would be applied, change nothing'
+        type: boolean
+        default: false
+      allow_destructive:
+        description: 'Permit data-losing DDL. Only the manual Deploy production workflow passes this.'
+        type: boolean
+        default: false
+      confirm:
+        description: 'Production only: the production database name, municipality_db'
+        type: string
+        default: ''
+
+jobs:
+  migrate:
+    name: migrate ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # db-staging admits only develop. A production run comes from main and
+    # reaches staging through the STAGING_* secrets db-production also holds.
+    environment: ${{ inputs.target == 'production' && 'db-production' || 'db-staging' }}
+
+    # One migration at a time against this cluster, whichever workflow started
+    # it. Prisma takes an advisory lock and the tenant migrator works in
+    # transactions, but a second deploy applying what the first is halfway
+    # through is not a state worth reasoning about.
+    concurrency:
+      group: database-migrations
+      cancel-in-progress: false
+
+    steps:
+      - name: Refuse an unknown target
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          case "$TARGET" in
+            staging|production) ;;
+            *) echo "::error::Unknown target '$TARGET'. Expected staging or production."; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Guard unit tests
+        # The guard decides which database everything below talks to. If its
+        # own tests do not pass, nothing else in this job should run.
+        run: pnpm db:test
+
+      - name: Generate Prisma clients
+        run: pnpm db:generate
+
+      - name: Open SSH tunnel to the database host
+        # Runner port 5433 → the box's own localhost:5432, where both databases
+        # listen. The database URL secrets therefore name localhost:5433.
+        #
+        # The host key is checked against SSH_KNOWN_HOSTS and never learned on
+        # the fly. Every runner is a fresh machine, so "accept the first key
+        # seen" would accept whatever answered at that address on every run,
+        # and hand it the database password.
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SSH_KNOWN_HOSTS" ]; then
+            echo "::error::SSH_KNOWN_HOSTS is not set. Add the server's host keys as a repository secret: see docs/database-environments.md §6."
+            exit 1
+          fi
+
+          install -d -m 700 "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/db_tunnel_key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/db_known_hosts"
+
+          ssh -i "$HOME/.ssh/db_tunnel_key" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/db_known_hosts" \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=30 \
+            -M -S "$HOME/.ssh/db_tunnel.sock" -f -N \
+            -L 127.0.0.1:5433:localhost:5432 \
+            "$SSH_USER@$SSH_HOST"
+
+          for _ in $(seq 1 15); do
+            if (exec 3<>/dev/tcp/127.0.0.1/5433) 2>/dev/null; then
+              echo "Tunnel open: 127.0.0.1:5433 → $SSH_HOST:5432"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::The SSH tunnel did not open."
+          exit 1
+
+      - name: Write the env files
+        # Through the environment rather than interpolated into the script, so
+        # a secret containing shell metacharacters cannot become shell. The
+        # files are the ones a developer would have, so the guard reads the
+        # identical input it is tested against.
+        env:
+          TARGET: ${{ inputs.target }}
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+          PRODUCTION_DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          {
+            echo "NODE_ENV=production"
+            echo "DATABASE_URL=$STAGING_DATABASE_URL"
+            echo "DIRECT_URL=$STAGING_DIRECT_URL"
+          } > apps/backend/.env.staging
+          if [ "$TARGET" = production ]; then
+            {
+              echo "NODE_ENV=production"
+              echo "DATABASE_URL=$PRODUCTION_DATABASE_URL"
+              echo "DIRECT_URL=$PRODUCTION_DIRECT_URL"
+            } > apps/backend/.env.production
+          fi
+
+      - name: Migrate staging
+        # Always first. For a production run this is what makes the promotion
+        # check meaningful from main: staging has run the migration seconds
+        # before production does, or production is not touched.
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          ALLOW_DESTRUCTIVE: ${{ inputs.allow_destructive }}
+        run: |
+          args=()
+          if [ "$DRY_RUN" = true ]; then args+=(--dry-run); fi
+          if [ "$ALLOW_DESTRUCTIVE" = true ]; then args+=(--allow-destructive); fi
+          node scripts/db/deploy.mjs staging "${args[@]}"
+
+      - name: Migrate production
+        if: inputs.target == 'production'
+        # In a dry run staging was only reported, not migrated, so production's
+        # promotion check fails for anything staging still lacks. That is the
+        # honest answer: a real run migrates staging first.
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          ALLOW_DESTRUCTIVE: ${{ inputs.allow_destructive }}
+        run: |
+          args=(--confirm="$CONFIRM")
+          if [ "$DRY_RUN" = true ]; then args+=(--dry-run); fi
+          if [ "$ALLOW_DESTRUCTIVE" = true ]; then args+=(--allow-destructive); fi
+          node scripts/db/deploy.mjs production "${args[@]}"
+
+      - name: Close the tunnel and remove credentials
+        if: always()
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          rm -f apps/backend/.env.staging apps/backend/.env.production
+          if [ -S "$HOME/.ssh/db_tunnel.sock" ]; then
+            ssh -S "$HOME/.ssh/db_tunnel.sock" -O exit "$SSH_USER@$SSH_HOST" || true
+          fi
+          rm -f "$HOME/.ssh/db_tunnel_key" "$HOME/.ssh/db_known_hosts"

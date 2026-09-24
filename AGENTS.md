@@ -74,9 +74,12 @@ pnpm db:status:production
   `pnpm dev` reads and writes staging. Do not "temporarily" point it at
   production to check one row.
 - There is deliberately no `.env.production` on developer machines. Production
-  migrations run from the manual GitHub Actions workflow behind a required
-  reviewer. If you think you need to run one locally, you need to ask, not
-  improvise.
+  migrations run in GitHub Actions: automatically on every push to `main`,
+  staging first, before the code ships (`migrate-database.yml` through
+  `scripts/db/deploy.mjs`), and by hand from *Deploy production* for dry runs
+  and destructive contract steps. **A push to `main` migrates production**, so
+  a migration merged to `main` has to be additive. If you think you need to
+  run one locally, you need to ask, not improvise.
 
 ## 3. Migrations
 
