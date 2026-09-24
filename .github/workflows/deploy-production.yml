@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_ref:
-        description: 'Type the production project ref to confirm'
+        description: 'Type the production database name (municipality_db) to confirm'
         required: true
         type: string
       dry_run:

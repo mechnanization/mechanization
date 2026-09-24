@@ -52,9 +52,12 @@ where table_schema = 'tenant_<slug>' and table_name = '<table>';
 
 ## 2. Name the target, every time
 
-Every environment is pinned by Supabase project ref in
+Every environment is pinned by database name and role in
 [`scripts/db/targets.mjs`](scripts/db/targets.mjs), and the guard refuses any
-dotenv file whose connection strings name a different project.
+dotenv file whose connection strings name a different database or role. Both
+databases sit on one Lightsail box and are reached through an SSH tunnel, so
+every target looks like `localhost` — **the host tells you nothing**; read the
+database name.
 
 ```bash
 pnpm db:check                 # validate env files, no network
@@ -116,8 +119,10 @@ The rules that have already been broken once (§7.4):
   data and cannot state which rows are citizens, you are not ready to copy.
 - **Allowlist, never discover.** Enumerate the tables you intend to copy and
   say why for each. Dynamic table discovery means the next migration silently
-  adds a table to the copy set. See `TABLE_POLICY` in
-  [`scripts/db/sync-production-tenant.mjs`](scripts/db/sync-production-tenant.mjs).
+  adds a table to the copy set. The retired
+  `scripts/db/sync-production-tenant.mjs` (removed in the Lightsail cutover;
+  still in git history) has a `TABLE_POLICY` worth reading before writing the
+  next one.
 - **Filter at the source, not afterwards.** `WHERE kind = 'STAFF'` on the SELECT.
   Copying everything and deleting later means the data existed in production.
 - **Never `SET session_replication_role = 'replica'`.** It disables every

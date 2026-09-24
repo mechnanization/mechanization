@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Validates dotenv files against the pinned project refs. Touches no network.
+ * Validates dotenv files against the pinned database identities. Touches no network.
  *
  *   node scripts/db/check.mjs            every target whose env file exists
  *   node scripts/db/check.mjs local      one target; missing file is an error
@@ -42,7 +42,7 @@ for (const name of names) {
 
   try {
     const resolved = resolveTarget(name);
-    console.log(green(`✓ ${name.padEnd(11)}`) + `${resolved.envFile} → ${resolved.ref}`);
+    console.log(green(`✓ ${name.padEnd(11)}`) + `${resolved.envFile} → ${resolved.user}@${resolved.host}/${resolved.database}`);
     for (const warning of resolved.warnings) console.log(yellow(`  ! ${warning}`));
     checked += 1;
   } catch (error) {

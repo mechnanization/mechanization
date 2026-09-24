@@ -1,21 +1,36 @@
 # Database environments
 
-Two Supabase projects, three targets, and a set of checks whose only job is to
-make "I ran it against the wrong one" impossible rather than unlikely.
+Two databases in one Postgres cluster, three targets, and a set of checks whose
+only job is to make "I ran it against the wrong one" impossible rather than
+unlikely.
 
-| Target | Supabase project | Env file | Who runs it |
-| --- | --- | --- | --- |
-| `local` | `lzgbjcwtzqyrbeoolvdz` (staging) | `apps/backend/.env` | `pnpm dev` on a laptop |
-| `staging` | `lzgbjcwtzqyrbeoolvdz` | `apps/backend/.env.staging` | GitHub Actions, on push to `develop` |
-| `production` | `thbgwfbcqdougbjvgvyw` | `apps/backend/.env.production` | GitHub Actions, manual, with approval |
+| Target | Database | Role | Env file | Who runs it |
+| --- | --- | --- | --- | --- |
+| `local` | `municipality_db_staging` | `appuser_staging` | `apps/backend/.env` | `pnpm dev` and `db:*:local` on a laptop |
+| `staging` | `municipality_db_staging` | `appuser_staging` | `apps/backend/.env.staging` | CI only — see the note in §3 |
+| `production` | `municipality_db` | `appuser` | `apps/backend/.env.production` | CI, manual, with approval — see §3 |
 
-`local` and `staging` are the same database. There is no local Postgres —
+Both databases live on the Lightsail box that also runs the backend (moved off
+Supabase in September 2026). **Port 5432 there is closed to the internet and
+must stay closed.** A laptop reaches the database through an SSH tunnel, on 5433
+because a local Postgres install commonly holds 5432:
+
+```bash
+ssh -i <key.pem> -N -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes \
+    -L 5433:localhost:5432 <ssh-user>@<lightsail-host>
+# then, in apps/backend/.env:
+# DATABASE_URL="postgresql://appuser_staging:<pw>@localhost:5433/municipality_db_staging"
+```
+
+`local` and `staging` are the same database. There is no local Postgres stack —
 `docker-compose.yml` runs Redis and nothing else — so "local" describes where
-the *process* runs, not where the data lives. `pnpm dev` writes to staging.
+the *process* runs, not where the data lives. `pnpm dev` writes to staging. A
+laptop needs only `apps/backend/.env`; `.env.staging` exists for CI.
 
-The refs above are pinned in [`scripts/db/targets.mjs`](../scripts/db/targets.mjs).
-Refs are not secrets; the passwords they pair with are, and those stay in
-ignored dotenv files and GitHub Environment secrets.
+The database names and roles above are pinned in
+[`scripts/db/targets.mjs`](../scripts/db/targets.mjs). They are not secrets; the
+passwords they pair with are, and those stay in ignored dotenv files and GitHub
+Environment secrets.
 
 ---
 
@@ -24,11 +39,14 @@ ignored dotenv files and GitHub Environment secrets.
 ```bash
 pnpm db:check                 # validate every env file present. No network.
 pnpm db:test                  # unit-test the guard itself
-pnpm db:status:staging        # what is pending on staging, applies nothing
+pnpm db:status:local          # what is pending on staging (via .env), applies nothing
+pnpm db:deploy:local          # apply to staging
 pnpm db:status:production     # same for production
-pnpm db:deploy:staging        # apply
-pnpm db:deploy:production     # apply, after typing the project ref
+pnpm db:deploy:production     # apply, after typing the database name
 ```
+
+The `db:*:staging` forms do the same as `db:*:local` against the same database,
+but read `.env.staging`, which only CI writes.
 
 Every one of them names its target. There is deliberately no bare `db:deploy`
 that reads ambient configuration and guesses.
@@ -44,16 +62,24 @@ pnpm db:migrate:tenant        # tenant:  prisma migrate dev --create-only
 
 ## 2. What stops a mistake
 
-Six checks, each one there because of a specific way this goes wrong.
+Seven checks, each one there because of a specific way this goes wrong.
 
-**The env file must belong to the project the target is pinned to.** Both
-connection strings and `SUPABASE_URL` are parsed, the project ref is extracted,
-and a mismatch is a hard failure. Editing a dotenv file can no longer change
-which database a command reaches — only naming a different target can.
+**The env file must name the database and role the target is pinned to.** Both
+connection strings are parsed, and a database name or role that differs from
+the target's is a hard failure. Editing a dotenv file can no longer change which
+database a command reaches — only naming a different target can.
 
-**A non-production env file may not mention the production ref at all**, not
-even in a comment. This catches the half-finished edit, where `DATABASE_URL` was
-swapped but the service-role key below it was not.
+The host is deliberately *not* checked. Every connection goes through a tunnel,
+so from the machine running the command, staging and production are both
+`localhost`; a host check would pass either. The role is checked as well as the
+database because it is the half the cluster enforces — `appuser_staging` holds
+no `CONNECT` on `municipality_db`.
+
+**A non-production env file may not mention production at all** — not
+`municipality_db`, not `appuser`, not the retired Supabase production project —
+not even in a comment. This catches the half-finished edit, and the duplicated
+key: on 2026-09-23 `apps/backend/.env` held a staging `DATABASE_URL` near the
+top and a production one further down, and dotenv keeps the *last*.
 
 **`pnpm dev` runs the check before it boots.** The moment someone pastes a
 production connection string into `apps/backend/.env` — to read one row, to
@@ -71,15 +97,29 @@ reads staging's migration history and refuses anything staging has not seen.
 This is what turns "we have a staging environment" into "staging is
 load-bearing".
 
-**Production needs the ref typed out.** Interactively, you type it at a prompt;
-in CI, `--confirm=<ref>` must match, so a command copied from the staging
-runbook cannot fire at production.
+**Production needs the database name typed out.** Interactively, you type
+`municipality_db` at a prompt; in CI, `--confirm=municipality_db` must match, so
+a command copied from the staging runbook cannot fire at production.
+
+**The restore drill refuses any pinned database.** `verify-restore.mjs` only
+restores onto a loopback address — but a tunnel *is* a loopback address, so it
+also refuses any URL naming `municipality_db`, `municipality_db_staging`,
+`appuser` or `appuser_staging`, wherever it points.
 
 None of this is a substitute for reading the SQL. It is a floor, not a ceiling.
 
 ---
 
 ## 3. The normal path
+
+> **Not working since the Lightsail move.** The *Deploy staging* and *Deploy
+> production* workflows below cannot reach either database: port 5432 is closed
+> to the internet (correctly), GitHub's runners have no tunnel, and the
+> `STAGING_*` / `PRODUCTION_*` secrets still name the Supabase projects. Until
+> migrations have a new route — running them over SSH on the box, or a tunnel
+> step in the workflow — staging is migrated from a laptop with
+> `pnpm db:deploy:local`, and production has no sanctioned path. Ask before
+> improvising one.
 
 ```
 feature branch
@@ -102,7 +142,7 @@ protection rule is a poor place to conflate them.
 1. `pnpm db:status:production` locally, or run the workflow with **dry run**
    ticked. Read the list of migrations it prints.
 2. Confirm a backup exists — see §5.
-3. Actions → **Deploy production** → Run workflow. Type the ref, leave
+3. Actions → **Deploy production** → Run workflow. Type `municipality_db`, leave
    `dry_run` on for the first run, then run again with it off.
 4. A reviewer approves the `production` environment.
 5. Afterwards: `curl https://<api>/api/v1/health/ready` should return
@@ -163,6 +203,14 @@ never run, being asked to work on the worst day. The rollback plan is:
 ---
 
 ## 5. Backups
+
+> **This section describes the Supabase-era backup and has not been adapted to
+> Lightsail.** `backup.yml` cannot reach the database (see the note in §3), and
+> `backup.mjs` still dumps Supabase's `auth` and `storage` schemas, which do not
+> exist on the new server — a run would fail there. Document bytes now live in
+> S3, not Supabase Storage. Until this is rebuilt, **production has no automated
+> backup**; on AWS the floor is a scheduled snapshot of the Lightsail instance
+> plus a nightly `pg_dump`.
 
 **The production project is on the Supabase free plan, so the platform provides
 nothing here.** Not daily backups, not Point-in-Time Recovery, and no
@@ -356,6 +404,11 @@ manifest is the file you have to hand and this document may not be.
 ---
 
 ## 6. Secrets
+
+> The GitHub Environment secrets below still hold the **Supabase** connection
+> strings and service-role keys. They need replacing with the Lightsail ones
+> once CI has a route to the database (§3); the `*_SUPABASE_URL` and
+> `*_SERVICE_ROLE_KEY` entries can then be deleted.
 
 | Where | What |
 | --- | --- |

@@ -348,7 +348,7 @@ async function main() {
   if (!connectionString) fail(`DIRECT_URL is missing from ${target.envFile}`);
 
   console.log(`\n  target    ${options.target} — ${target.label}`);
-  console.log(`  project   ${target.ref}`);
+  console.log(`  database  ${target.database}`);
 
   const dump = resolveDumpBinary();
   console.log(`  pg_dump   ${dump.version}`);
@@ -444,7 +444,7 @@ async function main() {
 
   mkdirSync(options.out, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const base = `${options.target}-${target.ref}-${stamp}`;
+  const base = `${options.target}-${target.database}-${stamp}`;
   const dumpPath = join(options.out, `${base}.dump`);
   const auxPath = join(options.out, `${base}.auth-storage.dump`);
 
@@ -469,7 +469,7 @@ async function main() {
 
   const manifest = {
     target: options.target,
-    projectRef: target.ref,
+    database: target.database,
     createdAt: new Date().toISOString(),
     serverVersion,
     pgDumpVersion: dump.version,

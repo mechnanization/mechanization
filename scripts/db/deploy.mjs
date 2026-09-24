@@ -254,7 +254,7 @@ async function main() {
 
   console.log('');
   console.log(C.bold('  Target      ') + (isProduction ? C.red(target.label) : C.blue(target.label)));
-  console.log(C.bold('  Project     ') + target.ref);
+  console.log(C.bold('  Database    ') + `${target.database} (as ${target.user} via ${target.host})`);
   console.log(C.bold('  Env file    ') + target.envFile);
   console.log(C.bold('  Mode        ') + (dryRun ? C.yellow('dry run — nothing will be applied') : 'apply'));
 
@@ -319,15 +319,20 @@ async function main() {
   // load-bearing" — without it, nothing stops a migration reaching production
   // having never run anywhere else.
   if (isProduction && !flag('skip-promotion-check')) {
-    const staging = TARGETS.staging;
-    if (!existsSync(join(ROOT, staging.envFile))) {
+    // Either file will do: `local` and `staging` are pinned to the same
+    // database and role, so whichever exists names the staging database. CI
+    // writes `.env.staging`; a developer machine has only `.env`. Demanding
+    // the one a laptop does not have would make `--skip-promotion-check` the
+    // normal way to deploy, and a check that is always skipped is not a check.
+    const stagingName = ['staging', 'local'].find((n) => existsSync(join(ROOT, TARGETS[n].envFile)));
+    if (!stagingName) {
       throw new Error(
-        `Cannot verify promotion: ${staging.envFile} does not exist.\n` +
+        `Cannot verify promotion: neither ${TARGETS.staging.envFile} nor ${TARGETS.local.envFile} exists.\n` +
           '  Production deploys check that staging already has these migrations.\n' +
-          '  Create the staging env file, or pass --skip-promotion-check for a hotfix.',
+          '  Create one of them, or pass --skip-promotion-check for a hotfix.',
       );
     }
-    const stagingTarget = resolveTarget('staging');
+    const stagingTarget = resolveTarget(stagingName);
     const stagingPending = await pendingFor(stagingTarget.env.DIRECT_URL);
 
     const notOnStaging = [
@@ -339,7 +344,7 @@ async function main() {
       throw new Error(
         'These migrations have not been applied to staging yet:\n' +
           notOnStaging.map((m) => `    ✗ ${m}`).join('\n') +
-          '\n  Deploy to staging first: pnpm db:deploy:staging',
+          `\n  Deploy to staging first: pnpm db:deploy:${stagingName}`,
       );
     }
     console.log(C.green('\n  ✓ Promotion check: every pending migration is already live on staging.'));
@@ -356,24 +361,24 @@ async function main() {
   if (isProduction) {
     const supplied = value('confirm');
     if (supplied !== undefined) {
-      if (supplied !== target.ref) {
+      if (supplied !== target.database) {
         throw new Error(
-          `--confirm=${supplied} does not match the production ref ${target.ref}. Refusing.`,
+          `--confirm=${supplied} does not match the production database ${target.database}. Refusing.`,
         );
       }
     } else if (!stdin.isTTY) {
       throw new Error(
         'Production deploy needs confirmation and there is no terminal to ask.\n' +
-          `  In CI, pass --confirm=${target.ref} explicitly.`,
+          `  In CI, pass --confirm=${target.database} explicitly.`,
       );
     } else {
       console.log(
         C.red('\n  This writes to PRODUCTION — live municipal records, real citizens.'),
       );
       const rl = createInterface({ input: stdin, output: stdout });
-      const answer = await rl.question(`  Type the project ref (${target.ref}) to continue: `);
+      const answer = await rl.question(`  Type the database name (${target.database}) to continue: `);
       rl.close();
-      if (answer.trim() !== target.ref) {
+      if (answer.trim() !== target.database) {
         throw new Error('Confirmation did not match. Nothing was applied.');
       }
     }

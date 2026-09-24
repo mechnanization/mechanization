@@ -110,7 +110,7 @@ async function main() {
 
   console.log('');
   console.log(C.bold('  Target      ') + (isProduction ? C.red(target.label) : C.blue(target.label)));
-  console.log(C.bold('  Project     ') + target.ref);
+  console.log(C.bold('  Database    ') + `${target.database} (as ${target.user} via ${target.host})`);
   console.log(C.bold('  Municipality') + `  ${name} (${slug}) → ${schemaName}`);
   console.log(C.bold('  Migrations  ') + `${onDisk} tenant migration(s) on disk`);
   console.log(C.bold('  Mode        ') + (dryRun ? C.yellow('dry run — nothing will be created') : 'apply'));
@@ -137,17 +137,17 @@ async function main() {
   if (isProduction) {
     const supplied = arg(argv, 'confirm');
     if (supplied !== undefined) {
-      if (supplied !== target.ref) {
-        throw new Error(`--confirm=${supplied} does not match the production ref ${target.ref}. Refusing.`);
+      if (supplied !== target.database) {
+        throw new Error(`--confirm=${supplied} does not match the production database ${target.database}. Refusing.`);
       }
     } else if (!stdin.isTTY) {
-      throw new Error(`Production provisioning needs confirmation and there is no terminal to ask.\n  Pass --confirm=${target.ref}.`);
+      throw new Error(`Production provisioning needs confirmation and there is no terminal to ask.\n  Pass --confirm=${target.database}.`);
     } else {
       console.log(C.red('\n  This creates a CITIZEN DATA STORE on PRODUCTION.'));
       const rl = createInterface({ input: stdin, output: stdout });
-      const answer = await rl.question(`  Type the project ref (${target.ref}) to continue: `);
+      const answer = await rl.question(`  Type the database name (${target.database}) to continue: `);
       rl.close();
-      if (answer.trim() !== target.ref) throw new Error('Confirmation did not match. Nothing was created.');
+      if (answer.trim() !== target.database) throw new Error('Confirmation did not match. Nothing was created.');
     }
   }
 

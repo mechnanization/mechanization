@@ -29,7 +29,7 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROOT, TARGETS, extractRef } from './targets.mjs';
+import { ROOT, TARGETS, parseConnection } from './targets.mjs';
 
 // Resolved from the backend package, where `pg` is a dependency — `scripts/` has
 // no `package.json` of its own. Same as `deploy.mjs`.
@@ -97,22 +97,28 @@ function parseArgs(argv) {
 /**
  * The gate. Refuses anything that could be a real database.
  *
- * Two independent checks, because either alone has a hole: a ref check passes a
- * Supabase project that is not in `targets.mjs` yet, and a host check passes a
- * loopback tunnel forwarding to production. Both must agree.
+ * Two independent checks, because either alone has a hole. The host check
+ * refuses anything remote, but it passes an SSH tunnel — and every real
+ * database is reached through one, so staging and production both *are*
+ * `localhost` from here. The identity check closes that: a URL naming any
+ * pinned database or role is refused wherever it points. Both must agree.
  */
 function assertThrowaway(connectionString) {
-  const ref = extractRef(connectionString);
-  if (ref) {
-    // `local` shares staging's ref, so name the database rather than the target
-    // — "points at staging" is the useful sentence, "points at local" is not.
-    // Same reasoning as `resolveTarget` in targets.mjs.
-    const known = Object.entries(TARGETS).find(([n, t]) => t.ref === ref && n !== 'local');
-    fail(
-      `--into names Supabase project ${ref}${known ? ` (${known[0]})` : ''}.\n` +
-        `  This script restores over everything it touches. It will only ever run\n` +
-        `  against a throwaway on a loopback address.`,
+  const found = parseConnection(connectionString);
+  if (found) {
+    // `local` shares staging's database, so name the environment rather than
+    // the target — "points at staging" is the useful sentence, "points at
+    // local" is not. Same reasoning as `resolveTarget` in targets.mjs.
+    const known = Object.entries(TARGETS).find(
+      ([n, t]) => n !== 'local' && (t.database === found.database || t.user === found.user),
     );
+    if (known) {
+      fail(
+        `--into names ${found.user}@…/${found.database}, which is the ${known[0]} database or role.\n` +
+          `  On a loopback address that is a tunnel, not a throwaway. This script restores\n` +
+          `  over everything it touches; it will only ever run against a container.`,
+      );
+    }
   }
 
   let host;
@@ -130,7 +136,7 @@ function assertThrowaway(connectionString) {
     );
   }
 
-  console.log(`  target    throwaway at ${host} — verified not a Supabase project`);
+  console.log(`  target    throwaway at ${host} — verified not a pinned database`);
 }
 
 /**
@@ -166,7 +172,7 @@ async function main() {
 
   console.log(`\n  dump      ${options.dump}`);
   if (options.aux) console.log(`  aux       ${options.aux}`);
-  console.log(`  from      ${manifest.target} (${manifest.projectRef}) at ${manifest.createdAt}`);
+  console.log(`  from      ${manifest.target} (${manifest.database ?? manifest.projectRef}) at ${manifest.createdAt}`);
 
   /*
    * A manifest that declares a second archive and a rehearsal that was not
