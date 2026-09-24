@@ -13,24 +13,31 @@
  *
  * What it enforces, in the order the checks run:
  *
- *   1. The env file's connection strings belong to the project the target is
- *      pinned to (`targets.mjs`).
- *   2. Nothing is pending that this script has not read — it lists the exact
+ *   1. The env file's connection strings name the database and role the target
+ *      is pinned to (`targets.mjs`).
+ *   2. The target's history is readable and believable (`migration-state.mjs`).
+ *      A live schema whose history is missing, a registry migration Prisma
+ *      left half-done, or production reporting no municipalities stops here,
+ *      before anything is listed as pending.
+ *   3. Nothing is pending that this script has not read — it lists the exact
  *      migrations it is about to apply, per tenant schema included.
- *   3. Pending SQL is scanned for irreversible DDL. `DROP COLUMN` on a table of
+ *   4. Pending SQL is scanned for irreversible DDL. `DROP COLUMN` on a table of
  *      citizen records is not something to discover from a stack trace, so it
  *      blocks unless the caller says `--allow-destructive` out loud.
- *   4. Production only: every migration about to be applied is already applied
- *      on staging. Promotion, not a parallel path.
- *   5. Production only: a typed confirmation of the project ref.
+ *   5. Production only: every migration about to be applied is already applied
+ *      on staging, and staging has a municipality to have applied it to.
+ *      Promotion, not a parallel path.
+ *   6. Production only: a typed confirmation of the database name.
+ *   7. After applying: the target is read again, registry and every tenant
+ *      schema, and must have nothing left pending.
  *
  * Options:
  *   --dry-run              Report everything above, apply nothing. Safe anywhere.
  *   --allow-destructive    Permit migrations containing data-losing DDL.
- *   --confirm=<ref>        Non-interactive confirmation, for CI. Must equal the
- *                          target's own ref, so a copied staging command cannot
- *                          fire at production.
- *   --skip-promotion-check Bypass (4). For a genuine hotfix; it is logged loudly.
+ *   --confirm=<db>         Non-interactive confirmation, for CI. Must equal the
+ *                          target's own database name, so a copied staging
+ *                          command cannot fire at production.
+ *   --skip-promotion-check Bypass (5). For a genuine hotfix; it is logged loudly.
  */
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -39,6 +46,12 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { ROOT, TARGETS, resolveTarget, TargetError } from './targets.mjs';
+import {
+  isUpToDate,
+  productionProblems,
+  promotionProblems,
+  readMigrationState,
+} from './migration-state.mjs';
 
 const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
 const { Client } = require('pg');
@@ -121,58 +134,17 @@ async function withClient(connectionString, fn) {
   }
 }
 
-async function appliedRegistry(client) {
-  const { rows } = await client.query(`
-    select migration_name from _prisma_migrations
-    where finished_at is not null and rolled_back_at is null
-  `).catch(() => ({ rows: [] }));
-  return new Set(rows.map((r) => r.migration_name));
-}
-
-/** Every provisioned tenant schema, and the migrations each has seen. */
-async function appliedTenants(client) {
-  const { rows: tenants } = await client
-    // `@@map("tenants")` in the registry schema — the table is not "Tenant".
-    .query(`select slug, "schemaName" from public.tenants where "provisionedAt" is not null order by slug`)
-    .catch(() => ({ rows: [] }));
-
-  const out = [];
-  for (const tenant of tenants) {
-    const { rows } = await client
-      .query(`select name from "${tenant.schemaName}"."_tenant_migrations"`)
-      .catch(() => ({ rows: [] }));
-    out.push({
-      slug: tenant.slug,
-      schema: tenant.schemaName,
-      applied: new Set(rows.map((r) => r.name)),
-    });
-  }
-  return out;
-}
-
-/** What this target still needs, registry and per tenant schema. */
+/**
+ * What this target still needs, registry and per tenant schema. Every read
+ * either succeeds or stops the deploy: see `migration-state.mjs` for why none
+ * of them may fall back to "nothing there".
+ */
 async function pendingFor(connectionString) {
-  const registryAll = migrationFolders(REGISTRY_MIGRATIONS);
-  const tenantAll = migrationFolders(TENANT_MIGRATIONS);
-
-  return withClient(connectionString, async (client) => {
-    const registryApplied = await appliedRegistry(client);
-    const tenants = await appliedTenants(client);
-
-    const registryPending = registryAll.filter((m) => !registryApplied.has(m));
-    const tenantPending = tenants.map((t) => ({
-      ...t,
-      pending: tenantAll.filter((m) => !t.applied.has(m)),
-    }));
-
-    // Union across schemas — the set of tenant SQL this deploy will execute
-    // somewhere, which is what the destructive scan and promotion gate care about.
-    const tenantPendingUnion = [
-      ...new Set(tenantPending.flatMap((t) => t.pending)),
-    ].sort((a, b) => a.localeCompare(b));
-
-    return { registryPending, tenantPending, tenantPendingUnion, tenantCount: tenants.length };
-  });
+  const folders = {
+    registry: migrationFolders(REGISTRY_MIGRATIONS),
+    tenant: migrationFolders(TENANT_MIGRATIONS),
+  };
+  return withClient(connectionString, (client) => readMigrationState(client, folders));
 }
 
 // ── Running the actual migration commands ──────────────────────────────────
@@ -207,23 +179,29 @@ function run(script, env, label) {
 }
 
 /**
- * Proves the migrations landed on the database we aimed at.
+ * Proves the migrations landed on the database we aimed at, all of them.
  *
  * Prisma loads `apps/backend/.env` of its own accord — it says so in its output
  * — on top of the environment this script hands it. dotenv does not overwrite
  * variables that are already set, so the injected URL wins, but "does not
  * overwrite" is a library's default behaviour and this is the one decision in
  * the repository that must not rest on one. So we go and look: reconnect to the
- * target's own DIRECT_URL and confirm the rows are there.
+ * target's own DIRECT_URL and read the whole state again.
+ *
+ * The whole state, not just the registry. This used to re-read only
+ * `_prisma_migrations`, so a tenant run that exited 0 without recording
+ * anything, or recorded it somewhere else, reported "up to date" unchecked.
  */
-async function verifyApplied(connectionString, expectedRegistry) {
-  if (expectedRegistry.length === 0) return;
-  const applied = await withClient(connectionString, appliedRegistry);
-  const missing = expectedRegistry.filter((m) => !applied.has(m));
-  if (missing.length > 0) {
+async function verifyApplied(connectionString) {
+  const after = await pendingFor(connectionString);
+  if (!isUpToDate(after)) {
+    const left = [
+      ...after.registryPending.map((m) => `registry/${m}`),
+      ...after.tenantPending.flatMap((t) => t.pending.map((m) => `${t.slug}/${m}`)),
+    ];
     throw new Error(
       'Migrations reported success but are not recorded on the target database:\n' +
-        missing.map((m) => `    ✗ ${m}`).join('\n') +
+        left.map((m) => `    ✗ ${m}`).join('\n') +
         '\n  Something redirected the connection. Do not re-run — check which database was written.',
     );
   }
@@ -260,8 +238,14 @@ async function main() {
 
   // ── What is pending ─────────────────────────────────────────────────────
   const pending = await pendingFor(target.env.DIRECT_URL);
-  const nothingPending =
-    pending.registryPending.length === 0 && pending.tenantPendingUnion.length === 0;
+  const nothingPending = isUpToDate(pending);
+
+  // Before "nothing to apply" can be believed: zero municipalities on the live
+  // register means the read went somewhere else, not that there is no work.
+  if (isProduction) {
+    const problems = productionProblems(pending);
+    if (problems.length > 0) throw new Error(problems.join('\n'));
+  }
 
   console.log('');
   console.log(C.bold('  Registry migrations pending: ') + (pending.registryPending.length || 'none'));
@@ -335,16 +319,10 @@ async function main() {
     const stagingTarget = resolveTarget(stagingName);
     const stagingPending = await pendingFor(stagingTarget.env.DIRECT_URL);
 
-    const notOnStaging = [
-      ...pending.registryPending.filter((m) => stagingPending.registryPending.includes(m)).map((m) => `registry/${m}`),
-      ...pending.tenantPendingUnion.filter((m) => stagingPending.tenantPendingUnion.includes(m)).map((m) => `tenant/${m}`),
-    ];
-
-    if (notOnStaging.length > 0) {
+    const problems = promotionProblems(pending, stagingPending);
+    if (problems.length > 0) {
       throw new Error(
-        'These migrations have not been applied to staging yet:\n' +
-          notOnStaging.map((m) => `    ✗ ${m}`).join('\n') +
-          `\n  Deploy to staging first: pnpm db:deploy:${stagingName}`,
+        problems.join('\n') + `\n  Deploy to staging first: pnpm db:deploy:${stagingName}`,
       );
     }
     console.log(C.green('\n  ✓ Promotion check: every pending migration is already live on staging.'));
@@ -403,7 +381,7 @@ async function main() {
   }
 
   console.log('');
-  await verifyApplied(target.env.DIRECT_URL, pending.registryPending);
+  await verifyApplied(target.env.DIRECT_URL);
 
   console.log(C.green(`\n  ✓ ${target.label} is up to date.\n`));
 }
