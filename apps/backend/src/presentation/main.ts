@@ -36,14 +36,35 @@ function warnOnNonUtcClock(): void {
 }
 
 /**
+ * The Prometheus counters live in this process's memory, so they describe the
+ * whole service only while one process answers the port. pm2 numbers the
+ * processes of a multi-instance app from 0 in `NODE_APP_INSTANCE`. On any
+ * instance but the first, a scrape of the shared port reads whichever process
+ * answered, and every rate and quantile built on it is wrong without looking
+ * wrong.
+ */
+function warnOnSecondInstance(): void {
+  const instance = process.env.NODE_APP_INSTANCE?.trim();
+  if (!instance || instance === '0') return;
+
+  Logger.warn(
+    `This is pm2 instance ${instance}: /${APP_CONFIG.metricsPath} counts only this process, and a ` +
+      'scrape of the shared port reads whichever instance answers. Run one instance, or scrape each on its own port.',
+    'Bootstrap',
+  );
+}
+
+/**
  * Boots the API as a long-lived process. The configuration itself lives in
  * `bootstrap.ts`, shared with the serverless entry point.
  */
 async function bootstrap(): Promise<void> {
   warnOnNonUtcClock();
+  warnOnSecondInstance();
 
   const app = await createApiApp();
-  const port = app.get(ConfigService).get<number>('PORT') ?? 4000;
+  const config = app.get(ConfigService);
+  const port = config.get<number>('PORT') ?? 4000;
 
   await app.listen(port);
 
@@ -54,6 +75,14 @@ async function bootstrap(): Promise<void> {
   // migration.
   Logger.log(
     sentryEnabled() ? 'Sentry error reporting enabled' : 'Sentry disabled (no SENTRY_DSN)',
+    'Bootstrap',
+  );
+  // The same for metrics: a scrape answered 404 looks identical whether the
+  // token is missing or the scrape path is wrong.
+  Logger.log(
+    config.get<string>('METRICS_TOKEN')
+      ? `Prometheus metrics at /${APP_CONFIG.metricsPath} (bearer token required)`
+      : 'Metrics endpoint disabled (no METRICS_TOKEN)',
     'Bootstrap',
   );
 }

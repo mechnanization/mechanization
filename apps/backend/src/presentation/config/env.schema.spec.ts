@@ -81,6 +81,27 @@ describe('validateEnv — SCHEDULER_ENABLED', () => {
   });
 });
 
+describe('validateEnv — METRICS_TOKEN', () => {
+  const base = {
+    DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
+    DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
+    JWT_SECRET: 'y'.repeat(40),
+  };
+
+  it('accepts the variable being absent — that is metrics switched off', () => {
+    expect(validateEnv({ ...base }).METRICS_TOKEN).toBeUndefined();
+  });
+
+  it('rejects a token short enough to have been typed rather than generated', () => {
+    expect(() => validateEnv({ ...base, METRICS_TOKEN: 'prometheus' })).toThrow(/METRICS_TOKEN/);
+  });
+
+  it('accepts a generated one', () => {
+    const token = 'a1'.repeat(32);
+    expect(validateEnv({ ...base, METRICS_TOKEN: token }).METRICS_TOKEN).toBe(token);
+  });
+});
+
 /**
  * The S3 configuration.
  *

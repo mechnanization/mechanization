@@ -24,9 +24,10 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { CorrelationIdMiddleware } from './middleware/correlation-id.middleware';
 import { TenantMiddleware } from './middleware/tenant.middleware';
+import { MetricsModule } from './metrics.module';
 
 @Module({
-  imports: [ApplicationModule],
+  imports: [ApplicationModule, MetricsModule],
   controllers: [
     HealthController,
     InternalCronController,

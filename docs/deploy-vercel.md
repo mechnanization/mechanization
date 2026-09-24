@@ -47,6 +47,7 @@ Set all of these for **Production** and **Preview**.
 | `PUBLIC_PORTAL_URL` | The web project's origin |
 | `CRON_SECRET` | `openssl rand -hex 32` — see §4 |
 | `SCHEDULER_ENABLED` | Leave **unset** on Vercel. On any long-lived host, set it explicitly — see §4 |
+| `METRICS_TOKEN` | Leave **unset** on Vercel: `/metrics` then answers 404. Only a long-lived host that Prometheus scrapes sets it (`openssl rand -hex 32`); the scraper sends `Authorization: Bearer <token>` |
 | `TZ` | `UTC` on a long-lived host. Not needed on Vercel, which is UTC already |
 | `SENTRY_DSN` | Optional. The **API** project's DSN — see §7 |
 | `SENTRY_ENVIRONMENT` | `production` or `preview`, scoped per environment — see §7 |
