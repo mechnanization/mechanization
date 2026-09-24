@@ -89,6 +89,35 @@ describe('readMigrationState', () => {
     assert.deepEqual(state.tenantPendingUnion, ['0003_building_units']);
   });
 
+  test('a gap below the latest applied migration is pending and flagged as out of order', async () => {
+    // A late merge from a parallel branch, or a history row someone deleted.
+    const state = await readMigrationState(
+      database({
+        registry: [finished('0001_init')],
+        tenants: [albazourieh],
+        ledgers: { tenant_albazourieh: ['0001_init', '0003_building_units'] },
+      }),
+      FOLDERS,
+    );
+
+    assert.deepEqual(state.tenantPendingUnion, ['0002_parcels']);
+    assert.deepEqual(state.tenantPending[0].outOfOrder, ['0002_parcels']);
+  });
+
+  test('being merely behind is not out of order', async () => {
+    const state = await readMigrationState(
+      database({
+        registry: [finished('0001_init')],
+        tenants: [albazourieh],
+        ledgers: { tenant_albazourieh: ['0001_init', '0002_parcels'] },
+      }),
+      FOLDERS,
+    );
+
+    assert.deepEqual(state.tenantPending[0].outOfOrder, []);
+    assert.deepEqual(state.registryOutOfOrder, []);
+  });
+
   test('history the repository no longer has (a renamed or unmerged migration) is not pending', async () => {
     const state = await readMigrationState(
       database({

@@ -132,6 +132,17 @@ export function parseConnection(connectionString) {
   return { user, host, database };
 }
 
+/**
+ * The query-string parameters of a Postgres connection string, read after the
+ * *last* `@` so a password containing `?` is not mistaken for the start of one.
+ */
+export function connectionParams(connectionString) {
+  const trimmed = (connectionString ?? '').trim();
+  const afterAt = trimmed.slice(trimmed.lastIndexOf('@') + 1);
+  const query = afterAt.split('#')[0].split('?').slice(1).join('?');
+  return new URLSearchParams(query);
+}
+
 /** Values still carrying a `<FILL-ME>` marker from the template. */
 function placeholderKeys(env) {
   return Object.entries(env)
@@ -251,6 +262,27 @@ export function resolveTarget(name, { root = ROOT } = {}) {
       problems.push(
         `${key} connects as '${found.user}', but target '${name}' is pinned to role '${target.user}'`,
       );
+    }
+  }
+
+  // The pin covers the database, not the schema inside it, and two parameters
+  // can move every statement somewhere else in that database. Prisma honours
+  // `?schema=`: a registry migration then builds its tables in that schema,
+  // and the checks above still pass, because the database name is right.
+  // `options` can set `search_path` for the whole session. Proven end to end
+  // against a throwaway database before this check existed.
+  for (const key of CONNECTION_KEYS) {
+    if (!env[key]) continue;
+    const params = connectionParams(env[key]);
+    const schema = params.get('schema');
+    if (schema !== null && schema !== 'public') {
+      problems.push(
+        `${key} sets ?schema=${schema}. Migrations would run in that schema of ` +
+          `${target.database} instead of public; only ?schema=public is accepted`,
+      );
+    }
+    if (params.has('options')) {
+      problems.push(`${key} sets ?options=, which can change search_path for every statement`);
     }
   }
 

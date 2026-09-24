@@ -30,6 +30,16 @@ const REGISTRY_LEDGER = 'public._prisma_migrations';
 const REGISTRY_TABLE = 'public.tenants';
 const tenantLedger = (schema) => `"${schema}"."_tenant_migrations"`;
 
+/**
+ * Pending migrations that sort before the latest applied one the repository
+ * still has: a late merge from a parallel branch, or a deleted history row.
+ * `all` is sorted, so `pending`, filtered from it, is too.
+ */
+function outOfOrder(all, applied, pending) {
+  const latest = all.filter((m) => applied.has(m)).at(-1);
+  return latest === undefined ? [] : pending.filter((m) => m.localeCompare(latest) < 0);
+}
+
 async function exists(client, qualifiedName) {
   const { rows } = await client.query('select to_regclass($1) is not null as present', [
     qualifiedName,
@@ -139,7 +149,13 @@ export async function readMigrationState(client, folders) {
       );
     }
 
-    tenants.push({ slug, schema: schemaName, applied, pending });
+    tenants.push({
+      slug,
+      schema: schemaName,
+      applied,
+      pending,
+      outOfOrder: outOfOrder(tenantAll, applied, pending),
+    });
   }
 
   // Union across schemas: the tenant SQL this deploy will execute somewhere,
@@ -150,6 +166,7 @@ export async function readMigrationState(client, folders) {
 
   return {
     registryPending,
+    registryOutOfOrder: outOfOrder(registryAll, registryApplied, registryPending),
     tenantPending: tenants,
     tenantPendingUnion,
     tenantCount: tenants.length,

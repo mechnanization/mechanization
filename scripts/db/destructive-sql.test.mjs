@@ -23,6 +23,16 @@ describe('blocks everything that loses data', () => {
     'ALTER TABLE "units" RENAME TO "flats";',
     'DELETE FROM "unit_occupancies" AS dup USING x WHERE dup.id = x.id;',
     'delete   from users;',
+    // The shapes an end-to-end run slipped past the previous version:
+    'ALTER TABLE "units"\n  ALTER COLUMN "area"\n  TYPE integer;',
+    'ALTER TABLE "units" ALTER "area" TYPE integer;',
+    'ALTER TABLE "units" ALTER COLUMN "area" SET DATA TYPE integer;',
+    'DROP TYPE "UnitType" CASCADE;',
+    'DROP SEQUENCE "payment_receipt_seq";',
+    'DROP VIEW "occupancy_view" CASCADE;',
+    "SELECT '--'; ALTER TABLE \"units\" DROP COLUMN \"note\";",
+    "SELECT 'it''s -- fine'; DROP TABLE \"units\";",
+    'CREATE FUNCTION f() RETURNS trigger AS $$ BEGIN DELETE FROM "audit"; RETURN NULL; END $$ LANGUAGE plpgsql;',
   ]) {
     test(sql, () => assert.equal(blocks(sql), true));
   }
@@ -37,6 +47,10 @@ describe('lets additive and harmless statements through', () => {
     'SELECT 1 FROM "units" FOR UPDATE;',
     '-- DROP TABLE "units"; kept for reference',
     '/* DELETE FROM users; */ SELECT 1;',
+    'ALTER TYPE "UnitType" ADD VALUE \'PILOTIS\';',
+    'ALTER TABLE "a" DROP CONSTRAINT "a_b_fkey", ADD CONSTRAINT "a_b_fkey" FOREIGN KEY ("b") REFERENCES "b"("id") ON DELETE CASCADE;',
+    'CREATE FUNCTION f() RETURNS trigger AS $body$ BEGIN -- never DROP TABLE here\n RETURN NEW; END $body$ LANGUAGE plpgsql;',
+    'COMMENT ON COLUMN "units"."area" IS \'square metres\';',
   ]) {
     test(sql, () => assert.equal(blocks(sql), false));
   }

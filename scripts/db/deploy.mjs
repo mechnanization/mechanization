@@ -46,7 +46,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
-import { ROOT, TARGETS, resolveTarget, TargetError } from './targets.mjs';
+import { ROOT, TARGETS, parseConnection, resolveTarget, TargetError } from './targets.mjs';
 import { scanSql } from './destructive-sql.mjs';
 import {
   isUpToDate,
@@ -167,7 +167,11 @@ async function verifyApplied(connectionString) {
         '\n  Something redirected the connection. Do not re-run — check which database was written.',
     );
   }
-  console.log(C.green(`  ✓ Verified on ${connectionString.replace(/:[^:@]*@/, ':***@')}`));
+  // Named from its parts, never by masking the URL. The password may contain
+  // `@` or `:` (`parseConnection` allows both), and a regex mask then printed
+  // part of it into CI logs.
+  const where = parseConnection(connectionString);
+  console.log(C.green(`  ✓ Verified on ${where.user}@${where.host}/${where.database}`));
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -219,7 +223,24 @@ async function main() {
       `${pending.tenantPendingUnion.length || 'no'} distinct migration(s) pending`,
   );
   for (const t of pending.tenantPending.filter((t) => t.pending.length > 0)) {
-    console.log(`    · ${t.slug} (${t.schema}): ${t.pending.length} pending`);
+    console.log(`    · ${t.slug} (${t.schema}): ${t.pending.join(', ')}`);
+  }
+
+  // A pending migration that sorts before one already applied is either a
+  // number merged late from a parallel branch, which happens here and is fine,
+  // or a history row someone deleted, in which case applying re-runs SQL that
+  // already ran. Nothing here can tell which, so it is said out loud.
+  const outOfOrder = [
+    ...pending.registryOutOfOrder.map((m) => `registry/${m}`),
+    ...pending.tenantPending.flatMap((t) => t.outOfOrder.map((m) => `${t.slug}/${m}`)),
+  ];
+  if (outOfOrder.length > 0) {
+    console.log(C.yellow('\n  Pending migrations that sort before one already applied:'));
+    for (const m of outOfOrder) console.log(C.yellow(`    ! ${m}`));
+    console.log(
+      C.yellow('    A late merge from a parallel branch is fine. A deleted history row is not:\n') +
+        C.yellow('    applying would re-run SQL that has already run.'),
+    );
   }
 
   if (nothingPending) {
@@ -279,7 +300,18 @@ async function main() {
       );
     }
     const stagingTarget = resolveTarget(stagingName);
-    const stagingPending = await pendingFor(stagingTarget.env.DIRECT_URL);
+    // Staging's own refusals (a missing history, an unreadable registry) would
+    // otherwise surface under the PRODUCTION header, reading as if production
+    // were the database at fault.
+    let stagingPending;
+    try {
+      stagingPending = await pendingFor(stagingTarget.env.DIRECT_URL);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Promotion check could not read staging (${stagingTarget.database}), so it cannot vouch for anything:\n${reason}`,
+      );
+    }
 
     const problems = promotionProblems(pending, stagingPending);
     if (problems.length > 0) {

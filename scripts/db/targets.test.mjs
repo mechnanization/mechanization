@@ -171,6 +171,34 @@ describe('resolveTarget refuses', () => {
   });
 });
 
+describe('resolveTarget refuses a URL that moves statements to another schema', () => {
+  const withQuery = (target, query) =>
+    envFor(target).replaceAll(`/${target.database}"`, `/${target.database}?${query}"`);
+
+  test('?schema= naming anything but public', () => {
+    const message = refusalFor('production', withQuery(PROD, 'schema=decoy'));
+    assert.match(message, /DATABASE_URL sets \?schema=decoy/);
+    assert.match(message, /DIRECT_URL sets \?schema=decoy/);
+  });
+
+  test('?options=, which can set search_path', () => {
+    assert.match(
+      refusalFor('staging', withQuery(STAGING, 'options=-c%20search_path%3Ddecoy')),
+      /sets \?options=/,
+    );
+  });
+
+  test('but NOT ?schema=public, nor ordinary parameters', () => {
+    assert.equal(refusalFor('production', withQuery(PROD, 'schema=public')), null);
+    assert.equal(refusalFor('staging', withQuery(STAGING, 'sslmode=require&connect_timeout=10')), null);
+  });
+
+  test('and is not fooled by a ? inside the password', () => {
+    const body = envFor(PROD).replaceAll('appuser:pw123@', 'appuser:p%3Fschema=x@');
+    assert.equal(refusalFor('production', body), null);
+  });
+});
+
 describe('resolveTarget accepts', () => {
   test('a correct staging file', () => {
     assert.equal(refusalFor('staging', envFor(STAGING)), null);
