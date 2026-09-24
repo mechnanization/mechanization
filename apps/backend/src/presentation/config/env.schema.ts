@@ -265,6 +265,14 @@ export const envSchema = z
     CRON_SECRET: z.string().min(16).optional(),
 
     /**
+     * Bearer token Prometheus presents on `GET /metrics`. Unset means the
+     * route answers 404. `MetricsController` explains why this cannot be left
+     * to nginx. Long enough that it has to be generated rather than chosen:
+     * `openssl rand -hex 32`.
+     */
+    METRICS_TOKEN: z.string().min(32).optional(),
+
+    /**
      * Whether this process runs the `@Cron` schedule in memory.
      *
      * Until this existed the answer was inferred from `process.env.VERCEL`,

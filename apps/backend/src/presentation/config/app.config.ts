@@ -5,6 +5,18 @@ export const APP_CONFIG = {
   apiPrefix: 'api/v1',
 
   /**
+   * The Prometheus scrape path — the one route *outside* `apiPrefix`
+   * (`bootstrap.ts` excludes it).
+   *
+   * Outside, because `/metrics` is the path Prometheus requests by default, and
+   * the path an nginx deny rule on the Lightsail box would name. Under the
+   * prefix it would be `/api/v1/metrics`, which such a rule would not match
+   * while reading as though it did. The control is `METRICS_TOKEN`, not nginx;
+   * see `MetricsController`.
+   */
+  metricsPath: 'metrics',
+
+  /**
    * Absolute URLs this service hands to a third party.
    *
    * Whish is told where to send its confirmation and where to return the
