@@ -21,9 +21,10 @@
  *      before anything is listed as pending.
  *   3. Nothing is pending that this script has not read — it lists the exact
  *      migrations it is about to apply, per tenant schema included.
- *   4. Pending SQL is scanned for irreversible DDL. `DROP COLUMN` on a table of
- *      citizen records is not something to discover from a stack trace, so it
- *      blocks unless the caller says `--allow-destructive` out loud.
+ *   4. Pending SQL is scanned for anything that loses data (`destructive-sql.mjs`).
+ *      `DROP COLUMN` or `DELETE FROM` on a table of citizen records is not
+ *      something to discover from a stack trace, so it blocks unless the
+ *      caller says `--allow-destructive` out loud.
  *   5. Production only: every migration about to be applied is already applied
  *      on staging, and staging has a municipality to have applied it to.
  *      Promotion, not a parallel path.
@@ -46,6 +47,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { ROOT, TARGETS, resolveTarget, TargetError } from './targets.mjs';
+import { scanSql } from './destructive-sql.mjs';
 import {
   isUpToDate,
   productionProblems,
@@ -68,46 +70,6 @@ const C = {
   bold: (s) => `\x1b[1m${s}\x1b[0m`,
   dim: (s) => `\x1b[2m${s}\x1b[0m`,
 };
-
-// ── Destructive DDL ────────────────────────────────────────────────────────
-//
-// Split by consequence, because the two deserve different answers. `blocking`
-// is "this can lose data a municipality cannot re-enter"; `warning` is "this
-// takes a lock that can stall the portal on a table with rows in it".
-//
-// The expand/contract discipline in docs/database-environments.md is what keeps
-// the blocking list empty in normal work: you add, backfill, switch reads, and
-// only drop a release later — by which point the drop is genuinely safe and
-// `--allow-destructive` is an accurate description of an intentional act.
-const DESTRUCTIVE = [
-  { level: 'blocking', re: /\bDROP\s+TABLE\b/i, what: 'DROP TABLE' },
-  { level: 'blocking', re: /\bDROP\s+COLUMN\b/i, what: 'DROP COLUMN' },
-  { level: 'blocking', re: /\bDROP\s+SCHEMA\b/i, what: 'DROP SCHEMA' },
-  { level: 'blocking', re: /\bTRUNCATE\b/i, what: 'TRUNCATE' },
-  { level: 'blocking', re: /\bALTER\s+COLUMN\s+.*\bTYPE\b/i, what: 'ALTER COLUMN … TYPE' },
-  { level: 'blocking', re: /\bRENAME\s+(COLUMN|TO)\b/i, what: 'RENAME' },
-  { level: 'warning', re: /\bSET\s+NOT\s+NULL\b/i, what: 'SET NOT NULL (full table scan + lock)' },
-  {
-    level: 'warning',
-    re: /\bCREATE\s+(UNIQUE\s+)?INDEX\s+(?!CONCURRENTLY)/i,
-    what: 'CREATE INDEX without CONCURRENTLY (write lock)',
-  },
-  { level: 'warning', re: /\bDROP\s+CONSTRAINT\b/i, what: 'DROP CONSTRAINT' },
-];
-
-/** Strips -- and /* *\/ comments so a commented-out DROP does not trip the scanner. */
-function stripSqlComments(sql) {
-  return sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
-}
-
-function scanSql(name, sql) {
-  const clean = stripSqlComments(sql);
-  return DESTRUCTIVE.filter((rule) => rule.re.test(clean)).map((rule) => ({
-    migration: name,
-    level: rule.level,
-    what: rule.what,
-  }));
-}
 
 function migrationFolders(dir) {
   if (!existsSync(dir)) return [];
