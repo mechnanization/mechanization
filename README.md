@@ -1,21 +1,26 @@
 ## Setup
 
+Needs Node, pnpm and Docker Desktop.
+
 ```bash
 pnpm install
 pnpm --filter @mechanization/shared-schemas build
 pnpm db:generate
 
-cp apps/backend/.env.example apps/backend/.env          
-cp apps/frontend/.env.example apps/frontend/.env.local
-
-pnpm db:check    # confirms .env addresses the staging project and nothing else
-pnpm db:seed
+# Create apps/backend/.env and apps/frontend/.env.local first:
+# contents in docs/database-environments.md §0.1, "The env files".
+pnpm db:check                                  # ✓ local → appuser_local@127.0.0.1:5434/municipality_db_local
+docker compose up -d --wait postgres redis     # the local database and cache
+pnpm db:deploy:local                           # registry schema
+pnpm db:seed                                   # 2 municipalities, staff logins, fake citizens
+pnpm --filter @mechanization/backend cadastre:import --slug albazourieh --file data/bazoreyye.kmz --out-dir ../../.cadastre-out
 ```
 
-`apps/backend/.env` points at the **staging** Supabase project — there is no
-local Postgres, so `pnpm dev` reads and writes staging. It cannot be pointed at
-production: `pnpm dev` refuses to start if it is. See
-[docs/database-environments.md](docs/database-environments.md).
+`apps/backend/.env` points at a Postgres 17 container on your own machine
+(`127.0.0.1:5434`) that holds seeded data only. `pnpm dev` refuses to start if
+the file names staging or production. Never load a copy of either into it.
+Details, logins and the reset procedure are in
+[docs/database-environments.md §0](docs/database-environments.md#0-the-local-database).
 
 ## Run everything at once
 
@@ -23,7 +28,7 @@ production: `pnpm dev` refuses to start if it is. See
 pnpm start
 ```
 
-Starts Redis via Docker (skipped with a warning if Docker isn't running) then runs backend + frontend together.
+Starts the local database and Redis in Docker, then runs backend + frontend together. Docker must be running.
 
 ## Run backend + frontend
 
@@ -54,7 +59,7 @@ REDIS_URL="redis://localhost:6379"
 docker compose up --build
 ```
 
-Postgres and storage are hosted on Supabase, so only Redis, backend, and frontend run locally. The backend won't accept traffic until Redis passes its healthcheck.
+Runs the local database, Redis, backend and frontend. The database must already be migrated and seeded (Setup, above). Document storage is S3 and deliberately not configured locally, so document views fail rather than reach the real bucket.
 
 ## Onboarding a municipality
 

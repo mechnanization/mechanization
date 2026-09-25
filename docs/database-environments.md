@@ -1,36 +1,250 @@
 # Database environments
 
-Two databases in one Postgres cluster, three targets, and a set of checks whose
-only job is to make "I ran it against the wrong one" impossible rather than
-unlikely.
+Three databases, three targets, and a set of checks whose only job is to make
+"I ran it against the wrong one" impossible rather than unlikely.
 
-| Target | Database | Role | Env file | Who runs it |
-| --- | --- | --- | --- | --- |
-| `local` | `municipality_db_staging` | `appuser_staging` | `apps/backend/.env` | `pnpm dev` and `db:*:local` on a laptop |
-| `staging` | `municipality_db_staging` | `appuser_staging` | `apps/backend/.env.staging` | CI: push to `develop`, and before every production run — §3 |
-| `production` | `municipality_db` | `appuser` | `apps/backend/.env.production` | CI: every push to `main`, before the code ships — §3 |
+| Target | Database | Role | Where it is | Env file | Who runs it |
+| --- | --- | --- | --- | --- | --- |
+| `local` | `municipality_db_local` | `appuser_local` | Docker on your machine, `127.0.0.1:5434` | `apps/backend/.env` | `pnpm dev` and `db:*:local` on a laptop — §0 |
+| `staging` | `municipality_db_staging` | `appuser_staging` | Lightsail, via SSH tunnel | `apps/backend/.env.staging` | CI: push to `develop`, and before every production run — §3 |
+| `production` | `municipality_db` | `appuser` | Lightsail, via SSH tunnel | `apps/backend/.env.production` | CI: every push to `main`, before the code ships — §3 |
 
-Both databases live on the Lightsail box that also runs the backend (moved off
-Supabase in September 2026). **Port 5432 there is closed to the internet and
-must stay closed.** A laptop reaches the database through an SSH tunnel, on 5433
-because a local Postgres install commonly holds 5432:
+Staging and production live on the Lightsail box that also runs the backend
+(moved off Supabase in September 2026). **Port 5432 there is closed to the
+internet and must stay closed.** A machine reaches them through an SSH tunnel:
 
 ```bash
 ssh -i <key.pem> -N -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes \
     -L 5433:localhost:5432 <ssh-user>@<lightsail-host>
-# then, in apps/backend/.env:
-# DATABASE_URL="postgresql://appuser_staging:<pw>@localhost:5433/municipality_db_staging"
 ```
 
-`local` and `staging` are the same database. There is no local Postgres stack —
-`docker-compose.yml` runs Redis and nothing else — so "local" describes where
-the *process* runs, not where the data lives. `pnpm dev` writes to staging. A
-laptop needs only `apps/backend/.env`; `.env.staging` exists for CI.
+CI tunnels on 5433. On a laptop pick any free port. If another project's
+container already holds 5433, `ExitOnForwardFailure` stops the tunnel and your
+client silently talks to that container instead.
+
+`local` is its own database, in its own container, and holds seeded data only.
+Until 2026-09-25 it was pinned to the staging database, so `pnpm dev` read and
+wrote staging, and running a feature branch left its migrations there
+permanently. Six such orphans are still on staging.
 
 The database names and roles above are pinned in
 [`scripts/db/targets.mjs`](../scripts/db/targets.mjs). They are not secrets; the
 passwords they pair with are, and those stay in ignored dotenv files and GitHub
-Environment secrets.
+Environment secrets. The local password (`localdev`) is the exception. It is
+committed because the port is loopback-only and the data is synthetic.
+
+---
+
+## 0. The local database
+
+A Postgres 17 container, the `postgres` service in
+[`docker-compose.yml`](../docker-compose.yml), published on `127.0.0.1:5434`
+only. It is built from the same migrations, through the same wrapper, as
+staging and production, so its **schema** is theirs. Its **data** is the seed's
+synthetic municipalities plus the real cadastre map, and never anything else.
+
+### What goes in it, and what never does
+
+| Goes in | Source |
+| --- | --- |
+| Schema: registry + every tenant migration | the repo's migration folders, via `pnpm db:deploy:local` and the seed |
+| Two municipalities, `albazourieh` and `zahle`, with staff logins and 4 fake citizens each | `pnpm db:seed` (`apps/backend/src/scripts/seed.ts`) |
+| Al-Bazourieh's 1,825 real parcels (1,800 with outlines) | `apps/backend/data/bazoreyye.kmz`, the survey office's file, already in the repo |
+
+**Never** a dump, backup, export or query result from staging or production —
+not with `pg_dump`, Navicat, the pre-migration backups, `verify-restore.mjs`,
+the app's own export, or an MCP server. Citizen records carry national IDs,
+addresses and residency/refugee status, and they do not leave staging
+([AGENTS.md](../AGENTS.md) §4). A laptop's database is outside every control
+that protects them: no audit log, no access list, and no deletion when the
+laptop is lost.
+
+When the seed is too thin for what you are testing, the answer is more
+synthetic data, not real data. See §0.5.
+
+### 0.1 First-time setup
+
+From the repository root, with Docker Desktop running:
+
+```bash
+# 1. Dependencies and generated clients (once per checkout)
+pnpm install
+pnpm --filter @mechanization/shared-schemas build
+pnpm db:generate
+
+# 2. Create apps/backend/.env and apps/frontend/.env.local with the contents
+#    under "The env files" below, then:
+pnpm db:check                 # ✓ local  apps/backend/.env → appuser_local@127.0.0.1:5434/municipality_db_local
+
+# 3. Start the database (and the cache). --wait returns once it is healthy.
+docker compose up -d --wait postgres redis
+
+# 4. The registry schema, through the guarded wrapper
+pnpm db:status:local          # expect: Registry migrations pending: 1 · 0001_init; 0 municipalities
+pnpm db:deploy:local          # expect: ✓ Verified on appuser_local@127.0.0.1:5434/municipality_db_local
+
+# 5. Municipalities, their tenant schemas (all migrations), staff and fake citizens
+pnpm db:seed
+
+# 6. The real parcel map for Al-Bazourieh. --out-dir keeps the import from
+#    rewriting the four GeoJSON files committed under apps/frontend/public/
+#    (.cadastre-out/ is gitignored; delete it whenever you like).
+pnpm --filter @mechanization/backend cadastre:import \
+  --slug albazourieh --file data/bazoreyye.kmz --out-dir ../../.cadastre-out
+
+# 7. Run it
+pnpm dev                      # or: pnpm start
+```
+
+#### The env files
+
+`apps/backend/.env`: generate your own `JWT_SECRET` with
+`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+Never reuse staging's or production's: tokens carry no issuer, so a token signed
+with a shared secret is accepted wherever that secret is.
+
+```
+PORT=4000
+NODE_ENV=development
+TZ=UTC
+CORS_ORIGINS="http://localhost:3000"
+# Off, so the 02:00 billing run and the OTP cleanup don't change data under you.
+SCHEDULER_ENABLED=false
+
+DATABASE_URL="postgresql://appuser_local:localdev@127.0.0.1:5434/municipality_db_local"
+DIRECT_URL="postgresql://appuser_local:localdev@127.0.0.1:5434/municipality_db_local"
+
+JWT_SECRET=<your generated value>
+# false: citizen OTP accepts any code. true: the code comes back as `devCode`.
+OTP_ENABLED=false
+
+REDIS_URL="redis://localhost:6379"
+```
+
+Leave out every `AWS_*`, `S3_*`, `SUPABASE_*`, `SMTP_*`, `SENTRY_DSN`,
+`CRON_SECRET`, `METRICS_TOKEN`, `WHISH_*` and `SMS_*` variable. Each one points a
+local process at a shared service: the real document and cadastre buckets, the
+retired hosted projects, real mailboxes.
+
+`apps/frontend/.env.local` (restart `next dev` after changing it; `NEXT_PUBLIC_*`
+is inlined at build time):
+
+```
+NEXT_PUBLIC_API_URL="http://localhost:4000/api/v1"
+NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN=<a Mapbox public token, pk.…; ask a teammate>
+```
+
+Never point `NEXT_PUBLIC_API_URL` at a deployed API: the pages would then read
+and write its database.
+
+#### Logins
+
+`pnpm db:seed` prints the logins. Every staff password is `Password123!`:
+
+| Municipality | Admin URL | Accounts |
+| --- | --- | --- |
+| Al-Bazourieh | `http://localhost:3000/albazourieh/ar/admin-portal-a91f` | `admin@`, `auditor@`, `inspector@albazourieh.gov.lb` |
+| Zahle | `http://localhost:3000/zahle/ar/admin-portal-4c7d` | `admin@`, `auditor@`, `inspector@zahle.gov.lb` |
+
+The `admin@` accounts are SUPER_ADMIN and have TOTP switched on. The seed prints
+each one's TOTP secret: add it to an authenticator app to get the 6-digit code.
+The secret is random and generated per machine, so yours differs from a
+teammate's. `auditor@` and `inspector@` sign in with the password alone.
+
+Run the seed once. Running it again before step 6 changes nothing, and prints
+the same TOTP secrets. Running it again **after** step 6 does not: the seed then
+moves its sample properties onto real parcel numbers, finds no card with those
+numbers, and adds a second set of 4 registrations to Al-Bazourieh. To get a
+clean database back, start over (§0.4).
+
+Step 6 prints four `AWS_REGION/S3_CADASTRE_BUCKET not set` warnings. That is
+correct: the import would otherwise upload over the **real** cartography bucket.
+Keep every `AWS_*`, `S3_*` and `SUPABASE_*` variable out of `.env` and out of
+your shell.
+
+### 0.2 Checking it
+
+```bash
+pnpm db:status:local          # expect: 2 provisioned, ✓ Already up to date
+docker compose exec postgres psql -U appuser_local -d municipality_db_local \
+  -c "select slug, \"adminPathSegment\" from public.tenants"
+docker compose exec postgres psql -U appuser_local -d municipality_db_local \
+  -c "select kind, count(*) from tenant_albazourieh.users group by kind"
+```
+
+A GUI client (Navicat, DBeaver, pgAdmin) connects to host `127.0.0.1`, port
+`5434`, database `municipality_db_local`, user `appuser_local`, password
+`localdev`. Give it its own saved connection, named so it cannot be confused
+with the tunnelled staging and production ones.
+
+### 0.3 After pulling new migrations
+
+```bash
+pnpm db:status:local          # lists what is pending here
+pnpm db:deploy:local          # applies registry + every municipality's tenant migrations
+```
+
+The same scanner and verification as production run here, so a migration that
+fails or is refused on your machine would have failed or been refused there
+too. Unlike staging, this database never carries migrations from other
+people's branches.
+
+### 0.4 Starting over
+
+```bash
+docker compose down -v        # deletes the database and the cache volumes
+docker compose up -d --wait postgres redis
+# then 0.1 steps 4 to 6
+```
+
+Nothing is lost that the seed cannot recreate, which is the point. Before a
+risky experiment, keep a copy of the local database only:
+
+```bash
+docker compose exec postgres sh -c 'pg_dump -U appuser_local -Fc -f /tmp/before.dump municipality_db_local'
+# … experiment …
+docker compose exec postgres sh -c 'pg_restore -U appuser_local -d municipality_db_local --clean --if-exists /tmp/before.dump'
+```
+
+Both run inside the container, so no connection string is typed and none can
+point at staging by mistake. The file stays in the container: it survives
+`docker compose stop`, not `down`. The `sh -c '…'` wrapper is there because Git
+Bash rewrites a bare `/tmp/…` argument into a Windows path before Docker sees
+it. Don't redirect a dump to a file with `>` in Windows PowerShell 5.1, which
+re-encodes binary output and corrupts it.
+
+### 0.5 When the seed is not enough
+
+The seed covers each property type once and fills no census, billing,
+occupancy, zone, document or audit tables. To test those:
+
+- **Through the UI or the API.** Signed in as `admin@`, create buildings on real
+  parcels, units, occupancy, fee notices and payments. This also exercises the
+  audit trail and the census sync, which writing rows directly would skip.
+- **The census backfill** turns the seed's property cards into buildings and
+  units: `pnpm --filter @mechanization/backend backfill:buildings --slug albazourieh`
+  (a dry run; add `--apply` to write).
+- **Missing staff roles** (COLLECTOR, ACCOUNTANT, ADMINISTRATIVE_OFFICER):
+  `pnpm staff:create --slug albazourieh --email … --password … --first-name … --last-name … --role COLLECTOR`.
+- **Volume** (paging, search, performance): a deterministic synthetic
+  generator going through `CitizensService.importMany`, with ID and phone
+  ranges that cannot belong to real people. It does not exist yet.
+
+The one thing this list does not contain is "copy it from staging".
+
+### 0.6 What stops a mistake here
+
+- `pnpm dev`, `pnpm start` and the backend's own `dev` script run
+  `check.mjs local` first. It refuses to boot if `apps/backend/.env` names
+  another database, role or address, mentions the staging or production
+  database anywhere (comments included), or if a `DATABASE_URL`/`DIRECT_URL`
+  exported in your shell would override the file.
+- The check runs at launch. If you edit `.env` while `pnpm dev` is running,
+  restart it.
+- The scripts in `apps/backend/src/scripts` (seed, `staff:create`,
+  `cadastre:import`, backfills) have no guard of their own. They use `.env`,
+  unless your shell overrides it. Run `pnpm db:check` before any of them, and
+  never with a staging `DATABASE_URL` exported.
 
 ---
 
@@ -39,24 +253,30 @@ Environment secrets.
 ```bash
 pnpm db:check                 # validate every env file present. No network.
 pnpm db:test                  # unit-test the guard itself
-pnpm db:status:local          # what is pending on staging (via .env), applies nothing
-pnpm db:deploy:local          # apply to staging
+pnpm db:status:local          # what is pending on your local database, applies nothing
+pnpm db:deploy:local          # apply to it
+pnpm db:status:staging        # same for staging; reads .env.staging
 pnpm db:status:production     # same for production
 pnpm db:deploy:production     # apply, after typing the database name
 ```
 
-The `db:*:staging` forms do the same as `db:*:local` against the same database,
-but read `.env.staging`, which only CI writes.
+The `db:*:staging` forms read `.env.staging`, which CI writes for each run. A
+laptop has one only while someone is deliberately working on staging (§0,
+[AGENTS.md](../AGENTS.md) §2).
 
 Every one of them names its target. There is deliberately no bare `db:deploy`
 that reads ambient configuration and guesses.
 
-Authoring a migration is unchanged:
+Authoring a migration runs against the local database now, not staging:
 
 ```bash
 pnpm db:migrate               # registry: prisma migrate dev --create-only
 pnpm db:migrate:tenant        # tenant:  prisma migrate dev --create-only
 ```
+
+Tenant migrations are hand-written SQL applied by the tenant migrator.
+`db:migrate:tenant` points Prisma's own engine at `public`, so use it only to
+draft SQL. Apply with `pnpm db:deploy:local`.
 
 ---
 
@@ -69,22 +289,29 @@ connection strings are parsed, and a database name or role that differs from
 the target's is a hard failure. Editing a dotenv file can no longer change which
 database a command reaches — only naming a different target can.
 
-The host is deliberately *not* checked. Every connection goes through a tunnel,
-so from the machine running the command, staging and production are both
-`localhost`; a host check would pass either. The role is checked as well as the
-database because it is the half the cluster enforces — `appuser_staging` holds
-no `CONNECT` on `municipality_db`.
+For staging and production the host is deliberately *not* checked. Every
+connection goes through a tunnel, so from the machine running the command, both
+are `localhost`; a host check would pass either. The role is checked as well as
+the database because it is the half the cluster enforces — `appuser_staging`
+holds no `CONNECT` on `municipality_db`. `local` is the exception: it is not
+tunnelled, so its URL must say `127.0.0.1:5434` (or `localhost:5434`), and a
+`local` URL on the tunnel port is refused even with the right names.
 
-**A non-production env file may not mention production at all** — not
-`municipality_db`, not `appuser`, not the retired Supabase production project —
-not even in a comment. This catches the half-finished edit, and the duplicated
-key: on 2026-09-23 `apps/backend/.env` held a staging `DATABASE_URL` near the
-top and a production one further down, and dotenv keeps the *last*.
+**An env file may not mention an environment above it at all.** The staging
+file may not mention production (`municipality_db`, `appuser`, the retired
+Supabase production project). The local file may mention neither staging nor
+production, including the retired Supabase staging project. Not even in a
+comment. This catches the half-finished edit, and the duplicated key: on
+2026-09-23 `apps/backend/.env` held a staging `DATABASE_URL` near the top and a
+production one further down, and dotenv keeps the *last*.
 
-**`pnpm dev` runs the check before it boots.** The moment someone pastes a
-production connection string into `apps/backend/.env` — to read one row, to
-reproduce one bug — the dev server stops starting instead of quietly attaching
-the whole application to live data.
+**`pnpm dev` runs the check before it boots**, and so do `pnpm start` and the
+backend's own `dev` script. The moment someone pastes a staging or production
+connection string into `apps/backend/.env` — to read one row, to reproduce one
+bug — the dev server stops starting instead of quietly attaching the whole
+application to real data. The same check refuses a `DATABASE_URL` or
+`DIRECT_URL` exported in the shell, which would otherwise win over the file
+without the check ever seeing it.
 
 **Anything that loses data blocks the deploy.** Pending migrations are scanned
 for `DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, `ALTER COLUMN … TYPE`, `RENAME` and
@@ -95,9 +322,12 @@ manual *Deploy production* workflow can pass. Statements that take a heavy lock
 new columns, and a scanner cannot tell that from an overwrite.
 
 **Production only accepts migrations staging has already applied.** The deploy
-reads staging's migration history and refuses anything staging has not seen.
-This is what turns "we have a staging environment" into "staging is
-load-bearing".
+reads staging's migration history, from `.env.staging` and nothing else, and
+refuses anything staging has not seen. This is what turns "we have a staging
+environment" into "staging is load-bearing". Until 2026-09-25 it would fall
+back to `apps/backend/.env` when `.env.staging` was missing, which was harmless
+while that file named staging. It now names your local database, which must
+never vouch for production.
 
 **Production needs the database name typed out.** Interactively, you type
 `municipality_db` at a prompt; in CI, `--confirm=municipality_db` must match, so
@@ -105,8 +335,10 @@ a command copied from the staging runbook cannot fire at production.
 
 **The restore drill refuses any pinned database.** `verify-restore.mjs` only
 restores onto a loopback address — but a tunnel *is* a loopback address, so it
-also refuses any URL naming `municipality_db`, `municipality_db_staging`,
-`appuser` or `appuser_staging`, wherever it points.
+also refuses any URL naming a pinned database or role, wherever it points:
+production's, staging's, and the local one's. It drops `public` before
+restoring, and a production dump restored into your local database would be
+citizen data on a laptop.
 
 None of this is a substitute for reading the SQL. It is a floor, not a ceiling.
 
@@ -117,7 +349,7 @@ None of this is a substitute for reading the SQL. It is a floor, not a ceiling.
 ```
 feature branch
     ↓  pnpm db:migrate            author the migration
-    ↓  pnpm dev                   it runs against staging, locally
+    ↓  pnpm db:deploy:local       it runs against your local database (§0.3)
   PR → develop
     ↓  CI: typecheck · test · db:test
   merge to develop
@@ -423,8 +655,8 @@ rm -f restore.sql
 
 | Where | What |
 | --- | --- |
-| `apps/backend/.env` | Staging credentials. Gitignored. |
-| `apps/backend/.env.staging` | Staging credentials. Gitignored. |
+| `apps/backend/.env` | The local database (`localdev`, not a secret) and a `JWT_SECRET` generated on that machine. Gitignored. Contents: §0.1. |
+| `apps/backend/.env.staging` | Staging credentials. Gitignored. Written by CI per run; on a laptop only while working on staging, then deleted. |
 | GitHub → Environments → `db-staging` | `STAGING_DATABASE_URL`, `STAGING_DIRECT_URL` |
 | GitHub → Environments → `db-production` | `PRODUCTION_DATABASE_URL`, `PRODUCTION_DIRECT_URL`, **plus** the two `STAGING_` ones: a production run migrates staging first and checks its history. **Plus** `BACKUP_AGE_PUBLIC_KEY`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for the pre-migration backup (§5); the AWS keys belong in `db-production` only. Without them, a push with a migration pending stops before migrating. |
 | GitHub → repository secrets | `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY` (the deploy, and the migration tunnel), `SSH_KNOWN_HOSTS` (the tunnel) |

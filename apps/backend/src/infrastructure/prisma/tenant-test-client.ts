@@ -12,8 +12,10 @@ import { PrismaClient as TenantPrismaClient } from '../../generated/tenant-clien
  * `TEST_DATABASE_URL` — the *direct*, session-mode string — which carries
  * neither, so Prisma falls back to its own default pool of `num_cpus * 2 + 1`.
  * On an eight-core machine that is seventeen session connections per suite, and
- * there is no local Postgres in this project: `TARGETS.local` points at hosted
- * staging, where that ceiling is shared with everything else aimed at it.
+ * these suites were first run against hosted staging (before `TARGETS.local`
+ * became a local container), where that ceiling is shared with everything else
+ * aimed at it. Point `TEST_DATABASE_URL` at a throwaway container, never at the
+ * local development database: the suites drop and rebuild fixed schema names.
  */
 
 /**

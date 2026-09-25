@@ -54,15 +54,16 @@ where table_schema = 'tenant_<slug>' and table_name = '<table>';
 
 Every environment is pinned by database name and role in
 [`scripts/db/targets.mjs`](scripts/db/targets.mjs), and the guard refuses any
-dotenv file whose connection strings name a different database or role. Both
-databases sit on one Lightsail box and are reached through an SSH tunnel, so
-every target looks like `localhost` — **the host tells you nothing**; read the
+dotenv file whose connection strings name a different database or role. Staging
+and production sit on one Lightsail box and are reached through an SSH tunnel,
+so both look like `localhost` — **the host tells you nothing**; read the
 database name.
 
 ```bash
 pnpm db:check                 # validate env files, no network
-pnpm db:status:staging        # what is pending, applies nothing
-pnpm db:deploy:staging        # apply
+pnpm db:status:local          # your own Docker database: what is pending
+pnpm db:deploy:local          # apply to it
+pnpm db:status:staging        # staging: needs .env.staging and a tunnel
 pnpm db:status:production
 ```
 
@@ -70,9 +71,23 @@ pnpm db:status:production
   `tenant:migrate-all` directly. They read whatever dotenv file happens to be on
   disk and tell you nothing about where they are pointed. The wrappers exist
   because that is one careless `git stash` away from rewriting live records.
-- `apps/backend/.env` is pinned to **staging**. There is no local Postgres —
-  `pnpm dev` reads and writes staging. Do not "temporarily" point it at
-  production to check one row.
+- `apps/backend/.env` is pinned to the **local Docker database**
+  (`municipality_db_local` on `127.0.0.1:5434`, the `postgres` service in
+  `docker-compose.yml`). `pnpm dev` reads and writes only that. The guard
+  refuses the file if it names staging or production anywhere, and refuses a
+  shell `DATABASE_URL` that overrides it. Do not "temporarily" point it at
+  staging or production to check one row. Until 2026-09-25 it was pinned to
+  staging; that is how six migrations from unmerged branches landed there.
+- **The local database holds seeded, synthetic data only**: `pnpm db:seed` plus
+  the cadastre import. Never restore, dump or copy staging or production rows
+  into it. That is citizen data leaving staging (§4), whichever tool does it:
+  `pg_dump`, Navicat, the backup files, `verify-restore.mjs`, an MCP server.
+  A request to "clone the real data" to a laptop is a request to break §4. Say
+  so, and offer the seed.
+- Staging is reached from a laptop only by creating `apps/backend/.env.staging`
+  (tunnel on a free port, not 5433 if something already holds it) and naming
+  the `staging` target. Delete the file afterwards: while it exists, the
+  machine can migrate staging.
 - There is deliberately no `.env.production` on developer machines. Production
   migrations run in GitHub Actions: automatically on every push to `main`,
   staging first, before the code ships (`migrate-database.yml` through
