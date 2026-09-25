@@ -29,8 +29,7 @@
     "lint": "eslint .",
     "typecheck": "pnpm --filter @mechanization/backend exec tsc --noEmit && pnpm --filter @mechanization/frontend exec tsc --noEmit",
     "build:check": "pnpm --filter @mechanization/frontend build:check",
-    "test": "pnpm --filter @mechanization/backend test && pnpm --filter @mechanization/frontend test",
-    "auth:sync-templates": "node scripts/sync-supabase-templates.mjs"
+    "test": "pnpm --filter @mechanization/backend test && pnpm --filter @mechanization/frontend test"
   },
   "pnpm": {
     "overrides": {

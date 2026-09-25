@@ -1,28 +1,24 @@
 name: Deploy production
 
-# Manual only, deliberately.
+# Production is migrated automatically on every push to main: `deploy-backend.yml`
+# runs the migrations, through the guard and staging first, before the code
+# that needs them ships. This button is for the two things that must not
+# happen automatically:
 #
-# The common setup is "push to main deploys production". This repository does
-# not do that, because merging a pull request and migrating a database holding
-# citizens' national ID numbers, addresses and refugee status are not the same
-# decision, and a branch protection rule is not a good place to conflate them.
-# Merging to main ships code. Migrating production is this button.
+#   - a dry run: report what is pending on staging and production, change
+#     nothing. The default, and the first thing to do when in doubt;
+#   - the contract half of an expand/contract change (DROP COLUMN, RENAME, a
+#     type change), which the guard refuses unless `allow_destructive` is
+#     ticked here, and only here.
 #
-# Four things have to line up before any SQL runs:
-#
-#   1. Someone opens this workflow and fills in the form.
-#   2. The `production` GitHub Environment requires a reviewer's approval.
-#   3. The typed ref must match the production project exactly.
-#   4. scripts/db/deploy.mjs re-checks that staging already has every pending
-#      migration, and refuses irreversible DDL unless it is asked for by name.
-#
-# Removing any one of them removes a layer that exists because of a specific
-# way this goes wrong. Leave the reasoning above intact if you change it.
+# Both paths call the same reusable workflow, so there is one way to reach the
+# production database, not two. The typed database name is checked by
+# scripts/db/deploy.mjs against the target it is pinned to.
 on:
   workflow_dispatch:
     inputs:
       confirm_ref:
-        description: 'Type the production project ref to confirm'
+        description: 'Type the production database name (municipality_db) to confirm'
         required: true
         type: string
       dry_run:
@@ -34,92 +30,20 @@ on:
         type: boolean
         default: false
 
-concurrency:
-  group: deploy-production
-  cancel-in-progress: false
-
 jobs:
   migrate:
     name: migrate production database
-    runs-on: ubuntu-latest
-    # Configure this environment with required reviewers in
-    # Settings → Environments → db-production. Without reviewers set, this job
-    # is a single click and three of the four gates above are gone.
-    #
-    # `db-` prefixed to keep it distinct from the Vercel integration's
-    # "Production – mechanization-api" / "Production – mechanization-web",
-    # which gate code deployments. Do not put protection rules on those: they
-    # would start holding your site deploys for approval too.
-    environment: db-production
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Guard unit tests
-        run: pnpm db:test
-
-      - name: Generate Prisma clients
-        run: pnpm db:generate
-
-      - name: Materialise both env files
-        # Staging's credentials are needed too: the promotion check reads
-        # staging's migration history to prove these migrations have already run
-        # somewhere before production sees them.
-        env:
-          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
-          DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL }}
-          SUPABASE_URL: ${{ secrets.PRODUCTION_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.PRODUCTION_SERVICE_ROLE_KEY }}
-          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
-          STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
-          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
-          STAGING_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SERVICE_ROLE_KEY }}
-        run: |
-          {
-            echo "NODE_ENV=production"
-            echo "DATABASE_URL=$DATABASE_URL"
-            echo "DIRECT_URL=$DIRECT_URL"
-            echo "SUPABASE_URL=$SUPABASE_URL"
-            echo "SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY"
-            echo "SUPABASE_STORAGE_BUCKET=documents"
-          } > apps/backend/.env.production
-          {
-            echo "NODE_ENV=production"
-            echo "DATABASE_URL=$STAGING_DATABASE_URL"
-            echo "DIRECT_URL=$STAGING_DIRECT_URL"
-            echo "SUPABASE_URL=$STAGING_SUPABASE_URL"
-            echo "SUPABASE_SERVICE_ROLE_KEY=$STAGING_SERVICE_ROLE_KEY"
-            echo "SUPABASE_STORAGE_BUCKET=documents"
-          } > apps/backend/.env.staging
-
-      - name: Deploy
-        # `confirm_ref` is free text a human typed, so it goes through the
-        # environment rather than into the command line. Interpolating
-        # `${{ inputs.* }}` directly into `run:` is how a workflow input becomes
-        # shell. The two booleans below are safe — a typed boolean can only ever
-        # render as one of the two literals written here.
-        env:
-          CONFIRM_REF: ${{ inputs.confirm_ref }}
-        run: |
-          node scripts/db/deploy.mjs production \
-            --confirm="$CONFIRM_REF" \
-            ${{ inputs.dry_run && '--dry-run' || '' }} \
-            ${{ inputs.allow_destructive && '--allow-destructive' || '' }}
-
-      - name: Shred env files
-        if: always()
-        run: rm -f apps/backend/.env.production apps/backend/.env.staging
+    uses: ./.github/workflows/migrate-database.yml
+    # id-token: the pre-migration backup assumes its AWS role through OIDC.
+    # A called workflow can only narrow what its caller grants.
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      target: production
+      dry_run: ${{ inputs.dry_run }}
+      allow_destructive: ${{ inputs.allow_destructive }}
+      # Free text a human typed. It reaches the script through the environment
+      # inside the called workflow, never interpolated into a command line.
+      confirm: ${{ inputs.confirm_ref }}
+    secrets: inherit

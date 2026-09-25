@@ -13,19 +13,22 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { TARGETS, resolveTarget, extractRef } from './targets.mjs';
+import { TARGETS, resolveTarget, parseConnection } from './targets.mjs';
 
-const STAGING = TARGETS.staging.ref;
-const PROD = TARGETS.production.ref;
+const STAGING = TARGETS.staging;
+const PROD = TARGETS.production;
 
-/** A complete, valid env file for `ref`. Individual tests corrupt one line. */
-function envFor(ref) {
+/** A connection string for `target` through the usual SSH tunnel. */
+function urlFor(target, { password = 'pw123', host = 'localhost:5433' } = {}) {
+  return `postgresql://${target.user}:${password}@${host}/${target.database}`;
+}
+
+/** A complete, valid env file for `target`. Individual tests corrupt one line. */
+function envFor(target) {
   return [
     'NODE_ENV=production',
-    `DATABASE_URL="postgresql://postgres.${ref}:pw123@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?pgbouncer=true"`,
-    `DIRECT_URL="postgresql://postgres.${ref}:pw123@aws-1-ap-south-1.pooler.supabase.com:5432/postgres"`,
-    `SUPABASE_URL="https://${ref}.supabase.co"`,
-    'SUPABASE_SERVICE_ROLE_KEY="sbp_notarealkey00000000000000"',
+    `DATABASE_URL="${urlFor(target)}"`,
+    `DIRECT_URL="${urlFor(target)}"`,
     '',
   ].join('\n');
 }
@@ -55,63 +58,86 @@ function refusalFor(targetName, body) {
   });
 }
 
-describe('extractRef', () => {
-  test('reads the ref from a pooled connection string', () => {
-    assert.equal(
-      extractRef(`postgresql://postgres.${STAGING}:pw@aws-1-ap-south-1.pooler.supabase.com:6543/postgres`),
-      STAGING,
-    );
+describe('parseConnection', () => {
+  test('reads role, host and database from a tunnelled URL', () => {
+    assert.deepEqual(parseConnection('postgresql://appuser_staging:pw@localhost:5433/municipality_db_staging'), {
+      user: 'appuser_staging',
+      host: 'localhost:5433',
+      database: 'municipality_db_staging',
+    });
   });
 
-  test('reads the ref from a direct connection string', () => {
-    assert.equal(extractRef(`postgresql://postgres:pw@db.${PROD}.supabase.co:5432/postgres`), PROD);
-  });
-
-  test('still reads the ref when the password is an unfilled placeholder', () => {
+  test('still reads the database when the password is an unfilled placeholder', () => {
     // The case that matters most: a half-finished file must not become
     // *unidentifiable*, or the guard silently stops guarding.
-    assert.equal(
-      extractRef(`postgresql://postgres.${PROD}:<PASSWORD>@aws-1-x.pooler.supabase.com:6543/postgres`),
-      PROD,
-    );
+    assert.equal(parseConnection('postgresql://appuser:<PASSWORD>@localhost:5433/municipality_db')?.database, 'municipality_db');
   });
 
-  test('returns null for a non-Supabase database', () => {
-    assert.equal(extractRef('postgresql://ci:ci@localhost:5432/ci'), null);
+  test('survives a password holding @, ? and $', () => {
+    const found = parseConnection('postgresql://appuser:p@ss?w$rd@13.39.160.240:5432/municipality_db?sslmode=require');
+    assert.equal(found?.user, 'appuser');
+    assert.equal(found?.database, 'municipality_db');
+  });
+
+  test('drops the query string from the database name', () => {
+    assert.equal(parseConnection('postgresql://ci:ci@localhost:5432/ci?schema=public')?.database, 'ci');
+  });
+
+  test('returns null for something that is not a Postgres URL', () => {
+    assert.equal(parseConnection('https://lzgbjcwtzqyrbeoolvdz.supabase.co'), null);
+    assert.equal(parseConnection(''), null);
   });
 });
 
 describe('resolveTarget refuses', () => {
-  test('a local env file pointed at production', () => {
+  test('a local env file pointed at the production database', () => {
     const message = refusalFor('local', envFor(PROD));
-    assert.match(message ?? '', /points at .* \(production\)/);
+    assert.match(message ?? '', /names database 'municipality_db' \(production\)/);
   });
 
   test('a production env file pointed at staging', () => {
     const message = refusalFor('production', envFor(STAGING));
-    assert.match(message ?? '', /points at .* \(staging\)/);
+    assert.match(message ?? '', /names database 'municipality_db_staging' \(staging\)/);
   });
 
-  test('a staging file that names the production ref anywhere, comments included', () => {
-    const message = refusalFor('staging', `${envFor(STAGING)}# was ${PROD}\n`);
-    assert.match(message ?? '', /mentions the production ref/);
+  test('the right database reached with the production role', () => {
+    // The database name is what a pasted URL gets wrong; the role is what the
+    // cluster enforces. A staging URL carrying production's role has lost the
+    // second of the two walls, so it is refused on its own.
+    const body = envFor(STAGING).replaceAll(`//${STAGING.user}:`, `//${PROD.user}:`);
+    assert.match(refusalFor('local', body) ?? '', /connects as 'appuser'/);
   });
 
-  test('DIRECT_URL on the transaction pooler', () => {
-    const message = refusalFor('staging', envFor(STAGING).replace(':5432/postgres"', ':6543/postgres"'));
-    assert.match(message ?? '', /port 6543/);
+  test('a duplicated DATABASE_URL whose later line is production', () => {
+    // What `apps/backend/.env` actually held on 2026-09-23: a staging block,
+    // then a production block further down. dotenv keeps the *last* value, so
+    // the dev server was attached to production while the top of the file
+    // read "staging".
+    const body = `${envFor(STAGING)}DATABASE_URL="${urlFor(PROD)}"\nDIRECT_URL="${urlFor(PROD)}"\n`;
+    assert.ok(refusalFor('local', body), 'expected a refusal');
   });
 
-  test('a SUPABASE_URL belonging to a different project', () => {
-    const message = refusalFor(
-      'staging',
-      envFor(STAGING).replace(`https://${STAGING}.supabase.co`, `https://${PROD}.supabase.co`),
+  test('a staging file that mentions the production database anywhere, comments included', () => {
+    const message = refusalFor('staging', `${envFor(STAGING)}# was ${urlFor(PROD)}\n`);
+    assert.match(message ?? '', /mentions 'municipality_db', which belongs to production/);
+  });
+
+  test('a staging file that still names the retired Supabase production project', () => {
+    // It holds a full copy of the register until it is deleted.
+    const message = refusalFor('local', `${envFor(STAGING)}SUPABASE_URL="https://thbgwfbcqdougbjvgvyw.supabase.co"\n`);
+    assert.match(message ?? '', /thbgwfbcqdougbjvgvyw/);
+  });
+
+  test('a Supabase connection string, which is no target any more', () => {
+    const body = envFor(STAGING).replace(
+      urlFor(STAGING),
+      'postgresql://postgres.lzgbjcwtzqyrbeoolvdz:pw@aws-0-eu-central-1.pooler.supabase.com:6543/postgres',
     );
-    assert.ok(message, 'expected a refusal');
+    assert.match(refusalFor('local', body) ?? '', /names database 'postgres'/);
   });
 
   test('an unfilled template in a connection string', () => {
-    const message = refusalFor('staging', envFor(STAGING).replace('pw123', '<PASSWORD>'));
+    const message = refusalFor('staging', envFor(STAGING).replaceAll('pw123', '<PASSWORD>'));
     assert.match(message ?? '', /template placeholders/);
   });
 
@@ -124,6 +150,11 @@ describe('resolveTarget refuses', () => {
 
     const warnings = withEnv('staging', body, (root) => resolveTarget('staging', { root }).warnings);
     assert.match(warnings.join(' '), /CORS_ORIGINS/);
+  });
+
+  test('a missing connection string', () => {
+    const body = envFor(STAGING).replace(/^DIRECT_URL=.*$/m, '');
+    assert.match(refusalFor('staging', body) ?? '', /DIRECT_URL is missing/);
   });
 
   test('a missing env file', () => {
@@ -140,6 +171,34 @@ describe('resolveTarget refuses', () => {
   });
 });
 
+describe('resolveTarget refuses a URL that moves statements to another schema', () => {
+  const withQuery = (target, query) =>
+    envFor(target).replaceAll(`/${target.database}"`, `/${target.database}?${query}"`);
+
+  test('?schema= naming anything but public', () => {
+    const message = refusalFor('production', withQuery(PROD, 'schema=decoy'));
+    assert.match(message, /DATABASE_URL sets \?schema=decoy/);
+    assert.match(message, /DIRECT_URL sets \?schema=decoy/);
+  });
+
+  test('?options=, which can set search_path', () => {
+    assert.match(
+      refusalFor('staging', withQuery(STAGING, 'options=-c%20search_path%3Ddecoy')),
+      /sets \?options=/,
+    );
+  });
+
+  test('but NOT ?schema=public, nor ordinary parameters', () => {
+    assert.equal(refusalFor('production', withQuery(PROD, 'schema=public')), null);
+    assert.equal(refusalFor('staging', withQuery(STAGING, 'sslmode=require&connect_timeout=10')), null);
+  });
+
+  test('and is not fooled by a ? inside the password', () => {
+    const body = envFor(PROD).replaceAll('appuser:pw123@', 'appuser:p%3Fschema=x@');
+    assert.equal(refusalFor('production', body), null);
+  });
+});
+
 describe('resolveTarget accepts', () => {
   test('a correct staging file', () => {
     assert.equal(refusalFor('staging', envFor(STAGING)), null);
@@ -152,16 +211,28 @@ describe('resolveTarget accepts', () => {
   test('a correct local file, which points at the staging database', () => {
     assert.equal(refusalFor('local', envFor(STAGING)), null);
   });
+
+  test('any host — through a tunnel every target is localhost, so host proves nothing', () => {
+    const body = envFor(STAGING).replaceAll('localhost:5433', '13.39.160.240:5432');
+    assert.equal(refusalFor('local', body), null);
+  });
+
+  test('a password containing $, which the dotenv reader must not expand', () => {
+    const body = envFor(STAGING).replaceAll('pw123', 'q1w2$e3');
+    assert.equal(refusalFor('local', body), null);
+  });
 });
 
-describe('the pinned refs', () => {
-  test('staging and production are different projects', () => {
+describe('the pinned identities', () => {
+  test('staging and production are different databases and different roles', () => {
     // A copy-paste slip here would disable every check above at once.
-    assert.notEqual(STAGING, PROD);
+    assert.notEqual(STAGING.database, PROD.database);
+    assert.notEqual(STAGING.user, PROD.user);
   });
 
   test('local shares the staging database, never production', () => {
-    assert.equal(TARGETS.local.ref, STAGING);
-    assert.notEqual(TARGETS.local.ref, PROD);
+    assert.equal(TARGETS.local.database, STAGING.database);
+    assert.equal(TARGETS.local.user, STAGING.user);
+    assert.notEqual(TARGETS.local.database, PROD.database);
   });
 });

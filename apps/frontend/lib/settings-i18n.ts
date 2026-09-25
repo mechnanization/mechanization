@@ -406,7 +406,7 @@ export const CURRENCY_NAMES: Record<SettingsLocale, Record<CurrencyCode, string>
 const AR: SettingsCopy = {
   page: {
     title: 'إعدادات البلدية',
-    subtitle: 'الملف الشخصي، المالية، الترقيم، الأمان، النسخ الاحتياطي، والمستخدمون',
+    subtitle: 'الملف الشخصي، المالية، الترقيم، الأمان، والمستخدمون',
   },
   nav: {
     label: 'أقسام الإعدادات',
@@ -772,7 +772,7 @@ const AR: SettingsCopy = {
 const EN: SettingsCopy = {
   page: {
     title: 'Municipality settings',
-    subtitle: 'Profile, finance, numbering, security, backups, and users',
+    subtitle: 'Profile, finance, numbering, security, and users',
   },
   nav: {
     label: 'Settings sections',

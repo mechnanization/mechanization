@@ -3,7 +3,6 @@ import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { ApplicationModule } from '../application/application.module';
 import { AuditController } from './controllers/audit.controller';
-import { BackupController } from './controllers/backup.controller';
 import { AuthController } from './controllers/auth.controller';
 import { CadastreController } from './controllers/cadastre.controller';
 import { BuildingsController } from './controllers/buildings.controller';
@@ -45,7 +44,14 @@ import { MetricsModule } from './metrics.module';
     CasesController,
     QualityController,
     BuildingsController,
-    BackupController,
+    /*
+     * BackupController (`t/:tenantSlug/backup/export` and `/restore`) is not
+     * registered. Backups are taken on the AWS side now, and the in-app page
+     * that downloaded a municipality's snapshot and wrote one back over the
+     * live register is withdrawn until it is rebuilt on top of them. The
+     * controller and BackupService are kept for that rebuild; adding the
+     * controller back to this list is what re-opens both routes.
+     */
   ],
   providers: [
     { provide: APP_FILTER, useClass: DomainExceptionFilter },

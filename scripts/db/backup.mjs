@@ -1,14 +1,12 @@
 /**
  * Takes a verified, restorable dump of a named target.
  *
- * This is the disaster-recovery backup. It is not the same thing as
- * `BackupService`'s snapshot (`apps/backend/src/application/features/backup/`),
- * and the difference matters enough to state plainly: that one is a
- * *per-municipality export* built from a hand-maintained table list, and that
- * list has already drifted twice — it is currently missing `payment_transactions`
- * and `inspector_payouts`, and it can carry neither storage objects nor the
- * `payment_receipt_seq` sequence. This one is `pg_dump`, which enumerates what
- * exists at run time and therefore cannot fall behind a migration.
+ * This is the backup the migration pipeline takes of production right before
+ * applying a migration (`.github/workflows/migrate-database.yml`), so a
+ * migration that damages data can be undone from the moment before it ran. It
+ * is `pg_dump`, which enumerates what exists at run time and therefore cannot
+ * fall behind a migration. Day-to-day backups of the Lightsail box are taken on
+ * the AWS side, outside this repository.
  *
  * ── Why discovery here, when §4 of AGENTS.md says "allowlist, never discover" ─
  *
@@ -24,18 +22,22 @@
  * confirm it took. Postgres refuses any INSERT, UPDATE, DELETE or DDL on such a
  * session with a hard error. A backup script is the last place that should be
  * able to change anything, and "it only reads" is a claim worth making
- * unfalsifiable rather than asserting in a comment.
+ * unfalsifiable rather than asserting in a comment. The read-back is not
+ * ceremony: an earlier version set the flag through a connection pooler that
+ * silently dropped it, and only the read-back noticed.
  *
- * The read-back is not ceremony. The first version of this file set the flag via
- * the `options` startup parameter only, which is silently dropped by Supavisor —
- * and `DIRECT_URL` on this project is Supavisor in session mode, not
- * `db.<ref>.supabase.co`. The check caught a session that was still writable.
- * See the comment at the `SET SESSION CHARACTERISTICS` call.
- *
- * `pg_dump` is handed the same startup option, which helps on a genuinely direct
- * connection and is dropped on the pooler. It is not the guarantee: `pg_dump`
+ * `pg_dump` is handed the same startup option. It is not the guarantee: `pg_dump`
  * issues only SELECT and `LOCK TABLE … IN ACCESS SHARE MODE`, which is read-only
  * by construction and is the reason it is safe to point at a live database.
+ *
+ * ── One moment, not two ──────────────────────────────────────────────────────
+ *
+ * The row counts in the manifest and the rows in the dump come from the same
+ * database snapshot: this session exports one, and `pg_dump --snapshot` reads
+ * through it. So a restore must reproduce every count exactly. An earlier
+ * version counted first and dumped second, and had to allow a restored table to
+ * come back *smaller* when a row was deleted in between, which is a tolerance
+ * that also hides a table the dump really lost.
  *
  * Usage:
  *   node scripts/db/backup.mjs <target> --out <dir> [--dry-run]
@@ -73,44 +75,6 @@ const READ_ONLY_PGOPTIONS = '-c default_transaction_read_only=on';
  * Leaving it out is the kind of omission that is only discovered mid-recovery.
  */
 const ALWAYS_INCLUDED_SCHEMAS = ['public'];
-
-/**
- * The platform-managed schemas, taken as a **second** archive.
- *
- * `auth` is not an optional extra here. Staff rows in `tenant_*.users` carry
- * `kind = 'STAFF'` and an email, and that email is the *only* link to
- * `auth.users` — the ids do not match. Every password hash, every confirmed
- * email, every identity row lives in `auth`, and none of it was in the dump
- * this script produced before. A recovery from that dump returned the register
- * intact and nobody able to sign in to it.
- *
- * `storage` is the other half of the same omission. The workflow copies the
- * *bytes* of every scanned document to R2, but `storage.objects` — the rows
- * naming them, their bucket, owner, mime type and checksum — and
- * `storage.buckets` — which bucket is public, which has a size limit — are
- * database rows, and they were not being dumped either.
- *
- * ── Why a separate archive, and not more `--schema` flags ────────────────────
- *
- * Because it restores differently. A fresh Supabase project creates `auth` and
- * `storage` itself, owned by `supabase_auth_admin` and `supabase_storage_admin`,
- * before you restore anything. Folding these into the main archive would make
- * every real recovery collide on objects the platform had already created, and
- * the usual way out of that at 3am is `--clean`, which is how a recovery becomes
- * a second incident.
- *
- * Kept apart, the main archive restores untouched, and this one is applied
- * deliberately — `pg_restore --data-only`, table by table if need be. It is
- * dumped complete (schema and data) so the rehearsal in `verify-restore.mjs`
- * can restore it standalone into a bare Postgres, which is what proves it.
- *
- * Nothing is filtered out of it. `auth.sessions` and `auth.refresh_tokens` are
- * live session state that you would almost certainly *not* replay into a
- * recovered project — but that is a decision for the person doing the recovery,
- * made with `--table` flags at restore time. A backup that has already made it
- * for them is a backup with rows missing.
- */
-const AUX_SCHEMAS = ['auth', 'storage'];
 
 function fail(message) {
   console.error(`\nABORT: ${message}\n`);
@@ -157,8 +121,8 @@ function parseArgs(argv) {
         `  A dump holds every citizen row — national ID and civil record numbers,\n` +
         `  addresses, residency status — as one unencrypted portable file.\n` +
         `  AGENTS.md §4: citizen data does not land on a developer's disk.\n\n` +
-        `  The nightly backup runs in CI (.github/workflows/backup.yml), where the\n` +
-        `  file is encrypted to an offline key and shredded in the same job.\n\n` +
+        `  The pre-migration backup runs in CI (.github/workflows/migrate-database.yml),\n` +
+        `  where the file is encrypted to an offline key and shredded in the same job.\n\n` +
         `  To see what would be dumped, without writing anything:\n` +
         `      node scripts/db/backup.mjs ${options.target} --dry-run\n\n` +
         `  If you genuinely need the file here — a migration rehearsal, a recovery\n` +
@@ -172,11 +136,10 @@ function parseArgs(argv) {
 /**
  * The `pg_dump` on PATH, and a check that it can read this server at all.
  *
- * `pg_dump` refuses a server newer than itself. Supabase runs Postgres 17; an
- * `ubuntu-latest` runner ships an older client by default, and the resulting
- * error ("server version mismatch") arrives *after* the credentials have been
- * materialised, which reads like an auth problem and sends people the wrong way.
- * Checked up front instead.
+ * `pg_dump` refuses a server newer than itself, and the error ("server version
+ * mismatch") arrives *after* the credentials have been materialised, which
+ * reads like an auth problem and sends people the wrong way. Checked up front
+ * instead, against the server's own version, below.
  */
 function resolveDumpBinary() {
   const probe = spawnSync('pg_dump', ['--version'], { encoding: 'utf8' });
@@ -213,9 +176,8 @@ async function discoverSchemas(client) {
  * Row counts per table, recorded so a restore has something to be checked against.
  *
  * `count(*)` rather than `reltuples`: the planner's estimate is fine for query
- * planning and useless as evidence. This runs against a database that is being
- * written to, so these are a reference point for a human reading the manifest,
- * not a checksum — the dump itself is taken in its own snapshot.
+ * planning and useless as evidence. Read inside the exported snapshot, so these
+ * are the counts of exactly the rows the dump carries.
  */
 async function tableCounts(client, schemas) {
   const { rows: tables } = await client.query(
@@ -245,14 +207,19 @@ async function migrationsBySchema(client, schemas) {
   for (const schema of schemas) {
     if (schema === 'public') continue;
     const quoted = `"${schema.replace(/"/g, '""')}"."_tenant_migrations"`;
-    try {
-      const { rows } = await client.query(`SELECT "name" FROM ${quoted} ORDER BY "name"`);
-      out[schema] = rows.map((row) => row.name);
-    } catch {
+    // Checked rather than caught: an error inside the snapshot's transaction
+    // would abort it, and the dump that follows reads through that transaction.
+    const { rows: present } = await client.query('SELECT to_regclass($1) IS NOT NULL AS present', [
+      quoted,
+    ]);
+    if (!present[0].present) {
       // A schema mid-provision may not have the table yet. Recorded as such
       // rather than skipped — "absent" and "empty" are different on restore.
       out[schema] = null;
+      continue;
     }
+    const { rows } = await client.query(`SELECT "name" FROM ${quoted} ORDER BY "name"`);
+    out[schema] = rows.map((row) => row.name);
   }
   return out;
 }
@@ -268,22 +235,22 @@ function sha256(path) {
 }
 
 /**
- * Dumps `schemas` into `path`, then reads the archive back to prove it parses.
+ * Dumps `schemas` into `path` through `snapshot`, then reads the archive back
+ * to prove it parses.
  *
  * Custom format (`-Fc`), not plain SQL: it is compressed, it can be inspected
  * without being restored (`pg_restore --list`, which is what the read-back
  * below does), and `pg_restore` can replay it selectively — which is what you
  * want at 3am when one schema is wrong and the rest of the cluster is fine.
  *
- * `--no-owner` and `--no-privileges`: role grants on a Supabase project are
- * managed by the platform and do not transfer to a restore target. Carrying
- * them makes every restore fail on a role that does not exist there.
+ * `--no-owner` and `--no-privileges`: a restore target has its own roles, and
+ * carrying these makes every restore fail on a role that does not exist there.
  *
  * The read-back is not ceremony. A truncated or corrupt archive is a file with
  * the right name and roughly the right size, and `pg_dump` exiting 0 rules out
  * neither (§5). `pg_restore --list` is the cheapest thing that fails on both.
  */
-async function takeDump({ connectionString, path, schemas, label }) {
+async function takeDump({ connectionString, path, schemas, snapshot }) {
   if (existsSync(path)) fail(`${path} already exists — refusing to overwrite`);
 
   const args = [
@@ -292,12 +259,13 @@ async function takeDump({ connectionString, path, schemas, label }) {
     '--no-owner',
     '--no-privileges',
     '--verbose',
+    `--snapshot=${snapshot}`,
     ...schemas.map((schema) => `--schema=${schema}`),
     `--file=${path}`,
     connectionString,
   ];
 
-  console.log(`\n  dumping   ${label} → ${path}`);
+  console.log(`\n  dumping   registry + tenants → ${path}`);
   const result = spawnSync('pg_dump', args, {
     encoding: 'utf8',
     // The read-only guarantee follows `pg_dump` into its own connection.
@@ -308,13 +276,13 @@ async function takeDump({ connectionString, path, schemas, label }) {
   });
 
   if (result.status !== 0) {
-    fail(`pg_dump exited ${result.status} dumping ${label}. No usable backup was produced.`);
+    fail(`pg_dump exited ${result.status}. No usable backup was produced.`);
   }
 
   const listing = spawnSync('pg_restore', ['--list', path], { encoding: 'utf8' });
   if (listing.status !== 0) {
     fail(
-      `The ${label} dump was written but pg_restore could not read it back.\n` +
+      `The dump was written but pg_restore could not read it back.\n` +
         `  ${(listing.stderr || '').trim()}\n` +
         `  Treat this file as unusable.`,
     );
@@ -336,50 +304,31 @@ async function main() {
     throw error;
   }
 
-  /*
-   * The direct connection, never the pooled one.
-   *
-   * `pg_dump` needs a session it can hold open with a repeatable-read snapshot.
-   * Supabase's transaction pooler on 6543 hands a different backend to every
-   * statement, so a dump through it produces either an error or — worse — an
-   * archive stitched from several moments. `DIRECT_URL` is port 5432.
-   */
+  // The session URL, never a pooled one: `pg_dump` has to hold one session and
+  // one snapshot for the whole dump.
   const connectionString = env.DIRECT_URL;
   if (!connectionString) fail(`DIRECT_URL is missing from ${target.envFile}`);
 
   console.log(`\n  target    ${options.target} — ${target.label}`);
-  console.log(`  project   ${target.ref}`);
+  console.log(`  database  ${target.database}`);
 
   const dump = resolveDumpBinary();
   console.log(`  pg_dump   ${dump.version}`);
 
-  const client = new Client({
-    connectionString,
-    ssl: { rejectUnauthorized: false },
-    options: READ_ONLY_PGOPTIONS,
-  });
+  const client = new Client({ connectionString, options: READ_ONLY_PGOPTIONS });
   await client.connect();
 
   let schemas;
   let counts;
-  let auxCounts;
   let migrations;
   let serverVersion;
+  let primary = null;
+  let base = null;
   try {
     /*
-     * Read-only, stated as a statement rather than only as a startup option.
-     *
-     * `DIRECT_URL` on this project is Supavisor in session mode — the pooler
-     * host on 5432, not `db.<ref>.supabase.co` — and Supavisor does not forward
-     * the `options` startup parameter to Postgres. So the `options` passed to
-     * `new Client` above silently does nothing, and the first version of this
-     * check caught exactly that: it aborted, correctly, on a session that was
-     * still writable.
-     *
-     * `SET SESSION CHARACTERISTICS` is a plain statement, so it survives the
-     * pooler. It is issued and then read back, because a setting that was
-     * applied and a setting that took effect are different claims and only the
-     * second one is worth anything (§5).
+     * Read-only, stated as a statement rather than only as a startup option, and
+     * read back: a setting that was applied and a setting that took effect are
+     * different claims, and only the second one is worth anything (§5).
      */
     await client.query('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY');
 
@@ -405,6 +354,15 @@ async function main() {
     }
     console.log(`  server    Postgres ${serverVersion}`);
 
+    /*
+     * One snapshot for the counts and the dump. The transaction stays open until
+     * `pg_dump` has finished, because an exported snapshot lives exactly as long
+     * as the transaction that exported it.
+     */
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const { rows: snapshotRows } = await client.query('SELECT pg_export_snapshot() AS id');
+    const snapshot = snapshotRows[0].id;
+
     schemas = await discoverSchemas(client);
     console.log(`\n  schemas   ${schemas.length} found`);
     for (const schema of schemas) console.log(`              ${schema}`);
@@ -412,91 +370,58 @@ async function main() {
     counts = await tableCounts(client, schemas);
     migrations = await migrationsBySchema(client, schemas);
 
-    /*
-     * Counted through the same read-only session, so the numbers in the
-     * manifest and the numbers the rehearsal checks come from one reading.
-     * `postgres` can SELECT every table in both schemas on this project — the
-     * tables are owned by `supabase_auth_admin` and `supabase_storage_admin`,
-     * which is why this is worth stating rather than assuming.
-     */
-    auxCounts = await tableCounts(client, AUX_SCHEMAS);
+    const totalRows = Object.values(counts).reduce((a, b) => a + b, 0);
+    console.log(`\n  tables    ${Object.keys(counts).length}`);
+    console.log(`  rows      ${totalRows.toLocaleString('en-US')}`);
+
+    if (!options.dryRun) {
+      mkdirSync(options.out, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      base = `${options.target}-${target.database}-${stamp}`;
+      primary = await takeDump({
+        connectionString,
+        path: join(options.out, `${base}.dump`),
+        schemas,
+        snapshot,
+      });
+    }
+
+    await client.query('COMMIT');
   } finally {
     await client.end();
   }
-
-  const totalRows = Object.values(counts).reduce((a, b) => a + b, 0);
-  const auxTotalRows = Object.values(auxCounts).reduce((a, b) => a + b, 0);
-  console.log(`\n  tables    ${Object.keys(counts).length}`);
-  console.log(`  rows      ${totalRows.toLocaleString('en-US')}`);
-  console.log(
-    `  auth+storage  ${Object.keys(auxCounts).length} tables, ` +
-      `${auxTotalRows.toLocaleString('en-US')} rows (second archive)`,
-  );
-  console.log(
-    `                incl. ${(auxCounts['auth.users'] ?? 0).toLocaleString('en-US')} auth.users, ` +
-      `${(auxCounts['storage.objects'] ?? 0).toLocaleString('en-US')} storage.objects`,
-  );
 
   if (options.dryRun) {
     console.log('\n  --dry-run — nothing written.\n');
     return;
   }
 
-  mkdirSync(options.out, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const base = `${options.target}-${target.ref}-${stamp}`;
-  const dumpPath = join(options.out, `${base}.dump`);
-  const auxPath = join(options.out, `${base}.auth-storage.dump`);
-
-  const primary = await takeDump({
-    connectionString,
-    path: dumpPath,
-    schemas,
-    label: 'registry + tenants',
-  });
-
-  /*
-   * Named `.auth-storage.dump` rather than `.aux.dump` so that the file says
-   * what it holds to whoever finds it in a bucket during a recovery, and ending
-   * in `.dump` so the workflow's encrypt step picks it up with the same glob.
-   */
-  const aux = await takeDump({
-    connectionString,
-    path: auxPath,
-    schemas: AUX_SCHEMAS,
-    label: 'auth + storage',
-  });
-
+  const totalRows = Object.values(counts).reduce((a, b) => a + b, 0);
   const manifest = {
     target: options.target,
-    projectRef: target.ref,
+    database: target.database,
     createdAt: new Date().toISOString(),
     serverVersion,
     pgDumpVersion: dump.version,
+    // Read by verify-restore.mjs: counts taken inside the dump's own snapshot
+    // must come back exactly, not merely "at least".
+    consistency: 'single-snapshot',
     schemas,
     tableCounts: counts,
     totalRows,
     migrations,
     dump: { file: `${base}.dump`, ...primary },
-    authStorage: {
-      file: `${base}.auth-storage.dump`,
-      ...aux,
-      schemas: AUX_SCHEMAS,
-      tableCounts: auxCounts,
-      totalRows: auxTotalRows,
-    },
     /*
      * Named here because a manifest that lists only what it *does* contain
-     * invites the reader to assume it contains everything. Restoring these
-     * files alone does not bring a municipality back.
+     * invites the reader to assume it contains everything. Restoring this file
+     * alone does not bring a municipality back.
      */
     notIncluded: [
-      'Supabase Storage object *bytes* (documents, cadastre buckets) — copied to ' +
-        'R2 by the workflow, separately from these archives. storage.objects and ' +
-        'storage.buckets — the rows describing them — ARE in the auth-storage dump.',
-      'Postgres roles and their passwords — platform-managed, recreated by Supabase',
-      'Project settings outside Postgres: auth providers and redirect URLs, ' +
-        'edge function source, Vercel and GitHub environment variables (§7 of AGENTS.md)',
+      'Uploaded documents and cadastre files — they are objects in the S3 ' +
+        'documents and assets buckets, not rows. document rows here name them.',
+      'Postgres roles and their passwords — cluster-level, recreated on the server',
+      'Configuration outside Postgres: the server .env, nginx, pm2, and the GitHub ' +
+        'and Vercel environment variables (§7 of AGENTS.md)',
     ],
     /*
      * Written into the manifest rather than only into a runbook, because the
@@ -504,32 +429,25 @@ async function main() {
      * recovery this is what is to hand; docs/database-environments.md may not be.
      */
     restoreOrder: [
-      '1. Create the target project. Supabase creates auth/ and storage/ itself.',
-      `2. psql -c 'DROP SCHEMA IF EXISTS public CASCADE' — the archive carries its own.`,
-      `3. pg_restore --no-owner --no-privileges --exit-on-error -d <url> ${base}.dump`,
-      `4. pg_restore --data-only --no-owner --disable-triggers -d <url> \\`,
-      `     --table=users --table=identities --table=buckets --table=objects \\`,
-      `     ${base}.auth-storage.dump`,
-      '   (--data-only: the platform already created these tables. Add --table=sessions',
-      '    and --table=refresh_tokens only if you intend to replay live sessions.)',
-      '5. rclone copy r2:<bucket>/storage/ back into the project buckets.',
-      '6. Verify: counts in this manifest, then sign in as a staff user.',
+      '1. age --decrypt -i <private key> -o <file>.dump <file>.dump.age',
+      '2. Restore into a NEW, empty database first, never over the live one:',
+      '     createdb -O <role> <scratch_db>',
+      `     psql -d <scratch_db> -c 'DROP SCHEMA IF EXISTS public CASCADE'`,
+      `     pg_restore --no-owner --no-privileges --exit-on-error -d <scratch_db> ${base}.dump`,
+      '3. Verify: every count in this manifest, and _tenant_migrations per schema.',
+      '4. Only then decide what to move back, and how. A whole-database swap discards',
+      '   every write made since this dump was taken.',
     ],
   };
 
   const manifestPath = join(options.out, `${base}.manifest.json`);
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  writeFileSync(
-    join(options.out, `${base}.dump.sha256`),
-    `${primary.sha256}  ${base}.dump\n${aux.sha256}  ${base}.auth-storage.dump\n`,
-  );
+  writeFileSync(join(options.out, `${base}.dump.sha256`), `${primary.sha256}  ${base}.dump\n`);
 
   const mb = (n) => `${(n / 1024 / 1024).toFixed(1)} MB`;
-  console.log(`\n  verified  pg_restore read back both archives`);
-  console.log(`  registry + tenants  ${mb(primary.bytes)}, ${primary.tocEntries} entries`);
-  console.log(`            sha256    ${primary.sha256}`);
-  console.log(`  auth + storage      ${mb(aux.bytes)}, ${aux.tocEntries} entries`);
-  console.log(`            sha256    ${aux.sha256}`);
+  console.log(`\n  verified  pg_restore read the archive back`);
+  console.log(`  archive   ${mb(primary.bytes)}, ${primary.tocEntries} entries`);
+  console.log(`  sha256    ${primary.sha256}`);
   console.log(`  manifest  ${manifestPath}\n`);
 
   // Read by the workflow, so the later steps name the same files this one wrote
@@ -539,15 +457,11 @@ async function main() {
       process.env.GITHUB_OUTPUT,
       [
         `dump_file=${base}.dump`,
-        `aux_file=${base}.auth-storage.dump`,
         `manifest_file=${base}.manifest.json`,
         `basename=${base}`,
         `sha256=${primary.sha256}`,
-        `aux_sha256=${aux.sha256}`,
         `bytes=${primary.bytes}`,
-        `aux_bytes=${aux.bytes}`,
         `total_rows=${totalRows}`,
-        `aux_total_rows=${auxTotalRows}`,
         '',
       ].join('\n'),
       { flag: 'a' },

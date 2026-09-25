@@ -52,9 +52,12 @@ where table_schema = 'tenant_<slug>' and table_name = '<table>';
 
 ## 2. Name the target, every time
 
-Every environment is pinned by Supabase project ref in
+Every environment is pinned by database name and role in
 [`scripts/db/targets.mjs`](scripts/db/targets.mjs), and the guard refuses any
-dotenv file whose connection strings name a different project.
+dotenv file whose connection strings name a different database or role. Both
+databases sit on one Lightsail box and are reached through an SSH tunnel, so
+every target looks like `localhost` — **the host tells you nothing**; read the
+database name.
 
 ```bash
 pnpm db:check                 # validate env files, no network
@@ -71,9 +74,12 @@ pnpm db:status:production
   `pnpm dev` reads and writes staging. Do not "temporarily" point it at
   production to check one row.
 - There is deliberately no `.env.production` on developer machines. Production
-  migrations run from the manual GitHub Actions workflow behind a required
-  reviewer. If you think you need to run one locally, you need to ask, not
-  improvise.
+  migrations run in GitHub Actions: automatically on every push to `main`,
+  staging first, before the code ships (`migrate-database.yml` through
+  `scripts/db/deploy.mjs`), and by hand from *Deploy production* for dry runs
+  and destructive contract steps. **A push to `main` migrates production**, so
+  a migration merged to `main` has to be additive. If you think you need to
+  run one locally, you need to ask, not improvise.
 
 ## 3. Migrations
 
@@ -116,8 +122,10 @@ The rules that have already been broken once (§7.4):
   data and cannot state which rows are citizens, you are not ready to copy.
 - **Allowlist, never discover.** Enumerate the tables you intend to copy and
   say why for each. Dynamic table discovery means the next migration silently
-  adds a table to the copy set. See `TABLE_POLICY` in
-  [`scripts/db/sync-production-tenant.mjs`](scripts/db/sync-production-tenant.mjs).
+  adds a table to the copy set. The retired
+  `scripts/db/sync-production-tenant.mjs` (removed in the Lightsail cutover;
+  still in git history) has a `TABLE_POLICY` worth reading before writing the
+  next one.
 - **Filter at the source, not afterwards.** `WHERE kind = 'STAFF'` on the SELECT.
   Copying everything and deleting later means the data existed in production.
 - **Never `SET session_replication_role = 'replica'`.** It disables every
