@@ -235,9 +235,17 @@ jobs:
 
       - name: Install Postgres 17 client and age
         if: steps.production.outputs.pending == 'true'
-        # The runner's default client is older than the server, and `pg_dump`
-        # refuses to dump a server newer than itself. The PGDG repository is the
-        # supported way to get a matching pair.
+        # `pg_dump` refuses to dump a server newer than itself, and a v16
+        # `pg_restore` cannot read a v17 archive. The PGDG repository is the
+        # supported way to get a client matching the server.
+        #
+        # Installing it is not enough. The runner image ships a PostgreSQL 16
+        # server with its default cluster on 5432, and Debian's `pg_wrapper`,
+        # which is what `pg_dump` on PATH is, runs that cluster's version
+        # whenever it is not given `--host`. The scripts pass a connection URL
+        # instead, so `pg_dump` stayed 16 with 17 installed; that is exactly how
+        # the retired nightly backup failed on 2026-09-24. The v17 binaries go
+        # first on PATH, past the wrapper, and the version is asserted.
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -247,9 +255,13 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17 age
-          # pg_wrapper picks the newest installed client; say which one it is.
-          pg_dump --version
-          pg_restore --version
+          bin=/usr/lib/postgresql/17/bin
+          for tool in pg_dump pg_restore; do
+            "$bin/$tool" --version | grep -q ' 17\.' \
+              || { echo "::error::$bin/$tool is not version 17"; exit 1; }
+          done
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/pg_dump" --version
           age --version
 
       - name: Dump production

@@ -342,11 +342,20 @@ it was needed.
        "Action": "sts:AssumeRoleWithWebIdentity",
        "Condition": { "StringEquals": {
          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-         "token.actions.githubusercontent.com:sub": "repo:mechnanization/mechanization:environment:db-production"
+         "token.actions.githubusercontent.com:sub": "repo:mechnanization@325249501/mechanization@1310300660:environment:db-production"
        } }
      }]
    }
    ```
+
+   The `sub` carries the organisation's and the repository's numeric IDs.
+   GitHub switched repositories created after 2026-07-15 to these immutable
+   subjects, and this one was created on 2026-07-23, so the familiar
+   `repo:mechnanization/mechanization:…` form is never sent and would refuse
+   every run. The IDs survive a rename. To read the prefix GitHub actually
+   uses: `gh api repos/mechnanization/mechanization/actions/oidc/customization/sub`.
+   If the role is still refused, CloudTrail's `AssumeRoleWithWebIdentity` event
+   shows the exact subject that was presented.
 
    and this permissions policy, write-only, one prefix:
 
