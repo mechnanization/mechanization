@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "nest build",
-    "dev": "nest start --watch",
+    "dev": "node ../../scripts/db/check.mjs local && nest start --watch",
     "start:prod": "node dist/presentation/main",
     "prisma:generate": "pnpm prisma:generate:registry && pnpm prisma:generate:tenant",
     "prisma:generate:registry": "prisma generate --schema src/infrastructure/prisma/registry/schema.prisma",

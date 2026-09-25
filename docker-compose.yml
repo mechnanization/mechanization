@@ -1,16 +1,49 @@
 # Local development stack.
 #
-# Postgres and object storage are hosted (Supabase); Redis is the one local
-# data store, and it backs an optimisation, not a source of truth — the
-# dashboard cache degrades to "reads go straight to Postgres" if it is
-# missing, so `docker compose down -v` can lose the cache contents but never
-# real data.
+# `postgres` is the local development database, the target `local` in
+# scripts/db/targets.mjs. It holds what `pnpm db:seed` and the cadastre import
+# put there: synthetic citizens and the real parcel map, never a copy of
+# staging or production (AGENTS.md §4). `docker compose down -v` deletes it,
+# and the fix is to seed again (docs/database-environments.md §0).
+#
+# Redis backs an optimisation, not a source of truth: the dashboard cache
+# degrades to "reads go straight to Postgres" if it is missing.
+#
+# Both are published on 127.0.0.1 only. Nothing on the network needs to reach
+# a developer's database or cache.
 
 services:
+  postgres:
+    # 17, not 16: tenant migration 0044 uses ALTER COLUMN … SET EXPRESSION,
+    # which Postgres 17 introduced. Same major version as CI and Lightsail.
+    image: postgres:17-alpine
+    environment:
+      # The cluster's superuser, for `docker compose exec postgres psql -U postgres`.
+      # The application connects as appuser_local, created by local-init.sql.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: postgres
+    # 5434 because 5432 is commonly a Postgres installed on the machine itself,
+    # and 5433 is the SSH tunnel to the Lightsail cluster. targets.mjs refuses a
+    # `local` URL on any other port.
+    ports: ['127.0.0.1:5434:5432']
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/db/local-init.sql:/docker-entrypoint-initdb.d/10-local-init.sql:ro
+    healthcheck:
+      # Over TCP on purpose: while the init script runs, the image serves a
+      # temporary server on the unix socket only, and a socket check would call
+      # a half-initialised database healthy.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -p 5432 -U appuser_local -d municipality_db_local']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes
-    ports: ['6379:6379']
+    ports: ['127.0.0.1:6379:6379']
     volumes:
       - redis-data:/data
     healthcheck:
@@ -26,10 +59,12 @@ services:
       dockerfile: apps/backend/Dockerfile
     env_file: ./apps/backend/.env
     environment:
-      # Overrides whatever REDIS_URL is in .env: inside compose the only
-      # reachable Redis is the service above, addressed by service name — the
-      # value in .env is for `pnpm dev` on the host, where that name doesn't
-      # resolve.
+      # Override the database and Redis URLs in .env. Inside compose the only
+      # reachable services are the ones above, addressed by service name. The
+      # values in .env are for `pnpm dev` on the host, where 127.0.0.1:5434 is
+      # the published port; inside this container it would be the container.
+      DATABASE_URL: postgresql://appuser_local:localdev@postgres:5432/municipality_db_local
+      DIRECT_URL: postgresql://appuser_local:localdev@postgres:5432/municipality_db_local
       REDIS_URL: redis://redis:6379
       # Repeated from the Dockerfile so it survives `env_file` — a TZ line in
       # apps/backend/.env would otherwise win and move the clock the billing
@@ -42,6 +77,8 @@ services:
       SCHEDULER_ENABLED: 'true'
     ports: ['4000:4000']
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -70,4 +107,5 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres-data:
   redis-data:

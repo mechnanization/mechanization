@@ -6,7 +6,7 @@
  *     --slug albazourieh --name "Al-Bazourieh" --name-ar "البازورية" --prefix BZR
  *
  * `pnpm tenant:provision` reads whatever `apps/backend/.env` says, which the
- * guard pins to staging — so until now there was no supported way to onboard a
+ * guard pins to the local database — so until now there was no supported way to onboard a
  * municipality onto production at all. The gap mattered: provisioning is the one
  * operation that CREATES a citizen data store, and "run it from a laptop with the
  * right dotenv file" is exactly the shape of mistake `targets.mjs` exists to stop.

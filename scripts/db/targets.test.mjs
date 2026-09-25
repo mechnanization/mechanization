@@ -10,16 +10,20 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { TARGETS, resolveTarget, parseConnection } from './targets.mjs';
+import { ROOT, TARGETS, resolveTarget, parseConnection } from './targets.mjs';
 
+const LOCAL = TARGETS.local;
 const STAGING = TARGETS.staging;
 const PROD = TARGETS.production;
 
-/** A connection string for `target` through the usual SSH tunnel. */
-function urlFor(target, { password = 'pw123', host = 'localhost:5433' } = {}) {
+/**
+ * A connection string for `target`: the Docker port for `local`, the usual SSH
+ * tunnel for the others.
+ */
+function urlFor(target, { password = 'pw123', host = target.hosts?.[0] ?? 'localhost:5433' } = {}) {
   return `postgresql://${target.user}:${password}@${host}/${target.database}`;
 }
 
@@ -100,12 +104,20 @@ describe('resolveTarget refuses', () => {
     assert.match(message ?? '', /names database 'municipality_db_staging' \(staging\)/);
   });
 
+  test('a local env file pointed at the staging database', () => {
+    // What `apps/backend/.env` held until 2026-09-25, when `local` was pinned
+    // to staging. It must now stop `pnpm dev` instead of attaching it there.
+    const message = refusalFor('local', envFor(STAGING));
+    assert.match(message ?? '', /names database 'municipality_db_staging' \(staging\)/);
+    assert.match(message ?? '', /connects as 'appuser_staging'/);
+  });
+
   test('the right database reached with the production role', () => {
     // The database name is what a pasted URL gets wrong; the role is what the
     // cluster enforces. A staging URL carrying production's role has lost the
     // second of the two walls, so it is refused on its own.
     const body = envFor(STAGING).replaceAll(`//${STAGING.user}:`, `//${PROD.user}:`);
-    assert.match(refusalFor('local', body) ?? '', /connects as 'appuser'/);
+    assert.match(refusalFor('staging', body) ?? '', /connects as 'appuser'/);
   });
 
   test('a duplicated DATABASE_URL whose later line is production', () => {
@@ -113,7 +125,7 @@ describe('resolveTarget refuses', () => {
     // then a production block further down. dotenv keeps the *last* value, so
     // the dev server was attached to production while the top of the file
     // read "staging".
-    const body = `${envFor(STAGING)}DATABASE_URL="${urlFor(PROD)}"\nDIRECT_URL="${urlFor(PROD)}"\n`;
+    const body = `${envFor(LOCAL)}DATABASE_URL="${urlFor(PROD)}"\nDIRECT_URL="${urlFor(PROD)}"\n`;
     assert.ok(refusalFor('local', body), 'expected a refusal');
   });
 
@@ -122,10 +134,25 @@ describe('resolveTarget refuses', () => {
     assert.match(message ?? '', /mentions 'municipality_db', which belongs to production/);
   });
 
+  test('a local file that mentions the staging database anywhere, comments included', () => {
+    // A staging line left behind as a comment is one uncomment away from
+    // `pnpm dev` writing to staging again.
+    const message = refusalFor('local', `${envFor(LOCAL)}# was ${urlFor(STAGING)}\n`);
+    assert.match(message ?? '', /mentions 'municipality_db_staging', which belongs to staging/);
+    assert.match(message ?? '', /mentions 'appuser_staging', which belongs to staging/);
+  });
+
   test('a staging file that still names the retired Supabase production project', () => {
     // It holds a full copy of the register until it is deleted.
-    const message = refusalFor('local', `${envFor(STAGING)}SUPABASE_URL="https://thbgwfbcqdougbjvgvyw.supabase.co"\n`);
+    const message = refusalFor('staging', `${envFor(STAGING)}SUPABASE_URL="https://thbgwfbcqdougbjvgvyw.supabase.co"\n`);
     assert.match(message ?? '', /thbgwfbcqdougbjvgvyw/);
+  });
+
+  test('a local file that names either retired Supabase project', () => {
+    for (const ref of ['thbgwfbcqdougbjvgvyw', 'lzgbjcwtzqyrbeoolvdz']) {
+      const message = refusalFor('local', `${envFor(LOCAL)}SUPABASE_URL="https://${ref}.supabase.co"\n`);
+      assert.match(message ?? '', new RegExp(`mentions '${ref}'`));
+    }
   });
 
   test('a Supabase connection string, which is no target any more', () => {
@@ -133,7 +160,17 @@ describe('resolveTarget refuses', () => {
       urlFor(STAGING),
       'postgresql://postgres.lzgbjcwtzqyrbeoolvdz:pw@aws-0-eu-central-1.pooler.supabase.com:6543/postgres',
     );
-    assert.match(refusalFor('local', body) ?? '', /names database 'postgres'/);
+    assert.match(refusalFor('staging', body) ?? '', /names database 'postgres'/);
+  });
+
+  test('a local URL on any address but the Docker port, even with the right names', () => {
+    // 5433 is the SSH tunnel to the Lightsail cluster; 5432 is whatever
+    // Postgres the machine itself runs. The names alone would pass the day
+    // someone creates `appuser_local` over there.
+    for (const host of ['localhost:5433', 'localhost:5432', '13.37.53.105:5432', 'localhost']) {
+      const message = refusalFor('local', envFor(LOCAL).replaceAll(LOCAL.hosts[0], host));
+      assert.match(message ?? '', new RegExp(`points at '${host.replace(/[.[\]]/g, '\\$&')}'`));
+    }
   });
 
   test('an unfilled template in a connection string', () => {
@@ -208,31 +245,55 @@ describe('resolveTarget accepts', () => {
     assert.equal(refusalFor('production', envFor(PROD)), null);
   });
 
-  test('a correct local file, which points at the staging database', () => {
-    assert.equal(refusalFor('local', envFor(STAGING)), null);
+  test('a correct local file, which points at the Docker database', () => {
+    assert.equal(refusalFor('local', envFor(LOCAL)), null);
   });
 
-  test('any host — through a tunnel every target is localhost, so host proves nothing', () => {
+  test('a local file on every loopback spelling of the Docker port', () => {
+    for (const host of LOCAL.hosts) {
+      assert.equal(refusalFor('local', envFor(LOCAL).replaceAll(LOCAL.hosts[0], host)), null, host);
+    }
+  });
+
+  test('any host for staging — through a tunnel every target is localhost, so host proves nothing', () => {
     const body = envFor(STAGING).replaceAll('localhost:5433', '13.39.160.240:5432');
-    assert.equal(refusalFor('local', body), null);
+    assert.equal(refusalFor('staging', body), null);
   });
 
   test('a password containing $, which the dotenv reader must not expand', () => {
-    const body = envFor(STAGING).replaceAll('pw123', 'q1w2$e3');
+    const body = envFor(LOCAL).replaceAll('pw123', 'q1w2$e3');
     assert.equal(refusalFor('local', body), null);
   });
 });
 
 describe('the pinned identities', () => {
-  test('staging and production are different databases and different roles', () => {
+  test('local, staging and production are three different databases and three different roles', () => {
     // A copy-paste slip here would disable every check above at once.
-    assert.notEqual(STAGING.database, PROD.database);
-    assert.notEqual(STAGING.user, PROD.user);
+    const all = [LOCAL, STAGING, PROD];
+    assert.equal(new Set(all.map((t) => t.database)).size, 3);
+    assert.equal(new Set(all.map((t) => t.user)).size, 3);
   });
 
-  test('local shares the staging database, never production', () => {
-    assert.equal(TARGETS.local.database, STAGING.database);
-    assert.equal(TARGETS.local.user, STAGING.user);
-    assert.notEqual(TARGETS.local.database, PROD.database);
+  test('local lives on loopback only', () => {
+    for (const host of LOCAL.hosts) {
+      assert.match(host, /^(127\.0\.0\.1|localhost|\[::1\]):5434$/);
+    }
+  });
+
+  test('the local file may name neither staging nor production; staging may not name production', () => {
+    assert.deepEqual([...LOCAL.forbid].sort(), ['production', 'staging']);
+    assert.deepEqual(STAGING.forbid, ['production']);
+  });
+});
+
+describe('the production deploy', () => {
+  // deploy.mjs runs on import, so this reads its source instead. A tripwire,
+  // not a proof: it fails if the promotion check ever goes back to accepting
+  // the local file, which is how a laptop's own database could vouch for
+  // migrations staging has never run.
+  test('reads staging, and never the local target, to vouch for production', () => {
+    const source = readFileSync(join(ROOT, 'scripts/db/deploy.mjs'), 'utf8');
+    assert.match(source, /resolveTarget\('staging'\)/);
+    assert.doesNotMatch(source, /['"]local['"]/);
   });
 });

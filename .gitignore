@@ -39,6 +39,10 @@ backup-key.txt
 *.agekey
 age-key*.txt
 
+# Where the local setup sends `cadastre:import`'s GeoJSON (docs/database-environments.md §0),
+# so it does not rewrite the copies committed under apps/frontend/public/.
+.cadastre-out/
+
 # Generated Prisma clients — two of them, one per schema kind. Regenerate with
 # `pnpm db:generate`; they are build output, not source.
 apps/backend/src/generated/

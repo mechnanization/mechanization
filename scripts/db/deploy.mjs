@@ -294,20 +294,20 @@ async function main() {
   // load-bearing" — without it, nothing stops a migration reaching production
   // having never run anywhere else.
   if (isProduction && !flag('skip-promotion-check')) {
-    // Either file will do: `local` and `staging` are pinned to the same
-    // database and role, so whichever exists names the staging database. CI
-    // writes `.env.staging`; a developer machine has only `.env`. Demanding
-    // the one a laptop does not have would make `--skip-promotion-check` the
-    // normal way to deploy, and a check that is always skipped is not a check.
-    const stagingName = ['staging', 'local'].find((n) => existsSync(join(ROOT, TARGETS[n].envFile)));
-    if (!stagingName) {
+    // Staging, and nothing else. This used to accept `apps/backend/.env` too,
+    // back when `local` was pinned to the staging database. It is now the
+    // developer's own Docker database, and one that has run a feature branch's
+    // migrations would vouch for production with migrations staging has never
+    // seen. CI writes `.env.staging` before this runs.
+    if (!existsSync(join(ROOT, TARGETS.staging.envFile))) {
       throw new Error(
-        `Cannot verify promotion: neither ${TARGETS.staging.envFile} nor ${TARGETS.local.envFile} exists.\n` +
-          '  Production deploys check that staging already has these migrations.\n' +
-          '  Create one of them, or pass --skip-promotion-check for a hotfix.',
+        `Cannot verify promotion: ${TARGETS.staging.envFile} does not exist.\n` +
+          '  Production deploys check that staging already has these migrations, and only\n' +
+          '  the staging target can answer that. CI writes this file before every run.\n' +
+          '  Create it, or pass --skip-promotion-check for a hotfix.',
       );
     }
-    const stagingTarget = resolveTarget(stagingName);
+    const stagingTarget = resolveTarget('staging');
     // Staging's own refusals (a missing history, an unreadable registry) would
     // otherwise surface under the PRODUCTION header, reading as if production
     // were the database at fault.
@@ -324,7 +324,7 @@ async function main() {
     const problems = promotionProblems(pending, stagingPending);
     if (problems.length > 0) {
       throw new Error(
-        problems.join('\n') + `\n  Deploy to staging first: pnpm db:deploy:${stagingName}`,
+        problems.join('\n') + '\n  Deploy to staging first: pnpm db:deploy:staging',
       );
     }
     console.log(C.green('\n  ✓ Promotion check: every pending migration is already live on staging.'));
