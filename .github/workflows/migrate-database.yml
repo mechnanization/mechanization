@@ -54,13 +54,12 @@ jobs:
     # reaches staging through the STAGING_* secrets db-production also holds.
     environment: ${{ inputs.target == 'production' && 'db-production' || 'db-staging' }}
 
-    # id-token lets the backup step assume the AWS role through GitHub's OIDC
-    # provider, so no AWS access key is stored anywhere. The role's trust policy
-    # admits only this repository's db-production environment, so a staging run
-    # can mint a token and do nothing with it. Every caller has to grant this.
+    # The backup authenticates as the IAM user lightsail-db-backup, whose access
+    # keys are secrets of db-production only: that environment admits protected
+    # branches, db-staging admits develop. The user can only PutObject under
+    # pre-migrate/ (docs/database-environments.md §5).
     permissions:
       contents: read
-      id-token: write
 
     env:
       # Named by DevOps. Retention (90 days) is a lifecycle rule on the bucket,
@@ -219,14 +218,20 @@ jobs:
         if: steps.production.outputs.pending == 'true'
         env:
           AGE_PUBLIC_KEY: ${{ secrets.BACKUP_AGE_PUBLIC_KEY }}
-          ROLE_ARN: ${{ secrets.AWS_BACKUP_ROLE_ARN }}
+          ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           missing=()
           if [ -z "$AGE_PUBLIC_KEY" ]; then missing+=(BACKUP_AGE_PUBLIC_KEY); fi
-          if [ -z "$ROLE_ARN" ]; then missing+=(AWS_BACKUP_ROLE_ARN); fi
-          if [ "${#missing[@]}" -gt 0 ]; then
+          if [ -z "$ACCESS_KEY_ID" ]; then missing+=(AWS_ACCESS_KEY_ID); fi
+          if [ -z "$SECRET_ACCESS_KEY" ]; then missing+=(AWS_SECRET_ACCESS_KEY); fi
+          n=${#missing[@]}
+          if [ "$n" -gt 0 ]; then
             names="${missing[0]}"; verb=is
-            if [ "${#missing[@]}" -gt 1 ]; then names="${missing[0]} and ${missing[1]}"; verb=are; fi
+            for ((i = 1; i < n; i++)); do
+              if [ "$i" -eq $((n - 1)) ]; then names="$names and ${missing[$i]}"; else names="$names, ${missing[$i]}"; fi
+            done
+            if [ "$n" -gt 1 ]; then verb=are; fi
             echo "::error::Production has migrations pending and $names $verb not set in db-production. Nothing was migrated: a migration is never applied without a backup to go back to."
             exit 1
           fi
@@ -309,14 +314,6 @@ jobs:
           test -s "$DUMP.age"
           shred -u "$DUMP"
 
-      - name: Assume the backup role
-        if: steps.production.outputs.pending == 'true'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_BACKUP_ROLE_ARN }}
-          aws-region: ${{ env.PRE_MIGRATE_REGION }}
-          role-session-name: pre-migrate-${{ github.run_id }}
-
       - name: Upload to S3
         if: steps.production.outputs.pending == 'true'
         # Write-once and checked by S3 itself. `--if-none-match '*'` refuses to
@@ -328,6 +325,11 @@ jobs:
         env:
           DIR: ${{ runner.temp }}/pre-migrate
           BASE: ${{ steps.dump.outputs.basename }}
+          # The backup user's keys live in this step's environment only, not in
+          # $GITHUB_ENV, so "Migrate production" and the cleanup never see them.
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.PRE_MIGRATE_REGION }}
         run: |
           set -euo pipefail
           prefix="$PRE_MIGRATE_PREFIX/$BASE-${GITHUB_SHA::7}"

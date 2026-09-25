@@ -294,11 +294,15 @@ code is not deployed.
   `BACKUP_AGE_PUBLIC_KEY`. The private key is held offline by DevOps. The
   plaintext dump exists only on the runner, and is shredded as soon as it is
   encrypted, or by the cleanup step if a step before that failed.
-- **It cannot overwrite or delete.** Each file is uploaded with
+- **The pipeline never overwrites or deletes.** Each file is uploaded with
   `--if-none-match '*'` (S3 refuses to replace an existing object) and
   `--checksum-sha256` (S3 refuses bytes that do not match, and the stored
-  checksum is compared again). The role can only `PutObject`. Retention is a
-  bucket lifecycle rule, not something the pipeline can shorten.
+  checksum is compared again). It calls nothing but `PutObject`. Retention is a
+  bucket lifecycle rule, not something the pipeline can shorten. **The
+  credential can do more than the pipeline does:** as of 2026-09-25 the IAM
+  user holds `PutObject`, `GetObject`, `DeleteObject` and `ListBucket` on the
+  whole bucket, `daily/` included. DevOps accepted that to ship; step 3 is the
+  policy it should be narrowed to.
 
 Where it lands:
 
@@ -328,36 +332,16 @@ it was needed.
    `BACKUP_AGE_PUBLIC_KEY` secret of `db-production`. The private key never goes
    into GitHub, the server or this repository. **Losing it loses every backup**;
    there is no recovery path.
-2. **GitHub's OIDC provider in IAM**, once per AWS account:
-   `aws iam create-open-id-connect-provider --url https://token.actions.githubusercontent.com --client-id-list sts.amazonaws.com`
-3. **A role the pipeline assumes**, with this trust policy, which admits only
-   this repository's `db-production` environment:
-
-   ```json
-   {
-     "Version": "2012-10-17",
-     "Statement": [{
-       "Effect": "Allow",
-       "Principal": { "Federated": "arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com" },
-       "Action": "sts:AssumeRoleWithWebIdentity",
-       "Condition": { "StringEquals": {
-         "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-         "token.actions.githubusercontent.com:sub": "repo:mechnanization@325249501/mechanization@1310300660:environment:db-production"
-       } }
-     }]
-   }
-   ```
-
-   The `sub` carries the organisation's and the repository's numeric IDs.
-   GitHub switched repositories created after 2026-07-15 to these immutable
-   subjects, and this one was created on 2026-07-23, so the familiar
-   `repo:mechnanization/mechanization:…` form is never sent and would refuse
-   every run. The IDs survive a rename. To read the prefix GitHub actually
-   uses: `gh api repos/mechnanization/mechanization/actions/oidc/customization/sub`.
-   If the role is still refused, CloudTrail's `AssumeRoleWithWebIdentity` event
-   shows the exact subject that was presented.
-
-   and this permissions policy, write-only, one prefix:
+2. **The IAM user `lightsail-db-backup`.** The pipeline signs in with its
+   access keys, stored as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in
+   `db-production` **only**. Not in `db-staging`: that environment admits the
+   `develop` branch, so any workflow pushed to `develop` could read them, and
+   staging takes no backup, so nothing there uses them. The keys do not expire;
+   rotate them by creating the new key, updating the two secrets, then
+   deactivating the old key once a backup has uploaded with the new one.
+3. **The user's permissions policy**, write-only, one prefix. Not applied yet
+   (see above), and until it is, a leaked key can read and delete every
+   backup in the bucket:
 
    ```json
    {
@@ -370,9 +354,10 @@ it was needed.
    }
    ```
 
-   If the bucket encrypts with a customer-managed KMS key, the role also needs
-   `kms:GenerateDataKey` on that key. Put the role's ARN in the
-   `AWS_BACKUP_ROLE_ARN` secret of `db-production`.
+   If the bucket encrypts with a customer-managed KMS key, the user also needs
+   `kms:GenerateDataKey` on that key. Anything broader than this policy (read,
+   list, delete, other prefixes such as `daily/`) is more than the pipeline
+   needs, and would let a leaked key read or destroy backups.
 4. **Retention, 90 days**, as a lifecycle rule on the `pre-migrate/` prefix.
    `put-bucket-lifecycle-configuration` **replaces the bucket's whole lifecycle
    configuration**: read the existing one first
@@ -441,7 +426,7 @@ rm -f restore.sql
 | `apps/backend/.env` | Staging credentials. Gitignored. |
 | `apps/backend/.env.staging` | Staging credentials. Gitignored. |
 | GitHub → Environments → `db-staging` | `STAGING_DATABASE_URL`, `STAGING_DIRECT_URL` |
-| GitHub → Environments → `db-production` | `PRODUCTION_DATABASE_URL`, `PRODUCTION_DIRECT_URL`, **plus** the two `STAGING_` ones: a production run migrates staging first and checks its history. **Plus** `BACKUP_AGE_PUBLIC_KEY` and `AWS_BACKUP_ROLE_ARN` for the pre-migration backup (§5). Without them, a push with a migration pending stops before migrating. |
+| GitHub → Environments → `db-production` | `PRODUCTION_DATABASE_URL`, `PRODUCTION_DIRECT_URL`, **plus** the two `STAGING_` ones: a production run migrates staging first and checks its history. **Plus** `BACKUP_AGE_PUBLIC_KEY`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for the pre-migration backup (§5); the AWS keys belong in `db-production` only. Without them, a push with a migration pending stops before migrating. |
 | GitHub → repository secrets | `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY` (the deploy, and the migration tunnel), `SSH_KNOWN_HOSTS` (the tunnel) |
 
 The database URLs name the **runner's end of the tunnel**, not the box. The
