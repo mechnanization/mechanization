@@ -1,0 +1,34 @@
+-- 0058_pre_migrate_backup_probe
+--
+-- Deliberately does nothing. It exists so that production has a migration
+-- pending, which is the only thing that makes the pipeline take its
+-- pre-migration backup.
+--
+-- == Why ===================================================================
+--
+-- `migrate-database.yml` backs up production only when `deploy.mjs production
+-- --check` finds something pending (docs/database-environments.md §5). Nothing
+-- has been pending since that backup was added, so the whole chain has never
+-- run against the real database: the dump, the restore rehearsal, the age
+-- encryption and the write-once upload to s3://…/pre-migrate/. A backup that
+-- has never been restored is not a backup. This is the smallest change that
+-- makes the chain run once, with DevOps watching and then decrypting the
+-- result.
+--
+-- == What it does ==========================================================
+--
+-- Nothing. It reads no table, locks no table and changes no row. Its only
+-- effect is the row the tenant migrator records for it in each municipality's
+-- ledger.
+--
+-- `CREATE INDEX IF NOT EXISTS` on an index that already exists was considered
+-- and rejected. On Postgres 17 it still takes a SHARE lock on the table and
+-- holds it until commit, blocking writes. Behind an open write transaction it
+-- waits, and fails on the migrator's 5 s lock_timeout
+-- (migrate-all-tenants.ts). That can leave some municipalities migrated and
+-- others not.
+--
+-- Never edit, renumber or delete this file once it has run anywhere
+-- (AGENTS.md §3).
+
+SELECT 1;
