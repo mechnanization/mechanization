@@ -52,14 +52,18 @@ where table_schema = 'tenant_<slug>' and table_name = '<table>';
 
 ## 2. Name the target, every time
 
-Every environment is pinned by Supabase project ref in
+Every environment is pinned by database name and role in
 [`scripts/db/targets.mjs`](scripts/db/targets.mjs), and the guard refuses any
-dotenv file whose connection strings name a different project.
+dotenv file whose connection strings name a different database or role. Staging
+and production sit on one Lightsail box and are reached through an SSH tunnel,
+so both look like `localhost` — **the host tells you nothing**; read the
+database name.
 
 ```bash
 pnpm db:check                 # validate env files, no network
-pnpm db:status:staging        # what is pending, applies nothing
-pnpm db:deploy:staging        # apply
+pnpm db:status:local          # your own Docker database: what is pending
+pnpm db:deploy:local          # apply to it
+pnpm db:status:staging        # staging: needs .env.staging and a tunnel
 pnpm db:status:production
 ```
 
@@ -67,13 +71,30 @@ pnpm db:status:production
   `tenant:migrate-all` directly. They read whatever dotenv file happens to be on
   disk and tell you nothing about where they are pointed. The wrappers exist
   because that is one careless `git stash` away from rewriting live records.
-- `apps/backend/.env` is pinned to **staging**. There is no local Postgres —
-  `pnpm dev` reads and writes staging. Do not "temporarily" point it at
-  production to check one row.
+- `apps/backend/.env` is pinned to the **local Docker database**
+  (`municipality_db_local` on `127.0.0.1:5434`, the `postgres` service in
+  `docker-compose.yml`). `pnpm dev` reads and writes only that. The guard
+  refuses the file if it names staging or production anywhere, and refuses a
+  shell `DATABASE_URL` that overrides it. Do not "temporarily" point it at
+  staging or production to check one row. Until 2026-09-25 it was pinned to
+  staging; that is how six migrations from unmerged branches landed there.
+- **The local database holds seeded, synthetic data only**: `pnpm db:seed` plus
+  the cadastre import. Never restore, dump or copy staging or production rows
+  into it. That is citizen data leaving staging (§4), whichever tool does it:
+  `pg_dump`, Navicat, the backup files, `verify-restore.mjs`, an MCP server.
+  A request to "clone the real data" to a laptop is a request to break §4. Say
+  so, and offer the seed.
+- Staging is reached from a laptop only by creating `apps/backend/.env.staging`
+  (tunnel on a free port, not 5433 if something already holds it) and naming
+  the `staging` target. Delete the file afterwards: while it exists, the
+  machine can migrate staging.
 - There is deliberately no `.env.production` on developer machines. Production
-  migrations run from the manual GitHub Actions workflow behind a required
-  reviewer. If you think you need to run one locally, you need to ask, not
-  improvise.
+  migrations run in GitHub Actions: automatically on every push to `main`,
+  staging first, before the code ships (`migrate-database.yml` through
+  `scripts/db/deploy.mjs`), and by hand from *Deploy production* for dry runs
+  and destructive contract steps. **A push to `main` migrates production**, so
+  a migration merged to `main` has to be additive. If you think you need to
+  run one locally, you need to ask, not improvise.
 
 ## 3. Migrations
 
@@ -116,8 +137,10 @@ The rules that have already been broken once (§7.4):
   data and cannot state which rows are citizens, you are not ready to copy.
 - **Allowlist, never discover.** Enumerate the tables you intend to copy and
   say why for each. Dynamic table discovery means the next migration silently
-  adds a table to the copy set. See `TABLE_POLICY` in
-  [`scripts/db/sync-production-tenant.mjs`](scripts/db/sync-production-tenant.mjs).
+  adds a table to the copy set. The retired
+  `scripts/db/sync-production-tenant.mjs` (removed in the Lightsail cutover;
+  still in git history) has a `TABLE_POLICY` worth reading before writing the
+  next one.
 - **Filter at the source, not afterwards.** `WHERE kind = 'STAFF'` on the SELECT.
   Copying everything and deleting later means the data existed in production.
 - **Never `SET session_replication_role = 'replica'`.** It disables every

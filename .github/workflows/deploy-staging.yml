@@ -1,9 +1,9 @@
 name: Deploy staging
 
-# Staging migrates itself on every push to develop. That is the whole point of
-# having it: a migration reaches production only after it has already run
-# unattended somewhere real, and `scripts/db/deploy.mjs` enforces that as a
-# precondition rather than a convention.
+# Staging migrates itself on every push to develop that touches a migration, so
+# a change runs unattended somewhere real before main ever sees it. Production
+# runs from main also migrate staging first, which keeps the promotion check in
+# scripts/db/deploy.mjs meaningful for a branch merged straight to main.
 on:
   push:
     branches: [develop]
@@ -11,6 +11,7 @@ on:
       - 'apps/backend/src/infrastructure/prisma/**'
       - 'scripts/db/**'
       - '.github/workflows/deploy-staging.yml'
+      - '.github/workflows/migrate-database.yml'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -18,71 +19,18 @@ on:
         type: boolean
         default: false
 
-concurrency:
-  # Never two migrations against one database at once. Prisma takes an advisory
-  # lock and the tenant loop would serialise anyway, but a queued second deploy
-  # applying a migration the first one is mid-way through is not a state worth
-  # reasoning about.
-  group: deploy-staging
-  cancel-in-progress: false
-
 jobs:
   migrate:
     name: migrate staging database
-    runs-on: ubuntu-latest
-    # `db-` prefixed, because the Vercel integration already owns four
-    # environments in this repository named "Production – mechanization-api",
-    # "Preview – mechanization-web" and so on. Those gate *code deployments*.
-    # This one gates a *database migration*. A reviewer approving one of these
-    # should never have to work out which kind they are approving.
-    environment: db-staging
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Guard unit tests
-        # The guard decides which database everything below talks to. If its own
-        # tests do not pass, nothing else in this job should run.
-        run: pnpm db:test
-
-      - name: Generate Prisma clients
-        run: pnpm db:generate
-
-      - name: Materialise staging env
-        # Written through the environment rather than interpolated into the
-        # script body, so a secret containing shell metacharacters cannot become
-        # shell. The file is the same one a developer would have locally, which
-        # means CI runs the identical guard on the identical input.
-        env:
-          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
-          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
-          SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SERVICE_ROLE_KEY }}
-        run: |
-          {
-            echo "NODE_ENV=production"
-            echo "DATABASE_URL=$DATABASE_URL"
-            echo "DIRECT_URL=$DIRECT_URL"
-            echo "SUPABASE_URL=$SUPABASE_URL"
-            echo "SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY"
-            echo "SUPABASE_STORAGE_BUCKET=documents"
-          } > apps/backend/.env.staging
-
-      - name: Deploy
-        run: node scripts/db/deploy.mjs staging ${{ inputs.dry_run && '--dry-run' || '' }}
-
-      - name: Shred env file
-        if: always()
-        run: rm -f apps/backend/.env.staging
+    uses: ./.github/workflows/migrate-database.yml
+    # Staging takes no backup, but the called job declares id-token for the
+    # production path, and a called workflow can only narrow what its caller
+    # grants. The AWS role admits only db-production, so the token is inert here.
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      target: staging
+      # Unset on a push, where it reads as false: pushes apply.
+      dry_run: ${{ inputs.dry_run == true }}
+    secrets: inherit

@@ -162,9 +162,11 @@ export class AuthController {
 
   /**
    * Public: reached from the reset-password landing page, before any session
-   * exists. `accessToken` — the Supabase recovery token the email link's own
-   * redirect appended to that page's URL — is what proves the caller owns the
-   * inbox; see `IdentityService.confirmStaffPasswordReset`.
+   * exists. `accessToken` is the token this service signed into the reset
+   * link it mailed — not a session, and not a third party's. It names the
+   * account and carries the `tokenVersion` current when it was minted, so it
+   * expires, it is single-use, and nothing here is resolved from anything the
+   * caller chose; see `IdentityService.confirmStaffPasswordReset`.
    */
   @Public()
   @Post('staff/confirm-password-reset')

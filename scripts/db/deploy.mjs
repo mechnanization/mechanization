@@ -13,24 +13,36 @@
  *
  * What it enforces, in the order the checks run:
  *
- *   1. The env file's connection strings belong to the project the target is
- *      pinned to (`targets.mjs`).
- *   2. Nothing is pending that this script has not read — it lists the exact
+ *   1. The env file's connection strings name the database and role the target
+ *      is pinned to (`targets.mjs`).
+ *   2. The target's history is readable and believable (`migration-state.mjs`).
+ *      A live schema whose history is missing, a registry migration Prisma
+ *      left half-done, or production reporting no municipalities stops here,
+ *      before anything is listed as pending.
+ *   3. Nothing is pending that this script has not read — it lists the exact
  *      migrations it is about to apply, per tenant schema included.
- *   3. Pending SQL is scanned for irreversible DDL. `DROP COLUMN` on a table of
- *      citizen records is not something to discover from a stack trace, so it
- *      blocks unless the caller says `--allow-destructive` out loud.
- *   4. Production only: every migration about to be applied is already applied
- *      on staging. Promotion, not a parallel path.
- *   5. Production only: a typed confirmation of the project ref.
+ *   4. Pending SQL is scanned for anything that loses data (`destructive-sql.mjs`).
+ *      `DROP COLUMN` or `DELETE FROM` on a table of citizen records is not
+ *      something to discover from a stack trace, so it blocks unless the
+ *      caller says `--allow-destructive` out loud.
+ *   5. Production only: every migration about to be applied is already applied
+ *      on staging, and staging has a municipality to have applied it to.
+ *      Promotion, not a parallel path.
+ *   6. Production only: a typed confirmation of the database name.
+ *   7. After applying: the target is read again, registry and every tenant
+ *      schema, and must have nothing left pending.
  *
  * Options:
  *   --dry-run              Report everything above, apply nothing. Safe anywhere.
+ *   --check                A dry run whose exit code says whether anything is
+ *                          pending: 0 up to date, 3 pending and every check
+ *                          passed, 1 refused. How the pipeline decides whether
+ *                          to take a pre-migration backup.
  *   --allow-destructive    Permit migrations containing data-losing DDL.
- *   --confirm=<ref>        Non-interactive confirmation, for CI. Must equal the
- *                          target's own ref, so a copied staging command cannot
- *                          fire at production.
- *   --skip-promotion-check Bypass (4). For a genuine hotfix; it is logged loudly.
+ *   --confirm=<db>         Non-interactive confirmation, for CI. Must equal the
+ *                          target's own database name, so a copied staging
+ *                          command cannot fire at production.
+ *   --skip-promotion-check Bypass (5). For a genuine hotfix; it is logged loudly.
  */
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -38,10 +50,20 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
-import { ROOT, TARGETS, resolveTarget, TargetError } from './targets.mjs';
+import { ROOT, TARGETS, parseConnection, resolveTarget, TargetError } from './targets.mjs';
+import { scanSql } from './destructive-sql.mjs';
+import {
+  isUpToDate,
+  productionProblems,
+  promotionProblems,
+  readMigrationState,
+} from './migration-state.mjs';
 
 const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
 const { Client } = require('pg');
+
+/** `--check`'s answer for "migrations are pending, and nothing refused them". */
+const PENDING_EXIT_CODE = 3;
 
 const BACKEND = join(ROOT, 'apps', 'backend');
 const REGISTRY_MIGRATIONS = join(BACKEND, 'src/infrastructure/prisma/registry/migrations');
@@ -55,46 +77,6 @@ const C = {
   bold: (s) => `\x1b[1m${s}\x1b[0m`,
   dim: (s) => `\x1b[2m${s}\x1b[0m`,
 };
-
-// ── Destructive DDL ────────────────────────────────────────────────────────
-//
-// Split by consequence, because the two deserve different answers. `blocking`
-// is "this can lose data a municipality cannot re-enter"; `warning` is "this
-// takes a lock that can stall the portal on a table with rows in it".
-//
-// The expand/contract discipline in docs/database-environments.md is what keeps
-// the blocking list empty in normal work: you add, backfill, switch reads, and
-// only drop a release later — by which point the drop is genuinely safe and
-// `--allow-destructive` is an accurate description of an intentional act.
-const DESTRUCTIVE = [
-  { level: 'blocking', re: /\bDROP\s+TABLE\b/i, what: 'DROP TABLE' },
-  { level: 'blocking', re: /\bDROP\s+COLUMN\b/i, what: 'DROP COLUMN' },
-  { level: 'blocking', re: /\bDROP\s+SCHEMA\b/i, what: 'DROP SCHEMA' },
-  { level: 'blocking', re: /\bTRUNCATE\b/i, what: 'TRUNCATE' },
-  { level: 'blocking', re: /\bALTER\s+COLUMN\s+.*\bTYPE\b/i, what: 'ALTER COLUMN … TYPE' },
-  { level: 'blocking', re: /\bRENAME\s+(COLUMN|TO)\b/i, what: 'RENAME' },
-  { level: 'warning', re: /\bSET\s+NOT\s+NULL\b/i, what: 'SET NOT NULL (full table scan + lock)' },
-  {
-    level: 'warning',
-    re: /\bCREATE\s+(UNIQUE\s+)?INDEX\s+(?!CONCURRENTLY)/i,
-    what: 'CREATE INDEX without CONCURRENTLY (write lock)',
-  },
-  { level: 'warning', re: /\bDROP\s+CONSTRAINT\b/i, what: 'DROP CONSTRAINT' },
-];
-
-/** Strips -- and /* *\/ comments so a commented-out DROP does not trip the scanner. */
-function stripSqlComments(sql) {
-  return sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
-}
-
-function scanSql(name, sql) {
-  const clean = stripSqlComments(sql);
-  return DESTRUCTIVE.filter((rule) => rule.re.test(clean)).map((rule) => ({
-    migration: name,
-    level: rule.level,
-    what: rule.what,
-  }));
-}
 
 function migrationFolders(dir) {
   if (!existsSync(dir)) return [];
@@ -121,58 +103,17 @@ async function withClient(connectionString, fn) {
   }
 }
 
-async function appliedRegistry(client) {
-  const { rows } = await client.query(`
-    select migration_name from _prisma_migrations
-    where finished_at is not null and rolled_back_at is null
-  `).catch(() => ({ rows: [] }));
-  return new Set(rows.map((r) => r.migration_name));
-}
-
-/** Every provisioned tenant schema, and the migrations each has seen. */
-async function appliedTenants(client) {
-  const { rows: tenants } = await client
-    // `@@map("tenants")` in the registry schema — the table is not "Tenant".
-    .query(`select slug, "schemaName" from public.tenants where "provisionedAt" is not null order by slug`)
-    .catch(() => ({ rows: [] }));
-
-  const out = [];
-  for (const tenant of tenants) {
-    const { rows } = await client
-      .query(`select name from "${tenant.schemaName}"."_tenant_migrations"`)
-      .catch(() => ({ rows: [] }));
-    out.push({
-      slug: tenant.slug,
-      schema: tenant.schemaName,
-      applied: new Set(rows.map((r) => r.name)),
-    });
-  }
-  return out;
-}
-
-/** What this target still needs, registry and per tenant schema. */
+/**
+ * What this target still needs, registry and per tenant schema. Every read
+ * either succeeds or stops the deploy: see `migration-state.mjs` for why none
+ * of them may fall back to "nothing there".
+ */
 async function pendingFor(connectionString) {
-  const registryAll = migrationFolders(REGISTRY_MIGRATIONS);
-  const tenantAll = migrationFolders(TENANT_MIGRATIONS);
-
-  return withClient(connectionString, async (client) => {
-    const registryApplied = await appliedRegistry(client);
-    const tenants = await appliedTenants(client);
-
-    const registryPending = registryAll.filter((m) => !registryApplied.has(m));
-    const tenantPending = tenants.map((t) => ({
-      ...t,
-      pending: tenantAll.filter((m) => !t.applied.has(m)),
-    }));
-
-    // Union across schemas — the set of tenant SQL this deploy will execute
-    // somewhere, which is what the destructive scan and promotion gate care about.
-    const tenantPendingUnion = [
-      ...new Set(tenantPending.flatMap((t) => t.pending)),
-    ].sort((a, b) => a.localeCompare(b));
-
-    return { registryPending, tenantPending, tenantPendingUnion, tenantCount: tenants.length };
-  });
+  const folders = {
+    registry: migrationFolders(REGISTRY_MIGRATIONS),
+    tenant: migrationFolders(TENANT_MIGRATIONS),
+  };
+  return withClient(connectionString, (client) => readMigrationState(client, folders));
 }
 
 // ── Running the actual migration commands ──────────────────────────────────
@@ -207,27 +148,37 @@ function run(script, env, label) {
 }
 
 /**
- * Proves the migrations landed on the database we aimed at.
+ * Proves the migrations landed on the database we aimed at, all of them.
  *
  * Prisma loads `apps/backend/.env` of its own accord — it says so in its output
  * — on top of the environment this script hands it. dotenv does not overwrite
  * variables that are already set, so the injected URL wins, but "does not
  * overwrite" is a library's default behaviour and this is the one decision in
  * the repository that must not rest on one. So we go and look: reconnect to the
- * target's own DIRECT_URL and confirm the rows are there.
+ * target's own DIRECT_URL and read the whole state again.
+ *
+ * The whole state, not just the registry. This used to re-read only
+ * `_prisma_migrations`, so a tenant run that exited 0 without recording
+ * anything, or recorded it somewhere else, reported "up to date" unchecked.
  */
-async function verifyApplied(connectionString, expectedRegistry) {
-  if (expectedRegistry.length === 0) return;
-  const applied = await withClient(connectionString, appliedRegistry);
-  const missing = expectedRegistry.filter((m) => !applied.has(m));
-  if (missing.length > 0) {
+async function verifyApplied(connectionString) {
+  const after = await pendingFor(connectionString);
+  if (!isUpToDate(after)) {
+    const left = [
+      ...after.registryPending.map((m) => `registry/${m}`),
+      ...after.tenantPending.flatMap((t) => t.pending.map((m) => `${t.slug}/${m}`)),
+    ];
     throw new Error(
       'Migrations reported success but are not recorded on the target database:\n' +
-        missing.map((m) => `    ✗ ${m}`).join('\n') +
+        left.map((m) => `    ✗ ${m}`).join('\n') +
         '\n  Something redirected the connection. Do not re-run — check which database was written.',
     );
   }
-  console.log(C.green(`  ✓ Verified on ${connectionString.replace(/:[^:@]*@/, ':***@')}`));
+  // Named from its parts, never by masking the URL. The password may contain
+  // `@` or `:` (`parseConnection` allows both), and a regex mask then printed
+  // part of it into CI logs.
+  const where = parseConnection(connectionString);
+  console.log(C.green(`  ✓ Verified on ${where.user}@${where.host}/${where.database}`));
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -248,20 +199,27 @@ async function main() {
     );
   }
 
-  const dryRun = flag('dry-run');
+  const check = flag('check');
+  const dryRun = flag('dry-run') || check;
   const target = resolveTarget(targetName);
   const isProduction = target.name === 'production';
 
   console.log('');
   console.log(C.bold('  Target      ') + (isProduction ? C.red(target.label) : C.blue(target.label)));
-  console.log(C.bold('  Project     ') + target.ref);
+  console.log(C.bold('  Database    ') + `${target.database} (as ${target.user} via ${target.host})`);
   console.log(C.bold('  Env file    ') + target.envFile);
   console.log(C.bold('  Mode        ') + (dryRun ? C.yellow('dry run — nothing will be applied') : 'apply'));
 
   // ── What is pending ─────────────────────────────────────────────────────
   const pending = await pendingFor(target.env.DIRECT_URL);
-  const nothingPending =
-    pending.registryPending.length === 0 && pending.tenantPendingUnion.length === 0;
+  const nothingPending = isUpToDate(pending);
+
+  // Before "nothing to apply" can be believed: zero municipalities on the live
+  // register means the read went somewhere else, not that there is no work.
+  if (isProduction) {
+    const problems = productionProblems(pending);
+    if (problems.length > 0) throw new Error(problems.join('\n'));
+  }
 
   console.log('');
   console.log(C.bold('  Registry migrations pending: ') + (pending.registryPending.length || 'none'));
@@ -273,7 +231,24 @@ async function main() {
       `${pending.tenantPendingUnion.length || 'no'} distinct migration(s) pending`,
   );
   for (const t of pending.tenantPending.filter((t) => t.pending.length > 0)) {
-    console.log(`    · ${t.slug} (${t.schema}): ${t.pending.length} pending`);
+    console.log(`    · ${t.slug} (${t.schema}): ${t.pending.join(', ')}`);
+  }
+
+  // A pending migration that sorts before one already applied is either a
+  // number merged late from a parallel branch, which happens here and is fine,
+  // or a history row someone deleted, in which case applying re-runs SQL that
+  // already ran. Nothing here can tell which, so it is said out loud.
+  const outOfOrder = [
+    ...pending.registryOutOfOrder.map((m) => `registry/${m}`),
+    ...pending.tenantPending.flatMap((t) => t.outOfOrder.map((m) => `${t.slug}/${m}`)),
+  ];
+  if (outOfOrder.length > 0) {
+    console.log(C.yellow('\n  Pending migrations that sort before one already applied:'));
+    for (const m of outOfOrder) console.log(C.yellow(`    ! ${m}`));
+    console.log(
+      C.yellow('    A late merge from a parallel branch is fine. A deleted history row is not:\n') +
+        C.yellow('    applying would re-run SQL that has already run.'),
+    );
   }
 
   if (nothingPending) {
@@ -319,27 +294,37 @@ async function main() {
   // load-bearing" — without it, nothing stops a migration reaching production
   // having never run anywhere else.
   if (isProduction && !flag('skip-promotion-check')) {
-    const staging = TARGETS.staging;
-    if (!existsSync(join(ROOT, staging.envFile))) {
+    // Staging, and nothing else. This used to accept `apps/backend/.env` too,
+    // back when `local` was pinned to the staging database. It is now the
+    // developer's own Docker database, and one that has run a feature branch's
+    // migrations would vouch for production with migrations staging has never
+    // seen. CI writes `.env.staging` before this runs.
+    if (!existsSync(join(ROOT, TARGETS.staging.envFile))) {
       throw new Error(
-        `Cannot verify promotion: ${staging.envFile} does not exist.\n` +
-          '  Production deploys check that staging already has these migrations.\n' +
-          '  Create the staging env file, or pass --skip-promotion-check for a hotfix.',
+        `Cannot verify promotion: ${TARGETS.staging.envFile} does not exist.\n` +
+          '  Production deploys check that staging already has these migrations, and only\n' +
+          '  the staging target can answer that. CI writes this file before every run.\n' +
+          '  Create it, or pass --skip-promotion-check for a hotfix.',
       );
     }
     const stagingTarget = resolveTarget('staging');
-    const stagingPending = await pendingFor(stagingTarget.env.DIRECT_URL);
-
-    const notOnStaging = [
-      ...pending.registryPending.filter((m) => stagingPending.registryPending.includes(m)).map((m) => `registry/${m}`),
-      ...pending.tenantPendingUnion.filter((m) => stagingPending.tenantPendingUnion.includes(m)).map((m) => `tenant/${m}`),
-    ];
-
-    if (notOnStaging.length > 0) {
+    // Staging's own refusals (a missing history, an unreadable registry) would
+    // otherwise surface under the PRODUCTION header, reading as if production
+    // were the database at fault.
+    let stagingPending;
+    try {
+      stagingPending = await pendingFor(stagingTarget.env.DIRECT_URL);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
       throw new Error(
-        'These migrations have not been applied to staging yet:\n' +
-          notOnStaging.map((m) => `    ✗ ${m}`).join('\n') +
-          '\n  Deploy to staging first: pnpm db:deploy:staging',
+        `Promotion check could not read staging (${stagingTarget.database}), so it cannot vouch for anything:\n${reason}`,
+      );
+    }
+
+    const problems = promotionProblems(pending, stagingPending);
+    if (problems.length > 0) {
+      throw new Error(
+        problems.join('\n') + '\n  Deploy to staging first: pnpm db:deploy:staging',
       );
     }
     console.log(C.green('\n  ✓ Promotion check: every pending migration is already live on staging.'));
@@ -349,6 +334,10 @@ async function main() {
 
   if (dryRun) {
     console.log(C.yellow('\n  Dry run complete — nothing was applied.\n'));
+    // Only reached with something pending and every check above passed; up to
+    // date returned early, and a refusal threw. A distinct code, so a pipeline
+    // can branch on "there is work" without reading the output.
+    if (check) process.exitCode = PENDING_EXIT_CODE;
     return;
   }
 
@@ -356,24 +345,24 @@ async function main() {
   if (isProduction) {
     const supplied = value('confirm');
     if (supplied !== undefined) {
-      if (supplied !== target.ref) {
+      if (supplied !== target.database) {
         throw new Error(
-          `--confirm=${supplied} does not match the production ref ${target.ref}. Refusing.`,
+          `--confirm=${supplied} does not match the production database ${target.database}. Refusing.`,
         );
       }
     } else if (!stdin.isTTY) {
       throw new Error(
         'Production deploy needs confirmation and there is no terminal to ask.\n' +
-          `  In CI, pass --confirm=${target.ref} explicitly.`,
+          `  In CI, pass --confirm=${target.database} explicitly.`,
       );
     } else {
       console.log(
         C.red('\n  This writes to PRODUCTION — live municipal records, real citizens.'),
       );
       const rl = createInterface({ input: stdin, output: stdout });
-      const answer = await rl.question(`  Type the project ref (${target.ref}) to continue: `);
+      const answer = await rl.question(`  Type the database name (${target.database}) to continue: `);
       rl.close();
-      if (answer.trim() !== target.ref) {
+      if (answer.trim() !== target.database) {
         throw new Error('Confirmation did not match. Nothing was applied.');
       }
     }
@@ -398,7 +387,7 @@ async function main() {
   }
 
   console.log('');
-  await verifyApplied(target.env.DIRECT_URL, pending.registryPending);
+  await verifyApplied(target.env.DIRECT_URL);
 
   console.log(C.green(`\n  ✓ ${target.label} is up to date.\n`));
 }

@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import { AppModule } from '../app.module';
 import { APP_CONFIG } from './config/app.config';
 import { AppLogger } from './config/app-logger';
+import { METRICS_ROUTE, useHttpMetrics } from './metrics.module';
 
 /**
  * Builds the configured application without starting a listener.
@@ -36,7 +37,12 @@ export async function createApiApp(): Promise<NestExpressApplication> {
   });
   const config = app.get(ConfigService);
 
-  app.setGlobalPrefix(APP_CONFIG.apiPrefix);
+  // First, so the request clock covers every layer below and a request any of
+  // them rejects is still counted. See `useHttpMetrics`.
+  useHttpMetrics(app);
+
+  // `/metrics` is the one route outside the prefix. See `APP_CONFIG.metricsPath`.
+  app.setGlobalPrefix(APP_CONFIG.apiPrefix, { exclude: [METRICS_ROUTE] });
   app.use(helmet());
   app.use(compression());
 

@@ -19,7 +19,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { createClient } from '@supabase/supabase-js';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { PrismaClient as RegistryPrismaClient } from '../generated/registry-client';
 import { PrismaClient as TenantPrismaClient } from '../generated/tenant-client';
 import { TenantSlug } from '../domain/value-objects/tenant-slug.vo';
@@ -123,33 +123,56 @@ function writeAsset(path: string, contents: string): void {
 /**
  * The local write above is what the frontend serves cadastre.geojson and
  * parcels.geojson from once committed — fine for a repo colocated with the
- * frontend. The backend reads its own copy from Supabase Storage instead (see
- * `CadastreStorageService`), since in production the backend is a separate
+ * frontend. The backend reads its own copy from S3 instead (see
+ * `S3CadastreStorageService`), since in production the backend is a separate
  * deployment with no access to the frontend's filesystem at all. Best-effort:
- * a developer running this without Supabase creds configured still gets the
- * local files and a clear nudge, rather than a failed import.
+ * a developer running this without S3 configured still gets the local files
+ * and a clear nudge, rather than a failed import.
+ *
+ * Gated on AWS_REGION and S3_CADASTRE_BUCKET, and deliberately not on the key
+ * variables: credentials legitimately arrive from `~/.aws/credentials` or an
+ * instance role, so requiring AWS_ACCESS_KEY_ID here would skip the upload on
+ * exactly the machines best placed to do it. The bucket name is read from the
+ * environment and never written down here — this is the public cartography
+ * bucket, and the one thing that must never happen is a cadastre layer landing
+ * in the private documents bucket, or a hardcoded name pointing one developer's
+ * run at another environment's map.
  */
-async function uploadToSupabase(slug: string, assetName: string, contents: string): Promise<void> {
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+async function uploadToS3(slug: string, assetName: string, contents: string): Promise<void> {
+  const region = process.env.AWS_REGION;
+  const bucket = process.env.S3_CADASTRE_BUCKET;
+
+  if (!region || !bucket) {
     console.warn(
-      `  ! SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set — skipped uploading ${assetName} ` +
-        `to Supabase Storage; the map's backend will not see this layer until it is uploaded`,
+      `  ! AWS_REGION/S3_CADASTRE_BUCKET not set — skipped uploading ${assetName} ` +
+        `to S3; the map's backend will not see this layer until it is uploaded`,
     );
     return;
   }
 
-  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-  const { error } = await supabase.storage
-    .from('cadastre')
-    .upload(`${slug}/${assetName}`, contents, { contentType: 'application/geo+json', upsert: true });
-
-  if (error) {
-    console.warn(`  ! Failed to upload ${assetName} to Supabase Storage: ${error.message}`);
+  try {
+    // No credentials passed: whatever the SDK's default provider chain finds
+    // is what this developer already uses for `aws s3 ...`, which is the point.
+    const client = new S3Client({ region });
+    await client.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: `${slug}/${assetName}`,
+        Body: contents,
+        ContentType: 'application/geo+json',
+        // No `IfNoneMatch` guard, unlike the documents adapter: this script is
+        // idempotent on purpose — a corrected survey export is applied by
+        // re-running it, so a re-upload must replace last time's layer rather
+        // than be refused.
+      }),
+    );
+  } catch (error) {
+    // Warned, not thrown: the local files are already written and are the half
+    // a developer usually wants. A failed upload must not lose them.
+    console.warn(`  ! Failed to upload ${assetName} to S3: ${(error as Error).message}`);
     return;
   }
-  console.log(`  uploaded ${slug}/${assetName} to Supabase Storage`);
+  console.log(`  uploaded ${slug}/${assetName} to S3`);
 }
 
 /** Rebuilds a municipality's parcel registry and map layers from its KMZ. */
@@ -238,16 +261,16 @@ export async function importCadastre(args: Args): Promise<void> {
     const cadastreAsset = cadastreGeoJson(lines);
     writeAsset(join(outDir, 'parcels.geojson'), parcelsAsset);
     writeAsset(join(outDir, 'cadastre.geojson'), cadastreAsset);
-    await uploadToSupabase(slug.value, 'parcels.geojson', parcelsAsset);
-    await uploadToSupabase(slug.value, 'cadastre.geojson', cadastreAsset);
+    await uploadToS3(slug.value, 'parcels.geojson', parcelsAsset);
+    await uploadToS3(slug.value, 'cadastre.geojson', cadastreAsset);
 
     if (geometry.parcelPolygonsGeoJson) {
       writeAsset(join(outDir, 'parcel-polygons.geojson'), geometry.parcelPolygonsGeoJson);
-      await uploadToSupabase(slug.value, 'parcel-polygons.geojson', geometry.parcelPolygonsGeoJson);
+      await uploadToS3(slug.value, 'parcel-polygons.geojson', geometry.parcelPolygonsGeoJson);
     }
     if (geometry.cityBoundaryGeoJson) {
       writeAsset(join(outDir, 'city-boundary.geojson'), geometry.cityBoundaryGeoJson);
-      await uploadToSupabase(slug.value, 'city-boundary.geojson', geometry.cityBoundaryGeoJson);
+      await uploadToS3(slug.value, 'city-boundary.geojson', geometry.cityBoundaryGeoJson);
     }
 
     console.log(`\n✓ Cadastre imported for '${slug.value}'`);

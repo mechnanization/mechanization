@@ -6,7 +6,6 @@ import Link from 'next/link';
 import {
   Building2,
   Coins,
-  DatabaseBackup,
   Hash,
   Map as MapIcon,
   Settings as SettingsIcon,
@@ -20,7 +19,6 @@ import { PageHeader } from '@/components/ui/page-header';
 import { ProfileSection } from '@/components/admin/settings/profile-section';
 import { FinanceSection } from '@/components/admin/settings/finance-section';
 import { NumberingSection } from '@/components/admin/settings/numbering-section';
-import { BackupSection } from '@/components/admin/settings/backup-section';
 import { UsersSection } from '@/components/admin/settings/users-section';
 import { CadastreSection } from '@/components/admin/settings/cadastre-section';
 import { SettingsTabs } from '@/components/admin/settings/settings-ui';
@@ -31,7 +29,6 @@ type SectionId =
   | 'finance'
   | 'numbering'
   | 'cadastre'
-  | 'backup'
   | 'users';
 
 interface SectionDef {
@@ -42,13 +39,17 @@ interface SectionDef {
 
 /**
  * The settings sections, in the order a municipality sets them up.
+ *
+ * No backup section: backups are taken on the AWS side, and the page that
+ * downloaded and restored snapshots from here is withdrawn until it is rebuilt
+ * on top of them. `BackupSection` is kept, unrendered, for that rebuild; its
+ * endpoints are unregistered in `PresentationModule`.
  */
 const SECTIONS: SectionDef[] = [
   { id: 'profile', icon: Building2, label: (copy) => copy.nav.profile },
   { id: 'finance', icon: Coins, label: (copy) => copy.nav.finance },
   { id: 'numbering', icon: Hash, label: (copy) => copy.nav.numbering },
   { id: 'cadastre', icon: MapIcon, label: (copy) => copy.nav.cadastre },
-  { id: 'backup', icon: DatabaseBackup, label: (copy) => copy.nav.backup },
   { id: 'users', icon: UsersRound, label: (copy) => copy.nav.users },
 ];
 
@@ -145,9 +146,6 @@ export default function SettingsPage({
           ) : null}
           {active === 'cadastre' ? (
             <CadastreSection tenant={tenant} token={token} copy={copy} />
-          ) : null}
-          {active === 'backup' ? (
-            <BackupSection tenant={tenant} token={token} locale={locale} copy={copy} />
           ) : null}
           {active === 'users' ? (
             <UsersSection tenant={tenant} token={token} copy={copy} />

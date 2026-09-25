@@ -6,8 +6,27 @@ import {
   SupabaseAuthService,
   SupabaseAuthUser,
 } from '../../../domain/interfaces/supabase-auth.interface';
-import { UnauthorizedError } from '../../../application/common/exceptions';
 
+/**
+ * What is left of Supabase Auth: the password-reset round trip, and nothing
+ * else.
+ *
+ * Staff sign-in no longer comes through here — `IdentityService.loginStaff`
+ * verifies `users.passwordHash` with bcrypt against this municipality's own
+ * schema, which is where every other password check in this system already
+ * looked. The account-mirroring methods below are therefore no longer mirroring
+ * anything anyone reads, and they have been emptied rather than deleted so the
+ * port and its seven call sites stay still while the database cutover settles.
+ *
+ * `verifyToken` and `sendPasswordResetEmail` are deliberately **not** empty.
+ * They are the two halves of one flow: Supabase sends the recovery email, and
+ * the token that comes back through the link is the only evidence
+ * `confirmStaffPasswordReset` ever has that the caller owns the inbox. Emptying
+ * `verifyToken` the way the others were emptied would not disable a mirror — it
+ * would hand anyone who posts to the reset endpoint the ability to set any
+ * staff member's password. It keeps calling Supabase until a real mail provider
+ * replaces both halves together.
+ */
 @Injectable()
 export class SupabaseAuthServiceImpl implements SupabaseAuthService {
   private readonly logger = new Logger(SupabaseAuthServiceImpl.name);
@@ -26,30 +45,33 @@ export class SupabaseAuthServiceImpl implements SupabaseAuthService {
     );
   }
 
-  async authenticateStaff(email: string, password: string): Promise<SupabaseAuthResult> {
-    const { data, error } = await this.client.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password,
-    });
-
-    if (error || !data.user || !data.session) {
-      this.logger.warn(`Supabase staff auth failed for ${email}: ${error?.message}`);
-      throw new UnauthorizedError('بيانات الدخول غير صحيحة');
-    }
-
-    return {
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        userMetadata: data.user.user_metadata,
-        appMetadata: data.user.app_metadata,
-      },
-      accessToken: data.session.access_token,
-      expiresIn: data.session.expires_in?.toString(),
-    };
+  /**
+   * Refuses, always.
+   *
+   * Staff authentication moved to `IdentityService.loginStaff`, which is the
+   * only caller this ever had. Left throwing rather than deleted from the port
+   * so that a future caller wiring itself back to Supabase for a password check
+   * fails loudly instead of silently authenticating against a copy of the hash
+   * that nothing keeps up to date any more.
+   */
+  async authenticateStaff(_email: string, _password: string): Promise<SupabaseAuthResult> {
+    throw new Error(
+      'authenticateStaff is no longer available — staff passwords are verified against users.passwordHash in IdentityService.loginStaff',
+    );
   }
 
-  async createStaffUser(input: {
+  /**
+   * No-op. The staff row in the tenant schema is the account; there is no
+   * second copy to create.
+   *
+   * Returns an empty id because the only caller discards it
+   * (`StaffService.create`, inside a try/catch it already treats as
+   * best-effort). **Consequence worth knowing:** staff created from here on
+   * have no Supabase Auth user, so `sendPasswordResetEmail` cannot reach them
+   * until a real mail provider lands. An administrator setting their password
+   * directly through `StaffService.update` is the interim path.
+   */
+  async createStaffUser(_input: {
     email: string;
     password: string;
     tenantSlug: string;
@@ -57,44 +79,15 @@ export class SupabaseAuthServiceImpl implements SupabaseAuthService {
     firstName: string;
     lastName: string;
   }): Promise<{ id: string }> {
-    const email = input.email.trim().toLowerCase();
-    const metadata = {
-      firstName: input.firstName,
-      lastName: input.lastName,
-      role: input.role,
-      tenantSlug: input.tenantSlug,
-    };
-
-    const { data, error } = await this.client.auth.admin.createUser({
-      email,
-      password: input.password,
-      email_confirm: true,
-      user_metadata: metadata,
-    });
-
-    if (error) {
-      if (error.message.toLowerCase().includes('already') || error.status === 422) {
-        // User already exists in Supabase Auth — update their credentials and metadata
-        const existing = await this.findUserByEmail(email);
-        if (existing) {
-          const { error: updateError } = await this.client.auth.admin.updateUserById(existing.id, {
-            password: input.password,
-            user_metadata: metadata,
-          });
-          if (updateError) {
-            this.logger.error(`Failed to update existing Supabase user ${email}: ${updateError.message}`);
-          }
-          return { id: existing.id };
-        }
-      }
-      this.logger.error(`Supabase createUser failed for ${email}: ${error.message}`);
-      throw new Error(`Failed to provision Supabase user: ${error.message}`);
-    }
-
-    return { id: data.user.id };
+    return { id: '' };
   }
 
-  async updateStaffUser(input: {
+  /**
+   * No-op. Every caller already wrote the change to `users` first and treated
+   * this as a best-effort mirror; the mirror is what has been removed, not the
+   * write.
+   */
+  async updateStaffUser(_input: {
     email: string;
     newEmail?: string;
     password?: string;
@@ -103,53 +96,25 @@ export class SupabaseAuthServiceImpl implements SupabaseAuthService {
     role?: string;
     isActive?: boolean;
   }): Promise<void> {
-    const existing = await this.findUserByEmail(input.email);
-    if (!existing) {
-      this.logger.warn(`Supabase user not found for update: ${input.email}`);
-      return;
-    }
-
-    const updates: Parameters<typeof this.client.auth.admin.updateUserById>[1] = {};
-    if (input.newEmail) {
-      updates.email = input.newEmail.trim().toLowerCase();
-      updates.email_confirm = true;
-    }
-    if (input.password) {
-      updates.password = input.password;
-    }
-
-    const userMetadata: Record<string, unknown> = {
-      ...(existing.user_metadata || {}),
-    };
-    if (input.firstName) userMetadata.firstName = input.firstName;
-    if (input.lastName) userMetadata.lastName = input.lastName;
-    if (input.role) userMetadata.role = input.role;
-    if (input.isActive !== undefined) userMetadata.isActive = input.isActive;
-    updates.user_metadata = userMetadata;
-
-    if (input.isActive === false) {
-      // 100 years ban duration for deactivated accounts
-      updates.ban_duration = '876000h';
-    } else if (input.isActive === true) {
-      updates.ban_duration = 'none';
-    }
-
-    const { error } = await this.client.auth.admin.updateUserById(existing.id, updates);
-    if (error) {
-      this.logger.error(`Failed to update Supabase user ${input.email}: ${error.message}`);
-    }
+    return;
   }
 
-  async deleteStaffUser(email: string): Promise<void> {
-    const existing = await this.findUserByEmail(email);
-    if (!existing) return;
-
-    const { error } = await this.client.auth.admin.deleteUser(existing.id);
-    if (error) {
-      this.logger.error(`Failed to delete Supabase user ${email}: ${error.message}`);
-    }
+  /**
+   * No-op. Deactivation is `users.isActive` plus a `tokenVersion` bump, both
+   * already done by the caller, and both are what actually end a session.
+   */
+  async deleteStaffUser(_email: string): Promise<void> {
+    return;
   }
 
+  /**
+   * Still real, and it has to be — see the note on this class.
+   *
+   * This verifies the short-lived recovery token minted by the link in a
+   * password-reset email. It is not a session check: staff sessions are this
+   * app's own JWT and never come near it. It is the sole proof that whoever is
+   * setting a new password reached the inbox the email went to.
+   */
   async verifyToken(token: string): Promise<SupabaseAuthUser | null> {
     try {
       const { data, error } = await this.client.auth.getUser(token);
@@ -167,6 +132,12 @@ export class SupabaseAuthServiceImpl implements SupabaseAuthService {
     }
   }
 
+  /**
+   * Still real: Path 1 of the migration plan. Supabase keeps delivering reset
+   * mail until SES/Postmark/Resend replaces it, at which point this and
+   * `verifyToken` are rewritten in the same change — a token issued by one
+   * system and checked by another verifies nothing.
+   */
   async sendPasswordResetEmail(email: string, redirectTo?: string): Promise<void> {
     const { error } = await this.client.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
       redirectTo,
@@ -175,15 +146,5 @@ export class SupabaseAuthServiceImpl implements SupabaseAuthService {
       this.logger.error(`Failed to send password reset email to ${email}: ${error.message}`);
       throw new Error(`تعذّر إرسال بريد إعادة تعيين كلمة المرور: ${error.message}`);
     }
-  }
-
-  private async findUserByEmail(email: string) {
-    const normalised = email.trim().toLowerCase();
-    const { data, error } = await this.client.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    if (error || !data?.users) {
-      this.logger.error(`Failed to list Supabase users: ${error?.message}`);
-      return null;
-    }
-    return data.users.find((u) => u.email?.toLowerCase() === normalised) ?? null;
   }
 }

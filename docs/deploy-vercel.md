@@ -47,6 +47,7 @@ Set all of these for **Production** and **Preview**.
 | `PUBLIC_PORTAL_URL` | The web project's origin |
 | `CRON_SECRET` | `openssl rand -hex 32` — see §4 |
 | `SCHEDULER_ENABLED` | Leave **unset** on Vercel. On any long-lived host, set it explicitly — see §4 |
+| `METRICS_TOKEN` | Leave **unset** on Vercel: `/metrics` then answers 404. Only a long-lived host that Prometheus scrapes sets it (`openssl rand -hex 32`); the scraper sends `Authorization: Bearer <token>` |
 | `TZ` | `UTC` on a long-lived host. Not needed on Vercel, which is UTC already |
 | `SENTRY_DSN` | Optional. The **API** project's DSN — see §7 |
 | `SENTRY_ENVIRONMENT` | `production` or `preview`, scoped per environment — see §7 |
@@ -134,7 +135,7 @@ answer true:
 | Vercel | unset (or `false`) | The platform sets `VERCEL`; timers cannot fire there anyway. `crons` below is the schedule. |
 | One long-lived process (container, VM) | `true` | It owns the schedule. Say so rather than relying on the absence of a variable. |
 | Every further replica | `false` | Two processes with in-process timers are two schedulers. See `open-decisions.md` §5. |
-| `pnpm dev` | `false` is recommended | `apps/backend/.env` points at **staging**, so every developer machine left on the default is another scheduler writing to it. |
+| `pnpm dev` | `false` is recommended | `apps/backend/.env` points at the developer's own local database, and a 02:00 billing run changes the data under whatever is being tested. The local `.env` in `database-environments.md` §0.1 sets it. |
 
 An unrecognised value fails the boot. It is not defaulted in either direction:
 guessing `true` gives you a scheduler nobody asked for, guessing `false` stops

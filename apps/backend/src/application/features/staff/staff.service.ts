@@ -2,7 +2,6 @@ import { Inject, Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   PASSWORD_HASHER,
-  SUPABASE_AUTH_SERVICE,
   TOTP_SERVICE,
   USER_REPOSITORY,
 } from '../../../domain/interfaces/base-repository.interface';
@@ -10,12 +9,12 @@ import {
   PasswordHasher,
   TotpService,
 } from '../../../domain/interfaces/otp-repository.interface';
-import { SupabaseAuthService } from '../../../domain/interfaces/supabase-auth.interface';
 import {
   StaffSummary,
   UserRepository,
 } from '../../../domain/interfaces/user-repository.interface';
 import { StaffRole } from '../../../domain/entities/user.entity';
+import { IdentityService } from '../identity/identity.service';
 import { SessionRevocationService } from '../identity/session-revocation.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import {
@@ -53,10 +52,10 @@ export class StaffService {
   constructor(
     @Inject(USER_REPOSITORY) private readonly users: UserRepository,
     @Inject(PASSWORD_HASHER) private readonly hasher: PasswordHasher,
-    @Inject(SUPABASE_AUTH_SERVICE) private readonly supabaseAuth: SupabaseAuthService,
     @Inject(TOTP_SERVICE) private readonly totp: TotpService,
     private readonly tenantContext: TenantContextService,
     private readonly revocation: SessionRevocationService,
+    private readonly identity: IdentityService,
     private readonly events: EventEmitter2,
   ) {}
 
@@ -109,19 +108,6 @@ export class StaffService {
      */
     const totp = input.role === 'SUPER_ADMIN' ? await this.enrolTotp(id) : undefined;
 
-    // Sync to Supabase Auth
-    try {
-      await this.supabaseAuth.createStaffUser({
-        email: input.email,
-        password: input.password,
-        tenantSlug: input.tenantSlug,
-        role: input.role,
-        firstName: input.firstName,
-        lastName: input.lastName,
-      });
-    } catch {
-      // Non-blocking for local fallback if Supabase network is unreachable
-    }
 
     this.events.emit('staff.changed', {
       action: 'STAFF_CREATED',
@@ -192,18 +178,6 @@ export class StaffService {
       await this.revocation.forget(input.id);
     }
 
-    // Sync to Supabase Auth
-    try {
-      await this.supabaseAuth.updateStaffUser({
-        email: target.email!,
-        password: input.password,
-        firstName: input.firstName,
-        lastName: input.lastName,
-        role: input.role,
-      });
-    } catch {
-      // Non-blocking
-    }
 
     this.events.emit('staff.changed', {
       action: 'STAFF_UPDATED',
@@ -245,15 +219,6 @@ export class StaffService {
     // the revocation takes effect now rather than at the end of its TTL.
     await this.revocation.forget(input.id);
 
-    // Sync to Supabase Auth
-    try {
-      await this.supabaseAuth.updateStaffUser({
-        email: target.email!,
-        isActive: input.isActive,
-      });
-    } catch {
-      // Non-blocking
-    }
 
     this.events.emit('staff.changed', {
       action: input.isActive ? 'STAFF_REACTIVATED' : 'STAFF_DEACTIVATED',
@@ -293,14 +258,6 @@ export class StaffService {
 
     await this.users.hardDeleteStaff(input.id);
 
-    // Sync to Supabase Auth
-    try {
-      if (target.email) {
-        await this.supabaseAuth.deleteStaffUser(target.email);
-      }
-    } catch {
-      // Non-blocking
-    }
 
     this.events.emit('staff.changed', {
       action: 'STAFF_DELETED',
@@ -335,17 +292,6 @@ export class StaffService {
     await this.users.updateStaff(input.staffId, { passwordHash });
 
     await this.revocation.forget(input.staffId);
-
-    try {
-      if (target.email) {
-        await this.supabaseAuth.updateStaffUser({
-          email: target.email,
-          password: input.newPassword,
-        });
-      }
-    } catch {
-      // Non-blocking
-    }
 
     this.events.emit('staff.changed', {
       action: 'STAFF_PASSWORD_CHANGED',
@@ -388,17 +334,6 @@ export class StaffService {
 
     await this.users.updateStaff(input.staffId, { email: nextEmail });
 
-    try {
-      if (target.email) {
-        await this.supabaseAuth.updateStaffUser({
-          email: target.email,
-          newEmail: nextEmail,
-        });
-      }
-    } catch {
-      // Non-blocking
-    }
-
     this.events.emit('staff.changed', {
       action: 'STAFF_EMAIL_CHANGED',
       tenantSlug: input.tenantSlug,
@@ -418,8 +353,10 @@ export class StaffService {
     if (!user || !user.email) {
       throw new NotFoundError('Staff user', input.staffId);
     }
-    await this.supabaseAuth.sendPasswordResetEmail(user.email, input.redirectTo);
-    return { message: 'تم إرسال بريد إعادة تعيين كلمة المرور بنجاح' };
+    // One implementation, in IdentityService: the link is a signed token tied
+    // to this account's tokenVersion, and duplicating that here would be two
+    // places to get single-use and expiry right.
+    return this.identity.sendStaffPasswordResetEmail(input.staffId, input.redirectTo);
   }
 
   /**

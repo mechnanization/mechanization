@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Inject,
   NotFoundException,
   Param,
   Post,
@@ -12,7 +13,8 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { CadastreImportService } from '../../application/features/cadastre/cadastre-import.service';
 import { ValidationError } from '../../application/common/exceptions';
-import { CadastreStorageService } from '../../infrastructure/cadastre/cadastre-storage.service';
+import { CADASTRE_STORAGE_SERVICE } from '../../domain/interfaces/base-repository.interface';
+import type { CadastreStorage } from '../../domain/interfaces/cadastre-storage.interface';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
@@ -22,11 +24,11 @@ import { APP_CONFIG } from '../config/app.config';
 export class CadastreController {
   constructor(
     private readonly cadastreImport: CadastreImportService,
-    private readonly assets: CadastreStorageService,
+    @Inject(CADASTRE_STORAGE_SERVICE) private readonly assets: CadastreStorage,
   ) {}
 
   /**
-   * Proxies a tenant's static GeoJSON map layers from Supabase Storage.
+   * Proxies a tenant's static GeoJSON map layers from S3.
    *
    * The frontend's own `public/tenants/<slug>/` copy (committed to git) is
    * this asset's fast path for `cadastre.geojson`/`parcels.geojson` — same
@@ -34,8 +36,9 @@ export class CadastreController {
    * falls back to when that copy is missing, and the only path at all for
    * `parcel-polygons.geojson`/`city-boundary.geojson`, which the frontend
    * never fetches directly. Proxied through this API's own origin rather than
-   * redirected to Supabase's storage host, which the deployed frontend's CSP
-   * `connect-src` does not allow.
+   * redirected to the bucket's own S3 host, which the deployed frontend's CSP
+   * `connect-src` does not allow — the bucket being public-read is what makes
+   * a redirect conceivable, not permitted.
    */
   @Get('assets/:assetName')
   async getAsset(
