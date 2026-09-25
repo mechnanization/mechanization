@@ -225,7 +225,9 @@ jobs:
           if [ -z "$AGE_PUBLIC_KEY" ]; then missing+=(BACKUP_AGE_PUBLIC_KEY); fi
           if [ -z "$ROLE_ARN" ]; then missing+=(AWS_BACKUP_ROLE_ARN); fi
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Production has migrations pending and ${missing[*]} is not set in db-production. Nothing was migrated: a migration is never applied without a backup to go back to."
+            names="${missing[0]}"; verb=is
+            if [ "${#missing[@]}" -gt 1 ]; then names="${missing[0]} and ${missing[1]}"; verb=are; fi
+            echo "::error::Production has migrations pending and $names $verb not set in db-production. Nothing was migrated: a migration is never applied without a backup to go back to."
             exit 1
           fi
           case "$AGE_PUBLIC_KEY" in
