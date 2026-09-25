@@ -244,202 +244,184 @@ never run, being asked to work on the worst day. The rollback plan is:
 
 ## 5. Backups
 
-> **This section describes the Supabase-era backup and has not been adapted to
-> Lightsail.** `backup.yml` cannot reach the database (see the note in §3), and
-> `backup.mjs` still dumps Supabase's `auth` and `storage` schemas, which do not
-> exist on the new server — a run would fail there. Document bytes now live in
-> S3, not Supabase Storage. Until this is rebuilt, **production has no automated
-> backup**; on AWS the floor is a scheduled snapshot of the Lightsail instance
-> plus a nightly `pg_dump`.
+Two kinds, kept apart:
 
-**The production project is on the Supabase free plan, so the platform provides
-nothing here.** Not daily backups, not Point-in-Time Recovery, and no
-downloadable backup in the dashboard. That was checked on 2026-09-16; an earlier
-version of this section told you to go and check it, and nobody had. Until the
-plan changes, [`.github/workflows/backup.yml`](../.github/workflows/backup.yml)
-is the only copy of the register that exists anywhere.
+- **Day-to-day backups of the Lightsail box are taken on the AWS side**, by
+  DevOps, outside this repository. Nothing here schedules them or can see them.
+- **A pre-migration backup of production** is taken by the migration pipeline
+  itself, right before it applies a migration, so a migration that damages data
+  can be undone from the moment before it ran. The rest of this section is
+  about that one.
 
-Upgrading to Pro ($25/mo) restores a floor under all of this — daily backups
-with 7-day retention, and no pausing for inactivity. PITR is a further add-on
-(~$100/mo at 7 days' retention) and is the only thing that actually delivers
-"restore to the second". A nightly backup's honest promise is **at most 24 hours
-of registrations lost**. Do not let anyone round that up to "we have backups, so
-we're covered".
+Retired in September 2026, when the database moved to Lightsail:
 
-### What runs nightly
+- the nightly `backup.yml` workflow. It was built for Supabase and Cloudflare
+  R2, never produced a backup after the move, and was deleted;
+- the in-app **Backup & restore** settings page, which downloaded a
+  municipality's snapshot to the admin's computer and could write one back over
+  the live register. Its tab is removed and its two routes are unregistered
+  (`PresentationModule`) until it is rebuilt on top of the AWS backups.
+  `BackupController`, `BackupService` and `BackupSection` are kept for that.
 
-22:00 UTC, in GitHub Actions rather than Vercel Cron — the backend function is
-capped at 60s and 1 GB, and the team is on the Vercel Hobby plan. The order of
-the steps is the design:
+### The pre-migration backup
+
+It runs inside [`migrate-database.yml`](../.github/workflows/migrate-database.yml),
+after staging has been migrated and before production is, and **only when
+production has something pending**. `node scripts/db/deploy.mjs production --check`
+answers that with its exit code: 0 up to date, 3 pending, anything else
+refused. Most pushes to `main` apply nothing and take no backup.
 
 ```
-dump → prove it restores → encrypt → upload → prove the upload arrived
+dump → prove it restores → encrypt → upload (write-once, checksummed) → migrate
 ```
 
-The restore rehearsal runs against a throwaway Postgres 17 container, on the
-real dump, **before** anything is uploaded. So a dump that cannot be restored
-never becomes your stored backup: the job fails, nothing is uploaded, and the
-previous good backup is still in the bucket. This repository has already been
-bitten by the other arrangement — `BackupService`'s restore was broken for every
-municipality while its rehearsal reported success, because the rehearsal counted
-rows instead of writing them.
-
-Three properties worth keeping if you change this workflow:
+Every arrow is a gate. If any step fails, production is not migrated and the
+code is not deployed.
 
 - **It cannot write to production.** `scripts/db/backup.mjs` opens every
-  connection — its own and `pg_dump`'s — with `default_transaction_read_only=on`
-  and aborts if the server does not confirm it. The server refuses writes; it is
-  not a convention in a comment.
-- **It cannot restore onto anything real.** `scripts/db/verify-restore.mjs`
-  refuses any `--into` that resolves to a known Supabase ref or to a non-loopback
-  host. There is no override flag.
-- **It never deletes.** Uploads use `rclone copy`, never `sync` — `sync` makes
-  the destination match the source, which means it propagates a deletion into
-  your backup. Retention is a bucket lifecycle rule (below), which is what lets
-  the upload token be write-only.
+  connection, its own and `pg_dump`'s, read-only, and aborts unless the server
+  confirms it.
+- **The counts are exact.** The counts in the manifest and the rows in the dump
+  are read from one database snapshot (`pg_export_snapshot`, then
+  `pg_dump --snapshot`), so a restore must reproduce every count exactly, not
+  "at least".
+- **It is restored before it is trusted.** `scripts/db/verify-restore.mjs`
+  restores the real dump into a throwaway Postgres 17 container on the runner
+  and checks every schema, every count and every tenant's migration list. It
+  refuses any address naming a pinned database or role, and any host that is
+  not loopback. There is no override flag.
+- **It is encrypted to a key CI does not hold.** `age`, to
+  `BACKUP_AGE_PUBLIC_KEY`. The private key is held offline by DevOps. The
+  plaintext dump exists only on the runner, and is shredded as soon as it is
+  encrypted, or by the cleanup step if a step before that failed.
+- **It cannot overwrite or delete.** Each file is uploaded with
+  `--if-none-match '*'` (S3 refuses to replace an existing object) and
+  `--checksum-sha256` (S3 refuses bytes that do not match, and the stored
+  checksum is compared again). The role can only `PutObject`. Retention is a
+  bucket lifecycle rule, not something the pipeline can shorten.
 
-### What is backed up, and what is not
+Where it lands:
 
-| | Covered by | |
-| --- | --- | --- |
-| Registry schema (`public`) and every `tenant_*` schema | `pg_dump` → `<base>.dump`, schemas discovered at run time | ✅ |
-| Sequences, triggers, the audit trail | same | ✅ |
-| `auth.users`, `auth.identities` — staff logins and password hashes | `pg_dump` of `auth` → `<base>.auth-storage.dump` | ✅ |
-| `storage.objects`, `storage.buckets` — the rows naming each document | same second archive | ✅ |
-| `documents` and `cadastre` object **bytes** | `rclone copy` of the Supabase S3 endpoint | ✅ |
-| Postgres roles and passwords | nothing — platform-managed, recreated by Supabase | ❌ |
-| Auth providers, redirect URLs, Vercel and GitHub env vars | nothing — see §6 and §7 | ❌ |
+```
+s3://nestjs-db-backups-687326766003-eu-west-3-an/pre-migrate/production-municipality_db-<time>-<commit>/
+    <base>.dump.age         the register, encrypted
+    <base>.manifest.json    schemas, exact counts, migrations, restore order
+    <base>.dump.sha256      checksum of the plaintext dump
+```
 
-A complete backup is **three** things, not one: the register, the `auth` archive,
-and the object bytes. Staff rows in `tenant_*.users` link to `auth.users` by
-**email**, not by id — the ids do not match — and every password hash lives in
-`auth`. A recovery from the register alone returns the municipality's data with
-nobody able to sign in to it, which is why the second archive exists and why the
-restore rehearsal fails if it is not handed both.
-
-Session state (`auth.sessions`, `auth.refresh_tokens`) *is* dumped, because a
-backup that decides for you is a backup with rows missing — but you almost
-certainly do not replay it into a recovered project. That choice belongs to the
-restore, below.
+| Covered | Not covered |
+| --- | --- |
+| The registry (`public`) and every `tenant_*` schema, discovered at run time: rows, sequences, triggers, the audit trail, staff password hashes (`users.passwordHash`) | Document and cadastre **files** (objects in the S3 documents and assets buckets; the rows naming them are covered) |
+| | Postgres roles and passwords, the server `.env`, nginx, pm2, GitHub and Vercel settings |
+| | Staging (a test environment; the backup protects production) |
 
 Schemas are **discovered**, not listed. This is the one place the "allowlist,
 never discover" rule in [AGENTS.md](../AGENTS.md) §4 inverts: that rule governs
 data *leaving*, where a discovered table is incident §8.4. A backup's failure
-mode is the opposite — a table nobody remembered to add, found missing on the
-day it was needed.
+mode is the opposite: a table nobody remembered to add, found missing on the day
+it was needed.
 
-### One-time setup
+### One-time setup (DevOps)
 
-Secrets go in the `db-production` GitHub Environment, beside the existing four:
+1. **The age key.** On a machine that is not CI and not a laptop that travels:
+   `age-keygen -o backup-key.txt`. The public key (`age1…`) goes in the
+   `BACKUP_AGE_PUBLIC_KEY` secret of `db-production`. The private key never goes
+   into GitHub, the server or this repository. **Losing it loses every backup**;
+   there is no recovery path.
+2. **GitHub's OIDC provider in IAM**, once per AWS account:
+   `aws iam create-open-id-connect-provider --url https://token.actions.githubusercontent.com --client-id-list sts.amazonaws.com`
+3. **A role the pipeline assumes**, with this trust policy, which admits only
+   this repository's `db-production` environment:
 
-| Secret | Where it comes from |
-| --- | --- |
-| `BACKUP_AGE_PUBLIC_KEY` | `age-keygen` — see below |
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Cloudflare → R2 → Manage API tokens |
-| `B2_KEY_ID`, `B2_APPLICATION_KEY`, `B2_BUCKET` | Backblaze → Application Keys |
-| `SUPABASE_S3_ACCESS_KEY_ID`, `SUPABASE_S3_SECRET_ACCESS_KEY` | Supabase → Storage → S3 Access Keys |
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Principal": { "Federated": "arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com" },
+       "Action": "sts:AssumeRoleWithWebIdentity",
+       "Condition": { "StringEquals": {
+         "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+         "token.actions.githubusercontent.com:sub": "repo:mechnanization/mechanization:environment:db-production"
+       } }
+     }]
+   }
+   ```
 
-**The age key.** Generate it on a machine that is not CI and not a laptop that
-travels:
+   and this permissions policy, write-only, one prefix:
 
-```bash
-age-keygen -o backup-key.txt      # prints the public key to stderr
-```
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Action": "s3:PutObject",
+       "Resource": "arn:aws:s3:::nestjs-db-backups-687326766003-eu-west-3-an/pre-migrate/*"
+     }]
+   }
+   ```
 
-The **public** key goes in `BACKUP_AGE_PUBLIC_KEY`. The **private** half never
-goes into GitHub, Vercel, or this repository — it lives offline with the
-municipality, and a copy in a sealed envelope somewhere else. CI can encrypt and
-cannot decrypt, which is the entire reason it is acceptable to store a register
-of national ID numbers, addresses and residency status on infrastructure outside
-Lebanon: Cloudflare holds ciphertext, and the question becomes who holds one key.
+   If the bucket encrypts with a customer-managed KMS key, the role also needs
+   `kms:GenerateDataKey` on that key. Put the role's ARN in the
+   `AWS_BACKUP_ROLE_ARN` secret of `db-production`.
+4. **Retention, 90 days**, as a lifecycle rule on the `pre-migrate/` prefix.
+   `put-bucket-lifecycle-configuration` **replaces the bucket's whole lifecycle
+   configuration**: read the existing one first
+   (`get-bucket-lifecycle-configuration`) and add this rule to it, or the rules
+   that expire your other backups are silently removed.
 
-**Losing the private key loses every backup.** There is no recovery path. Treat
-it the way the municipality treats its seal.
+   ```json
+   { "ID": "pre-migrate-90-days", "Filter": { "Prefix": "pre-migrate/" },
+     "Status": "Enabled", "Expiration": { "Days": 90 } }
+   ```
 
-**The R2 token must not be able to delete.** Scope it to object writes only, and
-set the retention rule as a bucket lifecycle policy in Cloudflare rather than as
-a prune step in CI. A token that can delete your backups is how a compromise
-takes the backups too — which is the usual way people find out. Suggested
-lifecycle: expire `db/daily/` after 35 days, keep `storage/` indefinitely.
+   On a versioned bucket, add `"NoncurrentVersionExpiration": { "NoncurrentDays": 90 }`
+   too, or expired backups are kept as hidden versions.
 
-### Before a data-rewriting migration
+Until steps 1–3 are done, a push to `main` with nothing pending works as
+normal, and one **with** a migration pending stops before migrating: "Production
+has migrations pending and … is not set … Nothing was migrated."
 
-Run the workflow manually first — Actions → *Backup production* → Run workflow —
-and wait for it to go green. `workflow_dispatch` takes a `skip_upload` input if
-you only want the restore rehearsal. Do not run a production migration while the
-nightly backup is running: `pg_dump` holds `ACCESS SHARE` on every table for its
-duration, so an `ALTER TABLE` starting mid-dump queues behind it, and every
-query arriving after that queues behind the `ALTER`.
+**Do not schedule the AWS-side `pg_dump` over deploys.** A dump holds
+`ACCESS SHARE` on every table while it runs, so a migration's `ALTER TABLE`
+queues behind it, and every query arriving after that queues behind the
+`ALTER`. The site stalls until the dump finishes.
 
 ### Restoring
 
 Restoring is deliberately not automated. Decrypt with the offline private key,
-then `pg_restore` the schemas you actually need — usually one municipality, not
-the cluster:
+and restore into a **new, empty** database first, never over the live one:
 
 ```bash
-age -d -i backup-key.txt production-<ref>-<stamp>.dump.age > restore.dump
+age -d -i backup-key.txt -o restore.dump <base>.dump.age
 pg_restore --list restore.dump                     # read before you write
-pg_restore --no-owner --no-privileges \
-  --schema=tenant_<slug> --dbname="$TARGET" restore.dump
+createdb -O appuser municipality_db_restore
+psql -d municipality_db_restore -c 'DROP SCHEMA IF EXISTS public CASCADE'
+pg_restore --no-owner --no-privileges --exit-on-error \
+  -d municipality_db_restore restore.dump
 ```
 
-`--list` first, every time.
+**Then verify, do not assume (§5 of [AGENTS.md](../AGENTS.md)).** Compare every
+count in `<base>.manifest.json` against the restored database. Only then decide
+what to move back into production, and how. Usually one municipality, one
+table, or a set of rows, because a whole-database swap discards every write
+made since the dump was taken. The manifest carries these steps in its
+`restoreOrder` field, because during a recovery the manifest is the file you
+have to hand and this document may not be. Delete `restore.dump` afterwards: it
+is the whole register in plaintext.
 
-**Archives taken before tenant migration `0048` need one patch to restore.**
-`search_compact` called `search_normalize` unqualified, and `pg_restore` runs
-with `search_path = ''`, so building `citizen_payments` — whose `searchText` is a
-generated column calling it — stops with `function search_normalize(text) does
-not exist ... during inlining`. The rows are all in the archive; the schema
-cannot be built without the edit. Convert to SQL, qualify the single call, then
-load it:
+Archives taken before tenant migration `0048` (none from this pipeline; every
+database is past it) do not restore with plain `pg_restore`: `search_compact`
+called `search_normalize` unqualified. Convert to SQL, qualify the one call, and
+load that instead:
 
 ```bash
 pg_restore --no-owner --no-privileges -f restore.sql <archive>.dump
 perl -0pi -e 's/(AS \$\$\s*\n\s*SELECT replace\()search_normalize\(/$1tenant_<slug>.search_normalize(/' restore.sql
 psql "$TARGET" -c 'DROP SCHEMA IF EXISTS public CASCADE'
 psql "$TARGET" -v ON_ERROR_STOP=1 -f restore.sql
-rm -f restore.sql      # it is the whole register in plaintext
+rm -f restore.sql
 ```
-
-Once `0048` is applied to a database, its dumps restore with plain `pg_restore`
-and this step is unnecessary. It was found by the restore rehearsal — nothing
-else could have found it, and every archive taken before it has the defect.
-
-Then the logins, from the second archive. This one restores **`--data-only`**:
-a fresh Supabase project has already created `auth` and `storage` itself, owned
-by `supabase_auth_admin` and `supabase_storage_admin`, so replaying the archive's
-DDL would collide with objects the platform put there — and the usual way out of
-that collision at 3am is `--clean`, which turns a recovery into a second
-incident.
-
-```bash
-age -d -i backup-key.txt production-<ref>-<stamp>.auth-storage.dump.age > auth.dump
-pg_restore --list auth.dump
-pg_restore --data-only --no-owner --disable-triggers --dbname="$TARGET" \
-  --table=users --table=identities \
-  --table=buckets --table=objects \
-  auth.dump
-```
-
-Add `--table=sessions --table=refresh_tokens` only if you actually want to
-replay live sessions into the recovered project; normally you do not, and staff
-sign in again.
-
-Finally the object bytes, without which every document link in the restored
-register is dead:
-
-```bash
-rclone copy "r2:$R2_BUCKET/storage/documents/" "supastorage:documents/"
-rclone copy "r2:$R2_BUCKET/storage/cadastre/"  "supastorage:cadastre/"
-```
-
-**Then verify, do not assume (§5 of [AGENTS.md](../AGENTS.md)).** Compare the
-counts in `<base>.manifest.json` against the restored database, and then sign in
-as a staff user. A restore that reports success and cannot be logged into is the
-failure this whole section is built around. The manifest carries its own
-`restoreOrder` field with these same steps, because during a recovery the
-manifest is the file you have to hand and this document may not be.
 
 ---
 
@@ -450,7 +432,7 @@ manifest is the file you have to hand and this document may not be.
 | `apps/backend/.env` | Staging credentials. Gitignored. |
 | `apps/backend/.env.staging` | Staging credentials. Gitignored. |
 | GitHub → Environments → `db-staging` | `STAGING_DATABASE_URL`, `STAGING_DIRECT_URL` |
-| GitHub → Environments → `db-production` | `PRODUCTION_DATABASE_URL`, `PRODUCTION_DIRECT_URL`, **plus** the two `STAGING_` ones: a production run migrates staging first and checks its history. |
+| GitHub → Environments → `db-production` | `PRODUCTION_DATABASE_URL`, `PRODUCTION_DIRECT_URL`, **plus** the two `STAGING_` ones: a production run migrates staging first and checks its history. **Plus** `BACKUP_AGE_PUBLIC_KEY` and `AWS_BACKUP_ROLE_ARN` for the pre-migration backup (§5). Without them, a push with a migration pending stops before migrating. |
 | GitHub → repository secrets | `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY` (the deploy, and the migration tunnel), `SSH_KNOWN_HOSTS` (the tunnel) |
 
 The database URLs name the **runner's end of the tunnel**, not the box. The

@@ -23,6 +23,12 @@ jobs:
   migrate:
     name: migrate staging database
     uses: ./.github/workflows/migrate-database.yml
+    # Staging takes no backup, but the called job declares id-token for the
+    # production path, and a called workflow can only narrow what its caller
+    # grants. The AWS role admits only db-production, so the token is inert here.
+    permissions:
+      contents: read
+      id-token: write
     with:
       target: staging
       # Unset on a push, where it reads as false: pushes apply.

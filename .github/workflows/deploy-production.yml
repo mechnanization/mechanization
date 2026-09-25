@@ -34,6 +34,11 @@ jobs:
   migrate:
     name: migrate production database
     uses: ./.github/workflows/migrate-database.yml
+    # id-token: the pre-migration backup assumes its AWS role through OIDC.
+    # A called workflow can only narrow what its caller grants.
+    permissions:
+      contents: read
+      id-token: write
     with:
       target: production
       dry_run: ${{ inputs.dry_run }}

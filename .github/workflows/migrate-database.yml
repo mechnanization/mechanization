@@ -18,6 +18,12 @@ name: Migrate database
 # history is missing, production reporting no municipalities, a production
 # migration staging has not already run, and data-losing DDL unless
 # `allow_destructive` is passed, which only the manual workflow can do.
+#
+# Before production is migrated, and only when it has something pending, the
+# job takes a backup of it: dumped, restored into a throwaway to prove it
+# restores, encrypted to an offline key, and uploaded to S3. If any of that
+# fails, production is not migrated. A run with nothing pending, which is most
+# runs, takes no backup.
 on:
   workflow_call:
     inputs:
@@ -47,6 +53,21 @@ jobs:
     # db-staging admits only develop. A production run comes from main and
     # reaches staging through the STAGING_* secrets db-production also holds.
     environment: ${{ inputs.target == 'production' && 'db-production' || 'db-staging' }}
+
+    # id-token lets the backup step assume the AWS role through GitHub's OIDC
+    # provider, so no AWS access key is stored anywhere. The role's trust policy
+    # admits only this repository's db-production environment, so a staging run
+    # can mint a token and do nothing with it. Every caller has to grant this.
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      # Named by DevOps. Retention (90 days) is a lifecycle rule on the bucket,
+      # not something this job can set or shorten.
+      PRE_MIGRATE_BUCKET: nestjs-db-backups-687326766003-eu-west-3-an
+      PRE_MIGRATE_PREFIX: pre-migrate
+      PRE_MIGRATE_REGION: eu-west-3
 
     # One migration at a time against this cluster, whichever workflow started
     # it. Prisma takes an advisory lock and the tenant migrator works in
@@ -173,6 +194,153 @@ jobs:
           if [ "$ALLOW_DESTRUCTIVE" = true ]; then args+=(--allow-destructive); fi
           node scripts/db/deploy.mjs staging "${args[@]}"
 
+      - name: Is production behind?
+        id: production
+        if: inputs.target == 'production' && !inputs.dry_run
+        # The guard's own answer, with every check it makes, applying nothing:
+        # exit 0 up to date, 3 pending and allowed, anything else refused.
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          ALLOW_DESTRUCTIVE: ${{ inputs.allow_destructive }}
+        run: |
+          args=(--check --confirm="$CONFIRM")
+          if [ "$ALLOW_DESTRUCTIVE" = true ]; then args+=(--allow-destructive); fi
+          set +e
+          node scripts/db/deploy.mjs production "${args[@]}"
+          code=$?
+          set -e
+          case "$code" in
+            0) echo "pending=false" >> "$GITHUB_OUTPUT" ;;
+            3) echo "pending=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$code" ;;
+          esac
+
+      - name: Refuse to migrate production without a backup
+        if: steps.production.outputs.pending == 'true'
+        env:
+          AGE_PUBLIC_KEY: ${{ secrets.BACKUP_AGE_PUBLIC_KEY }}
+          ROLE_ARN: ${{ secrets.AWS_BACKUP_ROLE_ARN }}
+        run: |
+          missing=()
+          if [ -z "$AGE_PUBLIC_KEY" ]; then missing+=(BACKUP_AGE_PUBLIC_KEY); fi
+          if [ -z "$ROLE_ARN" ]; then missing+=(AWS_BACKUP_ROLE_ARN); fi
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Production has migrations pending and ${missing[*]} is not set in db-production. Nothing was migrated: a migration is never applied without a backup to go back to."
+            exit 1
+          fi
+          case "$AGE_PUBLIC_KEY" in
+            age1*) ;;
+            *) echo "::error::BACKUP_AGE_PUBLIC_KEY is not an age public key (age1…). Nothing was migrated."; exit 1 ;;
+          esac
+
+      - name: Install Postgres 17 client and age
+        if: steps.production.outputs.pending == 'true'
+        # The runner's default client is older than the server, and `pg_dump`
+        # refuses to dump a server newer than itself. The PGDG repository is the
+        # supported way to get a matching pair.
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 age
+          # pg_wrapper picks the newest installed client; say which one it is.
+          pg_dump --version
+          pg_restore --version
+          age --version
+
+      - name: Dump production
+        id: dump
+        if: steps.production.outputs.pending == 'true'
+        # One read-only session, one snapshot for the counts and the dump.
+        # Writes the dump, its manifest and its checksum under RUNNER_TEMP,
+        # which the cleanup step below shreds whatever happens.
+        run: node scripts/db/backup.mjs production --out "$RUNNER_TEMP/pre-migrate"
+
+      - name: Prove the dump restores
+        if: steps.production.outputs.pending == 'true'
+        # Into a container started here and removed below. verify-restore.mjs
+        # refuses any address naming the staging or production database or
+        # role, and any host that is not loopback.
+        env:
+          DUMP: ${{ runner.temp }}/pre-migrate/${{ steps.dump.outputs.dump_file }}
+          MANIFEST: ${{ runner.temp }}/pre-migrate/${{ steps.dump.outputs.manifest_file }}
+        run: |
+          set -euo pipefail
+          docker run -d --name restore-rehearsal \
+            -e POSTGRES_USER=rehearsal -e POSTGRES_PASSWORD=rehearsal -e POSTGRES_DB=rehearsal \
+            -p 127.0.0.1:5439:5432 postgres:17 > /dev/null
+          for _ in $(seq 1 60); do
+            if docker exec restore-rehearsal pg_isready -U rehearsal -d rehearsal > /dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          node scripts/db/verify-restore.mjs --dump "$DUMP" --manifest "$MANIFEST" \
+            --into "postgresql://rehearsal:rehearsal@127.0.0.1:5439/rehearsal"
+
+      - name: Encrypt
+        if: steps.production.outputs.pending == 'true'
+        # To the public key only. This runner can encrypt and cannot decrypt:
+        # the private key is held offline by DevOps and exists nowhere in CI,
+        # on the server, or in this repository. The plaintext is shredded the
+        # moment the encrypted copy exists.
+        env:
+          AGE_PUBLIC_KEY: ${{ secrets.BACKUP_AGE_PUBLIC_KEY }}
+          DUMP: ${{ runner.temp }}/pre-migrate/${{ steps.dump.outputs.dump_file }}
+        run: |
+          set -euo pipefail
+          age -r "$AGE_PUBLIC_KEY" -o "$DUMP.age" "$DUMP"
+          test -s "$DUMP.age"
+          shred -u "$DUMP"
+
+      - name: Assume the backup role
+        if: steps.production.outputs.pending == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_BACKUP_ROLE_ARN }}
+          aws-region: ${{ env.PRE_MIGRATE_REGION }}
+          role-session-name: pre-migrate-${{ github.run_id }}
+
+      - name: Upload to S3
+        if: steps.production.outputs.pending == 'true'
+        # Write-once and checked by S3 itself. `--if-none-match '*'` refuses to
+        # replace an object that already exists, so a backup can never be
+        # overwritten, including by a re-run. `--checksum-sha256` makes S3
+        # reject the upload unless the bytes it stored hash to what was sent,
+        # and the checksum it answers with is compared again here. That is the
+        # proof the upload arrived intact, and it needs no read permission.
+        env:
+          DIR: ${{ runner.temp }}/pre-migrate
+          BASE: ${{ steps.dump.outputs.basename }}
+        run: |
+          set -euo pipefail
+          prefix="$PRE_MIGRATE_PREFIX/$BASE-${GITHUB_SHA::7}"
+          {
+            echo "### Pre-migration backup"
+            echo ""
+            echo "Bucket \`$PRE_MIGRATE_BUCKET\`, prefix \`$prefix/\`"
+            echo ""
+            echo "| File | Bytes | SHA-256 (base64) |"
+            echo "| --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for f in "$BASE.dump.age" "$BASE.manifest.json" "$BASE.dump.sha256"; do
+            path="$DIR/$f"
+            sum=$(openssl dgst -sha256 -binary "$path" | base64)
+            stored=$(aws s3api put-object \
+              --bucket "$PRE_MIGRATE_BUCKET" --key "$prefix/$f" --body "$path" \
+              --checksum-algorithm SHA256 --checksum-sha256 "$sum" \
+              --if-none-match '*' \
+              --query ChecksumSHA256 --output text --no-cli-pager)
+            if [ "$stored" != "$sum" ]; then
+              echo "::error::S3 stored $f with checksum $stored, expected $sum. Nothing was migrated."
+              exit 1
+            fi
+            echo "Uploaded $prefix/$f"
+            echo "| $f | $(stat -c %s "$path") | \`$sum\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
       - name: Migrate production
         if: inputs.target == 'production'
         # In a dry run staging was only reported, not migrated, so production's
@@ -188,13 +356,20 @@ jobs:
           if [ "$ALLOW_DESTRUCTIVE" = true ]; then args+=(--allow-destructive); fi
           node scripts/db/deploy.mjs production "${args[@]}"
 
-      - name: Close the tunnel and remove credentials
+      - name: Close the tunnel, remove credentials and any dump
         if: always()
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           rm -f apps/backend/.env.staging apps/backend/.env.production
+          # The dump directory holds the plaintext register until Encrypt shreds
+          # it; if a step before that failed, this is what removes it.
+          if [ -d "$RUNNER_TEMP/pre-migrate" ]; then
+            find "$RUNNER_TEMP/pre-migrate" -type f -exec shred -u {} +
+            rm -rf "$RUNNER_TEMP/pre-migrate"
+          fi
+          docker rm -f restore-rehearsal > /dev/null 2>&1 || true
           if [ -S "$HOME/.ssh/db_tunnel.sock" ]; then
             ssh -S "$HOME/.ssh/db_tunnel.sock" -O exit "$SSH_USER@$SSH_HOST" || true
           fi

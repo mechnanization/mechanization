@@ -34,6 +34,10 @@
  *
  * Options:
  *   --dry-run              Report everything above, apply nothing. Safe anywhere.
+ *   --check                A dry run whose exit code says whether anything is
+ *                          pending: 0 up to date, 3 pending and every check
+ *                          passed, 1 refused. How the pipeline decides whether
+ *                          to take a pre-migration backup.
  *   --allow-destructive    Permit migrations containing data-losing DDL.
  *   --confirm=<db>         Non-interactive confirmation, for CI. Must equal the
  *                          target's own database name, so a copied staging
@@ -57,6 +61,9 @@ import {
 
 const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
 const { Client } = require('pg');
+
+/** `--check`'s answer for "migrations are pending, and nothing refused them". */
+const PENDING_EXIT_CODE = 3;
 
 const BACKEND = join(ROOT, 'apps', 'backend');
 const REGISTRY_MIGRATIONS = join(BACKEND, 'src/infrastructure/prisma/registry/migrations');
@@ -192,7 +199,8 @@ async function main() {
     );
   }
 
-  const dryRun = flag('dry-run');
+  const check = flag('check');
+  const dryRun = flag('dry-run') || check;
   const target = resolveTarget(targetName);
   const isProduction = target.name === 'production';
 
@@ -326,6 +334,10 @@ async function main() {
 
   if (dryRun) {
     console.log(C.yellow('\n  Dry run complete — nothing was applied.\n'));
+    // Only reached with something pending and every check above passed; up to
+    // date returned early, and a refusal threw. A distinct code, so a pipeline
+    // can branch on "there is work" without reading the output.
+    if (check) process.exitCode = PENDING_EXIT_CODE;
     return;
   }
 
