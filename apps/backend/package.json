@@ -20,6 +20,7 @@
     "backfill:buildings": "ts-node -r tsconfig-paths/register src/scripts/backfill-buildings.ts",
     "backfill:boundaries": "ts-node -r tsconfig-paths/register src/scripts/backfill-parcel-boundaries.ts",
     "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts",
+    "seed:census": "ts-node -r tsconfig-paths/register src/scripts/seed-census.ts",
     "test": "jest",
     "test:e2e": "jest --config test/jest-e2e.json",
     "lint": "eslint \"src/**/*.ts\""
