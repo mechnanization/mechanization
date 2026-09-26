@@ -1,29 +1,48 @@
 /**
  * Local development seed: two provisioned municipalities, staff at every role,
- * and enough citizen data to exercise the dashboard, the map and the taxonomy.
+ * and a register shaped like production's — citizens, filings, cards, reviews,
+ * field re-checks and invoices. What is generated, and why it passes the app's
+ * own validation, is in seed-register.ts.
  *
- *   pnpm --filter @mechanization/backend seed
+ *   pnpm db:seed                      1,500 citizens in Al-Bazourieh, 375 in Zahle
+ *   pnpm db:seed --citizens=3000      Al-Bazourieh at 3,000; Zahle gets a quarter
+ *
+ * It runs only against the local database (municipality_db_local on loopback).
+ * It creates staff accounts whose password it prints, and a register of
+ * invented people; neither belongs anywhere else.
+ *
+ * Re-running is safe. Every id is derived, so rows that exist are skipped and
+ * only what is missing is written.
  *
  * Two tenants rather than one is deliberate — with a single municipality, a
  * tenant-isolation bug looks exactly like working software.
  */
+import 'reflect-metadata';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Client } from 'pg';
 import * as bcrypt from 'bcrypt';
 import { authenticator } from 'otplib';
-import { createClient } from '@supabase/supabase-js';
 import { PrismaClient as RegistryPrismaClient } from '../generated/registry-client';
 import { PrismaClient as TenantPrismaClient } from '../generated/tenant-client';
-import { ReferenceNumber } from '../domain/value-objects/reference-number.vo';
 import { TenantSlug } from '../domain/value-objects/tenant-slug.vo';
 import { migrateTenantSchema } from '../infrastructure/prisma/tenant-migrator';
+import { importCadastre } from './import-parcels';
+import { generateRegister, type Register, type SeedStaff } from './seed-register';
 
-const TENANTS = [
+export const TENANTS = [
   {
     slug: 'albazourieh',
     name: 'Al-Bazourieh',
     nameAr: 'البازورية',
     prefix: 'BZR',
     adminPathSegment: 'admin-portal-a91f',
+    region: 'south' as const,
+    index: 0,
+    /** The survey office's file, relative to apps/backend. */
+    cadastre: 'data/bazoreyye.kmz',
+    share: 1,
   },
   {
     slug: 'zahle',
@@ -31,355 +50,291 @@ const TENANTS = [
     nameAr: 'زحلة',
     prefix: 'ZHL',
     adminPathSegment: 'admin-portal-4c7d',
+    region: 'bekaa' as const,
+    index: 1,
+    cadastre: null,
+    share: 0.25,
   },
 ];
+
+const DEFAULT_CITIZENS = 1500;
 
 /** Development only. Production staff are created by the provisioning flow. */
 const DEV_PASSWORD = 'Password123!';
 
-const supabase =
-  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { autoRefreshToken: false, persistSession: false },
-      })
-    : null;
+/** Every role, and four field inspectors so officer statistics have a spread. */
+const STAFF = [
+  { key: 'admin', local: 'admin', role: 'SUPER_ADMIN', firstName: 'مدير', lastName: 'النظام' },
+  { key: 'auditor', local: 'auditor', role: 'AUDITOR', firstName: 'مدقق', lastName: 'الحسابات' },
+  { key: 'officer', local: 'officer', role: 'ADMINISTRATIVE_OFFICER', firstName: 'موظف', lastName: 'إداري' },
+  { key: 'accountant', local: 'accountant', role: 'ACCOUNTANT', firstName: 'محاسب', lastName: 'البلدية' },
+  { key: 'collector', local: 'collector', role: 'COLLECTOR', firstName: 'جابي', lastName: 'البلدية' },
+  { key: 'inspector1', local: 'inspector', role: 'FIELD_INSPECTOR', firstName: 'مفتش', lastName: 'ميداني' },
+  { key: 'inspector2', local: 'inspector2', role: 'FIELD_INSPECTOR', firstName: 'حسين', lastName: 'قاسم' },
+  { key: 'inspector3', local: 'inspector3', role: 'FIELD_INSPECTOR', firstName: 'زينب', lastName: 'فقيه' },
+  { key: 'inspector4', local: 'inspector4', role: 'FIELD_INSPECTOR', firstName: 'علي', lastName: 'سرور' },
+] as const;
 
-async function syncStaffToSupabase(email: string, password: string, metadata: Record<string, unknown>) {
-  if (!supabase) return;
-  try {
-    const { error } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: metadata,
-    });
-    if (error) {
-      const { data } = await supabase.auth.admin.listUsers();
-      const existing = data?.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
-      if (existing) {
-        await supabase.auth.admin.updateUserById(existing.id, {
-          password,
-          user_metadata: metadata,
-        });
-      }
-    }
-  } catch (err) {
-    console.warn(`  Could not sync ${email} to Supabase: ${(err as Error).message}`);
+/**
+ * Variables that point a process at a shared service. The seed needs none of
+ * them, and the cadastre import would upload over the real cartography bucket
+ * if AWS_REGION and S3_CADASTRE_BUCKET were set. Cleared twice: at start, and
+ * after Prisma has loaded apps/backend/.env.
+ */
+export function clearRemoteCredentials(): void {
+  for (const key of Object.keys(process.env)) {
+    if (/^(AWS_|S3_|SUPABASE_)/.test(key)) delete process.env[key];
   }
 }
 
+/**
+ * Refuses anything but the local database. The guard in scripts/db/ covers
+ * `pnpm dev`; this script is run on its own, and it writes a known password.
+ */
+export function localDatabaseUrl(): string {
+  const raw = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
+  if (!raw) throw new Error('DATABASE_URL is not set. apps/backend/.env names the local database.');
+  const url = new URL(raw);
+  const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  if (database !== 'municipality_db_local' || !['127.0.0.1', 'localhost', '::1'].includes(host)) {
+    throw new Error(
+      `The seed runs only against the local database (municipality_db_local on this machine). ` +
+        `The connection names '${database}' on '${host}'. It creates staff accounts with a published ` +
+        `password and a register of invented people, which belong nowhere else.`,
+    );
+  }
+  return raw;
+}
+
+export function requestedCitizens(): number {
+  const argv = process.argv.slice(2);
+  const inline = argv.find((a) => a.startsWith('--citizens='))?.split('=')[1];
+  const spaced = argv.includes('--citizens') ? argv[argv.indexOf('--citizens') + 1] : undefined;
+  const raw = inline ?? spaced ?? process.env.SEED_CITIZENS;
+  if (raw === undefined) return DEFAULT_CITIZENS;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 50 || n > 50_000) {
+    throw new Error(`--citizens must be a whole number between 50 and 50000 (got '${raw}')`);
+  }
+  return n;
+}
+
 /** A Prisma client bound to one municipality's schema. */
-function tenantClient(schemaName: string): TenantPrismaClient {
-  const url = new URL(process.env.DIRECT_URL ?? process.env.DATABASE_URL!);
+export function tenantClient(connectionString: string, schemaName: string): TenantPrismaClient {
+  const url = new URL(connectionString);
   url.searchParams.set('schema', schemaName);
   return new TenantPrismaClient({ datasources: { db: { url: url.toString() } } });
 }
 
-/**
- * Real parcels from this municipality's cadastre, spread across the whole
- * imported set rather than taken from the front of it.
- *
- * Seeded property numbers have to be real ones wherever a cadastre exists.
- * Invented numbers would now be rejected by the submission path they are meant
- * to demonstrate, and they would plot the sample registrations at coordinates
- * outside the municipality — which is exactly the bug the staff map is supposed
- * to make visible.
- *
- * Returns an empty list for a municipality with no cadastre; the caller falls
- * back to synthetic numbers, which is correct there because nothing validates
- * against a registry that does not exist.
- */
-async function sampleParcels(
+type Tenant = (typeof TENANTS)[number];
+
+async function seedStaff(
   db: TenantPrismaClient,
-  count: number,
-): Promise<Array<{ parcelNumber: string; latitude: number; longitude: number }>> {
-  const total = await db.parcel.count();
-  if (total === 0) return [];
+  tenant: Tenant,
+): Promise<{ ids: SeedStaff; totpSecret: string | null }> {
+  const passwordHash = await bcrypt.hash(DEV_PASSWORD, 12);
 
-  const stride = Math.max(1, Math.floor(total / count));
+  /*
+    The admin's TOTP secret: a fresh one only when the row is first created.
+    `update: {}` means a re-run never touches an existing row, so what gets
+    printed is what the row actually holds. An admin whose 2FA was reset in
+    the app has none, and printing a newly generated secret for them would
+    send someone to an authenticator code that can never work.
+  */
+  const adminEmail = `admin@${tenant.slug}.gov.lb`;
+  const existingAdmin = await db.user.findUnique({
+    where: { email: adminEmail },
+    select: { totpSecret: true, totpConfirmedAt: true },
+  });
+  const newSecret = authenticator.generateSecret();
+  const totpSecret = existingAdmin
+    ? existingAdmin.totpConfirmedAt
+      ? existingAdmin.totpSecret
+      : null
+    : newSecret;
 
-  const picked = await Promise.all(
-    Array.from({ length: count }, (_, index) =>
-      db.parcel.findMany({
-        skip: index * stride,
-        take: 1,
-        orderBy: { parcelNumber: 'asc' },
-        select: { parcelNumber: true, latitude: true, longitude: true },
-      }),
-    ),
-  );
+  const ids: Record<string, string> = {};
+  for (const member of STAFF) {
+    const email = `${member.local}@${tenant.slug}.gov.lb`;
+    const row = await db.user.upsert({
+      where: { email },
+      update: {},
+      create: {
+        kind: 'STAFF',
+        tenantSlug: tenant.slug,
+        email,
+        passwordHash,
+        role: member.role,
+        firstName: member.firstName,
+        lastName: member.lastName,
+        ...(member.role === 'SUPER_ADMIN' ? { totpSecret: newSecret, totpConfirmedAt: new Date() } : {}),
+      },
+      select: { id: true },
+    });
+    ids[member.key] = row.id;
+  }
 
-  return picked.flat();
+  return {
+    totpSecret,
+    ids: {
+      admin: ids.admin,
+      auditor: ids.auditor,
+      officer: ids.officer,
+      accountant: ids.accountant,
+      collector: ids.collector,
+      inspectors: [ids.inspector1, ids.inspector2, ids.inspector3, ids.inspector4],
+    },
+  };
 }
 
-/** Staff at every role plus enough citizen data to exercise the dashboard. */
-async function seedTenant(
-  tenant: (typeof TENANTS)[number],
-  schemaName: string,
-): Promise<void> {
-  const db = tenantClient(schemaName);
+/**
+ * Imports the municipality's survey file if its parcel table is empty, so the
+ * register is generated against real parcel numbers — the ones the citizen
+ * form checks a رقم العقار against. The GeoJSON goes to a temporary folder, not
+ * over the copies committed under apps/frontend/public.
+ */
+async function ensureCadastre(db: TenantPrismaClient, tenant: Tenant): Promise<void> {
+  if (!tenant.cadastre) return;
+  if ((await db.parcel.count()) > 0) return;
+  const file = join(__dirname, '..', '..', tenant.cadastre);
+  if (!existsSync(file)) {
+    console.log(`  ! no cadastre file at ${file}; parcel numbers will not be checked`);
+    return;
+  }
+  await importCadastre({
+    slug: tenant.slug,
+    file,
+    outDir: join(tmpdir(), `mechanization-seed-cadastre-${tenant.slug}`),
+  });
+}
 
+/**
+ * The previous seed's four sample citizens per municipality. They carried map
+ * coordinates, and the register no longer seeds any.
+ */
+async function removePreviousSamples(db: TenantPrismaClient, tenant: Tenant): Promise<void> {
+  const docNumbers = [1001, 1002, 1003, 1004].map((n) => `${tenant.prefix}${n}`);
   try {
-    const passwordHash = await bcrypt.hash(DEV_PASSWORD, 12);
-
-    /**
-     * SUPER_ADMIN gets a confirmed TOTP secret so the seeded account can
-     * actually sign in — `User.assertMayStartSession()` refuses a SUPER_ADMIN
-     * whose enrolment is incomplete, which is the intended production behaviour
-     * and would otherwise lock a developer out of their own seed data.
-     *
-     * `update: {}` below means re-running the seed against an existing tenant
-     * never touches this row, so generating a *new* secret on every run and
-     * printing that would print a value that was never written to the
-     * database — exactly the bug that made a re-seeded admin account
-     * unloggable-into. The existing row's real secret is read back and printed
-     * instead; a fresh one is only generated the first time the row is created.
-     */
-    const existingAdmin = await db.user.findUnique({
-      where: { email: `admin@${tenant.slug}.gov.lb` },
-      select: { totpSecret: true },
+    const { count } = await db.user.deleteMany({
+      where: { kind: 'CITIZEN', identityDocType: 'NATIONAL_ID', identityDocNumber: { in: docNumbers } },
     });
-    const totpSecret = existingAdmin?.totpSecret ?? authenticator.generateSecret();
-
-    await db.user.upsert({
-      where: { email: `admin@${tenant.slug}.gov.lb` },
-      update: {},
-      create: {
-        kind: 'STAFF',
-        tenantSlug: tenant.slug,
-        email: `admin@${tenant.slug}.gov.lb`,
-        passwordHash,
-        role: 'SUPER_ADMIN',
-        firstName: 'مدير',
-        lastName: 'النظام',
-        totpSecret,
-        totpConfirmedAt: new Date(),
-      },
-    });
-
-    await db.user.upsert({
-      where: { email: `auditor@${tenant.slug}.gov.lb` },
-      update: {},
-      create: {
-        kind: 'STAFF',
-        tenantSlug: tenant.slug,
-        email: `auditor@${tenant.slug}.gov.lb`,
-        passwordHash,
-        role: 'AUDITOR',
-        firstName: 'مدقق',
-        lastName: 'الحسابات',
-      },
-    });
-
-    await db.user.upsert({
-      where: { email: `inspector@${tenant.slug}.gov.lb` },
-      update: {},
-      create: {
-        kind: 'STAFF',
-        tenantSlug: tenant.slug,
-        email: `inspector@${tenant.slug}.gov.lb`,
-        passwordHash,
-        role: 'FIELD_INSPECTOR',
-        firstName: 'مفتش',
-        lastName: 'ميداني',
-      },
-    });
-
-    await syncStaffToSupabase(`admin@${tenant.slug}.gov.lb`, DEV_PASSWORD, {
-      role: 'SUPER_ADMIN',
-      tenantSlug: tenant.slug,
-      firstName: 'مدير',
-      lastName: 'النظام',
-    });
-    await syncStaffToSupabase(`auditor@${tenant.slug}.gov.lb`, DEV_PASSWORD, {
-      role: 'AUDITOR',
-      tenantSlug: tenant.slug,
-      firstName: 'مدقق',
-      lastName: 'الحسابات',
-    });
-    await syncStaffToSupabase(`inspector@${tenant.slug}.gov.lb`, DEV_PASSWORD, {
-      role: 'FIELD_INSPECTOR',
-      tenantSlug: tenant.slug,
-      firstName: 'مفتش',
-      lastName: 'ميداني',
-    });
-
-    console.log(`  staff: admin/auditor/inspector@${tenant.slug}.gov.lb (${DEV_PASSWORD})`);
-    console.log(`  SUPER_ADMIN TOTP secret: ${totpSecret}`);
-
-    // ── Citizens + registrations ──────────────────────────────────────
-    // Deliberately covers every branch of the property taxonomy and every
-    // صفة الإقامة, so the dashboard's group-by charts have something to show.
-    const samples = [
-      {
-        firstName: 'علي',
-        lastName: 'حسن',
-        phone: '+96170111222',
-        residentStatus: 'VILLAGE_RESIDENT' as const,
-        docNumber: `${tenant.prefix}1001`,
-        property: {
-          occupancyType: 'OWNER' as const,
-          propertyType: 'BUILDING' as const,
-          neighborhood: 'الزهراء',
-          propertyNumber: `${tenant.prefix}-B-101`,
-          buildingName: 'مبنى الزهراء',
-          latitude: 33.2705,
-          longitude: 35.2038,
-          // A whole building, which is the case the units table exists for —
-          // one رقم العقار, three units. Seeding a single-unit building would
-          // never exercise it.
-          units: {
-            create: [
-              { unitType: 'APARTMENT' as const, floor: '3', unitArea: 120.5 },
-              { unitType: 'APARTMENT' as const, floor: '4', unitArea: 118 },
-              { unitType: 'SHOP' as const, floor: '0', unitArea: 45 },
-            ],
-          },
-        },
-        status: 'PENDING' as const,
-      },
-      {
-        firstName: 'فاطمة',
-        lastName: 'خليل',
-        phone: '+96171333444',
-        residentStatus: 'DISPLACED' as const,
-        docNumber: `${tenant.prefix}1002`,
-        property: {
-          occupancyType: 'TENANT' as const,
-          landlordName: 'سمير مراد',
-          landlordPhone: '+96176555666',
-          propertyType: 'HOUSE' as const,
-          neighborhood: 'الحديقة',
-          propertyNumber: `${tenant.prefix}-H-202`,
-          buildingName: 'منزل الحديقة',
-          unitArea: 85,
-          latitude: 33.2731,
-          longitude: 35.2094,
-        },
-        status: 'UNDER_REVIEW' as const,
-      },
-      {
-        firstName: 'محمد',
-        lastName: 'صالح',
-        phone: '+96103777888',
-        residentStatus: 'REFUGEE' as const,
-        docNumber: `${tenant.prefix}1003`,
-        property: {
-          occupancyType: 'OWNER' as const,
-          propertyType: 'TENT' as const,
-          neighborhood: 'المخيم الشمالي',
-          propertyNumber: `${tenant.prefix}-T-303`,
-          tentLocation: 'مخيم الشمال — قطاع ب',
-          latitude: 33.2688,
-          longitude: 35.1975,
-        },
-        status: 'VERIFIED' as const,
-      },
-      {
-        firstName: 'رانيا',
-        lastName: 'عبدالله',
-        phone: '+96178999000',
-        residentStatus: 'VILLAGE_RESIDENT' as const,
-        docNumber: `${tenant.prefix}1004`,
-        property: {
-          occupancyType: 'OWNER' as const,
-          propertyType: 'LAND' as const,
-          neighborhood: 'الأطراف الشرقية',
-          propertyNumber: `${tenant.prefix}-L-404`,
-          landType: 'AGRICULTURAL' as const,
-          unitArea: 2400,
-          shares: 2400,
-          latitude: 33.2752,
-          longitude: 35.2141,
-        },
-        status: 'APPROVED' as const,
-      },
-    ];
-
-    /**
-     * Where a cadastre exists, the sample properties adopt real parcel numbers
-     * and the survey's own coordinates — the same substitution the live
-     * submission path performs, so the seeded rows are indistinguishable from
-     * ones a citizen filed.
-     */
-    const realParcels = await sampleParcels(db, samples.length);
-    if (realParcels.length > 0) {
-      console.log(
-        `  using real parcels: ${realParcels.map((p) => p.parcelNumber).join(', ')}`,
-      );
-    }
-
-    for (const [sampleIndex, sample] of samples.entries()) {
-      const parcel = realParcels[sampleIndex];
-      if (parcel) {
-        sample.property.propertyNumber = parcel.parcelNumber;
-        sample.property.latitude = parcel.latitude;
-        sample.property.longitude = parcel.longitude;
-      }
-
-      const citizen = await db.user.upsert({
-        where: {
-          identityDocType_identityDocNumber: {
-            identityDocType: 'NATIONAL_ID',
-            identityDocNumber: sample.docNumber,
-          },
-        },
-        update: {},
-        create: {
-          kind: 'CITIZEN',
-          tenantSlug: tenant.slug,
-          phone: sample.phone,
-          whatsapp: sample.phone,
-          firstName: sample.firstName,
-          lastName: sample.lastName,
-          gender: 'MALE',
-          nationality: 'لبناني',
-          isLebanese: sample.residentStatus !== 'REFUGEE',
-          residentStatus: sample.residentStatus,
-          identityDocType: 'NATIONAL_ID',
-          identityDocNumber: sample.docNumber,
-          civilRecordNumber: '12',
-          totalRegisteredMembers: 4,
-          actualHouseholdMembers: 4,
-          maritalStatus: 'MARRIED',
-          referenceNumber: ReferenceNumber.generate(tenant.prefix).value,
-        },
-        select: { id: true },
-      });
-
-      // `findFirst`, not `findUnique`: رقم العقار is no longer unique, because
-      // a building is one cadastral number shared by everyone in it. This is
-      // only re-run protection for the seed itself — it keeps a second
-      // `pnpm db:seed` from stacking duplicate sample registrations onto the
-      // same parcel, which real citizens are explicitly allowed to do.
-      const existing = await db.propertyEntry.findFirst({
-        where: { propertyNumber: sample.property.propertyNumber },
-        select: { id: true },
-      });
-      if (existing) continue;
-
-      await db.registration.create({
-        data: {
-          citizenId: citizen.id,
-          referenceNumber: ReferenceNumber.generate(tenant.prefix).value,
-          status: sample.status,
-          properties: { create: [sample.property as never] },
-        },
-      });
-    }
-
-    console.log(`  ${samples.length} citizens + registrations`);
-  } finally {
-    await db.$disconnect();
+    if (count > 0) console.log(`  removed the previous seed's ${count} sample citizens (they carried map points)`);
+  } catch (error) {
+    // A payment recorded against one of them makes the append-only ledger
+    // refuse the cascade. That is the ledger working; leave them.
+    console.log(`  ! kept the previous seed's sample citizens: ${(error as Error).message.split('\n')[0]}`);
   }
 }
 
-/** Provisions and seeds both demo municipalities. */
-async function main(): Promise<void> {
+async function insertAll(
+  label: string,
+  rows: readonly Record<string, unknown>[],
+  create: (chunk: Record<string, unknown>[]) => Promise<{ count: number }>,
+  written: Record<string, number>,
+): Promise<void> {
+  let count = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    count += (await create(rows.slice(i, i + 500))).count;
+  }
+  written[label] = count;
+}
+
+/** Writes what is missing, in dependency order. Existing ids are skipped. */
+async function writeRegister(
+  db: TenantPrismaClient,
+  schemaName: string,
+  register: Register,
+): Promise<Record<string, number>> {
+  const written: Record<string, number> = {};
+  const skip = { skipDuplicates: true } as const;
+
+  await insertAll('citizens', register.users, (data) => db.user.createMany({ data: data as never, ...skip }), written);
+  await insertAll('registrations', register.registrations, (data) => db.registration.createMany({ data: data as never, ...skip }), written);
+  await insertAll('property cards', register.propertyEntries, (data) => db.propertyEntry.createMany({ data: data as never, ...skip }), written);
+  await insertAll('card units', register.buildingUnits, (data) => db.buildingUnit.createMany({ data: data as never, ...skip }), written);
+  await insertAll('record reviews', register.recordReviews, (data) => db.recordReview.createMany({ data: data as never, ...skip }), written);
+  await insertAll('quality checks', register.qualityChecks, (data) => db.qualityCheck.createMany({ data: data as never, ...skip }), written);
+
+  // One row per municipality; a developer's own settings are left alone.
+  if ((await db.systemSettings.count()) === 0) {
+    await db.systemSettings.create({ data: register.systemSettings as never });
+  }
+  await insertAll('fee notices', register.feeNotices, (data) => db.feeNotice.createMany({ data: data as never, ...skip }), written);
+  await insertAll('invoices', register.invoices, (data) => db.citizenPayment.createMany({ data: data as never, ...skip }), written);
+
+  /*
+    Receipts are numbered from the ledger's own sequence, as
+    PaymentLedgerService numbers them, and only for transactions not already
+    written. Inventing numbers here would leave the sequence behind them, and
+    the app's next real receipt would collide with a seeded one.
+  */
+  const planned = register.transactions;
+  const existing = new Set(
+    (await db.paymentTransaction.findMany({ where: { id: { in: planned.map((t) => t.id) } }, select: { id: true } })).map(
+      (row) => row.id,
+    ),
+  );
+  const fresh = planned.filter((t) => !existing.has(t.id));
+  let receipts: Array<{ n: bigint }> = [];
+  if (fresh.length > 0) {
+    receipts = await db.$queryRawUnsafe<Array<{ n: bigint }>>(
+      `SELECT nextval('"${schemaName}".payment_receipt_seq') AS n FROM generate_series(1, ${fresh.length})`,
+    );
+  }
+  await insertAll(
+    'payment transactions',
+    fresh.map((t, i) => ({
+      ...t,
+      currency: 'LBP',
+      receiptNumber: `RCP-${String(receipts[i].n).padStart(6, '0')}`,
+      note: null,
+    })),
+    (data) => db.paymentTransaction.createMany({ data: data as never, ...skip }),
+    written,
+  );
+
+  return written;
+}
+
+/** Reads the municipality back on a fresh connection: the count, not the exit code. */
+async function readBack(connectionString: string, schemaName: string): Promise<Record<string, number>> {
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    const s = `"${schemaName}"`;
+    const { rows } = await client.query(`
+      SELECT
+        (SELECT count(*) FROM ${s}.users WHERE kind = 'STAFF')::int                     AS staff,
+        (SELECT count(*) FROM ${s}.users WHERE kind = 'CITIZEN')::int                   AS citizens,
+        (SELECT count(*) FROM ${s}.registrations)::int                                  AS registrations,
+        (SELECT count(*) FROM ${s}.registrations WHERE status = 'REQUIRES_REVIEW')::int AS flagged,
+        (SELECT count(*) FROM ${s}.property_entries)::int                               AS cards,
+        (SELECT count(*) FROM ${s}.building_units)::int                                 AS units,
+        (SELECT count(*) FROM ${s}.record_reviews)::int                                 AS reviews,
+        (SELECT count(*) FROM ${s}.quality_checks)::int                                 AS checks,
+        (SELECT count(*) FROM ${s}.citizen_payments)::int                               AS invoices,
+        (SELECT count(*) FROM ${s}.payment_transactions)::int                           AS transactions,
+        (SELECT count(*) FROM ${s}.parcels)::int                                        AS parcels,
+        (SELECT count(*) FROM ${s}.property_entries WHERE latitude IS NOT NULL)::int    AS pinned_cards,
+        (SELECT count(*) FROM ${s}.buildings)::int                                      AS buildings
+    `);
+    return rows[0] as Record<string, number>;
+  } finally {
+    await client.end();
+  }
+}
+
+/** Provisions and seeds both demo municipalities. Exported for seed-census.ts, which builds on it. */
+export async function runSeed(): Promise<void> {
+  clearRemoteCredentials();
+  // Constructing the client is what loads apps/backend/.env into process.env.
   const registry = new RegistryPrismaClient();
-  const ddl = new Client({
-    connectionString: process.env.DIRECT_URL ?? process.env.DATABASE_URL,
-  });
+  clearRemoteCredentials();
+  const connectionString = localDatabaseUrl();
+  const citizens = requestedCitizens();
+  const ddl = new Client({ connectionString });
+  const logins: string[] = [];
 
   try {
     await ddl.connect();
@@ -406,10 +361,54 @@ async function main(): Promise<void> {
         },
       });
 
-      await seedTenant(tenant, schemaName);
-      console.log(`  admin path: /${tenant.slug}/ar/${tenant.adminPathSegment}`);
+      const db = tenantClient(connectionString, schemaName);
+      try {
+        await ensureCadastre(db, tenant);
+        const { ids, totpSecret } = await seedStaff(db, tenant);
+        await removePreviousSamples(db, tenant);
+
+        const parcels = (
+          await db.parcel.findMany({ select: { parcelNumber: true }, orderBy: { parcelNumber: 'asc' } })
+        ).map((p) => p.parcelNumber);
+        const count = tenant.share === 1 ? citizens : Math.max(50, Math.round(citizens * tenant.share));
+
+        const register = generateRegister(
+          { slug: tenant.slug, prefix: tenant.prefix, index: tenant.index, region: tenant.region, nameAr: tenant.nameAr },
+          { citizens: count, parcels, staff: ids },
+        );
+        console.log(
+          `  generated ${count} citizens against ${parcels.length > 0 ? `${parcels.length} real parcels` : 'no cadastre'}; ` +
+            'every filing passed the API validation',
+        );
+
+        const written = await writeRegister(db, schemaName, register);
+        const newRows = Object.entries(written)
+          .filter(([, n]) => n > 0)
+          .map(([label, n]) => `${n} ${label}`);
+        console.log(`  written: ${newRows.length > 0 ? newRows.join(', ') : 'nothing new (already seeded)'}`);
+
+        const on = await readBack(connectionString, schemaName);
+        console.log(
+          `  on the database now: ${on.citizens} citizens (${on.flagged} flagged for review), ${on.cards} cards, ` +
+            `${on.units} units, ${on.reviews} reviews, ${on.checks} field re-checks, ${on.invoices} invoices, ` +
+            `${on.transactions} payments, ${on.staff} staff, ${on.parcels} parcels`,
+        );
+        console.log(`  map points: ${on.pinned_cards} pinned cards, ${on.buildings} census buildings`);
+
+        logins.push(
+          `  ${tenant.nameAr}: http://localhost:3000/${tenant.slug}/ar/${tenant.adminPathSegment}` +
+            `\n    ${STAFF.map((m) => `${m.local}@${tenant.slug}.gov.lb`).join(', ')}` +
+            (totpSecret
+              ? `\n    admin@ TOTP secret: ${totpSecret}`
+              : '\n    admin@ has no 2FA set up (it was reset in the app): it signs in with the password alone'),
+        );
+      } finally {
+        await db.$disconnect();
+      }
     }
 
+    console.log(`\nLogins (password for every account: ${DEV_PASSWORD})`);
+    console.log(logins.join('\n'));
     console.log('\n✓ Seed complete');
   } finally {
     await ddl.end().catch(() => undefined);
@@ -417,7 +416,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(`\n✗ Seed failed: ${error instanceof Error ? error.message : error}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  runSeed().catch((error: unknown) => {
+    console.error(`\n✗ Seed failed: ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  });
+}
