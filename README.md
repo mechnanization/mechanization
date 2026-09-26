@@ -12,8 +12,7 @@ pnpm db:generate
 pnpm db:check                                  # ✓ local → appuser_local@127.0.0.1:5434/municipality_db_local
 docker compose up -d --wait postgres redis     # the local database and cache
 pnpm db:deploy:local                           # registry schema
-pnpm db:seed                                   # 2 municipalities, staff logins, fake citizens
-pnpm --filter @mechanization/backend cadastre:import --slug albazourieh --file data/bazoreyye.kmz --out-dir ../../.cadastre-out
+pnpm db:seed                                   # 2 municipalities, the real parcel map, every staff role, ~1,900 synthetic citizens
 ```
 
 `apps/backend/.env` points at a Postgres 17 container on your own machine
