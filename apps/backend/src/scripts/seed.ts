@@ -278,8 +278,11 @@ async function writeRegister(
   const fresh = planned.filter((t) => !existing.has(t.id));
   let receipts: Array<{ n: bigint }> = [];
   if (fresh.length > 0) {
+    // Qualified the way PaymentLedgerService writes it, the form
+    // raw-sql-is-schema-qualified.spec.ts recognises.
+    const S = `"${schemaName}".`;
     receipts = await db.$queryRawUnsafe<Array<{ n: bigint }>>(
-      `SELECT nextval('"${schemaName}".payment_receipt_seq') AS n FROM generate_series(1, ${fresh.length})`,
+      `SELECT nextval('${S}payment_receipt_seq') AS n FROM generate_series(1, ${fresh.length})`,
     );
   }
   await insertAll(
