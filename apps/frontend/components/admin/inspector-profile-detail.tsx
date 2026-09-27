@@ -302,7 +302,7 @@ export function InspectorProfileDetail({
         />
         <Stat
           icon={Home}
-          label={isAr ? 'العقارات والوحدات' : 'Properties & units'}
+          label={isAr ? 'الوحدات المحتسبة' : 'Billable units'}
           value={data.totalProperties.toLocaleString(locale)}
         />
         <Stat
@@ -316,12 +316,28 @@ export function InspectorProfileDetail({
           value={`$${money(data.paidBalance)}`}
           note={`${data.payouts.length} ${isAr ? 'دفعة مسجلة' : 'payouts'}`}
         />
-        <Stat
-          icon={Clock}
-          label={isAr ? 'المتبقي المستحق' : 'Pending'}
-          value={`$${money(data.pendingBalance)}`}
-          emphasis
-        />
+        {/*
+          Two balances, never both: `pendingBalance` clamps at zero, so an
+          inspector paid more than he earned read as settled here. That can
+          happen without anyone erring — a record corrected away after its
+          payout lowers the total underneath money already handed over — and it
+          is the one figure on this row that asks for something back.
+        */}
+        {(data.overpaidBalance ?? 0) > 0 ? (
+          <Stat
+            icon={Clock}
+            label={isAr ? 'مدفوع بالزيادة' : 'Overpaid'}
+            value={`$${money(data.overpaidBalance ?? 0)}`}
+            emphasis
+          />
+        ) : (
+          <Stat
+            icon={Clock}
+            label={isAr ? 'المتبقي المستحق' : 'Pending'}
+            value={`$${money(data.pendingBalance)}`}
+            emphasis
+          />
+        )}
       </div>
 
       {/*
@@ -508,7 +524,7 @@ export function InspectorProfileDetail({
                       <div className="flex items-center justify-between gap-3 border-t pt-2 sm:justify-end sm:border-t-0 sm:pt-0">
                         <div className="text-end">
                           <div className="text-xs text-muted-foreground">
-                            {item.propertyCount} {isAr ? 'عقار / وحدة' : 'properties'}
+                            {item.propertyCount} {isAr ? 'وحدة محتسبة' : 'units credited'}
                           </div>
                           <div className="text-sm font-extrabold tabular-nums text-success">
                             <bdi>+${money(item.commissionEarned)}</bdi>

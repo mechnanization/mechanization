@@ -18,6 +18,8 @@ import { IdentityService } from '../identity/identity.service';
 import { SessionRevocationService } from '../identity/session-revocation.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import {
+  COMMISSION_RATE,
+  creditBillableUnits,
   payoutAllowance,
   payoutRefusal,
   type InspectorPayoutItem,
@@ -361,8 +363,16 @@ export class StaffService {
 
   /**
    * Field Inspector dashboard performance & commission earnings.
-   * Calculates total registered properties ($1/property), property type breakdown,
-   * paid balance from recorded payouts, and pending balance.
+   *
+   * Earnings are $1 per distinct unit filed — `creditBillableUnits` owns that
+   * rule, and the roster in `listStaff` calls the same function, because this
+   * figure and the roster's used to be two copies of one loop.
+   *
+   * The breakdown below is a different question and keeps its own arithmetic:
+   * it describes every property type this inspector surveyed, land and tents
+   * included, and the card that renders it says so. Work that earns nothing is
+   * still work, and hiding it would make the page a worse record of what the
+   * officer actually did.
    */
   async getInspectorProfile(tenantSlug: string, inspectorId: string): Promise<InspectorProfileResponse> {
     const inspector = await this.db.user.findFirst({
@@ -427,10 +437,29 @@ export class StaffService {
       totalUnits: 0,
     };
 
-    let totalProperties = 0;
+    /*
+      Oldest first, which is not the order this list is rendered in.
+
+      Deduplication has to credit *somebody* for a flat that carries two
+      records, and crediting whoever filed first is the only choice that does
+      not move an inspector's total when an unrelated record is added months
+      later. `registrations` arrives newest-first for display, so the credit
+      pass walks its own copy and the map carries the answer back.
+    */
+    const seenUnits = new Set<string>();
+    const creditedByRegistration = new Map<string, number>();
+    for (const reg of [...registrations].sort(
+      (a, b) => a.submittedAt.getTime() - b.submittedAt.getTime(),
+    )) {
+      creditedByRegistration.set(reg.id, creditBillableUnits(reg.properties, seenUnits));
+    }
+    const totalProperties = seenUnits.size;
 
     const recentRegistrations = registrations.map((reg) => {
-      let regPropertyCount = 0;
+      // What this record added to the total — zero when every flat on it was
+      // already credited to an earlier record, which is the honest figure to
+      // show beside it.
+      const regPropertyCount = creditedByRegistration.get(reg.id) ?? 0;
       const neighborhoods = new Set<string>();
       const propNums = new Set<string>();
       const propTypes = new Set<string>();
@@ -441,7 +470,6 @@ export class StaffService {
         if (p.propertyType) propTypes.add(p.propertyType);
 
         if (p.propertyType === 'BUILDING' && p.units && p.units.length > 0) {
-          regPropertyCount += p.units.length;
           breakdown.buildings++;
           for (const u of p.units) {
             if (u.unitType) propTypes.add(u.unitType);
@@ -457,7 +485,6 @@ export class StaffService {
             breakdown.totalUnits++;
           }
         } else {
-          regPropertyCount += 1;
           if (p.propertyType === 'HOUSE' || p.unitType === 'INDEPENDENT_HOUSE') {
             breakdown.houses++;
           } else if (p.unitType === 'APARTMENT') {
@@ -475,8 +502,6 @@ export class StaffService {
           }
         }
       }
-
-      totalProperties += regPropertyCount;
 
       const citizenName = reg.citizen
         ? [reg.citizen.firstName, reg.citizen.middleName, reg.citizen.lastName]
@@ -496,17 +521,27 @@ export class StaffService {
         neighborhoods: Array.from(neighborhoods),
         propertyNumbers: Array.from(propNums),
         propertyTypes: Array.from(propTypes),
-        commissionEarned: regPropertyCount * 1.0,
+        commissionEarned: regPropertyCount * COMMISSION_RATE,
       };
     });
 
     const distinctCitizenIds = new Set(registrations.map((r) => r.citizenId));
     const totalCitizens = distinctCitizenIds.size;
 
-    const commissionRate = 1.0;
+    const commissionRate = COMMISSION_RATE;
     const totalEarnings = totalProperties * commissionRate;
     const paidBalance = payouts.reduce((sum, p) => sum + Number(p.amount), 0);
     const pendingBalance = Math.max(0, totalEarnings - paidBalance);
+    /*
+      The other side of that clamp, which used to be nowhere.
+
+      `pendingBalance` must not go negative — the payout rule reads it as "the
+      most that may still be paid" — but an inspector paid more than he earned
+      then read as settled, which is the one balance nobody would want hidden.
+      It arises without anyone erring: a record corrected away after its payout
+      lowers the total underneath money already handed over.
+    */
+    const overpaidBalance = Math.max(0, paidBalance - totalEarnings);
 
     const formattedPayouts: InspectorPayoutItem[] = payouts.map((p) => ({
       id: p.id,
@@ -537,6 +572,7 @@ export class StaffService {
       totalEarnings,
       paidBalance,
       pendingBalance,
+      overpaidBalance,
       breakdown,
       recentRegistrations,
       payouts: formattedPayouts,

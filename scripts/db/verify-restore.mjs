@@ -73,11 +73,10 @@ function parseArgs(argv) {
 function assertThrowaway(connectionString) {
   const found = parseConnection(connectionString);
   if (found) {
-    // `local` shares staging's database, so name the environment rather than
-    // the target — "points at staging" is the useful sentence, "points at
-    // local" is not. Same reasoning as `resolveTarget` in targets.mjs.
+    // Every pinned target, `local` included: the developer's own database is
+    // not a throwaway either, and this script drops `public` before restoring.
     const known = Object.entries(TARGETS).find(
-      ([n, t]) => n !== 'local' && (t.database === found.database || t.user === found.user),
+      ([, t]) => t.database === found.database || t.user === found.user,
     );
     if (known) {
       fail(

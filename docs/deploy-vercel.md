@@ -135,7 +135,7 @@ answer true:
 | Vercel | unset (or `false`) | The platform sets `VERCEL`; timers cannot fire there anyway. `crons` below is the schedule. |
 | One long-lived process (container, VM) | `true` | It owns the schedule. Say so rather than relying on the absence of a variable. |
 | Every further replica | `false` | Two processes with in-process timers are two schedulers. See `open-decisions.md` §5. |
-| `pnpm dev` | `false` is recommended | `apps/backend/.env` points at **staging**, so every developer machine left on the default is another scheduler writing to it. |
+| `pnpm dev` | `false` is recommended | `apps/backend/.env` points at the developer's own local database, and a 02:00 billing run changes the data under whatever is being tested. The local `.env` in `database-environments.md` §0.1 sets it. |
 
 An unrecognised value fails the boot. It is not defaulted in either direction:
 guessing `true` gives you a scheduler nobody asked for, guessing `false` stops

@@ -203,7 +203,7 @@ export default function InspectorPayoutHistoryPage({
               icon={TrendingUp}
               label={isAr ? 'إجمالي الأرباح' : 'Total earned'}
               value={`$${money(data.totalEarnings)}`}
-              note={`${data.totalProperties.toLocaleString(locale)} ${isAr ? 'عقار / وحدة' : 'properties & units'}`}
+              note={`${data.totalProperties.toLocaleString(locale)} ${isAr ? 'وحدة محتسبة' : 'billable units'}`}
             />
             <Stat
               icon={Wallet}

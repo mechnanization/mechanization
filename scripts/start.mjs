@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Starts Docker (if needed), then Redis, then the backend, then — only once
-// the backend is actually accepting requests — the frontend. Sequential on
+// Starts the local database and Redis in Docker, then the backend, then — only
+// once the backend is actually accepting requests — the frontend. Sequential on
 // purpose: the frontend's first render fetches from the API, so starting it
 // alongside the backend just means its first few requests fail while the
 // backend is still compiling.
@@ -68,14 +68,14 @@ function dockerAvailable() {
   }
 }
 
-// Redis is a cache, not a dependency — without it the app falls through to
-// Postgres. So probe once, bounded, and move on: never launch Docker Desktop,
-// never wait for it. Waiting cost 90s of dead time on every start for a
-// service the app does not need in order to run. Start Docker yourself if you
-// want the cache; SKIP_DOCKER=1 skips even the probe.
+// The local database runs in Docker, so Docker is required. Redis rides along
+// and stays optional: without it the app falls through to Postgres. Probe
+// once, bounded, and never launch Docker Desktop on the developer's behalf.
+// SKIP_DOCKER=1 skips both services, for someone running that Postgres some
+// other way. It must still answer at the address targets.mjs pins.
 function ensureDockerRunning() {
   if (process.env.SKIP_DOCKER === '1') {
-    console.warn(colorize('! SKIP_DOCKER=1 — skipping redis, app will fall through to Postgres', YELLOW));
+    console.warn(colorize('! SKIP_DOCKER=1 — not starting postgres or redis; the database must already be up on 127.0.0.1:5434', YELLOW));
     return false;
   }
 
@@ -84,19 +84,30 @@ function ensureDockerRunning() {
     return true;
   }
 
-  console.warn(
+  console.log(
     colorize(
-      '! docker not running or unresponsive — skipping redis, app will fall through to Postgres',
-      YELLOW,
+      '> docker    not running or unresponsive — the local database runs in Docker. Start Docker Desktop, then run this again.',
+      RED,
     ),
   );
-  return false;
+  process.exit(1);
 }
 
 if (ensureDockerRunning()) {
   try {
-    // Bounded for the same reason the probe is: a half-wedged engine can
-    // accept the connection and then never answer.
+    // --wait returns once the healthchecks pass, so the backend never boots
+    // against a database that is still initialising. Bounded for the same
+    // reason the probe is: a half-wedged engine can accept the connection and
+    // then never answer.
+    execSync('docker compose up -d --wait postgres', { stdio: 'ignore', timeout: 120_000 });
+    console.log(statusLine('postgres', 'running on', '127.0.0.1:5434/municipality_db_local'));
+  } catch {
+    console.log(
+      colorize('> postgres  failed to start — run `docker compose up -d --wait postgres` to see why', RED),
+    );
+    process.exit(1);
+  }
+  try {
     execSync('docker compose up -d redis', { stdio: 'ignore', timeout: 30_000 });
     console.log(statusLine('redis', 'running on', 'redis://localhost:6379'));
   } catch {

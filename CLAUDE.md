@@ -14,7 +14,9 @@ are the ones that matter most.
 
 2. **Name the target.** `pnpm db:deploy:staging`, never bare
    `prisma migrate deploy` / `tenant:migrate-all`. `apps/backend/.env` is pinned
-   to staging and must stay that way; `pnpm dev` writes to staging.
+   to the local Docker database (`municipality_db_local`, `127.0.0.1:5434`) and
+   must stay that way; `pnpm dev` never touches staging or production. The local
+   database holds seeded data only — never a copy of staging or production.
 
 3. **Never edit an applied migration.** Fix forward. The tenant migrator tracks
    by folder name, so an edit silently diverges staging from production.
@@ -23,8 +25,8 @@ are the ones that matter most.
    contract. `--allow-destructive` asserts you verified the data is safe; it is
    never a way past an error.
 
-5. **Citizen data never leaves staging** — not to production, not to a file, not
-   to a log. When copying data: allowlist tables, filter at the SELECT, and
+5. **Citizen data never leaves staging** — not to production, not to a laptop's
+   local database, not to a file, not to a log. When copying data: allowlist tables, filter at the SELECT, and
    assert zero citizens afterwards.
 
 6. **A blocked action is an answer.** If a trigger, permission layer or

@@ -8,6 +8,7 @@ import {
   StaffSummary,
   UserRepository,
 } from '../../domain/interfaces/user-repository.interface';
+import { COMMISSION_RATE, creditBillableUnits } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../context/tenant-context.service';
 
 @Injectable()
@@ -302,26 +303,38 @@ export class PrismaUserRepository implements UserRepository {
 
     const staffIds = rows.map((r) => r.id);
 
-    // Query registrations created by each staff member (field inspector)
+    // Query registrations created by each staff member (field inspector).
+    //
+    // Oldest first, because `creditBillableUnits` credits a flat to whoever
+    // filed it first and an unordered read would hand the dollar to whichever
+    // record Postgres happened to return first.
     const registrations = await this.db.registration.findMany({
       where: { createdById: { in: staffIds } },
+      orderBy: { submittedAt: 'asc' },
       select: {
         id: true,
         createdById: true,
         citizenId: true,
         properties: {
+          // `endReason` on both levels and the unit's type and census link are
+          // what the earnings rule reads; selecting only `id` here is what let
+          // this list disagree with the inspector's own page.
           select: {
             id: true,
             propertyType: true,
+            endReason: true,
             units: {
-              select: { id: true },
+              select: { id: true, unitId: true, unitType: true, endReason: true },
             },
           },
         },
       },
     });
 
-    const inspectorStats = new Map<string, { citizens: Set<string>; propertyCount: number }>();
+    const inspectorStats = new Map<
+      string,
+      { citizens: Set<string>; units: Set<string> }
+    >();
     for (const reg of registrations) {
       if (reg.createdById === null) continue;
       // Prisma's payload type keeps createdById as `string | null` here even after the
@@ -330,16 +343,13 @@ export class PrismaUserRepository implements UserRepository {
       const createdById = reg.createdById as string;
       const citizenId = reg.citizenId;
       const existing = inspectorStats.get(createdById);
-      const stat = existing ?? { citizens: new Set<string>(), propertyCount: 0 };
+      const stat = existing ?? { citizens: new Set<string>(), units: new Set<string>() };
       if (!existing) inspectorStats.set(createdById, stat);
       stat.citizens.add(citizenId);
-      for (const p of reg.properties) {
-        if (p.propertyType === 'BUILDING' && p.units.length > 0) {
-          stat.propertyCount += p.units.length;
-        } else {
-          stat.propertyCount += 1;
-        }
-      }
+      // One dollar per distinct unit. The set spans this inspector's whole
+      // history rather than one registration, so the owner's file and the
+      // tenant's file for one flat are counted once between them.
+      creditBillableUnits(reg.properties, stat.units);
     }
 
     // Query recorded payouts for each inspector
@@ -359,10 +369,13 @@ export class PrismaUserRepository implements UserRepository {
     return rows.map((row) => {
       const stats = inspectorStats.get(row.id);
       const regCitizens = stats ? stats.citizens.size : 0;
-      const regProperties = stats ? stats.propertyCount : 0;
-      const totalEarnings = regProperties * 1.0;
+      const regProperties = stats ? stats.units.size : 0;
+      const totalEarnings = regProperties * COMMISSION_RATE;
       const paid = payoutSums.get(row.id) ?? 0;
       const pending = Math.max(0, totalEarnings - paid);
+      // See StaffSummary.overpaidBalance: the half of the clamp that used to
+      // be invisible, so the roster can show money owed back.
+      const overpaid = Math.max(0, paid - totalEarnings);
 
       return {
         id: row.id,
@@ -386,6 +399,7 @@ export class PrismaUserRepository implements UserRepository {
         totalEarnings,
         paidBalance: paid,
         pendingBalance: pending,
+        overpaidBalance: overpaid,
         createdAt: row.createdAt.toISOString(),
         lastLoginAt: row.lastLoginAt?.toISOString() ?? null,
       };

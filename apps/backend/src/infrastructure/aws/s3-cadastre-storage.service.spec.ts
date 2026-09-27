@@ -19,8 +19,8 @@ import { S3CadastreStorageService } from './s3-cadastre-storage.service';
  *
  * The third is *when* configuration is read. This adapter is bound in a
  * `@Global` module, so Nest builds it during bootstrap on every machine — and a
- * developer's `apps/backend/.env` is pinned to staging while only production's
- * objects were migrated into S3. An adapter that demanded AWS variables in its
+ * developer's `apps/backend/.env` is pinned to a local database while only
+ * production's objects were migrated into S3. An adapter that demanded AWS variables in its
  * constructor would be asking developers to point `pnpm dev` at the production
  * buckets in order to boot. So construction must stay silent, and the
  * complaint — naming the variable — must arrive on the first call that actually

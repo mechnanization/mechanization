@@ -38,29 +38,44 @@ export const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..
  * `appuser_staging` holds no CONNECT on the production database, so a staging
  * file that somehow named `municipality_db` still could not open it. Neither is
  * a secret; the passwords they pair with stay in the ignored dotenv files.
+ *
+ * The exception is `local`, which is not behind a tunnel and so does have an
+ * address worth pinning (see its entry).
  */
 export const TARGETS = {
   /**
-   * A developer's machine. Deliberately pointed at *staging*: there is no local
-   * Postgres stack (`docker-compose.yml` runs Redis alone), so "local" describes
-   * where the process runs, not where the data is.
+   * A developer's machine, and the database on it: the `postgres` service in
+   * `docker-compose.yml`, which holds seeded, synthetic data and nothing else.
    *
-   * The consequence worth stating plainly: `pnpm dev` writes to the staging
-   * database. That is the trade this repository already made; what the guard
-   * adds is that it can never be the production one.
+   * Until 2026-09-25 this target was pinned to the staging database, so
+   * `pnpm dev` read and wrote staging. That is how six migrations from
+   * never-merged branches ended up applied there. Its own database and role
+   * mean a laptop now reaches staging only by naming the `staging` target.
+   *
+   * It is also the one target whose host identifies it. It is not behind a
+   * tunnel: it is a container published on loopback port 5434, and 5433 is the
+   * tunnel port. So a `local` URL on any other address is refused, even one
+   * carrying the right names. That covers the day someone creates
+   * `appuser_local` on the Lightsail cluster to "keep the data off laptops".
+   *
+   * `forbid` lists the targets whose names may not appear anywhere in this
+   * file, comments included (see the marker check in `resolveTarget`).
    */
   local: {
-    database: 'municipality_db_staging',
-    user: 'appuser_staging',
+    database: 'municipality_db_local',
+    user: 'appuser_local',
+    hosts: ['127.0.0.1:5434', 'localhost:5434', '[::1]:5434'],
     envFile: 'apps/backend/.env',
     nodeEnv: 'development',
-    label: 'local dev → staging database',
+    label: 'local Docker database',
+    forbid: ['staging', 'production'],
   },
   /**
-   * The same database as `local`, reached with the production `NODE_ENV`. Kept
-   * as its own target because CI writes this file from the `STAGING_*` secrets;
-   * a developer machine does not need it, since `local` already names this
-   * database.
+   * The staging database on the Lightsail box. CI writes this file from the
+   * `STAGING_*` secrets, and it is the only source the production deploy's
+   * promotion check will read. A laptop needs it only to migrate or inspect
+   * staging by hand. Delete it afterwards: while it exists, this machine can
+   * migrate staging.
    */
   staging: {
     database: 'municipality_db_staging',
@@ -68,6 +83,7 @@ export const TARGETS = {
     envFile: 'apps/backend/.env.staging',
     nodeEnv: 'production',
     label: 'staging',
+    forbid: ['production'],
   },
   production: {
     database: 'municipality_db',
@@ -75,16 +91,28 @@ export const TARGETS = {
     envFile: 'apps/backend/.env.production',
     nodeEnv: 'production',
     label: 'PRODUCTION — live municipal records',
+    forbid: [],
   },
 };
 
 /**
- * The retired Supabase production project. It still holds a full copy of the
- * register until it is deleted, so a non-production file naming it is refused
- * exactly as before the move — a guard that forgot the old address the day the
- * data moved would have forgotten it while the data was still there.
+ * The retired Supabase projects, keyed by the environment each one served.
+ * Production's still holds a full copy of the register until it is deleted, so
+ * a file forbidden from naming production is refused for naming it too. A
+ * guard that forgot the old address the day the data moved would have
+ * forgotten it while the data was still there. Staging's is listed for the
+ * same reason, one level down: the local file must not reach it either.
  */
-const LEGACY_SUPABASE_PRODUCTION_REF = 'thbgwfbcqdougbjvgvyw';
+const LEGACY_SUPABASE_REFS = {
+  production: 'thbgwfbcqdougbjvgvyw',
+  staging: 'lzgbjcwtzqyrbeoolvdz',
+};
+
+/** Every name that identifies `owner`: its database, its role, its retired Supabase ref. */
+function markersOf(owner) {
+  const target = TARGETS[owner];
+  return [target.database, target.user, LEGACY_SUPABASE_REFS[owner]].filter(Boolean);
+}
 
 /**
  * Pulls the role, host and database out of a Postgres connection string.
@@ -177,12 +205,7 @@ function identifierPattern(name) {
 
 /** Which target a database name belongs to, for error messages. */
 function ownerOf(database) {
-  // 'local' shares staging's database, so name the *database's* environment —
-  // "belongs to staging" is the useful sentence, "belongs to local" is not.
-  return (
-    Object.entries(TARGETS).find(([n, t]) => t.database === database && n !== 'local')?.[0] ??
-    'no known target'
-  );
+  return Object.entries(TARGETS).find(([, t]) => t.database === database)?.[0] ?? 'no known target';
 }
 
 export class TargetError extends Error {}
@@ -263,6 +286,12 @@ export function resolveTarget(name, { root = ROOT } = {}) {
         `${key} connects as '${found.user}', but target '${name}' is pinned to role '${target.user}'`,
       );
     }
+    if (target.hosts && !target.hosts.includes(found.host.toLowerCase())) {
+      problems.push(
+        `${key} points at '${found.host}', but target '${name}' only lives at ` +
+          `${target.hosts.join(' / ')} (the postgres service in docker-compose.yml)`,
+      );
+    }
   }
 
   // The pin covers the database, not the schema inside it, and two parameters
@@ -290,18 +319,17 @@ export function resolveTarget(name, { root = ROOT } = {}) {
   // line or a stray comment behind — is caught here even when the two URLs
   // above happen to be right. This is the check that catches a duplicated key,
   // where the parser keeps one value and a different tool keeps the other.
-  if (name !== 'production') {
-    const raw = readFileSync(envPath, 'utf8');
-    const markers = [
-      TARGETS.production.database,
-      TARGETS.production.user,
-      LEGACY_SUPABASE_PRODUCTION_REF,
-    ];
-    for (const marker of markers) {
+  //
+  // Each target names the environments it must never mention: production for
+  // staging, and both for the local file, since a staging line left in
+  // `apps/backend/.env` is one edit away from `pnpm dev` writing to staging.
+  const raw = readFileSync(envPath, 'utf8');
+  for (const owner of target.forbid) {
+    for (const marker of markersOf(owner)) {
       if (identifierPattern(marker).test(raw)) {
         problems.push(
-          `${target.envFile} mentions '${marker}', which belongs to production. ` +
-            `Nothing outside the production target may reference it.`,
+          `${target.envFile} mentions '${marker}', which belongs to ${owner}. ` +
+            `Nothing outside the ${owner} target may reference it.`,
         );
       }
     }

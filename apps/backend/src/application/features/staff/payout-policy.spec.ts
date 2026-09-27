@@ -1,25 +1,31 @@
 import { payoutAllowance, payoutRefusal } from '@mechanization/shared-schemas';
 
 /*
-  The payout rule, as the server enforces it: nothing before $100 of lifetime
-  earnings, then at most $50 per week — weeks counted in sevens of days from the
-  first payout — and never more than is owed.
+  The payout rule, as the server enforces it: at most $50 per week — weeks
+  counted in sevens of days from the first payout — and never more than is owed.
+
+  The $100 lifetime threshold was removed on 2026-09-27 at the municipality's
+  decision; it had stopped four of six officers from being paid anything. The
+  first test below is the one that used to assert it, inverted: a small balance
+  is now payable in full.
 */
 const noon = (day: string) => `${day}T12:00:00.000Z`;
 
 describe('payoutAllowance', () => {
-  it('refuses anything before lifetime earnings reach $100', () => {
+  it('pays a small balance in full — there is no lifetime threshold', () => {
     const allowance = payoutAllowance({
-      totalEarnings: 99,
-      pendingBalance: 99,
+      totalEarnings: 8,
+      pendingBalance: 8,
       payouts: [],
       paidAt: noon('2026-09-01'),
     });
-    expect(allowance).toEqual({ allowed: false, reason: 'BELOW_THRESHOLD', shortBy: 1 });
-    expect(payoutRefusal(allowance, 10)).toContain('100$');
+    expect(allowance).toMatchObject({ allowed: true, reason: 'OK', owed: 8, maxAmount: 8 });
+    expect(payoutRefusal(allowance, 8)).toBeNull();
+    // Still never more than is owed.
+    expect(payoutRefusal(allowance, 8.01)).not.toBeNull();
   });
 
-  it('allows up to $50 on the first payout once $100 is reached', () => {
+  it('allows up to $50 on the first payout', () => {
     const allowance = payoutAllowance({
       totalEarnings: 100,
       pendingBalance: 100,
@@ -38,8 +44,8 @@ describe('payoutAllowance', () => {
     expect(payoutRefusal(allowance, 50.01)).not.toBeNull();
   });
 
-  it('keeps the threshold met after payouts bring the balance down', () => {
-    // Earned $120, paid $50: still over $100 lifetime, so the rule is the weekly cap.
+  it('caps the week after an earlier payout, whatever the lifetime total', () => {
+    // Earned $120, paid $50: the only rule left is the weekly cap.
     const allowance = payoutAllowance({
       totalEarnings: 120,
       pendingBalance: 70,

@@ -473,7 +473,7 @@ export default function StaffDashboard({
 
               <div className="rounded-lg border bg-card/80 p-3.5 sm:p-4 shadow-sm">
                 <p className="text-xs font-medium text-muted-foreground">
-                  {locale === 'en' ? 'Properties Registered by You' : 'العقارات والوحدات المسجلة بواسطتك'}
+                  {locale === 'en' ? 'Billable Units Registered by You' : 'الوحدات المحتسبة المسجلة بواسطتك'}
                 </p>
                 <p className="mt-1.5 text-2xl font-bold tracking-tight text-foreground">
                   {loadingInspector ? '...' : (inspectorData?.totalProperties ?? 0)}

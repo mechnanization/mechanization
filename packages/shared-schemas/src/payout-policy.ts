@@ -1,11 +1,24 @@
 /**
  * When a field inspector may be paid, and how much.
  *
- * Nothing before their lifetime earnings reach $100 — once reached, it stays
- * reached. After that, at most $50 in any one week, where the weeks are counted
- * in sevens of days from the date of their very first payout: first paid on the
- * 1st, the weeks run 1st–7th, 8th–14th, and so on, and the allowance comes back
- * whole at the start of each. Never more than is still owed.
+ * At most $50 in any one week, where the weeks are counted in sevens of days
+ * from the date of their very first payout: first paid on the 1st, the weeks
+ * run 1st–7th, 8th–14th, and so on, and the allowance comes back whole at the
+ * start of each. Never more than is still owed.
+ *
+ * There used to be a second rule: nothing at all before lifetime earnings
+ * reached $100. It was removed on 2026-09-27 at the municipality's decision.
+ * It had stopped four of six officers from being paid anything — and the
+ * corrected unit counts lowered every total, which pushed more people under it
+ * rather than fewer. Someone who has surveyed thirty flats has earned thirty
+ * dollars; making them wait on a round number was a rule about tidiness, not
+ * about money being owed.
+ *
+ * The constant is gone rather than set to zero. A threshold of zero is a
+ * branch that can never fire and a refusal message nobody can ever read, which
+ * is the shape AGENTS.md §8.7 is about: a control that cannot fail for the
+ * right reason looks like coverage and is worse than none. The weekly cap
+ * remains, because it still refuses things.
  *
  * One function for both sides of the wire. The server refuses a payout this
  * rejects — that is the check that protects the money — and the payout dialog
@@ -13,8 +26,6 @@
  * server will accept and why.
  */
 
-/** Lifetime earnings an inspector must reach before any payout. */
-export const PAYOUT_THRESHOLD = 100;
 /** The most paid out within one payout week. */
 export const PAYOUT_WEEKLY_CAP = 50;
 /** A payout week, in days, counted from the first payout. */
@@ -53,12 +64,6 @@ export interface PayoutPolicyInput {
 
 export type PayoutAllowance =
   | {
-      allowed: false;
-      reason: 'BELOW_THRESHOLD';
-      /** How far their lifetime earnings still are from the threshold. */
-      shortBy: number;
-    }
-  | {
       allowed: boolean;
       reason: 'OK' | 'WEEK_USED' | 'NOTHING_OWED';
       /** First and last day of the payout week `paidAt` falls in, as ISO dates. */
@@ -88,15 +93,6 @@ function isoDay(day: number): string {
  * block every payout after it.
  */
 export function payoutAllowance(input: PayoutPolicyInput): PayoutAllowance {
-  const earned = cents(input.totalEarnings);
-  if (earned < cents(PAYOUT_THRESHOLD)) {
-    return {
-      allowed: false,
-      reason: 'BELOW_THRESHOLD',
-      shortBy: (cents(PAYOUT_THRESHOLD) - earned) / 100,
-    };
-  }
-
   const day = dayNumber(input.paidAt);
   const anchor = Math.min(day, ...input.payouts.map((payout) => dayNumber(payout.paidAt)));
   const start = anchor + Math.floor((day - anchor) / PAYOUT_WEEK_DAYS) * PAYOUT_WEEK_DAYS;
@@ -127,9 +123,6 @@ export function payoutAllowance(input: PayoutPolicyInput): PayoutAllowance {
  * dialog and the server both show — or null when it can.
  */
 export function payoutRefusal(allowance: PayoutAllowance, amount: number): string | null {
-  if (allowance.reason === 'BELOW_THRESHOLD') {
-    return `لا يمكن صرف أي مبلغ قبل أن تبلغ أرباح المفتش ${PAYOUT_THRESHOLD}$ — المتبقي لبلوغها ${allowance.shortBy.toFixed(2)}$.`;
-  }
   if (allowance.reason === 'NOTHING_OWED') {
     return 'لا يوجد رصيد مستحق لهذا المفتش.';
   }

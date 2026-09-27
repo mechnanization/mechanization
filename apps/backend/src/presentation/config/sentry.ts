@@ -14,10 +14,9 @@ import { scrubEvent } from './sentry-redaction';
  * a few milliseconds earlier.
  *
  * **Unset DSN means disabled, and that is a supported state**, not a
- * degradation. There is no local Postgres here and `pnpm dev` already writes to
- * staging (AGENTS.md §2) — an SDK that also shipped every developer's stack
- * traces into the production issue stream would make the stream unreadable
- * within a week. It is equally deliberate that this does *not* become a boot
+ * degradation. `pnpm dev` runs against each developer's own local database
+ * (AGENTS.md §2) — an SDK that shipped every developer's stack traces into the
+ * production issue stream would make the stream unreadable within a week. It is equally deliberate that this does *not* become a boot
  * requirement in production: §8.7 is a whole incident about an env guard that
  * enforced a boot failure rather than a working path, and a municipality whose
  * API refuses to start because an observability vendor is unreachable has been

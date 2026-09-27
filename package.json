@@ -14,6 +14,7 @@
     "db:migrate": "pnpm --filter @mechanization/backend prisma:migrate:registry",
     "db:migrate:tenant": "pnpm --filter @mechanization/backend prisma:migrate:tenant",
     "db:seed": "pnpm --filter @mechanization/backend seed",
+    "db:seed:census": "pnpm --filter @mechanization/backend seed:census",
     "db:check": "node scripts/db/check.mjs",
     "db:test": "node --test \"scripts/db/*.test.mjs\"",
     "db:status:local": "node scripts/db/deploy.mjs local --dry-run",

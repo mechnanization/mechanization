@@ -47,11 +47,20 @@ function money(value: number, locale: string): string {
  * below add up to, so a figure that looks wrong can be traced to the row that
  * made it.
  *
- * Only `FIELD_INSPECTOR` accounts appear. The commission is $1 per registered
- * property and the backend computes it for every staff row, so widening this
- * list is a one-word change — but a card that reads «$0.00» for an accountant
- * who was never going to survey anything is a row to scroll past, not
- * information.
+ * Who appears: every `FIELD_INSPECTOR`, and anyone else who actually filed
+ * something or has already been paid. The commission is $1 per distinct unit
+ * and the backend computes it for every staff row, so the question was only
+ * ever which rows are worth showing.
+ *
+ * Role alone was the wrong test. It hid a SUPER_ADMIN who had filed records
+ * and accrued a real balance — the profile page showed it, no roster did, and
+ * the «تسجيل دفعة» button lives here, so there was no way to settle up with
+ * him. Filing work is what earns, so filing work is what puts a row on this
+ * page.
+ *
+ * The original reasoning still holds at the other end: an accountant who was
+ * never going to survey anything is a «$0.00» row to scroll past, not
+ * information. Having filed nothing and been paid nothing, they stay off it.
  */
 export function InspectorEarningsRoster({
   tenant,
@@ -87,7 +96,12 @@ export function InspectorEarningsRoster({
   });
 
   const inspectors = useMemo(() => {
-    const rows = (data?.items ?? []).filter((row) => row.role === 'FIELD_INSPECTOR');
+    const rows = (data?.items ?? []).filter(
+      (row) =>
+        row.role === 'FIELD_INSPECTOR' ||
+        (row.registeredPropertiesCount ?? 0) > 0 ||
+        (row.paidBalance ?? 0) > 0,
+    );
     /*
       Largest outstanding balance first, because that is the column this page
       exists to clear. Disabled accounts sink to the bottom whatever they are
@@ -112,8 +126,9 @@ export function InspectorEarningsRoster({
           earned: sum.earned + (row.totalEarnings ?? 0),
           paid: sum.paid + (row.paidBalance ?? 0),
           pending: sum.pending + (row.pendingBalance ?? 0),
+          overpaid: sum.overpaid + (row.overpaidBalance ?? 0),
         }),
-        { citizens: 0, properties: 0, earned: 0, paid: 0, pending: 0 },
+        { citizens: 0, properties: 0, earned: 0, paid: 0, pending: 0, overpaid: 0 },
       ),
     [inspectors],
   );
@@ -182,12 +197,15 @@ export function InspectorEarningsRoster({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <Stat
           icon={UsersRound}
-          label={isAr ? 'المفتشون الميدانيون' : 'Field inspectors'}
+          // Not «المفتشون الميدانيون» any more: the list now includes anyone who
+          // filed work, and a tile that counts them under an inspector's title
+          // would misname the admin row sitting underneath it.
+          label={isAr ? 'من سجّل بيانات' : 'People who filed'}
           value={inspectors.length.toLocaleString(locale)}
         />
         <Stat
           icon={Home}
-          label={isAr ? 'العقارات والوحدات' : 'Properties & units'}
+          label={isAr ? 'الوحدات المحتسبة' : 'Billable units'}
           value={totals.properties.toLocaleString(locale)}
           note={`${totals.citizens.toLocaleString(locale)} ${isAr ? 'مواطن مسجَّل' : 'citizens registered'}`}
         />
@@ -205,6 +223,11 @@ export function InspectorEarningsRoster({
           icon={Clock}
           label={isAr ? 'إجمالي المتبقي' : 'Total pending'}
           value={`$${money(totals.pending, locale)}`}
+          note={
+            totals.overpaid > 0
+              ? `$${money(totals.overpaid, locale)} ${isAr ? 'مدفوع بالزيادة' : 'overpaid'}`
+              : undefined
+          }
           emphasis
           className="col-span-2 xl:col-span-1"
         />
@@ -294,6 +317,9 @@ function InspectorCard({
   const earned = inspector.totalEarnings ?? 0;
   const paid = inspector.paidBalance ?? 0;
   const pending = inspector.pendingBalance ?? 0;
+  // `pendingBalance` clamps at zero, so money owed back showed as a settled
+  // row. Never both: one is zero whenever the other is not.
+  const overpaid = inspector.overpaidBalance ?? 0;
 
   const facts: Array<{ label: string; value: string; className?: string }> = [
     { label: isAr ? 'الصفة' : 'Role', value: roleLabel },
@@ -322,7 +348,7 @@ function InspectorCard({
   const figures: Array<{ label: string; value: string; className?: string }> = [
     { label: isAr ? 'المواطنون' : 'Citizens', value: citizens.toLocaleString(locale) },
     {
-      label: isAr ? 'العقارات والوحدات' : 'Properties & units',
+      label: isAr ? 'الوحدات المحتسبة' : 'Billable units',
       value: properties.toLocaleString(locale),
     },
     { label: isAr ? 'إجمالي الأرباح' : 'Earned', value: `$${money(earned, locale)}` },
@@ -332,11 +358,11 @@ function InspectorCard({
       className: 'text-success',
     },
     {
-      label: isAr ? 'المتبقي المستحق' : 'Pending',
-      value: `$${money(pending, locale)}`,
+      label: overpaid > 0 ? (isAr ? 'مدفوع بالزيادة' : 'Overpaid') : isAr ? 'المتبقي المستحق' : 'Pending',
+      value: `$${money(overpaid > 0 ? overpaid : pending, locale)}`,
       className: cn(
         'font-bold',
-        pending > 0 ? 'text-warning' : 'text-muted-foreground',
+        overpaid > 0 ? 'text-destructive' : pending > 0 ? 'text-warning' : 'text-muted-foreground',
       ),
     },
   ];
