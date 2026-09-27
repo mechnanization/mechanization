@@ -1926,10 +1926,11 @@ export async function endOccupancy(
   tenant: string,
   token: string,
   occupancyId: string,
-  input: { reason: OccupancyEndReason; toDate?: string } & AfterTenancyAnswer,
+  input: { reason: OccupancyEndReason; toDate?: string; newOwnerId?: string } & AfterTenancyAnswer,
 ) {
   const { toDate, ...rest } = input;
-  const result = await apiFetch<EndTenancyResult | { ownerSpellEnded: true }>(
+  // An owner's spell ends an ownership — `EndOwnershipResult`; anyone else's, a tenancy.
+  const result = await apiFetch<EndTenancyResult | EndOwnershipResult>(
     tenant,
     `/buildings/occupancies/${encodeURIComponent(occupancyId)}/end`,
     {
@@ -1937,6 +1938,122 @@ export async function endOccupancy(
       method: 'PATCH',
       body: JSON.stringify(toDate ? { ...rest, toDate } : rest),
     },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+// ─────────────────────────────  «إنهاء الملكية»  ─────────────────────────────
+
+/** A tenant whose card names this owner as the landlord of a flat. */
+export interface OwnershipLinkedTenant {
+  citizenId: string;
+  name: string;
+  propertyEntryId: string;
+}
+
+/**
+ * What ending an ownership would touch — read before the dialog asks anything,
+ * so it asks only what applies to these flats.
+ */
+export interface OwnershipPreview {
+  owner: { id: string; name: string; nonResident: boolean };
+  propertyType: string | null;
+  propertyNumber: string | null;
+  /** When the ownership was recorded — a sale cannot be dated before it. */
+  startedAt: string | null;
+  units: Array<{
+    unitId: string;
+    unitCode: string;
+    buildingCode: string;
+    /** Co-owners keep the flat, and its status. */
+    otherOwners: string[];
+    /** A buyer among these already owns the flat, and keeps that ownership as it is. */
+    otherOwnerIds: string[];
+    /** A buyer among these lives there as tenant or occupant — their tenancy ends first. */
+    occupantIds: string[];
+    /** «يسكنها المالك» or «مسكن موسمي» — a status about this owner. */
+    ownerLivedThere: boolean;
+    /** On a sale, what the flat is now has to be said. */
+    needsStatus: boolean;
+    dwelling: boolean;
+    linkedTenants: OwnershipLinkedTenant[];
+  }>;
+  /** Every current row on the card, in the form's order — what the dialog chooses from. */
+  rows: Array<{
+    rowId: string;
+    unitId: string | null;
+    unitCode: string | null;
+    unitType: string | null;
+    floor: string | null;
+    unitArea: number | null;
+    needsStatus: boolean;
+    otherOwners: string[];
+    linkedTenants: OwnershipLinkedTenant[];
+  }>;
+}
+
+/** What ending an ownership changed. */
+export interface EndOwnershipResult {
+  reason: 'OWNERSHIP_TRANSFERRED' | 'RECORDED_IN_ERROR';
+  endedAt: string;
+  occupanciesEnded: number;
+  rowsEnded: number;
+  endedRowIds: string[];
+  cardsEnded: number;
+  statusApplied: AfterTenancyStatus | null;
+  newOwnerRecorded: boolean;
+  casesOpened: number;
+  vacanciesConfirmed: number;
+  tenantsReleased: Array<{
+    tenantId: string;
+    tenantName: string;
+    propertyEntryId: string;
+    mode: 'RELEASED' | 'SPLIT';
+  }>;
+  /** The flats whose ownership ended — for «سجِّل المالك الجديد الآن». */
+  units: Array<{ unitId: string; unitCode: string; buildingId: string }>;
+}
+
+export type EndOwnershipAnswer = {
+  reason: 'OWNERSHIP_TRANSFERRED' | 'RECORDED_IN_ERROR';
+  endedAt?: string;
+  rowIds?: string[];
+  newOwnerId?: string;
+} & AfterTenancyAnswer;
+
+/** Whether a result is an ownership's — the matrix's end returns either kind. */
+export function isOwnershipResult(result: EndTenancyResult | EndOwnershipResult): result is EndOwnershipResult {
+  return 'tenantsReleased' in result;
+}
+
+export function getOwnershipEndPreview(tenant: string, token: string, propertyEntryId: string) {
+  return apiFetch<OwnershipPreview>(
+    tenant,
+    `/citizens/ownerships/${encodeURIComponent(propertyEntryId)}/end-preview`,
+    { token },
+  );
+}
+
+export function getOccupancyOwnershipPreview(tenant: string, token: string, occupancyId: string) {
+  return apiFetch<OwnershipPreview>(
+    tenant,
+    `/buildings/occupancies/${encodeURIComponent(occupancyId)}/ownership-preview`,
+    { token },
+  );
+}
+
+/** «إنهاء الملكية» on an owner's card — the same operation the unit matrix runs for an owner. */
+export async function endOwnership(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  input: EndOwnershipAnswer,
+) {
+  const result = await apiFetch<EndOwnershipResult>(
+    tenant,
+    `/citizens/ownerships/${encodeURIComponent(propertyEntryId)}/end`,
+    { token, method: 'POST', body: JSON.stringify(input) },
   );
   invalidateCensus(tenant);
   return result;

@@ -10,6 +10,7 @@ import {
   Calendar,
   Clock3,
   DoorOpen,
+  KeyRound,
   Droplet,
   ExternalLink,
   FileDigit,
@@ -76,6 +77,7 @@ import { Money } from '@/components/ui/money';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
+import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
 import { CompleteRecordDialog } from '@/components/admin/complete-record-dialog';
 import { EmptyState, LoadingState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
@@ -2144,6 +2146,7 @@ function PropertyCard({
 }) {
   const [unlinkOpen, setUnlinkOpen] = useState(false);
   const [endOpen, setEndOpen] = useState(false);
+  const [endOwnershipOpen, setEndOwnershipOpen] = useState(false);
   const Icon = PROPERTY_ICON[property.propertyType] ?? Building2;
   const isTenant = property.occupancyType === 'TENANT';
   /*
@@ -2614,7 +2617,34 @@ function PropertyCard({
               ) : null}
             </Button>
           ) : null}
+          {/*
+            «إنهاء الملكية» — sold, inherited, gifted, or never theirs. The
+            owner's twin of «إنهاء الإيجار»; where the entry holds several
+            flats the dialog asks which, so it needs no count here.
+          */}
+          {property.occupancyType === 'OWNER' && !ended && canEdit && token ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 transition-transform duration-150 ease-out active:scale-[0.97] motion-reduce:transform-none"
+              onClick={() => setEndOwnershipOpen(true)}
+            >
+              <KeyRound className="size-4" aria-hidden />
+              {locale === 'en' ? 'End ownership' : 'إنهاء الملكية'}
+            </Button>
+          ) : null}
         </div>
+        {property.occupancyType === 'OWNER' && !ended && canEdit && token ? (
+          <EndOwnershipDialog
+            tenant={tenant}
+            token={token}
+            source={{ kind: 'card', propertyEntryId: property.id }}
+            open={endOwnershipOpen}
+            onOpenChange={setEndOwnershipOpen}
+            onEnded={onChanged}
+            locale={locale}
+          />
+        ) : null}
         {isNonOwner && !ended && canEdit && token ? (
           <EndTenancyDialog
             tenant={tenant}

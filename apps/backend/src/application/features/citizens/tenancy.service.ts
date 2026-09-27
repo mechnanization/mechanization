@@ -15,6 +15,7 @@ import { claimsFlat } from '../../../domain/entities/census-claim';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CasesService } from '../cases/cases.service';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
+import { OwnershipService, type EndOwnershipResult } from './ownership.service';
 import {
   LandlordLinkService,
   type PendingEvent,
@@ -66,6 +67,7 @@ export class TenancyService {
     private readonly cases: CasesService,
     private readonly links: LandlordLinkService,
     private readonly events: EventEmitter2,
+    private readonly ownership: OwnershipService,
   ) {}
 
   private get db() {
@@ -121,13 +123,17 @@ export class TenancyService {
 
   /**
    * The matrix's «إنهاء الإشغال». An owner's spell is not a tenancy — a sale or
-   * a correction of who owns the flat — and keeps its own path.
+   * a correction of who owns the flat — and goes through `OwnershipService`,
+   * the same operation «إنهاء الملكية» runs from the owner's file. It used to
+   * go to `BuildingsService.endOccupancy`, which unlinked the flat from the
+   * owner's card instead of ending the card's row, so the seller kept being
+   * billed from the row it left behind.
    */
   async endOccupancy(
     occupancyId: string,
-    input: EndInput & { reason: string },
+    input: EndInput & { reason: string; newOwnerId?: string },
     actor: Actor,
-  ): Promise<EndTenancyResult | { ownerSpellEnded: true }> {
+  ): Promise<EndTenancyResult | EndOwnershipResult> {
     const occupancy = await this.db.unitOccupancy.findUnique({
       where: { id: occupancyId },
       select: { role: true },
@@ -135,12 +141,23 @@ export class TenancyService {
     if (!occupancy) throw new NotFoundError('سجل الإشغال غير موجود');
 
     if (occupancy.role === 'OWNER') {
-      await this.buildings.endOccupancy(
+      if (input.reason !== 'OWNERSHIP_TRANSFERRED' && input.reason !== 'RECORDED_IN_ERROR') {
+        throw new ValidationError('إنهاء ملكية يكون ببيع أو نقل ملكية، أو لأنها سُجِّلت بالخطأ', {
+          reason: input.reason,
+        });
+      }
+      return this.ownership.endOccupancy(
         occupancyId,
-        { toDate: input.endedAt, reason: input.reason },
+        {
+          reason: input.reason,
+          endedAt: input.endedAt,
+          newOwnerId: input.newOwnerId,
+          afterStatus: input.afterStatus,
+          vacancyBasis: input.vacancyBasis,
+          vacancyNotes: input.vacancyNotes,
+        },
         actor,
       );
-      return { ownerSpellEnded: true };
     }
 
     if (input.reason !== 'MOVED_OUT' && input.reason !== 'RECORDED_IN_ERROR') {

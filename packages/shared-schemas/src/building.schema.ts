@@ -956,6 +956,8 @@ export const endOccupancySchema = z
      * recorded in the flat. The server says when it is missing.
      */
     ...afterTenancyFields,
+    /** An owner's sale from the matrix: the buyer, when registered. See `endOwnershipSchema`. */
+    newOwnerId: uuid.optional(),
   })
   .superRefine(refineAfterTenancy);
 
@@ -986,6 +988,54 @@ export const endTenancySchema = z
   .superRefine(refineAfterTenancy);
 
 export type EndTenancyInput = z.infer<typeof endTenancySchema>;
+
+/**
+ * «إنهاء الملكية» — an owner no longer holds a property, or never did.
+ *
+ * The owner's half of `endTenancySchema`, and the same shape on purpose: the
+ * two dialogs ask the same questions in the same order.
+ *
+ *  - `OWNERSHIP_TRANSFERRED` — sold, inherited, gifted: it ended on `endedAt`.
+ *    The card stays on the seller's file as history, their flats close on that
+ *    day, and they stop being billed for them from then.
+ *  - `RECORDED_IN_ERROR` — the ownership was never true. Closed as of now and
+ *    kept only as evidence, hidden from the flat's history.
+ *
+ * `newOwnerId` names the buyer when they are already registered; they are
+ * recorded owner of the same flats from the day of the sale. The after-status
+ * fields are asked only for a flat the seller lived in and nobody else owns —
+ * the server says when they are missing. `OWNER_OCCUPIED` there means «the new
+ * owner lives there», so it needs `newOwnerId`.
+ */
+export const endOwnershipSchema = z
+  .object({
+    reason: z.enum(['OWNERSHIP_TRANSFERRED', 'RECORDED_IN_ERROR'], {
+      errorMap: () => ({ message: 'حدِّد ماذا حدث للملكية' }),
+    }),
+    endedAt: pastDate('تاريخ البيع غير صالح').optional(),
+    rowIds: z.array(uuid).min(1, 'حدِّد الوحدات التي انتهت ملكيتها').max(60).optional(),
+    newOwnerId: uuid.optional(),
+    ...afterTenancyFields,
+  })
+  .superRefine((value, ctx) => {
+    refineAfterTenancy(value, ctx);
+    if (value.newOwnerId && value.reason !== 'OWNERSHIP_TRANSFERRED') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['newOwnerId'],
+        message: 'المالك الجديد يُسجَّل عند البيع أو نقل الملكية فقط',
+      });
+    }
+    if (value.afterStatus === 'OWNER_OCCUPIED' && !value.newOwnerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['afterStatus'],
+        message: 'اختر المالك الجديد لتسجيل أنه يسكنها، أو اختر «لا أعرف»',
+      });
+    }
+  });
+
+export type EndOwnershipInput = z.infer<typeof endOwnershipSchema>;
 
 /**
  * «ربط بالمالك» from the unit — names which of the flat's recorded owners a

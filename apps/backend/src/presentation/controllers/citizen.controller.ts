@@ -12,16 +12,19 @@ import {
   adminCreateCitizenSubmissionSchema,
   adminUpdateCitizenSubmissionSchema,
   citizenImportSchema,
+  endOwnershipSchema,
   endTenancySchema,
 } from '@mechanization/shared-schemas';
 import type {
   AdminCitizenSubmission,
   AdminCitizenUpdateSubmission,
   CitizenImportRequest,
+  EndOwnershipInput,
   EndTenancyInput,
 } from '@mechanization/shared-schemas';
 import { CitizensService } from '../../application/features/citizens/citizens.service';
 import { LandlordLinkService } from '../../application/features/citizens/landlord-link.service';
+import { OwnershipService } from '../../application/features/citizens/ownership.service';
 import { TenancyService } from '../../application/features/citizens/tenancy.service';
 import { ReportingService } from '../../application/features/reporting/reporting.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
@@ -72,6 +75,7 @@ export class CitizenController {
     private readonly reporting: ReportingService,
     private readonly landlordLinkService: LandlordLinkService,
     private readonly tenancy: TenancyService,
+    private readonly ownership: OwnershipService,
   ) {}
 
   /**
@@ -313,6 +317,44 @@ export class CitizenController {
         endedAt: body.endedAt,
         rowIds: body.rowIds,
         unitIds: body.unitIds,
+        afterStatus: body.afterStatus,
+        vacancyBasis: body.vacancyBasis,
+        vacancyNotes: body.vacancyNotes,
+      },
+      { id: user.sub, role: user.role ?? 'STAFF' },
+    );
+  }
+
+  /**
+   * What ending this ownership would touch — which flats, whether a co-owner
+   * keeps each, whether the seller lived there, which tenants' links name them
+   * — so «إنهاء الملكية» asks only what applies.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Get('ownerships/:propertyEntryId/end-preview')
+  ownershipEndPreview(@Param('propertyEntryId') propertyEntryId: string) {
+    return this.ownership.previewCard(propertyEntryId);
+  }
+
+  /**
+   * «إنهاء الملكية» from the owner's file: sold (the card stays as history,
+   * the buyer recorded or asked for) or recorded in error. The same operation
+   * the unit matrix runs for an owner's spell.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Post('ownerships/:propertyEntryId/end')
+  endOwnership(
+    @Param('propertyEntryId') propertyEntryId: string,
+    @Body(new ZodValidationPipe(endOwnershipSchema)) body: EndOwnershipInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.ownership.endCard(
+      propertyEntryId,
+      {
+        reason: body.reason,
+        endedAt: body.endedAt,
+        rowIds: body.rowIds,
+        newOwnerId: body.newOwnerId,
         afterStatus: body.afterStatus,
         vacancyBasis: body.vacancyBasis,
         vacancyNotes: body.vacancyNotes,

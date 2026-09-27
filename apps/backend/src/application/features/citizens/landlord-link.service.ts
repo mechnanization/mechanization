@@ -10,7 +10,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../../../domain/e
 import { BuildingsService } from '../buildings/buildings.service';
 import type { FileLinkResult } from '../buildings/building.types';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
-import { cardClaiming } from '../../../domain/entities/census-claim';
+import { cardClaiming, claimsFlat } from '../../../domain/entities/census-claim';
 import { foldNamePart } from './possible-duplicates';
 
 /**
@@ -2171,6 +2171,178 @@ export class LandlordLinkService {
   }
 
   /**
+   * An owner sold flats their tenants' links name — release those links.
+   *
+   * ## Why a sale cannot leave the link standing
+   *
+   * A link says «this card's flats are rented from X», and
+   * `reconcileRegistration` acts on it: on the tenant's next save it puts X on
+   * every flat the card names that X's footprint does not cover. Leave the link
+   * after a sale and the first edit of the tenant's phone number quietly makes
+   * the seller the owner again — the sale undone by nobody.
+   *
+   * ## What is kept, and where
+   *
+   * The link was true until the sale, so this is `detachUnits`' KEEP, never a
+   * revert: what it wrote on the seller's file stays theirs (now ended by the
+   * sale), and those flats leave the footprint so no later undo can delete that
+   * history. Then, per card:
+   *
+   *  - **Every flat on it was sold** — the link itself ends. The card keeps the
+   *    seller as its written landlord (filled in from the register where the
+   *    link had supplied it, so the card still validates), and the seller is
+   *    recorded as dismissed, so the owner-link queue does not offer them again
+   *    for this card.
+   *  - **Some were not** — the sold flats move to a card of their own, carrying
+   *    the same written landlord and no link; the rest stay linked.
+   *
+   * Either way the tenancy itself is untouched: the tenant still lives there and
+   * pays what they paid. Linking them to the new owner is a person's decision,
+   * and the caller opens a case asking for it.
+   */
+  async releaseForSale(input: {
+    ownerId: string;
+    unitIds: readonly string[];
+    buildingIds: readonly string[];
+  }): Promise<{ released: SaleRelease[]; events: PendingEvent[] }> {
+    const sold = [...new Set(input.unitIds)];
+    if (sold.length === 0) return { released: [], events: [] };
+
+    const cards = await this.db.propertyEntry.findMany({
+      where: {
+        landlordCitizenId: input.ownerId,
+        endedAt: null,
+        occupancyType: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+        OR: [
+          { units: { some: { unitId: { in: sold }, endedAt: null } } },
+          { buildingId: { in: [...new Set(input.buildingIds)] } },
+        ],
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        registrationId: true,
+        occupancyType: true,
+        propertyType: true,
+        buildingId: true,
+        landlordName: true,
+        landlordPhone: true,
+        landlordLinkFootprint: true,
+        landlordLinkDismissedIds: true,
+        registration: {
+          select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } } },
+        },
+        units: { where: { endedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, unitId: true } },
+      },
+    });
+    if (cards.length === 0) return { released: [], events: [] };
+
+    const seller = await this.db.user.findUnique({
+      where: { id: input.ownerId },
+      select: { firstName: true, middleName: true, lastName: true, phone: true },
+    });
+    const sellerName = seller ? fullName(seller) : null;
+
+    const released: SaleRelease[] = [];
+    const events: PendingEvent[] = [];
+
+    for (const card of cards) {
+      const tenantId = card.registration.citizen.id;
+      // Which sold flats this card claims — the census's own rule, over the tenant's spells.
+      const spells = card.buildingId
+        ? await this.db.unitOccupancy.findMany({
+            where: { citizenId: tenantId, toDate: null, unit: { buildingId: card.buildingId } },
+            select: { unitId: true, role: true },
+          })
+        : [];
+      /*
+        A row names its flat. A card with no rows claims by inference, and a
+        مبنى card with none "claims" every flat of its structure — so there the
+        tenant must also be recorded living in the flat that was sold, or a sale
+        of the flat next door would release their link.
+      */
+      const claimed = sold.filter((unitId) =>
+        card.units.length > 0
+          ? card.units.some((row) => row.unitId === unitId)
+          : spells.some((spell) => spell.unitId === unitId && spell.role !== 'OWNER') &&
+            claimsFlat([card], spells, unitId)(card),
+      );
+      if (claimed.length === 0) continue;
+
+      const soldRows = card.units.filter((row) => row.unitId && claimed.includes(row.unitId));
+      const keptRows = card.units.filter((row) => !soldRows.includes(row));
+
+      const detached = await this.detachUnits(this.db, {
+        entryId: card.id,
+        ownerId: input.ownerId,
+        footprint: card.landlordLinkFootprint,
+        unitIds: claimed,
+        cardEnded: false,
+        mode: 'KEEP',
+      });
+      events.push(...detached.events);
+
+      /*
+        The written landlord the card is left with. A link can have supplied it
+        (the registration form's owner prefill writes the agreement, not the
+        tenant's words), and a tenancy card with no landlord fails the next save
+        of the tenant's file — so the register's own record of the seller fills
+        a blank, and never overwrites what the tenant said.
+      */
+      const writtenLandlord = {
+        landlordName: card.landlordName?.trim() || sellerName,
+        landlordPhone: card.landlordPhone?.trim() || seller?.phone || null,
+      };
+      const dismissed = [...new Set([...card.landlordLinkDismissedIds, input.ownerId])];
+
+      if (keptRows.length === 0) {
+        await this.db.propertyEntry.update({
+          where: { id: card.id },
+          data: {
+            ...writtenLandlord,
+            landlordCitizenId: null,
+            landlordLinkFootprint: Prisma.DbNull,
+            landlordLinkDismissedIds: dismissed,
+          },
+        });
+        released.push({
+          propertyEntryId: card.id,
+          tenantId,
+          tenantName: fullName(card.registration.citizen),
+          unitIds: claimed,
+          mode: 'RELEASED',
+        });
+        continue;
+      }
+
+      // Some flats stay with the seller: only the sold ones leave this card.
+      await this.db.propertyEntry.update({
+        where: { id: card.id },
+        data: { landlordLinkFootprint: (detached.data.landlordLinkFootprint ?? card.landlordLinkFootprint) as never },
+      });
+      const movedTo: string[] = [];
+      for (const row of soldRows) {
+        const newCardId = await this.moveRowToOwnCard(card, row.id);
+        await this.db.propertyEntry.update({
+          where: { id: newCardId },
+          data: { ...writtenLandlord, landlordLinkDismissedIds: [input.ownerId] },
+        });
+        movedTo.push(newCardId);
+      }
+      released.push({
+        propertyEntryId: card.id,
+        tenantId,
+        tenantName: fullName(card.registration.citizen),
+        unitIds: claimed,
+        mode: 'SPLIT',
+        movedToCardIds: movedTo,
+      });
+    }
+
+    return { released, events };
+  }
+
+  /**
    * Whether a card the owner filed themselves — not one a link created —
    * claims this flat, in either of the two shapes the census sync reads a
    * claim from: an itemised tick, or a منزل on a one-unit structure.
@@ -2964,4 +3136,16 @@ export interface UnlinkPreview {
 export interface ReconcileResult {
   updated: number;
   blocked: Array<{ propertyEntryId: string; block: LinkBlock }>;
+}
+
+/** One tenant card whose link to a seller a sale released — see `releaseForSale`. */
+export interface SaleRelease {
+  propertyEntryId: string;
+  tenantId: string;
+  tenantName: string;
+  /** The sold flats this card claimed. */
+  unitIds: string[];
+  /** `RELEASED`: the whole link ended. `SPLIT`: the sold flats moved to cards of their own. */
+  mode: 'RELEASED' | 'SPLIT';
+  movedToCardIds?: string[];
 }

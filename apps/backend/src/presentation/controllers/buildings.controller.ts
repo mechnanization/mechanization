@@ -30,6 +30,7 @@ import {
 import { BuildingsService } from '../../application/features/buildings/buildings.service';
 import { DamageService } from '../../application/features/buildings/damage.service';
 import { TenancyService } from '../../application/features/citizens/tenancy.service';
+import { OwnershipService } from '../../application/features/citizens/ownership.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
@@ -77,6 +78,7 @@ export class BuildingsController {
     private readonly buildings: BuildingsService,
     private readonly damage: DamageService,
     private readonly tenancy: TenancyService,
+    private readonly ownership: OwnershipService,
   ) {}
 
   private actor(user: SessionClaims) {
@@ -316,9 +318,21 @@ export class BuildingsController {
         afterStatus: body.afterStatus,
         vacancyBasis: body.vacancyBasis,
         vacancyNotes: body.vacancyNotes,
+        newOwnerId: body.newOwnerId,
       },
       this.actor(user),
     );
+  }
+
+  /**
+   * What ending an owner's spell would touch — the same preview «إنهاء الملكية»
+   * reads from the owner's file, reached from the flat. Refused, with the way
+   * out, when the owner's card covers the whole structure without naming flats.
+   */
+  @Roles(...WRITE_ROLES)
+  @Get('occupancies/:occupancyId/ownership-preview')
+  ownershipPreview(@Param('occupancyId') occupancyId: string) {
+    return this.ownership.previewOccupancy(occupancyId);
   }
 
   // ──────────────────────────────  Visits  ──────────────────────────────
