@@ -187,7 +187,7 @@ export function InspectorEarningsRoster({
         />
         <Stat
           icon={Home}
-          label={isAr ? 'العقارات والوحدات' : 'Properties & units'}
+          label={isAr ? 'الوحدات المحتسبة' : 'Billable units'}
           value={totals.properties.toLocaleString(locale)}
           note={`${totals.citizens.toLocaleString(locale)} ${isAr ? 'مواطن مسجَّل' : 'citizens registered'}`}
         />
@@ -322,7 +322,7 @@ function InspectorCard({
   const figures: Array<{ label: string; value: string; className?: string }> = [
     { label: isAr ? 'المواطنون' : 'Citizens', value: citizens.toLocaleString(locale) },
     {
-      label: isAr ? 'العقارات والوحدات' : 'Properties & units',
+      label: isAr ? 'الوحدات المحتسبة' : 'Billable units',
       value: properties.toLocaleString(locale),
     },
     { label: isAr ? 'إجمالي الأرباح' : 'Earned', value: `$${money(earned, locale)}` },
