@@ -16,6 +16,23 @@ import { areaField, propertyNumberField } from './property.schema';
 import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
 
 /**
+ * "Not in the future", judged when the date arrives rather than when this
+ * module loaded.
+ *
+ * Six fields here used `.max(new Date(Date.now() + 60_000), …)`. That argument
+ * is evaluated once, while the schema object is being built — so the ceiling
+ * froze at the moment the process started, and a server up since yesterday
+ * refused today's visit, vacancy and damage dates with «… في المستقبل» on a
+ * date the officer could see was today. It got worse the longer the API stayed
+ * up, which is the opposite of how anyone looks for a bug.
+ *
+ * `.refine` runs per parse, so the ceiling moves with the clock. The minute of
+ * slack absorbs a phone whose clock runs a little fast; it is not a window for
+ * post-dating, which the messages still refuse.
+ */
+const notAfterNow = (value: Date): boolean => value.getTime() <= Date.now() + 60_000;
+
+/**
  * The building census, as it crosses the wire.
  *
  * The same shapes validate the request server-side and drive the editor's
@@ -613,11 +630,11 @@ export const updateUnitSchema = upsertUnitSchema
       .transform((months) => [...new Set(months)].sort((a, b) => a - b)),
     ownerLastStayAt: z.coerce
       .date({ invalid_type_error: 'تاريخ آخر إقامة غير صالح' })
-      .max(new Date(Date.now() + 60_000), 'تاريخ آخر إقامة في المستقبل')
+      .refine(notAfterNow, 'تاريخ آخر إقامة في المستقبل')
       .nullable(),
     vacancyDeclaredAt: z.coerce
       .date({ invalid_type_error: 'تاريخ تصريح الشغور غير صالح' })
-      .max(new Date(Date.now() + 60_000), 'تاريخ تصريح الشغور في المستقبل')
+      .refine(notAfterNow, 'تاريخ تصريح الشغور في المستقبل')
       .nullable(),
   })
   .partial()
@@ -647,7 +664,7 @@ export const createDamageAssessmentSchema = z
     observations: z.string().trim().max(2000, 'الوصف طويل جداً').optional(),
     assessedAt: z.coerce
       .date({ invalid_type_error: 'تاريخ الكشف غير صالح' })
-      .max(new Date(Date.now() + 60_000), 'تاريخ الكشف في المستقبل')
+      .refine(notAfterNow, 'تاريخ الكشف في المستقبل')
       .optional(),
   })
   .superRefine((value, ctx) => {
@@ -912,9 +929,7 @@ export type AfterTenancyStatus = z.infer<typeof afterTenancyStatusSchema>;
  * when the module loads goes stale on a server that has been up since yesterday.
  */
 const pastDate = (message: string) =>
-  z.coerce
-    .date({ invalid_type_error: message })
-    .refine((value) => value.getTime() <= Date.now() + 60_000, 'التاريخ في المستقبل');
+  z.coerce.date({ invalid_type_error: message }).refine(notAfterNow, 'التاريخ في المستقبل');
 
 const afterTenancyFields = {
   afterStatus: afterTenancyStatusSchema.optional(),
@@ -1038,7 +1053,7 @@ export const logVisitSchema = z.object({
    */
   visitedAt: z.coerce
     .date({ invalid_type_error: 'تاريخ الزيارة غير صالح' })
-    .max(new Date(Date.now() + 60_000), 'تاريخ الزيارة في المستقبل')
+    .refine(notAfterNow, 'تاريخ الزيارة في المستقبل')
     .optional(),
   notes: z.string().trim().max(1000, 'الملاحظات طويلة جداً').optional(),
   /**
@@ -1074,7 +1089,7 @@ export const confirmVacancySchema = z
     /** When the unit was found empty. Back-datable from a paper round; never future. */
     observedAt: z.coerce
       .date({ invalid_type_error: 'تاريخ المعاينة غير صالح' })
-      .max(new Date(Date.now() + 60_000), 'تاريخ المعاينة في المستقبل')
+      .refine(notAfterNow, 'تاريخ المعاينة في المستقبل')
       .optional(),
     notes: z.string().trim().max(1000, 'الملاحظات طويلة جداً').optional(),
   })
@@ -1115,7 +1130,7 @@ export const endVacancySchema = z.object({
   reason: vacancyEndReasonSchema,
   endedAt: z.coerce
     .date({ invalid_type_error: 'التاريخ غير صالح' })
-    .max(new Date(Date.now() + 60_000), 'التاريخ في المستقبل')
+    .refine(notAfterNow, 'التاريخ في المستقبل')
     .optional(),
   notes: z.string().trim().max(1000, 'الملاحظات طويلة جداً').optional(),
 });
