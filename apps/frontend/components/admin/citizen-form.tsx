@@ -45,6 +45,7 @@ import {
 } from './possible-duplicates';
 import {
   PropertyCard,
+  type CardRemovalAnswer,
   type PropertyDraft,
   type UnitDraft,
 } from '@/components/citizen/property-card';
@@ -66,6 +67,14 @@ export interface CitizenFormValues {
   personal: Record<string, unknown>;
   contact: Record<string, unknown>;
   properties: PropertyDraft[];
+  /**
+   * Why each saved card removed on this edit is going — the officer's answer
+   * in the delete dialog. The census closes the flats a removed card claimed
+   * with it: «سُجِّلت بالخطأ» drops them from the unit's history, «بيع أو نقل
+   * ملكية» keeps the ownership, ending on its date. Only saved cards; a card
+   * added and removed in the same sitting never reached the server.
+   */
+  removals?: Array<CardRemovalAnswer & { propertyId: string }>;
   /**
    * Fields the officer recorded as «غير مؤكَّد», keyed by dot-path.
    *
@@ -592,6 +601,8 @@ export function toSubmission(values: CitizenFormValues) {
       about string length rather than presence, on both sides of the wire.
     */
     ...(values.notes?.trim() ? { notes: values.notes.trim() } : {}),
+    // Only on an edit, and only what the officer answered — see `removals`.
+    ...(values.removals?.length ? { removals: values.removals } : {}),
   };
 }
 
@@ -1037,7 +1048,7 @@ export function CitizenForm({
             onChange={(update) => setProperty(index, update)}
             onAddOnSameParcel={() => addProperty(index)}
             onViewParcel={token ? setRosterParcel : undefined}
-            onRemove={() => removeProperty(index)}
+            onRemove={(answer) => removeProperty(index, answer)}
             // Ended on the server, kept there as history — no longer this form's.
             // A partial end leaves the card here without the rows that ended.
             onEnded={(result, cardEnded) =>
@@ -1084,7 +1095,7 @@ export function CitizenForm({
                 onToggleCollapse={() => toggleCollapsed(index)}
                 onChange={(update) => setProperty(index, update)}
                 onViewParcel={token ? setRosterParcel : undefined}
-                onRemove={() => removeProperty(index)}
+                onRemove={(answer) => removeProperty(index, answer)}
                 onEnded={(result, cardEnded) =>
                   cardEnded ? removeProperty(index) : removeEndedRows(index, result.endedRowIds ?? [])
                 }
@@ -1114,10 +1125,24 @@ export function CitizenForm({
       );
     });
 
-  const removeProperty = useCallback((index: number) => {
+  const removeProperty = useCallback((index: number, answer?: CardRemovalAnswer) => {
     setValues((current) => ({
       ...current,
       properties: current.properties.filter((_, i) => i !== index),
+      /*
+        The answer travels with the save, keyed by the card's id — the only
+        thing that still names it once it has left the list.
+      */
+      ...(answer && current.properties[index]?.id
+        ? {
+            removals: [
+              ...(current.removals ?? []).filter(
+                (removal) => removal.propertyId !== current.properties[index]!.id,
+              ),
+              { propertyId: current.properties[index]!.id!, ...answer },
+            ],
+          }
+        : {}),
       /*
         Flags are addressed by card index, so deleting a card renumbers them.
 
@@ -1292,8 +1317,42 @@ export function CitizenForm({
    * a number one section above the field that asks for it, reading as a
    * complaint about the name the officer had just typed.
    */
+  /*
+    «تغيير رقم الهاتف» on a saved file changes how the citizen signs in: the
+    portal asks for their رقم مرجعي *and* this number. Said under the field, on
+    every screen size, while the old number is still on screen to compare —
+    not discovered when the citizen calls to say they cannot log in.
+  */
+  const loadedPhone = String(initial.contact.phone ?? '').replace(/\s+/g, '');
+  const phoneNow = String(values.contact.phone ?? '').replace(/\s+/g, '');
+  const phoneNote =
+    mode === 'edit' && loadedPhone && phoneNow !== loadedPhone ? (
+      <p
+        role="note"
+        className="mt-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed text-warning"
+      >
+        <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+        <span>
+          {locale === 'en' ? (
+            <>
+              The citizen signs in with their reference number and this phone. After saving, they must use the new
+              number — the old one (<span dir="ltr">{loadedPhone}</span>) will stop working.
+            </>
+          ) : (
+            <>
+              يدخل المواطن إلى حسابه برقمه المرجعي وهذا الهاتف. بعد الحفظ عليه استعمال الرقم الجديد، ولن يعمل الرقم
+              السابق (<span dir="ltr">{loadedPhone}</span>).
+            </>
+          )}
+        </span>
+      </p>
+    ) : null;
+
   const duplicatesPanel = (
-    <PossibleDuplicatesPanel check={duplicateCheck} locale={locale} className="hidden lg:block" />
+    <>
+      {phoneNote}
+      <PossibleDuplicatesPanel check={duplicateCheck} locale={locale} className="hidden lg:block" />
+    </>
   );
 
   /**

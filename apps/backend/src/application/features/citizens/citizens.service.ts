@@ -31,7 +31,7 @@ import type {
   ParcelRepository,
 } from '../../../domain/interfaces/parcel-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
-import { CensusSyncService } from '../buildings/census-sync.service';
+import { CensusSyncService, type CardEnding } from '../buildings/census-sync.service';
 import {
   LandlordLinkService,
   type LandlordProposal,
@@ -1329,6 +1329,9 @@ export class CitizensService {
       select: {
         id: true,
         referenceNumber: true,
+        // Only to tell a cleared passport box from a box that never showed this
+        // number — see `citizenColumnsForEdit`.
+        identityDocType: true,
         registrations: {
           orderBy: { submittedAt: 'desc' },
           take: 1,
@@ -1339,8 +1342,21 @@ export class CitizensService {
             // whose number *changed* — which is what invalidates any answer
             // somebody gave about it. Both are read again, locked, inside the
             // transaction; this copy only decides which flags stand.
+            //
+            // The capacity, the structure and the current flats come back so a
+            // card this save removes can say which flats it claimed, for the
+            // census to close them with the officer's answer (`removals`).
             properties: {
-              select: { id: true, landlordPhone: true, landlordCitizenId: true, endedAt: true },
+              select: {
+                id: true,
+                landlordPhone: true,
+                landlordCitizenId: true,
+                endedAt: true,
+                occupancyType: true,
+                propertyType: true,
+                buildingId: true,
+                units: { where: { endedAt: null }, select: { unitId: true } },
+              },
             },
             flaggedFields: true,
           },
@@ -1513,6 +1529,35 @@ export class CitizensService {
     const keptIds = new Set(entries.map(({ id }) => id).filter(Boolean) as string[]);
     const removedIds = [...existingIds].filter((id) => !keptIds.has(id));
 
+    /*
+      Why each removed card is going, when the officer was asked.
+
+      Checked before anything is written, like the ids above: an answer about a
+      card this save keeps, or a sale on a card that owns nothing, is a form out
+      of step with the file, and guessing which half is right would stamp a
+      reason on the wrong flats.
+    */
+    const removals = input.payload.removals ?? [];
+    const removedCards = new Map(
+      (existing?.properties ?? [])
+        .filter((property) => removedIds.includes(property.id))
+        .map((property) => [property.id, property]),
+    );
+    for (const removal of removals) {
+      const card = removedCards.get(removal.propertyId);
+      if (!card) {
+        throw new ConflictError('بطاقة ذُكر سبب حذفها ليست من البطاقات المحذوفة — حدّث الصفحة', {
+          propertyId: removal.propertyId,
+        });
+      }
+      if (removal.reason === 'OWNERSHIP_TRANSFERRED' && card.occupancyType !== 'OWNER') {
+        throw new ValidationError('«بيع أو نقل ملكية» يخص بطاقة مالك فقط', {
+          propertyId: removal.propertyId,
+        });
+      }
+    }
+    const endings = await this.removalEndings(removals, removedCards);
+
     /** What undoing links during this save wrote, emitted once it commits. */
     const revertEvents: PendingEvent[] = [];
     const unlinkedBySave: Array<{ propertyEntryId: string; report: RevertReport }> = [];
@@ -1527,7 +1572,7 @@ export class CitizensService {
     const registrationId = await this.db.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: citizen.id },
-        data: citizenColumnsForEdit(input.payload),
+        data: citizenColumnsForEdit(input.payload, { identityDocType: citizen.identityDocType }),
       });
 
       // A citizen with no registration at all (never expected from this form,
@@ -1828,6 +1873,7 @@ export class CitizensService {
       registrationId,
       citizenId: citizen.id,
       actor: input.actor,
+      endings,
     });
 
     /*
@@ -1866,6 +1912,17 @@ export class CitizensService {
       after: {
         propertyCount: entries.length,
         propertiesRemoved: removedIds.length,
+        // What the officer said about each removed card — the reason its flats
+        // closed the way they did in the census.
+        ...(removals.length > 0
+          ? {
+              removals: removals.map((removal) => ({
+                propertyId: removal.propertyId,
+                reason: removal.reason,
+                ...(removal.endedAt ? { endedAt: removal.endedAt } : {}),
+              })),
+            }
+          : {}),
         status: nextStatus,
         unestablishedFields: flags.length,
         ...(duplicateFlagResolved
@@ -1897,6 +1954,51 @@ export class CitizensService {
        */
       landlordLinkChanges,
     };
+  }
+
+  /**
+   * The flats each removed card claimed, keyed for the census sync, with what
+   * the officer said about the card. See `CardEnding`.
+   *
+   * A card claims a flat the way `CensusSyncService` reads it: each current
+   * row's `unitId`, or — a منزل with no rows — the one unit of its structure,
+   * inferred only when the structure has exactly one. A flat claimed twice by
+   * removed cards takes the first answer; the sync only closes a spell nothing
+   * kept still claims, so a flat another current card holds is untouched.
+   */
+  private async removalEndings(
+    removals: ReadonlyArray<{ propertyId: string; reason: CardEnding['reason']; endedAt?: Date }>,
+    cards: ReadonlyMap<
+      string,
+      { propertyType: string; buildingId: string | null; units: Array<{ unitId: string | null }> }
+    >,
+  ): Promise<Map<string, CardEnding>> {
+    const endings = new Map<string, CardEnding>();
+
+    for (const removal of removals) {
+      const card = cards.get(removal.propertyId);
+      if (!card) continue;
+
+      let unitIds = card.units.map((row) => row.unitId).filter((id): id is string => Boolean(id));
+      if (unitIds.length === 0 && card.units.length === 0 && card.buildingId && card.propertyType === 'HOUSE') {
+        const units = await this.db.unit.findMany({
+          where: { buildingId: card.buildingId },
+          select: { id: true },
+          take: 2,
+        });
+        if (units.length === 1) unitIds = [units[0]!.id];
+      }
+
+      for (const unitId of unitIds) {
+        if (endings.has(unitId)) continue;
+        endings.set(unitId, {
+          reason: removal.reason,
+          ...(removal.endedAt ? { endedAt: removal.endedAt } : {}),
+        });
+      }
+    }
+
+    return endings;
   }
 
   /** `reconcileRegistration`, with its failure kept off a save that committed. */
@@ -2191,8 +2293,13 @@ export class CitizensService {
  *
  *  - The identity document. A Lebanese citizen is no longer asked for one, so
  *    this form cannot be the thing that erases the real numbers already on
- *    file. A non-Lebanese person's passport number is written only when one is
- *    given; a blank field keeps what is stored.
+ *    file. A non-Lebanese person's passport number is written when one is
+ *    given, and cleared only when the box that showed it comes back empty:
+ *    the stored document is a passport (so the form loaded it into that box)
+ *    and the submission carries the field, blank. Anything else — a box that
+ *    never held this number, an older client, a flagged field — keeps what is
+ *    stored. Before this a wrong number typed at a doorstep could be replaced
+ *    but never removed.
  *  - A non-resident record's household columns. A person converted to «غير
  *    مقيم في البلدة» keeps whatever was filed for them as a household; the form stops
  *    asking and stops showing, and nothing is erased by the conversion. The
@@ -2201,6 +2308,7 @@ export class CitizensService {
  */
 export function citizenColumnsForEdit(
   payload: AdminCitizenUpdateSubmission,
+  stored: { identityDocType: string | null } = { identityDocType: null },
 ): Prisma.UserUpdateInput {
   const { personal, contact } = payload;
   const shared = {
@@ -2222,6 +2330,11 @@ export function citizenColumnsForEdit(
   }
 
   const passport = identityDocumentOf(payload);
+  const passportCleared =
+    personal.isLebanese === false &&
+    stored.identityDocType === 'PASSPORT' &&
+    'identityDocNumber' in personal &&
+    !String(personal.identityDocNumber ?? '').trim();
 
   return {
     ...shared,
@@ -2247,6 +2360,8 @@ export function citizenColumnsForEdit(
           identityDocType: passport.identityDocType as never,
           identityDocNumber: passport.identityDocNumber,
         }
-      : {}),
+      : passportCleared
+        ? { identityDocType: null, identityDocNumber: null }
+        : {}),
   };
 }

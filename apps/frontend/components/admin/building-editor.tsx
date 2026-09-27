@@ -26,6 +26,7 @@ import {
   defaultUnitTypeFor,
   formatBuildingCode,
   getLabels,
+  isOccupiableLifecycle,
   isUnsurveyableShell,
   nextBuildingSuffix,
   STRUCTURE_TYPE,
@@ -612,10 +613,31 @@ export function BuildingEditor({
    * including the reload after a half-refused save.
    */
   const loadedUpdatedAtRef = useRef<string | null>(null);
+  /**
+   * The floor counts as stored. A save that lowers either sends the smaller
+   * number only after the units it removes are gone — the server refuses a
+   * count that leaves units outside the building (`unitsOutsideFloors`).
+   */
+  const loadedFloorsRef = useRef<{ floors: number; basements: number } | null>(null);
+  /**
+   * The lifecycle as loaded, and how many people are recorded in the units
+   * right now — so moving a lived-in building to «مهدوم» says what it leaves
+   * behind. See the notice under «الحالة الإنشائية».
+   */
+  const [loadedLifecycle, setLoadedLifecycle] = useState<BuildingLifecycle | null>(null);
+  const [liveOccupants, setLiveOccupants] = useState(0);
 
   const hydrate = useCallback(
     (detail: BuildingDetail, keepEdits = false) => {
       loadedUpdatedAtRef.current = detail.updatedAt ?? null;
+      loadedFloorsRef.current = { floors: detail.floorsCount, basements: detail.basementsCount ?? 0 };
+      setLoadedLifecycle(detail.lifecycleStatus);
+      setLiveOccupants(
+        detail.units.reduce(
+          (count, unit) => count + unit.occupants.filter((occupant) => !occupant.toDate).length,
+          0,
+        ),
+      );
       if (!keepEdits) {
         setParcelNumber(detail.parcelNumber);
         pinParcelRef.current = detail.parcelNumber;
@@ -1378,6 +1400,25 @@ export function BuildingEditor({
    * beside it that it would have allowed.
    */
   const saveEdit = async (id: string, activeToken: string): Promise<string[]> => {
+    /*
+      Fewer floors, in two steps.
+
+      The server refuses a floor count that leaves a unit outside the building,
+      and the units this save removes from the top floor still exist when the
+      building row is written — the removals come after it. So a shrink is held
+      back: the building keeps its stored counts, the matrix changes run, and
+      only once every one of them landed is the smaller count sent. On the
+      info-only pass there are no removals to wait for, and the server's refusal
+      (naming the units) is the answer.
+    */
+    const requestedFloors = Number(floorsCount) || 1;
+    const requestedBasements = Number(basementsCount) || 0;
+    const loadedFloors = loadedFloorsRef.current;
+    const shrinkLater =
+      !infoOnly &&
+      loadedFloors !== null &&
+      (requestedFloors < loadedFloors.floors || requestedBasements < loadedFloors.basements);
+
     await updateBuilding(tenant, activeToken, id, {
       ...(loadedUpdatedAtRef.current ? { expectedUpdatedAt: loadedUpdatedAtRef.current } : {}),
       name: name.trim() || null,
@@ -1397,8 +1438,10 @@ export function BuildingEditor({
       lifecycleStatus,
       latitude: pin ? pin[1] : null,
       longitude: pin ? pin[0] : null,
-      floorsCount: Number(floorsCount) || 1,
-      basementsCount: Number(basementsCount) || 0,
+      floorsCount: shrinkLater ? Math.max(requestedFloors, loadedFloors!.floors) : requestedFloors,
+      basementsCount: shrinkLater
+        ? Math.max(requestedBasements, loadedFloors!.basements)
+        : requestedBasements,
       notes: notes.trim() || null,
     });
 
@@ -1490,6 +1533,29 @@ export function BuildingEditor({
             ? `A unit on floor ${unit.floor} could not be added.`
             : `تعذّرت إضافة وحدة على الطابق ${unit.floor}.`,
         );
+      }
+    }
+
+    if (shrinkLater) {
+      if (failures.length > 0) {
+        // A refused removal may be exactly the unit the smaller count would strand.
+        failures.push(
+          en
+            ? 'The floor count was not lowered, because some unit changes were refused.'
+            : 'لم يُنقَص عدد الطوابق، لأن بعض تعديلات الوحدات رُفضت.',
+        );
+      } else {
+        try {
+          await updateBuilding(tenant, activeToken, id, {
+            floorsCount: requestedFloors,
+            basementsCount: requestedBasements,
+          });
+        } catch (caught) {
+          refused(
+            caught,
+            en ? 'The floor count could not be lowered.' : 'تعذّر إنقاص عدد الطوابق.',
+          );
+        }
       }
     }
 
@@ -2530,6 +2596,34 @@ export function BuildingEditor({
                   </Select>
                 </Field>
               </div>
+
+              {/*
+                A building leaving «قائم ومستعمل» with people still recorded in it.
+
+                The lifecycle is a statement about the structure; nothing reads
+                it when deciding who is billed. So «مهدوم» on a building whose
+                flats still hold a tenant leaves that tenant housed and charged
+                in a building that is gone — until somebody ends each occupancy.
+                Said before saving, with where to do it, rather than left to a
+                resident disputing the bill.
+              */}
+              {editing &&
+              liveOccupants > 0 &&
+              loadedLifecycle !== null &&
+              isOccupiableLifecycle(loadedLifecycle) &&
+              !isOccupiableLifecycle(lifecycleStatus) ? (
+                <div
+                  role="note"
+                  className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 p-3.5 text-xs leading-relaxed text-warning"
+                >
+                  <AlertTriangle className="size-4 shrink-0 mt-0.5" aria-hidden />
+                  <p>
+                    {en
+                      ? `${liveOccupants} occupancy record(s) are still current in this building's units, and they keep being billed. Changing the building's status does not end them — after saving, end each one from the unit matrix («End tenancy» for a tenant; a new status for an owner's unit).`
+                      : `ما زال ${liveOccupants} إشغال قائماً على وحدات هذا المبنى، ويُحصَّل الرسم منه. تغيير حالة المبنى لا يُنهيه — بعد الحفظ أنهِ كل إشغال من مصفوفة الوحدات («إنهاء الإيجار» للمستأجر، وحالة جديدة لوحدة المالك).`}
+                  </p>
+                </div>
+              ) : null}
 
               {/*
                 Said out loud, because two things vanish at once — the floor
