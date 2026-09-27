@@ -532,6 +532,16 @@ export class StaffService {
     const totalEarnings = totalProperties * commissionRate;
     const paidBalance = payouts.reduce((sum, p) => sum + Number(p.amount), 0);
     const pendingBalance = Math.max(0, totalEarnings - paidBalance);
+    /*
+      The other side of that clamp, which used to be nowhere.
+
+      `pendingBalance` must not go negative — the payout rule reads it as "the
+      most that may still be paid" — but an inspector paid more than he earned
+      then read as settled, which is the one balance nobody would want hidden.
+      It arises without anyone erring: a record corrected away after its payout
+      lowers the total underneath money already handed over.
+    */
+    const overpaidBalance = Math.max(0, paidBalance - totalEarnings);
 
     const formattedPayouts: InspectorPayoutItem[] = payouts.map((p) => ({
       id: p.id,
@@ -562,6 +572,7 @@ export class StaffService {
       totalEarnings,
       paidBalance,
       pendingBalance,
+      overpaidBalance,
       breakdown,
       recentRegistrations,
       payouts: formattedPayouts,

@@ -3303,6 +3303,8 @@ export interface StaffSummary {
   totalEarnings?: number;
   paidBalance?: number;
   pendingBalance?: number;
+  /** Paid over and above earned. `pendingBalance` clamps at zero and hides it. */
+  overpaidBalance?: number;
   createdAt: string;
   lastLoginAt: string | null;
 }

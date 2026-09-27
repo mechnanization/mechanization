@@ -59,6 +59,17 @@ export const inspectorProfileResponseSchema = z.object({
   totalEarnings: z.number().nonnegative(),
   paidBalance: z.number().nonnegative(),
   pendingBalance: z.number().nonnegative(),
+  /**
+   * What was paid over and above what was earned.
+   *
+   * `pendingBalance` is `max(0, earned - paid)`, so an inspector paid more than
+   * he earned reads as settled rather than as owing money back — the one state
+   * nobody would want hidden. It can arise without anyone erring: a record
+   * corrected away after its payout lowers the total underneath a payment
+   * already made. Reported separately so `pendingBalance` keeps meaning "still
+   * to pay" for the payout rule, which must never offer a negative.
+   */
+  overpaidBalance: z.number().nonnegative().default(0),
   breakdown: inspectorPropertyBreakdownSchema,
   recentRegistrations: z.array(inspectorRegistrationLogItemSchema),
   payouts: z.array(inspectorPayoutItemSchema),

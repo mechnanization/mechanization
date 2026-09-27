@@ -373,6 +373,9 @@ export class PrismaUserRepository implements UserRepository {
       const totalEarnings = regProperties * COMMISSION_RATE;
       const paid = payoutSums.get(row.id) ?? 0;
       const pending = Math.max(0, totalEarnings - paid);
+      // See StaffSummary.overpaidBalance: the half of the clamp that used to
+      // be invisible, so the roster can show money owed back.
+      const overpaid = Math.max(0, paid - totalEarnings);
 
       return {
         id: row.id,
@@ -396,6 +399,7 @@ export class PrismaUserRepository implements UserRepository {
         totalEarnings,
         paidBalance: paid,
         pendingBalance: pending,
+        overpaidBalance: overpaid,
         createdAt: row.createdAt.toISOString(),
         lastLoginAt: row.lastLoginAt?.toISOString() ?? null,
       };
