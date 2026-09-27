@@ -316,15 +316,15 @@ export class PrismaUserRepository implements UserRepository {
         createdById: true,
         citizenId: true,
         properties: {
-          // `endedAt` on both levels and the unit's type and census link are
+          // `endReason` on both levels and the unit's type and census link are
           // what the earnings rule reads; selecting only `id` here is what let
           // this list disagree with the inspector's own page.
           select: {
             id: true,
             propertyType: true,
-            endedAt: true,
+            endReason: true,
             units: {
-              select: { id: true, unitId: true, unitType: true, endedAt: true },
+              select: { id: true, unitId: true, unitType: true, endReason: true },
             },
           },
         },

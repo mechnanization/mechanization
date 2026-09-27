@@ -5,20 +5,24 @@ import { COMMISSION_RATE, creditBillableUnits } from '@mechanization/shared-sche
 
   Each case here is a way the old figure — `units.length` for a building,
   otherwise 1 — paid for something that was not a unit somebody filled. On
-  production on 2026-09-22 those four together inflated the bill from $430 to
-  $505 across six accounts.
+  production on 2026-09-22 they together inflated the bill from $430 to $505
+  across six accounts.
+
+  The ones that keep earning matter just as much. Only `RECORDED_IN_ERROR`
+  withdraws credit; a tenancy that ended because the tenant moved out, or a
+  flat that changed hands, was still surveyed and is still paid.
 */
 
 const unit = (over: Partial<Parameters<typeof creditBillableUnits>[0][number]['units'][number]> = {}) => ({
   id: 'bu-1',
   unitId: 'census-1',
   unitType: 'APARTMENT',
-  endedAt: null,
+  endReason: null,
   ...over,
 });
 
-const entry = (units: ReturnType<typeof unit>[], endedAt: Date | string | null = null) => ({
-  endedAt,
+const entry = (units: ReturnType<typeof unit>[], endReason: string | null = null) => ({
+  endReason,
   units,
 });
 
@@ -34,19 +38,43 @@ describe('creditBillableUnits', () => {
     expect(credited * COMMISSION_RATE).toBe(2);
   });
 
-  it('does not pay for a unit whose tenancy ended', () => {
+  it('does not pay for a unit recorded in error', () => {
     const seen = new Set<string>();
     const credited = creditBillableUnits(
-      [entry([unit({ id: 'a', unitId: 'c1' }), unit({ id: 'b', unitId: 'c2', endedAt: new Date() })])],
+      [
+        entry([
+          unit({ id: 'a', unitId: 'c1' }),
+          unit({ id: 'b', unitId: 'c2', endReason: 'RECORDED_IN_ERROR' }),
+        ]),
+      ],
       seen,
     );
     expect(credited).toBe(1);
   });
 
-  it('does not pay for units on a property entry that ended', () => {
+  it('does not pay for units on a property entry recorded in error', () => {
     const seen = new Set<string>();
-    expect(creditBillableUnits([entry([unit()], new Date())], seen)).toBe(0);
+    expect(creditBillableUnits([entry([unit()], 'RECORDED_IN_ERROR')], seen)).toBe(0);
     expect(seen.size).toBe(0);
+  });
+
+  it('keeps paying for a tenancy that genuinely ended', () => {
+    // The officer interviewed the household. What the household did afterwards
+    // is not something his pay should depend on.
+    const seen = new Set<string>();
+    expect(creditBillableUnits([entry([unit({ endReason: 'MOVED_OUT' })])], seen)).toBe(1);
+  });
+
+  it('keeps paying after an ownership transfer', () => {
+    const seen = new Set<string>();
+    expect(
+      creditBillableUnits([entry([unit({ endReason: 'OWNERSHIP_TRANSFERRED' })])], seen),
+    ).toBe(1);
+  });
+
+  it('keeps paying for a row ended with no reason given', () => {
+    const seen = new Set<string>();
+    expect(creditBillableUnits([entry([unit({ endReason: null })])], seen)).toBe(1);
   });
 
   it('does not pay for structural floors', () => {
