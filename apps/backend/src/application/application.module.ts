@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { OtpCleanupJob } from './background-jobs/otp-cleanup.job';
 import { RecurringBillingJob } from './background-jobs/recurring-billing.job';
+import { StaffRefreshTokenCleanupJob } from './background-jobs/staff-refresh-token-cleanup.job';
 import { AuditService } from './features/audit/audit.service';
 import { BackupService } from './features/backup/backup.service';
 import { CadastreImportService } from './features/cadastre/cadastre-import.service';
@@ -17,6 +18,7 @@ import { DocumentService } from './features/documents/document.service';
 import { IdentityService } from './features/identity/identity.service';
 import { OtpService } from './features/identity/otp.service';
 import { SessionRevocationService } from './features/identity/session-revocation.service';
+import { StaffRefreshTokenService } from './features/identity/staff-refresh-token.service';
 import { RegistrationService } from './features/registration/registration.service';
 import { ReportingService } from './features/reporting/reporting.service';
 import { TenantService } from './features/tenant/tenant.service';
@@ -48,6 +50,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     IdentityService,
     OtpService,
     SessionRevocationService,
+    StaffRefreshTokenService,
     RegistrationService,
     DocumentService,
     AuditService,
@@ -69,6 +72,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     DataQualityService,
     OtpCleanupJob,
     RecurringBillingJob,
+    StaffRefreshTokenCleanupJob,
   ],
   exports: [
     TenantService,
@@ -96,6 +100,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     DataQualityService,
     OtpCleanupJob,
     RecurringBillingJob,
+    StaffRefreshTokenCleanupJob,
     JwtModule,
   ],
 })

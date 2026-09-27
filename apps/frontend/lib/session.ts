@@ -17,6 +17,16 @@ export type { Session };
  * "Remember me" is an explicit opt-in to `localStorage` instead, for a staff
  * member on their own machine who would rather not sign in every session; the
  * safer default is unaffected for everyone who doesn't check it.
+ *
+ * For staff, what is stored here is only the short-lived access token
+ * (`JWT_STAFF_IDLE_TTL`, 30 minutes by default). The credential that renews it
+ * is an httpOnly cookie, one per account, that no script on this page can read
+ * — and a refresh needs both: the cookie, and this tab's own access token to
+ * say which account the tab belongs to. That is why closing the tab still ends
+ * a session signed in without «تذكّرني»: the token goes with `sessionStorage`,
+ * and the cookie on its own renews nothing. Two staff accounts in one browser
+ * each get their own cookie, but a «تذكّرني» session is still one per
+ * municipality in `localStorage` — the last sign-in wins, as it always has.
  */
 const key = (tenant: string) => `mechanization.session.${tenant}`;
 
@@ -78,7 +88,13 @@ export function loadSession(tenant: string): Session | null {
   }
 }
 
-/** Signs out of this tenant by clearing both stores. */
+/**
+ * Signs out of this tenant by clearing both stores.
+ *
+ * The local half only. For staff, the refresh cookie and the session behind it
+ * live on the API, and `logoutStaff` is what ends them; the header's sign-out
+ * calls it before this.
+ */
 export function clearSession(tenant: string): void {
   try {
     sessionStorage.removeItem(key(tenant));

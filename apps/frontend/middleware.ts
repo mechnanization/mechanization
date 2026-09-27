@@ -36,7 +36,10 @@ function apiOrigin(): string {
  * `localStorage`, so one injected script is a month of full access to a
  * municipality's register (a token that, until `tokenVersion`, could not even
  * be revoked). Blocking script injection is what keeps that from being one bug
- * away.
+ * away. The refresh credential is now an httpOnly cookie the page cannot read,
+ * so a token copied out dies within its idle window — but a script running
+ * inside the page can still renew through the browser, which is why this
+ * remains the mitigation that matters.
  *
  * Next.js reads the nonce out of this header and stamps it onto its own inline
  * bootstrap and hydration scripts, so `'unsafe-inline'` is not needed for them

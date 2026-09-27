@@ -182,6 +182,23 @@ const NEVER_RESTORED = new Set(['auditLogEntry']);
  * decision for a person, not something to infer from the constraint.
  */
 
+/**
+ * ── `staffRefreshToken` is deliberately NOT in `TABLE_ORDER` either. ─────────
+ *
+ * `staff_refresh_tokens` (0059) holds keyed hashes of staff refresh tokens —
+ * live sessions, not register data. A snapshot has no business carrying them:
+ * restoring Tuesday's rows would bring back sessions that were signed out, or
+ * revoked for reuse, since.
+ *
+ * Leaving it out loses nothing, unlike the `unitOccupancy` hole above. Its
+ * `userId` is `ON DELETE CASCADE` from `users`, which restore deletes and
+ * rewrites, so the rows cascade away inside the restore transaction and every
+ * staff member signs in again — the right outcome after a register has been
+ * rolled back. The set of tables a snapshot carries did not change, so
+ * `SNAPSHOT_VERSION` did not either; and a snapshot hand-edited to carry the
+ * table is refused as an unknown one by `restore`.
+ */
+
 export interface SnapshotManifest {
   version: number;
   tenantSlug: string;

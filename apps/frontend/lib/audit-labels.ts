@@ -87,6 +87,11 @@ export function auditActionLabel(action: string, locale: string): string {
 
     // ── the portal itself ──
     LOGIN: ['تسجيل دخول', 'Login'],
+    STAFF_LOGOUT: ['تسجيل خروج', 'Signed out'],
+    STAFF_SESSION_REUSE_DETECTED: [
+      'إنهاء جلسة: إعادة استخدام رمز التجديد',
+      'Session ended: refresh token reused',
+    ],
     REGISTER_RESTORED: ['استعادة سجل البلدية من نسخة احتياطية', 'Register restored from backup'],
     STAFF_EMAIL_CHANGED: ['تغيير بريد موظف', 'Staff email changed'],
     STAFF_PASSWORD_CHANGED: ['تغيير كلمة مرور موظف', 'Staff password changed'],

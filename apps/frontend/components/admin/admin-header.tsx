@@ -32,7 +32,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { getLabels } from '@mechanization/shared-schemas';
-import type { Session } from '@/lib/api-client';
+import { logoutStaff, type Session } from '@/lib/api-client';
 import { clearSession } from '@/lib/session';
 
 /**
@@ -108,7 +108,26 @@ export function AdminHeader({
     router.push((pathname ?? base).replace(`/${tenant}/${locale}/`, `/${tenant}/${other}/`));
   }
 
-  function signOut(): void {
+  /*
+   * Ends the session on the server first, then here — and here always.
+   *
+   * Clearing storage alone used to be the whole of signing out. With a refresh
+   * cookie it would leave a live session behind on the API — the access token
+   * good for the rest of its idle window, and the cookie able to renew it for
+   * any tab still holding one. So the server is asked to end it, with the token
+   * this header was rendered with: this tab's account as of its last
+   * navigation, rather than whatever storage holds by the time the menu is
+   * pressed, which another account's sign-in may have replaced. Whatever that
+   * request does — times out, finds no route on an older API — the local
+   * sign-out still happens: a clerk who pressed «تسجيل الخروج» on a shared PC
+   * must never be left signed in because the network was down.
+   */
+  async function signOut(): Promise<void> {
+    try {
+      await logoutStaff(tenant, session?.accessToken);
+    } catch {
+      // Deliberately ignored; see above.
+    }
     clearSession(tenant);
     router.replace(`${base}/login`);
   }
@@ -267,7 +286,7 @@ export function AdminHeader({
             <span>{locale === 'ar' ? 'English' : 'عربي'}</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem destructive onSelect={signOut}>
+          <DropdownMenuItem destructive onSelect={() => void signOut()}>
             <LogOut aria-hidden />
             <span>{locale === 'en' ? 'Sign out' : 'تسجيل الخروج'}</span>
           </DropdownMenuItem>
