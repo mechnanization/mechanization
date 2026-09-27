@@ -8,17 +8,22 @@
  *
  * == What counts ========================================================
  *
- * A unit row (`building_units`) that is still standing:
- *
- *  - its own `endedAt` is null. An ended tenancy is work that was undone;
- *    billing it again pays twice for one flat.
- *  - its property entry's `endedAt` is null, for the same reason one level up.
+ *  - the row was not recorded in error. `RECORDED_IN_ERROR` is the one end
+ *    reason that says the work never happened; every other ending says it did
+ *    and then stopped. A tenant who moves out and an owner who sells were both
+ *    interviewed, and taking the dollar back months later would make an
+ *    officer's pay depend on what the people he surveyed did next. Same test on
+ *    the property entry one level up.
  *  - it is not a structural floor. «طابق أعمدة» and «طابق فارغ» draw a level of
  *    the building; nobody holds them and nobody can be registered against them.
  *    Migrations 0052 and 0054 already keep them out of `buildings.unitsTotal`,
  *    and a payment that counted them would contradict the census on the next
  *    screen over.
  *  - no other row has already been credited for the same physical unit.
+ *
+ * Note what this deliberately does NOT test: `endedAt`. An ended row is still
+ * paid, because ending is the normal end of a tenancy's life, not a retraction
+ * of the visit. Only the reason decides.
  *
  * == Why the deduplication is by census unit, and what it costs ==========
  *
@@ -47,17 +52,28 @@ import { isStructuralUnitType } from './enums';
 /** Dollars per distinct unit. */
 export const COMMISSION_RATE = 1.0;
 
+/**
+ * The one end reason that withdraws an officer's credit: it says the record
+ * should never have existed. `MOVED_OUT` and `OWNERSHIP_TRANSFERRED` describe
+ * something that really happened and later ended, and keep earning.
+ *
+ * A string rather than the Prisma enum so this module stays free of the
+ * generated client — the value is compared as text, exactly as migrations 0052
+ * and 0054 compare unit types.
+ */
+export const UNEARNED_END_REASON = 'RECORDED_IN_ERROR';
+
 /** The columns of a unit row this rule reads. */
 export type EarningsUnit = {
   id: string;
   unitId: string | null;
   unitType: string | null;
-  endedAt: Date | string | null;
+  endReason: string | null;
 };
 
 /** The columns of a property entry this rule reads. */
 export type EarningsPropertyEntry = {
-  endedAt: Date | string | null;
+  endReason: string | null;
   units: readonly EarningsUnit[];
 };
 
@@ -79,10 +95,10 @@ export function creditBillableUnits(
   let credited = 0;
 
   for (const entry of entries) {
-    if (entry.endedAt != null) continue;
+    if (entry.endReason === UNEARNED_END_REASON) continue;
 
     for (const unit of entry.units) {
-      if (unit.endedAt != null) continue;
+      if (unit.endReason === UNEARNED_END_REASON) continue;
       if (isStructuralUnitType(unit.unitType)) continue;
 
       // `bu:` cannot collide with a census uuid, so an unlinked record is its
