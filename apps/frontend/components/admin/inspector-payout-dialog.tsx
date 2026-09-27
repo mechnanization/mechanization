@@ -248,38 +248,25 @@ export function InspectorPayoutDialog({
             </p>
           ) : allowance ? (
             <SummaryList className="rounded-lg border px-3">
-              {allowance.reason === 'BELOW_THRESHOLD' ? (
-                <>
-                  <SummaryRow label={isAr ? 'إجمالي الأرباح' : 'Total earned'} className="tabular-nums">
-                    ${profile.data!.totalEarnings.toFixed(2)}
-                  </SummaryRow>
-                  <SummaryRow label={isAr ? 'المتبقي لبلوغ 100$' : 'Left to reach $100'} className="tabular-nums text-warning">
-                    ${allowance.shortBy.toFixed(2)}
-                  </SummaryRow>
-                </>
-              ) : (
-                <>
-                  <SummaryRow label={isAr ? 'الرصيد المستحق' : 'Pending balance'} className="tabular-nums">
-                    ${allowance.owed.toFixed(2)}
-                  </SummaryRow>
-                  <SummaryRow label={isAr ? 'أسبوع الصرف' : 'Payout week'} className="tabular-nums">
-                    {formatDate(`${allowance.weekStart}T12:00:00`)} – {formatDate(`${allowance.weekEnd}T12:00:00`)}
-                  </SummaryRow>
-                  <SummaryRow label={isAr ? 'صُرف في هذا الأسبوع' : 'Paid this week'} className="tabular-nums">
-                    ${allowance.paidThisWeek.toFixed(2)} / ${PAYOUT_WEEKLY_CAP.toFixed(2)}
-                  </SummaryRow>
-                  <SummaryRow
-                    label={isAr ? 'أقصى مبلغ الآن' : 'Most payable now'}
-                    className={
-                      allowance.maxAmount > 0
-                        ? 'tabular-nums text-success'
-                        : 'tabular-nums text-muted-foreground'
-                    }
-                  >
-                    ${allowance.maxAmount.toFixed(2)}
-                  </SummaryRow>
-                </>
-              )}
+              <SummaryRow label={isAr ? 'الرصيد المستحق' : 'Pending balance'} className="tabular-nums">
+                ${allowance.owed.toFixed(2)}
+              </SummaryRow>
+              <SummaryRow label={isAr ? 'أسبوع الصرف' : 'Payout week'} className="tabular-nums">
+                {formatDate(`${allowance.weekStart}T12:00:00`)} – {formatDate(`${allowance.weekEnd}T12:00:00`)}
+              </SummaryRow>
+              <SummaryRow label={isAr ? 'صُرف في هذا الأسبوع' : 'Paid this week'} className="tabular-nums">
+                ${allowance.paidThisWeek.toFixed(2)} / ${PAYOUT_WEEKLY_CAP.toFixed(2)}
+              </SummaryRow>
+              <SummaryRow
+                label={isAr ? 'أقصى مبلغ الآن' : 'Most payable now'}
+                className={
+                  allowance.maxAmount > 0
+                    ? 'tabular-nums text-success'
+                    : 'tabular-nums text-muted-foreground'
+                }
+              >
+                ${allowance.maxAmount.toFixed(2)}
+              </SummaryRow>
             </SummaryList>
           ) : null}
 
