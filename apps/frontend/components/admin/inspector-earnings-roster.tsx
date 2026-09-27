@@ -112,8 +112,9 @@ export function InspectorEarningsRoster({
           earned: sum.earned + (row.totalEarnings ?? 0),
           paid: sum.paid + (row.paidBalance ?? 0),
           pending: sum.pending + (row.pendingBalance ?? 0),
+          overpaid: sum.overpaid + (row.overpaidBalance ?? 0),
         }),
-        { citizens: 0, properties: 0, earned: 0, paid: 0, pending: 0 },
+        { citizens: 0, properties: 0, earned: 0, paid: 0, pending: 0, overpaid: 0 },
       ),
     [inspectors],
   );
@@ -205,6 +206,11 @@ export function InspectorEarningsRoster({
           icon={Clock}
           label={isAr ? 'إجمالي المتبقي' : 'Total pending'}
           value={`$${money(totals.pending, locale)}`}
+          note={
+            totals.overpaid > 0
+              ? `$${money(totals.overpaid, locale)} ${isAr ? 'مدفوع بالزيادة' : 'overpaid'}`
+              : undefined
+          }
           emphasis
           className="col-span-2 xl:col-span-1"
         />
@@ -294,6 +300,9 @@ function InspectorCard({
   const earned = inspector.totalEarnings ?? 0;
   const paid = inspector.paidBalance ?? 0;
   const pending = inspector.pendingBalance ?? 0;
+  // `pendingBalance` clamps at zero, so money owed back showed as a settled
+  // row. Never both: one is zero whenever the other is not.
+  const overpaid = inspector.overpaidBalance ?? 0;
 
   const facts: Array<{ label: string; value: string; className?: string }> = [
     { label: isAr ? 'الصفة' : 'Role', value: roleLabel },
@@ -332,11 +341,11 @@ function InspectorCard({
       className: 'text-success',
     },
     {
-      label: isAr ? 'المتبقي المستحق' : 'Pending',
-      value: `$${money(pending, locale)}`,
+      label: overpaid > 0 ? (isAr ? 'مدفوع بالزيادة' : 'Overpaid') : isAr ? 'المتبقي المستحق' : 'Pending',
+      value: `$${money(overpaid > 0 ? overpaid : pending, locale)}`,
       className: cn(
         'font-bold',
-        pending > 0 ? 'text-warning' : 'text-muted-foreground',
+        overpaid > 0 ? 'text-destructive' : pending > 0 ? 'text-warning' : 'text-muted-foreground',
       ),
     },
   ];

@@ -146,6 +146,12 @@ export interface StaffSummary {
   totalEarnings?: number;
   paidBalance?: number;
   pendingBalance?: number;
+  /**
+   * Paid over and above earned. `pendingBalance` clamps at zero so the payout
+   * rule can read it as "the most that may still be paid", which left an
+   * overpaid inspector looking settled. Reported rather than inferred.
+   */
+  overpaidBalance?: number;
   createdAt: string;
   lastLoginAt: string | null;
 }

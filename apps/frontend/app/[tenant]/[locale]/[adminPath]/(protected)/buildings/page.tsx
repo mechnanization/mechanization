@@ -855,9 +855,19 @@ export default function BuildingsPage({
       */}
       {!query.loading && summary && summary.unitsOutOfScope > 0 ? (
         <p className="-mt-2 text-xs text-muted-foreground">
+          {/*
+            «منشآت غير قائمة» described only DEMOLISHED, and that is not the
+            rule. The exclusion is `NOT IN OCCUPIABLE_LIFECYCLE`, which also
+            drops PERMITTED, UNDER_CONSTRUCTION, WAR_DAMAGED_UNINHABITED and
+            NOT_REALISED. On production on 2026-09-22 the three excluded units
+            were an UNDER_CONSTRUCTION building's; both DEMOLISHED buildings
+            held zero units, so the caption named the one state contributing
+            nothing. Phrased as the rule rather than the list, so a seventh
+            lifecycle value does not make it wrong again.
+          */}
           {en
-            ? `${summary.unitsOutOfScope.toLocaleString('en-US')} units excluded from these figures (structures not standing)`
-            : `${summary.unitsOutOfScope.toLocaleString('en-US')} وحدة مستثناة من هذه الأرقام (منشآت غير قائمة)`}
+            ? `${summary.unitsOutOfScope.toLocaleString('en-US')} units excluded from these figures (buildings that cannot hold households)`
+            : `${summary.unitsOutOfScope.toLocaleString('en-US')} وحدة مستثناة من هذه الأرقام (مبانٍ لا يمكن أن تؤوي أسراً)`}
         </p>
       ) : null}
 

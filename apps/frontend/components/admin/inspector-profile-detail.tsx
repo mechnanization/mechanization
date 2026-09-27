@@ -316,12 +316,28 @@ export function InspectorProfileDetail({
           value={`$${money(data.paidBalance)}`}
           note={`${data.payouts.length} ${isAr ? 'دفعة مسجلة' : 'payouts'}`}
         />
-        <Stat
-          icon={Clock}
-          label={isAr ? 'المتبقي المستحق' : 'Pending'}
-          value={`$${money(data.pendingBalance)}`}
-          emphasis
-        />
+        {/*
+          Two balances, never both: `pendingBalance` clamps at zero, so an
+          inspector paid more than he earned read as settled here. That can
+          happen without anyone erring — a record corrected away after its
+          payout lowers the total underneath money already handed over — and it
+          is the one figure on this row that asks for something back.
+        */}
+        {(data.overpaidBalance ?? 0) > 0 ? (
+          <Stat
+            icon={Clock}
+            label={isAr ? 'مدفوع بالزيادة' : 'Overpaid'}
+            value={`$${money(data.overpaidBalance ?? 0)}`}
+            emphasis
+          />
+        ) : (
+          <Stat
+            icon={Clock}
+            label={isAr ? 'المتبقي المستحق' : 'Pending'}
+            value={`$${money(data.pendingBalance)}`}
+            emphasis
+          />
+        )}
       </div>
 
       {/*
