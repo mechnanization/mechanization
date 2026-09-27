@@ -47,11 +47,20 @@ function money(value: number, locale: string): string {
  * below add up to, so a figure that looks wrong can be traced to the row that
  * made it.
  *
- * Only `FIELD_INSPECTOR` accounts appear. The commission is $1 per registered
- * property and the backend computes it for every staff row, so widening this
- * list is a one-word change — but a card that reads «$0.00» for an accountant
- * who was never going to survey anything is a row to scroll past, not
- * information.
+ * Who appears: every `FIELD_INSPECTOR`, and anyone else who actually filed
+ * something or has already been paid. The commission is $1 per distinct unit
+ * and the backend computes it for every staff row, so the question was only
+ * ever which rows are worth showing.
+ *
+ * Role alone was the wrong test. It hid a SUPER_ADMIN who had filed records
+ * and accrued a real balance — the profile page showed it, no roster did, and
+ * the «تسجيل دفعة» button lives here, so there was no way to settle up with
+ * him. Filing work is what earns, so filing work is what puts a row on this
+ * page.
+ *
+ * The original reasoning still holds at the other end: an accountant who was
+ * never going to survey anything is a «$0.00» row to scroll past, not
+ * information. Having filed nothing and been paid nothing, they stay off it.
  */
 export function InspectorEarningsRoster({
   tenant,
@@ -87,7 +96,12 @@ export function InspectorEarningsRoster({
   });
 
   const inspectors = useMemo(() => {
-    const rows = (data?.items ?? []).filter((row) => row.role === 'FIELD_INSPECTOR');
+    const rows = (data?.items ?? []).filter(
+      (row) =>
+        row.role === 'FIELD_INSPECTOR' ||
+        (row.registeredPropertiesCount ?? 0) > 0 ||
+        (row.paidBalance ?? 0) > 0,
+    );
     /*
       Largest outstanding balance first, because that is the column this page
       exists to clear. Disabled accounts sink to the bottom whatever they are
@@ -183,7 +197,10 @@ export function InspectorEarningsRoster({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <Stat
           icon={UsersRound}
-          label={isAr ? 'المفتشون الميدانيون' : 'Field inspectors'}
+          // Not «المفتشون الميدانيون» any more: the list now includes anyone who
+          // filed work, and a tile that counts them under an inspector's title
+          // would misname the admin row sitting underneath it.
+          label={isAr ? 'من سجّل بيانات' : 'People who filed'}
           value={inspectors.length.toLocaleString(locale)}
         />
         <Stat
