@@ -62,6 +62,24 @@ import { activeVacancy, closeActiveVacancy, toVacancyRow } from './unit-vacancy'
 /** How many units one blueprint may generate in a single call. */
 const MAX_GENERATED_UNITS = 400;
 
+/** What a whole-matrix save did — or, on a dry run, would do. */
+export interface MatrixSaveResult {
+  dryRun: boolean;
+  building: BuildingRow;
+  /** Unit codes, as they were before the save. */
+  removed: string[];
+  /** Unit codes after the save — a moved unit's new code. */
+  updated: string[];
+  added: string[];
+}
+
+/** Thrown at the end of a dry run so the transaction rolls back with the answer in hand. */
+class MatrixDryRun extends Error {
+  constructor(readonly building: BuildingRow) {
+    super('dry run');
+  }
+}
+
 /**
  * «العقارات المشتركة», minus the building's own — the list as it is stored.
  *
@@ -86,24 +104,6 @@ const MAX_GENERATED_UNITS = 400;
  * cannot know about, because the schema does not know which parcel is being
  * edited.
  */
-/** What a whole-matrix save did — or, on a dry run, would do. */
-export interface MatrixSaveResult {
-  dryRun: boolean;
-  building: BuildingRow;
-  /** Unit codes, as they were before the save. */
-  removed: string[];
-  /** Unit codes after the save — a moved unit's new code. */
-  updated: string[];
-  added: string[];
-}
-
-/** Thrown at the end of a dry run so the transaction rolls back with the answer in hand. */
-class MatrixDryRun extends Error {
-  constructor(readonly building: BuildingRow) {
-    super('dry run');
-  }
-}
-
 export function sharedParcelsExcluding(
   values: readonly string[] | undefined,
   own: string,
@@ -1716,6 +1716,18 @@ export class BuildingsService {
     const summary = { removed: [] as string[], updated: [] as string[], added: [] as string[] };
     try {
       const building = await runInTenantTransaction(this.tenantContext, async () => {
+        /*
+          The freshness check again, under the building's row lock. Two officers
+          saving the same stale screen a moment apart both pass the check above,
+          and the second would write over the first. Locked, the second waits for
+          the first to commit and then reads its `updatedAt`, which refuses it.
+        */
+        const S = tenantSchemaRef(this.tenantContext.schemaName);
+        await this.db.$queryRaw`SELECT "id" FROM ${S}"buildings" WHERE "id" = ${id}::uuid FOR UPDATE`;
+        const locked = await this.db.building.findUnique({ where: { id } });
+        if (!locked) throw new NotFoundError('المبنى غير موجود');
+        await this.assertFresh(locked, input.expectedUpdatedAt, actor);
+
         // Every unit named must still be this building's — a stale screen could name another's.
         const named = [...input.remove, ...input.update.map((row) => row.id)];
         if (named.length > 0) {

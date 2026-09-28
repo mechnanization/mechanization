@@ -19,6 +19,9 @@ import { Field } from '@/components/ui/field';
 import { Money } from '@/components/ui/money';
 import { Textarea } from '@/components/ui/textarea';
 
+/** The high-impact fields whose values the trail never keeps — `SENSITIVE_FILE_FIELDS` on the server. */
+const REASON_SENSITIVE = new Set(['civilRecordNumber', 'identityDocNumber', 'residencyNumber', 'residentStatus']);
+
 /**
  * «مراجعة التعديلات» — what saving this edit will do, before it is pressed.
  *
@@ -94,7 +97,18 @@ export function EditReviewDialog({
   const nothing = changes.changed.length === 0 && changes.cards.length === 0;
   const blocking = blockers.filter((row) => row.code === 'TENANTS_LINKED');
   const needsReason = reasonRequired.length > 0;
-  const ready = blocking.length === 0 && (!needsReason || reason.trim().length >= 3);
+  /*
+    Three characters either way — the server's floor (`changeReason`). An
+    optional reason of one or two would pass here and be refused on save.
+  */
+  const reasonLength = reason.trim().length;
+  const ready = blocking.length === 0 && (reasonLength === 0 ? !needsReason : reasonLength >= 3);
+  /*
+    An identity number or صفة الإقامة is corrected here and its values are never
+    kept (`SENSITIVE_FILE_FIELDS`), so the reason must not be where they turn up
+    again: it asks for what the correction rests on, not the numbers.
+  */
+  const correctsSensitive = reasonRequired.some((field) => REASON_SENSITIVE.has(field));
 
   const cardName = (card: CardChangeView) =>
     [
@@ -297,8 +311,8 @@ export function EditReviewDialog({
               <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
               {needsReason
                 ? en
-                  ? `Required: this corrects ${reasonRequired.map(fieldLabel).join(', ')}. Kept in the file’s history under your name.`
-                  : `مطلوب: هذا يصحّح ${reasonRequired.map(fieldLabel).join('، ')}. يُحفظ في سجل تعديلات الملف باسمك.`
+                  ? `Required: this corrects ${reasonRequired.map(fieldLabel).join(', ')}. Kept in the file’s history under your name.${correctsSensitive ? ' Say what the correction rests on (the document you saw), not the numbers themselves — they are not kept.' : ''}`
+                  : `مطلوب: هذا يصحّح ${reasonRequired.map(fieldLabel).join('، ')}. يُحفظ في سجل تعديلات الملف باسمك.${correctsSensitive ? ' اذكر ما يستند إليه التصحيح (المستند الذي اطّلعت عليه)، لا الأرقام نفسها — فهي لا تُحفظ.' : ''}`
                 : en
                   ? 'Optional. Kept in the file’s history under your name.'
                   : 'اختياري. يُحفظ في سجل تعديلات الملف باسمك.'}

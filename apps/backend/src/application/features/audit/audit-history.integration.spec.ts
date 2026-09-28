@@ -111,6 +111,16 @@ describeIfDb('AuditService.history', () => {
     }
   });
 
+  it('refuses a staff account: `users` holds staff too, and their trail is the full trail’s business', async () => {
+    await entry('STAFF_UPDATED', { entityId: officer, after: { email: 'officer@history.gov.lb', role: 'COLLECTOR' } });
+    await expect(
+      within(() => audit.history({ entityType: 'User', entityId: officer, limit: 50, offset: 0 })),
+    ).rejects.toThrow(/not found/);
+    await expect(
+      within(() => audit.history({ entityType: 'Building', entityId: citizen, limit: 50, offset: 0 })),
+    ).rejects.toThrow(/not found/);
+  });
+
   it('leaves the full trail as it was for those who may read it', async () => {
     const full = await within(() => audit.query({ entityType: 'User', entityId: citizen, limit: 50, offset: 0 }));
     expect(full.total).toBe(5);

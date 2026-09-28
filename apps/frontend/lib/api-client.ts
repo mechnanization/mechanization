@@ -3781,9 +3781,6 @@ export function getAuditFacets(tenant: string, token: string, signal?: AbortSign
   return apiFetch<AuditFacets>(tenant, '/audit/facets', { token, signal });
 }
 
-/** SUPER_ADMIN/AUDITOR only, server-enforced. Omitting `actorId` returns
- * every administrative action; passing it (e.g. the signed-in user's own id)
- * narrows the trail down to one admin's activity. */
 /**
  * «سجل التعديلات» — one citizen's or building's own history: what was changed,
  * by whom, from what to what, and why. Open to everyone who can open the
@@ -3809,6 +3806,9 @@ export function getRecordHistory(
   );
 }
 
+/** SUPER_ADMIN/AUDITOR only, server-enforced. Omitting `actorId` returns
+ * every administrative action; passing it (e.g. the signed-in user's own id)
+ * narrows the trail down to one admin's activity. */
 export function getAuditLog(
   tenant: string,
   token: string,

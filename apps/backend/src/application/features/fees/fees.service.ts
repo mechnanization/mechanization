@@ -1158,13 +1158,6 @@ export class FeesService {
   }
 
   /**
-   * Which citizens a notice applies to.
-   *
-   * Only active citizens, and for a category only those with a *registered*
-   * property of that kind — billing someone for a shop they never registered
-   * is the error this whole feature would be judged on.
-   */
-  /**
    * Everyone a flat charge aimed at this category would reach today.
    *
    * What a FLAT bill «would be now» turns on: its amount never depends on the
@@ -1175,6 +1168,13 @@ export class FeesService {
     return new Set(await this.resolveTargets({ targetType: 'BUILDING_CATEGORY', targetCategory: category }));
   }
 
+  /**
+   * Which citizens a notice applies to.
+   *
+   * Only active citizens, and for a category only those with a *registered*
+   * property of that kind — billing someone for a shop they never registered
+   * is the error this whole feature would be judged on.
+   */
   private async resolveTargets(input: {
     targetType: string;
     targetCategory?: string;
