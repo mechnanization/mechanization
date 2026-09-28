@@ -87,6 +87,7 @@ export function auditActionLabel(action: string, locale: string): string {
     PAYMENT_DECLARED: ['تصريح بدفعة', 'Payment declared'],
     PAYMENT_CONFIRMED: ['تأكيد دفعة', 'Payment confirmed'],
     PAYMENT_REJECTED: ['رفض دفعة', 'Payment rejected'],
+    BILL_BASIS_REVIEWED: ['مراجعة فاتورة تأثّرت بتصحيح', 'Bill affected by a correction reviewed'],
     INSPECTOR_PAYOUT_RECORDED: ['تسجيل دفعة لمفتش', 'Inspector payout recorded'],
 
     // ── the portal itself ──

@@ -68,7 +68,7 @@ export const AUDIT_FAMILIES: AuditFamily[] = [
     key: 'money',
     label: ['الرسوم والدفعات', 'Fees & payments'],
     tone: 'money',
-    match: (action) => action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.includes('PAYOUT'),
+    match: (action) => action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.startsWith('BILL_') || action.includes('PAYOUT'),
   },
   {
     key: 'land',
@@ -98,7 +98,7 @@ export function auditToneOf(action: string): AuditTone {
   if (/DELETE|ENDED|DEACTIVATED|UNLINKED|DISMISSED|REJECTED|REMOVED|DISABLED|RESTORED$/.test(action)) {
     return action === 'LANDLORD_MATCH_RESTORED' ? 'change' : 'remove';
   }
-  if (action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.includes('PAYOUT')) return 'money';
+  if (action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.startsWith('BILL_') || action.includes('PAYOUT')) return 'money';
   if (/LOGIN|TOTP|PASSWORD|EMAIL_CHANGED|DOCUMENT_VIEW|CSV_EXPORT|SETTINGS/.test(action)) return 'access';
   if (/CREATED|RECORDED|LOGGED|ADDED|LINKED|SUBMITTED|ISSUED|GENERATED|CONFIRMED|IMPORT/.test(action)) {
     return 'create';
@@ -136,7 +136,7 @@ const REDACTED = '[redacted]';
 const isIdKey = (key: string) => /^id$|Id$|Ids$|^subjectKey$/.test(key);
 
 /** Structures too internal to read; summarised under «كل التفاصيل» only. */
-const INTERNAL_KEYS = new Set(['footprint', 'snapshot', 'census', 'written', 'filter', 'release', 'fileLink']);
+const INTERNAL_KEYS = new Set(['footprint', 'snapshot', 'census', 'written', 'filter', 'release', 'fileLink', 'figure']);
 
 /** Keys consumed by a special rule below, so the generic pass skips them. */
 const SPECIAL_KEYS = new Set([
@@ -242,6 +242,7 @@ function fieldLabels(en: boolean): Record<string, string> {
     parcelsSkipped: ['عقارات تُركت', 'Parcels skipped'],
     linesImported: ['خطوط استوردت', 'Lines imported'],
     amount: ['المبلغ', 'Amount'],
+    amountNow: ['المبلغ لو صدرت اليوم', 'Amount if raised today'],
     targetType: ['الجهة المستهدفة', 'Target'],
     issuedCount: ['عدد الإشعارات', 'Notices issued'],
     periodKey: ['الفترة', 'Period'],
@@ -353,7 +354,8 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
         : entry.action.startsWith('QUALITY_FINDING')
           ? en ? 'Why it is not a problem' : 'سبب اعتبارها ليست مشكلة'
           : en ? 'Reason' : 'السبب';
-    result.quotes.push({ label: reasonLabel, value: reason });
+    // An ending's reason is a code («سُجّل خطأً», «انتقال الملكية»); a person's is prose.
+    result.quotes.push({ label: reasonLabel, value: format('reason', reason) });
   }
   if (typeof after?.duplicateReason === 'string' && after.duplicateReason) {
     result.quotes.push({

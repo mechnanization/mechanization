@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import {
+  billBasisReviewSchema,
   chargeCitizenSchema,
   createFeeNoticeSchema,
   declarePaymentSchema,
@@ -20,6 +21,7 @@ import {
   reviewPaymentSchema,
   settlePaymentSchema,
   systemSettingsSchema,
+  type BillBasisReview,
   type ChargeCitizen,
   type CreateFeeNotice,
   type DeclarePayment,
@@ -27,6 +29,7 @@ import {
   type SystemSettingsInput,
 } from '@mechanization/shared-schemas';
 import { FeesService } from '../../application/features/fees/fees.service';
+import { CorrectionBillsService } from '../../application/features/fees/correction-bills.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
@@ -50,7 +53,10 @@ export class FeesController {
   // `RecurringBillingJob` is deliberately not injected here. It is the
   // cross-tenant job, and this controller is mounted under `t/:tenantSlug`;
   // having it in reach is how `recurring/run` came to bill every municipality.
-  constructor(private readonly fees: FeesService) {}
+  constructor(
+    private readonly fees: FeesService,
+    private readonly correctionBills: CorrectionBillsService,
+  ) {}
 
   // ───────────────────────────  Settings  ───────────────────────────
 
@@ -331,6 +337,35 @@ export class FeesController {
       note: body.note,
       actor: { id: user.sub, role: user.role ?? '' },
     });
+  }
+
+  /**
+   * «فواتير تأثّرت بتصحيحات» — open bills whose basis a correction changed,
+   * with today's figure and what was recorded since. Read-only for AUDITOR.
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT')
+  @Get('correction-affected')
+  async correctionAffected(
+    @Query('includeReviewed') includeReviewed?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.correctionBills.list({
+      includeReviewed: includeReviewed === 'true',
+      limit: Math.min(Math.max(Number(limit) || 20, 1), 100),
+      offset: Math.max(Number(offset) || 0, 0),
+    });
+  }
+
+  /** Recording what was decided about one of them. The bill itself is never changed. */
+  @Roles('SUPER_ADMIN', 'ACCOUNTANT')
+  @Post('payments/:id/basis-review')
+  async reviewBasis(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(billBasisReviewSchema)) body: BillBasisReview,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.correctionBills.review(id, body, { id: user.sub, role: user.role ?? '' });
   }
 
   // ─────────────────────────  Citizen portal  ─────────────────────────

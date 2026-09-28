@@ -23,6 +23,7 @@ import { RegistrationService } from './features/registration/registration.servic
 import { ReportingService } from './features/reporting/reporting.service';
 import { TenantService } from './features/tenant/tenant.service';
 import { FeesService } from './features/fees/fees.service';
+import { CorrectionBillsService } from './features/fees/correction-bills.service';
 import { PaymentLedgerService } from './features/fees/payment-ledger.service';
 import { StaffService } from './features/staff/staff.service';
 import { ZonesService } from './features/zones/zones.service';
@@ -61,6 +62,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
 
     OwnershipService,
     FeesService,
+    CorrectionBillsService,
     PaymentLedgerService,
     StaffService,
     ZonesService,
@@ -91,6 +93,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
 
     OwnershipService,
     FeesService,
+    CorrectionBillsService,
     PaymentLedgerService,
     StaffService,
     ZonesService,

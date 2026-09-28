@@ -62,3 +62,18 @@ describe('describeAudit — a citizen edit, field by field', () => {
     expect(described.facts.some((fact) => fact.label === 'حُذفت بطاقة' && /46/.test(fact.value))).toBe(true);
   });
 });
+
+describe('describeAudit — reasons', () => {
+  it('reads an ending’s reason code as words, and leaves a written reason as written', () => {
+    const ended = describeAudit(
+      { ...entry(null, { reason: 'OWNERSHIP_TRANSFERRED', endedAt: '2026-08-15T00:00:00.000Z' }), action: 'OWNERSHIP_ENDED' },
+      'ar',
+    );
+    const quote = ended.quotes.find((line) => line.label === 'السبب');
+    expect(quote?.value).not.toBe('OWNERSHIP_TRANSFERRED');
+    expect(quote?.value).toMatch(/[؀-ۿ]/);
+
+    const written = describeAudit(entry(null, { reason: 'المحل الثاني سُجّل خطأً', cards: [] }), 'ar');
+    expect(written.quotes.find((line) => line.label === 'السبب')?.value).toBe('المحل الثاني سُجّل خطأً');
+  });
+});

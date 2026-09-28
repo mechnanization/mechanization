@@ -65,7 +65,7 @@ function iconOf(action: string): LucideIcon {
     action === 'PROPERTY_NUMBER_CORRECTED'
   )
     return Users;
-  if (action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.includes('PAYOUT')) return Banknote;
+  if (action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.startsWith('BILL_') || action.includes('PAYOUT')) return Banknote;
   if (action.startsWith('ZONE_') || action === 'CADASTRE_IMPORT') return Layers;
   if (action === 'LOGIN') return LogIn;
   if (/TOTP|PASSWORD|EMAIL|STAFF_/.test(action)) return KeyRound;
