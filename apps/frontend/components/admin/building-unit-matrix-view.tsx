@@ -66,6 +66,8 @@ import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
+import { ActivityTrail } from '@/components/admin/activity-trail';
+import { AUDIT_ENTITY } from '@/lib/audit-labels';
 import {
   type EndOccupancyAnswer,
   activeVacancy,
@@ -1435,20 +1437,27 @@ export function BuildingUnitMatrixView({
       ) : null}
 
       {/*
-        «سجل الموظفين على هذا القيد» used to sit here.
+        «سجل التعديلات» — every change to this building and its units, by whom,
+        from what to what, and why, for everyone who can read the building.
 
-        Creating a building lands the officer on this page, and the first thing
-        under their new record was a panel telling them they had just created
-        it — the one moment the trail has nothing to say that the person
-        reading it does not already know. It also only ever rendered for
-        SUPER_ADMIN and AUDITOR, so for everyone else it was a request that
-        returned nothing on every visit.
-
-        The trail itself is not gone: «سجل النشاطات» filters to this building
-        by record type and date, and the citizen profile still carries its own
-        panel. Removed here rather than hidden behind a flag, because a flag
-        would keep firing the request.
+        Folded by default. It was removed from here once because creating a
+        building lands the officer on this page, and an open panel under the new
+        record only told them they had just created it; and because it rendered
+        for SUPER_ADMIN and AUDITOR alone. The second reason is gone — the
+        history endpoint serves every reader of the building — and folding
+        answers the first: the line says how many changes there are, and opens
+        when somebody wants to know which.
       */}
+      {building ? (
+        <ActivityTrail
+          tenant={tenant}
+          locale={locale}
+          base={base}
+          entityType={AUDIT_ENTITY.building}
+          entityId={building.id}
+          className="mt-4"
+        />
+      ) : null}
     </div>
   );
 }

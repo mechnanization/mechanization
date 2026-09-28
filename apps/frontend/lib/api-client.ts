@@ -3697,6 +3697,31 @@ export function getAuditFacets(tenant: string, token: string, signal?: AbortSign
 /** SUPER_ADMIN/AUDITOR only, server-enforced. Omitting `actorId` returns
  * every administrative action; passing it (e.g. the signed-in user's own id)
  * narrows the trail down to one admin's activity. */
+/**
+ * «سجل التعديلات» — one citizen's or building's own history: what was changed,
+ * by whom, from what to what, and why. Open to everyone who can open the
+ * record, unlike `getAuditLog`: the server leaves out who viewed it and how it
+ * is being reviewed, and strips repair snapshots.
+ */
+export function getRecordHistory(
+  tenant: string,
+  token: string,
+  record: { kind: 'citizen' | 'building'; id: string },
+  page: { limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({
+    limit: String(page.limit ?? 30),
+    offset: String(page.offset ?? 0),
+  });
+  const path = record.kind === 'citizen' ? 'citizens' : 'buildings';
+  return apiFetch<{ items: AuditEntry[]; total: number }>(
+    tenant,
+    `/${path}/${encodeURIComponent(record.id)}/history?${query.toString()}`,
+    { token, signal },
+  );
+}
+
 export function getAuditLog(
   tenant: string,
   token: string,

@@ -25,6 +25,7 @@ import type {
 import { CitizensService } from '../../application/features/citizens/citizens.service';
 import { LandlordLinkService } from '../../application/features/citizens/landlord-link.service';
 import { OwnershipService } from '../../application/features/citizens/ownership.service';
+import { AuditService } from '../../application/features/audit/audit.service';
 import { TenancyService } from '../../application/features/citizens/tenancy.service';
 import { ReportingService } from '../../application/features/reporting/reporting.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
@@ -76,7 +77,24 @@ export class CitizenController {
     private readonly landlordLinkService: LandlordLinkService,
     private readonly tenancy: TenancyService,
     private readonly ownership: OwnershipService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * «سجل التعديلات» — what was changed on this file, by whom, from what to
+   * what, and why. Open to everyone who can open the file; changes only, never
+   * who viewed it or how it is being reviewed (see `AuditService.history`).
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Get(':id/history')
+  history(@Param('id') id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
+    return this.audit.history({
+      entityType: 'User',
+      entityId: id,
+      limit: Math.min(Math.max(Number(limit) || 30, 1), 100),
+      offset: Math.max(Number(offset) || 0, 0),
+    });
+  }
 
   /**
    * The registry table: every citizen with their registration summary and

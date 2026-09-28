@@ -479,6 +479,52 @@ export class AuditService {
   }
 
   /**
+   * «سجل التعديلات» — one record's own history, for the staff who work on it.
+   *
+   * The whole trail stays SUPER_ADMIN and AUDITOR (see `AuditController`): it
+   * shows who opened which file and how closely a colleague's work is being
+   * reviewed. A record's history is a narrower question — what was changed on
+   * this file or building, by whom, from what to what, and why — so it leaves
+   * out exactly those two things:
+   *
+   *  - access: file and document views, exports, logins;
+   *  - review: approvals, returns and quality checks.
+   *
+   * What remains is redacted as every read is (`toAuditViews`), and the
+   * structures a trail keeps for repair rather than for reading — a removed
+   * row's full snapshot, a link's footprint — are dropped, since they can carry
+   * other people's details. Sensitive fields never had values written for them
+   * (`fileChanges`), so a history can say that a civil record number changed
+   * and by whom, and never what it was.
+   */
+  async history(query: {
+    entityType: 'User' | 'Building';
+    entityId: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: AuditView[]; total: number }> {
+    const result = await this.query({
+      entityType: query.entityType,
+      entityId: query.entityId,
+      excludeActions: [...HISTORY_EXCLUDED_ACTIONS],
+      excludeActionPrefixes: [...HISTORY_EXCLUDED_PREFIXES],
+      limit: query.limit,
+      offset: query.offset,
+    });
+    return {
+      total: result.total,
+      items: result.items.map((item) => ({
+        ...item,
+        before: withoutRepairData(item.before),
+        after: withoutRepairData(item.after),
+        // The request's origin is the trail's business, not the record's.
+        ipAddress: null,
+        actor: { ...item.actor, email: null },
+      })),
+    };
+  }
+
+  /**
    * «التقرير اليومي» — one row per staff member per day, with what they did.
    *
    * The same filters as `query`, so the summary and the list it drills into
@@ -563,6 +609,8 @@ export class AuditService {
       query.entityType ?? 'ALL',
       query.entityId ?? 'ALL',
       query.actions?.length ? query.actions.join('|') : 'ALL',
+      query.excludeActions?.length ? `not:${query.excludeActions.join('|')}` : '-',
+      query.excludeActionPrefixes?.length ? `notp:${query.excludeActionPrefixes.join('|')}` : '-',
       query.from ? query.from.toISOString() : 'ALL',
       query.to ? query.to.toISOString() : 'ALL',
       query.limit,
@@ -603,4 +651,41 @@ export class AuditService {
       );
     }
   }
+}
+
+/** Access to a record, not a change to it — kept out of `AuditService.history`. */
+const HISTORY_EXCLUDED_ACTIONS = [
+  'LOGIN',
+  'DOCUMENT_VIEW',
+  'CSV_EXPORT',
+  // How a colleague's work is being reviewed — the reason the full trail is restricted.
+  'RECORD_APPROVED',
+  'RECORD_RETURNED',
+  'RECORD_CORRECTED',
+] as const;
+const HISTORY_EXCLUDED_PREFIXES = ['QUALITY_'] as const;
+
+/**
+ * Keys a trail keeps for repairing a record rather than for reading it: whole
+ * rows copied before a deletion, a link's list of what it wrote. They can hold
+ * other people's details, and a record's history has no use for them.
+ */
+const REPAIR_KEYS = new Set([
+  'snapshot',
+  'snapshots',
+  'removed',
+  'rows',
+  'footprint',
+  'written',
+  'census',
+  'release',
+  'fileLink',
+  'flagsOnEndedCards',
+]);
+
+function withoutRepairData(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(([key]) => !REPAIR_KEYS.has(key)),
+  );
 }

@@ -28,7 +28,11 @@ const REDACTED_KEYS = new Set([
   'identitydocnumber',
   'civilrecordnumber',
   'residencynumber',
+  // صفة الإقامة — whether somebody is a refugee. Recorded as "changed", never as a value.
+  'residentstatus',
   'phone',
+  // The local contact is somebody else, and their number is theirs.
+  'localcontactphone',
   'whatsapp',
   'landlordphone',
   'token',
