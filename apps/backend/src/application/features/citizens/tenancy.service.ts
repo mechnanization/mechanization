@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   isDwellingUnitType,
+  mayTransferOwnership,
   statusForFlags,
   type AfterTenancyStatus,
   type FieldFlag,
@@ -10,7 +11,12 @@ import {
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
-import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from '../../../domain/errors/domain-error';
 import { claimsFlat } from '../../../domain/entities/census-claim';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CasesService } from '../cases/cases.service';
@@ -127,7 +133,7 @@ export class TenancyService {
     occupancyId: string,
     input: EndInput & { reason: string },
     actor: Actor,
-  ): Promise<EndTenancyResult | { ownerSpellEnded: true }> {
+  ): Promise<EndTenancyResult | OwnerSpellEnded> {
     const occupancy = await this.db.unitOccupancy.findUnique({
       where: { id: occupancyId },
       select: { role: true },
@@ -135,12 +141,7 @@ export class TenancyService {
     if (!occupancy) throw new NotFoundError('سجل الإشغال غير موجود');
 
     if (occupancy.role === 'OWNER') {
-      await this.buildings.endOccupancy(
-        occupancyId,
-        { toDate: input.endedAt, reason: input.reason },
-        actor,
-      );
-      return { ownerSpellEnded: true };
+      return this.endOwnership(occupancyId, input, actor);
     }
 
     if (input.reason !== 'MOVED_OUT' && input.reason !== 'RECORDED_IN_ERROR') {
@@ -436,6 +437,197 @@ export class TenancyService {
   }
 
   // ─────────────────────────────  Ending  ─────────────────────────────
+
+  /**
+   * «إنهاء الملكية» — a sale, a transfer, or a correction of who owns the flat.
+   *
+   * Apart from the tenancy path because almost nothing about it is the same: an
+   * owner's spell is not a residence, there is no tenancy card to close, and
+   * `BuildingsService.endOccupancy` releases the census claim from their file
+   * instead. What it does share is the half that was missing.
+   *
+   * ## The statement nothing used to take back
+   *
+   * `Unit.unitStatus` is answered when an owner is recorded, so a flat its
+   * owner lived in carries «مشغولة من المالك» — a statement about a person. The
+   * spell ended, the file was released, and the register went on saying the
+   * flat is occupied by an owner it no longer has one of. Billing reads the
+   * unit, so that is not a display fault; and `UNIT_STATUS_CONTRADICTION`
+   * catches it one report later instead of at the door.
+   *
+   * So when this ends the **last** spell on the flat — no co-owner, no tenant,
+   * nobody — the officer is asked what it is now. Only two answers can be true
+   * of a flat nobody is recorded in: «شاغرة», a finding with what it rests on,
+   * which `confirmVacancy` records so it can be lifted again; and «لا أعرف»,
+   * which clears the statement and sends somebody to look. «يسكنها المالك» and
+   * «مؤجرة لمستأجر آخر» are refused rather than offered — there is no owner to
+   * live there and no tenancy to continue.
+   *
+   * With anyone still recorded on the flat, nothing is asked and nothing is
+   * touched: the status is theirs to speak for, not the departing owner's.
+   *
+   * ## A correction is asked nothing
+   *
+   * «سُجِّل بالخطأ» says the ownership never existed, so neither does anything it
+   * asserted: what it implied about the flat's use is cleared, and no case is
+   * opened, because there is nobody to go and check on.
+   */
+  private async endOwnership(
+    occupancyId: string,
+    input: EndInput & { reason: string },
+    actor: Actor,
+  ): Promise<OwnerSpellEnded> {
+    /*
+      Ahead of every read, because it is a fact about the caller alone.
+
+      `@Roles` on the endpoint cannot say this: an inspector must still reach
+      this method to take back an entry they made in error, so the gate is on
+      the reason rather than on the route. Here rather than in the controller
+      because this is the only path to the write, and a second door added later
+      would arrive already governed.
+    */
+    if (input.reason === 'OWNERSHIP_TRANSFERRED' && !mayTransferOwnership(actor.role)) {
+      throw new ForbiddenError(
+        'تسجيل بيع أو نقل ملكية يحتاج صلاحية إدارية. يمكنك إنهاء الملكية بسبب «سُجِّلت بالخطأ» فقط.',
+      );
+    }
+
+    const spell = await this.db.unitOccupancy.findUnique({
+      where: { id: occupancyId },
+      select: {
+        unitId: true,
+        toDate: true,
+        unit: { select: { unitCode: true, buildingId: true } },
+      },
+    });
+    if (!spell) throw new NotFoundError('سجل الإشغال غير موجود');
+    /*
+      Refused here as well as in `BuildingsService.endOccupancy`, and before the
+      question rather than after it: what is asked below is decided on what is
+      standing now, and asking it of a spell that turns out to be closed would
+      put a vacancy on a flat for a departure that already happened.
+    */
+    if (spell.toDate) throw new ConflictError('هذا الإشغال منتهٍ مسبقاً');
+
+    const othersRemain =
+      (await this.db.unitOccupancy.count({
+        where: { unitId: spell.unitId, toDate: null, id: { not: occupancyId } },
+      })) > 0;
+    /** The flat is left with nobody, and by a sale rather than a correction. */
+    const asks = !othersRemain && input.reason === 'OWNERSHIP_TRANSFERRED';
+
+    if (asks && !input.afterStatus) {
+      throw new ValidationError('حدِّد حالة الوحدة بعد انتهاء الملكية', {
+        needsStatus: true,
+        unitCodes: [spell.unit.unitCode],
+      });
+    }
+    if (asks && input.afterStatus !== 'VACANT' && input.afterStatus !== 'UNKNOWN') {
+      throw new ValidationError(
+        `لم يبقَ أحد مسجَّلاً على الوحدة ${spell.unit.unitCode} — اختر «شاغرة» أو «لا أعرف»`,
+        { afterStatus: input.afterStatus },
+      );
+    }
+    if (asks && input.afterStatus === 'VACANT' && !input.vacancyBasis) {
+      throw new ValidationError('على ماذا يستند الشغور؟', { vacancyBasis: null });
+    }
+
+    const endedAt = input.endedAt ?? new Date();
+    const statusApplied = asks ? (input.afterStatus ?? null) : null;
+
+    /*
+      One transaction: the spell ending and what the flat says afterwards are
+      one fact. A spell ended with the status write lost is the very state this
+      method exists to stop producing.
+
+      The effects are returned rather than written into an outer object — the
+      work runs inside a scope swap, and a result assembled from both sides of
+      that boundary is one refactor away from reporting writes that rolled back.
+    */
+    const effects = await this.inTransaction(async (): Promise<Partial<OwnerSpellEnded>> => {
+      await this.buildings.endOccupancy(
+        occupancyId,
+        { toDate: input.endedAt, reason: input.reason },
+        actor,
+      );
+      if (othersRemain) return {};
+
+      if (statusApplied === 'VACANT') {
+        await this.buildings.confirmVacancy(
+          spell.unitId,
+          {
+            basis: input.vacancyBasis,
+            observedAt: endedAt,
+            notes:
+              input.vacancyNotes?.trim() ||
+              `انتهت ملكية الوحدة ${spell.unit.unitCode} ولم يبقَ فيها أحد مسجَّلاً`,
+          } as never,
+          actor,
+        );
+        return { vacanciesConfirmed: 1 };
+      }
+
+      // «لا أعرف», and a correction: the flat goes back to saying nothing.
+      const statusCleared = await this.clearOwnerUse(spell.unitId);
+      if (!asks) return { statusCleared };
+
+      const building = await this.db.building.findUnique({
+        where: { id: spell.unit.buildingId },
+        select: { parcelNumber: true },
+      });
+      // A check already open on the flat asks the same question.
+      const { opened } = await this.cases.openUnlessStanding(
+        {
+          notes: `انتهت ملكية الوحدة ${spell.unit.unitCode} ولم تُعرف حالتها بعدها — تحقّق: شاغرة أم يسكنها أحد.`,
+          caseType: 'VACANT_UNCONFIRMED',
+          buildingId: spell.unit.buildingId,
+          unitId: spell.unitId,
+          propertyNumber: building?.parcelNumber ?? undefined,
+        } as never,
+        actor,
+      );
+      return { statusCleared, casesOpened: opened ? 1 : 0 };
+    });
+
+    return {
+      ownerSpellEnded: true,
+      statusApplied,
+      vacanciesConfirmed: 0,
+      casesOpened: 0,
+      statusCleared: false,
+      ...effects,
+    };
+  }
+
+  /**
+   * Takes back what an ownership asserted about the flat's own use.
+   *
+   * Only the two statuses that say the owner themselves has it: «مؤجرة» and
+   * «مشغولة بتسامح» describe somebody else, and if such a person is recorded
+   * this is not reached at all — so a status naming them is left exactly as it
+   * is rather than cleared by a sale that did not concern them.
+   *
+   * The «مسكن موسمي» facts go with the status they qualify. The months are the
+   * departed owner's presence pattern; left standing beside a new owner they
+   * would read as that person's, which is a statement nobody made.
+   *
+   * The owner's card rows are not touched here, unlike the tenancy path: the
+   * claim on the departing owner's file has just been released by
+   * `BuildingsService.endOccupancy`, and by the condition above there is no
+   * other owner whose card could be naming this flat.
+   */
+  private async clearOwnerUse(unitId: string): Promise<boolean> {
+    const cleared = await this.db.unit.updateMany({
+      where: { id: unitId, unitStatus: { in: ['OWNER_OCCUPIED', 'SEASONAL'] as never } },
+      data: {
+        unitStatus: null,
+        presenceMonths: { set: [] },
+        ownerLastStayAt: null,
+        vacancyDeclaredAt: null,
+      },
+    });
+    return cleared.count > 0;
+  }
 
   private async end(
     target: Target,
@@ -903,6 +1095,20 @@ interface Target {
   cards: TargetCard[];
   spells: Array<{ id: string; unitId: string; fromDate: Date }>;
   units: TargetUnit[];
+}
+
+/**
+ * What «إنهاء الملكية» did — the spell always, and what the flat says now when
+ * that spell was the last one on it. See `endOwnership`.
+ */
+export interface OwnerSpellEnded {
+  ownerSpellEnded: true;
+  /** The answer applied, or null when nobody was asked because somebody remains. */
+  statusApplied: AfterTenancyStatus | null;
+  vacanciesConfirmed: number;
+  casesOpened: number;
+  /** «مشغولة من المالك» or «مسكن موسمي» stood on the unit and no longer does. */
+  statusCleared: boolean;
 }
 
 export interface EndTenancyResult {

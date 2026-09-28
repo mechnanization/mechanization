@@ -3,7 +3,12 @@
 import { useId } from 'react';
 import { getLabels, VACANCY_BASIS } from '@mechanization/shared-schemas';
 import type { VacancyBasis } from '@mechanization/shared-schemas';
-import type { AfterTenancyAnswer, AfterTenancyStatus, EndTenancyResult } from '@/lib/api-client';
+import type {
+  AfterTenancyAnswer,
+  AfterTenancyStatus,
+  EndTenancyResult,
+  OwnerSpellEnded,
+} from '@/lib/api-client';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 
@@ -22,12 +27,23 @@ export function AfterTenancyQuestion({
   value,
   onChange,
   ownerNonResident = false,
+  scope = 'TENANCY',
   locale,
 }: {
   value: AfterTenancyAnswer;
   onChange: (next: AfterTenancyAnswer) => void;
   /** The owner lives elsewhere — they cannot be recorded living in a dwelling. */
   ownerNonResident?: boolean;
+  /**
+   * Which ending this follows.
+   *
+   * `OWNERSHIP` is asked after the last spell on a flat has gone, so it offers
+   * only what can be true of one nobody is recorded in. «يسكنها المالك» has no
+   * owner left to name and «مؤجرة لمستأجر آخر» no tenancy to continue — the
+   * server refuses both there, and an option that exists to be refused is worse
+   * than one that was never shown.
+   */
+  scope?: 'TENANCY' | 'OWNERSHIP';
   locale: string;
 }) {
   const en = locale === 'en';
@@ -36,37 +52,54 @@ export function AfterTenancyQuestion({
   const basisGroup = useId();
   const notesId = useId();
 
+  const ownership = scope === 'OWNERSHIP';
   const options: Array<{ status: AfterTenancyStatus; title: string; effect: string; disabled?: string }> = [
-    {
-      status: 'OWNER_OCCUPIED',
-      title: en ? 'The owner lives there' : 'يسكنها المالك',
-      effect: en ? 'The owner is charged the occupancy fee.' : 'يتحمّل المالك رسم الإشغال.',
-      disabled: ownerNonResident
-        ? en
-          ? 'The owner lives elsewhere.'
-          : 'المالك غير مقيم في البلدة.'
-        : undefined,
-    },
+    ...(ownership
+      ? []
+      : [
+          {
+            status: 'OWNER_OCCUPIED' as const,
+            title: en ? 'The owner lives there' : 'يسكنها المالك',
+            effect: en ? 'The owner is charged the occupancy fee.' : 'يتحمّل المالك رسم الإشغال.',
+            disabled: ownerNonResident
+              ? en
+                ? 'The owner lives elsewhere.'
+                : 'المالك غير مقيم في البلدة.'
+              : undefined,
+          },
+        ]),
     {
       status: 'VACANT',
       title: en ? 'Empty' : 'شاغرة',
-      effect: en
-        ? 'Recorded as a confirmed vacancy, which exempts the owner. Say what it rests on.'
-        : 'تُسجَّل «تأكيد شغور» فيُعفى المالك — حدّد على ماذا يستند.',
+      effect: ownership
+        ? en
+          ? 'Recorded as a confirmed vacancy, which exempts whoever owns it. Say what it rests on.'
+          : 'تُسجَّل «تأكيد شغور» يُعفى به مالكها — حدّد على ماذا يستند.'
+        : en
+          ? 'Recorded as a confirmed vacancy, which exempts the owner. Say what it rests on.'
+          : 'تُسجَّل «تأكيد شغور» فيُعفى المالك — حدّد على ماذا يستند.',
     },
-    {
-      status: 'RENTED_TO_OTHER',
-      title: en ? 'Rented to someone else' : 'مؤجرة لمستأجر آخر',
-      effect: en
-        ? 'Stays «rented», and a case is opened to register the new tenant.'
-        : 'تبقى «مؤجرة» وتُفتح حالة لتسجيل المستأجر الجديد.',
-    },
+    ...(ownership
+      ? []
+      : [
+          {
+            status: 'RENTED_TO_OTHER' as const,
+            title: en ? 'Rented to someone else' : 'مؤجرة لمستأجر آخر',
+            effect: en
+              ? 'Stays «rented», and a case is opened to register the new tenant.'
+              : 'تبقى «مؤجرة» وتُفتح حالة لتسجيل المستأجر الجديد.',
+          },
+        ]),
     {
       status: 'UNKNOWN',
       title: en ? 'I don’t know' : 'لا أعرف',
-      effect: en
-        ? 'The status is cleared — the owner is billed until it is confirmed — and a case is opened to check.'
-        : 'تُمسح حالة الوحدة — ويُحتسب الرسم على المالك حتى تُعرف — وتُفتح حالة للتحقق.',
+      effect: ownership
+        ? en
+          ? 'The status is cleared and a case is opened to check the unit.'
+          : 'تُمسح حالة الوحدة وتُفتح حالة للتحقق منها.'
+        : en
+          ? 'The status is cleared — the owner is billed until it is confirmed — and a case is opened to check.'
+          : 'تُمسح حالة الوحدة — ويُحتسب الرسم على المالك حتى تُعرف — وتُفتح حالة للتحقق.',
     },
   ];
 
@@ -174,14 +207,32 @@ export function afterTenancyComplete(answer: AfterTenancyAnswer): boolean {
  * because both halves land somewhere the officer is not looking.
  */
 export function endTenancyMessage(
-  result: EndTenancyResult | { ownerSpellEnded: true },
+  result: EndTenancyResult | OwnerSpellEnded,
   locale: string,
 ): string {
   const en = locale === 'en';
   if ('ownerSpellEnded' in result) {
-    return en
+    const ended = en
       ? 'Ownership ended, and the property released from their file'
       : 'تم إنهاء الملكية وفصل العقار عن ملف المواطن';
+    /*
+      What happened to the flat, when the ownership was the last thing on it.
+      Said here because it is the half the officer did not press for: they
+      answered a question about the unit and the answer landed on rows they are
+      not looking at — a vacancy confirmation, a cleared status, a case.
+    */
+    if (result.vacanciesConfirmed) {
+      return en ? `${ended}. The unit is recorded vacant.` : `${ended}، وسُجِّلت الوحدة شاغرة`;
+    }
+    if (result.casesOpened) {
+      return en
+        ? `${ended}. Its status was cleared and a case opened to check it.`
+        : `${ended}، ومُسحت حالتها وفُتحت حالة للتحقق منها`;
+    }
+    if (result.statusCleared) {
+      return en ? `${ended}. Its status was cleared.` : `${ended}، ومُسحت حالة الوحدة`;
+    }
+    return ended;
   }
   const head =
     result.cardsEnded > 0

@@ -34,7 +34,6 @@ import {
   createCase,
   deleteUnit,
   duplicateUnitsOf,
-  endOccupancy,
   endVacancy,
   getBuilding,
   getBuildingDamage,
@@ -65,9 +64,7 @@ import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
-import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import {
-  type EndOccupancyAnswer,
   activeVacancy,
   AddPersonForm,
   CaseForm,
@@ -75,6 +72,7 @@ import {
   ConfirmVacancyForm,
   DamageForm,
   effectiveUnitStatus,
+  EndSpellButton,
   floorLabel,
   groupUnitsByFloor,
   layoutFloor,
@@ -142,17 +140,37 @@ export function BuildingUnitMatrixView({
   locale,
   adminPath,
   buildingId,
+  initialUnitId = null,
+  initialAddOwner = false,
 }: {
   tenant: string;
   locale: string;
   adminPath: string;
   buildingId: string;
+  /**
+   * The unit to open on, from `?unit=` — how the end page hands the officer
+   * back to the flat they were working on rather than to an unselected grid.
+   */
+  initialUnitId?: string | null;
+  /**
+   * «نعم، أضف المالك الجديد», answered on the end page after a sale: the
+   * add-person form opens on «مالك» as soon as the matrix has loaded.
+   */
+  initialAddOwner?: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
   const en = locale === 'en';
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
+  /**
+   * Where ending a spell is answered — a page of its own, keyed by the spell.
+   *
+   * The unit is not in the path: one occupancy belongs to exactly one flat, and
+   * a URL carrying both could be edited into a pair that does not go together.
+   */
+  const endHref = (occupant: UnitOccupant) =>
+    `${base}/buildings/${buildingId}/occupancies/${occupant.id}/end`;
 
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
@@ -180,8 +198,16 @@ export function BuildingUnitMatrixView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
-  const [action, setAction] = useState<ActionKind>(null);
+  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(initialUnitId);
+  const [action, setAction] = useState<ActionKind>(initialAddOwner ? 'occupant' : null);
+  /**
+   * «إضافة شخص» was opened by answering «نعم، أضف المالك الجديد», so the form
+   * opens on «مالك» rather than unanswered.
+   *
+   * Cleared whenever the button opens the form itself: the preset belongs to
+   * the sale that asked for it, not to the next person recorded on the flat.
+   */
+  const [addingOwner, setAddingOwner] = useState(initialAddOwner);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -395,26 +421,7 @@ export function BuildingUnitMatrixView({
     looking at, not in a toast behind it, so the error is rethrown for the
     dialog to show and the dialog stays open.
   */
-  const closeSpell = async (occupant: UnitOccupant, input: EndOccupancyAnswer) => {
-    if (!token) throw new Error('unauthenticated');
-    let result: Awaited<ReturnType<typeof endOccupancy>>;
-    try {
-      result = await endOccupancy(tenant, token, occupant.id, input);
-    } catch (caught) {
-      logApiError(caught);
-      throw new Error(
-        caught instanceof ApiRequestError
-          ? caught.payload.message
-          : en
-            ? 'Could not end the occupancy.'
-            : 'تعذّر إنهاء الإشغال.',
-      );
-    }
-    await load();
-    toast.success(endTenancyMessage(result, locale));
-  };
-
-  /** «ربط بالمالك» — a refusal is rethrown for the dialog to show, as `closeSpell`'s is. */
+  /** «ربط بالمالك» — a refusal is rethrown for the dialog to show. */
   const linkOwner = async (occupant: UnitOccupant, ownerId: string, confirmRecordedAfter: boolean) => {
     if (!token) throw new Error('unauthenticated');
     let result: Awaited<ReturnType<typeof linkOccupancyOwner>>;
@@ -1049,6 +1056,7 @@ export function BuildingUnitMatrixView({
                       disabled={busy}
                       onClick={() => {
                         setActionError(null);
+                        setAddingOwner(false);
                         setAction(action === 'occupant' ? null : 'occupant');
                       }}
                     >
@@ -1116,6 +1124,33 @@ export function BuildingUnitMatrixView({
                       <ClipboardList className="size-4" aria-hidden />
                       {en ? 'Open a follow-up case' : 'فتح حالة متابعة'}
                     </Button>
+                    {/*
+                      In the grid, and last in it.
+
+                      Each shows itself only when the unit records a current
+                      spell of that capacity — see `EndSpellButton` — so the
+                      cells before them do not move as flats gain and lose
+                      occupants. They are the corrections, and on this page the
+                      occupant list that used to be their only door is below the
+                      forms and the summary, which is why an owner on the wrong
+                      flat read as uncorrectable.
+                    */}
+                    <EndSpellButton
+                      unit={selectedUnit}
+                      kind="OWNERSHIP"
+                      locale={locale}
+                      busy={busy}
+                      className="w-full"
+                      endHref={endHref}
+                    />
+                    <EndSpellButton
+                      unit={selectedUnit}
+                      kind="TENANCY"
+                      locale={locale}
+                      busy={busy}
+                      className="w-full"
+                      endHref={endHref}
+                    />
                   </div>
                   {/*
                     Out of the grid on purpose. It deletes on a single tap, with no
@@ -1139,6 +1174,10 @@ export function BuildingUnitMatrixView({
 
               {action === 'occupant' && token ? (
                 <AddPersonForm
+                  // Remounts when the capacity is preset, so a form already on
+                  // screen takes it — `initialRole` is read once, on mount.
+                  key={addingOwner ? 'successor' : 'person'}
+                  initialRole={addingOwner ? 'OWNER' : undefined}
                   tenant={tenant}
                   token={token}
                   busy={busy}
@@ -1304,7 +1343,7 @@ export function BuildingUnitMatrixView({
                 canWrite={canWrite}
                 busy={busy}
                 citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
-                onEnd={closeSpell}
+                endHref={endHref}
                 onLinkOwner={linkOwner}
               />
 

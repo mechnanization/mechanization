@@ -393,6 +393,7 @@ export function ChoiceCard({
   title,
   description,
   icon: Icon,
+  disabled = false,
   className,
 }: {
   name: string;
@@ -402,15 +403,24 @@ export function ChoiceCard({
   title: string;
   description?: string;
   icon?: React.ComponentType<{ className?: string }>;
+  /**
+   * Shown, and not selectable — for a choice the viewer's permission or the
+   * record's state rules out. Say why in `description`: an option greyed with
+   * no reason reads as a bug, and one removed entirely reads as a thing the
+   * system cannot do, which sends people looking for another way to do it.
+   */
+  disabled?: boolean;
   className?: string;
 }) {
   return (
     <label
       className={cn(
-        'flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-sm transition-all select-none',
-        checked
-          ? 'border-primary/80 bg-primary/5 ring-1 ring-primary/40 shadow-2xs font-medium text-foreground'
-          : 'border-border/80 bg-card hover:bg-muted/40 hover:border-border text-foreground/80',
+        'flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm transition-all select-none',
+        disabled
+          ? 'cursor-not-allowed border-border/60 bg-muted/30 opacity-60'
+          : checked
+            ? 'cursor-pointer border-primary/80 bg-primary/5 ring-1 ring-primary/40 shadow-2xs font-medium text-foreground'
+            : 'cursor-pointer border-border/80 bg-card hover:bg-muted/40 hover:border-border text-foreground/80',
         className,
       )}
     >
@@ -419,6 +429,7 @@ export function ChoiceCard({
         name={name}
         value={value}
         checked={checked}
+        disabled={disabled}
         onChange={() => onChange(value)}
         className="size-4 shrink-0 accent-[hsl(var(--primary))]"
       />

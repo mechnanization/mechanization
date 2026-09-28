@@ -30,7 +30,6 @@ import {
   deleteUnit,
   duplicateUnitsOf,
   type DuplicateUnitCandidate,
-  endOccupancy,
   endVacancy,
   getBuilding,
   getBuildingDamage,
@@ -59,9 +58,7 @@ import { Sheet } from '@/components/ui/sheet';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
-import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import {
-  type EndOccupancyAnswer,
   activeVacancy,
   AddPersonForm,
   BuildingSummaryBadges,
@@ -70,6 +67,7 @@ import {
   ConfirmVacancyForm,
   DamageForm,
   effectiveUnitStatus,
+  EndSpellButton,
   floorLabel,
   groupUnitsByFloor,
   logVisitWithFollowUp,
@@ -132,6 +130,7 @@ export function BuildingUnitMatrixDrawer({
   onEditBuilding,
   registerHref,
   citizenHref,
+  endHref,
   locale = 'ar',
 }: {
   open: boolean;
@@ -174,6 +173,14 @@ export function BuildingUnitMatrixDrawer({
    * name, leave the matrix, and search the citizens page for it.
    */
   citizenHref?: (citizenId: string) => string;
+  /**
+   * The page that ends one spell — «إنهاء الملكية» / «إنهاء الإيجار».
+   *
+   * A route rather than a dialog over the matrix: it asks four things, the
+   * last of which is a question in its own right, and a modal stacked inside
+   * a scrolling page had nowhere to put them on a phone.
+   */
+  endHref?: (buildingId: string, occupancyId: string) => string;
   locale?: string;
 }) {
   const en = locale === 'en';
@@ -186,6 +193,15 @@ export function BuildingUnitMatrixDrawer({
   }, [tenant]);
 
   const [building, setBuilding] = useState<BuildingDetail | null>(null);
+  /*
+    The end page, bound to the building this drawer has open — the caller knows
+    the admin base path, this knows which building. Undefined where the caller
+    passed no builder, and the action is then not offered at all.
+  */
+  const endTo =
+    endHref && building
+      ? (occupant: UnitOccupant) => endHref(building.id, occupant.id)
+      : undefined;
   const [damage, setDamage] = useState<{
     current: DamageLevel | null;
     history: DamageAssessmentRow[];
@@ -195,6 +211,14 @@ export function BuildingUnitMatrixDrawer({
 
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [action, setAction] = useState<ActionKind>(null);
+  /**
+   * «إضافة شخص» was opened by answering «نعم، أضف المالك الجديد», so the form
+   * opens on «مالك» rather than unanswered.
+   *
+   * Cleared whenever the button opens the form itself: the preset belongs to
+   * the sale that asked for it, not to the next person recorded on the flat.
+   */
+  const [addingOwner, setAddingOwner] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -483,28 +507,7 @@ export function BuildingUnitMatrixDrawer({
     `TenancyService.endOccupancy`, and the message says so, because that half
     happens inside a file the officer is not looking at.
   */
-  const closeSpell = async (occupant: UnitOccupant, input: EndOccupancyAnswer) => {
-    // Not through `run`: a refusal belongs in the dialog the officer is
-    // looking at, so it is rethrown for `EndOccupancyDialog` to show.
-    let result: Awaited<ReturnType<typeof endOccupancy>>;
-    try {
-      result = await endOccupancy(tenant, token, occupant.id, input);
-    } catch (caught) {
-      logApiError(caught);
-      throw new Error(
-        caught instanceof ApiRequestError
-          ? caught.payload.message
-          : en
-            ? 'Could not end the occupancy.'
-            : 'تعذّر إنهاء الإشغال.',
-      );
-    }
-    await load();
-    onChanged?.();
-    toast.success(endTenancyMessage(result, locale));
-  };
-
-  /** «ربط بالمالك» — a refusal is rethrown for the dialog to show, as `closeSpell`'s is. */
+  /** «ربط بالمالك» — a refusal is rethrown for the dialog to show. */
   const linkOwner = async (occupant: UnitOccupant, ownerId: string, confirmRecordedAfter: boolean) => {
     let result: Awaited<ReturnType<typeof linkOccupancyOwner>>;
     try {
@@ -916,7 +919,7 @@ export function BuildingUnitMatrixDrawer({
                 canWrite={canWrite}
                 busy={busy}
                 citizenHref={citizenHref}
-                onEnd={closeSpell}
+                endHref={endTo}
                 onLinkOwner={linkOwner}
               />
 
@@ -948,6 +951,7 @@ export function BuildingUnitMatrixDrawer({
                     disabled={busy}
                     onClick={() => {
                       setActionError(null);
+                      setAddingOwner(false);
                       setAction(action === 'occupant' ? null : 'occupant');
                     }}
                   >
@@ -1023,6 +1027,32 @@ export function BuildingUnitMatrixDrawer({
                   </Button>
 
                   {/*
+                    Each shows itself only when the unit records a current spell
+                    of that capacity — see `EndSpellButton`. On a flat with an
+                    owner and a tenant both appear, and ending one leaves the
+                    other exactly as it was: a sale over a sitting tenant is two
+                    facts, not one.
+                  */}
+                  {endTo ? (
+                    <>
+                      <EndSpellButton
+                        unit={selectedUnit}
+                        kind="OWNERSHIP"
+                        locale={locale}
+                        busy={busy}
+                        endHref={endTo}
+                      />
+                      <EndSpellButton
+                        unit={selectedUnit}
+                        kind="TENANCY"
+                        locale={locale}
+                        busy={busy}
+                        endHref={endTo}
+                      />
+                    </>
+                  ) : null}
+
+                  {/*
                     Offered only for a flat nothing has been recorded against.
 
                     The condition mirrors the server's refusals rather than
@@ -1056,6 +1086,10 @@ export function BuildingUnitMatrixDrawer({
 
               {action === 'occupant' ? (
                 <AddPersonForm
+                  // Remounts when the capacity is preset, so a form already on
+                  // screen takes it — `initialRole` is read once, on mount.
+                  key={addingOwner ? 'successor' : 'person'}
+                  initialRole={addingOwner ? 'OWNER' : undefined}
                   tenant={tenant}
                   token={token}
                   busy={busy}

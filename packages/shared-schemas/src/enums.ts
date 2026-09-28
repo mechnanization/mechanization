@@ -894,6 +894,32 @@ export const STAFF_ROLE = [
 export const staffRoleSchema = arabicEnum(STAFF_ROLE, 'الصلاحية غير صالحة');
 export type StaffRole = z.infer<typeof staffRoleSchema>;
 
+/**
+ * Who may record «بيع أو نقل ملكية» on a unit.
+ *
+ * Ending an ownership has two reasons and they are not the same kind of act.
+ * «سُجِّل بالخطأ» says the register was wrong and takes an entry back — the
+ * correction an inspector standing at the door is there to make, and the one
+ * the ⋯ menu exists for. «بيع أو نقل ملكية» says the deed changed hands: it
+ * writes a legal fact the municipality will bill and testify from, on the word
+ * of whoever pressed it, and it cannot be undone by pressing it again.
+ *
+ * So the second is an office decision. An inspector on a round, or a collector
+ * on one, is not who records a sale — they report it and somebody with the
+ * paperwork in front of them enters it.
+ *
+ * An **allowlist**, not a list of the restricted: a role added later — a clerk,
+ * a volunteer, a surveyor — must not acquire the power to transfer property by
+ * being new. It is enforced in `TenancyService.endOwnership`, which is the only
+ * path that reaches the write; the screens read it to say so before the press.
+ */
+export const OWNERSHIP_TRANSFER_ROLES = ['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER'] as const;
+
+/** Fails closed: an absent or unrecognised role may not transfer ownership. */
+export function mayTransferOwnership(role: string | null | undefined): boolean {
+  return role != null && (OWNERSHIP_TRANSFER_ROLES as readonly string[]).includes(role);
+}
+
 export const DOCUMENT_TYPE = [
   'IDENTITY',
   'OWNERSHIP_PROOF',

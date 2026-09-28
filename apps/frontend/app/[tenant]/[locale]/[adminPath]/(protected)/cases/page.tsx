@@ -879,6 +879,9 @@ export default function CasesPage({
             }`
           }
           citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
+          endHref={(buildingId, occupancyId) =>
+            `${base}/buildings/${buildingId}/occupancies/${occupancyId}/end`
+          }
           locale={locale}
         />
       ) : null}
