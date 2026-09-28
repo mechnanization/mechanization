@@ -48,12 +48,14 @@ import {
   saveBuildingMatrix,
   type BuildingDetail,
   type BuildingMatrixSave,
+  type BuildingMatrixSaveResult,
   type DuplicateBuildingCandidate,
   type ParcelCorrectionResult,
   type UnitWithOccupants,
   type ZoneSummary,
 } from '@/lib/api-client';
 import { ParcelCorrectionDialog } from '@/components/admin/parcel-correction-dialog';
+import { BuildingReviewDialog } from '@/components/admin/building-review-dialog';
 import {
   clearBuildingDraft,
   loadBuildingDraft,
@@ -613,6 +615,13 @@ export function BuildingEditor({
    * including the reload after a half-refused save.
    */
   const loadedUpdatedAtRef = useRef<string | null>(null);
+  /** The building as loaded — what «مراجعة التعديلات» compares the save with. */
+  const loadedDetailRef = useRef<BuildingDetail | null>(null);
+  /** A rehearsed save waiting for the officer to confirm — see `handleSave`. */
+  const [buildingReview, setBuildingReview] = useState<{
+    save: BuildingMatrixSave;
+    result: BuildingMatrixSaveResult;
+  } | null>(null);
   /**
    * The lifecycle as loaded, and how many people are recorded in the units
    * right now — so moving a lived-in building to «مهدوم» says what it leaves
@@ -650,6 +659,7 @@ export function BuildingEditor({
   const hydrate = useCallback(
     (detail: BuildingDetail, keepEdits = false) => {
       loadedUpdatedAtRef.current = detail.updatedAt ?? null;
+      loadedDetailRef.current = detail;
       setLoadedLifecycle(detail.lifecycleStatus);
       setLiveOccupants(
         detail.units.reduce(
@@ -1491,7 +1501,7 @@ export function BuildingEditor({
   };
 
   // Save handler
-  const handleSave = async () => {
+  const handleSave = async (confirmed = false) => {
     if (!trimmedParcel) {
       setFieldErrors({ parcelNumber: en ? 'Parcel number is required' : 'رقم العقار مطلوب' });
       goToStep(0);
@@ -1553,10 +1563,22 @@ export function BuildingEditor({
         }
 
         /*
-          All or nothing: a refusal throws before anything is written and lands
-          in the catch below with the unit it names, and the grid on screen is
-          still exactly what the officer drew — nothing to reload.
+          «مراجعة التعديلات» first: the save rehearsed on the server and rolled
+          back (`dryRun`), so the review shows what the server would actually
+          do — which units go, move and arrive — or the refusal it would give,
+          before the officer confirms anything.
+
+          All or nothing either way: a refusal throws before anything is
+          written and lands in the catch below with the unit it names, and the
+          grid on screen is still exactly what the officer drew.
         */
+        if (!confirmed) {
+          const save = matrixSave();
+          const result = await saveBuildingMatrix(tenant, token, buildingId, { ...save, dryRun: true });
+          setBuildingReview({ save, result });
+          setSaving(false);
+          return;
+        }
         await saveEdit(buildingId, token);
 
         clearBuildingDraft(tenant, buildingId);
@@ -1762,6 +1784,20 @@ export function BuildingEditor({
 
   return (
     <div ref={rootRef} className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8 pb-28 sm:pb-12">
+      {/* At the root, not inside a step: the save can be pressed from any of them. */}
+      <BuildingReviewDialog
+        loaded={loadedDetailRef.current}
+        review={buildingReview}
+        open={buildingReview !== null}
+        saving={saving}
+        onCancel={() => setBuildingReview(null)}
+        onConfirm={() => {
+          setBuildingReview(null);
+          void handleSave(true);
+        }}
+        locale={locale}
+      />
+
       {/* ── Breadcrumb & Navigation ── */}
       {/*
         Wraps rather than overflows. On a phone this row can carry «رجوع», the

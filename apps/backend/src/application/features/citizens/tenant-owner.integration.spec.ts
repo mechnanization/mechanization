@@ -616,6 +616,8 @@ describeIfDb('A tenant and the owner they rent from', () => {
             contact: { maritalStatus, phone: stored.phone, whatsappSameAsPhone: true, actualHouseholdMembers: '3' },
             properties: [],
             flags: [],
+            // Correcting a civil record number needs one (`highImpactChanges`).
+            changeReason: 'تصحيح بعد مطابقة الهوية',
           }),
           actor: actor(),
         }),
@@ -634,6 +636,92 @@ describeIfDb('A tenant and the owner they rent from', () => {
     expect(last.after).toMatchObject({ maritalStatus: 'SINGLE' });
     expect((last.after as { changed: string[] }).changed.sort()).toEqual(['civilRecordNumber', 'maritalStatus']);
     expect(JSON.stringify([last.before, last.after])).not.toMatch(/700[12]/);
+  });
+
+  /** A household file with nothing on it, saved from the form. */
+  const householdPayload = (
+    stored: { firstName: string; lastName: string; phone: string | null },
+    over: { civilRecordNumber?: string; phone?: string; changeReason?: string; properties?: unknown[]; removals?: unknown[] } = {},
+  ) =>
+    adminUpdateCitizenSubmissionSchema.parse({
+      personal: {
+        firstName: stored.firstName,
+        middleName: 'علي',
+        lastName: stored.lastName,
+        motherName: 'فاطمة خليل',
+        gender: 'MALE',
+        ...(over.civilRecordNumber !== undefined ? { civilRecordNumber: over.civilRecordNumber } : {}),
+        nationality: 'لبناني',
+        isLebanese: true,
+        residentStatus: 'VILLAGE_RESIDENT',
+      },
+      contact: { maritalStatus: 'MARRIED', phone: over.phone ?? stored.phone, whatsappSameAsPhone: true, actualHouseholdMembers: '3' },
+      properties: over.properties ?? [],
+      ...(over.removals ? { removals: over.removals } : {}),
+      ...(over.changeReason ? { changeReason: over.changeReason } : {}),
+      flags: [],
+    });
+
+  it('asks a reason for correcting an identity number, never for filling one in', async () => {
+    const holder = await person('صاحب رقم');
+    const stored = await db.user.findUniqueOrThrow({ where: { id: holder.id } });
+    const save = (over: Parameters<typeof householdPayload>[1]) =>
+      within(() =>
+        citizens.update({ tenantSlug: 'owners', citizenId: holder.id, payload: householdPayload(stored, over), actor: actor() }),
+      );
+
+    // A blank filled in is a completion.
+    await save({ civilRecordNumber: '8801' });
+    // A value corrected is not, and says which field wants the reason.
+    await expect(save({ civilRecordNumber: '8802' })).rejects.toMatchObject({
+      details: { code: 'REASON_REQUIRED', fields: ['civilRecordNumber'] },
+    });
+    expect((await db.user.findUniqueOrThrow({ where: { id: holder.id } })).civilRecordNumber).toBe('8801');
+
+    await save({ civilRecordNumber: '8802', changeReason: 'خطأ في نسخ الرقم عن الهوية' });
+    expect((await db.user.findUniqueOrThrow({ where: { id: holder.id } })).civilRecordNumber).toBe('8802');
+    await pause();
+    const last = await db.auditLogEntry.findFirstOrThrow({
+      where: { entityId: holder.id, action: 'CITIZEN_UPDATED' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect((last.after as { reason: string }).reason).toBe('خطأ في نسخ الرقم عن الهوية');
+  });
+
+  it('reviews an edit without saving it: changes, the login, open bills, and what would refuse it', async () => {
+    const { units } = await block('OWN-14');
+    const flat = units[0]!.id;
+    const owner = await person('مالك مراجعة');
+    const tenant = await person('مستأجر مراجعة');
+    await add({ unitId: flat, citizenId: owner.id, role: 'OWNER', unitStatus: 'RENTED' });
+    await add({ unitId: flat, citizenId: tenant.id, role: 'TENANT', landlordCitizenId: owner.id });
+    await db.citizenPayment.create({
+      data: { citizenId: owner.id, title: 'رسم', amount: 50, dueDate: new Date('2026-12-31') },
+    });
+    const ownerCard = await db.propertyEntry.findFirstOrThrow({
+      where: { registration: { citizenId: owner.id }, occupancyType: 'OWNER', endedAt: null },
+    });
+    const stored = await db.user.findUniqueOrThrow({ where: { id: owner.id } });
+
+    const review = await within(() =>
+      citizens.reviewEdit(
+        owner.id,
+        householdPayload(stored, {
+          civilRecordNumber: '8810',
+          phone: '+96170999888',
+          removals: [{ propertyId: ownerCard.id, reason: 'RECORDED_IN_ERROR' }],
+        }),
+      ),
+    );
+
+    expect(review.changes.changed).toContain('phone');
+    expect(review.changes.cards.map((card) => card.kind)).toEqual(['removed']);
+    expect(review.impacts).toMatchObject({ loginChanges: true, cardsRemoved: 1, openBills: { count: 1, outstanding: 50 } });
+    expect(review.impacts.tenantsShowingName.map((row) => row.citizenId)).toEqual([tenant.id]);
+    expect(review.blockers.map((row) => row.code)).toEqual(['TENANTS_LINKED']);
+    // Read, never written.
+    expect((await db.user.findUniqueOrThrow({ where: { id: owner.id } })).phone).toBe(stored.phone);
+    expect(await db.propertyEntry.count({ where: { id: ownerCard.id } })).toBe(1);
   });
 
   it('refuses to delete an owner’s card while a tenant’s link names them, and writes nothing', async () => {

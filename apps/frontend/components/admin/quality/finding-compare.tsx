@@ -581,7 +581,17 @@ function CitizenCompare({
     const form = forms[pending.citizenId];
     if (!form) return;
 
-    await updateCitizen(tenant, token, pending.citizenId, citizenFieldPatch(form, pending.values));
+    await updateCitizen(tenant, token, pending.citizenId, {
+      ...citizenFieldPatch(form, pending.values),
+      /*
+        A correction made by comparing two records side by side — which may be
+        an identity number (`highImpactChanges`), so the save says so on the
+        audit row rather than being refused for want of a reason.
+      */
+      changeReason: en
+        ? `Corrected while comparing two records in quality review: ${pending.label}`
+        : `تصحيح عند مقارنة سجلَّين في مراجعة الجودة: ${pending.label}`,
+    });
 
     toast.success(en ? 'The record was corrected.' : 'صُحِّح السجل.');
     /*

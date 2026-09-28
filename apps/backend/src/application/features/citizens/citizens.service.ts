@@ -5,6 +5,7 @@ import {
   buildCitizenPayload,
   cadastreFlags,
   FIELD_FLAG_KINDS,
+  flaggedPaths,
   IMPORT_COLUMNS,
   POSSIBLE_DUPLICATE_FLAG_PATH,
   statusForFlags,
@@ -31,7 +32,7 @@ import type {
   ParcelRepository,
 } from '../../../domain/interfaces/parcel-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
-import { fileChanges } from './file-changes';
+import { fileChanges, highImpactChanges, type EditableFileView, type FileChanges } from './file-changes';
 import { CensusSyncService, type CardEnding } from '../buildings/census-sync.service';
 import {
   LandlordLinkService,
@@ -1396,6 +1397,23 @@ export class CitizensService {
     const fileBefore = await this.getEditable(citizen.id);
 
     /*
+      A high-impact correction carries its reason (the user's decision of
+      2026-09-27): refused here, before anything is written, naming the fields.
+      The review step asks for it; a client that skipped it is told what to add.
+    */
+    const needsReason = highImpactChanges(
+      fileBefore,
+      submittedView(input.payload),
+      flaggedPaths(input.payload.flags),
+    );
+    if (needsReason.length > 0 && !input.payload.changeReason) {
+      throw new ValidationError('اذكر سبب هذا التعديل — يمسّ حقولاً لا تُعدَّل دون سبب', {
+        code: 'REASON_REQUIRED',
+        fields: needsReason,
+      });
+    }
+
+    /*
       «سجل مشابه» is the server's note, so the form never sends it back — and an
       edit that says nothing about it must not be what clears it. It stands
       until the edit carries `duplicateReview`: somebody looked, and it is a
@@ -1950,6 +1968,7 @@ export class CitizensService {
         ...changes.after,
         ...(changes.changed.length > 0 ? { changed: changes.changed } : {}),
         ...(changes.cards.length > 0 ? { cards: changes.cards } : {}),
+        ...(input.payload.changeReason ? { reason: input.payload.changeReason } : {}),
         propertyCount: entries.length,
         propertiesRemoved: removedIds.length,
         // What the officer said about each removed card — the reason its flats
@@ -2147,6 +2166,107 @@ export class CitizensService {
       });
     }
     return linked;
+  }
+
+  /**
+   * «مراجعة التعديلات» — what saving this edit would do, read and never written.
+   *
+   * The same comparison the save audits (`fileChanges`) between the file as it
+   * stands and the file this payload would leave, and the same rules the save
+   * enforces, asked early: whether a reason is needed (`highImpactChanges`),
+   * and what would refuse it — a colleague's newer save, a tenant still linked
+   * to an ownership this edit takes away. Plus what else the edit touches that
+   * the form cannot show: the login it changes, the tenants' files that carry
+   * this person's name, and the open bills calculated on what it corrects —
+   * which a correction never changes, and which the accountant's list names.
+   */
+  async reviewEdit(citizenId: string, payload: AdminCitizenUpdateSubmission): Promise<EditReview> {
+    const before = await this.getEditable(citizenId);
+    const after = submittedView(payload);
+    const changes = fileChanges(before, after);
+    const reasonRequired = highImpactChanges(before, after, flaggedPaths(payload.flags));
+
+    const blockers: EditReview['blockers'] = [];
+    if (payload.expectedVersion && payload.expectedVersion !== before.version) {
+      blockers.push({
+        code: 'STALE',
+        message: before.lastStaffEdit?.name
+          ? `عدّل ${before.lastStaffEdit.name} هذا الملف بعد أن فتحتَه. حدِّث الصفحة لترى تعديلاته.`
+          : 'عُدِّل هذا الملف بعد أن فتحتَه. حدِّث الصفحة لترى التعديلات.',
+      });
+    }
+    const linked = await this.tenantsLinkedToDroppedOwnership(
+      citizenId,
+      before.properties.map((card) => ({
+        id: card.id,
+        occupancyType: card.occupancyType,
+        buildingId: card.buildingId ?? null,
+        units: card.units.map((row) => ({ unitId: row.unitId ?? null })),
+      })),
+      payload.properties.map((card) => ({ id: (card as { id?: string }).id, props: card as never })),
+    );
+    if (linked.length > 0) {
+      blockers.push({
+        code: 'TENANTS_LINKED',
+        message: 'مستأجر مربوط بهذا الشخص مالكاً لوحدة يحذفها هذا الحفظ — ألغِ الربط من بطاقته أولاً، أو استخدم «إنهاء الملكية» إن كان قد باعها',
+        tenants: linked,
+      });
+    }
+
+    const nameOrPhone = changes.changed.some((field) => NAME_AND_PHONE.has(field));
+    const tenantCards = nameOrPhone
+      ? await this.db.propertyEntry.findMany({
+          where: { landlordCitizenId: citizenId, endedAt: null },
+          select: {
+            registration: {
+              select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } } },
+            },
+          },
+        })
+      : [];
+    const tenants = new Map(
+      tenantCards.map((card) => [
+        card.registration.citizen.id,
+        [card.registration.citizen.firstName, card.registration.citizen.middleName, card.registration.citizen.lastName]
+          .filter(Boolean)
+          .join(' '),
+      ]),
+    );
+
+    const touchesBilling =
+      changes.changed.includes('residence') ||
+      changes.cards.some(
+        (card) =>
+          card.kind !== 'changed' ||
+          Boolean(card.rows) ||
+          (card.fields ?? []).some((field) => BILLING_FIELDS.has(field.field)),
+      );
+    const open = touchesBilling
+      ? await this.db.citizenPayment.findMany({
+          where: { citizenId, paymentStatus: { in: ['UNPAID', 'OVERDUE', 'PENDING_REVIEW'] as never } },
+          select: { amount: true, paidAmount: true, currency: true },
+        })
+      : [];
+
+    return {
+      version: before.version,
+      changes,
+      reasonRequired,
+      blockers,
+      impacts: {
+        loginChanges: changes.changed.includes('phone'),
+        tenantsShowingName: [...tenants].map(([citizenId, name]) => ({ citizenId, name })),
+        openBills:
+          open.length > 0
+            ? {
+                count: open.length,
+                outstanding: open.reduce((sum, bill) => sum + Number(bill.amount) - Number(bill.paidAmount), 0),
+                currency: open[0]!.currency,
+              }
+            : null,
+        cardsRemoved: changes.cards.filter((card) => card.kind === 'removed').length,
+      },
+    };
   }
 
   /** `reconcileRegistration`, with its failure kept off a save that committed. */
@@ -2511,5 +2631,54 @@ export function citizenColumnsForEdit(
       : passportCleared
         ? { identityDocType: null, identityDocNumber: null }
         : {}),
+  };
+}
+
+/**
+ * A submitted edit, read as the file it would leave — the shape `getEditable`
+ * returns — so it can be compared with the stored one before anything is
+ * written (`highImpactChanges`, the review step).
+ */
+function submittedView(payload: AdminCitizenUpdateSubmission): EditableFileView {
+  return {
+    residence: payload.residence,
+    notes: payload.notes ?? null,
+    personal: payload.personal as Record<string, unknown>,
+    contact: payload.contact as Record<string, unknown>,
+    properties: payload.properties.map((card, index) => ({
+      ...(card as Record<string, unknown>),
+      // A new card has no id yet; a placeholder keeps it from matching a stored one.
+      id: (card as { id?: string }).id ?? `new:${index}`,
+    })) as EditableFileView['properties'],
+  };
+}
+
+/** A name or number that tenants' files show for their landlord. */
+const NAME_AND_PHONE = new Set(['firstName', 'middleName', 'lastName', 'phone']);
+
+/** Card fields an assessment is calculated from. */
+const BILLING_FIELDS = new Set(['unitArea', 'unitStatus', 'unitType', 'propertyType', 'occupancyType', 'landType', 'shares']);
+
+/** What «مراجعة التعديلات» shows — see `CitizensService.reviewEdit`. */
+export interface EditReview {
+  /** The file's version now — the form sends it back as `expectedVersion`. */
+  version: string;
+  changes: FileChanges;
+  /** High-impact fields this edit corrects: the save needs a reason. */
+  reasonRequired: string[];
+  /** What would refuse the save — shown before it is pressed. */
+  blockers: Array<{
+    code: 'STALE' | 'TENANTS_LINKED';
+    message: string;
+    tenants?: Array<{ citizenId: string; name: string; propertyEntryId: string }>;
+  }>;
+  impacts: {
+    /** Citizens sign in with their reference number and phone. */
+    loginChanges: boolean;
+    /** Tenants whose files show this person as their landlord. */
+    tenantsShowingName: Array<{ citizenId: string; name: string }>;
+    /** Open bills calculated on what this edit corrects — never changed by it. */
+    openBills: { count: number; outstanding: number; currency: string } | null;
+    cardsRemoved: number;
   };
 }
