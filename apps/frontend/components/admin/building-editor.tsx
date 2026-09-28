@@ -36,20 +36,18 @@ import {
   type UnitType,
 } from '@mechanization/shared-schemas';
 import {
-  addUnit,
   ApiRequestError,
   checkPropertyNumber,
   createBuilding,
-  deleteUnit,
   duplicateBuildingsOf,
   getBuilding,
   getBuildings,
   getZoneParcelIndex,
   getZones,
   logApiError,
-  updateBuilding,
-  updateUnit,
+  saveBuildingMatrix,
   type BuildingDetail,
+  type BuildingMatrixSave,
   type DuplicateBuildingCandidate,
   type ParcelCorrectionResult,
   type UnitWithOccupants,
@@ -616,12 +614,6 @@ export function BuildingEditor({
    */
   const loadedUpdatedAtRef = useRef<string | null>(null);
   /**
-   * The floor counts as stored. A save that lowers either sends the smaller
-   * number only after the units it removes are gone — the server refuses a
-   * count that leaves units outside the building (`unitsOutsideFloors`).
-   */
-  const loadedFloorsRef = useRef<{ floors: number; basements: number } | null>(null);
-  /**
    * The lifecycle as loaded, and how many people are recorded in the units
    * right now — so moving a lived-in building to «مهدوم» says what it leaves
    * behind. See the notice under «الحالة الإنشائية».
@@ -658,7 +650,6 @@ export function BuildingEditor({
   const hydrate = useCallback(
     (detail: BuildingDetail, keepEdits = false) => {
       loadedUpdatedAtRef.current = detail.updatedAt ?? null;
-      loadedFloorsRef.current = { floors: detail.floorsCount, basements: detail.basementsCount ?? 0 };
       setLoadedLifecycle(detail.lifecycleStatus);
       setLiveOccupants(
         detail.units.reduce(
@@ -1422,180 +1413,81 @@ export function BuildingEditor({
   const goBack = () => goToStep((step > 0 ? step - 1 : step) as 0 | 1 | 2);
 
   /**
-   * A correction: the shell in one PATCH, then the difference between the
-   * matrix that was loaded and the one now on the grid.
+   * A correction, as one request: the shell and the difference between the
+   * matrix that was loaded and the one now on the grid (`saveMatrix`).
    *
    * A diff rather than a re-send, because the units on a standing building are
    * not the wizard's to recreate — they carry occupancies, visits and codes
    * the server derived, and deleting and re-adding one would take a flat's
    * whole history down with it.
    *
-   * Nothing here is transactional and nothing pretends to be: each refusal is
-   * collected and reported by name rather than aborting the rest, because the
-   * one the census refuses (a flat somebody lives in) must not stop the four
-   * beside it that it would have allowed.
+   * All or nothing. It used to be one PATCH and then one request per unit,
+   * each refusal collected while the rest went through — so a flat somebody
+   * lived in could refuse its removal while the four beside it were removed,
+   * and the officer was left with «حُفظ المبنى، لكن رُفض…»: a building half in
+   * the state they meant. Now the first refusal names its unit and nothing is
+   * written; the grid on screen is still the officer's, to fix and save again.
+   * The server runs the removals before the shell, so lowering the floor count
+   * with the top floor's units no longer needs a second request.
+   *
+   * On «تعديل معلومات المبنى» the matrix was never shown, so no unit is sent:
+   * a diff of a grid nobody saw could only compare the building to itself.
    */
-  const saveEdit = async (id: string, activeToken: string): Promise<string[]> => {
-    /*
-      Fewer floors, in two steps.
-
-      The server refuses a floor count that leaves a unit outside the building,
-      and the units this save removes from the top floor still exist when the
-      building row is written — the removals come after it. So a shrink is held
-      back: the building keeps its stored counts, the matrix changes run, and
-      only once every one of them landed is the smaller count sent. On the
-      info-only pass there are no removals to wait for, and the server's refusal
-      (naming the units) is the answer.
-    */
-    const requestedFloors = Number(floorsCount) || 1;
-    const requestedBasements = Number(basementsCount) || 0;
-    const loadedFloors = loadedFloorsRef.current;
-    const shrinkLater =
-      !infoOnly &&
-      loadedFloors !== null &&
-      (requestedFloors < loadedFloors.floors || requestedBasements < loadedFloors.basements);
-
-    await updateBuilding(tenant, activeToken, id, {
-      ...(loadedUpdatedAtRef.current ? { expectedUpdatedAt: loadedUpdatedAtRef.current } : {}),
-      name: name.trim() || null,
-      postedNumber: postedNumber.trim() || null,
-      /*
-        `null` and not `false` for an unticked box — «لم يُسأل», not a denial.
-
-        Sent rather than omitted because an officer must be able to withdraw a
-        فرز they ticked by mistake, and an omitted key would leave it set for
-        ever. The numbers travel with it; the server clears them whenever the
-        flag is not true, so the two cannot drift.
-      */
-      isPartitioned: isPartitioned ? true : null,
-      partitionNumbers: cleanedPartitionNumbers,
-      sharedParcelNumbers: cleanedSharedParcels,
-      structureType,
-      lifecycleStatus,
-      latitude: pin ? pin[1] : null,
-      longitude: pin ? pin[0] : null,
-      floorsCount: shrinkLater ? Math.max(requestedFloors, loadedFloors!.floors) : requestedFloors,
-      basementsCount: shrinkLater
-        ? Math.max(requestedBasements, loadedFloors!.basements)
-        : requestedBasements,
-      notes: notes.trim() || null,
-    });
-
-    /*
-      «تعديل معلومات المبنى» stops here. The shell is saved and the matrix is
-      not touched — no removals, no additions, no re-sequencing. The diff below
-      is driven by what is on the grid, and on an info-only pass the grid was
-      never shown, so running it could only ever compare the building against
-      an untouched copy of itself. Skipping it outright is the guarantee the
-      button's label makes.
-    */
-    if (infoOnly) return [];
-
+  const matrixSave = (): BuildingMatrixSave => {
     const baseline = baselineRef.current;
-    const failures: string[] = [];
-    const refused = (caught: unknown, fallback: string) => {
-      logApiError(caught);
-      failures.push(caught instanceof ApiRequestError ? caught.payload.message : fallback);
-    };
-
-    // Removals first — a freed position is one the additions below can take.
-    for (const [unitId, was] of baseline) {
-      if (gridUnits.some((unit) => unit.existingId === unitId)) continue;
-      try {
-        await deleteUnit(tenant, activeToken, unitId);
-      } catch (caught) {
-        refused(
-          caught,
-          en
-            ? `Unit ${was.unitCode} could not be removed.`
-            : `تعذّر حذف الوحدة ${was.unitCode}.`,
-        );
-      }
-    }
-
-    for (const unit of gridUnits) {
+    const changed = (unit: GridUnitDraft) => {
       const was = unit.existingId ? baseline.get(unit.existingId) : undefined;
-      if (!was) continue;
-      if (
-        was.floor === unit.floor &&
-        was.startCol === unit.startCol &&
-        was.endCol === unit.endCol &&
-        was.unitType === unit.unitType
-      ) {
-        continue;
-      }
-      try {
-        await updateUnit(tenant, activeToken, unit.existingId as string, {
-          floor: unit.floor,
-          startCol: unit.startCol,
-          endCol: unit.endCol,
-          unitType: unit.unitType,
-        });
-      } catch (caught) {
-        refused(
-          caught,
-          en
-            ? `Unit ${was.unitCode} could not be corrected.`
-            : `تعذّر تعديل الوحدة ${was.unitCode}.`,
-        );
-      }
-    }
+      return (
+        was !== undefined &&
+        (was.floor !== unit.floor ||
+          was.startCol !== unit.startCol ||
+          was.endCol !== unit.endCol ||
+          was.unitType !== unit.unitType)
+      );
+    };
+    return {
+      ...(loadedUpdatedAtRef.current ? { expectedUpdatedAt: loadedUpdatedAtRef.current } : {}),
+      building: {
+        name: name.trim() || null,
+        postedNumber: postedNumber.trim() || null,
+        /*
+          `null` and not `false` for an unticked box — «لم يُسأل», not a denial.
+          Sent rather than omitted, so a فرز ticked by mistake can be withdrawn;
+          the server clears the numbers whenever the flag is not true.
+        */
+        isPartitioned: isPartitioned ? true : null,
+        partitionNumbers: cleanedPartitionNumbers,
+        sharedParcelNumbers: cleanedSharedParcels,
+        structureType,
+        lifecycleStatus,
+        latitude: pin ? pin[1] : null,
+        longitude: pin ? pin[0] : null,
+        floorsCount: Number(floorsCount) || 1,
+        basementsCount: Number(basementsCount) || 0,
+        notes: notes.trim() || null,
+      },
+      remove: infoOnly
+        ? []
+        : [...baseline.keys()].filter((unitId) => !gridUnits.some((unit) => unit.existingId === unitId)),
+      update: infoOnly
+        ? []
+        : gridUnits.filter(changed).map((unit) => ({
+            id: unit.existingId as string,
+            floor: unit.floor,
+            startCol: unit.startCol,
+            endCol: unit.endCol,
+            unitType: unit.unitType,
+          })),
+      add: infoOnly
+        ? []
+        : gridUnits
+            .filter((unit) => !unit.existingId)
+            .map((unit) => ({ floor: unit.floor, startCol: unit.startCol, endCol: unit.endCol, unitType: unit.unitType })),
+    };
+  };
 
-    // New flats last, lowest floor and leftmost column first, so each floor's
-    // server-allocated sequences run the way the grid reads.
-    const additions = gridUnits
-      .filter((unit) => !unit.existingId)
-      .sort((a, b) => a.floor - b.floor || a.startCol - b.startCol);
-
-    for (const unit of additions) {
-      try {
-        await addUnit(tenant, activeToken, id, {
-          floor: unit.floor,
-          startCol: unit.startCol,
-          endCol: unit.endCol,
-          unitType: unit.unitType,
-          /*
-            The grid drew every unit already on this floor before the officer
-            painted beside them, so the duplicate prompt has nothing left to
-            show them — it would be asking whether they noticed what they were
-            looking at.
-          */
-          acknowledgedDuplicates: true,
-        });
-      } catch (caught) {
-        refused(
-          caught,
-          en
-            ? `A unit on floor ${unit.floor} could not be added.`
-            : `تعذّرت إضافة وحدة على الطابق ${unit.floor}.`,
-        );
-      }
-    }
-
-    if (shrinkLater) {
-      if (failures.length > 0) {
-        // A refused removal may be exactly the unit the smaller count would strand.
-        failures.push(
-          en
-            ? 'The floor count was not lowered, because some unit changes were refused.'
-            : 'لم يُنقَص عدد الطوابق، لأن بعض تعديلات الوحدات رُفضت.',
-        );
-      } else {
-        try {
-          await updateBuilding(tenant, activeToken, id, {
-            floorsCount: requestedFloors,
-            basementsCount: requestedBasements,
-          });
-        } catch (caught) {
-          refused(
-            caught,
-            en ? 'The floor count could not be lowered.' : 'تعذّر إنقاص عدد الطوابق.',
-          );
-        }
-      }
-    }
-
-    return failures;
+  const saveEdit = async (id: string, activeToken: string): Promise<void> => {
+    await saveBuildingMatrix(tenant, activeToken, id, matrixSave());
   };
 
   // Save handler
@@ -1660,25 +1552,12 @@ export function BuildingEditor({
           );
         }
 
-        const failures = await saveEdit(buildingId, token);
-
-        if (failures.length > 0) {
-          /*
-            Reported, then the grid is re-read from the server.
-
-            A half-applied save is the one state in which what is on screen and
-            what is on file disagree, and leaving the officer looking at their
-            own intention would have them save it again into the same refusal.
-          */
-          setError(
-            en
-              ? `The building was saved, but ${failures.length} unit change(s) were refused: ${failures.join(' · ')}`
-              : `حُفظ المبنى، لكن رُفض ${failures.length} تعديل على الوحدات: ${failures.join(' · ')}`,
-          );
-          await loadDetail();
-          goToStep(2);
-          return;
-        }
+        /*
+          All or nothing: a refusal throws before anything is written and lands
+          in the catch below with the unit it names, and the grid on screen is
+          still exactly what the officer drew — nothing to reload.
+        */
+        await saveEdit(buildingId, token);
 
         clearBuildingDraft(tenant, buildingId);
         toast.success(

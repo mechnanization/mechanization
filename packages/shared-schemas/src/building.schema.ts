@@ -489,7 +489,7 @@ export type CreateBuildingInput = z.infer<typeof createBuildingSchema>;
  * the parcel following it — not a field in a PATCH. That is
  * `correctBuildingParcelSchema`, «تصحيح رقم العقار».
  */
-export const updateBuildingSchema = z
+const updateBuildingFields = z
   .object({
     name: buildingName.nullable().optional(),
     postedNumber: postedNumber.nullable().optional(),
@@ -516,14 +516,15 @@ export const updateBuildingSchema = z
      * Not a change in itself, so it does not count toward "something to save".
      */
     expectedUpdatedAt: z.string().datetime().optional(),
-  })
-  .superRefine((value, ctx) => {
-    const { expectedUpdatedAt: _version, ...fields } = value;
-    if (!Object.values(fields).some((v) => v !== undefined)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'لا يوجد أي تغيير لحفظه' });
-    }
-    coordinatePair(value, ctx);
   });
+
+export const updateBuildingSchema = updateBuildingFields.superRefine((value, ctx) => {
+  const { expectedUpdatedAt: _version, ...fields } = value;
+  if (!Object.values(fields).some((v) => v !== undefined)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'لا يوجد أي تغيير لحفظه' });
+  }
+  coordinatePair(value, ctx);
+});
 
 export type UpdateBuildingInput = z.infer<typeof updateBuildingSchema>;
 
@@ -677,6 +678,42 @@ export const updateUnitSchema = upsertUnitSchema
   });
 
 export type UpdateUnitInput = z.infer<typeof updateUnitSchema>;
+
+/** A unit's place on the grid — all a matrix save moves. */
+const matrixCell = upsertUnitSchema.pick({ floor: true, startCol: true, endCol: true, unitType: true });
+
+/**
+ * A whole building edit in one request: the shell and the difference between
+ * the matrix that was loaded and the one on the grid.
+ *
+ * It used to be one PATCH for the building and one request per unit, so a save
+ * could half-succeed — «حُفظ المبنى، لكن رُفض…» — leaving a building nobody
+ * had intended. `BuildingsService.saveMatrix` runs it all in one transaction:
+ * the first refusal names its unit and nothing is written. `dryRun` does the
+ * same and rolls back, so the editor can show what a save would do, or why it
+ * would be refused, before anyone presses it.
+ */
+export const saveBuildingMatrixSchema = z
+  .object({
+    building: updateBuildingFields.omit({ expectedUpdatedAt: true }),
+    remove: z.array(uuid).max(200).default([]),
+    update: z
+      .array(matrixCell.extend({ id: uuid }))
+      .max(200)
+      .default([]),
+    add: z.array(matrixCell).max(200).default([]),
+    expectedUpdatedAt: z.string().datetime().optional(),
+    dryRun: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    coordinatePair(value.building, ctx);
+    const touched = [...value.remove, ...value.update.map((row) => row.id)];
+    if (new Set(touched).size !== touched.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'الوحدة نفسها مذكورة مرتين في الحفظ' });
+    }
+  });
+
+export type SaveBuildingMatrixInput = z.infer<typeof saveBuildingMatrixSchema>;
 
 /**
  * One observation of a structure's condition, appended to the log.

@@ -20,6 +20,7 @@ import {
   type StructureType,
   type UnitBlueprint,
   type LogVisitInput,
+  type SaveBuildingMatrixInput,
   type UpdateBuildingInput,
   type UpdateUnitInput,
   type UpsertOccupancyInput,
@@ -27,6 +28,7 @@ import {
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
@@ -59,6 +61,24 @@ import { activeVacancy, closeActiveVacancy, toVacancyRow } from './unit-vacancy'
 
 /** How many units one blueprint may generate in a single call. */
 const MAX_GENERATED_UNITS = 400;
+
+/** What a whole-matrix save did — or, on a dry run, would do. */
+export interface MatrixSaveResult {
+  dryRun: boolean;
+  building: BuildingRow;
+  /** Unit codes, as they were before the save. */
+  removed: string[];
+  /** Unit codes after the save — a moved unit's new code. */
+  updated: string[];
+  added: string[];
+}
+
+/** Thrown at the end of a dry run so the transaction rolls back with the answer in hand. */
+class MatrixDryRun extends Error {
+  constructor(readonly building: BuildingRow) {
+    super('dry run');
+  }
+}
 
 /**
  * «العقارات المشتركة», minus the building's own — the list as it is stored.
@@ -1664,6 +1684,97 @@ export class BuildingsService {
   }
 
   /**
+   * A whole building edit — the shell and the matrix difference — in one
+   * transaction. See `saveBuildingMatrixSchema`.
+   *
+   * It used to be one request for the building and one per unit, each free to
+   * fail on its own, so a save could leave «حُفظ المبنى، لكن رُفض…»: a building
+   * half in the state the officer meant and half in the old one. Now the first
+   * refusal — a flat somebody lived in, a floor count that strands a unit —
+   * names what refused and nothing is written.
+   *
+   * The same checks run as they always did, because the same methods do the
+   * work: `deleteUnit`, `updateUnit`, `addUnit` and `update` all join the
+   * transaction (`atomic`, `runInTenantTransaction`). In this order:
+   * removals, so a freed position can be taken; changes; additions, lowest
+   * floor and leftmost column first so each floor's sequences read like the
+   * grid; the shell last, so its floor counts are judged against the matrix
+   * this save leaves — which is what made the old two-step shrink necessary.
+   *
+   * `dryRun` does all of it and rolls back. Audit rows wait for a commit
+   * (`AuditService.record`), so a rehearsal leaves no trace.
+   */
+  async saveMatrix(
+    id: string,
+    input: SaveBuildingMatrixInput,
+    actor: { id: string; role: string },
+  ): Promise<MatrixSaveResult> {
+    const before = await this.db.building.findUnique({ where: { id } });
+    if (!before) throw new NotFoundError('المبنى غير موجود');
+    await this.assertFresh(before, input.expectedUpdatedAt, actor);
+
+    const summary = { removed: [] as string[], updated: [] as string[], added: [] as string[] };
+    try {
+      const building = await runInTenantTransaction(this.tenantContext, async () => {
+        /*
+          The freshness check again, under the building's row lock. Two officers
+          saving the same stale screen a moment apart both pass the check above,
+          and the second would write over the first. Locked, the second waits for
+          the first to commit and then reads its `updatedAt`, which refuses it.
+        */
+        const S = tenantSchemaRef(this.tenantContext.schemaName);
+        await this.db.$queryRaw`SELECT "id" FROM ${S}"buildings" WHERE "id" = ${id}::uuid FOR UPDATE`;
+        const locked = await this.db.building.findUnique({ where: { id } });
+        if (!locked) throw new NotFoundError('المبنى غير موجود');
+        await this.assertFresh(locked, input.expectedUpdatedAt, actor);
+
+        // Every unit named must still be this building's — a stale screen could name another's.
+        const named = [...input.remove, ...input.update.map((row) => row.id)];
+        if (named.length > 0) {
+          const own = await this.db.unit.findMany({
+            where: { id: { in: named }, buildingId: id },
+            select: { id: true, unitCode: true },
+          });
+          if (own.length !== named.length) {
+            throw new ConflictError('إحدى الوحدات لم تعد في هذا المبنى — أعد فتحه لترى المصفوفة الحالية');
+          }
+          const codeOf = new Map(own.map((unit) => [unit.id, unit.unitCode]));
+          for (const unitId of input.remove) {
+            await this.deleteUnit(unitId, actor);
+            summary.removed.push(codeOf.get(unitId)!);
+          }
+        }
+
+        for (const cell of input.update) {
+          const row = await this.updateUnit(
+            cell.id,
+            { floor: cell.floor, startCol: cell.startCol, endCol: cell.endCol, unitType: cell.unitType },
+            actor,
+          );
+          summary.updated.push(row.unitCode);
+        }
+
+        const additions = [...input.add].sort(
+          (a, b) => a.floor - b.floor || (a.startCol ?? 0) - (b.startCol ?? 0),
+        );
+        for (const cell of additions) {
+          // The grid drew every unit already on the floor, so there is no duplicate left to ask about.
+          const row = await this.addUnit(id, { ...cell, acknowledgedDuplicates: true }, actor);
+          summary.added.push(row.unitCode);
+        }
+
+        const updated = await this.update(id, input.building, actor);
+        if (input.dryRun) throw new MatrixDryRun(updated);
+        return updated;
+      });
+      return { dryRun: false, building, ...summary };
+    } catch (caught) {
+      if (caught instanceof MatrixDryRun) return { dryRun: true, building: caught.building, ...summary };
+      throw caught;
+    }
+  }
+
+  /**
    * Somebody saved this building after the screen was opened. Refused before
    * anything is written, naming them, so a screen loaded an hour ago does not
    * quietly put back a lifecycle, a فرز or a pin a colleague has since changed.
@@ -2070,7 +2181,8 @@ export class BuildingsService {
       }
     }
 
-    const created = await this.db.$transaction(async (tx) => {
+    // `atomic`, not `$transaction`: a whole-matrix save (`saveMatrix`) runs this inside its own.
+    const created = await this.atomic(async (tx) => {
       /*
         The schema is a literal here for the same reason it is in `create` —
         `current_schema()` reads the connection's `search_path`, which this app

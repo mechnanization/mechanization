@@ -1860,6 +1860,37 @@ export async function correctBuildingParcel(
   return result;
 }
 
+/** The building editor's save: the shell and the matrix difference, all or nothing. */
+export interface BuildingMatrixSave {
+  building: Omit<UpdateBuildingInput, 'expectedUpdatedAt'>;
+  remove: string[];
+  update: Array<{ id: string; floor: number; startCol?: number; endCol?: number; unitType: string }>;
+  add: Array<{ floor: number; startCol?: number; endCol?: number; unitType: string }>;
+  expectedUpdatedAt?: string;
+  /** Do it all and roll back — what a save would do, or why it would be refused. */
+  dryRun?: boolean;
+}
+
+export interface BuildingMatrixSaveResult {
+  dryRun: boolean;
+  building: BuildingSummary;
+  /** Unit codes as they were. */
+  removed: string[];
+  /** Unit codes after the save. */
+  updated: string[];
+  added: string[];
+}
+
+export async function saveBuildingMatrix(tenant: string, token: string, id: string, input: BuildingMatrixSave) {
+  const result = await apiFetch<BuildingMatrixSaveResult>(
+    tenant,
+    `/buildings/${encodeURIComponent(id)}/matrix-save`,
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
+  if (!input.dryRun) invalidateCensus(tenant);
+  return result;
+}
+
 /** SUPER_ADMIN only. Refused server-side once anyone is recorded as living in it. */
 export async function deleteBuilding(tenant: string, token: string, id: string) {
   const result = await apiFetch<{ deleted: boolean }>(
