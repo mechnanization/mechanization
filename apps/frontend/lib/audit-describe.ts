@@ -50,6 +50,8 @@ export const AUDIT_FAMILIES: AuditFamily[] = [
       action.startsWith('LANDLORD_') ||
       action.startsWith('HOUSEHOLD_') ||
       action === 'TENANCY_ENDED' ||
+      action === 'OWNERSHIP_ENDED' ||
+      action === 'PROPERTY_NUMBER_CORRECTED' ||
       action === 'STATUS_CHANGE',
   },
   {
@@ -232,6 +234,15 @@ function fieldLabels(en: boolean): Record<string, string> {
     snapshotCreatedAt: ['تاريخ النسخة الاحتياطية', 'Snapshot date'],
     rowCount: ['عدد الصفوف', 'Rows'],
     provisionalSuffix: ['الحرف المؤقت', 'Provisional suffix'],
+    codeSuffix: ['حرف المبنى', 'Building suffix'],
+    zoneCode: ['القطاع', 'Sector'],
+    buildingCode: ['رمز المبنى', 'Building code'],
+    cardsCorrected: ['بطاقات صُحِّحت', 'Cards corrected'],
+    casesCorrected: ['حالات صُحِّحت', 'Cases corrected'],
+    pinInsideNewParcel: ['الدبوس داخل العقار الجديد', 'Pin inside the new parcel'],
+    reclaimedOwnCode: ['استعاد رمزه السابق', 'Took its own old code back'],
+    keptOldAsShared: ['أُبقي العقار القديم مشتركاً', 'Old parcel kept as shared'],
+    acknowledgedNeighbours: ['مبانٍ تحقّق منها الموظف', 'Neighbours checked'],
     from: ['من', 'From'],
     to: ['إلى', 'To'],
     percent: ['النسبة ٪', 'Percent'],

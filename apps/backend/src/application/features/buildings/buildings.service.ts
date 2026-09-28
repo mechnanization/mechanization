@@ -210,6 +210,12 @@ export interface BuildingDetail extends BuildingRow {
   /** The zone this building's parcel belongs to, resolved at read time (D13). */
   zoneCode: string | null;
   zoneName: string | null;
+  /**
+   * Codes this building carried before «تصحيح رقم العقار», newest first. Still
+   * found by search and never given to another building — see
+   * `BuildingCodeAlias`.
+   */
+  previousCodes: Array<{ code: string; parcelNumber: string; reason: string; retiredAt: string }>;
   units: Array<
     UnitRow & {
       occupants: OccupancyRow[];
@@ -314,7 +320,17 @@ export class BuildingsService {
    */
   async list(
     filter: BuildingListFilter,
-  ): Promise<{ buildings: BuildingLedgerRow[]; total: number; summary: CensusSummary }> {
+  ): Promise<{
+    buildings: BuildingLedgerRow[];
+    total: number;
+    summary: CensusSummary;
+    /**
+     * With a `parcelNumber` filter only: the suffixes «تصحيح رقم العقار»
+     * retired on that parcel, so the editor's predicted code for a new
+     * building skips them exactly as `create` does.
+     */
+    retiredSuffixes?: string[];
+  }> {
     const where = await this.buildWhere(filter);
 
     /*
@@ -390,15 +406,47 @@ export class BuildingsService {
 
     const unitsTotal = totals._sum.unitsTotal ?? 0;
     const unitsSurveyed = totals._sum.unitsSurveyed ?? 0;
+    const retired = filter.parcelNumber
+      ? await withConnectionRetry(() =>
+          this.db.buildingCodeAlias.findMany({
+            where: { parcelNumber: filter.parcelNumber!.trim() },
+            select: { codeSuffix: true },
+          }),
+        )
+      : null;
+    // Which rows the search found by a retired code rather than their own.
+    const matchedAliases =
+      filter.search?.trim() && ids.length > 0
+        ? await withConnectionRetry(() =>
+            this.db.buildingCodeAlias.findMany({
+              where: {
+                buildingId: { in: ids },
+                code: { contains: filter.search!.trim(), mode: 'insensitive' },
+              },
+              orderBy: { retiredAt: 'desc' },
+              select: { buildingId: true, code: true },
+            }),
+          )
+        : [];
+    const matchedAlias = new Map<string, string>();
+    for (const alias of matchedAliases) {
+      if (alias.buildingId && !matchedAlias.has(alias.buildingId)) matchedAlias.set(alias.buildingId, alias.code);
+    }
 
     return {
+      ...(retired ? { retiredSuffixes: retired.map((row) => row.codeSuffix) } : {}),
       buildings: rows.map((row) => {
         const zone = zoneOf.get(row.parcelNumber);
+        const previous = matchedAlias.get(row.id);
         return {
           ...toBuildingRow(row),
           zoneCode: zone?.code ?? null,
           zoneName: zone?.name ?? null,
           damageLevel: damageOf.get(row.id) ?? null,
+          // Only when the term did not match the live code itself.
+          ...(previous && !row.code.toLowerCase().includes(filter.search!.trim().toLowerCase())
+            ? { matchedPreviousCode: previous }
+            : {}),
         };
       }),
       total,
@@ -707,6 +755,9 @@ export class BuildingsService {
         // Exact rather than `contains`: an array element cannot be matched by
         // substring, and a whole parcel number is what somebody searching one types.
         { sharedParcelNumbers: { has: term } },
+        // A code retired by «تصحيح رقم العقار» still finds its building: it is on
+        // paper forms and receipts that outlive the correction.
+        { codeAliases: { some: { code: match } } },
       ];
       // ANDed with the survey filter above rather than merged into one OR,
       // which would have a search term widening the status filter instead of
@@ -776,11 +827,19 @@ export class BuildingsService {
     const backing = await this.claimsBackingOccupancies(row.id, row.units);
     const declared = await this.ownerDeclaredStatuses(row.id, row.units);
     const ownerLinks = await this.occupancyOwnerLinks(row.id, row.units);
+    const previousCodes = await withConnectionRetry(() =>
+      this.db.buildingCodeAlias.findMany({
+        where: { buildingId: row.id },
+        orderBy: { retiredAt: 'desc' },
+        select: { code: true, parcelNumber: true, reason: true, retiredAt: true },
+      }),
+    );
 
     return {
       ...toBuildingRow(row),
       zoneCode: zone?.code ?? null,
       zoneName: zone?.name ?? null,
+      previousCodes: previousCodes.map((alias) => ({ ...alias, retiredAt: alias.retiredAt.toISOString() })),
       units: row.units.map((unit) => ({
         ...toUnitRow(unit),
         occupants: unit.occupancies.map((occupancy) => {
@@ -1237,11 +1296,7 @@ export class BuildingsService {
         `${this.tenantContext.schemaName}:building-suffix:${parcelNumber}`,
       );
 
-      const taken = await tx.building.findMany({
-        where: { parcelNumber },
-        select: { codeSuffix: true },
-      });
-      const codeSuffix = nextBuildingSuffix(taken.map((b) => b.codeSuffix));
+      const codeSuffix = nextBuildingSuffix(await this.suffixesInUse(tx, parcelNumber));
       const zone = await this.zoneOfParcel(parcelNumber, tx);
 
       const building = await tx.building.create({
@@ -1474,38 +1529,7 @@ export class BuildingsService {
     const before = await this.db.building.findUnique({ where: { id } });
     if (!before) throw new NotFoundError('المبنى غير موجود');
 
-    /*
-      Somebody saved this building after the editor was opened. Refused before
-      anything is written, naming them, so a screen loaded an hour ago does not
-      quietly put back a lifecycle, a فرز or a pin a colleague has since changed.
-    */
-    if (input.expectedUpdatedAt && before.updatedAt.toISOString() !== new Date(input.expectedUpdatedAt).toISOString()) {
-      const last = await this.db.auditLogEntry.findFirst({
-        where: { entityType: 'Building', entityId: id },
-        orderBy: { createdAt: 'desc' },
-        select: { actorId: true, createdAt: true },
-      });
-      const staff = last?.actorId
-        ? await this.db.user.findFirst({
-            where: { id: last.actorId, kind: 'STAFF' },
-            select: { firstName: true, lastName: true },
-          })
-        : null;
-      const who = staff ? `${staff.firstName} ${staff.lastName}` : null;
-      throw new ConflictError(
-        who
-          ? `عدّل ${who} هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى تعديلاته قبل الحفظ.`
-          : 'عُدِّل هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى التعديلات قبل الحفظ.',
-        {
-          staleEdit: {
-            updatedAt: before.updatedAt.toISOString(),
-            lastEditedBy: who,
-            lastEditedAt: last?.createdAt.toISOString() ?? null,
-            byViewer: last?.actorId === actor.id,
-          },
-        },
-      );
-    }
+    await this.assertFresh(before, input.expectedUpdatedAt, actor);
 
     /*
       The other direction of the same rule.
@@ -1639,6 +1663,47 @@ export class BuildingsService {
     return toBuildingRow(updated);
   }
 
+  /**
+   * Somebody saved this building after the screen was opened. Refused before
+   * anything is written, naming them, so a screen loaded an hour ago does not
+   * quietly put back a lifecycle, a فرز or a pin a colleague has since changed.
+   * An absent `expectedUpdatedAt` means "do not check" — older clients.
+   */
+  async assertFresh(
+    before: { id: string; updatedAt: Date },
+    expectedUpdatedAt: string | undefined,
+    actor: { id: string },
+  ): Promise<void> {
+    if (!expectedUpdatedAt) return;
+    if (before.updatedAt.toISOString() === new Date(expectedUpdatedAt).toISOString()) return;
+
+    const last = await this.db.auditLogEntry.findFirst({
+      where: { entityType: 'Building', entityId: before.id },
+      orderBy: { createdAt: 'desc' },
+      select: { actorId: true, createdAt: true },
+    });
+    const staff = last?.actorId
+      ? await this.db.user.findFirst({
+          where: { id: last.actorId, kind: 'STAFF' },
+          select: { firstName: true, lastName: true },
+        })
+      : null;
+    const who = staff ? `${staff.firstName} ${staff.lastName}` : null;
+    throw new ConflictError(
+      who
+        ? `عدّل ${who} هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى تعديلاته قبل الحفظ.`
+        : 'عُدِّل هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى التعديلات قبل الحفظ.',
+      {
+        staleEdit: {
+          updatedAt: before.updatedAt.toISOString(),
+          lastEditedBy: who,
+          lastEditedAt: last?.createdAt.toISOString() ?? null,
+          byViewer: last?.actorId === actor.id,
+        },
+      },
+    );
+  }
+
   async remove(id: string, actor: { id: string; role: string }): Promise<void> {
     const before = await this.db.building.findUnique({
       where: { id },
@@ -1682,7 +1747,7 @@ export class BuildingsService {
     const historical = await this.db.unitOccupancy.count({ where: { unit: { buildingId: id } } });
     if (historical > 0) {
       throw new ConflictError(
-        `لا يمكن حذف مبنى سُجّل فيه سكان: ${historical} إشغال سابق على وحداته. حذفه يمحو سجل من سكنها. عدّل بيانات المبنى أو غيّر حالته إلى «مهدوم» بدلاً من الحذف`,
+        `لا يمكن حذف مبنى سُجّل فيه سكان: ${historical} إشغال سابق على وحداته. حذفه يمحو سجل من سكنها. عدّل بيانات المبنى أو غيّر حالته إلى «مهدوم» بدلاً من الحذف، وإن كان رقم العقار خاطئاً فاستخدم «تصحيح رقم العقار»`,
       );
     }
 
@@ -4107,6 +4172,43 @@ export class BuildingsService {
     }
 
     return resolved;
+  }
+
+  /**
+   * Every suffix that may not be allocated on this parcel: the ones its
+   * buildings hold, and the ones «تصحيح رقم العقار» retired there
+   * (`BuildingCodeAlias`), so an old code on a receipt or a notice never comes
+   * to name a different building.
+   *
+   * `reclaimFor` lets one building take back a suffix it retired itself — a
+   * correction that is corrected again returns the building to its own old
+   * code, which is not reuse by anybody else.
+   *
+   * Read under the caller's per-parcel lock, inside its transaction.
+   */
+  async suffixesInUse(
+    client: Prisma.TransactionClient,
+    parcelNumber: string,
+    reclaimFor?: string,
+  ): Promise<string[]> {
+    const [buildings, retired] = await Promise.all([
+      client.building.findMany({ where: { parcelNumber }, select: { codeSuffix: true } }),
+      client.buildingCodeAlias.findMany({
+        where: { parcelNumber, ...(reclaimFor ? { NOT: { buildingId: reclaimFor } } : {}) },
+        select: { codeSuffix: true },
+      }),
+    ]);
+    return [...buildings, ...retired].map((row) => row.codeSuffix);
+  }
+
+  /** The sector a parcel belongs to — see `zoneOfParcel`. */
+  zoneFor(parcelNumber: string, tx?: Prisma.TransactionClient) {
+    return this.zoneOfParcel(parcelNumber, tx);
+  }
+
+  /** Every structure standing on a parcel, nearest first — see `parcelNeighbours`. */
+  neighboursOn(parcelNumber: string, pin: { latitude?: number | null; longitude?: number | null }) {
+    return this.parcelNeighbours(parcelNumber, pin);
   }
 
   private async zoneOfParcel(

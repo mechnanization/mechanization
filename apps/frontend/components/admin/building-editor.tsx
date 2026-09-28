@@ -51,9 +51,11 @@ import {
   updateUnit,
   type BuildingDetail,
   type DuplicateBuildingCandidate,
+  type ParcelCorrectionResult,
   type UnitWithOccupants,
   type ZoneSummary,
 } from '@/lib/api-client';
+import { ParcelCorrectionDialog } from '@/components/admin/parcel-correction-dialog';
 import {
   clearBuildingDraft,
   loadBuildingDraft,
@@ -626,6 +628,32 @@ export function BuildingEditor({
    */
   const [loadedLifecycle, setLoadedLifecycle] = useState<BuildingLifecycle | null>(null);
   const [liveOccupants, setLiveOccupants] = useState(0);
+  /** Codes retired by «تصحيح رقم العقار», newest first — shown under the code. */
+  const [previousCodes, setPreviousCodes] = useState<NonNullable<BuildingDetail['previousCodes']>>([]);
+  const [correctingParcel, setCorrectingParcel] = useState(false);
+
+  /*
+    A correction landed. Only what the server changed is applied — the parcel,
+    the code, the shared parcels and the version — so anything else the officer
+    has typed in the form stays theirs to save. The pin is claimed for the new
+    parcel *before* the parcel changes, or the parcel lookup below would drop it
+    as a pin left on another parcel.
+  */
+  const applyParcelCorrection = useCallback(
+    (result: ParcelCorrectionResult, oldParcel: string) => {
+      pinParcelRef.current = result.building.parcelNumber;
+      setParcelNumber(result.building.parcelNumber);
+      setSharedParcels(result.building.sharedParcelNumbers);
+      setSuffix(result.building.codeSuffix);
+      setSavedCode(result.building.code);
+      loadedUpdatedAtRef.current = result.building.updatedAt;
+      setPreviousCodes((current) => [
+        { code: result.previousCode, parcelNumber: oldParcel, reason: '', retiredAt: new Date().toISOString() },
+        ...current.filter((row) => row.code !== result.building.code),
+      ]);
+    },
+    [],
+  );
 
   const hydrate = useCallback(
     (detail: BuildingDetail, keepEdits = false) => {
@@ -638,9 +666,15 @@ export function BuildingEditor({
           0,
         ),
       );
+      /*
+        The parcel is the server's, even when a draft is kept: this form cannot
+        edit it, and a draft saved before «تصحيح رقم العقار» would otherwise put
+        the old number back on screen and centre the map on the wrong parcel.
+      */
+      setParcelNumber(detail.parcelNumber);
+      pinParcelRef.current = detail.parcelNumber;
+      setPreviousCodes(detail.previousCodes ?? []);
       if (!keepEdits) {
-        setParcelNumber(detail.parcelNumber);
-        pinParcelRef.current = detail.parcelNumber;
         setName(detail.name ?? '');
         setPostedNumber(detail.postedNumber ?? '');
         setIsPartitioned(detail.isPartitioned === true);
@@ -962,11 +996,13 @@ export function BuildingEditor({
               server allocates the same way.
             */
             setSuffix(
-              nextBuildingSuffix(
-                existing.buildings
+              nextBuildingSuffix([
+                ...existing.buildings
                   .filter((row) => row.parcelNumber === trimmedParcel)
                   .map((row) => row.codeSuffix),
-              ),
+                // Retired by «تصحيح رقم العقار»: never given out again, so never predicted.
+                ...(existing.retiredSuffixes ?? []),
+              ]),
             );
             setDuplicates(
               existing.buildings.length > 0
@@ -2212,9 +2248,11 @@ export function BuildingEditor({
               {/*
                 ── 3. رقم العقار ──────────────────────────────────────────
 
-                Read-only on a correction, because moving a building to another
-                parcel is not an edit — the suffix was allocated against the old
-                one and the whole code derives from it.
+                Not a field on an existing building: the suffix was allocated
+                against the parcel and the whole code derives from it, so a
+                wrong number is corrected by its own action — «تصحيح رقم العقار»
+                — which reallocates the code, retires the old one and carries
+                every card and case that copies the parcel along with it.
                 `updateBuildingSchema` does not accept the field at all.
               */}
               <StepField
@@ -2226,13 +2264,44 @@ export function BuildingEditor({
                 error={fieldErrors.parcelNumber}
               >
                 {editing ? (
-                  <p
-                    id="building-parcel"
-                    dir="ltr"
-                    className="flex h-10 items-center rounded-md border bg-muted/40 px-3 text-start font-mono text-base font-medium text-foreground"
-                  >
-                    {trimmedParcel || '—'}
-                  </p>
+                  <>
+                    <div className="flex items-stretch gap-2">
+                      <p
+                        id="building-parcel"
+                        dir="ltr"
+                        className="flex h-10 min-w-0 flex-1 items-center rounded-md border bg-muted/40 px-3 text-start font-mono text-base font-medium text-foreground"
+                      >
+                        {trimmedParcel || '—'}
+                      </p>
+                      {token && buildingId && savedCode ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-10 shrink-0 gap-1.5"
+                          onClick={() => setCorrectingParcel(true)}
+                        >
+                          <Hash className="size-4" aria-hidden />
+                          {en ? 'Correct the number' : 'تصحيح رقم العقار'}
+                        </Button>
+                      ) : null}
+                    </div>
+                    {token && buildingId && savedCode ? (
+                      <ParcelCorrectionDialog
+                        tenant={tenant}
+                        token={token}
+                        building={{
+                          id: buildingId,
+                          code: savedCode,
+                          parcelNumber: trimmedParcel,
+                          updatedAt: loadedUpdatedAtRef.current,
+                        }}
+                        open={correctingParcel}
+                        onOpenChange={setCorrectingParcel}
+                        onCorrected={(result) => applyParcelCorrection(result, trimmedParcel)}
+                        locale={locale}
+                      />
+                    ) : null}
+                  </>
                 ) : (
                   <div className="relative" dir="ltr">
                     <Input
@@ -2322,6 +2391,21 @@ export function BuildingEditor({
                       </Badge>
                     )}
                   </div>
+                  {/* Retired by a correction — still what old forms and receipts quote. */}
+                  {editing && previousCodes.length > 0 ? (
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      {en ? 'Previously: ' : 'رموزه السابقة: '}
+                      {previousCodes.map((row, index) => (
+                        <span key={row.code}>
+                          {index > 0 ? '، ' : null}
+                          <bdi dir="ltr" className="font-mono">
+                            {row.code}
+                          </bdi>
+                        </span>
+                      ))}
+                      {en ? ' — still found by search.' : ' — ما زالت تدلّ عليه في البحث.'}
+                    </p>
+                  ) : null}
                 </div>
               </StepField>
 
