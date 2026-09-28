@@ -15,6 +15,7 @@ import { claimsFlat } from '../../../domain/entities/census-claim';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CasesService } from '../cases/cases.service';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
+import { OwnershipService, type EndOwnershipResult } from './ownership.service';
 import {
   LandlordLinkService,
   type PendingEvent,
@@ -66,7 +67,11 @@ export class TenancyService {
     private readonly cases: CasesService,
     private readonly links: LandlordLinkService,
     private readonly events: EventEmitter2,
-  ) {}
+    private readonly ownership: OwnershipService,
+  ) {
+    // A tenant can buy the flat they rent; the sale ends that tenancy through here.
+    ownership.bindTenancy(this);
+  }
 
   private get db() {
     return this.tenantContext.prisma;
@@ -121,13 +126,17 @@ export class TenancyService {
 
   /**
    * The matrix's «إنهاء الإشغال». An owner's spell is not a tenancy — a sale or
-   * a correction of who owns the flat — and keeps its own path.
+   * a correction of who owns the flat — and goes through `OwnershipService`,
+   * the same operation «إنهاء الملكية» runs from the owner's file. It used to
+   * go to `BuildingsService.endOccupancy`, which unlinked the flat from the
+   * owner's card instead of ending the card's row, so the seller kept being
+   * billed from the row it left behind.
    */
   async endOccupancy(
     occupancyId: string,
-    input: EndInput & { reason: string },
+    input: EndInput & { reason: string; newOwnerId?: string },
     actor: Actor,
-  ): Promise<EndTenancyResult | { ownerSpellEnded: true }> {
+  ): Promise<EndTenancyResult | EndOwnershipResult> {
     const occupancy = await this.db.unitOccupancy.findUnique({
       where: { id: occupancyId },
       select: { role: true },
@@ -135,12 +144,23 @@ export class TenancyService {
     if (!occupancy) throw new NotFoundError('سجل الإشغال غير موجود');
 
     if (occupancy.role === 'OWNER') {
-      await this.buildings.endOccupancy(
+      if (input.reason !== 'OWNERSHIP_TRANSFERRED' && input.reason !== 'RECORDED_IN_ERROR') {
+        throw new ValidationError('إنهاء ملكية يكون ببيع أو نقل ملكية، أو لأنها سُجِّلت بالخطأ', {
+          reason: input.reason,
+        });
+      }
+      return this.ownership.endOccupancy(
         occupancyId,
-        { toDate: input.endedAt, reason: input.reason },
+        {
+          reason: input.reason,
+          endedAt: input.endedAt,
+          newOwnerId: input.newOwnerId,
+          afterStatus: input.afterStatus,
+          vacancyBasis: input.vacancyBasis,
+          vacancyNotes: input.vacancyNotes,
+        },
         actor,
       );
-      return { ownerSpellEnded: true };
     }
 
     if (input.reason !== 'MOVED_OUT' && input.reason !== 'RECORDED_IN_ERROR') {
@@ -152,6 +172,22 @@ export class TenancyService {
 
     const target = await this.targetFromOccupancy(occupancyId);
     return this.end(target, { ...input, reason: input.reason }, actor);
+  }
+
+  /**
+   * A tenant who buys the flat they rent — the tenancy's half of the sale.
+   *
+   * Called by `OwnershipService` inside the sale's transaction, never from a
+   * route. The tenancy was real and it ended because its tenant became the
+   * owner, so it ends as `OWNERSHIP_TRANSFERRED` on the day of the sale: kept
+   * in the flat's history and in the filing officer's credit, what its owner
+   * link wrote kept rather than reverted. A flat nobody else rents is
+   * «يسكنها المالك» from then — the buyer, whom the sale records as owner
+   * straight after.
+   */
+  async endForPurchase(occupancyId: string, endedAt: Date, actor: Actor): Promise<EndTenancyResult> {
+    const target = await this.targetFromOccupancy(occupancyId);
+    return this.end(target, { reason: 'OWNERSHIP_TRANSFERRED', endedAt, afterStatus: 'OWNER_OCCUPIED' }, actor);
   }
 
   /**
@@ -439,7 +475,7 @@ export class TenancyService {
 
   private async end(
     target: Target,
-    input: EndInput & { reason: EndReason },
+    input: EndInput & { reason: EndingReason },
     actor: Actor,
   ): Promise<EndTenancyResult> {
     if (target.cards.length === 0 && target.spells.length === 0) {
@@ -451,7 +487,7 @@ export class TenancyService {
       it is closed as of now, the way `endOccupancy` closes one.
     */
     const endedAt = input.reason === 'RECORDED_IN_ERROR' ? new Date() : (input.endedAt ?? new Date());
-    if (input.reason === 'MOVED_OUT' && target.startedAt && endedAt < target.startedAt) {
+    if (input.reason !== 'RECORDED_IN_ERROR' && target.startedAt && endedAt < target.startedAt) {
       // Compared by day: a spell recorded this afternoon may end today.
       if (endedAt.toISOString().slice(0, 10) < target.startedAt.toISOString().slice(0, 10)) {
         throw new ValidationError('تاريخ الانتهاء قبل بدء الإشغال', { endedAt });
@@ -468,7 +504,8 @@ export class TenancyService {
     if (input.afterStatus === 'VACANT' && !input.vacancyBasis) {
       throw new ValidationError('على ماذا يستند الشغور؟', { vacancyBasis: null });
     }
-    if (input.afterStatus === 'OWNER_OCCUPIED') {
+    // On a purchase the owner who lives there is the buyer — this tenant — whoever else co-owns it.
+    if (input.afterStatus === 'OWNER_OCCUPIED' && input.reason !== 'OWNERSHIP_TRANSFERRED') {
       const refused = freed.find((unit) => unit.ownerNonResident && unit.dwelling);
       if (refused) {
         throw new ValidationError(
@@ -587,14 +624,15 @@ export class TenancyService {
             footprint: card.landlordLinkFootprint,
             unitIds: endingUnitIds,
             cardEnded,
-            mode: input.reason === 'MOVED_OUT' ? 'KEEP' : 'REVERT',
+            // A tenancy that really ended — left, or bought — was true: what its link wrote stays.
+            mode: input.reason === 'RECORDED_IN_ERROR' ? 'REVERT' : 'KEEP',
           });
           Object.assign(data, detached.data);
           events.push(...detached.events);
           result.link.push({
             propertyEntryId: card.id,
             ownerId: card.landlordCitizenId,
-            kept: input.reason === 'MOVED_OUT',
+            kept: input.reason !== 'RECORDED_IN_ERROR',
             report: detached.report,
           });
         }
@@ -854,7 +892,13 @@ const CARD_SELECT = {
 } as const;
 
 type Actor = { id: string; role: string };
+/** What an officer can say ended a tenancy — the two answers the routes accept. */
 type EndReason = 'MOVED_OUT' | 'RECORDED_IN_ERROR';
+/**
+ * What `end` writes. `OWNERSHIP_TRANSFERRED` is never chosen for a tenancy:
+ * it is the tenancy of somebody who bought the flat (`endForPurchase`).
+ */
+type EndingReason = EndReason | 'OWNERSHIP_TRANSFERRED';
 
 interface EndInput {
   endedAt?: Date;

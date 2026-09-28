@@ -3,7 +3,13 @@
 import { useId } from 'react';
 import { getLabels, VACANCY_BASIS } from '@mechanization/shared-schemas';
 import type { VacancyBasis } from '@mechanization/shared-schemas';
-import type { AfterTenancyAnswer, AfterTenancyStatus, EndTenancyResult } from '@/lib/api-client';
+import {
+  isOwnershipResult,
+  type AfterTenancyAnswer,
+  type AfterTenancyStatus,
+  type EndOwnershipResult,
+  type EndTenancyResult,
+} from '@/lib/api-client';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 
@@ -22,12 +28,22 @@ export function AfterTenancyQuestion({
   value,
   onChange,
   ownerNonResident = false,
+  ownerOption,
+  legend,
   locale,
 }: {
   value: AfterTenancyAnswer;
   onChange: (next: AfterTenancyAnswer) => void;
   /** The owner lives elsewhere — they cannot be recorded living in a dwelling. */
   ownerNonResident?: boolean;
+  /**
+   * The first answer, said for who the owner is here. «إنهاء الملكية» asks it
+   * about the *new* owner — and holds it until one is chosen, since «يسكنها
+   * المالك» with nobody recorded as owner would bill no one.
+   */
+  ownerOption?: { title: string; effect: string; disabled?: string };
+  /** The question, when it is not «ما حال الوحدة الآن؟». */
+  legend?: string;
   locale: string;
 }) {
   const en = locale === 'en';
@@ -37,16 +53,18 @@ export function AfterTenancyQuestion({
   const notesId = useId();
 
   const options: Array<{ status: AfterTenancyStatus; title: string; effect: string; disabled?: string }> = [
-    {
-      status: 'OWNER_OCCUPIED',
-      title: en ? 'The owner lives there' : 'يسكنها المالك',
-      effect: en ? 'The owner is charged the occupancy fee.' : 'يتحمّل المالك رسم الإشغال.',
-      disabled: ownerNonResident
-        ? en
-          ? 'The owner lives elsewhere.'
-          : 'المالك غير مقيم في البلدة.'
-        : undefined,
-    },
+    ownerOption
+      ? { status: 'OWNER_OCCUPIED', ...ownerOption }
+      : {
+          status: 'OWNER_OCCUPIED',
+          title: en ? 'The owner lives there' : 'يسكنها المالك',
+          effect: en ? 'The owner is charged the occupancy fee.' : 'يتحمّل المالك رسم الإشغال.',
+          disabled: ownerNonResident
+            ? en
+              ? 'The owner lives elsewhere.'
+              : 'المالك غير مقيم في البلدة.'
+            : undefined,
+        },
     {
       status: 'VACANT',
       title: en ? 'Empty' : 'شاغرة',
@@ -75,7 +93,7 @@ export function AfterTenancyQuestion({
   return (
     <fieldset className="space-y-2">
       <legend className="mb-1 text-sm font-medium">
-        {en ? 'What is the unit now?' : 'ما حال الوحدة الآن؟'} <span className="text-destructive">*</span>
+        {legend ?? (en ? 'What is the unit now?' : 'ما حال الوحدة الآن؟')} <span className="text-destructive">*</span>
       </legend>
 
       <div role="radiogroup" className="grid gap-2">
@@ -174,15 +192,11 @@ export function afterTenancyComplete(answer: AfterTenancyAnswer): boolean {
  * because both halves land somewhere the officer is not looking.
  */
 export function endTenancyMessage(
-  result: EndTenancyResult | { ownerSpellEnded: true },
+  result: EndTenancyResult | EndOwnershipResult,
   locale: string,
 ): string {
   const en = locale === 'en';
-  if ('ownerSpellEnded' in result) {
-    return en
-      ? 'Ownership ended, and the property released from their file'
-      : 'تم إنهاء الملكية وفصل العقار عن ملف المواطن';
-  }
+  if (isOwnershipResult(result)) return endOwnershipMessage(result, locale);
   const head =
     result.cardsEnded > 0
       ? en
@@ -200,6 +214,40 @@ export function endTenancyMessage(
   if (!result.statusApplied) return head;
   const [enTail, arTail] = tail[result.statusApplied];
   return en ? `${head}; ${enTail}` : `${head}، ${arTail}`;
+}
+
+/**
+ * The toast after «إنهاء الملكية» — what happened to the seller's card, and
+ * what happens next about the buyer, because that is the officer's next job.
+ */
+export function endOwnershipMessage(result: EndOwnershipResult, locale: string): string {
+  const en = locale === 'en';
+  if (result.reason === 'RECORDED_IN_ERROR') {
+    return en
+      ? 'Ownership corrected — recorded as an entry made by mistake'
+      : 'صُحِّحت الملكية — سُجِّلت كإدخال خاطئ';
+  }
+  const head =
+    result.cardsEnded > 0
+      ? en
+        ? 'Ownership ended — the card stays on their file as ended'
+        : 'انتهت الملكية — بقيت البطاقة في ملفه كملكية منتهية'
+      : en
+        ? 'Ownership ended on the chosen units'
+        : 'انتهت الملكية على الوحدات المحددة';
+  const next =
+    (result.buyerTenancyEndedOn?.length ?? 0) > 0
+      ? en
+        ? 'the tenant who bought it is recorded as its owner, living there'
+        : 'وسُجِّل المستأجر الذي اشتراها مالكاً ساكناً فيها'
+      : result.newOwnerRecorded
+        ? en
+          ? 'the new owner is recorded'
+          : 'وسُجِّل المالك الجديد'
+        : en
+          ? 'a task was opened to record the new owner'
+          : 'وفُتحت مهمة لتسجيل المالك الجديد';
+  return en ? `${head}; ${next}` : `${head}، ${next}`;
 }
 
 /** Only the fields that belong to the chosen answer. */

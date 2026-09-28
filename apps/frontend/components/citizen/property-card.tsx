@@ -1,11 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
 import {
   Building2,
   CheckCircle2,
   ChevronDown,
   DoorOpen,
+  ExternalLink,
+  KeyRound,
   Loader2,
   Lock,
   MapPin,
@@ -41,8 +45,12 @@ export interface CardRemovalAnswer {
 }
 import {
   checkPropertyNumber,
+  getOwnershipEndPreview,
+  logApiError,
   peekPropertyNumberCheck,
+  type EndOwnershipResult,
   type EndTenancyResult,
+  type OwnershipLinkedTenant,
   type PropertyNumberCheck,
 } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -67,6 +75,7 @@ import {
 import { LandlordMatchHint } from '@/components/admin/landlord-match-hint';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
+import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
 import { cn, scopeErrors } from '@/lib/utils';
 import {
   type CensusUnitFacts,
@@ -248,7 +257,7 @@ export function PropertyCard({
    * (`result.endedRowIds`), the card stays and those rows leave it. The server
    * has already kept both. Absent where a card cannot be ended here.
    */
-  onEnded?: (result: EndTenancyResult, cardEnded: boolean) => void;
+  onEnded?: (result: EndTenancyResult | EndOwnershipResult, cardEnded: boolean) => void;
   canRemove: boolean;
   errors?: Record<string, string>;
   locale?: string;
@@ -292,19 +301,6 @@ export function PropertyCard({
     onChange((current) => ({ ...current, ...patch }));
 
   const [confirmingRemove, setConfirmingRemove] = useState(false);
-  /*
-    «لماذا تُحذف؟» — asked of a saved card on the staff form, because the
-    census closes the flats it claimed with the answer. No default for an
-    owner: «سُجِّل بالخطأ» hides the ownership from the flat's history and
-    «بيع» keeps it, and a preselected answer is the one nobody reads.
-  */
-  const [removalReason, setRemovalReason] = useState<CardRemovalReason | null>(null);
-  const [soldOn, setSoldOn] = useState('');
-  useEffect(() => {
-    if (!confirmingRemove) return;
-    setRemovalReason(null);
-    setSoldOn('');
-  }, [confirmingRemove]);
   /**
    * Whether the census-known fields are shown as fields rather than as facts.
    *
@@ -506,9 +502,56 @@ export function PropertyCard({
   const [endOpen, setEndOpen] = useState(false);
   /** A saved tenancy the staff form can end — see «إنهاء الإيجار» in the header. */
   const endable = Boolean(token && censusPicker && draft.id && isNonOwner && onEnded);
-  /** A saved card on the staff form: its removal says why (see `removalReason`). */
+  /**
+   * A saved card on the staff form: deleting it records that it was entered by
+   * mistake, and the census closes its flats that way (`removals`). A real
+   * departure or sale has its own action beside «حذف».
+   */
   const askWhy = Boolean(token && draft.id);
   const isOwnerCard = draft.occupancyType === 'OWNER';
+  /** «إنهاء الملكية» — a saved owner's card; a sale ends it and keeps it as history. */
+  const ownerEndable = Boolean(token && draft.id && isOwnerCard && onEnded);
+  const [endOwnershipOpen, setEndOwnershipOpen] = useState(false);
+  const routeParams = useParams<{ tenant?: string; locale?: string; adminPath?: string }>();
+  const adminBase =
+    routeParams?.tenant && routeParams?.locale && routeParams?.adminPath
+      ? `/${routeParams.tenant}/${routeParams.locale}/${routeParams.adminPath}`
+      : null;
+  /*
+    Tenants whose link names this person as the landlord of this card's flats,
+    read when the delete confirmation opens. Deleting says the ownership was a
+    mistake; the link says otherwise and is the tenant's record, so the delete
+    waits until it is undone — said here, before the officer answers anything
+    else on the form, rather than by the server when they press save. `null`
+    while it is being read.
+  */
+  const [linkedTenants, setLinkedTenants] = useState<OwnershipLinkedTenant[] | null>(null);
+  useEffect(() => {
+    if (!confirmingRemove || !askWhy || !isOwnerCard || !token || !draft.id) {
+      setLinkedTenants(null);
+      return;
+    }
+    let cancelled = false;
+    getOwnershipEndPreview(tenant, token, draft.id)
+      .then((preview) => {
+        if (cancelled) return;
+        const seen = new Set<string>();
+        setLinkedTenants(
+          preview.units
+            .flatMap((unit) => unit.linkedTenants)
+            .filter((row) => (seen.has(row.propertyEntryId) ? false : (seen.add(row.propertyEntryId), true))),
+        );
+      })
+      .catch((caught) => {
+        // The save is refused on the same rule, so a failed read only loses the early warning.
+        logApiError(caught);
+        if (!cancelled) setLinkedTenants([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [confirmingRemove, askWhy, isOwnerCard, token, draft.id, tenant]);
+  const deleteBlocked = askWhy && isOwnerCard && (linkedTenants === null || linkedTenants.length > 0);
   /*
     An agreement the server will not be able to act on yet.
 
@@ -630,6 +673,22 @@ export function PropertyCard({
           </Button>
         ) : null}
 
+        {/*
+          «إنهاء الملكية» beside «حذف», for the same reason «إنهاء الإيجار» is:
+          a sale is what an officer reaches for delete to record, and only this
+          keeps the record that they owned it.
+        */}
+        {ownerEndable ? (
+          <Button
+            variant="ghost"
+            className="review-hide shrink-0 gap-1.5 px-2.5 sm:px-3"
+            onClick={() => setEndOwnershipOpen(true)}
+          >
+            <KeyRound className="size-4" aria-hidden />
+            {locale === 'en' ? 'End ownership' : 'إنهاء الملكية'}
+          </Button>
+        ) : null}
+
         {canRemove ? (
           <Button
             variant="ghost"
@@ -640,6 +699,25 @@ export function PropertyCard({
           </Button>
         ) : null}
       </CardHeader>
+
+      {ownerEndable && token && draft.id ? (
+        <EndOwnershipDialog
+          tenant={tenant}
+          token={token}
+          source={{ kind: 'card', propertyEntryId: draft.id }}
+          open={endOwnershipOpen}
+          onOpenChange={setEndOwnershipOpen}
+          onEnded={(result) => onEnded?.(result, result.cardsEnded > 0)}
+          // The edit form keeps its unsaved answers: a new file opens beside it.
+          newFileTarget="_blank"
+          notice={
+            locale === 'en'
+              ? 'What ends leaves this form: the whole card, or only the units ticked. The rest of the form is unchanged.'
+              : 'ما يُنهى يخرج من هذا النموذج: البطاقة كلها، أو الوحدات المحددة وحدها، وباقي النموذج لا يتغيّر.'
+          }
+          locale={locale}
+        />
+      ) : null}
 
       {endable && token && draft.id ? (
         <EndTenancyDialog
@@ -1360,22 +1438,21 @@ export function PropertyCard({
               tenant simply left, that is the wrong tool, and the moment to say
               so is here.
             */}
-            {askWhy && !isOwnerCard ? (
+            {askWhy ? (
               <span className="mt-2 block font-medium text-foreground">
-                {locale === 'en'
-                  ? 'Deleting records that this card was entered by mistake: its units drop out of their history. If the person has left, end the tenancy instead — it keeps the record and asks what the unit is now.'
-                  : 'الحذف يعني أن هذه البطاقة سُجِّلت بالخطأ، فتخرج وحداتها من سجلها. إن كان الشخص قد ترك العقار فأنهِ الإيجار بدلاً من الحذف — يُبقي السجل ويسأل عن حال الوحدة الآن.'}
-              </span>
-            ) : null}
-            {askWhy && isOwnerCard ? (
-              <span className="mt-2 block font-medium text-foreground">
-                {locale === 'en' ? 'Why is this card being removed?' : 'لماذا تُحذف هذه البطاقة؟'}
+                {isOwnerCard
+                  ? locale === 'en'
+                    ? 'Deleting records that this ownership was entered by mistake: it drops out of each unit’s history. If they sold it or it passed on, end the ownership instead — it keeps the record and asks who owns it now.'
+                    : 'الحذف يعني أن هذه الملكية سُجِّلت بالخطأ، فتخرج من سجل كل وحدة. إن باع العقار أو انتقلت ملكيته فأنهِ الملكية بدلاً من الحذف — يُبقي السجل ويسأل عن المالك الجديد.'
+                  : locale === 'en'
+                    ? 'Deleting records that this card was entered by mistake: its units drop out of their history. If the person has left, end the tenancy instead — it keeps the record and asks what the unit is now.'
+                    : 'الحذف يعني أن هذه البطاقة سُجِّلت بالخطأ، فتخرج وحداتها من سجلها. إن كان الشخص قد ترك العقار فأنهِ الإيجار بدلاً من الحذف — يُبقي السجل ويسأل عن حال الوحدة الآن.'}
               </span>
             ) : null}
           </>
         }
         confirmLabel={
-          askWhy && !isOwnerCard
+          askWhy
             ? locale === 'en'
               ? 'Delete — entered by mistake'
               : 'حذف — سُجِّلت بالخطأ'
@@ -1383,67 +1460,60 @@ export function PropertyCard({
               ? 'Delete Property'
               : 'حذف العقار'
         }
-        confirmDisabled={askWhy && isOwnerCard && removalReason === null}
+        confirmDisabled={deleteBlocked}
         onConfirm={() => {
           setConfirmingRemove(false);
-          if (!askWhy) {
-            onRemove();
-            return;
-          }
-          const reason: CardRemovalReason = isOwnerCard ? removalReason! : 'RECORDED_IN_ERROR';
-          onRemove({
-            reason,
-            ...(reason === 'OWNERSHIP_TRANSFERRED' && soldOn ? { endedAt: soldOn } : {}),
-          });
+          onRemove(askWhy ? { reason: 'RECORDED_IN_ERROR' } : undefined);
         }}
       >
-        {askWhy && isOwnerCard ? (
-          <div className="space-y-3">
-            <SegmentedControl
-              value={removalReason ?? ''}
-              onChange={(next) => setRemovalReason(next as CardRemovalReason)}
-              aria-label={locale === 'en' ? 'Why is this card being removed?' : 'لماذا تُحذف هذه البطاقة؟'}
-              options={[
-                {
-                  value: 'RECORDED_IN_ERROR',
-                  label: locale === 'en' ? 'Entered by mistake' : 'سُجِّلت بالخطأ',
-                },
-                {
-                  value: 'OWNERSHIP_TRANSFERRED',
-                  label: locale === 'en' ? 'Sold / ownership passed on' : 'بيع أو نقل ملكية',
-                },
-              ]}
-            />
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              {removalReason === 'OWNERSHIP_TRANSFERRED'
-                ? locale === 'en'
-                  ? 'The ownership stays in each unit’s history, ending on the date below. Record the new owner on the unit afterwards.'
-                  : 'تبقى الملكية في سجل كل وحدة، منتهيةً بالتاريخ أدناه. سجِّل المالك الجديد على الوحدة بعد ذلك.'
-                : removalReason === 'RECORDED_IN_ERROR'
-                  ? locale === 'en'
-                    ? 'The ownership never existed: it leaves each unit’s history.'
-                    : 'الملكية لم تكن قائمة أصلاً: تخرج من سجل كل وحدة.'
-                  : locale === 'en'
-                    ? 'The answer decides what each unit’s history keeps.'
-                    : 'الجواب يحدد ما يبقى في سجل كل وحدة.'}
+        {askWhy && isOwnerCard && linkedTenants === null ? (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            {locale === 'en' ? 'Checking for tenants linked to this owner…' : 'جارٍ التحقق من المستأجرين المربوطين بهذا المالك…'}
+          </p>
+        ) : null}
+        {askWhy && isOwnerCard && linkedTenants && linkedTenants.length > 0 ? (
+          <div role="alert" className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+            <p className="flex items-start gap-2 font-medium text-warning">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+              {locale === 'en' ? 'Undo the tenant’s link first' : 'ألغِ ربط المستأجر أولاً'}
             </p>
-            {removalReason === 'OWNERSHIP_TRANSFERRED' ? (
-              <Field
-                label={locale === 'en' ? 'Date of sale or transfer' : 'تاريخ البيع أو نقل الملكية'}
-                htmlFor={`sold-on-${index}`}
-                optionalLabel={locale === 'en' ? '(optional — today if blank)' : '(اختياري — اليوم إن تُرك فارغاً)'}
-              >
-                <Input
-                  id={`sold-on-${index}`}
-                  type="date"
-                  dir="ltr"
-                  max={new Date().toISOString().slice(0, 10)}
-                  value={soldOn}
-                  onChange={(event) => setSoldOn(event.target.value)}
-                />
-              </Field>
+            <p className="text-xs leading-relaxed text-foreground">
+              {locale === 'en'
+                ? 'This person is recorded as the landlord on a tenant’s card. If the ownership was a mistake, undo that link from the tenant’s card («Unlink») first. If they sold it, end the ownership instead of deleting.'
+                : 'هذا الشخص مسجَّل مالكاً في بطاقة مستأجر. إن كانت الملكية خطأً فألغِ الربط من بطاقة المستأجر («إلغاء الربط») أولاً، وإن كان قد باعها فأنهِ الملكية بدلاً من الحذف.'}
+            </p>
+            {adminBase ? (
+              <ul className="space-y-1">
+                {linkedTenants.map((row) => (
+                  <li key={row.propertyEntryId}>
+                    <Link
+                      href={`${adminBase}/citizens/${encodeURIComponent(row.citizenId)}`}
+                      target="_blank"
+                      rel="noopener"
+                      className="inline-flex min-h-9 items-center gap-1.5 text-xs font-medium text-primary underline-offset-2 hover:underline"
+                    >
+                      {locale === 'en' ? `Open ${row.name}’s file` : `افتح ملف ${row.name}`}
+                      <ExternalLink className="size-3.5" aria-hidden />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             ) : null}
           </div>
+        ) : null}
+        {askWhy && ownerEndable ? (
+          <Button
+            variant="outline"
+            className="w-full gap-1.5"
+            onClick={() => {
+              setConfirmingRemove(false);
+              setEndOwnershipOpen(true);
+            }}
+          >
+            <KeyRound className="size-4" aria-hidden />
+            {locale === 'en' ? 'Sold or passed on? End the ownership instead' : 'بيع أو انتقلت ملكيته؟ أنهِ الملكية بدلاً من الحذف'}
+          </Button>
         ) : null}
         {askWhy && endable ? (
           <Button

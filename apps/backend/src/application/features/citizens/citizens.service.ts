@@ -1556,6 +1556,31 @@ export class CitizensService {
         });
       }
     }
+
+    /*
+      A flat this save takes off the owner's file — a deleted owner's card, a
+      row dropped from one, a card no longer «مالك» — while a tenant's link
+      still names this person as its landlord.
+
+      Taking it off says the ownership was entered by mistake; the link says
+      the opposite, and it is the tenant's record. Left standing, the tenant's
+      next save would put this person back on the flat
+      (`reconcileRegistration`). So the save stops before anything is written,
+      as «إنهاء الملكية» does for a correction, and names whose card to unlink.
+    */
+    const linkedTenants = await this.tenantsLinkedToDroppedOwnership(
+      citizen.id,
+      (existing?.properties ?? []).filter((property) => !property.endedAt),
+      entries.map(({ id, entry }) => ({ id, props: entry.props })),
+    );
+    if (linkedTenants.length > 0) {
+      const names = [...new Set(linkedTenants.map((tenant) => tenant.name))];
+      throw new ConflictError(
+        `${names.join('، ')} ${names.length === 1 ? 'مربوط' : 'مربوطون'} بهذا الشخص مالكاً لوحدة يحذفها هذا الحفظ من ملفه. ألغِ الربط من ${names.length === 1 ? 'بطاقة المستأجر' : 'بطاقات المستأجرين'} أولاً ثم احفظ، أو استخدم «إنهاء الملكية» إن كان قد باعها`,
+        { code: 'TENANTS_LINKED', linkedTenants },
+      );
+    }
+
     const endings = await this.removalEndings(removals, removedCards);
 
     /** What undoing links during this save wrote, emitted once it commits. */
@@ -1999,6 +2024,114 @@ export class CitizensService {
     }
 
     return endings;
+  }
+
+  /**
+   * Tenants whose link names this person as the landlord of a flat the save
+   * takes off their file — see the check in `update`.
+   *
+   * A flat is taken off when the owner's card holding it is deleted, turned
+   * into something other than «مالك», or loses the row naming it — unless
+   * another owner's card this save keeps still holds it. A card with no rows
+   * holds its whole structure. A tenant's card with no rows claims the flats
+   * the tenant is recorded living in, the census's own rule.
+   */
+  private async tenantsLinkedToDroppedOwnership(
+    ownerId: string,
+    stored: ReadonlyArray<{
+      id: string;
+      occupancyType: string;
+      buildingId: string | null;
+      units: ReadonlyArray<{ unitId: string | null }>;
+    }>,
+    kept: ReadonlyArray<{
+      id?: string;
+      props: {
+        occupancyType?: unknown;
+        buildingId?: unknown;
+        units?: ReadonlyArray<{ unitId?: string | null }> | null;
+      };
+    }>,
+  ): Promise<Array<{ citizenId: string; name: string; propertyEntryId: string }>> {
+    const keptOwner = kept.filter((card) => card.props.occupancyType === 'OWNER');
+    const rowsOf = (card: (typeof kept)[number]) =>
+      (card.props.units ?? []).map((row) => row.unitId).filter((id): id is string => Boolean(id));
+    const keptFlats = new Set(keptOwner.flatMap(rowsOf));
+    const keptStructures = new Set(
+      keptOwner
+        .filter((card) => (card.props.units ?? []).length === 0 && typeof card.props.buildingId === 'string')
+        .map((card) => card.props.buildingId as string),
+    );
+    const keptOwnerById = new Map(
+      keptOwner.filter((card) => card.id).map((card) => [card.id as string, card]),
+    );
+
+    const droppedFlats = new Set<string>();
+    const droppedFlatBuildings = new Set<string>();
+    const droppedStructures = new Set<string>();
+    for (const card of stored) {
+      if (card.occupancyType !== 'OWNER') continue;
+      if (card.buildingId && keptStructures.has(card.buildingId)) continue;
+      const still = keptOwnerById.get(card.id);
+      if (card.units.length === 0) {
+        if (!still && card.buildingId) droppedStructures.add(card.buildingId);
+        continue;
+      }
+      const stillRows = new Set(still ? rowsOf(still) : []);
+      for (const row of card.units) {
+        if (!row.unitId || stillRows.has(row.unitId) || keptFlats.has(row.unitId)) continue;
+        droppedFlats.add(row.unitId);
+        if (card.buildingId) droppedFlatBuildings.add(card.buildingId);
+      }
+    }
+    if (droppedFlats.size === 0 && droppedStructures.size === 0) return [];
+
+    const tenantCards = await this.db.propertyEntry.findMany({
+      where: {
+        landlordCitizenId: ownerId,
+        endedAt: null,
+        occupancyType: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+        OR: [
+          { units: { some: { unitId: { in: [...droppedFlats] }, endedAt: null } } },
+          { buildingId: { in: [...droppedStructures, ...droppedFlatBuildings] } },
+        ],
+      },
+      select: {
+        id: true,
+        buildingId: true,
+        units: { where: { endedAt: null }, select: { unitId: true } },
+        registration: {
+          select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } } },
+        },
+      },
+    });
+
+    const linked: Array<{ citizenId: string; name: string; propertyEntryId: string }> = [];
+    for (const card of tenantCards) {
+      const tenant = card.registration.citizen;
+      let claims = Boolean(card.buildingId && droppedStructures.has(card.buildingId));
+      if (!claims && card.units.length > 0) {
+        claims = card.units.some((row) => row.unitId && droppedFlats.has(row.unitId));
+      } else if (!claims && card.buildingId) {
+        const spells = await this.db.unitOccupancy.findMany({
+          where: {
+            citizenId: tenant.id,
+            toDate: null,
+            role: { not: 'OWNER' as never },
+            unit: { buildingId: card.buildingId },
+          },
+          select: { unitId: true },
+        });
+        claims = spells.some((spell) => droppedFlats.has(spell.unitId));
+      }
+      if (!claims) continue;
+      linked.push({
+        citizenId: tenant.id,
+        name: [tenant.firstName, tenant.middleName, tenant.lastName].filter(Boolean).join(' '),
+        propertyEntryId: card.id,
+      });
+    }
+    return linked;
   }
 
   /** `reconcileRegistration`, with its failure kept off a save that committed. */

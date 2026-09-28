@@ -1306,6 +1306,8 @@ export function BuildingUnitMatrixView({
                 citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
                 onEnd={closeSpell}
                 onLinkOwner={linkOwner}
+                session={token ? { tenant, token } : undefined}
+                onOwnershipEnded={() => void load()}
               />
 
               {/* Why the flat reads «شاغرة», and the control that lifts it. */}

@@ -13,6 +13,7 @@ import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
 import { LandlordLinkService } from './features/citizens/landlord-link.service';
 import { TenancyService } from './features/citizens/tenancy.service';
+import { OwnershipService } from './features/citizens/ownership.service';
 import { DocumentService } from './features/documents/document.service';
 import { IdentityService } from './features/identity/identity.service';
 import { OtpService } from './features/identity/otp.service';
@@ -56,6 +57,8 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CitizensService,
     LandlordLinkService,
     TenancyService,
+
+    OwnershipService,
     FeesService,
     PaymentLedgerService,
     StaffService,
@@ -83,6 +86,8 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CitizensService,
     LandlordLinkService,
     TenancyService,
+
+    OwnershipService,
     FeesService,
     PaymentLedgerService,
     StaffService,

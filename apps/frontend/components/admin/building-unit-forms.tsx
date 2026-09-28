@@ -98,6 +98,7 @@ import {
   afterTenancyComplete,
   afterTenancyPayload,
 } from '@/components/admin/after-tenancy-question';
+import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
 
 /**
  * The per-unit forms and small display helpers shared by
@@ -2277,6 +2278,8 @@ export function OccupantList({
   citizenHref,
   onEnd,
   onLinkOwner,
+  session,
+  onOwnershipEnded,
 }: {
   unit: UnitWithOccupants;
   locale: string;
@@ -2285,6 +2288,15 @@ export function OccupantList({
   /** Where a name links to; plain text when absent. */
   citizenHref?: (citizenId: string) => string;
   onEnd: (occupant: UnitOccupant, input: EndOccupancyAnswer) => Promise<void>;
+  /**
+   * The staff session «إنهاء الملكية» reads and writes with. An owner's row
+   * opens `EndOwnershipDialog`, which asks what happened, who the new owner
+   * is and who lives there now — more than a reason and a date — so it talks
+   * to the server itself and reports back through `onOwnershipEnded`.
+   */
+  session?: { tenant: string; token: string };
+  /** An ownership on this unit ended; the matrix should read the unit again. */
+  onOwnershipEnded?: () => void;
   /**
    * «ربط بالمالك» — links a tenant to one of the flat's owners. `confirmRecordedAfter`
    * is the officer's confirmation for an owner recorded after the tenant. Throws
@@ -2437,8 +2449,22 @@ export function OccupantList({
         </p>
       ) : null}
 
+      {session && ending?.role === 'OWNER' ? (
+        <EndOwnershipDialog
+          tenant={session.tenant}
+          token={session.token}
+          source={{ kind: 'occupancy', occupancyId: ending.id }}
+          open
+          onOpenChange={(open) => {
+            if (!open) setEnding(null);
+          }}
+          onEnded={() => onOwnershipEnded?.()}
+          locale={locale}
+        />
+      ) : null}
+
       <EndOccupancyDialog
-        occupant={ending}
+        occupant={session && ending?.role === 'OWNER' ? null : ending}
         unitCode={unit.unitCode}
         asksStatus={
           Boolean(ending) &&

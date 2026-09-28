@@ -16,6 +16,7 @@ import { CensusSyncService } from '../buildings/census-sync.service';
 import { CitizensService } from './citizens.service';
 import { LandlordLinkService, readFootprint } from './landlord-link.service';
 import { TenancyService } from './tenancy.service';
+import { OwnershipService } from './ownership.service';
 
 /**
  * A tenant and the owner they rent from, against a real Postgres.
@@ -86,7 +87,8 @@ describeIfDb('A tenant and the owner they rent from', () => {
     buildings = new BuildingsService(context, cases, events);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(context, buildings, events);
-    tenancy = new TenancyService(context, buildings, cases, links, events);
+    const ownership = new OwnershipService(context, buildings, cases, links, events);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership);
     citizens = new CitizensService(
       context,
       {} as never,
@@ -589,5 +591,49 @@ describeIfDb('A tenant and the owner they rent from', () => {
       await db.buildingUnit.count({ where: { propertyEntryId: card.id, unitId: flat, endedAt: null } }),
     ).toBe(0);
     expect(await db.unitOccupancy.count({ where: { citizenId: tenant.id, unitId: flat, toDate: null } })).toBe(0);
+  });
+
+  it('refuses to delete an owner’s card while a tenant’s link names them, and writes nothing', async () => {
+    const { units } = await block('OWN-13');
+    const flat = units[0]!.id;
+    const owner = await person('مالك');
+    const tenant = await person('مستأجر');
+    await add({ unitId: flat, citizenId: owner.id, role: 'OWNER', unitStatus: 'RENTED' });
+    await add({ unitId: flat, citizenId: tenant.id, role: 'TENANT', landlordCitizenId: owner.id });
+
+    const ownerCard = await db.propertyEntry.findFirstOrThrow({
+      where: { registration: { citizenId: owner.id }, occupancyType: 'OWNER', endedAt: null },
+    });
+    const stored = await db.user.findUniqueOrThrow({ where: { id: owner.id } });
+    // «حذف — سُجِّلت بالخطأ» on their only card.
+    const payload = adminUpdateCitizenSubmissionSchema.parse({
+      personal: {
+        firstName: stored.firstName,
+        middleName: 'علي',
+        lastName: stored.lastName,
+        motherName: 'فاطمة خليل',
+        gender: 'MALE',
+        civilRecordNumber: '8',
+        nationality: 'لبناني',
+        isLebanese: true,
+        residentStatus: 'VILLAGE_RESIDENT',
+      },
+      contact: { maritalStatus: 'MARRIED', phone: stored.phone, whatsappSameAsPhone: true, actualHouseholdMembers: '3' },
+      properties: [],
+      removals: [{ propertyId: ownerCard.id, reason: 'RECORDED_IN_ERROR' }],
+      flags: [],
+    });
+
+    // Deleting says they never owned it; the tenant's link says they do — the link goes first.
+    await expect(
+      within(() => citizens.update({ tenantSlug: 'owners', citizenId: owner.id, payload, actor: actor() })),
+    ).rejects.toThrow(/ألغِ الربط/);
+
+    expect(await db.propertyEntry.count({ where: { id: ownerCard.id } })).toBe(1);
+    expect(
+      await db.unitOccupancy.count({ where: { unitId: flat, citizenId: owner.id, role: 'OWNER', toDate: null } }),
+    ).toBe(1);
+    const [card] = await tenancyCards(tenant.id);
+    expect(card!.landlordCitizenId).toBe(owner.id);
   });
 });
