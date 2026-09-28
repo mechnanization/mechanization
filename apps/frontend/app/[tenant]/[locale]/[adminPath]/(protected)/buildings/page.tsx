@@ -558,6 +558,15 @@ export default function BuildingsPage({
             <span className="block font-mono text-sm font-bold">
               <bdi dir="ltr">{row.original.code}</bdi>
             </span>
+            {/* Found by a code «تصحيح رقم العقار» retired — say so, or the row looks like the wrong answer. */}
+            {row.original.matchedPreviousCode ? (
+              <span className="block text-xs text-muted-foreground">
+                {en ? 'Was ' : 'كان '}
+                <bdi dir="ltr" className="font-mono">
+                  {row.original.matchedPreviousCode}
+                </bdi>
+              </span>
+            ) : null}
             {row.original.postedNumber ? (
               <span className="block text-xs text-muted-foreground">
                 {en ? 'Door: ' : 'مكتوب: '}

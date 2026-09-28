@@ -20,6 +20,7 @@ import {
   type StructureType,
   type UnitBlueprint,
   type LogVisitInput,
+  type SaveBuildingMatrixInput,
   type UpdateBuildingInput,
   type UpdateUnitInput,
   type UpsertOccupancyInput,
@@ -27,6 +28,7 @@ import {
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
@@ -59,6 +61,24 @@ import { activeVacancy, closeActiveVacancy, toVacancyRow } from './unit-vacancy'
 
 /** How many units one blueprint may generate in a single call. */
 const MAX_GENERATED_UNITS = 400;
+
+/** What a whole-matrix save did — or, on a dry run, would do. */
+export interface MatrixSaveResult {
+  dryRun: boolean;
+  building: BuildingRow;
+  /** Unit codes, as they were before the save. */
+  removed: string[];
+  /** Unit codes after the save — a moved unit's new code. */
+  updated: string[];
+  added: string[];
+}
+
+/** Thrown at the end of a dry run so the transaction rolls back with the answer in hand. */
+class MatrixDryRun extends Error {
+  constructor(readonly building: BuildingRow) {
+    super('dry run');
+  }
+}
 
 /**
  * «العقارات المشتركة», minus the building's own — the list as it is stored.
@@ -210,6 +230,12 @@ export interface BuildingDetail extends BuildingRow {
   /** The zone this building's parcel belongs to, resolved at read time (D13). */
   zoneCode: string | null;
   zoneName: string | null;
+  /**
+   * Codes this building carried before «تصحيح رقم العقار», newest first. Still
+   * found by search and never given to another building — see
+   * `BuildingCodeAlias`.
+   */
+  previousCodes: Array<{ code: string; parcelNumber: string; reason: string; retiredAt: string }>;
   units: Array<
     UnitRow & {
       occupants: OccupancyRow[];
@@ -314,7 +340,17 @@ export class BuildingsService {
    */
   async list(
     filter: BuildingListFilter,
-  ): Promise<{ buildings: BuildingLedgerRow[]; total: number; summary: CensusSummary }> {
+  ): Promise<{
+    buildings: BuildingLedgerRow[];
+    total: number;
+    summary: CensusSummary;
+    /**
+     * With a `parcelNumber` filter only: the suffixes «تصحيح رقم العقار»
+     * retired on that parcel, so the editor's predicted code for a new
+     * building skips them exactly as `create` does.
+     */
+    retiredSuffixes?: string[];
+  }> {
     const where = await this.buildWhere(filter);
 
     /*
@@ -390,15 +426,47 @@ export class BuildingsService {
 
     const unitsTotal = totals._sum.unitsTotal ?? 0;
     const unitsSurveyed = totals._sum.unitsSurveyed ?? 0;
+    const retired = filter.parcelNumber
+      ? await withConnectionRetry(() =>
+          this.db.buildingCodeAlias.findMany({
+            where: { parcelNumber: filter.parcelNumber!.trim() },
+            select: { codeSuffix: true },
+          }),
+        )
+      : null;
+    // Which rows the search found by a retired code rather than their own.
+    const matchedAliases =
+      filter.search?.trim() && ids.length > 0
+        ? await withConnectionRetry(() =>
+            this.db.buildingCodeAlias.findMany({
+              where: {
+                buildingId: { in: ids },
+                code: { contains: filter.search!.trim(), mode: 'insensitive' },
+              },
+              orderBy: { retiredAt: 'desc' },
+              select: { buildingId: true, code: true },
+            }),
+          )
+        : [];
+    const matchedAlias = new Map<string, string>();
+    for (const alias of matchedAliases) {
+      if (alias.buildingId && !matchedAlias.has(alias.buildingId)) matchedAlias.set(alias.buildingId, alias.code);
+    }
 
     return {
+      ...(retired ? { retiredSuffixes: retired.map((row) => row.codeSuffix) } : {}),
       buildings: rows.map((row) => {
         const zone = zoneOf.get(row.parcelNumber);
+        const previous = matchedAlias.get(row.id);
         return {
           ...toBuildingRow(row),
           zoneCode: zone?.code ?? null,
           zoneName: zone?.name ?? null,
           damageLevel: damageOf.get(row.id) ?? null,
+          // Only when the term did not match the live code itself.
+          ...(previous && !row.code.toLowerCase().includes(filter.search!.trim().toLowerCase())
+            ? { matchedPreviousCode: previous }
+            : {}),
         };
       }),
       total,
@@ -707,6 +775,9 @@ export class BuildingsService {
         // Exact rather than `contains`: an array element cannot be matched by
         // substring, and a whole parcel number is what somebody searching one types.
         { sharedParcelNumbers: { has: term } },
+        // A code retired by «تصحيح رقم العقار» still finds its building: it is on
+        // paper forms and receipts that outlive the correction.
+        { codeAliases: { some: { code: match } } },
       ];
       // ANDed with the survey filter above rather than merged into one OR,
       // which would have a search term widening the status filter instead of
@@ -776,11 +847,19 @@ export class BuildingsService {
     const backing = await this.claimsBackingOccupancies(row.id, row.units);
     const declared = await this.ownerDeclaredStatuses(row.id, row.units);
     const ownerLinks = await this.occupancyOwnerLinks(row.id, row.units);
+    const previousCodes = await withConnectionRetry(() =>
+      this.db.buildingCodeAlias.findMany({
+        where: { buildingId: row.id },
+        orderBy: { retiredAt: 'desc' },
+        select: { code: true, parcelNumber: true, reason: true, retiredAt: true },
+      }),
+    );
 
     return {
       ...toBuildingRow(row),
       zoneCode: zone?.code ?? null,
       zoneName: zone?.name ?? null,
+      previousCodes: previousCodes.map((alias) => ({ ...alias, retiredAt: alias.retiredAt.toISOString() })),
       units: row.units.map((unit) => ({
         ...toUnitRow(unit),
         occupants: unit.occupancies.map((occupancy) => {
@@ -1237,11 +1316,7 @@ export class BuildingsService {
         `${this.tenantContext.schemaName}:building-suffix:${parcelNumber}`,
       );
 
-      const taken = await tx.building.findMany({
-        where: { parcelNumber },
-        select: { codeSuffix: true },
-      });
-      const codeSuffix = nextBuildingSuffix(taken.map((b) => b.codeSuffix));
+      const codeSuffix = nextBuildingSuffix(await this.suffixesInUse(tx, parcelNumber));
       const zone = await this.zoneOfParcel(parcelNumber, tx);
 
       const building = await tx.building.create({
@@ -1474,38 +1549,7 @@ export class BuildingsService {
     const before = await this.db.building.findUnique({ where: { id } });
     if (!before) throw new NotFoundError('المبنى غير موجود');
 
-    /*
-      Somebody saved this building after the editor was opened. Refused before
-      anything is written, naming them, so a screen loaded an hour ago does not
-      quietly put back a lifecycle, a فرز or a pin a colleague has since changed.
-    */
-    if (input.expectedUpdatedAt && before.updatedAt.toISOString() !== new Date(input.expectedUpdatedAt).toISOString()) {
-      const last = await this.db.auditLogEntry.findFirst({
-        where: { entityType: 'Building', entityId: id },
-        orderBy: { createdAt: 'desc' },
-        select: { actorId: true, createdAt: true },
-      });
-      const staff = last?.actorId
-        ? await this.db.user.findFirst({
-            where: { id: last.actorId, kind: 'STAFF' },
-            select: { firstName: true, lastName: true },
-          })
-        : null;
-      const who = staff ? `${staff.firstName} ${staff.lastName}` : null;
-      throw new ConflictError(
-        who
-          ? `عدّل ${who} هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى تعديلاته قبل الحفظ.`
-          : 'عُدِّل هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى التعديلات قبل الحفظ.',
-        {
-          staleEdit: {
-            updatedAt: before.updatedAt.toISOString(),
-            lastEditedBy: who,
-            lastEditedAt: last?.createdAt.toISOString() ?? null,
-            byViewer: last?.actorId === actor.id,
-          },
-        },
-      );
-    }
+    await this.assertFresh(before, input.expectedUpdatedAt, actor);
 
     /*
       The other direction of the same rule.
@@ -1525,6 +1569,35 @@ export class BuildingsService {
         await this.db.unit.count({ where: { buildingId: id } }),
         0,
       );
+    }
+
+    /*
+      Fewer floors than the matrix already uses.
+
+      The matrix is drawn from these two counts, so a unit above the top floor
+      or below the deepest basement is on no row of it: it keeps billing and
+      counting while the editor cannot show it or remove it. Only a shrink can
+      do that, so only a shrink is checked. The editor removes the units first
+      and sends the smaller count afterwards; see `saveEdit`.
+    */
+    const floorsAfter = input.floorsCount ?? before.floorsCount;
+    const basementsAfter = input.basementsCount ?? before.basementsCount;
+    if (floorsAfter < before.floorsCount || basementsAfter < before.basementsCount) {
+      const outside = unitsOutsideFloors(
+        await this.db.unit.findMany({
+          where: { buildingId: id },
+          select: { unitCode: true, floor: true },
+          orderBy: [{ floor: 'asc' }, { sequence: 'asc' }],
+        }),
+        floorsAfter,
+        basementsAfter,
+      );
+      if (outside.length > 0) {
+        throw new ConflictError(
+          `لا يمكن إنقاص طوابق المبنى ${before.code}: ${outside.length === 1 ? 'الوحدة' : 'الوحدات'} ${listCodes(outside)} خارج الطوابق الجديدة. احذفها من مصفوفة الوحدات أو انقلها إلى طابق قائم أولاً`,
+          { unitCodes: outside.map((unit) => unit.unitCode), floorsCount: floorsAfter, basementsCount: basementsAfter },
+        );
+      }
     }
 
     const updated = await this.db.building.update({
@@ -1610,6 +1683,138 @@ export class BuildingsService {
     return toBuildingRow(updated);
   }
 
+  /**
+   * A whole building edit — the shell and the matrix difference — in one
+   * transaction. See `saveBuildingMatrixSchema`.
+   *
+   * It used to be one request for the building and one per unit, each free to
+   * fail on its own, so a save could leave «حُفظ المبنى، لكن رُفض…»: a building
+   * half in the state the officer meant and half in the old one. Now the first
+   * refusal — a flat somebody lived in, a floor count that strands a unit —
+   * names what refused and nothing is written.
+   *
+   * The same checks run as they always did, because the same methods do the
+   * work: `deleteUnit`, `updateUnit`, `addUnit` and `update` all join the
+   * transaction (`atomic`, `runInTenantTransaction`). In this order:
+   * removals, so a freed position can be taken; changes; additions, lowest
+   * floor and leftmost column first so each floor's sequences read like the
+   * grid; the shell last, so its floor counts are judged against the matrix
+   * this save leaves — which is what made the old two-step shrink necessary.
+   *
+   * `dryRun` does all of it and rolls back. Audit rows wait for a commit
+   * (`AuditService.record`), so a rehearsal leaves no trace.
+   */
+  async saveMatrix(
+    id: string,
+    input: SaveBuildingMatrixInput,
+    actor: { id: string; role: string },
+  ): Promise<MatrixSaveResult> {
+    const before = await this.db.building.findUnique({ where: { id } });
+    if (!before) throw new NotFoundError('المبنى غير موجود');
+    await this.assertFresh(before, input.expectedUpdatedAt, actor);
+
+    const summary = { removed: [] as string[], updated: [] as string[], added: [] as string[] };
+    try {
+      const building = await runInTenantTransaction(this.tenantContext, async () => {
+        /*
+          The freshness check again, under the building's row lock. Two officers
+          saving the same stale screen a moment apart both pass the check above,
+          and the second would write over the first. Locked, the second waits for
+          the first to commit and then reads its `updatedAt`, which refuses it.
+        */
+        const S = tenantSchemaRef(this.tenantContext.schemaName);
+        await this.db.$queryRaw`SELECT "id" FROM ${S}"buildings" WHERE "id" = ${id}::uuid FOR UPDATE`;
+        const locked = await this.db.building.findUnique({ where: { id } });
+        if (!locked) throw new NotFoundError('المبنى غير موجود');
+        await this.assertFresh(locked, input.expectedUpdatedAt, actor);
+
+        // Every unit named must still be this building's — a stale screen could name another's.
+        const named = [...input.remove, ...input.update.map((row) => row.id)];
+        if (named.length > 0) {
+          const own = await this.db.unit.findMany({
+            where: { id: { in: named }, buildingId: id },
+            select: { id: true, unitCode: true },
+          });
+          if (own.length !== named.length) {
+            throw new ConflictError('إحدى الوحدات لم تعد في هذا المبنى — أعد فتحه لترى المصفوفة الحالية');
+          }
+          const codeOf = new Map(own.map((unit) => [unit.id, unit.unitCode]));
+          for (const unitId of input.remove) {
+            await this.deleteUnit(unitId, actor);
+            summary.removed.push(codeOf.get(unitId)!);
+          }
+        }
+
+        for (const cell of input.update) {
+          const row = await this.updateUnit(
+            cell.id,
+            { floor: cell.floor, startCol: cell.startCol, endCol: cell.endCol, unitType: cell.unitType },
+            actor,
+          );
+          summary.updated.push(row.unitCode);
+        }
+
+        const additions = [...input.add].sort(
+          (a, b) => a.floor - b.floor || (a.startCol ?? 0) - (b.startCol ?? 0),
+        );
+        for (const cell of additions) {
+          // The grid drew every unit already on the floor, so there is no duplicate left to ask about.
+          const row = await this.addUnit(id, { ...cell, acknowledgedDuplicates: true }, actor);
+          summary.added.push(row.unitCode);
+        }
+
+        const updated = await this.update(id, input.building, actor);
+        if (input.dryRun) throw new MatrixDryRun(updated);
+        return updated;
+      });
+      return { dryRun: false, building, ...summary };
+    } catch (caught) {
+      if (caught instanceof MatrixDryRun) return { dryRun: true, building: caught.building, ...summary };
+      throw caught;
+    }
+  }
+
+  /**
+   * Somebody saved this building after the screen was opened. Refused before
+   * anything is written, naming them, so a screen loaded an hour ago does not
+   * quietly put back a lifecycle, a فرز or a pin a colleague has since changed.
+   * An absent `expectedUpdatedAt` means "do not check" — older clients.
+   */
+  async assertFresh(
+    before: { id: string; updatedAt: Date },
+    expectedUpdatedAt: string | undefined,
+    actor: { id: string },
+  ): Promise<void> {
+    if (!expectedUpdatedAt) return;
+    if (before.updatedAt.toISOString() === new Date(expectedUpdatedAt).toISOString()) return;
+
+    const last = await this.db.auditLogEntry.findFirst({
+      where: { entityType: 'Building', entityId: before.id },
+      orderBy: { createdAt: 'desc' },
+      select: { actorId: true, createdAt: true },
+    });
+    const staff = last?.actorId
+      ? await this.db.user.findFirst({
+          where: { id: last.actorId, kind: 'STAFF' },
+          select: { firstName: true, lastName: true },
+        })
+      : null;
+    const who = staff ? `${staff.firstName} ${staff.lastName}` : null;
+    throw new ConflictError(
+      who
+        ? `عدّل ${who} هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى تعديلاته قبل الحفظ.`
+        : 'عُدِّل هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى التعديلات قبل الحفظ.',
+      {
+        staleEdit: {
+          updatedAt: before.updatedAt.toISOString(),
+          lastEditedBy: who,
+          lastEditedAt: last?.createdAt.toISOString() ?? null,
+          byViewer: last?.actorId === actor.id,
+        },
+      },
+    );
+  }
+
   async remove(id: string, actor: { id: string; role: string }): Promise<void> {
     const before = await this.db.building.findUnique({
       where: { id },
@@ -1653,7 +1858,7 @@ export class BuildingsService {
     const historical = await this.db.unitOccupancy.count({ where: { unit: { buildingId: id } } });
     if (historical > 0) {
       throw new ConflictError(
-        `لا يمكن حذف مبنى سُجّل فيه سكان: ${historical} إشغال سابق على وحداته. حذفه يمحو سجل من سكنها. عدّل بيانات المبنى أو غيّر حالته إلى «مهدوم» بدلاً من الحذف`,
+        `لا يمكن حذف مبنى سُجّل فيه سكان: ${historical} إشغال سابق على وحداته. حذفه يمحو سجل من سكنها. عدّل بيانات المبنى أو غيّر حالته إلى «مهدوم» بدلاً من الحذف، وإن كان رقم العقار خاطئاً فاستخدم «تصحيح رقم العقار»`,
       );
     }
 
@@ -1976,7 +2181,8 @@ export class BuildingsService {
       }
     }
 
-    const created = await this.db.$transaction(async (tx) => {
+    // `atomic`, not `$transaction`: a whole-matrix save (`saveMatrix`) runs this inside its own.
+    const created = await this.atomic(async (tx) => {
       /*
         The schema is a literal here for the same reason it is in `create` —
         `current_schema()` reads the connection's `search_path`, which this app
@@ -2235,50 +2441,167 @@ export class BuildingsService {
       );
     }
 
-    const updated = await this.db.unit.update({
-      where: { id: unitId },
-      data: {
-        ...(moved ? { floor, sequence, unitCode: formatUnitCode(floor, sequence) } : {}),
-        ...(input.startCol !== undefined ? { startCol: input.startCol } : {}),
-        ...(input.endCol !== undefined ? { endCol: input.endCol } : {}),
-        ...(input.unitType !== undefined ? { unitType: input.unitType as never } : {}),
-        ...(input.postedNumber !== undefined
-          ? { postedNumber: input.postedNumber?.trim() || null }
-          : {}),
-        ...(input.side !== undefined ? { side: input.side?.trim() || null } : {}),
-        ...(input.unitArea !== undefined ? { unitArea: input.unitArea ?? null } : {}),
-        /* Becoming structural clears it — see `becomingStructural` above. The
-           refusal there covers an officer *sending* one; this covers the value
-           already sitting on the row being retyped. */
-        ...(becomingStructural
-          ? { unitStatus: null }
-          : input.unitStatus !== undefined
-            ? { unitStatus: input.unitStatus as never }
+    /*
+      A محل retyped into a شقة under somebody who lives elsewhere.
+
+      The non-resident record may rent or occupy only what nobody lives in, and
+      an owner who lives elsewhere cannot be «مشغولة من المالك» on a dwelling
+      (`assertNonResidentOccupancy`). Both doors that record a person on a unit
+      refuse those states; this is the third door, which reaches them by
+      changing the unit under a person already recorded. Nothing refused it, so
+      the linked card copied the new type and the next save of that person's
+      file failed on a unit the officer had not touched.
+
+      Checked only when the edit makes the unit a dwelling or says the owner
+      lives in it. Refused rather than cascaded: whether the shop really became
+      a flat, or the person really moved into town, is for the officer to say.
+    */
+    const typeAfter = input.unitType ?? before.unitType;
+    const statusAfter = becomingStructural
+      ? null
+      : input.unitStatus !== undefined
+        ? input.unitStatus
+        : before.unitStatus;
+    const becomingDwelling = isDwellingUnitType(typeAfter) && !isDwellingUnitType(before.unitType);
+    const sayingOwnerLivesThere =
+      isDwellingUnitType(typeAfter) &&
+      statusAfter === 'OWNER_OCCUPIED' &&
+      (becomingDwelling || before.unitStatus !== 'OWNER_OCCUPIED');
+
+    if (becomingDwelling || sayingOwnerLivesThere) {
+      const names = { select: { firstName: true, middleName: true, lastName: true } } as const;
+      const nonOwner = { in: ['TENANT', 'FREE_OCCUPANT'] as never };
+      const [spells, rows, owners] = await Promise.all([
+        becomingDwelling
+          ? this.db.unitOccupancy.findMany({
+              where: {
+                unitId,
+                toDate: null,
+                role: nonOwner,
+                citizen: { residence: 'NON_RESIDENT_OWNER' as never },
+              },
+              select: { citizen: names },
+            })
+          : Promise.resolve([]),
+        becomingDwelling
+          ? this.db.buildingUnit.findMany({
+              where: {
+                unitId,
+                endedAt: null,
+                propertyEntry: {
+                  endedAt: null,
+                  occupancyType: nonOwner,
+                  registration: { citizen: { residence: 'NON_RESIDENT_OWNER' as never } },
+                },
+              },
+              select: { propertyEntry: { select: { registration: { select: { citizen: names } } } } },
+            })
+          : Promise.resolve([]),
+        sayingOwnerLivesThere
+          ? this.db.unitOccupancy.findMany({
+              where: { unitId, toDate: null, role: 'OWNER' as never },
+              select: { citizen: { select: { residence: true } } },
+            })
+          : Promise.resolve([]),
+      ]);
+
+      const conflict = nonResidentUnitConflict({
+        unitCode: before.unitCode,
+        nonResidentOccupants: [
+          ...spells.map((spell) => personName(spell.citizen)),
+          ...rows.map((row) => personName(row.propertyEntry.registration.citizen)),
+        ],
+        ownerOccupiedByNonResident:
+          sayingOwnerLivesThere &&
+          owners.length > 0 &&
+          owners.every((owner) => owner.citizen.residence === 'NON_RESIDENT_OWNER'),
+      });
+      if (conflict) {
+        throw new ConflictError(conflict, { unitCode: before.unitCode, unitType: typeAfter });
+      }
+    }
+
+    /*
+      Moving a unit past the building's floors grows the building, as adding a
+      unit there does (`addUnit`): an officer placing a flat on a fourth floor
+      of a building the register calls three storeys is correcting the
+      register. Without this the unit would sit on no row of the matrix.
+    */
+    const building = moved
+      ? await this.db.building.findUnique({
+          where: { id: before.buildingId },
+          select: { floorsCount: true, basementsCount: true },
+        })
+      : null;
+    const growFloors = building && floor + 1 > building.floorsCount ? floor + 1 : null;
+    const growBasements = building && floor < 0 && -floor > building.basementsCount ? -floor : null;
+
+    // One transaction: a moved unit and the floors that make room for it.
+    const updated = await this.atomic(async (tx) => {
+      const row = await tx.unit.update({
+        where: { id: unitId },
+        data: {
+          ...(moved ? { floor, sequence, unitCode: formatUnitCode(floor, sequence) } : {}),
+          ...(input.startCol !== undefined ? { startCol: input.startCol } : {}),
+          ...(input.endCol !== undefined ? { endCol: input.endCol } : {}),
+          ...(input.unitType !== undefined ? { unitType: input.unitType as never } : {}),
+          ...(input.postedNumber !== undefined
+            ? { postedNumber: input.postedNumber?.trim() || null }
             : {}),
-        ...(input.surveyStatus !== undefined
-          ? { surveyStatus: input.surveyStatus as never }
-          : {}),
-        ...(input.presenceMonths !== undefined ? { presenceMonths: input.presenceMonths } : {}),
-        ...(input.ownerLastStayAt !== undefined ? { ownerLastStayAt: input.ownerLastStayAt } : {}),
-        ...(input.vacancyDeclaredAt !== undefined
-          ? { vacancyDeclaredAt: input.vacancyDeclaredAt }
-          : {}),
-        ...(input.notes !== undefined ? { notes: input.notes?.trim() || null } : {}),
-      },
+          ...(input.side !== undefined ? { side: input.side?.trim() || null } : {}),
+          ...(input.unitArea !== undefined ? { unitArea: input.unitArea ?? null } : {}),
+          /* Becoming structural clears it — see `becomingStructural` above. The
+             refusal there covers an officer *sending* one; this covers the value
+             already sitting on the row being retyped. */
+          ...(becomingStructural
+            ? { unitStatus: null }
+            : input.unitStatus !== undefined
+              ? { unitStatus: input.unitStatus as never }
+              : {}),
+          ...(input.surveyStatus !== undefined
+            ? { surveyStatus: input.surveyStatus as never }
+            : {}),
+          ...(input.presenceMonths !== undefined ? { presenceMonths: input.presenceMonths } : {}),
+          ...(input.ownerLastStayAt !== undefined ? { ownerLastStayAt: input.ownerLastStayAt } : {}),
+          ...(input.vacancyDeclaredAt !== undefined
+            ? { vacancyDeclaredAt: input.vacancyDeclaredAt }
+            : {}),
+          ...(input.notes !== undefined ? { notes: input.notes?.trim() || null } : {}),
+        },
+      });
+
+      if (growFloors !== null || growBasements !== null) {
+        await tx.building.update({
+          where: { id: before.buildingId },
+          data: {
+            ...(growFloors !== null ? { floorsCount: growFloors } : {}),
+            ...(growBasements !== null ? { basementsCount: growBasements } : {}),
+          },
+        });
+      }
+      return row;
     });
 
+    /*
+      Every field this save changed, and only those — the rule the building's
+      own audit row follows (`changedBuildingFields`). This used to record the
+      code and the two statuses whatever moved, so a flat retyped from محل to
+      شقة, or re-measured from 40 m² to 140 m², left no trail, though both
+      change what its occupant is billed. `unitCode` is always on both sides:
+      it is how a reader finds the unit.
+    */
+    const changes = changedUnitFields(before, updated);
     this.record({
       action: 'UNIT_UPDATED',
       buildingId: before.buildingId,
-      before: {
-        unitCode: before.unitCode,
-        surveyStatus: before.surveyStatus,
-        unitStatus: before.unitStatus,
-      },
+      before: { ...changes.before, unitCode: before.unitCode },
       after: {
+        ...changes.after,
         unitCode: updated.unitCode,
-        surveyStatus: updated.surveyStatus,
-        unitStatus: updated.unitStatus,
+        changedFields: Object.keys(changes.after),
+        ...(growFloors !== null || growBasements !== null
+          ? { buildingGrown: { floorsCount: growFloors, basementsCount: growBasements } }
+          : {}),
       },
       actor,
     });
@@ -3963,6 +4286,43 @@ export class BuildingsService {
     return resolved;
   }
 
+  /**
+   * Every suffix that may not be allocated on this parcel: the ones its
+   * buildings hold, and the ones «تصحيح رقم العقار» retired there
+   * (`BuildingCodeAlias`), so an old code on a receipt or a notice never comes
+   * to name a different building.
+   *
+   * `reclaimFor` lets one building take back a suffix it retired itself — a
+   * correction that is corrected again returns the building to its own old
+   * code, which is not reuse by anybody else.
+   *
+   * Read under the caller's per-parcel lock, inside its transaction.
+   */
+  async suffixesInUse(
+    client: Prisma.TransactionClient,
+    parcelNumber: string,
+    reclaimFor?: string,
+  ): Promise<string[]> {
+    const [buildings, retired] = await Promise.all([
+      client.building.findMany({ where: { parcelNumber }, select: { codeSuffix: true } }),
+      client.buildingCodeAlias.findMany({
+        where: { parcelNumber, ...(reclaimFor ? { NOT: { buildingId: reclaimFor } } : {}) },
+        select: { codeSuffix: true },
+      }),
+    ]);
+    return [...buildings, ...retired].map((row) => row.codeSuffix);
+  }
+
+  /** The sector a parcel belongs to — see `zoneOfParcel`. */
+  zoneFor(parcelNumber: string, tx?: Prisma.TransactionClient) {
+    return this.zoneOfParcel(parcelNumber, tx);
+  }
+
+  /** Every structure standing on a parcel, nearest first — see `parcelNeighbours`. */
+  neighboursOn(parcelNumber: string, pin: { latitude?: number | null; longitude?: number | null }) {
+    return this.parcelNeighbours(parcelNumber, pin);
+  }
+
   private async zoneOfParcel(
     parcelNumber: string,
     tx?: Prisma.TransactionClient,
@@ -4189,6 +4549,99 @@ export function changedBuildingFields(
     changed.after[field] = after[field] ?? null;
   }
   return changed;
+}
+
+/** The unit fields `UNIT_UPDATED` records when they change. */
+const AUDITED_UNIT_FIELDS = [
+  'floor',
+  'sequence',
+  'unitCode',
+  'unitType',
+  'unitArea',
+  'unitStatus',
+  'surveyStatus',
+  'postedNumber',
+  'side',
+  'startCol',
+  'endCol',
+  'presenceMonths',
+  'ownerLastStayAt',
+  'vacancyDeclaredAt',
+  'notes',
+] as const;
+
+type AuditedUnit = { [K in (typeof AUDITED_UNIT_FIELDS)[number]]: unknown };
+
+/**
+ * The fields that differ between two versions of a unit, each side keyed by
+ * field — `changedBuildingFields` for a unit. Decimals and dates compare by
+ * their serialised form, so re-saving 120 m² as 120 m² is not a change.
+ * Exported for its spec.
+ */
+export function changedUnitFields(
+  before: AuditedUnit,
+  after: AuditedUnit,
+): { before: Record<string, unknown>; after: Record<string, unknown> } {
+  const changed = { before: {} as Record<string, unknown>, after: {} as Record<string, unknown> };
+  for (const field of AUDITED_UNIT_FIELDS) {
+    if (JSON.stringify(before[field] ?? null) === JSON.stringify(after[field] ?? null)) continue;
+    changed.before[field] = before[field] ?? null;
+    changed.after[field] = after[field] ?? null;
+  }
+  return changed;
+}
+
+/**
+ * The units a building's floors would no longer hold — above the top floor
+ * (`floorsCount - 1`) or below the deepest basement (`-basementsCount`).
+ * Exported for its spec.
+ */
+export function unitsOutsideFloors<T extends { floor: number }>(
+  units: readonly T[],
+  floorsCount: number,
+  basementsCount: number,
+): T[] {
+  return units.filter((unit) => unit.floor > floorsCount - 1 || unit.floor < -basementsCount);
+}
+
+/** «0401، 0402، 0403 و5 غيرها» — enough codes to find them, never a wall of them. */
+function listCodes(units: ReadonlyArray<{ unitCode: string }>, shown = 6): string {
+  const codes = units.map((unit) => unit.unitCode);
+  const head = codes.slice(0, shown).join('، ');
+  return codes.length > shown ? `${head} و${codes.length - shown} غيرها` : head;
+}
+
+/**
+ * Why a unit edit would put a non-resident somewhere the record cannot hold
+ * them, or null when it would not — the unit-edit face of
+ * `assertNonResidentOccupancy`. Each message names the people and both ways
+ * out, because only the officer knows which one is true. Exported for its spec.
+ */
+export function nonResidentUnitConflict(input: {
+  unitCode: string;
+  /** Tenants or free occupants of this unit whose file says they live elsewhere. */
+  nonResidentOccupants: readonly string[];
+  /** The edit says the owner lives here, and every recorded owner lives elsewhere. */
+  ownerOccupiedByNonResident: boolean;
+}): string | null {
+  const occupants = [...new Set(input.nonResidentOccupants.filter(Boolean))];
+
+  if (occupants.length > 0) {
+    return (
+      `لا يمكن جعل الوحدة ${input.unitCode} مسكناً: ${occupants.join('، ')} ` +
+      `${occupants.length === 1 ? 'مسجَّل عليها مستأجراً أو شاغلاً وملفه' : 'مسجَّلون عليها مستأجرين أو شاغلين وملفاتهم'} «غير مقيم في البلدة»، ` +
+      'وغير المقيم لا يستأجر مسكناً. إن كان يسكنها فعلاً فغيّر ملفه إلى «مقيم»، وإن كان قد تركها فأنهِ إيجاره أولاً'
+    );
+  }
+
+  if (input.ownerOccupiedByNonResident) {
+    return (
+      `لا يمكن تسجيل الوحدة ${input.unitCode} «مشغولة من المالك»: مالكها «غير مقيم في البلدة». ` +
+      'اختر «مسكن موسمي» أو «شاغرة»، أو غيّر ملف المالك إلى «مقيم» إن كان قد عاد ليسكنها'
+    );
+  }
+
+  return null;
 }
 
 /**

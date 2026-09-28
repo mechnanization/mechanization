@@ -11,6 +11,7 @@ import type {
   DamageLevel,
   DamageSource,
   FeeAssessment,
+  FeeAssessmentLine,
   FeeBasis,
   FeeBearer,
   FeeFrequency,
@@ -1053,6 +1054,8 @@ export interface BuildingLedgerRow extends BuildingSummary {
   zoneName: string | null;
   /** The *current* level, i.e. the newest assessment. Null = never assessed. */
   damageLevel: DamageLevel | null;
+  /** With a search: the retired code the term matched — «كان Z-1-45-A». */
+  matchedPreviousCode?: string;
 }
 
 /** One occupant of a unit. A `toDate` of null means they are there now (D2). */
@@ -1203,6 +1206,12 @@ export interface BuildingDetail extends BuildingSummary {
   /** Resolved from `Zone.parcelNumbers` at read time — never stored (D13). */
   zoneCode: string | null;
   zoneName: string | null;
+  /**
+   * Codes this building carried before «تصحيح رقم العقار», newest first —
+   * still found by search, never given to another building. Absent from a
+   * server older than the correction.
+   */
+  previousCodes?: Array<{ code: string; parcelNumber: string; reason: string; retiredAt: string }>;
   units: UnitWithOccupants[];
 }
 
@@ -1582,11 +1591,16 @@ export function getBuildings(
     query.set(key, String(value));
   }
   const qs = query.toString();
-  return apiFetch<{ buildings: BuildingLedgerRow[]; total: number; summary: CensusSummary }>(
-    tenant,
-    `/buildings${qs ? `?${qs}` : ''}`,
-    { token, signal },
-  );
+  return apiFetch<{
+    buildings: BuildingLedgerRow[];
+    total: number;
+    summary: CensusSummary;
+    /**
+     * With a `parcelNumber` filter: suffixes «تصحيح رقم العقار» retired on
+     * that parcel, which a new building there never gets.
+     */
+    retiredSuffixes?: string[];
+  }>(tenant, `/buildings${qs ? `?${qs}` : ''}`, { token, signal });
 }
 
 /**
@@ -1744,6 +1758,137 @@ export async function updateBuilding(
     body: JSON.stringify(input),
   });
   invalidateCensus(tenant);
+  return result;
+}
+
+// ─────────────────────────────  «تصحيح رقم العقار»  ─────────────────────────────
+
+/** What correcting a building's parcel would do — read before anything is asked. */
+export interface ParcelCorrectionPreview {
+  building: {
+    id: string;
+    code: string;
+    parcelNumber: string;
+    sharedParcelNumbers: string[];
+    zoneCode: string | null;
+    zoneName: string | null;
+    hasPin: boolean;
+    updatedAt: string;
+  };
+  next: {
+    parcelNumber: string;
+    /** Predicted: allocated under the parcel lock on save. */
+    codeSuffix: string;
+    code: string;
+    zoneCode: string | null;
+    zoneName: string | null;
+    zoneChanged: boolean;
+    /** Corrected back to a parcel it had left: it takes its own old code back. */
+    reclaimsOwnCode: boolean;
+    wasSharedParcel: boolean;
+  };
+  cadastre: {
+    /** null: this municipality has no cadastre loaded. */
+    known: boolean | null;
+    point: { latitude: number; longitude: number } | null;
+    /** null: no pin, or no outline known for the parcel. */
+    pinInside: boolean | null;
+  };
+  neighbours: DuplicateBuildingCandidate[];
+  cards: {
+    toRewrite: number;
+    current: number;
+    citizenCount: number;
+    citizens: Array<{ citizenId: string; name: string }>;
+    underSharedParcel: number;
+    otherNumber: number;
+  };
+  unlinkedOnOldParcel: number;
+  unlinkedOnNewParcel: number;
+  cases: number;
+}
+
+export interface ParcelCorrectionResult {
+  building: {
+    id: string;
+    parcelNumber: string;
+    codeSuffix: string;
+    code: string;
+    sharedParcelNumbers: string[];
+    updatedAt: string;
+  };
+  previousCode: string;
+  reclaimedOwnCode: boolean;
+  cardsCorrected: number;
+  citizensAffected: number;
+  casesCorrected: number;
+  pinInsideNewParcel: boolean | null;
+}
+
+export function getParcelCorrectionPreview(
+  tenant: string,
+  token: string,
+  buildingId: string,
+  parcelNumber: string,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ParcelCorrectionPreview>(
+    tenant,
+    `/buildings/${encodeURIComponent(buildingId)}/parcel-correction?parcelNumber=${encodeURIComponent(parcelNumber)}`,
+    { token, signal },
+  );
+}
+
+/** «تصحيح رقم العقار». Refused with the candidates when the right parcel already carries a structure. */
+export async function correctBuildingParcel(
+  tenant: string,
+  token: string,
+  buildingId: string,
+  input: {
+    parcelNumber: string;
+    reason: string;
+    acknowledgedDuplicates?: boolean;
+    keepOldAsShared?: boolean;
+    expectedUpdatedAt?: string;
+  },
+) {
+  const result = await apiFetch<ParcelCorrectionResult>(
+    tenant,
+    `/buildings/${encodeURIComponent(buildingId)}/parcel-correction`,
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/** The building editor's save: the shell and the matrix difference, all or nothing. */
+export interface BuildingMatrixSave {
+  building: Omit<UpdateBuildingInput, 'expectedUpdatedAt'>;
+  remove: string[];
+  update: Array<{ id: string; floor: number; startCol?: number; endCol?: number; unitType: string }>;
+  add: Array<{ floor: number; startCol?: number; endCol?: number; unitType: string }>;
+  expectedUpdatedAt?: string;
+  /** Do it all and roll back — what a save would do, or why it would be refused. */
+  dryRun?: boolean;
+}
+
+export interface BuildingMatrixSaveResult {
+  dryRun: boolean;
+  building: BuildingSummary;
+  /** Unit codes as they were. */
+  removed: string[];
+  /** Unit codes after the save. */
+  updated: string[];
+  added: string[];
+}
+
+export async function saveBuildingMatrix(tenant: string, token: string, id: string, input: BuildingMatrixSave) {
+  const result = await apiFetch<BuildingMatrixSaveResult>(
+    tenant,
+    `/buildings/${encodeURIComponent(id)}/matrix-save`,
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
+  if (!input.dryRun) invalidateCensus(tenant);
   return result;
 }
 
@@ -1926,10 +2071,11 @@ export async function endOccupancy(
   tenant: string,
   token: string,
   occupancyId: string,
-  input: { reason: OccupancyEndReason; toDate?: string } & AfterTenancyAnswer,
+  input: { reason: OccupancyEndReason; toDate?: string; newOwnerId?: string } & AfterTenancyAnswer,
 ) {
   const { toDate, ...rest } = input;
-  const result = await apiFetch<EndTenancyResult | { ownerSpellEnded: true }>(
+  // An owner's spell ends an ownership — `EndOwnershipResult`; anyone else's, a tenancy.
+  const result = await apiFetch<EndTenancyResult | EndOwnershipResult>(
     tenant,
     `/buildings/occupancies/${encodeURIComponent(occupancyId)}/end`,
     {
@@ -1937,6 +2083,128 @@ export async function endOccupancy(
       method: 'PATCH',
       body: JSON.stringify(toDate ? { ...rest, toDate } : rest),
     },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+// ─────────────────────────────  «إنهاء الملكية»  ─────────────────────────────
+
+/** A tenant whose card names this owner as the landlord of a flat. */
+export interface OwnershipLinkedTenant {
+  citizenId: string;
+  name: string;
+  propertyEntryId: string;
+}
+
+/**
+ * What ending an ownership would touch — read before the dialog asks anything,
+ * so it asks only what applies to these flats.
+ */
+export interface OwnershipPreview {
+  owner: { id: string; name: string; nonResident: boolean };
+  propertyType: string | null;
+  propertyNumber: string | null;
+  /** When the ownership was recorded — a sale cannot be dated before it. */
+  startedAt: string | null;
+  units: Array<{
+    unitId: string;
+    unitCode: string;
+    buildingCode: string;
+    /** Co-owners keep the flat, and its status. */
+    otherOwners: string[];
+    /** A buyer among these already owns the flat, and keeps that ownership as it is. */
+    otherOwnerIds: string[];
+    /** A buyer among these rents the flat: the sale ends that tenancy and records them living there. */
+    occupantIds: string[];
+    /** «يسكنها المالك» or «مسكن موسمي» — a status about this owner. */
+    ownerLivedThere: boolean;
+    /** On a sale, what the flat is now has to be said. */
+    needsStatus: boolean;
+    dwelling: boolean;
+    linkedTenants: OwnershipLinkedTenant[];
+  }>;
+  /** Every current row on the card, in the form's order — what the dialog chooses from. */
+  rows: Array<{
+    rowId: string;
+    unitId: string | null;
+    unitCode: string | null;
+    unitType: string | null;
+    floor: string | null;
+    unitArea: number | null;
+    needsStatus: boolean;
+    otherOwners: string[];
+    linkedTenants: OwnershipLinkedTenant[];
+  }>;
+}
+
+/** What ending an ownership changed. */
+export interface EndOwnershipResult {
+  reason: 'OWNERSHIP_TRANSFERRED' | 'RECORDED_IN_ERROR';
+  endedAt: string;
+  occupanciesEnded: number;
+  rowsEnded: number;
+  endedRowIds: string[];
+  cardsEnded: number;
+  statusApplied: AfterTenancyStatus | null;
+  newOwnerRecorded: boolean;
+  casesOpened: number;
+  vacanciesConfirmed: number;
+  tenantsReleased: Array<{
+    tenantId: string;
+    tenantName: string;
+    propertyEntryId: string;
+    mode: 'RELEASED' | 'SPLIT';
+  }>;
+  /**
+   * The flats the buyer rented until the sale — their tenancy ended there, as
+   * history. Absent from a server older than the one-step purchase: the
+   * frontend and the API deploy separately.
+   */
+  buyerTenancyEndedOn?: string[];
+  /** The flats whose ownership ended — for «سجِّل المالك الجديد الآن». */
+  units: Array<{ unitId: string; unitCode: string; buildingId: string }>;
+}
+
+export type EndOwnershipAnswer = {
+  reason: 'OWNERSHIP_TRANSFERRED' | 'RECORDED_IN_ERROR';
+  endedAt?: string;
+  rowIds?: string[];
+  newOwnerId?: string;
+} & AfterTenancyAnswer;
+
+/** Whether a result is an ownership's — the matrix's end returns either kind. */
+export function isOwnershipResult(result: EndTenancyResult | EndOwnershipResult): result is EndOwnershipResult {
+  return 'tenantsReleased' in result;
+}
+
+export function getOwnershipEndPreview(tenant: string, token: string, propertyEntryId: string) {
+  return apiFetch<OwnershipPreview>(
+    tenant,
+    `/citizens/ownerships/${encodeURIComponent(propertyEntryId)}/end-preview`,
+    { token },
+  );
+}
+
+export function getOccupancyOwnershipPreview(tenant: string, token: string, occupancyId: string) {
+  return apiFetch<OwnershipPreview>(
+    tenant,
+    `/buildings/occupancies/${encodeURIComponent(occupancyId)}/ownership-preview`,
+    { token },
+  );
+}
+
+/** «إنهاء الملكية» on an owner's card — the same operation the unit matrix runs for an owner. */
+export async function endOwnership(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  input: EndOwnershipAnswer,
+) {
+  const result = await apiFetch<EndOwnershipResult>(
+    tenant,
+    `/citizens/ownerships/${encodeURIComponent(propertyEntryId)}/end`,
+    { token, method: 'POST', body: JSON.stringify(input) },
   );
   invalidateCensus(tenant);
   return result;
@@ -2771,6 +3039,56 @@ export interface CitizenWriteInput {
   duplicateReview?: DuplicateReviewAnswer;
   /** On an edit: the version the form was opened at. See `CitizenFormData.version`. */
   expectedVersion?: string;
+  /**
+   * «سبب التعديل». Required by the server when the edit corrects a high-impact
+   * field — see `CitizenEditReview.reasonRequired` — and kept on the audit row.
+   */
+  changeReason?: string;
+}
+
+/** One card's changes in a review or a history entry — see the server's `CardChange`. */
+export interface CardChangeView {
+  cardId: string;
+  kind: 'added' | 'removed' | 'changed';
+  propertyType: string | null;
+  propertyNumber: string | null;
+  occupancyType: string | null;
+  fields?: Array<{ field: string; before: unknown; after: unknown }>;
+  sensitive?: string[];
+  rows?: { added: number; removed: number; changed: number };
+}
+
+/** «مراجعة التعديلات» — what saving an edit would do, read and never written. */
+export interface CitizenEditReview {
+  version: string;
+  changes: {
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
+    /** Every field that changes; sensitive ones appear here only, never with values. */
+    changed: string[];
+    cards: CardChangeView[];
+  };
+  /** High-impact fields this edit corrects: the save needs a reason. */
+  reasonRequired: string[];
+  blockers: Array<{
+    code: 'STALE' | 'TENANTS_LINKED';
+    message: string;
+    tenants?: Array<{ citizenId: string; name: string; propertyEntryId: string }>;
+  }>;
+  impacts: {
+    loginChanges: boolean;
+    tenantsShowingName: Array<{ citizenId: string; name: string }>;
+    openBills: { count: number; outstanding: number; currency: string } | null;
+    cardsRemoved: number;
+  };
+}
+
+export function reviewCitizenEdit(tenant: string, token: string, citizenId: string, input: CitizenWriteInput) {
+  return apiFetch<CitizenEditReview>(tenant, `/citizens/${encodeURIComponent(citizenId)}/edit-review`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 /** A record already on file that looks like the person being registered. */
@@ -3249,17 +3567,22 @@ export async function unlinkLandlord(tenant: string, token: string, propertyEntr
   return result;
 }
 
-/** Soft delete and its undo — a deactivated citizen is skipped by the biller. */
+/**
+ * Soft delete and its undo — a deactivated citizen is skipped by the biller.
+ * `why` goes on the audit row: the reason, and the day they moved away when
+ * that is why («تغيير الإقامة»).
+ */
 export function setCitizenActive(
   tenant: string,
   token: string,
   citizenId: string,
   isActive: boolean,
+  why: { reason?: string; movedOn?: string } = {},
 ) {
   return apiFetch<{ isActive: boolean }>(
     tenant,
     `/citizens/${encodeURIComponent(citizenId)}/active`,
-    { token, method: 'PATCH', body: JSON.stringify({ isActive }) },
+    { token, method: 'PATCH', body: JSON.stringify({ isActive, ...why }) },
   );
 }
 
@@ -3456,6 +3779,31 @@ export interface AuditFacets {
 
 export function getAuditFacets(tenant: string, token: string, signal?: AbortSignal) {
   return apiFetch<AuditFacets>(tenant, '/audit/facets', { token, signal });
+}
+
+/**
+ * «سجل التعديلات» — one citizen's or building's own history: what was changed,
+ * by whom, from what to what, and why. Open to everyone who can open the
+ * record, unlike `getAuditLog`: the server leaves out who viewed it and how it
+ * is being reviewed, and strips repair snapshots.
+ */
+export function getRecordHistory(
+  tenant: string,
+  token: string,
+  record: { kind: 'citizen' | 'building'; id: string },
+  page: { limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({
+    limit: String(page.limit ?? 30),
+    offset: String(page.offset ?? 0),
+  });
+  const path = record.kind === 'citizen' ? 'citizens' : 'buildings';
+  return apiFetch<{ items: AuditEntry[]; total: number }>(
+    tenant,
+    `/${path}/${encodeURIComponent(record.id)}/history?${query.toString()}`,
+    { token, signal },
+  );
 }
 
 /** SUPER_ADMIN/AUDITOR only, server-enforced. Omitting `actorId` returns
@@ -3909,6 +4257,82 @@ export async function reviewPayment(
   );
   invalidateRequests(`fee-summary:${tenant}`);
   return result;
+}
+
+/** What a bill would be if it were raised today. */
+export type BillFigure =
+  | { kind: 'ASSESSED'; amount: number; assessment: FeeAssessment | null }
+  | { kind: 'UNASSESSABLE'; reason: string }
+  /** A flat charge to a category the citizen no longer holds any of. */
+  | { kind: 'NOT_TARGETED' };
+
+/** One open bill a correction affected — «فواتير تأثّرت بتصحيحات». */
+export interface CorrectionAffectedBill {
+  paymentId: string;
+  citizenId: string;
+  citizenName: string;
+  title: string;
+  periodKey: string;
+  dueDate: string;
+  status: string;
+  raisedAt: string;
+  amount: number;
+  paidAmount: number;
+  currency: string;
+  billed: FeeAssessment | null;
+  now: BillFigure;
+  /** Today's figure minus the bill's; null when today's cannot be worked out. */
+  difference: number | null;
+  lines: { removed: FeeAssessmentLine[]; added: FeeAssessmentLine[] } | null;
+  changes: Array<{
+    /** CORRECTION: said to be one. DATED_CHANGE: a real change and its day. EDIT: anything else. */
+    kind: 'CORRECTION' | 'DATED_CHANGE' | 'EDIT';
+    effectiveOn: string | null;
+    entry: AuditEntry;
+  }>;
+  review: { at: string; by: string | null; note: string; current: boolean } | null;
+}
+
+export interface CorrectionAffectedList {
+  items: CorrectionAffectedBill[];
+  total: number;
+  totals: { billedTooMuch: number; billedTooLittle: number; unassessable: number; reviewed: number };
+}
+
+export function getCorrectionAffectedBills(
+  tenant: string,
+  token: string,
+  query: { includeReviewed?: boolean; limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({
+    limit: String(query.limit ?? 20),
+    offset: String(query.offset ?? 0),
+    ...(query.includeReviewed ? { includeReviewed: 'true' } : {}),
+  });
+  return apiFetch<CorrectionAffectedList>(tenant, `/fees/correction-affected?${params.toString()}`, {
+    token,
+    signal,
+  });
+}
+
+/** The key a review records having seen — must match the server's `figureKey`. */
+export function billFigureKey(figure: BillFigure): string {
+  return figure.kind === 'ASSESSED' ? `ASSESSED:${figure.amount}` : figure.kind;
+}
+
+/** Records what the accountant decided. The bill itself is never changed. */
+export function reviewBillBasis(
+  tenant: string,
+  token: string,
+  paymentId: string,
+  input: { note: string; figure: string },
+) {
+  return apiFetch<{ reviewedAt: string }>(
+    tenant,
+    `/fees/payments/${encodeURIComponent(paymentId)}/basis-review`,
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
 }
 
 export interface CitizenPaymentItem {

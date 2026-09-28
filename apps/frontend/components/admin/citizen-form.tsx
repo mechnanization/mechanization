@@ -45,6 +45,7 @@ import {
 } from './possible-duplicates';
 import {
   PropertyCard,
+  type CardRemovalAnswer,
   type PropertyDraft,
   type UnitDraft,
 } from '@/components/citizen/property-card';
@@ -53,6 +54,8 @@ import { UnverifiedFieldsDialog } from './unverified-fields-dialog';
 import { QuickSaveDialog } from './quick-save-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
+import { ResidenceChangeDialog } from './residence-change-dialog';
+import { applyResidenceMove, planResidenceMove } from '@/lib/residence-move';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
 
@@ -66,6 +69,14 @@ export interface CitizenFormValues {
   personal: Record<string, unknown>;
   contact: Record<string, unknown>;
   properties: PropertyDraft[];
+  /**
+   * Why each saved card removed on this edit is going — the officer's answer
+   * in the delete dialog. The census closes the flats a removed card claimed
+   * with it: «سُجِّلت بالخطأ» drops them from the unit's history, «بيع أو نقل
+   * ملكية» keeps the ownership, ending on its date. Only saved cards; a card
+   * added and removed in the same sitting never reached the server.
+   */
+  removals?: Array<CardRemovalAnswer & { propertyId: string }>;
   /**
    * Fields the officer recorded as «غير مؤكَّد», keyed by dot-path.
    *
@@ -103,6 +114,12 @@ export interface CitizenFormValues {
    * record for review. A note flags nothing.
    */
   notes?: string;
+  /**
+   * «تغيير الإقامة» — a real move applied on this form, not yet saved: the day
+   * it took effect, sent as `movedOn`, and the reason the save's review starts
+   * from. Absent on a correction, where only the answer changes.
+   */
+  residenceMove?: { movedOn: string; reason: string };
 }
 
 /**
@@ -592,6 +609,9 @@ export function toSubmission(values: CitizenFormValues) {
       about string length rather than presence, on both sides of the wire.
     */
     ...(values.notes?.trim() ? { notes: values.notes.trim() } : {}),
+    // Only on an edit, and only what the officer answered — see `removals`.
+    ...(values.removals?.length ? { removals: values.removals } : {}),
+    ...(values.residenceMove ? { movedOn: values.residenceMove.movedOn } : {}),
   };
 }
 
@@ -741,6 +761,7 @@ export function CitizenForm({
   onValuesChange,
   locale = 'ar',
   lockedCensusTarget,
+  onDeactivated,
 }: {
   tenant: string;
   /**
@@ -798,6 +819,8 @@ export function CitizenForm({
    * this form does not have to know anything about the matrix that sent it.
    */
   lockedCensusTarget?: LockedCensusTarget | null;
+  /** «تغيير الإقامة» deactivated the file: the person holds nothing here any more. */
+  onDeactivated?: () => void;
 }) {
   const [values, setValues] = useState<CitizenFormValues>(initial);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -1037,7 +1060,7 @@ export function CitizenForm({
             onChange={(update) => setProperty(index, update)}
             onAddOnSameParcel={() => addProperty(index)}
             onViewParcel={token ? setRosterParcel : undefined}
-            onRemove={() => removeProperty(index)}
+            onRemove={(answer) => removeProperty(index, answer)}
             // Ended on the server, kept there as history — no longer this form's.
             // A partial end leaves the card here without the rows that ended.
             onEnded={(result, cardEnded) =>
@@ -1084,7 +1107,7 @@ export function CitizenForm({
                 onToggleCollapse={() => toggleCollapsed(index)}
                 onChange={(update) => setProperty(index, update)}
                 onViewParcel={token ? setRosterParcel : undefined}
-                onRemove={() => removeProperty(index)}
+                onRemove={(answer) => removeProperty(index, answer)}
                 onEnded={(result, cardEnded) =>
                   cardEnded ? removeProperty(index) : removeEndedRows(index, result.endedRowIds ?? [])
                 }
@@ -1114,10 +1137,24 @@ export function CitizenForm({
       );
     });
 
-  const removeProperty = useCallback((index: number) => {
+  const removeProperty = useCallback((index: number, answer?: CardRemovalAnswer) => {
     setValues((current) => ({
       ...current,
       properties: current.properties.filter((_, i) => i !== index),
+      /*
+        The answer travels with the save, keyed by the card's id — the only
+        thing that still names it once it has left the list.
+      */
+      ...(answer && current.properties[index]?.id
+        ? {
+            removals: [
+              ...(current.removals ?? []).filter(
+                (removal) => removal.propertyId !== current.properties[index]!.id,
+              ),
+              { propertyId: current.properties[index]!.id!, ...answer },
+            ],
+          }
+        : {}),
       /*
         Flags are addressed by card index, so deleting a card renumbers them.
 
@@ -1261,6 +1298,38 @@ export function CitizenForm({
   }, []);
 
   /**
+   * «تغيير الإقامة» on a saved file.
+   *
+   * Changing the answer on a saved file opens the guide rather than flipping
+   * it: a real move has tenancies to end and homes to re-describe
+   * (`planResidenceMove`), and the guide also offers the plain switch for a
+   * residence recorded wrongly. A new filing just answers the question.
+   *
+   * Changing it back while a move is applied here undoes that move — the form
+   * as it was the moment the move was applied. Tenancies the guide ended stay
+   * ended: they were saved, on their day, as facts.
+   */
+  const [residenceGuide, setResidenceGuide] = useState<CitizenResidence | null>(null);
+  const beforeMove = useRef<CitizenFormValues | null>(null);
+  const chooseResidence = useCallback(
+    (next: CitizenResidence) => {
+      if (next === (values.residence ?? 'RESIDENT')) return;
+      if (values.residenceMove) {
+        const snapshot = beforeMove.current;
+        beforeMove.current = null;
+        setValues(snapshot ?? { ...withResidence(values, next), residenceMove: undefined });
+        return;
+      }
+      if (mode === 'edit' && citizenId) {
+        setResidenceGuide(next);
+        return;
+      }
+      setResidence(next);
+    },
+    [values, mode, citizenId, setResidence],
+  );
+
+  /**
    * «قد يكون مسجَّلاً مسبقاً» — looked up once, shown in one of two places.
    *
    * On a correction as well as a new filing, with the open file itself dropped
@@ -1292,8 +1361,42 @@ export function CitizenForm({
    * a number one section above the field that asks for it, reading as a
    * complaint about the name the officer had just typed.
    */
+  /*
+    «تغيير رقم الهاتف» on a saved file changes how the citizen signs in: the
+    portal asks for their رقم مرجعي *and* this number. Said under the field, on
+    every screen size, while the old number is still on screen to compare —
+    not discovered when the citizen calls to say they cannot log in.
+  */
+  const loadedPhone = String(initial.contact.phone ?? '').replace(/\s+/g, '');
+  const phoneNow = String(values.contact.phone ?? '').replace(/\s+/g, '');
+  const phoneNote =
+    mode === 'edit' && loadedPhone && phoneNow !== loadedPhone ? (
+      <p
+        role="note"
+        className="mt-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed text-warning"
+      >
+        <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+        <span>
+          {locale === 'en' ? (
+            <>
+              The citizen signs in with their reference number and this phone. After saving, they must use the new
+              number — the old one (<span dir="ltr">{loadedPhone}</span>) will stop working.
+            </>
+          ) : (
+            <>
+              يدخل المواطن إلى حسابه برقمه المرجعي وهذا الهاتف. بعد الحفظ عليه استعمال الرقم الجديد، ولن يعمل الرقم
+              السابق (<span dir="ltr">{loadedPhone}</span>).
+            </>
+          )}
+        </span>
+      </p>
+    ) : null;
+
   const duplicatesPanel = (
-    <PossibleDuplicatesPanel check={duplicateCheck} locale={locale} className="hidden lg:block" />
+    <>
+      {phoneNote}
+      <PossibleDuplicatesPanel check={duplicateCheck} locale={locale} className="hidden lg:block" />
+    </>
   );
 
   /**
@@ -1651,7 +1754,25 @@ export function CitizenForm({
             title={sections[0].title}
             invalid={sectionInvalid('personal')}
           >
-            <ResidenceChooser value={values.residence ?? 'RESIDENT'} onChange={setResidence} locale={locale} />
+            <ResidenceChooser value={values.residence ?? 'RESIDENT'} onChange={chooseResidence} locale={locale} />
+            {values.residenceMove ? (
+              <p className="-mt-2 mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-primary/5 px-3 py-2 text-sm">
+                <span>
+                  {locale === 'en'
+                    ? `A move on ${values.residenceMove.movedOn} is applied on this form; it is recorded when you save.`
+                    : `انتقال بتاريخ ${values.residenceMove.movedOn} مطبَّق على النموذج، ويُسجَّل عند الحفظ.`}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="link"
+                  className="h-auto p-0"
+                  onClick={() => chooseResidence(values.residence === 'NON_RESIDENT_OWNER' ? 'RESIDENT' : 'NON_RESIDENT_OWNER')}
+                >
+                  {locale === 'en' ? 'Undo' : 'تراجع'}
+                </Button>
+              </p>
+            ) : null}
             {isNonResident ? (
               <OwnerPersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
             ) : (
@@ -2093,6 +2214,35 @@ export function CitizenForm({
       }}
       locale={locale}
     />
+    {residenceGuide && citizenId ? (
+      <ResidenceChangeDialog
+        open
+        to={residenceGuide}
+        values={values}
+        tenant={tenant}
+        token={token}
+        citizenId={citizenId}
+        locale={locale}
+        onCancel={() => setResidenceGuide(null)}
+        onCorrect={() => {
+          setValues((current) => ({ ...withResidence(current, residenceGuide), residenceMove: undefined }));
+          setResidenceGuide(null);
+        }}
+        onApply={(answers) => {
+          beforeMove.current = values;
+          setValues(applyResidenceMove(values, planResidenceMove(values, residenceGuide), answers));
+          setResidenceGuide(null);
+        }}
+        onTenancyEnded={(index, result, cardEnded) =>
+          cardEnded ? removeProperty(index) : removeEndedRows(index, result.endedRowIds ?? [])
+        }
+        onRemoveUnsaved={(index) => removeProperty(index)}
+        onDeactivated={() => {
+          setResidenceGuide(null);
+          onDeactivated?.();
+        }}
+      />
+    ) : null}
     </FieldFlagProvider>
   );
 }

@@ -517,6 +517,13 @@ export function CompleteRecordDialog({
       await updateCitizen(tenant, token, citizenId, {
         ...toSubmission(merged),
         ...(version ? { expectedVersion: version } : {}),
+        /*
+          What this screen does, said on the audit row: it answers questions
+          the record left open. Filling a blank never needs a reason, but an
+          answer that replaces a value would (`highImpactChanges`), and this
+          is the true one.
+        */
+        changeReason: en ? 'Completing fields left unconfirmed' : 'استكمال بيانات غير مؤكَّدة',
       });
       toast.success(
         flags.size === 0

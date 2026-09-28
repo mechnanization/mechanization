@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { adminUpdateCitizenSubmissionSchema } from '@mechanization/shared-schemas';
+import { adminUpdateCitizenSubmissionSchema, setCitizenActiveSchema } from '@mechanization/shared-schemas';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
@@ -16,6 +16,7 @@ import { CensusSyncService } from '../buildings/census-sync.service';
 import { CitizensService } from './citizens.service';
 import { LandlordLinkService, readFootprint } from './landlord-link.service';
 import { TenancyService } from './tenancy.service';
+import { OwnershipService } from './ownership.service';
 
 /**
  * A tenant and the owner they rent from, against a real Postgres.
@@ -86,7 +87,8 @@ describeIfDb('A tenant and the owner they rent from', () => {
     buildings = new BuildingsService(context, cases, events);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(context, buildings, events);
-    tenancy = new TenancyService(context, buildings, cases, links, events);
+    const ownership = new OwnershipService(context, buildings, cases, links, events);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership);
     citizens = new CitizensService(
       context,
       {} as never,
@@ -589,5 +591,243 @@ describeIfDb('A tenant and the owner they rent from', () => {
       await db.buildingUnit.count({ where: { propertyEntryId: card.id, unitId: flat, endedAt: null } }),
     ).toBe(0);
     expect(await db.unitOccupancy.count({ where: { citizenId: tenant.id, unitId: flat, toDate: null } })).toBe(0);
+  });
+
+  it('writes what an edit changed field by field, and never a sensitive value', async () => {
+    const holder = await person('صاحب ملف');
+    const stored = await db.user.findUniqueOrThrow({ where: { id: holder.id } });
+    const save = (civilRecordNumber: string, maritalStatus: string) =>
+      within(() =>
+        citizens.update({
+          tenantSlug: 'owners',
+          citizenId: holder.id,
+          payload: adminUpdateCitizenSubmissionSchema.parse({
+            personal: {
+              firstName: stored.firstName,
+              middleName: 'علي',
+              lastName: stored.lastName,
+              motherName: 'فاطمة خليل',
+              gender: 'MALE',
+              civilRecordNumber,
+              nationality: 'لبناني',
+              isLebanese: true,
+              residentStatus: 'VILLAGE_RESIDENT',
+            },
+            contact: { maritalStatus, phone: stored.phone, whatsappSameAsPhone: true, actualHouseholdMembers: '3' },
+            properties: [],
+            flags: [],
+            // Correcting a civil record number needs one (`highImpactChanges`).
+            changeReason: 'تصحيح بعد مطابقة الهوية',
+          }),
+          actor: actor(),
+        }),
+      );
+
+    await save('7001', 'MARRIED');
+    await save('7002', 'SINGLE');
+    await pause();
+
+    const rows = await db.auditLogEntry.findMany({
+      where: { entityId: holder.id, action: 'CITIZEN_UPDATED' },
+      orderBy: { createdAt: 'asc' },
+    });
+    const last = rows.at(-1)!;
+    expect(last.before).toEqual({ maritalStatus: 'MARRIED' });
+    expect(last.after).toMatchObject({ maritalStatus: 'SINGLE' });
+    expect((last.after as { changed: string[] }).changed.sort()).toEqual(['civilRecordNumber', 'maritalStatus']);
+    expect(JSON.stringify([last.before, last.after])).not.toMatch(/700[12]/);
+  });
+
+  /** A household file with nothing on it, saved from the form. */
+  const householdPayload = (
+    stored: { firstName: string; lastName: string; phone: string | null },
+    over: { civilRecordNumber?: string; phone?: string; changeReason?: string; properties?: unknown[]; removals?: unknown[] } = {},
+  ) =>
+    adminUpdateCitizenSubmissionSchema.parse({
+      personal: {
+        firstName: stored.firstName,
+        middleName: 'علي',
+        lastName: stored.lastName,
+        motherName: 'فاطمة خليل',
+        gender: 'MALE',
+        ...(over.civilRecordNumber !== undefined ? { civilRecordNumber: over.civilRecordNumber } : {}),
+        nationality: 'لبناني',
+        isLebanese: true,
+        residentStatus: 'VILLAGE_RESIDENT',
+      },
+      contact: { maritalStatus: 'MARRIED', phone: over.phone ?? stored.phone, whatsappSameAsPhone: true, actualHouseholdMembers: '3' },
+      properties: over.properties ?? [],
+      ...(over.removals ? { removals: over.removals } : {}),
+      ...(over.changeReason ? { changeReason: over.changeReason } : {}),
+      flags: [],
+    });
+
+  it('asks a reason for correcting an identity number, never for filling one in', async () => {
+    const holder = await person('صاحب رقم');
+    const stored = await db.user.findUniqueOrThrow({ where: { id: holder.id } });
+    const save = (over: Parameters<typeof householdPayload>[1]) =>
+      within(() =>
+        citizens.update({ tenantSlug: 'owners', citizenId: holder.id, payload: householdPayload(stored, over), actor: actor() }),
+      );
+
+    // A blank filled in is a completion.
+    await save({ civilRecordNumber: '8801' });
+    // A value corrected is not, and says which field wants the reason.
+    await expect(save({ civilRecordNumber: '8802' })).rejects.toMatchObject({
+      details: { code: 'REASON_REQUIRED', fields: ['civilRecordNumber'] },
+    });
+    expect((await db.user.findUniqueOrThrow({ where: { id: holder.id } })).civilRecordNumber).toBe('8801');
+
+    await save({ civilRecordNumber: '8802', changeReason: 'خطأ في نسخ الرقم عن الهوية' });
+    expect((await db.user.findUniqueOrThrow({ where: { id: holder.id } })).civilRecordNumber).toBe('8802');
+    await pause();
+    const last = await db.auditLogEntry.findFirstOrThrow({
+      where: { entityId: holder.id, action: 'CITIZEN_UPDATED' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect((last.after as { reason: string }).reason).toBe('خطأ في نسخ الرقم عن الهوية');
+  });
+
+  it('records the day of a real move with the change of residence, and only then', async () => {
+    const mover = await person('منتقل');
+    const stored = await db.user.findUniqueOrThrow({ where: { id: mover.id } });
+    const nonResident = (over: { movedOn?: string; changeReason?: string; residencePlace: string }) =>
+      adminUpdateCitizenSubmissionSchema.parse({
+        residence: 'NON_RESIDENT_OWNER',
+        personal: { firstName: stored.firstName, lastName: stored.lastName, residencePlace: over.residencePlace },
+        contact: { phone: stored.phone, whatsappSameAsPhone: true },
+        properties: [],
+        flags: [],
+        ...(over.movedOn ? { movedOn: over.movedOn } : {}),
+        ...(over.changeReason ? { changeReason: over.changeReason } : {}),
+      });
+    const lastUpdate = async () => {
+      await pause();
+      const row = await db.auditLogEntry.findFirstOrThrow({
+        where: { entityId: mover.id, action: 'CITIZEN_UPDATED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      return row.after as Record<string, unknown>;
+    };
+
+    // A move a month ago: the residence changes, with its reason and its day.
+    await within(() =>
+      citizens.update({
+        tenantSlug: 'owners',
+        citizenId: mover.id,
+        payload: nonResident({ residencePlace: 'بيروت', movedOn: '2026-08-28', changeReason: 'انتقل للسكن في بيروت' }),
+        actor: actor(),
+      }),
+    );
+    expect((await db.user.findUniqueOrThrow({ where: { id: mover.id } })).residence).toBe('NON_RESIDENT_OWNER');
+    expect(await lastUpdate()).toMatchObject({ reason: 'انتقل للسكن في بيروت', movedOn: '2026-08-28T00:00:00.000Z' });
+
+    // A later edit that does not change the residence records no move, whatever it sends.
+    await within(() =>
+      citizens.update({
+        tenantSlug: 'owners',
+        citizenId: mover.id,
+        payload: nonResident({ residencePlace: 'صيدا', movedOn: '2026-09-01' }),
+        actor: actor(),
+      }),
+    );
+    expect(await lastUpdate()).not.toHaveProperty('movedOn');
+
+    // A move dated tomorrow is refused by the schema itself.
+    const tomorrow = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    expect(() => nonResident({ residencePlace: 'صيدا', movedOn: tomorrow })).toThrow(/تاريخ الانتقال في المستقبل/);
+  });
+
+  it('says why a file was deactivated, and from when — it stops being billed', async () => {
+    const leaver = await person('غادر البلدة');
+    const body = setCitizenActiveSchema.parse({ isActive: false, reason: 'انتقل للسكن خارج البلدة', movedOn: '2026-09-01' });
+    await within(() =>
+      citizens.setActive({ tenantSlug: 'owners', citizenId: leaver.id, ...body, actor: actor() }),
+    );
+    await pause();
+
+    expect((await db.user.findUniqueOrThrow({ where: { id: leaver.id } })).isActive).toBe(false);
+    const row = await db.auditLogEntry.findFirstOrThrow({ where: { entityId: leaver.id, action: 'CITIZEN_DEACTIVATED' } });
+    expect(row.after).toMatchObject({ reason: 'انتقل للسكن خارج البلدة', movedOn: '2026-09-01T00:00:00.000Z' });
+  });
+
+  it('reviews an edit without saving it: changes, the login, open bills, and what would refuse it', async () => {
+    const { units } = await block('OWN-14');
+    const flat = units[0]!.id;
+    const owner = await person('مالك مراجعة');
+    const tenant = await person('مستأجر مراجعة');
+    await add({ unitId: flat, citizenId: owner.id, role: 'OWNER', unitStatus: 'RENTED' });
+    await add({ unitId: flat, citizenId: tenant.id, role: 'TENANT', landlordCitizenId: owner.id });
+    await db.citizenPayment.create({
+      data: { citizenId: owner.id, title: 'رسم', amount: 50, dueDate: new Date('2026-12-31') },
+    });
+    const ownerCard = await db.propertyEntry.findFirstOrThrow({
+      where: { registration: { citizenId: owner.id }, occupancyType: 'OWNER', endedAt: null },
+    });
+    const stored = await db.user.findUniqueOrThrow({ where: { id: owner.id } });
+
+    const review = await within(() =>
+      citizens.reviewEdit(
+        owner.id,
+        householdPayload(stored, {
+          civilRecordNumber: '8810',
+          phone: '+96170999888',
+          removals: [{ propertyId: ownerCard.id, reason: 'RECORDED_IN_ERROR' }],
+        }),
+      ),
+    );
+
+    expect(review.changes.changed).toContain('phone');
+    expect(review.changes.cards.map((card) => card.kind)).toEqual(['removed']);
+    expect(review.impacts).toMatchObject({ loginChanges: true, cardsRemoved: 1, openBills: { count: 1, outstanding: 50 } });
+    expect(review.impacts.tenantsShowingName.map((row) => row.citizenId)).toEqual([tenant.id]);
+    expect(review.blockers.map((row) => row.code)).toEqual(['TENANTS_LINKED']);
+    // Read, never written.
+    expect((await db.user.findUniqueOrThrow({ where: { id: owner.id } })).phone).toBe(stored.phone);
+    expect(await db.propertyEntry.count({ where: { id: ownerCard.id } })).toBe(1);
+  });
+
+  it('refuses to delete an owner’s card while a tenant’s link names them, and writes nothing', async () => {
+    const { units } = await block('OWN-13');
+    const flat = units[0]!.id;
+    const owner = await person('مالك');
+    const tenant = await person('مستأجر');
+    await add({ unitId: flat, citizenId: owner.id, role: 'OWNER', unitStatus: 'RENTED' });
+    await add({ unitId: flat, citizenId: tenant.id, role: 'TENANT', landlordCitizenId: owner.id });
+
+    const ownerCard = await db.propertyEntry.findFirstOrThrow({
+      where: { registration: { citizenId: owner.id }, occupancyType: 'OWNER', endedAt: null },
+    });
+    const stored = await db.user.findUniqueOrThrow({ where: { id: owner.id } });
+    // «حذف — سُجِّلت بالخطأ» on their only card.
+    const payload = adminUpdateCitizenSubmissionSchema.parse({
+      personal: {
+        firstName: stored.firstName,
+        middleName: 'علي',
+        lastName: stored.lastName,
+        motherName: 'فاطمة خليل',
+        gender: 'MALE',
+        civilRecordNumber: '8',
+        nationality: 'لبناني',
+        isLebanese: true,
+        residentStatus: 'VILLAGE_RESIDENT',
+      },
+      contact: { maritalStatus: 'MARRIED', phone: stored.phone, whatsappSameAsPhone: true, actualHouseholdMembers: '3' },
+      properties: [],
+      removals: [{ propertyId: ownerCard.id, reason: 'RECORDED_IN_ERROR' }],
+      flags: [],
+    });
+
+    // Deleting says they never owned it; the tenant's link says they do — the link goes first.
+    await expect(
+      within(() => citizens.update({ tenantSlug: 'owners', citizenId: owner.id, payload, actor: actor() })),
+    ).rejects.toThrow(/ألغِ الربط/);
+
+    expect(await db.propertyEntry.count({ where: { id: ownerCard.id } })).toBe(1);
+    expect(
+      await db.unitOccupancy.count({ where: { unitId: flat, citizenId: owner.id, role: 'OWNER', toDate: null } }),
+    ).toBe(1);
+    const [card] = await tenancyCards(tenant.id);
+    expect(card!.landlordCitizenId).toBe(owner.id);
   });
 });

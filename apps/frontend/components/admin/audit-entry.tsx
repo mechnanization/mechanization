@@ -57,8 +57,15 @@ function iconOf(action: string): LucideIcon {
   if (action.startsWith('UNIT_') || action.startsWith('OCCUPANCY_')) return DoorOpen;
   if (action.startsWith('CASE_')) return ClipboardList;
   if (action.startsWith('LANDLORD_') || action === 'HOUSEHOLD_LINKED') return Link2;
-  if (action.startsWith('CITIZEN_') || action.startsWith('REGISTRATION_') || action === 'TENANCY_ENDED') return Users;
-  if (action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.includes('PAYOUT')) return Banknote;
+  if (
+    action.startsWith('CITIZEN_') ||
+    action.startsWith('REGISTRATION_') ||
+    action === 'TENANCY_ENDED' ||
+    action === 'OWNERSHIP_ENDED' ||
+    action === 'PROPERTY_NUMBER_CORRECTED'
+  )
+    return Users;
+  if (action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.startsWith('BILL_') || action.includes('PAYOUT')) return Banknote;
   if (action.startsWith('ZONE_') || action === 'CADASTRE_IMPORT') return Layers;
   if (action === 'LOGIN') return LogIn;
   if (/TOTP|PASSWORD|EMAIL|STAFF_/.test(action)) return KeyRound;

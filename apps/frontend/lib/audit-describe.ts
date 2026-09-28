@@ -50,6 +50,8 @@ export const AUDIT_FAMILIES: AuditFamily[] = [
       action.startsWith('LANDLORD_') ||
       action.startsWith('HOUSEHOLD_') ||
       action === 'TENANCY_ENDED' ||
+      action === 'OWNERSHIP_ENDED' ||
+      action === 'PROPERTY_NUMBER_CORRECTED' ||
       action === 'STATUS_CHANGE',
   },
   {
@@ -66,7 +68,7 @@ export const AUDIT_FAMILIES: AuditFamily[] = [
     key: 'money',
     label: ['الرسوم والدفعات', 'Fees & payments'],
     tone: 'money',
-    match: (action) => action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.includes('PAYOUT'),
+    match: (action) => action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.startsWith('BILL_') || action.includes('PAYOUT'),
   },
   {
     key: 'land',
@@ -96,7 +98,7 @@ export function auditToneOf(action: string): AuditTone {
   if (/DELETE|ENDED|DEACTIVATED|UNLINKED|DISMISSED|REJECTED|REMOVED|DISABLED|RESTORED$/.test(action)) {
     return action === 'LANDLORD_MATCH_RESTORED' ? 'change' : 'remove';
   }
-  if (action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.includes('PAYOUT')) return 'money';
+  if (action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.startsWith('BILL_') || action.includes('PAYOUT')) return 'money';
   if (/LOGIN|TOTP|PASSWORD|EMAIL_CHANGED|DOCUMENT_VIEW|CSV_EXPORT|SETTINGS/.test(action)) return 'access';
   if (/CREATED|RECORDED|LOGGED|ADDED|LINKED|SUBMITTED|ISSUED|GENERATED|CONFIRMED|IMPORT/.test(action)) {
     return 'create';
@@ -134,7 +136,7 @@ const REDACTED = '[redacted]';
 const isIdKey = (key: string) => /^id$|Id$|Ids$|^subjectKey$/.test(key);
 
 /** Structures too internal to read; summarised under «كل التفاصيل» only. */
-const INTERNAL_KEYS = new Set(['footprint', 'snapshot', 'census', 'written', 'filter', 'release', 'fileLink']);
+const INTERNAL_KEYS = new Set(['footprint', 'snapshot', 'census', 'written', 'filter', 'release', 'fileLink', 'figure']);
 
 /** Keys consumed by a special rule below, so the generic pass skips them. */
 const SPECIAL_KEYS = new Set([
@@ -156,6 +158,22 @@ const SPECIAL_KEYS = new Set([
   'matchedBy',
   'acknowledgedRepeat',
   'kind',
+  'cards',
+]);
+
+/**
+ * Fields a citizen edit names but never values — `SENSITIVE_FILE_FIELDS` on the
+ * server. Said as such, so «what was it?» is answered: it was never written.
+ */
+const SENSITIVE_FIELDS = new Set([
+  'civilRecordNumber',
+  'identityDocNumber',
+  'residencyNumber',
+  'residentStatus',
+  'phone',
+  'whatsapp',
+  'localContactPhone',
+  'landlordPhone',
 ]);
 
 function fieldLabels(en: boolean): Record<string, string> {
@@ -224,6 +242,8 @@ function fieldLabels(en: boolean): Record<string, string> {
     parcelsSkipped: ['عقارات تُركت', 'Parcels skipped'],
     linesImported: ['خطوط استوردت', 'Lines imported'],
     amount: ['المبلغ', 'Amount'],
+    amountNow: ['المبلغ لو صدرت اليوم', 'Amount if raised today'],
+    movedOn: ['تاريخ الانتقال', 'Moved on'],
     targetType: ['الجهة المستهدفة', 'Target'],
     issuedCount: ['عدد الإشعارات', 'Notices issued'],
     periodKey: ['الفترة', 'Period'],
@@ -232,6 +252,15 @@ function fieldLabels(en: boolean): Record<string, string> {
     snapshotCreatedAt: ['تاريخ النسخة الاحتياطية', 'Snapshot date'],
     rowCount: ['عدد الصفوف', 'Rows'],
     provisionalSuffix: ['الحرف المؤقت', 'Provisional suffix'],
+    codeSuffix: ['حرف المبنى', 'Building suffix'],
+    zoneCode: ['القطاع', 'Sector'],
+    buildingCode: ['رمز المبنى', 'Building code'],
+    cardsCorrected: ['بطاقات صُحِّحت', 'Cards corrected'],
+    casesCorrected: ['حالات صُحِّحت', 'Cases corrected'],
+    pinInsideNewParcel: ['الدبوس داخل العقار الجديد', 'Pin inside the new parcel'],
+    reclaimedOwnCode: ['استعاد رمزه السابق', 'Took its own old code back'],
+    keptOldAsShared: ['أُبقي العقار القديم مشتركاً', 'Old parcel kept as shared'],
+    acknowledgedNeighbours: ['مبانٍ تحقّق منها الموظف', 'Neighbours checked'],
     from: ['من', 'From'],
     to: ['إلى', 'To'],
     percent: ['النسبة ٪', 'Percent'],
@@ -326,7 +355,8 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
         : entry.action.startsWith('QUALITY_FINDING')
           ? en ? 'Why it is not a problem' : 'سبب اعتبارها ليست مشكلة'
           : en ? 'Reason' : 'السبب';
-    result.quotes.push({ label: reasonLabel, value: reason });
+    // An ending's reason is a code («سُجّل خطأً», «انتقال الملكية»); a person's is prose.
+    result.quotes.push({ label: reasonLabel, value: format('reason', reason) });
   }
   if (typeof after?.duplicateReason === 'string' && after.duplicateReason) {
     result.quotes.push({
@@ -407,9 +437,66 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
   if (typeof kind === 'string' && entry.action.startsWith('QUALITY_FINDING')) {
     fact(en ? 'Finding' : 'الملاحظة', quality.findingKind[kind as never] ?? kind);
   }
+  /*
+    `changed` names every field a save moved. The ones whose values the entry
+    also holds are listed below as before → after, so only the rest are named
+    here — and a sensitive one is said to be sensitive, because «what was it?»
+    is the next question and the answer is that it was never written down.
+  */
   const changedNames = after?.changed;
   if (Array.isArray(changedNames) && changedNames.length) {
-    fact(en ? 'Fields changed' : 'الحقول المعدَّلة', (changedNames as string[]).map(labelOf).join('، '));
+    const valued = (key: string) => Boolean((before && key in before) || (after && key in after));
+    const unvalued = (changedNames as string[]).filter((key) => !valued(key));
+    const sensitive = unvalued.filter((key) => SENSITIVE_FIELDS.has(key));
+    const plain = unvalued.filter((key) => !SENSITIVE_FIELDS.has(key));
+    if (plain.length) fact(en ? 'Fields changed' : 'الحقول المعدَّلة', plain.map(labelOf).join('، '));
+    if (sensitive.length) {
+      fact(
+        en ? 'Changed — value not kept, to protect personal data' : 'عُدِّلت — لا تُحفظ القيمة حمايةً للبيانات',
+        sensitive.map(labelOf).join('، '),
+      );
+    }
+  }
+
+  // ── a citizen's cards, one line per change ──
+  if (Array.isArray(after?.cards)) {
+    for (const card of after.cards as Json[]) {
+      const name = [
+        typeof card.propertyType === 'string' ? format('propertyType', card.propertyType) : null,
+        card.propertyNumber ? `${en ? 'parcel' : 'عقار'} ${String(card.propertyNumber)}` : null,
+        typeof card.occupancyType === 'string'
+          ? ((labels.occupancyType as Record<string, string>)[card.occupancyType] ?? card.occupancyType)
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      const cardLabel = `${en ? 'Card' : 'بطاقة'} ${name}`;
+      if (card.kind === 'added') fact(en ? 'Card added' : 'أُضيفت بطاقة', name);
+      if (card.kind === 'removed') fact(en ? 'Card removed' : 'حُذفت بطاقة', name);
+      for (const field of (Array.isArray(card.fields) ? card.fields : []) as Json[]) {
+        const key = String(field.field);
+        result.changes.push({
+          label: `${cardLabel} — ${labelOf(key)}`,
+          before: format(key, field.before),
+          after: format(key, field.after),
+        });
+      }
+      if (Array.isArray(card.sensitive) && card.sensitive.length) {
+        fact(
+          `${cardLabel} — ${en ? 'changed, value not kept' : 'عُدِّل دون حفظ القيمة'}`,
+          (card.sensitive as string[]).map(labelOf).join('، '),
+        );
+      }
+      const rows = asObject(card.rows);
+      if (rows) {
+        const parts = [
+          Number(rows.added) ? (en ? `${rows.added} added` : `أُضيفت ${rows.added}`) : null,
+          Number(rows.removed) ? (en ? `${rows.removed} removed` : `حُذفت ${rows.removed}`) : null,
+          Number(rows.changed) ? (en ? `${rows.changed} changed` : `عُدِّلت ${rows.changed}`) : null,
+        ].filter(Boolean);
+        if (parts.length) fact(`${cardLabel} — ${en ? 'units' : 'الوحدات'}`, parts.join('، '));
+      }
+    }
   }
 
   // ── before → after, and what only one side holds ──

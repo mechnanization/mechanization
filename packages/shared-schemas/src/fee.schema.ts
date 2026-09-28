@@ -241,6 +241,22 @@ export const feeAssessmentSchema = z.object({
 });
 
 export type FeeAssessmentLine = z.infer<typeof feeAssessmentLineSchema>;
+
+/**
+ * An accountant's review of a bill a correction affected («فواتير تأثّرت
+ * بتصحيحات»). The bill is never changed; this records that it was looked at,
+ * at which figure, and what was decided.
+ */
+export const billBasisReviewSchema = z.object({
+  note: z
+    .string({ required_error: 'اكتب ما قرّرته' })
+    .trim()
+    .min(3, 'اكتب ما قرّرته')
+    .max(1000, 'الملاحظة طويلة جداً'),
+  /** Today's figure as the screen showed it. Refused if it has moved since. */
+  figure: z.string().min(1).max(64),
+});
+export type BillBasisReview = z.infer<typeof billBasisReviewSchema>;
 export type FeeAssessment = z.infer<typeof feeAssessmentSchema>;
 
 /** LBP, whole pounds. The ceiling is a typo guard, not a policy limit. */

@@ -37,6 +37,8 @@ export function ConfirmDialog({
   destructive = true,
   requireText,
   requireTextHint,
+  confirmDisabled = false,
+  children,
   onConfirm,
 }: {
   open: boolean;
@@ -50,6 +52,16 @@ export function ConfirmDialog({
   /** When set, Confirm stays disabled until this exact text is typed. */
   requireText?: string;
   requireTextHint?: string;
+  /**
+   * Holds Confirm until the reader has answered something `children` asks — a
+   * question whose answer decides what the confirmed action records.
+   */
+  confirmDisabled?: boolean;
+  /**
+   * Controls rendered under the description. The description is a paragraph,
+   * so a choice or a date field goes here rather than inside it.
+   */
+  children?: React.ReactNode;
   /** Awaited — the dialog stays open and busy until it settles. */
   onConfirm: () => Promise<void> | void;
 }): React.JSX.Element {
@@ -68,7 +80,7 @@ export function ConfirmDialog({
   }, [open]);
 
   const entered = typed.trim();
-  const blocked = Boolean(requireText) && entered !== requireText;
+  const blocked = confirmDisabled || (Boolean(requireText) && entered !== requireText);
   // Only a *wrong* entry is an error. An empty box is someone who has not
   // typed yet, and colouring it red reads as a rejection of nothing.
   const mismatch = Boolean(requireText) && entered.length > 0 && entered !== requireText;
@@ -114,6 +126,8 @@ export function ConfirmDialog({
             </div>
           </div>
         </DialogHeader>
+
+        {children}
 
         {requireText ? (
           <div className="space-y-2">

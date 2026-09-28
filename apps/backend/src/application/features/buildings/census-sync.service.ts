@@ -96,6 +96,8 @@ export class CensusSyncService {
      *    what the person already holds elsewhere.
      */
     scope?: 'CITIZEN' | 'REGISTRATION';
+    /** Why the flats of cards removed on this save stopped being held — see `CardEnding`. */
+    endings?: ReadonlyMap<string, CardEnding>;
   }): Promise<CensusSyncResult> {
     const result: CensusSyncResult = {
       occupanciesCreated: 0,
@@ -292,6 +294,7 @@ export class CensusSyncService {
       keep: [...claimed.keys()],
       actor: input.actor,
       scope: input.scope ?? 'CITIZEN',
+      endings: input.endings,
     });
 
     if (firstFailure) throw firstFailure;
@@ -808,6 +811,7 @@ export class CensusSyncService {
     keep: readonly string[];
     actor: { id: string; role: string };
     scope: 'CITIZEN' | 'REGISTRATION';
+    endings?: ReadonlyMap<string, CardEnding>;
   }): Promise<number> {
     const where = {
       citizenId: input.citizenId,
@@ -840,29 +844,66 @@ export class CensusSyncService {
     */
     const closing = await this.db.unitOccupancy.findMany({
       where,
-      select: { id: true, unitId: true, unit: { select: { buildingId: true, unitCode: true } } },
+      select: {
+        id: true,
+        unitId: true,
+        role: true,
+        fromDate: true,
+        unit: { select: { buildingId: true, unitCode: true } },
+      },
     });
 
     if (closing.length === 0) return 0;
 
-    const ended = await this.db.unitOccupancy.updateMany({
-      where,
-      data: { toDate: new Date() },
-    });
+    /*
+      Why each spell ends, when the officer said.
 
-    for (const row of closing) {
+      A card removed on the edit form is asked «سُجِّل بالخطأ أم انتهى؟» — see
+      `CardEnding`. Without an answer (an older client, a queued edit, a flat
+      unticked rather than a card removed) the spell closes as it always did:
+      today, with no reason, which the unit's history shows as an ordinary end.
+    */
+    const now = new Date();
+    const stamped = closing.map((row) => ({
+      row,
+      end: spellEnding(row, input.endings?.get(row.unitId), now),
+    }));
+    const plain = stamped.filter(({ end }) => end.reason === null).map(({ row }) => row.id);
+
+    let endedCount = 0;
+    if (plain.length > 0) {
+      const ended = await this.db.unitOccupancy.updateMany({
+        where: { ...where, id: { in: plain } },
+        data: { toDate: now },
+      });
+      endedCount += ended.count;
+    }
+    for (const { row, end } of stamped) {
+      if (end.reason === null) continue;
+      const ended = await this.db.unitOccupancy.updateMany({
+        where: { ...where, id: row.id },
+        data: { toDate: end.toDate, endReason: end.reason as never },
+      });
+      endedCount += ended.count;
+    }
+
+    for (const { row, end } of stamped) {
       this.events.emit('building.changed', {
         tenantSlug: this.tenantContext.tenantSlug,
         action: 'OCCUPANCY_ENDED',
         buildingId: row.unit.buildingId,
         before: { unitCode: row.unit.unitCode, citizenId: input.citizenId },
-        after: { occupancyId: row.id, via: 'REGISTRATION' },
+        after: {
+          occupancyId: row.id,
+          via: 'REGISTRATION',
+          ...(end.reason ? { reason: end.reason, toDate: end.toDate } : {}),
+        },
         actorId: input.actor.id,
         actorRole: input.actor.role,
       });
     }
 
-    return ended.count;
+    return endedCount;
   }
 
   /**
@@ -882,6 +923,7 @@ export class CensusSyncService {
     citizenId: string;
     actor: { id: string; role: string };
     scope?: 'CITIZEN' | 'REGISTRATION';
+    endings?: ReadonlyMap<string, CardEnding>;
   }): Promise<CensusSyncResult | null> {
     try {
       const result = await this.syncRegistration(input);
@@ -958,6 +1000,45 @@ export interface CensusSyncResult {
   vacanciesEnded: number;
   /** Structures that had no name until this card supplied one. */
   buildingsNamed: number;
+}
+
+/**
+ * What the officer said when they removed a saved card: it was never true
+ * («سُجِّل بالخطأ»), or the owner no longer holds it («بيع أو نقل ملكية», on
+ * the day it happened). Keyed by unit when handed to the sync, so each spell
+ * the removal closes carries it. A tenant who left is not one of these — the
+ * form sends them to «إنهاء الإيجار», which ends the card and keeps it.
+ */
+export interface CardEnding {
+  reason: 'RECORDED_IN_ERROR' | 'OWNERSHIP_TRANSFERRED';
+  endedAt?: Date;
+}
+
+/**
+ * How one spell closes, given what the officer said about the card behind it.
+ *
+ * `OWNERSHIP_TRANSFERRED` fits an owner's spell only — a tenant does not sell —
+ * so on any other spell the answer is ignored and the spell closes plainly, as
+ * `BuildingsService.endOccupancy` would refuse it. Its date is the sale's,
+ * never before the spell began (the register cannot have someone sell a flat
+ * before it recorded them owning it) and never in the future. An error closes
+ * as of now, as `TenancyService` closes one: it has no real end date.
+ * Exported for its spec.
+ */
+export function spellEnding(
+  spell: { role: string; fromDate: Date },
+  ending: CardEnding | undefined,
+  now: Date,
+): { reason: CardEnding['reason'] | null; toDate: Date } {
+  if (!ending) return { reason: null, toDate: now };
+  if (ending.reason === 'RECORDED_IN_ERROR') return { reason: 'RECORDED_IN_ERROR', toDate: now };
+  if (spell.role !== 'OWNER') return { reason: null, toDate: now };
+
+  const asked = ending.endedAt && ending.endedAt < now ? ending.endedAt : now;
+  return {
+    reason: 'OWNERSHIP_TRANSFERRED',
+    toDate: asked < spell.fromDate ? spell.fromDate : asked,
+  };
 }
 
 /**

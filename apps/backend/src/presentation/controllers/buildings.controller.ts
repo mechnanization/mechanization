@@ -2,12 +2,14 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestj
 import {
   buildingFilterSchema,
   confirmVacancySchema,
+  correctBuildingParcelSchema,
   createBuildingSchema,
   createDamageAssessmentSchema,
   endOccupancySchema,
   endVacancySchema,
   linkOccupancyOwnerSchema,
   logVisitSchema,
+  saveBuildingMatrixSchema,
   unitBlueprintSchema,
   updateBuildingSchema,
   updateUnitSchema,
@@ -15,12 +17,14 @@ import {
   upsertUnitSchema,
   type BuildingFilter,
   type ConfirmVacancyInput,
+  type CorrectBuildingParcelInput,
   type CreateBuildingInput,
   type CreateDamageAssessmentInput,
   type EndOccupancyInput,
   type EndVacancyInput,
   type LinkOccupancyOwnerInput,
   type LogVisitInput,
+  type SaveBuildingMatrixInput,
   type UnitBlueprint,
   type UpdateBuildingInput,
   type UpdateUnitInput,
@@ -29,7 +33,10 @@ import {
 } from '@mechanization/shared-schemas';
 import { BuildingsService } from '../../application/features/buildings/buildings.service';
 import { DamageService } from '../../application/features/buildings/damage.service';
+import { ParcelCorrectionService } from '../../application/features/buildings/parcel-correction.service';
+import { AuditService } from '../../application/features/audit/audit.service';
 import { TenancyService } from '../../application/features/citizens/tenancy.service';
+import { OwnershipService } from '../../application/features/citizens/ownership.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
@@ -76,8 +83,27 @@ export class BuildingsController {
   constructor(
     private readonly buildings: BuildingsService,
     private readonly damage: DamageService,
+    private readonly parcelCorrection: ParcelCorrectionService,
     private readonly tenancy: TenancyService,
+    private readonly ownership: OwnershipService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * «سجل التعديلات» — what was changed on this building and its units, by
+   * whom, from what to what, and why. Everyone who can read the building; changes
+   * only (see `AuditService.history`).
+   */
+  @Roles(...READ_ROLES)
+  @Get(':id/history')
+  history(@Param('id') id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
+    return this.audit.history({
+      entityType: 'Building',
+      entityId: id,
+      limit: Math.min(Math.max(Number(limit) || 30, 1), 100),
+      offset: Math.max(Number(offset) || 0, 0),
+    });
+  }
 
   private actor(user: SessionClaims) {
     return { id: user.sub, role: user.role ?? '' };
@@ -146,6 +172,49 @@ export class BuildingsController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.buildings.update(id, body, this.actor(user));
+  }
+
+  /**
+   * The building editor's save: the shell and the matrix difference in one
+   * transaction, all or nothing — or, with `dryRun`, what it would do.
+   */
+  @Roles(...WRITE_ROLES)
+  @Post(':id/matrix-save')
+  async saveMatrix(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(saveBuildingMatrixSchema)) body: SaveBuildingMatrixInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.buildings.saveMatrix(id, body, this.actor(user));
+  }
+
+  /**
+   * What «تصحيح رقم العقار» to `parcelNumber` would do — the new code, the
+   * structures already on that parcel, whether the pin falls inside it, and
+   * which citizen cards and cases follow — before anything is asked.
+   */
+  @Roles(...WRITE_ROLES)
+  @Get(':id/parcel-correction')
+  async parcelCorrectionPreview(
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(correctBuildingParcelSchema.pick({ parcelNumber: true })))
+    query: Pick<CorrectBuildingParcelInput, 'parcelNumber'>,
+  ) {
+    return this.parcelCorrection.preview(id, query.parcelNumber);
+  }
+
+  /**
+   * «تصحيح رقم العقار». Anyone who can edit a building may, with a reason —
+   * the reason and the full before/after go on the audit row.
+   */
+  @Roles(...WRITE_ROLES)
+  @Post(':id/parcel-correction')
+  async correctParcel(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(correctBuildingParcelSchema)) body: CorrectBuildingParcelInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.parcelCorrection.correct(id, body, this.actor(user));
   }
 
   @Roles('SUPER_ADMIN')
@@ -316,9 +385,21 @@ export class BuildingsController {
         afterStatus: body.afterStatus,
         vacancyBasis: body.vacancyBasis,
         vacancyNotes: body.vacancyNotes,
+        newOwnerId: body.newOwnerId,
       },
       this.actor(user),
     );
+  }
+
+  /**
+   * What ending an owner's spell would touch — the same preview «إنهاء الملكية»
+   * reads from the owner's file, reached from the flat. Refused, with the way
+   * out, when the owner's card covers the whole structure without naming flats.
+   */
+  @Roles(...WRITE_ROLES)
+  @Get('occupancies/:occupancyId/ownership-preview')
+  ownershipPreview(@Param('occupancyId') occupancyId: string) {
+    return this.ownership.previewOccupancy(occupancyId);
   }
 
   // ──────────────────────────────  Visits  ──────────────────────────────

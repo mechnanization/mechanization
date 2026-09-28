@@ -9,10 +9,12 @@ import { CadastreImportService } from './features/cadastre/cadastre-import.servi
 import { BuildingsService } from './features/buildings/buildings.service';
 import { CensusSyncService } from './features/buildings/census-sync.service';
 import { DamageService } from './features/buildings/damage.service';
+import { ParcelCorrectionService } from './features/buildings/parcel-correction.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
 import { LandlordLinkService } from './features/citizens/landlord-link.service';
 import { TenancyService } from './features/citizens/tenancy.service';
+import { OwnershipService } from './features/citizens/ownership.service';
 import { DocumentService } from './features/documents/document.service';
 import { IdentityService } from './features/identity/identity.service';
 import { OtpService } from './features/identity/otp.service';
@@ -21,6 +23,7 @@ import { RegistrationService } from './features/registration/registration.servic
 import { ReportingService } from './features/reporting/reporting.service';
 import { TenantService } from './features/tenant/tenant.service';
 import { FeesService } from './features/fees/fees.service';
+import { CorrectionBillsService } from './features/fees/correction-bills.service';
 import { PaymentLedgerService } from './features/fees/payment-ledger.service';
 import { StaffService } from './features/staff/staff.service';
 import { ZonesService } from './features/zones/zones.service';
@@ -56,7 +59,10 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CitizensService,
     LandlordLinkService,
     TenancyService,
+
+    OwnershipService,
     FeesService,
+    CorrectionBillsService,
     PaymentLedgerService,
     StaffService,
     ZonesService,
@@ -64,6 +70,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     BuildingsService,
     CensusSyncService,
     DamageService,
+    ParcelCorrectionService,
     BackupService,
     RecordReviewService,
     DataQualityService,
@@ -83,7 +90,10 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CitizensService,
     LandlordLinkService,
     TenancyService,
+
+    OwnershipService,
     FeesService,
+    CorrectionBillsService,
     PaymentLedgerService,
     StaffService,
     ZonesService,
@@ -91,6 +101,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     BuildingsService,
     CensusSyncService,
     DamageService,
+    ParcelCorrectionService,
     BackupService,
     RecordReviewService,
     DataQualityService,

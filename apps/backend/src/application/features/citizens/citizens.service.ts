@@ -5,6 +5,7 @@ import {
   buildCitizenPayload,
   cadastreFlags,
   FIELD_FLAG_KINDS,
+  flaggedPaths,
   IMPORT_COLUMNS,
   POSSIBLE_DUPLICATE_FLAG_PATH,
   statusForFlags,
@@ -31,7 +32,8 @@ import type {
   ParcelRepository,
 } from '../../../domain/interfaces/parcel-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
-import { CensusSyncService } from '../buildings/census-sync.service';
+import { fileChanges, highImpactChanges, type EditableFileView, type FileChanges } from './file-changes';
+import { CensusSyncService, type CardEnding } from '../buildings/census-sync.service';
 import {
   LandlordLinkService,
   type LandlordProposal,
@@ -1329,6 +1331,9 @@ export class CitizensService {
       select: {
         id: true,
         referenceNumber: true,
+        // Only to tell a cleared passport box from a box that never showed this
+        // number — see `citizenColumnsForEdit`.
+        identityDocType: true,
         registrations: {
           orderBy: { submittedAt: 'desc' },
           take: 1,
@@ -1339,8 +1344,21 @@ export class CitizensService {
             // whose number *changed* — which is what invalidates any answer
             // somebody gave about it. Both are read again, locked, inside the
             // transaction; this copy only decides which flags stand.
+            //
+            // The capacity, the structure and the current flats come back so a
+            // card this save removes can say which flats it claimed, for the
+            // census to close them with the officer's answer (`removals`).
             properties: {
-              select: { id: true, landlordPhone: true, landlordCitizenId: true, endedAt: true },
+              select: {
+                id: true,
+                landlordPhone: true,
+                landlordCitizenId: true,
+                endedAt: true,
+                occupancyType: true,
+                propertyType: true,
+                buildingId: true,
+                units: { where: { endedAt: null }, select: { unitId: true } },
+              },
             },
             flaggedFields: true,
           },
@@ -1373,6 +1391,26 @@ export class CitizensService {
           },
         );
       }
+    }
+
+    // The file as the form showed it, for the field-level trail — see `fileChanges`.
+    const fileBefore = await this.getEditable(citizen.id);
+
+    /*
+      A high-impact correction carries its reason (the user's decision of
+      2026-09-27): refused here, before anything is written, naming the fields.
+      The review step asks for it; a client that skipped it is told what to add.
+    */
+    const needsReason = highImpactChanges(
+      fileBefore,
+      submittedView(input.payload),
+      flaggedPaths(input.payload.flags),
+    );
+    if (needsReason.length > 0 && !input.payload.changeReason) {
+      throw new ValidationError('اذكر سبب هذا التعديل — يمسّ حقولاً لا تُعدَّل دون سبب', {
+        code: 'REASON_REQUIRED',
+        fields: needsReason,
+      });
     }
 
     /*
@@ -1513,6 +1551,60 @@ export class CitizensService {
     const keptIds = new Set(entries.map(({ id }) => id).filter(Boolean) as string[]);
     const removedIds = [...existingIds].filter((id) => !keptIds.has(id));
 
+    /*
+      Why each removed card is going, when the officer was asked.
+
+      Checked before anything is written, like the ids above: an answer about a
+      card this save keeps, or a sale on a card that owns nothing, is a form out
+      of step with the file, and guessing which half is right would stamp a
+      reason on the wrong flats.
+    */
+    const removals = input.payload.removals ?? [];
+    const removedCards = new Map(
+      (existing?.properties ?? [])
+        .filter((property) => removedIds.includes(property.id))
+        .map((property) => [property.id, property]),
+    );
+    for (const removal of removals) {
+      const card = removedCards.get(removal.propertyId);
+      if (!card) {
+        throw new ConflictError('بطاقة ذُكر سبب حذفها ليست من البطاقات المحذوفة — حدّث الصفحة', {
+          propertyId: removal.propertyId,
+        });
+      }
+      if (removal.reason === 'OWNERSHIP_TRANSFERRED' && card.occupancyType !== 'OWNER') {
+        throw new ValidationError('«بيع أو نقل ملكية» يخص بطاقة مالك فقط', {
+          propertyId: removal.propertyId,
+        });
+      }
+    }
+
+    /*
+      A flat this save takes off the owner's file — a deleted owner's card, a
+      row dropped from one, a card no longer «مالك» — while a tenant's link
+      still names this person as its landlord.
+
+      Taking it off says the ownership was entered by mistake; the link says
+      the opposite, and it is the tenant's record. Left standing, the tenant's
+      next save would put this person back on the flat
+      (`reconcileRegistration`). So the save stops before anything is written,
+      as «إنهاء الملكية» does for a correction, and names whose card to unlink.
+    */
+    const linkedTenants = await this.tenantsLinkedToDroppedOwnership(
+      citizen.id,
+      (existing?.properties ?? []).filter((property) => !property.endedAt),
+      entries.map(({ id, entry }) => ({ id, props: entry.props })),
+    );
+    if (linkedTenants.length > 0) {
+      const names = [...new Set(linkedTenants.map((tenant) => tenant.name))];
+      throw new ConflictError(
+        `${names.join('، ')} ${names.length === 1 ? 'مربوط' : 'مربوطون'} بهذا الشخص مالكاً لوحدة يحذفها هذا الحفظ من ملفه. ألغِ الربط من ${names.length === 1 ? 'بطاقة المستأجر' : 'بطاقات المستأجرين'} أولاً ثم احفظ، أو استخدم «إنهاء الملكية» إن كان قد باعها`,
+        { code: 'TENANTS_LINKED', linkedTenants },
+      );
+    }
+
+    const endings = await this.removalEndings(removals, removedCards);
+
     /** What undoing links during this save wrote, emitted once it commits. */
     const revertEvents: PendingEvent[] = [];
     const unlinkedBySave: Array<{ propertyEntryId: string; report: RevertReport }> = [];
@@ -1527,7 +1619,7 @@ export class CitizensService {
     const registrationId = await this.db.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: citizen.id },
-        data: citizenColumnsForEdit(input.payload),
+        data: citizenColumnsForEdit(input.payload, { identityDocType: citizen.identityDocType }),
       });
 
       // A citizen with no registration at all (never expected from this form,
@@ -1828,6 +1920,7 @@ export class CitizensService {
       registrationId,
       citizenId: citizen.id,
       actor: input.actor,
+      endings,
     });
 
     /*
@@ -1859,13 +1952,40 @@ export class CitizensService {
       input.actor,
     );
 
+    /*
+      Field by field, what this save changed — the question «who changed this,
+      and what was it before?» the counts below could never answer. Sensitive
+      fields are named, never valued (`SENSITIVE_FILE_FIELDS`).
+    */
+    const changes = fileChanges(fileBefore, await this.getEditable(citizen.id));
+
     this.events.emit('citizen.changed', {
       tenantSlug: input.tenantSlug,
       citizenId: citizen.id,
       action: 'CITIZEN_UPDATED',
+      ...(Object.keys(changes.before).length > 0 ? { before: changes.before } : {}),
       after: {
+        ...changes.after,
+        ...(changes.changed.length > 0 ? { changed: changes.changed } : {}),
+        ...(changes.cards.length > 0 ? { cards: changes.cards } : {}),
+        ...(input.payload.changeReason ? { reason: input.payload.changeReason } : {}),
+        // A real move («تغيير الإقامة»): the day it took effect. Only with a residence that changed.
+        ...(input.payload.movedOn && changes.changed.includes('residence')
+          ? { movedOn: input.payload.movedOn.toISOString() }
+          : {}),
         propertyCount: entries.length,
         propertiesRemoved: removedIds.length,
+        // What the officer said about each removed card — the reason its flats
+        // closed the way they did in the census.
+        ...(removals.length > 0
+          ? {
+              removals: removals.map((removal) => ({
+                propertyId: removal.propertyId,
+                reason: removal.reason,
+                ...(removal.endedAt ? { endedAt: removal.endedAt } : {}),
+              })),
+            }
+          : {}),
         status: nextStatus,
         unestablishedFields: flags.length,
         ...(duplicateFlagResolved
@@ -1896,6 +2016,260 @@ export class CitizensService {
        * because each one moves somebody else's bill.
        */
       landlordLinkChanges,
+    };
+  }
+
+  /**
+   * The flats each removed card claimed, keyed for the census sync, with what
+   * the officer said about the card. See `CardEnding`.
+   *
+   * A card claims a flat the way `CensusSyncService` reads it: each current
+   * row's `unitId`, or — a منزل with no rows — the one unit of its structure,
+   * inferred only when the structure has exactly one. A flat claimed twice by
+   * removed cards takes the first answer; the sync only closes a spell nothing
+   * kept still claims, so a flat another current card holds is untouched.
+   */
+  private async removalEndings(
+    removals: ReadonlyArray<{ propertyId: string; reason: CardEnding['reason']; endedAt?: Date }>,
+    cards: ReadonlyMap<
+      string,
+      { propertyType: string; buildingId: string | null; units: Array<{ unitId: string | null }> }
+    >,
+  ): Promise<Map<string, CardEnding>> {
+    const endings = new Map<string, CardEnding>();
+
+    for (const removal of removals) {
+      const card = cards.get(removal.propertyId);
+      if (!card) continue;
+
+      let unitIds = card.units.map((row) => row.unitId).filter((id): id is string => Boolean(id));
+      if (unitIds.length === 0 && card.units.length === 0 && card.buildingId && card.propertyType === 'HOUSE') {
+        const units = await this.db.unit.findMany({
+          where: { buildingId: card.buildingId },
+          select: { id: true },
+          take: 2,
+        });
+        if (units.length === 1) unitIds = [units[0]!.id];
+      }
+
+      for (const unitId of unitIds) {
+        if (endings.has(unitId)) continue;
+        endings.set(unitId, {
+          reason: removal.reason,
+          ...(removal.endedAt ? { endedAt: removal.endedAt } : {}),
+        });
+      }
+    }
+
+    return endings;
+  }
+
+  /**
+   * Tenants whose link names this person as the landlord of a flat the save
+   * takes off their file — see the check in `update`.
+   *
+   * A flat is taken off when the owner's card holding it is deleted, turned
+   * into something other than «مالك», or loses the row naming it — unless
+   * another owner's card this save keeps still holds it. A card with no rows
+   * holds its whole structure. A tenant's card with no rows claims the flats
+   * the tenant is recorded living in, the census's own rule.
+   */
+  private async tenantsLinkedToDroppedOwnership(
+    ownerId: string,
+    stored: ReadonlyArray<{
+      id: string;
+      occupancyType: string;
+      buildingId: string | null;
+      units: ReadonlyArray<{ unitId: string | null }>;
+    }>,
+    kept: ReadonlyArray<{
+      id?: string;
+      props: {
+        occupancyType?: unknown;
+        buildingId?: unknown;
+        units?: ReadonlyArray<{ unitId?: string | null }> | null;
+      };
+    }>,
+  ): Promise<Array<{ citizenId: string; name: string; propertyEntryId: string }>> {
+    const keptOwner = kept.filter((card) => card.props.occupancyType === 'OWNER');
+    const rowsOf = (card: (typeof kept)[number]) =>
+      (card.props.units ?? []).map((row) => row.unitId).filter((id): id is string => Boolean(id));
+    const keptFlats = new Set(keptOwner.flatMap(rowsOf));
+    const keptStructures = new Set(
+      keptOwner
+        .filter((card) => (card.props.units ?? []).length === 0 && typeof card.props.buildingId === 'string')
+        .map((card) => card.props.buildingId as string),
+    );
+    const keptOwnerById = new Map(
+      keptOwner.filter((card) => card.id).map((card) => [card.id as string, card]),
+    );
+
+    const droppedFlats = new Set<string>();
+    const droppedFlatBuildings = new Set<string>();
+    const droppedStructures = new Set<string>();
+    for (const card of stored) {
+      if (card.occupancyType !== 'OWNER') continue;
+      if (card.buildingId && keptStructures.has(card.buildingId)) continue;
+      const still = keptOwnerById.get(card.id);
+      if (card.units.length === 0) {
+        if (!still && card.buildingId) droppedStructures.add(card.buildingId);
+        continue;
+      }
+      const stillRows = new Set(still ? rowsOf(still) : []);
+      for (const row of card.units) {
+        if (!row.unitId || stillRows.has(row.unitId) || keptFlats.has(row.unitId)) continue;
+        droppedFlats.add(row.unitId);
+        if (card.buildingId) droppedFlatBuildings.add(card.buildingId);
+      }
+    }
+    if (droppedFlats.size === 0 && droppedStructures.size === 0) return [];
+
+    const tenantCards = await this.db.propertyEntry.findMany({
+      where: {
+        landlordCitizenId: ownerId,
+        endedAt: null,
+        occupancyType: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+        OR: [
+          { units: { some: { unitId: { in: [...droppedFlats] }, endedAt: null } } },
+          { buildingId: { in: [...droppedStructures, ...droppedFlatBuildings] } },
+        ],
+      },
+      select: {
+        id: true,
+        buildingId: true,
+        units: { where: { endedAt: null }, select: { unitId: true } },
+        registration: {
+          select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } } },
+        },
+      },
+    });
+
+    const linked: Array<{ citizenId: string; name: string; propertyEntryId: string }> = [];
+    for (const card of tenantCards) {
+      const tenant = card.registration.citizen;
+      let claims = Boolean(card.buildingId && droppedStructures.has(card.buildingId));
+      if (!claims && card.units.length > 0) {
+        claims = card.units.some((row) => row.unitId && droppedFlats.has(row.unitId));
+      } else if (!claims && card.buildingId) {
+        const spells = await this.db.unitOccupancy.findMany({
+          where: {
+            citizenId: tenant.id,
+            toDate: null,
+            role: { not: 'OWNER' as never },
+            unit: { buildingId: card.buildingId },
+          },
+          select: { unitId: true },
+        });
+        claims = spells.some((spell) => droppedFlats.has(spell.unitId));
+      }
+      if (!claims) continue;
+      linked.push({
+        citizenId: tenant.id,
+        name: [tenant.firstName, tenant.middleName, tenant.lastName].filter(Boolean).join(' '),
+        propertyEntryId: card.id,
+      });
+    }
+    return linked;
+  }
+
+  /**
+   * «مراجعة التعديلات» — what saving this edit would do, read and never written.
+   *
+   * The same comparison the save audits (`fileChanges`) between the file as it
+   * stands and the file this payload would leave, and the same rules the save
+   * enforces, asked early: whether a reason is needed (`highImpactChanges`),
+   * and what would refuse it — a colleague's newer save, a tenant still linked
+   * to an ownership this edit takes away. Plus what else the edit touches that
+   * the form cannot show: the login it changes, the tenants' files that carry
+   * this person's name, and the open bills calculated on what it corrects —
+   * which a correction never changes, and which the accountant's list names.
+   */
+  async reviewEdit(citizenId: string, payload: AdminCitizenUpdateSubmission): Promise<EditReview> {
+    const before = await this.getEditable(citizenId);
+    const after = submittedView(payload);
+    const changes = fileChanges(before, after);
+    const reasonRequired = highImpactChanges(before, after, flaggedPaths(payload.flags));
+
+    const blockers: EditReview['blockers'] = [];
+    if (payload.expectedVersion && payload.expectedVersion !== before.version) {
+      blockers.push({
+        code: 'STALE',
+        message: before.lastStaffEdit?.name
+          ? `عدّل ${before.lastStaffEdit.name} هذا الملف بعد أن فتحتَه. حدِّث الصفحة لترى تعديلاته.`
+          : 'عُدِّل هذا الملف بعد أن فتحتَه. حدِّث الصفحة لترى التعديلات.',
+      });
+    }
+    const linked = await this.tenantsLinkedToDroppedOwnership(
+      citizenId,
+      before.properties.map((card) => ({
+        id: card.id,
+        occupancyType: card.occupancyType,
+        buildingId: card.buildingId ?? null,
+        units: card.units.map((row) => ({ unitId: row.unitId ?? null })),
+      })),
+      payload.properties.map((card) => ({ id: (card as { id?: string }).id, props: card as never })),
+    );
+    if (linked.length > 0) {
+      blockers.push({
+        code: 'TENANTS_LINKED',
+        message: 'مستأجر مربوط بهذا الشخص مالكاً لوحدة يحذفها هذا الحفظ — ألغِ الربط من بطاقته أولاً، أو استخدم «إنهاء الملكية» إن كان قد باعها',
+        tenants: linked,
+      });
+    }
+
+    const nameOrPhone = changes.changed.some((field) => NAME_AND_PHONE.has(field));
+    const tenantCards = nameOrPhone
+      ? await this.db.propertyEntry.findMany({
+          where: { landlordCitizenId: citizenId, endedAt: null },
+          select: {
+            registration: {
+              select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } } },
+            },
+          },
+        })
+      : [];
+    const tenants = new Map(
+      tenantCards.map((card) => [
+        card.registration.citizen.id,
+        [card.registration.citizen.firstName, card.registration.citizen.middleName, card.registration.citizen.lastName]
+          .filter(Boolean)
+          .join(' '),
+      ]),
+    );
+
+    const touchesBilling =
+      changes.changed.includes('residence') ||
+      changes.cards.some(
+        (card) =>
+          card.kind !== 'changed' ||
+          Boolean(card.rows) ||
+          (card.fields ?? []).some((field) => BILLING_FIELDS.has(field.field)),
+      );
+    const open = touchesBilling
+      ? await this.db.citizenPayment.findMany({
+          where: { citizenId, paymentStatus: { in: ['UNPAID', 'OVERDUE', 'PENDING_REVIEW'] as never } },
+          select: { amount: true, paidAmount: true, currency: true },
+        })
+      : [];
+
+    return {
+      version: before.version,
+      changes,
+      reasonRequired,
+      blockers,
+      impacts: {
+        loginChanges: changes.changed.includes('phone'),
+        tenantsShowingName: [...tenants].map(([citizenId, name]) => ({ citizenId, name })),
+        openBills:
+          open.length > 0
+            ? {
+                count: open.length,
+                outstanding: open.reduce((sum, bill) => sum + Number(bill.amount) - Number(bill.paidAmount), 0),
+                currency: open[0]!.currency,
+              }
+            : null,
+        cardsRemoved: changes.cards.filter((card) => card.kind === 'removed').length,
+      },
     };
   }
 
@@ -1973,6 +2347,10 @@ export class CitizensService {
     tenantSlug: string;
     citizenId: string;
     isActive: boolean;
+    /** Why — the trail's answer to «why did this file stop being billed?». */
+    reason?: string;
+    /** A deactivation because they moved away: the day they left. */
+    movedOn?: Date;
     actor: { id: string; role: string };
   }) {
     const citizen = await this.db.user.findFirst({
@@ -1990,6 +2368,14 @@ export class CitizensService {
       tenantSlug: input.tenantSlug,
       citizenId: citizen.id,
       action: input.isActive ? 'CITIZEN_REACTIVATED' : 'CITIZEN_DEACTIVATED',
+      ...(input.reason || input.movedOn
+        ? {
+            after: {
+              ...(input.reason ? { reason: input.reason } : {}),
+              ...(input.movedOn ? { movedOn: input.movedOn.toISOString() } : {}),
+            },
+          }
+        : {}),
       actorId: input.actor.id,
       actorRole: input.actor.role,
     });
@@ -2191,8 +2577,13 @@ export class CitizensService {
  *
  *  - The identity document. A Lebanese citizen is no longer asked for one, so
  *    this form cannot be the thing that erases the real numbers already on
- *    file. A non-Lebanese person's passport number is written only when one is
- *    given; a blank field keeps what is stored.
+ *    file. A non-Lebanese person's passport number is written when one is
+ *    given, and cleared only when the box that showed it comes back empty:
+ *    the stored document is a passport (so the form loaded it into that box)
+ *    and the submission carries the field, blank. Anything else — a box that
+ *    never held this number, an older client, a flagged field — keeps what is
+ *    stored. Before this a wrong number typed at a doorstep could be replaced
+ *    but never removed.
  *  - A non-resident record's household columns. A person converted to «غير
  *    مقيم في البلدة» keeps whatever was filed for them as a household; the form stops
  *    asking and stops showing, and nothing is erased by the conversion. The
@@ -2201,6 +2592,7 @@ export class CitizensService {
  */
 export function citizenColumnsForEdit(
   payload: AdminCitizenUpdateSubmission,
+  stored: { identityDocType: string | null } = { identityDocType: null },
 ): Prisma.UserUpdateInput {
   const { personal, contact } = payload;
   const shared = {
@@ -2222,6 +2614,11 @@ export function citizenColumnsForEdit(
   }
 
   const passport = identityDocumentOf(payload);
+  const passportCleared =
+    personal.isLebanese === false &&
+    stored.identityDocType === 'PASSPORT' &&
+    'identityDocNumber' in personal &&
+    !String(personal.identityDocNumber ?? '').trim();
 
   return {
     ...shared,
@@ -2247,6 +2644,57 @@ export function citizenColumnsForEdit(
           identityDocType: passport.identityDocType as never,
           identityDocNumber: passport.identityDocNumber,
         }
-      : {}),
+      : passportCleared
+        ? { identityDocType: null, identityDocNumber: null }
+        : {}),
+  };
+}
+
+/**
+ * A submitted edit, read as the file it would leave — the shape `getEditable`
+ * returns — so it can be compared with the stored one before anything is
+ * written (`highImpactChanges`, the review step).
+ */
+function submittedView(payload: AdminCitizenUpdateSubmission): EditableFileView {
+  return {
+    residence: payload.residence,
+    notes: payload.notes ?? null,
+    personal: payload.personal as Record<string, unknown>,
+    contact: payload.contact as Record<string, unknown>,
+    properties: payload.properties.map((card, index) => ({
+      ...(card as Record<string, unknown>),
+      // A new card has no id yet; a placeholder keeps it from matching a stored one.
+      id: (card as { id?: string }).id ?? `new:${index}`,
+    })) as EditableFileView['properties'],
+  };
+}
+
+/** A name or number that tenants' files show for their landlord. */
+const NAME_AND_PHONE = new Set(['firstName', 'middleName', 'lastName', 'phone']);
+
+/** Card fields an assessment is calculated from. */
+const BILLING_FIELDS = new Set(['unitArea', 'unitStatus', 'unitType', 'propertyType', 'occupancyType', 'landType', 'shares']);
+
+/** What «مراجعة التعديلات» shows — see `CitizensService.reviewEdit`. */
+export interface EditReview {
+  /** The file's version now — the form sends it back as `expectedVersion`. */
+  version: string;
+  changes: FileChanges;
+  /** High-impact fields this edit corrects: the save needs a reason. */
+  reasonRequired: string[];
+  /** What would refuse the save — shown before it is pressed. */
+  blockers: Array<{
+    code: 'STALE' | 'TENANTS_LINKED';
+    message: string;
+    tenants?: Array<{ citizenId: string; name: string; propertyEntryId: string }>;
+  }>;
+  impacts: {
+    /** Citizens sign in with their reference number and phone. */
+    loginChanges: boolean;
+    /** Tenants whose files show this person as their landlord. */
+    tenantsShowingName: Array<{ citizenId: string; name: string }>;
+    /** Open bills calculated on what this edit corrects — never changed by it. */
+    openBills: { count: number; outstanding: number; currency: string } | null;
+    cardsRemoved: number;
   };
 }

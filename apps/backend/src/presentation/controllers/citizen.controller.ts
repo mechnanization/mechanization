@@ -12,16 +12,22 @@ import {
   adminCreateCitizenSubmissionSchema,
   adminUpdateCitizenSubmissionSchema,
   citizenImportSchema,
+  endOwnershipSchema,
   endTenancySchema,
+  setCitizenActiveSchema,
 } from '@mechanization/shared-schemas';
 import type {
   AdminCitizenSubmission,
   AdminCitizenUpdateSubmission,
   CitizenImportRequest,
+  EndOwnershipInput,
   EndTenancyInput,
+  SetCitizenActive,
 } from '@mechanization/shared-schemas';
 import { CitizensService } from '../../application/features/citizens/citizens.service';
 import { LandlordLinkService } from '../../application/features/citizens/landlord-link.service';
+import { OwnershipService } from '../../application/features/citizens/ownership.service';
+import { AuditService } from '../../application/features/audit/audit.service';
 import { TenancyService } from '../../application/features/citizens/tenancy.service';
 import { ReportingService } from '../../application/features/reporting/reporting.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
@@ -72,7 +78,25 @@ export class CitizenController {
     private readonly reporting: ReportingService,
     private readonly landlordLinkService: LandlordLinkService,
     private readonly tenancy: TenancyService,
+    private readonly ownership: OwnershipService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * «سجل التعديلات» — what was changed on this file, by whom, from what to
+   * what, and why. Open to everyone who can open the file; changes only, never
+   * who viewed it or how it is being reviewed (see `AuditService.history`).
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Get(':id/history')
+  history(@Param('id') id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
+    return this.audit.history({
+      entityType: 'User',
+      entityId: id,
+      limit: Math.min(Math.max(Number(limit) || 30, 1), 100),
+      offset: Math.max(Number(offset) || 0, 0),
+    });
+  }
 
   /**
    * The registry table: every citizen with their registration summary and
@@ -322,6 +346,44 @@ export class CitizenController {
   }
 
   /**
+   * What ending this ownership would touch — which flats, whether a co-owner
+   * keeps each, whether the seller lived there, which tenants' links name them
+   * — so «إنهاء الملكية» asks only what applies.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Get('ownerships/:propertyEntryId/end-preview')
+  ownershipEndPreview(@Param('propertyEntryId') propertyEntryId: string) {
+    return this.ownership.previewCard(propertyEntryId);
+  }
+
+  /**
+   * «إنهاء الملكية» from the owner's file: sold (the card stays as history,
+   * the buyer recorded or asked for) or recorded in error. The same operation
+   * the unit matrix runs for an owner's spell.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Post('ownerships/:propertyEntryId/end')
+  endOwnership(
+    @Param('propertyEntryId') propertyEntryId: string,
+    @Body(new ZodValidationPipe(endOwnershipSchema)) body: EndOwnershipInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.ownership.endCard(
+      propertyEntryId,
+      {
+        reason: body.reason,
+        endedAt: body.endedAt,
+        rowIds: body.rowIds,
+        newOwnerId: body.newOwnerId,
+        afterStatus: body.afterStatus,
+        vacancyBasis: body.vacancyBasis,
+        vacancyNotes: body.vacancyNotes,
+      },
+      { id: user.sub, role: user.role ?? 'STAFF' },
+    );
+  }
+
+  /**
    * What «إلغاء الربط» would do, read when its confirmation opens — so the
    * clerk is told which flats leave the owner's file, and whether bills have
    * been raised since, before deciding.
@@ -528,6 +590,21 @@ export class CitizenController {
     });
   }
 
+  /**
+   * «مراجعة التعديلات» — the same edit `PATCH` takes, read and never written:
+   * what it changes, what else it touches, what would refuse it, and whether
+   * it needs a reason. The form shows it before the officer presses save.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Post(':id/edit-review')
+  async reviewEdit(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(adminUpdateCitizenSubmissionSchema))
+    payload: AdminCitizenUpdateSubmission,
+  ) {
+    return this.citizens.reviewEdit(id, payload);
+  }
+
   /** A clerk correcting a citizen already on file. */
   @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
   @Patch(':id')
@@ -556,13 +633,15 @@ export class CitizenController {
   async setActive(
     @Param('tenantSlug') tenantSlug: string,
     @Param('id') id: string,
-    @Body('isActive') isActive: boolean,
+    @Body(new ZodValidationPipe(setCitizenActiveSchema)) body: SetCitizenActive,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.citizens.setActive({
       tenantSlug,
       citizenId: id,
-      isActive: isActive !== false,
+      isActive: body.isActive,
+      ...(body.reason ? { reason: body.reason } : {}),
+      ...(body.movedOn ? { movedOn: body.movedOn } : {}),
       actor: { id: user.sub, role: user.role ?? '' },
     });
   }

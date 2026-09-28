@@ -15,11 +15,18 @@ import {
   hasDuplicateFindings,
   logApiError,
   reviewCitizenDuplicates,
+  reviewCitizenEdit,
   staleEditOf,
   updateCase,
   updateCitizen,
 } from '@/lib/api-client';
-import type { DuplicateReviewAnswer, DuplicateReviewFindings, StaleEdit } from '@/lib/api-client';
+import type {
+  CitizenEditReview,
+  DuplicateReviewAnswer,
+  DuplicateReviewFindings,
+  StaleEdit,
+} from '@/lib/api-client';
+import { EditReviewDialog } from '@/components/admin/edit-review-dialog';
 import type {
   BuildingDetail,
   CaseSummary,
@@ -900,8 +907,18 @@ export function CitizenEditor({
   const fileVersionRef = useRef<string | null>(null);
   /** Who last changed this file, when the server said. */
   const [lastStaffEdit, setLastStaffEdit] = useState<CitizenFormData['lastStaffEdit']>(null);
-  /** A save refused because somebody changed the file after it was opened. */
-  const [staleSave, setStaleSave] = useState<{ values: CitizenFormValues; stale: StaleEdit } | null>(
+  /**
+   * A save refused because somebody changed the file after it was opened —
+   * with the review the officer had already confirmed, so saving over does not
+   * ask for their reason a second time.
+   */
+  const [staleSave, setStaleSave] = useState<{
+    values: CitizenFormValues;
+    stale: StaleEdit;
+    reviewed?: { changeReason?: string };
+  } | null>(null);
+  /** «مراجعة التعديلات», waiting for the officer to confirm or go back. */
+  const [editReview, setEditReview] = useState<{ values: CitizenFormValues; review: CitizenEditReview } | null>(
     null,
   );
   const [error, setError] = useState<string | null>(null);
@@ -1281,6 +1298,11 @@ export function CitizenEditor({
        * pre-check is not run a second time for the same values.
        */
       duplicateAnswer?: DuplicateReviewAnswer | null,
+      /**
+       * «مراجعة التعديلات», confirmed — with the reason the officer gave, if
+       * any. Absent means the review has not been shown yet for these values.
+       */
+      reviewed?: { changeReason?: string },
     ) => {
       if (!token) return;
 
@@ -1323,6 +1345,36 @@ export function CitizenEditor({
           }
         } catch (caught) {
           logApiError(caught);
+        }
+      }
+
+      /*
+        «مراجعة التعديلات» — on an edit, what the save will change, what else
+        it touches, what would refuse it, and whether it needs a reason, shown
+        before anything is written: before the new structures below are
+        created, so an officer who goes back to the form leaves nothing behind.
+
+        Read from the server, which applies the same rules the save enforces.
+        If it cannot be read the save goes on — the server refuses there what
+        it would have flagged here — except a validation error, which the save
+        would only repeat.
+      */
+      if (citizenId && !queueId && reviewed === undefined) {
+        try {
+          const review = await reviewCitizenEdit(tenant, token, citizenId, {
+            ...toSubmission(values),
+            ...(fileVersionRef.current ? { expectedVersion: fileVersionRef.current } : {}),
+          });
+          setEditReview({ values, review });
+          setSubmitting(false);
+          return;
+        } catch (caught) {
+          logApiError(caught);
+          if (caught instanceof ApiRequestError && caught.status === 400) {
+            setError(caught.payload.message);
+            setSubmitting(false);
+            return;
+          }
         }
       }
 
@@ -1508,6 +1560,7 @@ export function CitizenEditor({
           const updated = await updateCitizen(tenant, token, citizenId, {
             ...payload,
             ...(fileVersionRef.current ? { expectedVersion: fileVersionRef.current } : {}),
+            ...(reviewed?.changeReason ? { changeReason: reviewed.changeReason } : {}),
             ...(duplicateCleared && duplicateClearedReason.trim().length >= 4
               ? {
                   duplicateReview: {
@@ -1607,7 +1660,7 @@ export function CitizenEditor({
         // Somebody saved this file after it was opened — ask before replacing.
         const stale = citizenId ? staleEditOf(caught) : null;
         if (stale) {
-          setStaleSave({ values, stale });
+          setStaleSave({ values, stale, reviewed });
           setSubmitting(false);
           return;
         }
@@ -1966,6 +2019,11 @@ export function CitizenEditor({
         onValuesChange={rememberDraft}
         locale={locale}
         lockedCensusTarget={lockedCensusTarget}
+        onDeactivated={() => {
+          forgetDraft();
+          toast.success(locale === 'en' ? 'File deactivated. It is kept and can be reactivated.' : 'عُطِّل الملف. يبقى محفوظاً ويمكن إعادة تفعيله.');
+          shellNavigate(router, `${base}/citizens/${citizenId}`);
+        }}
       />
 
       {/*
@@ -2052,8 +2110,22 @@ export function CitizenEditor({
           setStaleSave(null);
           if (!held) return;
           fileVersionRef.current = held.stale.version;
-          await submit(held.values, true, null);
+          await submit(held.values, true, null, held.reviewed);
         }}
+      />
+
+      <EditReviewDialog
+        review={editReview?.review ?? null}
+        open={editReview !== null}
+        initialReason={editReview?.values.residenceMove?.reason}
+        onCancel={() => setEditReview(null)}
+        onConfirm={(changeReason) => {
+          const held = editReview;
+          setEditReview(null);
+          if (!held) return;
+          void submit(held.values, true, null, { changeReason });
+        }}
+        locale={locale}
       />
 
       {duplicateReview ? (

@@ -228,6 +228,16 @@ export async function backfillBuildings(args: Args): Promise<void> {
           building.id,
         );
       }
+      // And the suffixes «تصحيح رقم العقار» retired: never allocated again, by
+      // this script any more than by `BuildingsService.create`.
+      for (const retired of await db.buildingCodeAlias.findMany({
+        select: { parcelNumber: true, codeSuffix: true },
+      })) {
+        takenSuffixes.set(retired.parcelNumber, [
+          ...(takenSuffixes.get(retired.parcelNumber) ?? []),
+          retired.codeSuffix,
+        ]);
+      }
 
       // Floor → sequences already taken, per building. Seeded from whatever is
       // on file so a re-run appends to a matrix instead of colliding with its

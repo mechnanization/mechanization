@@ -26,6 +26,7 @@ import {
   defaultUnitTypeFor,
   formatBuildingCode,
   getLabels,
+  isOccupiableLifecycle,
   isUnsurveyableShell,
   nextBuildingSuffix,
   STRUCTURE_TYPE,
@@ -35,24 +36,26 @@ import {
   type UnitType,
 } from '@mechanization/shared-schemas';
 import {
-  addUnit,
   ApiRequestError,
   checkPropertyNumber,
   createBuilding,
-  deleteUnit,
   duplicateBuildingsOf,
   getBuilding,
   getBuildings,
   getZoneParcelIndex,
   getZones,
   logApiError,
-  updateBuilding,
-  updateUnit,
+  saveBuildingMatrix,
   type BuildingDetail,
+  type BuildingMatrixSave,
+  type BuildingMatrixSaveResult,
   type DuplicateBuildingCandidate,
+  type ParcelCorrectionResult,
   type UnitWithOccupants,
   type ZoneSummary,
 } from '@/lib/api-client';
+import { ParcelCorrectionDialog } from '@/components/admin/parcel-correction-dialog';
+import { BuildingReviewDialog } from '@/components/admin/building-review-dialog';
 import {
   clearBuildingDraft,
   loadBuildingDraft,
@@ -612,13 +615,67 @@ export function BuildingEditor({
    * including the reload after a half-refused save.
    */
   const loadedUpdatedAtRef = useRef<string | null>(null);
+  /** The building as loaded — what «مراجعة التعديلات» compares the save with. */
+  const loadedDetailRef = useRef<BuildingDetail | null>(null);
+  /** A rehearsed save waiting for the officer to confirm — see `handleSave`. */
+  const [buildingReview, setBuildingReview] = useState<{
+    save: BuildingMatrixSave;
+    result: BuildingMatrixSaveResult;
+  } | null>(null);
+  /**
+   * The lifecycle as loaded, and how many people are recorded in the units
+   * right now — so moving a lived-in building to «مهدوم» says what it leaves
+   * behind. See the notice under «الحالة الإنشائية».
+   */
+  const [loadedLifecycle, setLoadedLifecycle] = useState<BuildingLifecycle | null>(null);
+  const [liveOccupants, setLiveOccupants] = useState(0);
+  /** Codes retired by «تصحيح رقم العقار», newest first — shown under the code. */
+  const [previousCodes, setPreviousCodes] = useState<NonNullable<BuildingDetail['previousCodes']>>([]);
+  const [correctingParcel, setCorrectingParcel] = useState(false);
+
+  /*
+    A correction landed. Only what the server changed is applied — the parcel,
+    the code, the shared parcels and the version — so anything else the officer
+    has typed in the form stays theirs to save. The pin is claimed for the new
+    parcel *before* the parcel changes, or the parcel lookup below would drop it
+    as a pin left on another parcel.
+  */
+  const applyParcelCorrection = useCallback(
+    (result: ParcelCorrectionResult, oldParcel: string) => {
+      pinParcelRef.current = result.building.parcelNumber;
+      setParcelNumber(result.building.parcelNumber);
+      setSharedParcels(result.building.sharedParcelNumbers);
+      setSuffix(result.building.codeSuffix);
+      setSavedCode(result.building.code);
+      loadedUpdatedAtRef.current = result.building.updatedAt;
+      setPreviousCodes((current) => [
+        { code: result.previousCode, parcelNumber: oldParcel, reason: '', retiredAt: new Date().toISOString() },
+        ...current.filter((row) => row.code !== result.building.code),
+      ]);
+    },
+    [],
+  );
 
   const hydrate = useCallback(
     (detail: BuildingDetail, keepEdits = false) => {
       loadedUpdatedAtRef.current = detail.updatedAt ?? null;
+      loadedDetailRef.current = detail;
+      setLoadedLifecycle(detail.lifecycleStatus);
+      setLiveOccupants(
+        detail.units.reduce(
+          (count, unit) => count + unit.occupants.filter((occupant) => !occupant.toDate).length,
+          0,
+        ),
+      );
+      /*
+        The parcel is the server's, even when a draft is kept: this form cannot
+        edit it, and a draft saved before «تصحيح رقم العقار» would otherwise put
+        the old number back on screen and centre the map on the wrong parcel.
+      */
+      setParcelNumber(detail.parcelNumber);
+      pinParcelRef.current = detail.parcelNumber;
+      setPreviousCodes(detail.previousCodes ?? []);
       if (!keepEdits) {
-        setParcelNumber(detail.parcelNumber);
-        pinParcelRef.current = detail.parcelNumber;
         setName(detail.name ?? '');
         setPostedNumber(detail.postedNumber ?? '');
         setIsPartitioned(detail.isPartitioned === true);
@@ -940,11 +997,13 @@ export function BuildingEditor({
               server allocates the same way.
             */
             setSuffix(
-              nextBuildingSuffix(
-                existing.buildings
+              nextBuildingSuffix([
+                ...existing.buildings
                   .filter((row) => row.parcelNumber === trimmedParcel)
                   .map((row) => row.codeSuffix),
-              ),
+                // Retired by «تصحيح رقم العقار»: never given out again, so never predicted.
+                ...(existing.retiredSuffixes ?? []),
+              ]),
             );
             setDuplicates(
               existing.buildings.length > 0
@@ -1364,140 +1423,85 @@ export function BuildingEditor({
   const goBack = () => goToStep((step > 0 ? step - 1 : step) as 0 | 1 | 2);
 
   /**
-   * A correction: the shell in one PATCH, then the difference between the
-   * matrix that was loaded and the one now on the grid.
+   * A correction, as one request: the shell and the difference between the
+   * matrix that was loaded and the one now on the grid (`saveMatrix`).
    *
    * A diff rather than a re-send, because the units on a standing building are
    * not the wizard's to recreate — they carry occupancies, visits and codes
    * the server derived, and deleting and re-adding one would take a flat's
    * whole history down with it.
    *
-   * Nothing here is transactional and nothing pretends to be: each refusal is
-   * collected and reported by name rather than aborting the rest, because the
-   * one the census refuses (a flat somebody lives in) must not stop the four
-   * beside it that it would have allowed.
+   * All or nothing. It used to be one PATCH and then one request per unit,
+   * each refusal collected while the rest went through — so a flat somebody
+   * lived in could refuse its removal while the four beside it were removed,
+   * and the officer was left with «حُفظ المبنى، لكن رُفض…»: a building half in
+   * the state they meant. Now the first refusal names its unit and nothing is
+   * written; the grid on screen is still the officer's, to fix and save again.
+   * The server runs the removals before the shell, so lowering the floor count
+   * with the top floor's units no longer needs a second request.
+   *
+   * On «تعديل معلومات المبنى» the matrix was never shown, so no unit is sent:
+   * a diff of a grid nobody saw could only compare the building to itself.
    */
-  const saveEdit = async (id: string, activeToken: string): Promise<string[]> => {
-    await updateBuilding(tenant, activeToken, id, {
-      ...(loadedUpdatedAtRef.current ? { expectedUpdatedAt: loadedUpdatedAtRef.current } : {}),
-      name: name.trim() || null,
-      postedNumber: postedNumber.trim() || null,
-      /*
-        `null` and not `false` for an unticked box — «لم يُسأل», not a denial.
-
-        Sent rather than omitted because an officer must be able to withdraw a
-        فرز they ticked by mistake, and an omitted key would leave it set for
-        ever. The numbers travel with it; the server clears them whenever the
-        flag is not true, so the two cannot drift.
-      */
-      isPartitioned: isPartitioned ? true : null,
-      partitionNumbers: cleanedPartitionNumbers,
-      sharedParcelNumbers: cleanedSharedParcels,
-      structureType,
-      lifecycleStatus,
-      latitude: pin ? pin[1] : null,
-      longitude: pin ? pin[0] : null,
-      floorsCount: Number(floorsCount) || 1,
-      basementsCount: Number(basementsCount) || 0,
-      notes: notes.trim() || null,
-    });
-
-    /*
-      «تعديل معلومات المبنى» stops here. The shell is saved and the matrix is
-      not touched — no removals, no additions, no re-sequencing. The diff below
-      is driven by what is on the grid, and on an info-only pass the grid was
-      never shown, so running it could only ever compare the building against
-      an untouched copy of itself. Skipping it outright is the guarantee the
-      button's label makes.
-    */
-    if (infoOnly) return [];
-
+  const matrixSave = (): BuildingMatrixSave => {
     const baseline = baselineRef.current;
-    const failures: string[] = [];
-    const refused = (caught: unknown, fallback: string) => {
-      logApiError(caught);
-      failures.push(caught instanceof ApiRequestError ? caught.payload.message : fallback);
-    };
-
-    // Removals first — a freed position is one the additions below can take.
-    for (const [unitId, was] of baseline) {
-      if (gridUnits.some((unit) => unit.existingId === unitId)) continue;
-      try {
-        await deleteUnit(tenant, activeToken, unitId);
-      } catch (caught) {
-        refused(
-          caught,
-          en
-            ? `Unit ${was.unitCode} could not be removed.`
-            : `تعذّر حذف الوحدة ${was.unitCode}.`,
-        );
-      }
-    }
-
-    for (const unit of gridUnits) {
+    const changed = (unit: GridUnitDraft) => {
       const was = unit.existingId ? baseline.get(unit.existingId) : undefined;
-      if (!was) continue;
-      if (
-        was.floor === unit.floor &&
-        was.startCol === unit.startCol &&
-        was.endCol === unit.endCol &&
-        was.unitType === unit.unitType
-      ) {
-        continue;
-      }
-      try {
-        await updateUnit(tenant, activeToken, unit.existingId as string, {
-          floor: unit.floor,
-          startCol: unit.startCol,
-          endCol: unit.endCol,
-          unitType: unit.unitType,
-        });
-      } catch (caught) {
-        refused(
-          caught,
-          en
-            ? `Unit ${was.unitCode} could not be corrected.`
-            : `تعذّر تعديل الوحدة ${was.unitCode}.`,
-        );
-      }
-    }
+      return (
+        was !== undefined &&
+        (was.floor !== unit.floor ||
+          was.startCol !== unit.startCol ||
+          was.endCol !== unit.endCol ||
+          was.unitType !== unit.unitType)
+      );
+    };
+    return {
+      ...(loadedUpdatedAtRef.current ? { expectedUpdatedAt: loadedUpdatedAtRef.current } : {}),
+      building: {
+        name: name.trim() || null,
+        postedNumber: postedNumber.trim() || null,
+        /*
+          `null` and not `false` for an unticked box — «لم يُسأل», not a denial.
+          Sent rather than omitted, so a فرز ticked by mistake can be withdrawn;
+          the server clears the numbers whenever the flag is not true.
+        */
+        isPartitioned: isPartitioned ? true : null,
+        partitionNumbers: cleanedPartitionNumbers,
+        sharedParcelNumbers: cleanedSharedParcels,
+        structureType,
+        lifecycleStatus,
+        latitude: pin ? pin[1] : null,
+        longitude: pin ? pin[0] : null,
+        floorsCount: Number(floorsCount) || 1,
+        basementsCount: Number(basementsCount) || 0,
+        notes: notes.trim() || null,
+      },
+      remove: infoOnly
+        ? []
+        : [...baseline.keys()].filter((unitId) => !gridUnits.some((unit) => unit.existingId === unitId)),
+      update: infoOnly
+        ? []
+        : gridUnits.filter(changed).map((unit) => ({
+            id: unit.existingId as string,
+            floor: unit.floor,
+            startCol: unit.startCol,
+            endCol: unit.endCol,
+            unitType: unit.unitType,
+          })),
+      add: infoOnly
+        ? []
+        : gridUnits
+            .filter((unit) => !unit.existingId)
+            .map((unit) => ({ floor: unit.floor, startCol: unit.startCol, endCol: unit.endCol, unitType: unit.unitType })),
+    };
+  };
 
-    // New flats last, lowest floor and leftmost column first, so each floor's
-    // server-allocated sequences run the way the grid reads.
-    const additions = gridUnits
-      .filter((unit) => !unit.existingId)
-      .sort((a, b) => a.floor - b.floor || a.startCol - b.startCol);
-
-    for (const unit of additions) {
-      try {
-        await addUnit(tenant, activeToken, id, {
-          floor: unit.floor,
-          startCol: unit.startCol,
-          endCol: unit.endCol,
-          unitType: unit.unitType,
-          /*
-            The grid drew every unit already on this floor before the officer
-            painted beside them, so the duplicate prompt has nothing left to
-            show them — it would be asking whether they noticed what they were
-            looking at.
-          */
-          acknowledgedDuplicates: true,
-        });
-      } catch (caught) {
-        refused(
-          caught,
-          en
-            ? `A unit on floor ${unit.floor} could not be added.`
-            : `تعذّرت إضافة وحدة على الطابق ${unit.floor}.`,
-        );
-      }
-    }
-
-    return failures;
+  const saveEdit = async (id: string, activeToken: string): Promise<void> => {
+    await saveBuildingMatrix(tenant, activeToken, id, matrixSave());
   };
 
   // Save handler
-  const handleSave = async () => {
+  const handleSave = async (confirmed = false) => {
     if (!trimmedParcel) {
       setFieldErrors({ parcelNumber: en ? 'Parcel number is required' : 'رقم العقار مطلوب' });
       goToStep(0);
@@ -1558,25 +1562,24 @@ export function BuildingEditor({
           );
         }
 
-        const failures = await saveEdit(buildingId, token);
+        /*
+          «مراجعة التعديلات» first: the save rehearsed on the server and rolled
+          back (`dryRun`), so the review shows what the server would actually
+          do — which units go, move and arrive — or the refusal it would give,
+          before the officer confirms anything.
 
-        if (failures.length > 0) {
-          /*
-            Reported, then the grid is re-read from the server.
-
-            A half-applied save is the one state in which what is on screen and
-            what is on file disagree, and leaving the officer looking at their
-            own intention would have them save it again into the same refusal.
-          */
-          setError(
-            en
-              ? `The building was saved, but ${failures.length} unit change(s) were refused: ${failures.join(' · ')}`
-              : `حُفظ المبنى، لكن رُفض ${failures.length} تعديل على الوحدات: ${failures.join(' · ')}`,
-          );
-          await loadDetail();
-          goToStep(2);
+          All or nothing either way: a refusal throws before anything is
+          written and lands in the catch below with the unit it names, and the
+          grid on screen is still exactly what the officer drew.
+        */
+        if (!confirmed) {
+          const save = matrixSave();
+          const result = await saveBuildingMatrix(tenant, token, buildingId, { ...save, dryRun: true });
+          setBuildingReview({ save, result });
+          setSaving(false);
           return;
         }
+        await saveEdit(buildingId, token);
 
         clearBuildingDraft(tenant, buildingId);
         toast.success(
@@ -1781,6 +1784,20 @@ export function BuildingEditor({
 
   return (
     <div ref={rootRef} className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8 pb-28 sm:pb-12">
+      {/* At the root, not inside a step: the save can be pressed from any of them. */}
+      <BuildingReviewDialog
+        loaded={loadedDetailRef.current}
+        review={buildingReview}
+        open={buildingReview !== null}
+        saving={saving}
+        onCancel={() => setBuildingReview(null)}
+        onConfirm={() => {
+          setBuildingReview(null);
+          void handleSave(true);
+        }}
+        locale={locale}
+      />
+
       {/* ── Breadcrumb & Navigation ── */}
       {/*
         Wraps rather than overflows. On a phone this row can carry «رجوع», the
@@ -2146,9 +2163,11 @@ export function BuildingEditor({
               {/*
                 ── 3. رقم العقار ──────────────────────────────────────────
 
-                Read-only on a correction, because moving a building to another
-                parcel is not an edit — the suffix was allocated against the old
-                one and the whole code derives from it.
+                Not a field on an existing building: the suffix was allocated
+                against the parcel and the whole code derives from it, so a
+                wrong number is corrected by its own action — «تصحيح رقم العقار»
+                — which reallocates the code, retires the old one and carries
+                every card and case that copies the parcel along with it.
                 `updateBuildingSchema` does not accept the field at all.
               */}
               <StepField
@@ -2160,13 +2179,44 @@ export function BuildingEditor({
                 error={fieldErrors.parcelNumber}
               >
                 {editing ? (
-                  <p
-                    id="building-parcel"
-                    dir="ltr"
-                    className="flex h-10 items-center rounded-md border bg-muted/40 px-3 text-start font-mono text-base font-medium text-foreground"
-                  >
-                    {trimmedParcel || '—'}
-                  </p>
+                  <>
+                    <div className="flex items-stretch gap-2">
+                      <p
+                        id="building-parcel"
+                        dir="ltr"
+                        className="flex h-10 min-w-0 flex-1 items-center rounded-md border bg-muted/40 px-3 text-start font-mono text-base font-medium text-foreground"
+                      >
+                        {trimmedParcel || '—'}
+                      </p>
+                      {token && buildingId && savedCode ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-10 shrink-0 gap-1.5"
+                          onClick={() => setCorrectingParcel(true)}
+                        >
+                          <Hash className="size-4" aria-hidden />
+                          {en ? 'Correct the number' : 'تصحيح رقم العقار'}
+                        </Button>
+                      ) : null}
+                    </div>
+                    {token && buildingId && savedCode ? (
+                      <ParcelCorrectionDialog
+                        tenant={tenant}
+                        token={token}
+                        building={{
+                          id: buildingId,
+                          code: savedCode,
+                          parcelNumber: trimmedParcel,
+                          updatedAt: loadedUpdatedAtRef.current,
+                        }}
+                        open={correctingParcel}
+                        onOpenChange={setCorrectingParcel}
+                        onCorrected={(result) => applyParcelCorrection(result, trimmedParcel)}
+                        locale={locale}
+                      />
+                    ) : null}
+                  </>
                 ) : (
                   <div className="relative" dir="ltr">
                     <Input
@@ -2256,6 +2306,21 @@ export function BuildingEditor({
                       </Badge>
                     )}
                   </div>
+                  {/* Retired by a correction — still what old forms and receipts quote. */}
+                  {editing && previousCodes.length > 0 ? (
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      {en ? 'Previously: ' : 'رموزه السابقة: '}
+                      {previousCodes.map((row, index) => (
+                        <span key={row.code}>
+                          {index > 0 ? '، ' : null}
+                          <bdi dir="ltr" className="font-mono">
+                            {row.code}
+                          </bdi>
+                        </span>
+                      ))}
+                      {en ? ' — still found by search.' : ' — ما زالت تدلّ عليه في البحث.'}
+                    </p>
+                  ) : null}
                 </div>
               </StepField>
 
@@ -2530,6 +2595,34 @@ export function BuildingEditor({
                   </Select>
                 </Field>
               </div>
+
+              {/*
+                A building leaving «قائم ومستعمل» with people still recorded in it.
+
+                The lifecycle is a statement about the structure; nothing reads
+                it when deciding who is billed. So «مهدوم» on a building whose
+                flats still hold a tenant leaves that tenant housed and charged
+                in a building that is gone — until somebody ends each occupancy.
+                Said before saving, with where to do it, rather than left to a
+                resident disputing the bill.
+              */}
+              {editing &&
+              liveOccupants > 0 &&
+              loadedLifecycle !== null &&
+              isOccupiableLifecycle(loadedLifecycle) &&
+              !isOccupiableLifecycle(lifecycleStatus) ? (
+                <div
+                  role="note"
+                  className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 p-3.5 text-xs leading-relaxed text-warning"
+                >
+                  <AlertTriangle className="size-4 shrink-0 mt-0.5" aria-hidden />
+                  <p>
+                    {en
+                      ? `${liveOccupants} occupancy record(s) are still current in this building's units, and they keep being billed. Changing the building's status does not end them — after saving, end each one from the unit matrix («End tenancy» for a tenant; a new status for an owner's unit).`
+                      : `ما زال ${liveOccupants} إشغال قائماً على وحدات هذا المبنى، ويُحصَّل الرسم منه. تغيير حالة المبنى لا يُنهيه — بعد الحفظ أنهِ كل إشغال من مصفوفة الوحدات («إنهاء الإيجار» للمستأجر، وحالة جديدة لوحدة المالك).`}
+                  </p>
+                </div>
+              ) : null}
 
               {/*
                 Said out loud, because two things vanish at once — the floor

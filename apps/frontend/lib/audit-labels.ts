@@ -35,6 +35,9 @@ export function auditActionLabel(action: string, locale: string): string {
     LANDLORD_MATCH_RESTORED: ['استعادة مطابقة مالك', 'Owner match restored'],
     LANDLORD_TENANCY_ENDED: ['إنهاء إيجار لدى المالك', 'Tenancy ended on owner'],
     TENANCY_ENDED: ['إنهاء إيجار', 'Tenancy ended'],
+    OWNERSHIP_ENDED: ['إنهاء ملكية', 'Ownership ended'],
+    LANDLORD_LINK_RELEASED_BY_SALE: ['فكّ ربط المالك بعد البيع', 'Owner link released by a sale'],
+    PROPERTY_NUMBER_CORRECTED: ['تصحيح رقم العقار في البطاقة', 'Card parcel number corrected'],
 
     // ── quality review ──
     RECORD_APPROVED: ['اعتماد سجل', 'Record approved'],
@@ -56,6 +59,7 @@ export function auditActionLabel(action: string, locale: string): string {
     BUILDING_DELETED: ['حذف مبنى', 'Building deleted'],
     BUILDING_UNITS_GENERATED: ['إنشاء وحدات المبنى', 'Units generated'],
     BUILDING_CODE_RECOMPUTED: ['إعادة احتساب رمز المبنى', 'Building code recomputed'],
+    BUILDING_PARCEL_CORRECTED: ['تصحيح رقم العقار', 'Parcel number corrected'],
     UNIT_ADDED: ['إضافة وحدة', 'Unit added'],
     UNIT_UPDATED: ['تعديل وحدة', 'Unit updated'],
     UNIT_DELETED: ['حذف وحدة', 'Unit deleted'],
@@ -83,6 +87,7 @@ export function auditActionLabel(action: string, locale: string): string {
     PAYMENT_DECLARED: ['تصريح بدفعة', 'Payment declared'],
     PAYMENT_CONFIRMED: ['تأكيد دفعة', 'Payment confirmed'],
     PAYMENT_REJECTED: ['رفض دفعة', 'Payment rejected'],
+    BILL_BASIS_REVIEWED: ['مراجعة فاتورة تأثّرت بتصحيح', 'Bill affected by a correction reviewed'],
     INSPECTOR_PAYOUT_RECORDED: ['تسجيل دفعة لمفتش', 'Inspector payout recorded'],
 
     // ── the portal itself ──

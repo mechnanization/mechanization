@@ -918,6 +918,11 @@ export function BuildingUnitMatrixDrawer({
                 citizenHref={citizenHref}
                 onEnd={closeSpell}
                 onLinkOwner={linkOwner}
+                session={token ? { tenant, token } : undefined}
+                onOwnershipEnded={() => {
+                  void load();
+                  onChanged?.();
+                }}
               />
 
               {/* Why the flat reads «شاغرة», and the control that lifts it. */}

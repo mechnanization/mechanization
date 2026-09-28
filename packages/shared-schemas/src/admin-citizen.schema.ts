@@ -204,6 +204,29 @@ function branchFieldsOnly(card: Record<string, unknown>): Record<string, unknown
   return Object.fromEntries(Object.entries(card).filter(([key]) => keep.has(key)));
 }
 
+/**
+ * Why a saved card is being removed on the edit form.
+ *
+ * «سُجِّل بالخطأ» — it was never true, so the flats it claimed close as
+ * `RECORDED_IN_ERROR` and drop out of their history. «بيع أو نقل ملكية» — an
+ * owner who held it and no longer does, closing on the day it happened. A tenant
+ * who left is not asked here: the form sends them to «إنهاء الإيجار», which
+ * keeps the card as history.
+ */
+export const CARD_REMOVAL_REASON = ['RECORDED_IN_ERROR', 'OWNERSHIP_TRANSFERRED'] as const;
+export type CardRemovalReason = (typeof CARD_REMOVAL_REASON)[number];
+
+export const cardRemovalSchema = z.object({
+  propertyId: uuid,
+  reason: z.enum(CARD_REMOVAL_REASON, { errorMap: () => ({ message: 'سبب الحذف غير صالح' }) }),
+  endedAt: z.coerce
+    .date({ invalid_type_error: 'التاريخ غير صالح' })
+    // Judged at parse time — a bound computed at module load goes stale.
+    .refine((value) => value.getTime() <= Date.now() + 60_000, 'التاريخ في المستقبل')
+    .optional(),
+});
+export type CardRemoval = z.infer<typeof cardRemovalSchema>;
+
 interface SubmissionInput {
   residence: CitizenResidence;
   personal: Record<string, unknown>;
@@ -216,6 +239,9 @@ interface SubmissionInput {
   reviewDuplicates?: boolean;
   duplicateReview?: DuplicateReviewAnswer;
   expectedVersion?: string;
+  removals?: CardRemoval[];
+  changeReason?: string;
+  movedOn?: Date;
 }
 
 /**
@@ -382,23 +408,23 @@ function allFlags(input: SubmissionInput): FieldFlag[] {
  * card needs at least one unit and every unit's type. That is not a dead end:
  * the officer at a shop can see it is a shop.
  */
-function nonResidentCardIssues(
+export function nonResidentCardIssues(
   card: Record<string, unknown>,
   flagged: ReadonlySet<string>,
   prefix: string,
-): Array<{ path: Array<string | number>; message: string }> {
-  const issues: Array<{ path: Array<string | number>; message: string }> = [];
+): NonResidentCardIssue[] {
+  const issues: NonResidentCardIssue[] = [];
   const owner = card.occupancyType === 'OWNER';
   const units = Array.isArray(card.units) ? (card.units as Array<Record<string, unknown>>) : [];
 
   if (owner) {
     if (card.propertyType === 'HOUSE' && card.unitStatus === 'OWNER_OCCUPIED') {
-      issues.push({ path: ['unitStatus'], message: OWNER_NOT_LIVING_THERE });
+      issues.push({ path: ['unitStatus'], message: OWNER_NOT_LIVING_THERE, code: 'OWNER_LIVES_THERE' });
     }
     if (card.propertyType === 'BUILDING') {
       units.forEach((unit, unitIndex) => {
         if (isDwellingUnitType(unit.unitType as string) && unit.unitStatus === 'OWNER_OCCUPIED') {
-          issues.push({ path: ['units', unitIndex, 'unitStatus'], message: OWNER_NOT_LIVING_THERE });
+          issues.push({ path: ['units', unitIndex, 'unitStatus'], message: OWNER_NOT_LIVING_THERE, code: 'OWNER_LIVES_THERE' });
         }
       });
     }
@@ -412,23 +438,40 @@ function nonResidentCardIssues(
       return issues;
     case 'BUILDING': {
       if (units.length === 0 || flagged.has(`${prefix}.units`)) {
-        issues.push({ path: ['occupancyType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE });
+        issues.push({ path: ['occupancyType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE, code: 'NEEDS_UNIT_TYPE' });
         return issues;
       }
       units.forEach((unit, unitIndex) => {
         if (unit.unitType === undefined || unit.unitType === null || unit.unitType === '') {
-          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE });
+          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE, code: 'NEEDS_UNIT_TYPE' });
         } else if (isDwellingUnitType(unit.unitType as string)) {
-          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_DWELLING });
+          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_DWELLING, code: 'DWELLING' });
         }
       });
       return issues;
     }
     default:
       // A منزل is a dwelling, and a خيمة is somewhere somebody lives.
-      issues.push({ path: ['occupancyType'], message: NON_RESIDENT_DWELLING });
+      issues.push({ path: ['occupancyType'], message: NON_RESIDENT_DWELLING, code: 'DWELLING' });
       return issues;
   }
+}
+
+/**
+ * Why a card does not fit a non-resident record — and so what «تغيير الإقامة»
+ * has to settle before a household can become one:
+ *
+ *  - `DWELLING`: they rent or occupy somewhere people live. Moving away ends
+ *    that tenancy.
+ *  - `NEEDS_UNIT_TYPE`: what they rent is not known to be somewhere nobody lives.
+ *  - `OWNER_LIVES_THERE`: a home they own is marked as the one they live in.
+ */
+export type NonResidentCardIssueCode = 'DWELLING' | 'NEEDS_UNIT_TYPE' | 'OWNER_LIVES_THERE';
+
+export interface NonResidentCardIssue {
+  path: Array<string | number>;
+  message: string;
+  code: NonResidentCardIssueCode;
 }
 
 const NON_RESIDENT_DWELLING =
@@ -595,6 +638,9 @@ function shapeSubmission(input: SubmissionInput) {
     ...(input.reviewDuplicates ? { reviewDuplicates: true as const } : {}),
     ...(input.duplicateReview ? { duplicateReview: input.duplicateReview } : {}),
     ...(input.expectedVersion ? { expectedVersion: input.expectedVersion } : {}),
+    ...(input.removals?.length ? { removals: input.removals } : {}),
+    ...(input.changeReason ? { changeReason: input.changeReason } : {}),
+    ...(input.movedOn ? { movedOn: input.movedOn } : {}),
   };
 }
 
@@ -676,6 +722,24 @@ const submissionEnvelope = {
    * Absent means "do not check", which is what every older client sends.
    */
   expectedVersion: z.string().trim().max(200).optional(),
+  /**
+   * «سبب التعديل» — why a high-impact field is being corrected: صفة الإقامة,
+   * an identity number that already held a value, نوع الملف, or a card's
+   * owner/tenant capacity or رقم العقار (see `highImpactChanges`). Required by
+   * the server when one of those changes; kept on the audit row with the change.
+   */
+  changeReason: z.string().trim().min(3, 'اذكر سبب التعديل').max(500, 'السبب طويل جداً').optional(),
+  /**
+   * «تاريخ الانتقال» — the day a change of نوع الملف took effect, when the
+   * person really moved into or out of the town («تغيير الإقامة»). Kept on the
+   * audit row, so a bill raised before the move reads as right and one raised
+   * after it as affected. Ignored when the residence does not change; absent on
+   * a correction of a residence recorded wrongly.
+   */
+  movedOn: z.coerce
+    .date({ invalid_type_error: 'تاريخ الانتقال غير صالح' })
+    .refine((value) => value.getTime() <= Date.now() + 60_000, 'تاريخ الانتقال في المستقبل')
+    .optional(),
 };
 
 /**
@@ -736,11 +800,36 @@ export const adminUpdateCitizenSubmissionSchema = z
     properties: z
       .array(z.object({ id: uuid.optional() }).passthrough())
       .max(25, 'عدد العقارات كبير جداً — يرجى مراجعة البلدية'),
+    /**
+     * The officer's answer for each saved card this edit removes — see
+     * `cardRemovalSchema`. Optional: an older client or a queued edit sends
+     * none, and its removals close the way they always did.
+     */
+    removals: z.array(cardRemovalSchema).max(25).optional(),
   })
   .superRefine(unexcusedIssues)
   .transform(shapeSubmission);
 
 export type AdminCitizenUpdateSubmission = z.infer<typeof adminUpdateCitizenSubmissionSchema>;
+
+/**
+ * Deactivating a file, or reactivating it.
+ *
+ * A deactivated citizen is skipped by the biller, so «why did this file stop
+ * being billed?» is a question the trail has to answer. `reason` and `movedOn`
+ * are optional for older clients; «تغيير الإقامة» sends both when someone who
+ * moved away is left holding nothing here, and they go on the audit row.
+ */
+export const setCitizenActiveSchema = z.object({
+  isActive: z.boolean(),
+  reason: z.string().trim().min(3, 'اذكر السبب').max(500, 'السبب طويل جداً').optional(),
+  movedOn: z.coerce
+    .date({ invalid_type_error: 'تاريخ الانتقال غير صالح' })
+    .refine((value) => value.getTime() <= Date.now() + 60_000, 'تاريخ الانتقال في المستقبل')
+    .optional(),
+});
+
+export type SetCitizenActive = z.infer<typeof setCitizenActiveSchema>;
 
 /**
  * Where a filed record stands.

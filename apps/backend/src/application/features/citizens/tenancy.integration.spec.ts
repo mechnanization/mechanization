@@ -18,6 +18,7 @@ import { FeesService } from '../fees/fees.service';
 import { CitizensService } from './citizens.service';
 import { LandlordLinkService, readFootprint } from './landlord-link.service';
 import { TenancyService } from './tenancy.service';
+import { OwnershipService } from './ownership.service';
 
 /**
  * Ending a tenancy, against a real Postgres.
@@ -83,7 +84,8 @@ describeIfDb('TenancyService', () => {
     buildings = new BuildingsService(context, cases, events);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(context, buildings, events);
-    tenancy = new TenancyService(context, buildings, cases, links, events);
+    const ownership = new OwnershipService(context, buildings, cases, links, events);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership);
     citizens = new CitizensService(
       context,
       {} as never,

@@ -483,12 +483,13 @@ export type CreateBuildingInput = z.infer<typeof createBuildingSchema>;
  * nothing is a caller bug, and returning the unchanged building would hide it.
  * The same rule `updateCaseSchema` applies.
  *
- * `parcelNumber` is absent on purpose. Moving a building to another parcel is
- * not an edit, it is a different building: the suffix was allocated against the
- * old parcel and the code is derived from it, so a "move" would have to
- * reallocate and renumber. Delete and recreate, deliberately.
+ * `parcelNumber` is absent on purpose. The suffix was allocated against the
+ * parcel and the code is derived from it, so a different parcel means a new
+ * suffix, a new code, a retired old one and every citizen card that mirrors
+ * the parcel following it — not a field in a PATCH. That is
+ * `correctBuildingParcelSchema`, «تصحيح رقم العقار».
  */
-export const updateBuildingSchema = z
+const updateBuildingFields = z
   .object({
     name: buildingName.nullable().optional(),
     postedNumber: postedNumber.nullable().optional(),
@@ -515,16 +516,49 @@ export const updateBuildingSchema = z
      * Not a change in itself, so it does not count toward "something to save".
      */
     expectedUpdatedAt: z.string().datetime().optional(),
-  })
-  .superRefine((value, ctx) => {
-    const { expectedUpdatedAt: _version, ...fields } = value;
-    if (!Object.values(fields).some((v) => v !== undefined)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'لا يوجد أي تغيير لحفظه' });
-    }
-    coordinatePair(value, ctx);
   });
 
+export const updateBuildingSchema = updateBuildingFields.superRefine((value, ctx) => {
+  const { expectedUpdatedAt: _version, ...fields } = value;
+  if (!Object.values(fields).some((v) => v !== undefined)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'لا يوجد أي تغيير لحفظه' });
+  }
+  coordinatePair(value, ctx);
+});
+
 export type UpdateBuildingInput = z.infer<typeof updateBuildingSchema>;
+
+/**
+ * «تصحيح رقم العقار» — the building was filed under the wrong parcel.
+ *
+ * Not a move: the structure is where it always was, the number was wrong. So
+ * the building keeps its id, units, occupants and history, and gets the
+ * suffix and code the right parcel gives it. The old code is retired — still
+ * found by search, never given to another building — and the citizen cards
+ * and cases that copy the building's parcel follow it.
+ *
+ * `reason` is required: anyone who can edit a building may correct it, and the
+ * reason is what the audit trail and the retired code keep.
+ * `acknowledgedDuplicates` is the same answer creation asks for when the right
+ * parcel already carries a structure. `keepOldAsShared` is for a building that
+ * really stands on both parcels and was only filed under the less fitting one:
+ * the old parcel stays on it as a shared parcel, and cards naming it are left
+ * as they are.
+ */
+export const correctBuildingParcelSchema = z.object({
+  parcelNumber,
+  reason: z
+    .string({ required_error: 'اكتب سبب التصحيح' })
+    .trim()
+    .min(3, 'اكتب سبب التصحيح')
+    .max(500, 'السبب طويل جداً'),
+  acknowledgedDuplicates: z.boolean().optional(),
+  keepOldAsShared: z.boolean().optional(),
+  /** As `updateBuildingSchema.expectedUpdatedAt`: refused if someone saved since. */
+  expectedUpdatedAt: z.string().datetime().optional(),
+});
+
+export type CorrectBuildingParcelInput = z.infer<typeof correctBuildingParcelSchema>;
 
 /**
  * How to fill a building's unit matrix.
@@ -644,6 +678,42 @@ export const updateUnitSchema = upsertUnitSchema
   });
 
 export type UpdateUnitInput = z.infer<typeof updateUnitSchema>;
+
+/** A unit's place on the grid — all a matrix save moves. */
+const matrixCell = upsertUnitSchema.pick({ floor: true, startCol: true, endCol: true, unitType: true });
+
+/**
+ * A whole building edit in one request: the shell and the difference between
+ * the matrix that was loaded and the one on the grid.
+ *
+ * It used to be one PATCH for the building and one request per unit, so a save
+ * could half-succeed — «حُفظ المبنى، لكن رُفض…» — leaving a building nobody
+ * had intended. `BuildingsService.saveMatrix` runs it all in one transaction:
+ * the first refusal names its unit and nothing is written. `dryRun` does the
+ * same and rolls back, so the editor can show what a save would do, or why it
+ * would be refused, before anyone presses it.
+ */
+export const saveBuildingMatrixSchema = z
+  .object({
+    building: updateBuildingFields.omit({ expectedUpdatedAt: true }),
+    remove: z.array(uuid).max(200).default([]),
+    update: z
+      .array(matrixCell.extend({ id: uuid }))
+      .max(200)
+      .default([]),
+    add: z.array(matrixCell).max(200).default([]),
+    expectedUpdatedAt: z.string().datetime().optional(),
+    dryRun: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    coordinatePair(value.building, ctx);
+    const touched = [...value.remove, ...value.update.map((row) => row.id)];
+    if (new Set(touched).size !== touched.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'الوحدة نفسها مذكورة مرتين في الحفظ' });
+    }
+  });
+
+export type SaveBuildingMatrixInput = z.infer<typeof saveBuildingMatrixSchema>;
 
 /**
  * One observation of a structure's condition, appended to the log.
@@ -971,6 +1041,8 @@ export const endOccupancySchema = z
      * recorded in the flat. The server says when it is missing.
      */
     ...afterTenancyFields,
+    /** An owner's sale from the matrix: the buyer, when registered. See `endOwnershipSchema`. */
+    newOwnerId: uuid.optional(),
   })
   .superRefine(refineAfterTenancy);
 
@@ -1001,6 +1073,54 @@ export const endTenancySchema = z
   .superRefine(refineAfterTenancy);
 
 export type EndTenancyInput = z.infer<typeof endTenancySchema>;
+
+/**
+ * «إنهاء الملكية» — an owner no longer holds a property, or never did.
+ *
+ * The owner's half of `endTenancySchema`, and the same shape on purpose: the
+ * two dialogs ask the same questions in the same order.
+ *
+ *  - `OWNERSHIP_TRANSFERRED` — sold, inherited, gifted: it ended on `endedAt`.
+ *    The card stays on the seller's file as history, their flats close on that
+ *    day, and they stop being billed for them from then.
+ *  - `RECORDED_IN_ERROR` — the ownership was never true. Closed as of now and
+ *    kept only as evidence, hidden from the flat's history.
+ *
+ * `newOwnerId` names the buyer when they are already registered; they are
+ * recorded owner of the same flats from the day of the sale. The after-status
+ * fields are asked only for a flat the seller lived in and nobody else owns —
+ * the server says when they are missing. `OWNER_OCCUPIED` there means «the new
+ * owner lives there», so it needs `newOwnerId`.
+ */
+export const endOwnershipSchema = z
+  .object({
+    reason: z.enum(['OWNERSHIP_TRANSFERRED', 'RECORDED_IN_ERROR'], {
+      errorMap: () => ({ message: 'حدِّد ماذا حدث للملكية' }),
+    }),
+    endedAt: pastDate('تاريخ البيع غير صالح').optional(),
+    rowIds: z.array(uuid).min(1, 'حدِّد الوحدات التي انتهت ملكيتها').max(60).optional(),
+    newOwnerId: uuid.optional(),
+    ...afterTenancyFields,
+  })
+  .superRefine((value, ctx) => {
+    refineAfterTenancy(value, ctx);
+    if (value.newOwnerId && value.reason !== 'OWNERSHIP_TRANSFERRED') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['newOwnerId'],
+        message: 'المالك الجديد يُسجَّل عند البيع أو نقل الملكية فقط',
+      });
+    }
+    if (value.afterStatus === 'OWNER_OCCUPIED' && !value.newOwnerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['afterStatus'],
+        message: 'اختر المالك الجديد لتسجيل أنه يسكنها، أو اختر «لا أعرف»',
+      });
+    }
+  });
+
+export type EndOwnershipInput = z.infer<typeof endOwnershipSchema>;
 
 /**
  * «ربط بالمالك» from the unit — names which of the flat's recorded owners a
