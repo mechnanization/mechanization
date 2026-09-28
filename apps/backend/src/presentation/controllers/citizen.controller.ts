@@ -14,6 +14,7 @@ import {
   citizenImportSchema,
   endOwnershipSchema,
   endTenancySchema,
+  setCitizenActiveSchema,
 } from '@mechanization/shared-schemas';
 import type {
   AdminCitizenSubmission,
@@ -21,6 +22,7 @@ import type {
   CitizenImportRequest,
   EndOwnershipInput,
   EndTenancyInput,
+  SetCitizenActive,
 } from '@mechanization/shared-schemas';
 import { CitizensService } from '../../application/features/citizens/citizens.service';
 import { LandlordLinkService } from '../../application/features/citizens/landlord-link.service';
@@ -631,13 +633,15 @@ export class CitizenController {
   async setActive(
     @Param('tenantSlug') tenantSlug: string,
     @Param('id') id: string,
-    @Body('isActive') isActive: boolean,
+    @Body(new ZodValidationPipe(setCitizenActiveSchema)) body: SetCitizenActive,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.citizens.setActive({
       tenantSlug,
       citizenId: id,
-      isActive: isActive !== false,
+      isActive: body.isActive,
+      ...(body.reason ? { reason: body.reason } : {}),
+      ...(body.movedOn ? { movedOn: body.movedOn } : {}),
       actor: { id: user.sub, role: user.role ?? '' },
     });
   }

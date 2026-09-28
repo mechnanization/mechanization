@@ -813,6 +813,25 @@ export const adminUpdateCitizenSubmissionSchema = z
 export type AdminCitizenUpdateSubmission = z.infer<typeof adminUpdateCitizenSubmissionSchema>;
 
 /**
+ * Deactivating a file, or reactivating it.
+ *
+ * A deactivated citizen is skipped by the biller, so «why did this file stop
+ * being billed?» is a question the trail has to answer. `reason` and `movedOn`
+ * are optional for older clients; «تغيير الإقامة» sends both when someone who
+ * moved away is left holding nothing here, and they go on the audit row.
+ */
+export const setCitizenActiveSchema = z.object({
+  isActive: z.boolean(),
+  reason: z.string().trim().min(3, 'اذكر السبب').max(500, 'السبب طويل جداً').optional(),
+  movedOn: z.coerce
+    .date({ invalid_type_error: 'تاريخ الانتقال غير صالح' })
+    .refine((value) => value.getTime() <= Date.now() + 60_000, 'تاريخ الانتقال في المستقبل')
+    .optional(),
+});
+
+export type SetCitizenActive = z.infer<typeof setCitizenActiveSchema>;
+
+/**
  * Where a filed record stands.
  *
  * `REQUIRES_REVIEW` is not a rejection and not a draft — the citizen is

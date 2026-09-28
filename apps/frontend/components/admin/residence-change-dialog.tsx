@@ -144,7 +144,8 @@ export function ResidenceChangeDialog({
     setDeactivating(true);
     setFailure(null);
     try {
-      await setCitizenActive(tenant, token, citizenId, false);
+      // Why the file stopped being billed, and from when — on the audit row.
+      await setCitizenActive(tenant, token, citizenId, false, { reason: reasonText.trim(), movedOn });
       onDeactivated();
     } catch (caught) {
       logApiError(caught);
@@ -244,7 +245,7 @@ export function ResidenceChangeDialog({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={plan.tenancies.length > 0 || deactivating || !token}
+                  disabled={plan.tenancies.length > 0 || !movedOn || !reasonOk || deactivating || !token}
                   onClick={() => void deactivate()}
                 >
                   {deactivating ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <UserX className="size-4" aria-hidden />}
@@ -342,20 +343,19 @@ export function ResidenceChangeDialog({
               </p>
             ) : null}
 
-            {!(leaving && plan.nothingLeft) ? (
-              <Field label={en ? 'Reason for the change' : 'سبب التعديل'} htmlFor={ids.reason} required>
-                <Textarea
-                  id={ids.reason}
-                  value={reasonText}
-                  rows={2}
-                  maxLength={500}
-                  onChange={(event) => {
-                    setReasonTouched(true);
-                    setReason(event.target.value);
-                  }}
-                />
-              </Field>
-            ) : null}
+            {/* Asked on the deactivation too: it goes on the audit row with the day they left. */}
+            <Field label={en ? 'Reason for the change' : 'سبب التعديل'} htmlFor={ids.reason} required>
+              <Textarea
+                id={ids.reason}
+                value={reasonText}
+                rows={2}
+                maxLength={500}
+                onChange={(event) => {
+                  setReasonTouched(true);
+                  setReason(event.target.value);
+                }}
+              />
+            </Field>
 
             {failure ? (
               <p role="alert" className="text-sm text-destructive">
