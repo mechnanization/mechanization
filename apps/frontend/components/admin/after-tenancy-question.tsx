@@ -235,13 +235,18 @@ export function endOwnershipMessage(result: EndOwnershipResult, locale: string):
       : en
         ? 'Ownership ended on the chosen units'
         : 'انتهت الملكية على الوحدات المحددة';
-  const next = result.newOwnerRecorded
-    ? en
-      ? 'the new owner is recorded'
-      : 'وسُجِّل المالك الجديد'
-    : en
-      ? 'a task was opened to record the new owner'
-      : 'وفُتحت مهمة لتسجيل المالك الجديد';
+  const next =
+    (result.buyerTenancyEndedOn?.length ?? 0) > 0
+      ? en
+        ? 'the tenant who bought it is recorded as its owner, living there'
+        : 'وسُجِّل المستأجر الذي اشتراها مالكاً ساكناً فيها'
+      : result.newOwnerRecorded
+        ? en
+          ? 'the new owner is recorded'
+          : 'وسُجِّل المالك الجديد'
+        : en
+          ? 'a task was opened to record the new owner'
+          : 'وفُتحت مهمة لتسجيل المالك الجديد';
   return en ? `${head}; ${next}` : `${head}، ${next}`;
 }
 

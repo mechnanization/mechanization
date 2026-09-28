@@ -360,25 +360,41 @@ describeIfDb('OwnershipService', () => {
     ]);
   });
 
-  it('refuses a buyer who rents the flat, and writes nothing, until that tenancy is ended', async () => {
+  it('ends the tenancy of a tenant who buys the flat, and records them as the owner living there', async () => {
     const linked = await linkedTenancy('OWN-10');
     const spell = await ownerSpell(linked.ownerId, linked.unitId);
+    const tenancySpell = await db.unitOccupancy.findFirstOrThrow({
+      where: { unitId: linked.unitId, citizenId: linked.tenantId, toDate: null },
+    });
 
     const preview = await within(() => ownership.previewOccupancy(spell.id));
     expect(preview.units[0]!.occupantIds).toContain(linked.tenantId);
 
-    await expect(
-      within(() =>
-        tenancy.endOccupancy(spell.id, { reason: 'OWNERSHIP_TRANSFERRED', newOwnerId: linked.tenantId }, actor()),
-      ),
-    ).rejects.toThrow(/أنهِ إشغاله أولاً/);
+    const result = await within(() =>
+      tenancy.endOccupancy(spell.id, { reason: 'OWNERSHIP_TRANSFERRED', newOwnerId: linked.tenantId }, actor()),
+    );
+    expect('buyerTenancyEndedOn' in result && result.buyerTenancyEndedOn).toHaveLength(1);
 
-    // Refused after the seller's side was written, so this is the rollback being checked.
-    expect((await db.unitOccupancy.findUniqueOrThrow({ where: { id: spell.id } })).toDate).toBeNull();
-    const tenantSpells = await db.unitOccupancy.findMany({ where: { unitId: linked.unitId, citizenId: linked.tenantId } });
-    expect(tenantSpells.map((row) => [row.role, row.toDate])).toEqual([['TENANT', null]]);
+    // The tenancy was real: it ends as history, its reason the sale — not rewritten into an ownership.
+    const endedTenancy = await db.unitOccupancy.findUniqueOrThrow({ where: { id: tenancySpell.id } });
+    expect([endedTenancy.role, endedTenancy.endReason]).toEqual(['TENANT', 'OWNERSHIP_TRANSFERRED']);
+    expect(endedTenancy.toDate).not.toBeNull();
     const card = await db.propertyEntry.findUniqueOrThrow({ where: { id: linked.tenantCardId } });
-    expect(card.landlordCitizenId).toBe(linked.ownerId);
+    expect(card.endReason).toBe('OWNERSHIP_TRANSFERRED');
+
+    // They own it now, and live there.
+    const owned = await db.unitOccupancy.findMany({
+      where: { unitId: linked.unitId, citizenId: linked.tenantId, role: 'OWNER', toDate: null },
+    });
+    expect(owned).toHaveLength(1);
+    const unit = await db.unit.findUniqueOrThrow({ where: { id: linked.unitId } });
+    expect(unit.unitStatus).toBe('OWNER_OCCUPIED');
+    expect(await ownerBill(linked.tenantId)).toBe(1000);
+    expect(await ownerBill(linked.ownerId)).toBe(0);
+
+    // Nobody is asked to link the buyer to themself, or to record a new owner.
+    const cases = await db.case.findMany({ where: { unitId: linked.unitId } });
+    expect(cases.some((row) => /اربطهم|سجِّل المالك الجديد/.test(row.notes ?? ''))).toBe(false);
   });
 
   // ─────────────────────────────  Corrections and scope  ─────────────────────────────

@@ -1970,7 +1970,7 @@ export interface OwnershipPreview {
     otherOwners: string[];
     /** A buyer among these already owns the flat, and keeps that ownership as it is. */
     otherOwnerIds: string[];
-    /** A buyer among these lives there as tenant or occupant — their tenancy ends first. */
+    /** A buyer among these rents the flat: the sale ends that tenancy and records them living there. */
     occupantIds: string[];
     /** «يسكنها المالك» or «مسكن موسمي» — a status about this owner. */
     ownerLivedThere: boolean;
@@ -2011,6 +2011,12 @@ export interface EndOwnershipResult {
     propertyEntryId: string;
     mode: 'RELEASED' | 'SPLIT';
   }>;
+  /**
+   * The flats the buyer rented until the sale — their tenancy ended there, as
+   * history. Absent from a server older than the one-step purchase: the
+   * frontend and the API deploy separately.
+   */
+  buyerTenancyEndedOn?: string[];
   /** The flats whose ownership ended — for «سجِّل المالك الجديد الآن». */
   units: Array<{ unitId: string; unitCode: string; buildingId: string }>;
 }

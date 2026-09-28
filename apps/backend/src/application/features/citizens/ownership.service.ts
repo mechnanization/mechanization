@@ -9,6 +9,7 @@ import { BuildingsService } from '../buildings/buildings.service';
 import { CasesService } from '../cases/cases.service';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
 import { LandlordLinkService, type PendingEvent, type SaleRelease } from './landlord-link.service';
+import type { TenancyService } from './tenancy.service';
 
 /**
  * «إنهاء الملكية» — an owner no longer holds a property, or never did.
@@ -34,8 +35,9 @@ import { LandlordLinkService, type PendingEvent, type SaleRelease } from './land
  *     back; a case asks for the tenant to be linked to the new owner.
  *  4. The buyer, when already registered, is recorded owner of the same flats
  *     from the day of the sale. When not, a case asks for them to be recorded.
- *     A buyer who already co-owns a flat keeps that ownership as it was; one
- *     who lives there as a tenant is refused until that tenancy is ended.
+ *     A buyer who already co-owns a flat keeps that ownership as it was. A
+ *     buyer who rents it has that tenancy ended on the day of the sale — a
+ *     real ending, kept as history — and is recorded owner living there.
  *  5. A flat the seller lived in, with no other owner left, gets the status the
  *     officer gives it now — the same question «إنهاء الإيجار» asks.
  *
@@ -59,6 +61,17 @@ export class OwnershipService {
     private readonly links: LandlordLinkService,
     private readonly events: EventEmitter2,
   ) {}
+
+  /**
+   * Ends the tenancy of a buyer who rented the flat. Handed over by
+   * `TenancyService` itself: it already depends on this service for an owner's
+   * spell, and a constructor dependency both ways would be a cycle.
+   */
+  private tenancy: Pick<TenancyService, 'endForPurchase'> | null = null;
+
+  bindTenancy(tenancy: Pick<TenancyService, 'endForPurchase'>): void {
+    this.tenancy = tenancy;
+  }
 
   private get db() {
     return this.tenantContext.prisma;
@@ -264,7 +277,7 @@ export class OwnershipService {
             },
           })
         : Promise.resolve([]),
-      // Who lives in these flats other than as owner — a buyer among them is refused (see `end`).
+      // Who lives in these flats other than as owner — a buyer among them rents it (see `end`).
       unitIds.length
         ? this.db.unitOccupancy.findMany({
             where: { unitId: { in: unitIds }, toDate: null, role: { not: 'OWNER' as never } },
@@ -443,7 +456,14 @@ export class OwnershipService {
       if (!buyer) throw new ValidationError('المالك الجديد غير موجود في السجل', { newOwnerId: input.newOwnerId });
     }
 
-    const asked = sale ? ending.filter((unit) => unit.ownerLivedThere && unit.otherOwners.length === 0) : [];
+    /*
+      Who lives in a flat the seller lived in is asked — unless the buyer rents
+      it: then they live there, now as its owner, and that is the answer.
+    */
+    const buyerRents = (unit: TargetUnit) => Boolean(input.newOwnerId && unit.occupantIds.includes(input.newOwnerId));
+    const asked = sale
+      ? ending.filter((unit) => unit.ownerLivedThere && unit.otherOwners.length === 0 && !buyerRents(unit))
+      : [];
     if (asked.length > 0 && !input.afterStatus) {
       throw new ValidationError('حدِّد من يسكن الوحدة الآن', {
         needsStatus: true,
@@ -472,12 +492,14 @@ export class OwnershipService {
       casesOpened: 0,
       vacanciesConfirmed: 0,
       tenantsReleased: [],
+      buyerTenancyEndedOn: [],
       units: ending.map((unit) => ({ unitId: unit.unitId, unitCode: unit.unitCode, buildingId: unit.buildingId })),
     };
     const droppedFlags: Array<Record<string, unknown>> = [];
     // Written inside the transaction, copied onto `result` once it commits.
     let tenantsReleased: EndOwnershipResult['tenantsReleased'] = [];
     let newOwnerRecorded = false;
+    const buyerTenancyEndedOn: string[] = [];
 
     await runInTenantTransaction(this.tenantContext, async () => {
       // 1 — the spells.
@@ -589,7 +611,7 @@ export class OwnershipService {
       // 5 — the buyer, or a case asking for them.
       if (sale) {
         for (const unit of ending) {
-          const heldBy = tenantsReleasedOn(tenantsReleased, unit);
+          const heldBy = tenantsReleasedOn(tenantsReleased, unit, input.newOwnerId);
           if (input.newOwnerId) {
             /*
               `recordOccupancy` treats a second spell for the same person on the
@@ -597,30 +619,37 @@ export class OwnershipService {
               buyer who is already there that would rewrite history: a co-owner
               buying the other share would have their own ownership re-dated to
               the sale, and a tenant buying their flat would have the tenancy
-              turned into an ownership, its dates and its card left behind. So
-              a co-owner keeps what they hold, and a tenant is sent to end the
-              tenancy first, where its own questions are asked.
+              turned into an ownership, its dates and its card left behind.
+
+              So a co-owner keeps what they hold. A tenant's tenancy ends first,
+              through `TenancyService` — the one place a tenancy ends — as a
+              real ending on the day of the sale, and they are recorded owner
+              after it, living there when nobody else rents it.
             */
             const already = await this.db.unitOccupancy.findFirst({
               where: { unitId: unit.unitId, citizenId: input.newOwnerId, toDate: null },
-              select: { role: true },
+              select: { id: true, role: true },
             });
+            let buyerStatus: { unitStatus: 'OWNER_OCCUPIED'; endsVacancy: true } | null =
+              input.afterStatus === 'OWNER_OCCUPIED' && asked.includes(unit)
+                ? { unitStatus: 'OWNER_OCCUPIED', endsVacancy: true }
+                : null;
             if (already && already.role !== 'OWNER') {
-              throw new ConflictError(
-                `المالك الجديد مسجَّل شاغلاً للوحدة ${unit.unitCode} (مستأجراً أو بتسامح). أنهِ إشغاله أولاً من ملفه بـ«إنهاء الإيجار» بتاريخ البيع، ثم عُد وسجِّل البيع`,
-                { code: 'BUYER_OCCUPIES_UNIT', unitCode: unit.unitCode, newOwnerId: input.newOwnerId },
-              );
+              if (!this.tenancy) throw new Error('OwnershipService: TenancyService was never bound');
+              const ended = await this.tenancy.endForPurchase(already.id, endedAt, actor);
+              buyerTenancyEndedOn.push(unit.unitCode);
+              buyerStatus = ended.statusApplied === 'OWNER_OCCUPIED'
+                ? { unitStatus: 'OWNER_OCCUPIED', endsVacancy: true }
+                : null;
             }
-            if (!already) {
+            if (!already || already.role !== 'OWNER') {
               await this.buildings.recordOccupancy(
                 {
                   unitId: unit.unitId,
                   citizenId: input.newOwnerId,
                   role: 'OWNER',
                   fromDate: endedAt,
-                  ...(input.afterStatus === 'OWNER_OCCUPIED' && asked.includes(unit)
-                    ? { unitStatus: 'OWNER_OCCUPIED' as const, endsVacancy: true }
-                    : {}),
+                  ...(buyerStatus ?? {}),
                 },
                 actor,
               );
@@ -670,6 +699,7 @@ export class OwnershipService {
 
     result.tenantsReleased = tenantsReleased;
     result.newOwnerRecorded = newOwnerRecorded;
+    result.buyerTenancyEndedOn = buyerTenancyEndedOn;
 
     this.links.emitAll(events, actor);
     this.events.emit('citizen.changed', {
@@ -686,6 +716,7 @@ export class OwnershipService {
         occupanciesEnded: result.occupanciesEnded,
         cardsEnded: result.cardsEnded,
         tenantsReleased: result.tenantsReleased.map((tenant) => tenant.propertyEntryId),
+        ...(result.buyerTenancyEndedOn.length > 0 ? { buyerTenancyEndedOn: result.buyerTenancyEndedOn } : {}),
         ...(droppedFlags.length > 0 ? { flagsOnEndedCards: droppedFlags } : {}),
       },
       actorId: actor.id,
@@ -800,12 +831,21 @@ export class OwnershipService {
 
 // ─────────────────────────────  Helpers  ─────────────────────────────
 
-/** The tenants whose link to the seller this sale released on one flat. */
-function tenantsReleasedOn(releases: EndOwnershipResult['tenantsReleased'], unit: TargetUnit): string[] {
+/**
+ * The tenants whose link to the seller this sale released on one flat, who
+ * still need linking to the new owner — never the buyer, who is that owner.
+ */
+function tenantsReleasedOn(
+  releases: EndOwnershipResult['tenantsReleased'],
+  unit: TargetUnit,
+  buyerId?: string,
+): string[] {
   const onUnit = new Set(unit.linkedTenants.map((tenant) => tenant.propertyEntryId));
   return [
     ...new Set(
-      releases.filter((release) => onUnit.has(release.propertyEntryId)).map((release) => release.tenantName),
+      releases
+        .filter((release) => onUnit.has(release.propertyEntryId) && release.tenantId !== buyerId)
+        .map((release) => release.tenantName),
     ),
   ];
 }
@@ -887,7 +927,7 @@ interface TargetUnit {
   /** Other current owners — co-owners keep the flat, and its status. */
   otherOwners: string[];
   otherOwnerIds: string[];
-  /** Who is recorded living here other than as owner — a buyer among them is refused. */
+  /** Who is recorded living here other than as owner — a buyer among them has their tenancy ended. */
   occupantIds: string[];
   /** «يسكنها المالك» or «مسكن موسمي» — a status that described this owner. */
   ownerLivedThere: boolean;
@@ -924,6 +964,8 @@ export interface EndOwnershipResult {
     propertyEntryId: string;
     mode: SaleRelease['mode'];
   }>;
+  /** The flats the buyer rented until the sale — their tenancy ended there, as history. */
+  buyerTenancyEndedOn: string[];
   /** The flats whose ownership ended — for «سجِّل المالك الجديد الآن» on the success screen. */
   units: Array<{ unitId: string; unitCode: string; buildingId: string }>;
 }
@@ -941,7 +983,7 @@ export interface OwnershipPreview {
     otherOwners: string[];
     /** A buyer among these already owns the flat, and keeps that ownership as it is. */
     otherOwnerIds: string[];
-    /** A buyer among these lives there as tenant or occupant — their tenancy ends first. */
+    /** A buyer among these rents the flat: the sale ends that tenancy and records them living there. */
     occupantIds: string[];
     ownerLivedThere: boolean;
     needsStatus: boolean;

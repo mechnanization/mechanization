@@ -186,26 +186,28 @@ export function EndOwnershipDialog({
   }, [preview, rows, chosenRows]);
 
   const sale = reason === 'OWNERSHIP_TRANSFERRED';
-  const asksStatus = sale && endingUnits.some((unit) => unit.needsStatus);
-  const coOwned = endingUnits.filter((unit) => unit.otherOwners.length > 0);
-  const tenants = uniqueTenants(endingUnits.flatMap((unit) => unit.linkedTenants));
-  const blockedByTenants = reason === 'RECORDED_IN_ERROR' && tenants.length > 0;
-  const everyRow = rows.length === 0 || chosenRows.length === rows.length;
   /*
-    A buyer who is already on the flat. A co-owner keeps what they hold; a
-    tenant has to end the tenancy first, where its own questions are asked —
-    recording them as owner over it would rewrite that tenancy.
+    A buyer who is already on the flat. A co-owner keeps what they hold. A
+    tenant buying the flat they rent: the sale ends that tenancy — kept as
+    history — and records them living there, so who lives there is not asked.
   */
   const buyerId = sale && buyer?.kind === 'citizen' ? buyer.id : null;
   const buyerOccupies = buyerId ? endingUnits.filter((unit) => unit.occupantIds.includes(buyerId)) : [];
   const buyerOwns = buyerId ? endingUnits.filter((unit) => unit.otherOwnerIds.includes(buyerId)) : [];
+  const statusUnits = endingUnits.filter((unit) => unit.needsStatus && !buyerOccupies.includes(unit));
+  const asksStatus = sale && statusUnits.length > 0;
+  const coOwned = endingUnits.filter((unit) => unit.otherOwners.length > 0);
+  const tenants = uniqueTenants(endingUnits.flatMap((unit) => unit.linkedTenants));
+  const blockedByTenants = reason === 'RECORDED_IN_ERROR' && tenants.length > 0;
+  // Tenants a sale leaves to be linked to the new owner — never the buyer, who is that owner.
+  const tenantsToRelink = tenants.filter((row) => row.citizenId !== buyerId);
+  const everyRow = rows.length === 0 || chosenRows.length === rows.length;
 
   const ready =
     Boolean(preview) &&
     Boolean(reason) &&
     (rows.length <= 1 || chosenRows.length > 0) &&
     !blockedByTenants &&
-    buyerOccupies.length === 0 &&
     (!sale || Boolean(buyer)) &&
     (!asksStatus || afterTenancyComplete(after)) &&
     !(after.afterStatus === 'OWNER_OCCUPIED' && buyer?.kind !== 'citizen');
@@ -579,30 +581,13 @@ export function EndOwnershipDialog({
                 />
 
                 {buyer?.kind === 'citizen' && buyerOccupies.length > 0 ? (
-                  <div role="alert" className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
-                    <p className="flex items-start gap-2 font-medium text-warning">
-                      <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                      {en ? 'End their tenancy first' : 'أنهِ إيجاره أولاً'}
-                    </p>
-                    <p className="text-xs leading-relaxed text-foreground">
-                      {en ? `${buyer.name} is recorded living in ` : `${buyer.name} مسجَّل ساكناً في `}
-                      {codes(buyerOccupies)}
-                      {en
-                        ? ' as a tenant or occupant. End that tenancy from their file («End tenancy»), dated the day of the sale, then come back and record the sale.'
-                        : ' مستأجراً أو بتسامح. أنهِ إيجاره من ملفه («إنهاء الإيجار») بتاريخ البيع، ثم عُد وسجِّل البيع.'}
-                    </p>
-                    {base ? (
-                      <Link
-                        href={`${base}/citizens/${encodeURIComponent(buyer.id)}`}
-                        target="_blank"
-                        rel="noopener"
-                        className="inline-flex min-h-9 items-center gap-1.5 text-xs font-medium text-primary underline-offset-2 hover:underline"
-                      >
-                        {en ? `Open ${buyer.name}’s file` : `افتح ملف ${buyer.name}`}
-                        <ExternalLink className="size-3.5" aria-hidden />
-                      </Link>
-                    ) : null}
-                  </div>
+                  <p className="rounded-md border border-primary/30 bg-primary/5 p-3 text-xs leading-relaxed text-foreground">
+                    {en ? `${buyer.name} rents ` : `${buyer.name} مستأجر في `}
+                    {codes(buyerOccupies)}
+                    {en
+                      ? '. Their tenancy ends on the date of the sale and stays in the record, and they are recorded as the owner living there — nothing to do on their file.'
+                      : '. ينتهي إيجاره بتاريخ البيع ويبقى في السجل، ويُسجَّل مالكاً ساكناً فيها — لا حاجة لفتح ملفه.'}
+                  </p>
                 ) : null}
 
                 {asksStatus ? (
@@ -610,7 +595,7 @@ export function EndOwnershipDialog({
                     {endingUnits.length > 1 ? (
                       <p className="text-xs text-muted-foreground">
                         {en ? 'For ' : 'عن '}
-                        {codes(endingUnits.filter((unit) => unit.needsStatus))}
+                        {codes(statusUnits)}
                       </p>
                     ) : null}
                     <AfterTenancyQuestion
@@ -688,7 +673,14 @@ export function EndOwnershipDialog({
                           {en ? ', so that ownership stays as it is.' : '، فتبقى ملكيته كما هي.'}
                         </li>
                       ) : null}
-                      {tenants.map((tenantRow) => (
+                      {buyer?.kind === 'citizen' && buyerOccupies.length > 0 ? (
+                        <li>
+                          {en
+                            ? `${buyer.name}’s tenancy ends on the same date and stays in the record; they are recorded as the owner living there.`
+                            : `ينتهي إيجار ${buyer.name} بالتاريخ نفسه ويبقى في السجل، ويُسجَّل مالكاً ساكناً فيها.`}
+                        </li>
+                      ) : null}
+                      {tenantsToRelink.map((tenantRow) => (
                         <li key={tenantRow.propertyEntryId}>
                           {en
                             ? `${tenantRow.name} stays the tenant. Their card keeps ${ownerName} as the former landlord, the link to them is released, and a task asks to link them to the new owner.`
