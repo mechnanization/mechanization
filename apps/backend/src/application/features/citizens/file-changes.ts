@@ -178,6 +178,56 @@ function rowChanges(
   return added || removed || changed ? { added, removed, changed } : null;
 }
 
+const IDENTITY_NUMBERS = ['civilRecordNumber', 'identityDocNumber', 'residencyNumber'] as const;
+
+/**
+ * The high-impact edits that need a reason (the user's decision of 2026-09-27):
+ * نوع الملف, صفة الإقامة (refugee status), an identity number that already held
+ * a value, and a saved card's owner/tenant capacity or رقم العقار. Anyone who
+ * may edit may make them — with a reason, kept on the audit row.
+ *
+ * A correction, not a completion: filling a blank asks nothing. A field the
+ * save marks «غير مؤكَّد» asks nothing either — the flag carries its own reason.
+ */
+export function highImpactChanges(
+  before: EditableFileView,
+  after: EditableFileView,
+  flaggedPaths: ReadonlySet<string> = new Set(),
+): string[] {
+  const found = new Set<string>();
+  const corrected = (was: unknown, now: unknown) => normal(was) !== null && !same(was, now);
+  /*
+    Only what the submission carries. An owner who lives elsewhere is not asked
+    صفة الإقامة, so their form never sends it — and a stored value compared with
+    an absent one would demand a reason on every save of every such file.
+  */
+  const personalCorrected = (field: string) =>
+    field in after.personal &&
+    !flaggedPaths.has(`personal.${field}`) &&
+    corrected(before.personal[field], after.personal[field]);
+
+  if (!same(before.residence, after.residence)) found.add('residence');
+  if (personalCorrected('residentStatus')) found.add('residentStatus');
+  for (const field of IDENTITY_NUMBERS) {
+    if (personalCorrected(field)) found.add(field);
+  }
+
+  const beforeCards = new Map(before.properties.map((card) => [card.id, card]));
+  after.properties.forEach((card, index) => {
+    const was = card.id ? beforeCards.get(card.id) : undefined;
+    if (!was) return;
+    if ('occupancyType' in card && !same(was.occupancyType, card.occupancyType)) found.add('occupancyType');
+    if (
+      'propertyNumber' in card &&
+      !flaggedPaths.has(`properties.${index}.propertyNumber`) &&
+      corrected(was.propertyNumber, card.propertyNumber)
+    ) {
+      found.add('propertyNumber');
+    }
+  });
+  return [...found];
+}
+
 /** Whether a save changed nothing a person would recognise as a change. */
 export function isEmptyChange(changes: FileChanges): boolean {
   return changes.changed.length === 0 && changes.cards.length === 0;

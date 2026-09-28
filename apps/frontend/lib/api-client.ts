@@ -3038,6 +3038,56 @@ export interface CitizenWriteInput {
   duplicateReview?: DuplicateReviewAnswer;
   /** On an edit: the version the form was opened at. See `CitizenFormData.version`. */
   expectedVersion?: string;
+  /**
+   * «سبب التعديل». Required by the server when the edit corrects a high-impact
+   * field — see `CitizenEditReview.reasonRequired` — and kept on the audit row.
+   */
+  changeReason?: string;
+}
+
+/** One card's changes in a review or a history entry — see the server's `CardChange`. */
+export interface CardChangeView {
+  cardId: string;
+  kind: 'added' | 'removed' | 'changed';
+  propertyType: string | null;
+  propertyNumber: string | null;
+  occupancyType: string | null;
+  fields?: Array<{ field: string; before: unknown; after: unknown }>;
+  sensitive?: string[];
+  rows?: { added: number; removed: number; changed: number };
+}
+
+/** «مراجعة التعديلات» — what saving an edit would do, read and never written. */
+export interface CitizenEditReview {
+  version: string;
+  changes: {
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
+    /** Every field that changes; sensitive ones appear here only, never with values. */
+    changed: string[];
+    cards: CardChangeView[];
+  };
+  /** High-impact fields this edit corrects: the save needs a reason. */
+  reasonRequired: string[];
+  blockers: Array<{
+    code: 'STALE' | 'TENANTS_LINKED';
+    message: string;
+    tenants?: Array<{ citizenId: string; name: string; propertyEntryId: string }>;
+  }>;
+  impacts: {
+    loginChanges: boolean;
+    tenantsShowingName: Array<{ citizenId: string; name: string }>;
+    openBills: { count: number; outstanding: number; currency: string } | null;
+    cardsRemoved: number;
+  };
+}
+
+export function reviewCitizenEdit(tenant: string, token: string, citizenId: string, input: CitizenWriteInput) {
+  return apiFetch<CitizenEditReview>(tenant, `/citizens/${encodeURIComponent(citizenId)}/edit-review`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 /** A record already on file that looks like the person being registered. */

@@ -588,6 +588,21 @@ export class CitizenController {
     });
   }
 
+  /**
+   * «مراجعة التعديلات» — the same edit `PATCH` takes, read and never written:
+   * what it changes, what else it touches, what would refuse it, and whether
+   * it needs a reason. The form shows it before the officer presses save.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Post(':id/edit-review')
+  async reviewEdit(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(adminUpdateCitizenSubmissionSchema))
+    payload: AdminCitizenUpdateSubmission,
+  ) {
+    return this.citizens.reviewEdit(id, payload);
+  }
+
   /** A clerk correcting a citizen already on file. */
   @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
   @Patch(':id')

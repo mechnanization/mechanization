@@ -1,4 +1,4 @@
-import { fileChanges, isEmptyChange, type EditableFileView } from './file-changes';
+import { fileChanges, highImpactChanges, isEmptyChange, type EditableFileView } from './file-changes';
 
 const file = (over: Partial<EditableFileView> = {}): EditableFileView => ({
   residence: 'HOUSEHOLD',
@@ -95,5 +95,46 @@ describe('fileChanges', () => {
     expect(changes.cards).toEqual([
       { cardId: 'card-1', kind: 'removed', propertyType: 'BUILDING', propertyNumber: '45', occupancyType: 'OWNER' },
     ]);
+  });
+});
+
+describe('highImpactChanges — the corrections that need a reason', () => {
+  it('asks for correcting a set identity number, and not for filling a blank one', () => {
+    const before = file();
+    expect(highImpactChanges(before, file({ personal: { ...before.personal, civilRecordNumber: '999' } }))).toEqual([
+      'civilRecordNumber',
+    ]);
+    expect(highImpactChanges(before, file({ personal: { ...before.personal, identityDocNumber: 'P123' } }))).toEqual([]);
+  });
+
+  it('asks for صفة الإقامة and نوع الملف', () => {
+    const before = file();
+    expect(
+      highImpactChanges(before, file({ residence: 'NON_RESIDENT_OWNER', personal: { ...before.personal, residentStatus: 'REFUGEE' } })).sort(),
+    ).toEqual(['residence', 'residentStatus']);
+  });
+
+  it('does not ask about a field the form did not send, or one it marks «غير مؤكَّد»', () => {
+    const before = file();
+    const { residentStatus: _gone, ...withoutStatus } = before.personal;
+    expect(highImpactChanges(before, file({ personal: withoutStatus }))).toEqual([]);
+    expect(
+      highImpactChanges(
+        before,
+        file({ personal: { ...before.personal, civilRecordNumber: null } }),
+        new Set(['personal.civilRecordNumber']),
+      ),
+    ).toEqual([]);
+  });
+
+  it('asks for a saved card’s owner/tenant capacity or parcel, never a new card’s', () => {
+    const before = file();
+    const card = before.properties[0]!;
+    expect(
+      highImpactChanges(before, file({ properties: [{ ...card, occupancyType: 'TENANT', propertyNumber: '46' }] })).sort(),
+    ).toEqual(['occupancyType', 'propertyNumber']);
+    expect(
+      highImpactChanges(before, file({ properties: [card, { id: 'new:1', occupancyType: 'TENANT', propertyNumber: '47' }] })),
+    ).toEqual([]);
   });
 });

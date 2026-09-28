@@ -240,6 +240,7 @@ interface SubmissionInput {
   duplicateReview?: DuplicateReviewAnswer;
   expectedVersion?: string;
   removals?: CardRemoval[];
+  changeReason?: string;
 }
 
 /**
@@ -620,6 +621,7 @@ function shapeSubmission(input: SubmissionInput) {
     ...(input.duplicateReview ? { duplicateReview: input.duplicateReview } : {}),
     ...(input.expectedVersion ? { expectedVersion: input.expectedVersion } : {}),
     ...(input.removals?.length ? { removals: input.removals } : {}),
+    ...(input.changeReason ? { changeReason: input.changeReason } : {}),
   };
 }
 
@@ -701,6 +703,13 @@ const submissionEnvelope = {
    * Absent means "do not check", which is what every older client sends.
    */
   expectedVersion: z.string().trim().max(200).optional(),
+  /**
+   * «سبب التعديل» — why a high-impact field is being corrected: صفة الإقامة,
+   * an identity number that already held a value, نوع الملف, or a card's
+   * owner/tenant capacity or رقم العقار (see `highImpactChanges`). Required by
+   * the server when one of those changes; kept on the audit row with the change.
+   */
+  changeReason: z.string().trim().min(3, 'اذكر سبب التعديل').max(500, 'السبب طويل جداً').optional(),
 };
 
 /**
