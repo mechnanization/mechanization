@@ -49,6 +49,17 @@ export interface CitizenAssessment {
   assessment: FeeAssessment | null;
 }
 
+/** What one citizen holds today, as billing reads it. See `FeesService.holdingsOf`. */
+export interface CitizenHoldings {
+  citizenId: string;
+  name: string;
+  /** The latest registration's current cards, occupancies attached. */
+  entries: BillablePropertyEntry[];
+  /** Where those holdings sit — how a change on a unit is traced to a bill. */
+  buildingIds: string[];
+  unitCodes: string[];
+}
+
 /** Someone the notice targets whose holdings cannot be measured. */
 export interface UnassessableCitizen {
   citizenId: string;
@@ -1147,6 +1158,17 @@ export class FeesService {
   }
 
   /**
+   * Everyone a flat charge aimed at this category would reach today.
+   *
+   * What a FLAT bill «would be now» turns on: its amount never depends on the
+   * register, but whether the citizen is on it at all does. The same query a
+   * notice is issued with, so the answer cannot drift from it.
+   */
+  async categoryHolders(category: string): Promise<Set<string>> {
+    return new Set(await this.resolveTargets({ targetType: 'BUILDING_CATEGORY', targetCategory: category }));
+  }
+
+  /**
    * Which citizens a notice applies to.
    *
    * Only active citizens, and for a category only those with a *registered*
@@ -1283,6 +1305,38 @@ export class FeesService {
     const assessed: CitizenAssessment[] = [];
     const unassessable: UnassessableCitizen[] = [];
 
+    for await (const batch of this.holdingsOf(citizenIds)) {
+      for (const holding of batch) {
+        const outcome = assessCitizen(holding.entries, notice);
+
+        if (outcome.kind === 'unassessable') {
+          unassessable.push({ citizenId: holding.citizenId, name: holding.name, reason: outcome.reason });
+          continue;
+        }
+
+        assessed.push({
+          citizenId: holding.citizenId,
+          amount: outcome.amount,
+          assessment: outcome.assessment,
+        });
+      }
+    }
+
+    return { assessed, unassessable };
+  }
+
+  /**
+   * What each citizen holds today, as billing reads it — one batch at a time.
+   *
+   * The register half of `assessTargets`, apart so that «فواتير تأثّرت
+   * بتصحيحات» can ask what a bill *would* be now through exactly the reading a
+   * billing run makes. A second copy of this query would be a second answer to
+   * «what does this person hold», and the two would drift.
+   *
+   * Also returns where the holdings sit — the buildings and unit codes — so a
+   * change recorded against a unit can be traced back to the bills it moves.
+   */
+  async *holdingsOf(citizenIds: readonly string[]): AsyncGenerator<CitizenHoldings[]> {
     /*
       Read in batches rather than one `IN (...)` over the whole register.
 
@@ -1364,7 +1418,7 @@ export class FeesService {
                         unitArea: true,
                         unitStatus: true,
                         unit: {
-                          select: { unitType: true, unitArea: true, unitStatus: true },
+                          select: { unitType: true, unitArea: true, unitStatus: true, unitCode: true },
                         },
                       },
                     },
@@ -1396,6 +1450,7 @@ export class FeesService {
                     unitType: true,
                     unitArea: true,
                     unitStatus: true,
+                    unitCode: true,
                   },
                 },
               },
@@ -1404,7 +1459,7 @@ export class FeesService {
         }),
       );
 
-      for (const row of rows) {
+      yield rows.map((row) => {
         /*
           Occupancies attached to the card they belong to.
 
@@ -1457,23 +1512,27 @@ export class FeesService {
           row.registrations[0]?.properties ?? [],
           occupanciesByBuilding,
         );
-        const name = [row.firstName, row.lastName].filter(Boolean).join(' ');
-        const outcome = assessCitizen(entries as never, notice);
-
-        if (outcome.kind === 'unassessable') {
-          unassessable.push({ citizenId: row.id, name, reason: outcome.reason });
-          continue;
+        const properties = row.registrations[0]?.properties ?? [];
+        const buildingIds = new Set<string>();
+        const unitCodes = new Set<string>();
+        for (const entry of properties) {
+          if (entry.buildingId) buildingIds.add(entry.buildingId);
+          for (const line of entry.units) if (line.unit?.unitCode) unitCodes.add(line.unit.unitCode);
+        }
+        for (const occupancy of row.unitOccupancies) {
+          buildingIds.add(occupancy.unit.buildingId);
+          unitCodes.add(occupancy.unit.unitCode);
         }
 
-        assessed.push({
+        return {
           citizenId: row.id,
-          amount: outcome.amount,
-          assessment: outcome.assessment,
-        });
-      }
+          name: [row.firstName, row.lastName].filter(Boolean).join(' '),
+          entries: entries as unknown as BillablePropertyEntry[],
+          buildingIds: [...buildingIds],
+          unitCodes: [...unitCodes],
+        };
+      });
     }
-
-    return { assessed, unassessable };
   }
 
   // ────────────────────────────  Payments  ────────────────────────────

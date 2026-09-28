@@ -4,6 +4,7 @@ import {
   Building2,
   ClipboardCheck,
   ClipboardList,
+  FileWarning,
   KeyRound,
   LayoutDashboard,
   Layers,
@@ -249,6 +250,19 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Receipt,
         roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER'],
         keywords: ['رسم', 'مطالبة', 'فاتورة', 'دفع', 'fees', 'billing'],
+      },
+      /*
+        Open bills a correction to the register affected — the accountant's
+        worklist, since a correction never changes a bill by itself. The
+        auditor reads it; the collector and the office do not decide on bills.
+      */
+      {
+        path: '/fees/corrections',
+        label: 'فواتير تأثّرت بتصحيحات',
+        labelEn: 'Bills affected by corrections',
+        icon: FileWarning,
+        roles: ['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT'],
+        keywords: ['تصحيح', 'فاتورة', 'فرق', 'مراجعة', 'corrections', 'bills', 'difference'],
       },
       // Read-only: the ledger above answers "who owes what", this answers
       // "what has been paid". An auditor lives here.

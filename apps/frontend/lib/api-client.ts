@@ -11,6 +11,7 @@ import type {
   DamageLevel,
   DamageSource,
   FeeAssessment,
+  FeeAssessmentLine,
   FeeBasis,
   FeeBearer,
   FeeFrequency,
@@ -4251,6 +4252,82 @@ export async function reviewPayment(
   );
   invalidateRequests(`fee-summary:${tenant}`);
   return result;
+}
+
+/** What a bill would be if it were raised today. */
+export type BillFigure =
+  | { kind: 'ASSESSED'; amount: number; assessment: FeeAssessment | null }
+  | { kind: 'UNASSESSABLE'; reason: string }
+  /** A flat charge to a category the citizen no longer holds any of. */
+  | { kind: 'NOT_TARGETED' };
+
+/** One open bill a correction affected — «فواتير تأثّرت بتصحيحات». */
+export interface CorrectionAffectedBill {
+  paymentId: string;
+  citizenId: string;
+  citizenName: string;
+  title: string;
+  periodKey: string;
+  dueDate: string;
+  status: string;
+  raisedAt: string;
+  amount: number;
+  paidAmount: number;
+  currency: string;
+  billed: FeeAssessment | null;
+  now: BillFigure;
+  /** Today's figure minus the bill's; null when today's cannot be worked out. */
+  difference: number | null;
+  lines: { removed: FeeAssessmentLine[]; added: FeeAssessmentLine[] } | null;
+  changes: Array<{
+    /** CORRECTION: said to be one. DATED_CHANGE: a real change and its day. EDIT: anything else. */
+    kind: 'CORRECTION' | 'DATED_CHANGE' | 'EDIT';
+    effectiveOn: string | null;
+    entry: AuditEntry;
+  }>;
+  review: { at: string; by: string | null; note: string; current: boolean } | null;
+}
+
+export interface CorrectionAffectedList {
+  items: CorrectionAffectedBill[];
+  total: number;
+  totals: { billedTooMuch: number; billedTooLittle: number; unassessable: number; reviewed: number };
+}
+
+export function getCorrectionAffectedBills(
+  tenant: string,
+  token: string,
+  query: { includeReviewed?: boolean; limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({
+    limit: String(query.limit ?? 20),
+    offset: String(query.offset ?? 0),
+    ...(query.includeReviewed ? { includeReviewed: 'true' } : {}),
+  });
+  return apiFetch<CorrectionAffectedList>(tenant, `/fees/correction-affected?${params.toString()}`, {
+    token,
+    signal,
+  });
+}
+
+/** The key a review records having seen — must match the server's `figureKey`. */
+export function billFigureKey(figure: BillFigure): string {
+  return figure.kind === 'ASSESSED' ? `ASSESSED:${figure.amount}` : figure.kind;
+}
+
+/** Records what the accountant decided. The bill itself is never changed. */
+export function reviewBillBasis(
+  tenant: string,
+  token: string,
+  paymentId: string,
+  input: { note: string; figure: string },
+) {
+  return apiFetch<{ reviewedAt: string }>(
+    tenant,
+    `/fees/payments/${encodeURIComponent(paymentId)}/basis-review`,
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
 }
 
 export interface CitizenPaymentItem {

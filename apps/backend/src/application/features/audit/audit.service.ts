@@ -525,17 +525,7 @@ export class AuditService {
       limit: query.limit,
       offset: query.offset,
     });
-    return {
-      total: result.total,
-      items: result.items.map((item) => ({
-        ...item,
-        before: withoutRepairData(item.before),
-        after: withoutRepairData(item.after),
-        // The request's origin is the trail's business, not the record's.
-        ipAddress: null,
-        actor: { ...item.actor, email: null },
-      })),
-    };
+    return { total: result.total, items: result.items.map(asRecordHistory) };
   }
 
   /**
@@ -696,6 +686,22 @@ const REPAIR_KEYS = new Set([
   'fileLink',
   'flagsOnEndedCards',
 ]);
+
+/**
+ * An entry as a record's own history shows it: repair data dropped, and the
+ * request's origin and the actor's email left to the full trail. Also what
+ * «فواتير تأثّرت بتصحيحات» shows beside a bill.
+ */
+export function asRecordHistory(item: AuditView): AuditView {
+  return {
+    ...item,
+    before: withoutRepairData(item.before),
+    after: withoutRepairData(item.after),
+    // The request's origin is the trail's business, not the record's.
+    ipAddress: null,
+    actor: { ...item.actor, email: null },
+  };
+}
 
 function withoutRepairData(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
