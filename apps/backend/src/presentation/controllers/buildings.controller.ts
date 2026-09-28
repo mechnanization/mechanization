@@ -9,6 +9,7 @@ import {
   endVacancySchema,
   linkOccupancyOwnerSchema,
   logVisitSchema,
+  saveBuildingMatrixSchema,
   unitBlueprintSchema,
   updateBuildingSchema,
   updateUnitSchema,
@@ -23,6 +24,7 @@ import {
   type EndVacancyInput,
   type LinkOccupancyOwnerInput,
   type LogVisitInput,
+  type SaveBuildingMatrixInput,
   type UnitBlueprint,
   type UpdateBuildingInput,
   type UpdateUnitInput,
@@ -170,6 +172,20 @@ export class BuildingsController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.buildings.update(id, body, this.actor(user));
+  }
+
+  /**
+   * The building editor's save: the shell and the matrix difference in one
+   * transaction, all or nothing — or, with `dryRun`, what it would do.
+   */
+  @Roles(...WRITE_ROLES)
+  @Post(':id/matrix-save')
+  async saveMatrix(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(saveBuildingMatrixSchema)) body: SaveBuildingMatrixInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.buildings.saveMatrix(id, body, this.actor(user));
   }
 
   /**
