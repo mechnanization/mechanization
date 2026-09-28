@@ -6,6 +6,13 @@ export interface AuditQuery {
   entityId?: string;
   /** One or more action codes, any of which matches. */
   actions?: string[];
+  /**
+   * Actions left out — by exact code, or by prefix (`QUALITY_`). What a record's
+   * own history excludes: who opened it and how it is being reviewed are not
+   * changes to it. See `AuditService.history`.
+   */
+  excludeActions?: string[];
+  excludeActionPrefixes?: string[];
   from?: Date;
   to?: Date;
   limit: number;

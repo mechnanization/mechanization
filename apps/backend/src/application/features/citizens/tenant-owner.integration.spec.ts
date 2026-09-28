@@ -593,6 +593,49 @@ describeIfDb('A tenant and the owner they rent from', () => {
     expect(await db.unitOccupancy.count({ where: { citizenId: tenant.id, unitId: flat, toDate: null } })).toBe(0);
   });
 
+  it('writes what an edit changed field by field, and never a sensitive value', async () => {
+    const holder = await person('صاحب ملف');
+    const stored = await db.user.findUniqueOrThrow({ where: { id: holder.id } });
+    const save = (civilRecordNumber: string, maritalStatus: string) =>
+      within(() =>
+        citizens.update({
+          tenantSlug: 'owners',
+          citizenId: holder.id,
+          payload: adminUpdateCitizenSubmissionSchema.parse({
+            personal: {
+              firstName: stored.firstName,
+              middleName: 'علي',
+              lastName: stored.lastName,
+              motherName: 'فاطمة خليل',
+              gender: 'MALE',
+              civilRecordNumber,
+              nationality: 'لبناني',
+              isLebanese: true,
+              residentStatus: 'VILLAGE_RESIDENT',
+            },
+            contact: { maritalStatus, phone: stored.phone, whatsappSameAsPhone: true, actualHouseholdMembers: '3' },
+            properties: [],
+            flags: [],
+          }),
+          actor: actor(),
+        }),
+      );
+
+    await save('7001', 'MARRIED');
+    await save('7002', 'SINGLE');
+    await pause();
+
+    const rows = await db.auditLogEntry.findMany({
+      where: { entityId: holder.id, action: 'CITIZEN_UPDATED' },
+      orderBy: { createdAt: 'asc' },
+    });
+    const last = rows.at(-1)!;
+    expect(last.before).toEqual({ maritalStatus: 'MARRIED' });
+    expect(last.after).toMatchObject({ maritalStatus: 'SINGLE' });
+    expect((last.after as { changed: string[] }).changed.sort()).toEqual(['civilRecordNumber', 'maritalStatus']);
+    expect(JSON.stringify([last.before, last.after])).not.toMatch(/700[12]/);
+  });
+
   it('refuses to delete an owner’s card while a tenant’s link names them, and writes nothing', async () => {
     const { units } = await block('OWN-13');
     const flat = units[0]!.id;

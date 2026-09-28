@@ -31,6 +31,7 @@ import type {
   ParcelRepository,
 } from '../../../domain/interfaces/parcel-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { fileChanges } from './file-changes';
 import { CensusSyncService, type CardEnding } from '../buildings/census-sync.service';
 import {
   LandlordLinkService,
@@ -1391,6 +1392,9 @@ export class CitizensService {
       }
     }
 
+    // The file as the form showed it, for the field-level trail — see `fileChanges`.
+    const fileBefore = await this.getEditable(citizen.id);
+
     /*
       «سجل مشابه» is the server's note, so the form never sends it back — and an
       edit that says nothing about it must not be what clears it. It stands
@@ -1930,11 +1934,22 @@ export class CitizensService {
       input.actor,
     );
 
+    /*
+      Field by field, what this save changed — the question «who changed this,
+      and what was it before?» the counts below could never answer. Sensitive
+      fields are named, never valued (`SENSITIVE_FILE_FIELDS`).
+    */
+    const changes = fileChanges(fileBefore, await this.getEditable(citizen.id));
+
     this.events.emit('citizen.changed', {
       tenantSlug: input.tenantSlug,
       citizenId: citizen.id,
       action: 'CITIZEN_UPDATED',
+      ...(Object.keys(changes.before).length > 0 ? { before: changes.before } : {}),
       after: {
+        ...changes.after,
+        ...(changes.changed.length > 0 ? { changed: changes.changed } : {}),
+        ...(changes.cards.length > 0 ? { cards: changes.cards } : {}),
         propertyCount: entries.length,
         propertiesRemoved: removedIds.length,
         // What the officer said about each removed card — the reason its flats

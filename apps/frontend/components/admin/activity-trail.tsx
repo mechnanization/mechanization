@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { History, Loader2 } from 'lucide-react';
 
-import { getAuditLog, type AuditEntry } from '@/lib/api-client';
+import { getAuditLog, getRecordHistory, type AuditEntry } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { AuditEntryItem } from '@/components/admin/audit-entry';
@@ -25,12 +25,12 @@ import { CollapsibleSection } from '@/components/ui/collapsible-section';
  *
  * ── On the role gate ───────────────────────────────────────────────────────
  * `GET /audit` is `@Roles('SUPER_ADMIN', 'AUDITOR')` and this does not widen
- * that. A `FIELD_INSPECTOR` on the same page renders nothing at all rather
- * than an empty panel or a permission error — an inspector has no use for a
- * box that only ever tells them they may not look in it, and a 403 in the
- * console on every building page would train everyone to ignore console
- * errors. If the trail should be visible to more roles, that is a decision
- * about the endpoint, not about this component.
+ * that: those two read the record's whole trail. Everyone else who can open a
+ * citizen's file or a building reads its «سجل التعديلات» instead —
+ * `GET /citizens/:id/history`, `GET /buildings/:id/history` — the changes
+ * only, never who viewed the record or how it is being reviewed. For any other
+ * record type a role without the full trail renders nothing, rather than an
+ * empty panel or a 403 in the console on every page.
  */
 export function ActivityTrail({
   tenant,
@@ -62,17 +62,29 @@ export function ActivityTrail({
     setRole(session.user.role ?? null);
   }, [tenant]);
 
-  const mayRead = role === 'SUPER_ADMIN' || role === 'AUDITOR';
+  /*
+    Two readers, two trails. SUPER_ADMIN and AUDITOR keep the whole trail of
+    the record — views, exports and reviews included. Everyone else who can
+    open a citizen's file or a building reads its «سجل التعديلات»: the changes
+    only, which the server narrows and strips (`AuditService.history`). Other
+    record types keep the old rule: the full trail or nothing.
+  */
+  const fullTrail = role === 'SUPER_ADMIN' || role === 'AUDITOR';
+  const historyKind =
+    entityType === 'User' ? 'citizen' : entityType === 'Building' ? 'building' : null;
+  const mayRead = fullTrail || (Boolean(role) && historyKind !== null);
 
   const { data, loading, error } = useStaffQuery<{ items: AuditEntry[]; total: number }>({
-    queryKey: ['staff', tenant, 'activity-trail', entityType, entityId ?? 'none'],
+    queryKey: ['staff', tenant, 'activity-trail', fullTrail ? 'full' : 'history', entityType, entityId ?? 'none'],
     // `token: null` is how `useStaffQuery` is told not to run — so a role that
     // may not read this never fires the request at all.
     token: mayRead && entityId ? token : null,
     tenant,
     base,
     queryFn: (tok, signal) =>
-      getAuditLog(tenant, tok, { entityType, entityId: entityId ?? undefined, limit: 50 }, signal),
+      fullTrail || !historyKind
+        ? getAuditLog(tenant, tok, { entityType, entityId: entityId ?? undefined, limit: 50 }, signal)
+        : getRecordHistory(tenant, tok, { kind: historyKind, id: entityId ?? '' }, { limit: 50 }, signal),
     errorMessage: en ? 'Could not load this record’s history.' : 'تعذّر تحميل سجل هذا القيد.',
   });
 
@@ -83,7 +95,15 @@ export function ActivityTrail({
   return (
     <CollapsibleSection
       id="activity-trail"
-      title={en ? 'Staff activity' : 'سجل الموظفين على هذا القيد'}
+      title={
+        fullTrail
+          ? en
+            ? 'Staff activity'
+            : 'سجل الموظفين على هذا القيد'
+          : en
+            ? 'Change history'
+            : 'سجل التعديلات'
+      }
       icon={History}
       defaultOpen={defaultOpen}
       className={className}

@@ -107,6 +107,14 @@ export class PrismaAuditRepository implements AuditRepository {
     }
     if (query.entityType) conditions.push(Prisma.sql`"entityType" = ${query.entityType}`);
     if (query.actions?.length) conditions.push(Prisma.sql`"action" = ANY(${query.actions}::text[])`);
+    if (query.excludeActions?.length) {
+      conditions.push(Prisma.sql`"action" <> ALL(${query.excludeActions}::text[])`);
+    }
+    if (query.excludeActionPrefixes?.length) {
+      // `_` is a LIKE wildcard; escaped so `QUALITY_` means the literal prefix.
+      const patterns = query.excludeActionPrefixes.map((prefix) => `${prefix.replace(/[\\%_]/g, '\\$&')}%`);
+      conditions.push(Prisma.sql`NOT ("action" LIKE ANY(${patterns}::text[]))`);
+    }
     if (query.entityId) conditions.push(Prisma.sql`"entityId" = ${query.entityId}`);
     if (query.from) conditions.push(Prisma.sql`"createdAt" >= ${query.from}`);
     if (query.to) conditions.push(Prisma.sql`"createdAt" <= ${query.to}`);

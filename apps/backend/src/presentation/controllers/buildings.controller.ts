@@ -32,6 +32,7 @@ import {
 import { BuildingsService } from '../../application/features/buildings/buildings.service';
 import { DamageService } from '../../application/features/buildings/damage.service';
 import { ParcelCorrectionService } from '../../application/features/buildings/parcel-correction.service';
+import { AuditService } from '../../application/features/audit/audit.service';
 import { TenancyService } from '../../application/features/citizens/tenancy.service';
 import { OwnershipService } from '../../application/features/citizens/ownership.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
@@ -83,7 +84,24 @@ export class BuildingsController {
     private readonly parcelCorrection: ParcelCorrectionService,
     private readonly tenancy: TenancyService,
     private readonly ownership: OwnershipService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * «سجل التعديلات» — what was changed on this building and its units, by
+   * whom, from what to what, and why. Everyone who can read the building; changes
+   * only (see `AuditService.history`).
+   */
+  @Roles(...READ_ROLES)
+  @Get(':id/history')
+  history(@Param('id') id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
+    return this.audit.history({
+      entityType: 'Building',
+      entityId: id,
+      limit: Math.min(Math.max(Number(limit) || 30, 1), 100),
+      offset: Math.max(Number(offset) || 0, 0),
+    });
+  }
 
   private actor(user: SessionClaims) {
     return { id: user.sub, role: user.role ?? '' };

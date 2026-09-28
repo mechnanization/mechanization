@@ -158,6 +158,22 @@ const SPECIAL_KEYS = new Set([
   'matchedBy',
   'acknowledgedRepeat',
   'kind',
+  'cards',
+]);
+
+/**
+ * Fields a citizen edit names but never values — `SENSITIVE_FILE_FIELDS` on the
+ * server. Said as such, so «what was it?» is answered: it was never written.
+ */
+const SENSITIVE_FIELDS = new Set([
+  'civilRecordNumber',
+  'identityDocNumber',
+  'residencyNumber',
+  'residentStatus',
+  'phone',
+  'whatsapp',
+  'localContactPhone',
+  'landlordPhone',
 ]);
 
 function fieldLabels(en: boolean): Record<string, string> {
@@ -418,9 +434,66 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
   if (typeof kind === 'string' && entry.action.startsWith('QUALITY_FINDING')) {
     fact(en ? 'Finding' : 'الملاحظة', quality.findingKind[kind as never] ?? kind);
   }
+  /*
+    `changed` names every field a save moved. The ones whose values the entry
+    also holds are listed below as before → after, so only the rest are named
+    here — and a sensitive one is said to be sensitive, because «what was it?»
+    is the next question and the answer is that it was never written down.
+  */
   const changedNames = after?.changed;
   if (Array.isArray(changedNames) && changedNames.length) {
-    fact(en ? 'Fields changed' : 'الحقول المعدَّلة', (changedNames as string[]).map(labelOf).join('، '));
+    const valued = (key: string) => Boolean((before && key in before) || (after && key in after));
+    const unvalued = (changedNames as string[]).filter((key) => !valued(key));
+    const sensitive = unvalued.filter((key) => SENSITIVE_FIELDS.has(key));
+    const plain = unvalued.filter((key) => !SENSITIVE_FIELDS.has(key));
+    if (plain.length) fact(en ? 'Fields changed' : 'الحقول المعدَّلة', plain.map(labelOf).join('، '));
+    if (sensitive.length) {
+      fact(
+        en ? 'Changed — value not kept, to protect personal data' : 'عُدِّلت — لا تُحفظ القيمة حمايةً للبيانات',
+        sensitive.map(labelOf).join('، '),
+      );
+    }
+  }
+
+  // ── a citizen's cards, one line per change ──
+  if (Array.isArray(after?.cards)) {
+    for (const card of after.cards as Json[]) {
+      const name = [
+        typeof card.propertyType === 'string' ? format('propertyType', card.propertyType) : null,
+        card.propertyNumber ? `${en ? 'parcel' : 'عقار'} ${String(card.propertyNumber)}` : null,
+        typeof card.occupancyType === 'string'
+          ? ((labels.occupancyType as Record<string, string>)[card.occupancyType] ?? card.occupancyType)
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      const cardLabel = `${en ? 'Card' : 'بطاقة'} ${name}`;
+      if (card.kind === 'added') fact(en ? 'Card added' : 'أُضيفت بطاقة', name);
+      if (card.kind === 'removed') fact(en ? 'Card removed' : 'حُذفت بطاقة', name);
+      for (const field of (Array.isArray(card.fields) ? card.fields : []) as Json[]) {
+        const key = String(field.field);
+        result.changes.push({
+          label: `${cardLabel} — ${labelOf(key)}`,
+          before: format(key, field.before),
+          after: format(key, field.after),
+        });
+      }
+      if (Array.isArray(card.sensitive) && card.sensitive.length) {
+        fact(
+          `${cardLabel} — ${en ? 'changed, value not kept' : 'عُدِّل دون حفظ القيمة'}`,
+          (card.sensitive as string[]).map(labelOf).join('، '),
+        );
+      }
+      const rows = asObject(card.rows);
+      if (rows) {
+        const parts = [
+          Number(rows.added) ? (en ? `${rows.added} added` : `أُضيفت ${rows.added}`) : null,
+          Number(rows.removed) ? (en ? `${rows.removed} removed` : `حُذفت ${rows.removed}`) : null,
+          Number(rows.changed) ? (en ? `${rows.changed} changed` : `عُدِّلت ${rows.changed}`) : null,
+        ].filter(Boolean);
+        if (parts.length) fact(`${cardLabel} — ${en ? 'units' : 'الوحدات'}`, parts.join('، '));
+      }
+    }
   }
 
   // ── before → after, and what only one side holds ──
