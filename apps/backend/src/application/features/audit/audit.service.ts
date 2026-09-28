@@ -10,6 +10,7 @@ import {
 } from '../../../domain/interfaces/audit-repository.interface';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { NotFoundError } from '../../common/exceptions';
 import { toAuditViews, type AuditView } from './audit-view';
 
 /** One staff member's day, as «التقرير اليومي» lists it. */
@@ -503,6 +504,19 @@ export class AuditService {
     limit: number;
     offset: number;
   }): Promise<{ items: AuditView[]; total: number }> {
+    /*
+      The record must be what the route says it is. `users` holds staff as well
+      as citizens, and a staff account's trail (role changes, its email) is the
+      full trail's business — `GET /citizens/<a staff id>/history` must not be a
+      way round `@Roles('SUPER_ADMIN', 'AUDITOR')` on `GET /audit`.
+    */
+    const db = this.tenantContext.prisma;
+    const exists =
+      query.entityType === 'User'
+        ? await db.user.findFirst({ where: { id: query.entityId, kind: 'CITIZEN' }, select: { id: true } })
+        : await db.building.findUnique({ where: { id: query.entityId }, select: { id: true } });
+    if (!exists) throw new NotFoundError(query.entityType === 'User' ? 'Citizen' : 'Building', query.entityId);
+
     const result = await this.query({
       entityType: query.entityType,
       entityId: query.entityId,

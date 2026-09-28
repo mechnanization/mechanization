@@ -172,4 +172,18 @@ describeIfDb('BuildingsService.saveMatrix', () => {
       save(first.id, { building: { name: 'x' }, expectedUpdatedAt: new Date(Date.now() - 86_400_000).toISOString() }),
     ).rejects.toThrow(/بعد أن فتحتَه/);
   });
+
+  it('lets only one of two saves from the same screen through, even at the same moment', async () => {
+    const { id } = await building('MX-6');
+    const opened = (await db.building.findUniqueOrThrow({ where: { id } })).updatedAt.toISOString();
+
+    const results = await Promise.allSettled([
+      save(id, { building: { name: 'الأول' }, expectedUpdatedAt: opened }),
+      save(id, { building: { name: 'الثاني' }, expectedUpdatedAt: opened }),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const refused = results.find((result) => result.status === 'rejected') as PromiseRejectedResult;
+    expect(String(refused.reason)).toMatch(/بعد أن فتحتَه/);
+  });
 });
