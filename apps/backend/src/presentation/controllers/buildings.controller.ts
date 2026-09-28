@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestj
 import {
   buildingFilterSchema,
   confirmVacancySchema,
+  correctBuildingParcelSchema,
   createBuildingSchema,
   createDamageAssessmentSchema,
   endOccupancySchema,
@@ -15,6 +16,7 @@ import {
   upsertUnitSchema,
   type BuildingFilter,
   type ConfirmVacancyInput,
+  type CorrectBuildingParcelInput,
   type CreateBuildingInput,
   type CreateDamageAssessmentInput,
   type EndOccupancyInput,
@@ -29,6 +31,7 @@ import {
 } from '@mechanization/shared-schemas';
 import { BuildingsService } from '../../application/features/buildings/buildings.service';
 import { DamageService } from '../../application/features/buildings/damage.service';
+import { ParcelCorrectionService } from '../../application/features/buildings/parcel-correction.service';
 import { TenancyService } from '../../application/features/citizens/tenancy.service';
 import { OwnershipService } from '../../application/features/citizens/ownership.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
@@ -77,6 +80,7 @@ export class BuildingsController {
   constructor(
     private readonly buildings: BuildingsService,
     private readonly damage: DamageService,
+    private readonly parcelCorrection: ParcelCorrectionService,
     private readonly tenancy: TenancyService,
     private readonly ownership: OwnershipService,
   ) {}
@@ -148,6 +152,35 @@ export class BuildingsController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.buildings.update(id, body, this.actor(user));
+  }
+
+  /**
+   * What «تصحيح رقم العقار» to `parcelNumber` would do — the new code, the
+   * structures already on that parcel, whether the pin falls inside it, and
+   * which citizen cards and cases follow — before anything is asked.
+   */
+  @Roles(...WRITE_ROLES)
+  @Get(':id/parcel-correction')
+  async parcelCorrectionPreview(
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(correctBuildingParcelSchema.pick({ parcelNumber: true })))
+    query: Pick<CorrectBuildingParcelInput, 'parcelNumber'>,
+  ) {
+    return this.parcelCorrection.preview(id, query.parcelNumber);
+  }
+
+  /**
+   * «تصحيح رقم العقار». Anyone who can edit a building may, with a reason —
+   * the reason and the full before/after go on the audit row.
+   */
+  @Roles(...WRITE_ROLES)
+  @Post(':id/parcel-correction')
+  async correctParcel(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(correctBuildingParcelSchema)) body: CorrectBuildingParcelInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.parcelCorrection.correct(id, body, this.actor(user));
   }
 
   @Roles('SUPER_ADMIN')

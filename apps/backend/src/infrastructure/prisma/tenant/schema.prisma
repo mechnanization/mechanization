@@ -221,6 +221,7 @@ model User {
   namedAsLandlordOn     PropertyEntry[]      @relation("NamedLandlord")
   damageAssessments     DamageAssessment[]   @relation("DamageAssessedBy")
   buildingsCreated      Building[]           @relation("BuildingCreatedBy")
+  buildingCodesRetired  BuildingCodeAlias[]  @relation("BuildingCodeRetiredBy")
   unitVisits            UnitVisit[]          @relation("UnitVisitOfficer")
   vacanciesConfirmed    UnitVacancyConfirmation[] @relation("VacancyConfirmedBy")
   vacanciesEnded        UnitVacancyConfirmation[] @relation("VacancyEndedBy")
@@ -1073,6 +1074,7 @@ model Building {
   cases             Case[]
   damageAssessments DamageAssessment[]
   propertyEntries   PropertyEntry[]
+  codeAliases       BuildingCodeAlias[]
 
   @@unique([parcelNumber, codeSuffix])
   @@index([parcelNumber])
@@ -1085,6 +1087,42 @@ model Building {
   /// page turn.
   @@index([createdAt])
   @@map("buildings")
+}
+
+/// A building code retired by «تصحيح رقم العقار» (migration 0060).
+///
+/// Correcting a building's parcel reallocates its suffix on the right parcel,
+/// so its code changes — and the old one is still on paper forms, notices and
+/// notebooks. A row here keeps the old code finding the building (ledger
+/// search), and keeps the `(parcelNumber, codeSuffix)` pair from ever being
+/// allocated to another building (`BuildingsService.create`).
+model BuildingCodeAlias {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Set null, not cascaded: a building deleted later must not free its
+  /// retired codes for reuse.
+  buildingId String?   @db.Uuid
+  building   Building? @relation(fields: [buildingId], references: [id], onDelete: SetNull)
+
+  /// As displayed when retired. A snapshot — a zone rename rewrites live codes,
+  /// never these.
+  code String
+
+  /// The pair allocation skips on this parcel.
+  parcelNumber String
+  codeSuffix   String
+
+  /// Why the parcel was corrected. Required.
+  reason String
+
+  retiredById String? @db.Uuid
+  retiredBy   User?   @relation("BuildingCodeRetiredBy", fields: [retiredById], references: [id], onDelete: SetNull)
+  retiredAt   DateTime @default(now())
+
+  @@unique([parcelNumber, codeSuffix])
+  @@index([buildingId])
+  @@index([code])
+  @@map("building_code_aliases")
 }
 
 /// One canonical unit inside a building — شقة, محل, عيادة.

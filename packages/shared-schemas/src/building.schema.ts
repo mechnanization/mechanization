@@ -483,10 +483,11 @@ export type CreateBuildingInput = z.infer<typeof createBuildingSchema>;
  * nothing is a caller bug, and returning the unchanged building would hide it.
  * The same rule `updateCaseSchema` applies.
  *
- * `parcelNumber` is absent on purpose. Moving a building to another parcel is
- * not an edit, it is a different building: the suffix was allocated against the
- * old parcel and the code is derived from it, so a "move" would have to
- * reallocate and renumber. Delete and recreate, deliberately.
+ * `parcelNumber` is absent on purpose. The suffix was allocated against the
+ * parcel and the code is derived from it, so a different parcel means a new
+ * suffix, a new code, a retired old one and every citizen card that mirrors
+ * the parcel following it — not a field in a PATCH. That is
+ * `correctBuildingParcelSchema`, «تصحيح رقم العقار».
  */
 export const updateBuildingSchema = z
   .object({
@@ -525,6 +526,38 @@ export const updateBuildingSchema = z
   });
 
 export type UpdateBuildingInput = z.infer<typeof updateBuildingSchema>;
+
+/**
+ * «تصحيح رقم العقار» — the building was filed under the wrong parcel.
+ *
+ * Not a move: the structure is where it always was, the number was wrong. So
+ * the building keeps its id, units, occupants and history, and gets the
+ * suffix and code the right parcel gives it. The old code is retired — still
+ * found by search, never given to another building — and the citizen cards
+ * and cases that copy the building's parcel follow it.
+ *
+ * `reason` is required: anyone who can edit a building may correct it, and the
+ * reason is what the audit trail and the retired code keep.
+ * `acknowledgedDuplicates` is the same answer creation asks for when the right
+ * parcel already carries a structure. `keepOldAsShared` is for a building that
+ * really stands on both parcels and was only filed under the less fitting one:
+ * the old parcel stays on it as a shared parcel, and cards naming it are left
+ * as they are.
+ */
+export const correctBuildingParcelSchema = z.object({
+  parcelNumber,
+  reason: z
+    .string({ required_error: 'اكتب سبب التصحيح' })
+    .trim()
+    .min(3, 'اكتب سبب التصحيح')
+    .max(500, 'السبب طويل جداً'),
+  acknowledgedDuplicates: z.boolean().optional(),
+  keepOldAsShared: z.boolean().optional(),
+  /** As `updateBuildingSchema.expectedUpdatedAt`: refused if someone saved since. */
+  expectedUpdatedAt: z.string().datetime().optional(),
+});
+
+export type CorrectBuildingParcelInput = z.infer<typeof correctBuildingParcelSchema>;
 
 /**
  * How to fill a building's unit matrix.

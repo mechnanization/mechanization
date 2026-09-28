@@ -305,6 +305,12 @@ export interface BuildingLedgerRow extends BuildingRow {
   zoneName: string | null;
   /** The current level — the latest assessment — or null if never assessed. */
   damageLevel: string | null;
+  /**
+   * With a search only: the retired code the term matched, when this row was
+   * found by a code «تصحيح رقم العقار» replaced — so the ledger can say why a
+   * search for Z-1-45-A shows Z-1-46-B.
+   */
+  matchedPreviousCode?: string;
 }
 
 /**

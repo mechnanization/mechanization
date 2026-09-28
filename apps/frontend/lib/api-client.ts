@@ -1053,6 +1053,8 @@ export interface BuildingLedgerRow extends BuildingSummary {
   zoneName: string | null;
   /** The *current* level, i.e. the newest assessment. Null = never assessed. */
   damageLevel: DamageLevel | null;
+  /** With a search: the retired code the term matched — «كان Z-1-45-A». */
+  matchedPreviousCode?: string;
 }
 
 /** One occupant of a unit. A `toDate` of null means they are there now (D2). */
@@ -1203,6 +1205,12 @@ export interface BuildingDetail extends BuildingSummary {
   /** Resolved from `Zone.parcelNumbers` at read time — never stored (D13). */
   zoneCode: string | null;
   zoneName: string | null;
+  /**
+   * Codes this building carried before «تصحيح رقم العقار», newest first —
+   * still found by search, never given to another building. Absent from a
+   * server older than the correction.
+   */
+  previousCodes?: Array<{ code: string; parcelNumber: string; reason: string; retiredAt: string }>;
   units: UnitWithOccupants[];
 }
 
@@ -1582,11 +1590,16 @@ export function getBuildings(
     query.set(key, String(value));
   }
   const qs = query.toString();
-  return apiFetch<{ buildings: BuildingLedgerRow[]; total: number; summary: CensusSummary }>(
-    tenant,
-    `/buildings${qs ? `?${qs}` : ''}`,
-    { token, signal },
-  );
+  return apiFetch<{
+    buildings: BuildingLedgerRow[];
+    total: number;
+    summary: CensusSummary;
+    /**
+     * With a `parcelNumber` filter: suffixes «تصحيح رقم العقار» retired on
+     * that parcel, which a new building there never gets.
+     */
+    retiredSuffixes?: string[];
+  }>(tenant, `/buildings${qs ? `?${qs}` : ''}`, { token, signal });
 }
 
 /**
@@ -1743,6 +1756,106 @@ export async function updateBuilding(
     method: 'PATCH',
     body: JSON.stringify(input),
   });
+  invalidateCensus(tenant);
+  return result;
+}
+
+// ─────────────────────────────  «تصحيح رقم العقار»  ─────────────────────────────
+
+/** What correcting a building's parcel would do — read before anything is asked. */
+export interface ParcelCorrectionPreview {
+  building: {
+    id: string;
+    code: string;
+    parcelNumber: string;
+    sharedParcelNumbers: string[];
+    zoneCode: string | null;
+    zoneName: string | null;
+    hasPin: boolean;
+    updatedAt: string;
+  };
+  next: {
+    parcelNumber: string;
+    /** Predicted: allocated under the parcel lock on save. */
+    codeSuffix: string;
+    code: string;
+    zoneCode: string | null;
+    zoneName: string | null;
+    zoneChanged: boolean;
+    /** Corrected back to a parcel it had left: it takes its own old code back. */
+    reclaimsOwnCode: boolean;
+    wasSharedParcel: boolean;
+  };
+  cadastre: {
+    /** null: this municipality has no cadastre loaded. */
+    known: boolean | null;
+    point: { latitude: number; longitude: number } | null;
+    /** null: no pin, or no outline known for the parcel. */
+    pinInside: boolean | null;
+  };
+  neighbours: DuplicateBuildingCandidate[];
+  cards: {
+    toRewrite: number;
+    current: number;
+    citizenCount: number;
+    citizens: Array<{ citizenId: string; name: string }>;
+    underSharedParcel: number;
+    otherNumber: number;
+  };
+  unlinkedOnOldParcel: number;
+  unlinkedOnNewParcel: number;
+  cases: number;
+}
+
+export interface ParcelCorrectionResult {
+  building: {
+    id: string;
+    parcelNumber: string;
+    codeSuffix: string;
+    code: string;
+    sharedParcelNumbers: string[];
+    updatedAt: string;
+  };
+  previousCode: string;
+  reclaimedOwnCode: boolean;
+  cardsCorrected: number;
+  citizensAffected: number;
+  casesCorrected: number;
+  pinInsideNewParcel: boolean | null;
+}
+
+export function getParcelCorrectionPreview(
+  tenant: string,
+  token: string,
+  buildingId: string,
+  parcelNumber: string,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ParcelCorrectionPreview>(
+    tenant,
+    `/buildings/${encodeURIComponent(buildingId)}/parcel-correction?parcelNumber=${encodeURIComponent(parcelNumber)}`,
+    { token, signal },
+  );
+}
+
+/** «تصحيح رقم العقار». Refused with the candidates when the right parcel already carries a structure. */
+export async function correctBuildingParcel(
+  tenant: string,
+  token: string,
+  buildingId: string,
+  input: {
+    parcelNumber: string;
+    reason: string;
+    acknowledgedDuplicates?: boolean;
+    keepOldAsShared?: boolean;
+    expectedUpdatedAt?: string;
+  },
+) {
+  const result = await apiFetch<ParcelCorrectionResult>(
+    tenant,
+    `/buildings/${encodeURIComponent(buildingId)}/parcel-correction`,
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
   invalidateCensus(tenant);
   return result;
 }
