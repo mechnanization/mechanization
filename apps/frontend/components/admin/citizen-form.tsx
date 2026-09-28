@@ -54,6 +54,8 @@ import { UnverifiedFieldsDialog } from './unverified-fields-dialog';
 import { QuickSaveDialog } from './quick-save-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
+import { ResidenceChangeDialog } from './residence-change-dialog';
+import { applyResidenceMove, planResidenceMove } from '@/lib/residence-move';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
 
@@ -112,6 +114,12 @@ export interface CitizenFormValues {
    * record for review. A note flags nothing.
    */
   notes?: string;
+  /**
+   * «تغيير الإقامة» — a real move applied on this form, not yet saved: the day
+   * it took effect, sent as `movedOn`, and the reason the save's review starts
+   * from. Absent on a correction, where only the answer changes.
+   */
+  residenceMove?: { movedOn: string; reason: string };
 }
 
 /**
@@ -603,6 +611,7 @@ export function toSubmission(values: CitizenFormValues) {
     ...(values.notes?.trim() ? { notes: values.notes.trim() } : {}),
     // Only on an edit, and only what the officer answered — see `removals`.
     ...(values.removals?.length ? { removals: values.removals } : {}),
+    ...(values.residenceMove ? { movedOn: values.residenceMove.movedOn } : {}),
   };
 }
 
@@ -752,6 +761,7 @@ export function CitizenForm({
   onValuesChange,
   locale = 'ar',
   lockedCensusTarget,
+  onDeactivated,
 }: {
   tenant: string;
   /**
@@ -809,6 +819,8 @@ export function CitizenForm({
    * this form does not have to know anything about the matrix that sent it.
    */
   lockedCensusTarget?: LockedCensusTarget | null;
+  /** «تغيير الإقامة» deactivated the file: the person holds nothing here any more. */
+  onDeactivated?: () => void;
 }) {
   const [values, setValues] = useState<CitizenFormValues>(initial);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -1286,6 +1298,38 @@ export function CitizenForm({
   }, []);
 
   /**
+   * «تغيير الإقامة» on a saved file.
+   *
+   * Changing the answer on a saved file opens the guide rather than flipping
+   * it: a real move has tenancies to end and homes to re-describe
+   * (`planResidenceMove`), and the guide also offers the plain switch for a
+   * residence recorded wrongly. A new filing just answers the question.
+   *
+   * Changing it back while a move is applied here undoes that move — the form
+   * as it was the moment the move was applied. Tenancies the guide ended stay
+   * ended: they were saved, on their day, as facts.
+   */
+  const [residenceGuide, setResidenceGuide] = useState<CitizenResidence | null>(null);
+  const beforeMove = useRef<CitizenFormValues | null>(null);
+  const chooseResidence = useCallback(
+    (next: CitizenResidence) => {
+      if (next === (values.residence ?? 'RESIDENT')) return;
+      if (values.residenceMove) {
+        const snapshot = beforeMove.current;
+        beforeMove.current = null;
+        setValues(snapshot ?? { ...withResidence(values, next), residenceMove: undefined });
+        return;
+      }
+      if (mode === 'edit' && citizenId) {
+        setResidenceGuide(next);
+        return;
+      }
+      setResidence(next);
+    },
+    [values, mode, citizenId, setResidence],
+  );
+
+  /**
    * «قد يكون مسجَّلاً مسبقاً» — looked up once, shown in one of two places.
    *
    * On a correction as well as a new filing, with the open file itself dropped
@@ -1710,7 +1754,25 @@ export function CitizenForm({
             title={sections[0].title}
             invalid={sectionInvalid('personal')}
           >
-            <ResidenceChooser value={values.residence ?? 'RESIDENT'} onChange={setResidence} locale={locale} />
+            <ResidenceChooser value={values.residence ?? 'RESIDENT'} onChange={chooseResidence} locale={locale} />
+            {values.residenceMove ? (
+              <p className="-mt-2 mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-primary/5 px-3 py-2 text-sm">
+                <span>
+                  {locale === 'en'
+                    ? `A move on ${values.residenceMove.movedOn} is applied on this form; it is recorded when you save.`
+                    : `انتقال بتاريخ ${values.residenceMove.movedOn} مطبَّق على النموذج، ويُسجَّل عند الحفظ.`}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="link"
+                  className="h-auto p-0"
+                  onClick={() => chooseResidence(values.residence === 'NON_RESIDENT_OWNER' ? 'RESIDENT' : 'NON_RESIDENT_OWNER')}
+                >
+                  {locale === 'en' ? 'Undo' : 'تراجع'}
+                </Button>
+              </p>
+            ) : null}
             {isNonResident ? (
               <OwnerPersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
             ) : (
@@ -2152,6 +2214,35 @@ export function CitizenForm({
       }}
       locale={locale}
     />
+    {residenceGuide && citizenId ? (
+      <ResidenceChangeDialog
+        open
+        to={residenceGuide}
+        values={values}
+        tenant={tenant}
+        token={token}
+        citizenId={citizenId}
+        locale={locale}
+        onCancel={() => setResidenceGuide(null)}
+        onCorrect={() => {
+          setValues((current) => ({ ...withResidence(current, residenceGuide), residenceMove: undefined }));
+          setResidenceGuide(null);
+        }}
+        onApply={(answers) => {
+          beforeMove.current = values;
+          setValues(applyResidenceMove(values, planResidenceMove(values, residenceGuide), answers));
+          setResidenceGuide(null);
+        }}
+        onTenancyEnded={(index, result, cardEnded) =>
+          cardEnded ? removeProperty(index) : removeEndedRows(index, result.endedRowIds ?? [])
+        }
+        onRemoveUnsaved={(index) => removeProperty(index)}
+        onDeactivated={() => {
+          setResidenceGuide(null);
+          onDeactivated?.();
+        }}
+      />
+    ) : null}
     </FieldFlagProvider>
   );
 }

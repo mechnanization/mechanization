@@ -109,6 +109,12 @@ function byReason(reason: string | null, on: Date | null): Omit<TracedChange, 'r
  * number, a name.
  */
 function fileEdit(after: Json): Omit<TracedChange, 'row'> | null {
+  /*
+    A move into or out of the town («تغيير الإقامة») is a real change with its
+    day, though it carries the reason every change of residence is asked for.
+  */
+  const movedOn = date(after.movedOn);
+  if (movedOn) return { kind: 'DATED_CHANGE', effectiveOn: movedOn };
   // A reason is only asked for a correction (R1), so an edit that carries one is one.
   if (text(after.reason)) return { kind: 'CORRECTION', effectiveOn: null };
 

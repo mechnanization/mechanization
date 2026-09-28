@@ -1969,6 +1969,10 @@ export class CitizensService {
         ...(changes.changed.length > 0 ? { changed: changes.changed } : {}),
         ...(changes.cards.length > 0 ? { cards: changes.cards } : {}),
         ...(input.payload.changeReason ? { reason: input.payload.changeReason } : {}),
+        // A real move («تغيير الإقامة»): the day it took effect. Only with a residence that changed.
+        ...(input.payload.movedOn && changes.changed.includes('residence')
+          ? { movedOn: input.payload.movedOn.toISOString() }
+          : {}),
         propertyCount: entries.length,
         propertiesRemoved: removedIds.length,
         // What the officer said about each removed card — the reason its flats
@@ -2343,6 +2347,10 @@ export class CitizensService {
     tenantSlug: string;
     citizenId: string;
     isActive: boolean;
+    /** Why — the trail's answer to «why did this file stop being billed?». */
+    reason?: string;
+    /** A deactivation because they moved away: the day they left. */
+    movedOn?: Date;
     actor: { id: string; role: string };
   }) {
     const citizen = await this.db.user.findFirst({
@@ -2360,6 +2368,14 @@ export class CitizensService {
       tenantSlug: input.tenantSlug,
       citizenId: citizen.id,
       action: input.isActive ? 'CITIZEN_REACTIVATED' : 'CITIZEN_DEACTIVATED',
+      ...(input.reason || input.movedOn
+        ? {
+            after: {
+              ...(input.reason ? { reason: input.reason } : {}),
+              ...(input.movedOn ? { movedOn: input.movedOn.toISOString() } : {}),
+            },
+          }
+        : {}),
       actorId: input.actor.id,
       actorRole: input.actor.role,
     });

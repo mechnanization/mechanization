@@ -2019,6 +2019,11 @@ export function CitizenEditor({
         onValuesChange={rememberDraft}
         locale={locale}
         lockedCensusTarget={lockedCensusTarget}
+        onDeactivated={() => {
+          forgetDraft();
+          toast.success(locale === 'en' ? 'File deactivated. It is kept and can be reactivated.' : 'عُطِّل الملف. يبقى محفوظاً ويمكن إعادة تفعيله.');
+          shellNavigate(router, `${base}/citizens/${citizenId}`);
+        }}
       />
 
       {/*
@@ -2112,6 +2117,7 @@ export function CitizenEditor({
       <EditReviewDialog
         review={editReview?.review ?? null}
         open={editReview !== null}
+        initialReason={editReview?.values.residenceMove?.reason}
         onCancel={() => setEditReview(null)}
         onConfirm={(changeReason) => {
           const held = editReview;

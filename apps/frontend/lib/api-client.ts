@@ -3567,17 +3567,22 @@ export async function unlinkLandlord(tenant: string, token: string, propertyEntr
   return result;
 }
 
-/** Soft delete and its undo — a deactivated citizen is skipped by the biller. */
+/**
+ * Soft delete and its undo — a deactivated citizen is skipped by the biller.
+ * `why` goes on the audit row: the reason, and the day they moved away when
+ * that is why («تغيير الإقامة»).
+ */
 export function setCitizenActive(
   tenant: string,
   token: string,
   citizenId: string,
   isActive: boolean,
+  why: { reason?: string; movedOn?: string } = {},
 ) {
   return apiFetch<{ isActive: boolean }>(
     tenant,
     `/citizens/${encodeURIComponent(citizenId)}/active`,
-    { token, method: 'PATCH', body: JSON.stringify({ isActive }) },
+    { token, method: 'PATCH', body: JSON.stringify({ isActive, ...why }) },
   );
 }
 
