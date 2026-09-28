@@ -241,6 +241,7 @@ interface SubmissionInput {
   expectedVersion?: string;
   removals?: CardRemoval[];
   changeReason?: string;
+  movedOn?: Date;
 }
 
 /**
@@ -407,23 +408,23 @@ function allFlags(input: SubmissionInput): FieldFlag[] {
  * card needs at least one unit and every unit's type. That is not a dead end:
  * the officer at a shop can see it is a shop.
  */
-function nonResidentCardIssues(
+export function nonResidentCardIssues(
   card: Record<string, unknown>,
   flagged: ReadonlySet<string>,
   prefix: string,
-): Array<{ path: Array<string | number>; message: string }> {
-  const issues: Array<{ path: Array<string | number>; message: string }> = [];
+): NonResidentCardIssue[] {
+  const issues: NonResidentCardIssue[] = [];
   const owner = card.occupancyType === 'OWNER';
   const units = Array.isArray(card.units) ? (card.units as Array<Record<string, unknown>>) : [];
 
   if (owner) {
     if (card.propertyType === 'HOUSE' && card.unitStatus === 'OWNER_OCCUPIED') {
-      issues.push({ path: ['unitStatus'], message: OWNER_NOT_LIVING_THERE });
+      issues.push({ path: ['unitStatus'], message: OWNER_NOT_LIVING_THERE, code: 'OWNER_LIVES_THERE' });
     }
     if (card.propertyType === 'BUILDING') {
       units.forEach((unit, unitIndex) => {
         if (isDwellingUnitType(unit.unitType as string) && unit.unitStatus === 'OWNER_OCCUPIED') {
-          issues.push({ path: ['units', unitIndex, 'unitStatus'], message: OWNER_NOT_LIVING_THERE });
+          issues.push({ path: ['units', unitIndex, 'unitStatus'], message: OWNER_NOT_LIVING_THERE, code: 'OWNER_LIVES_THERE' });
         }
       });
     }
@@ -437,23 +438,40 @@ function nonResidentCardIssues(
       return issues;
     case 'BUILDING': {
       if (units.length === 0 || flagged.has(`${prefix}.units`)) {
-        issues.push({ path: ['occupancyType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE });
+        issues.push({ path: ['occupancyType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE, code: 'NEEDS_UNIT_TYPE' });
         return issues;
       }
       units.forEach((unit, unitIndex) => {
         if (unit.unitType === undefined || unit.unitType === null || unit.unitType === '') {
-          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE });
+          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_NEEDS_UNIT_TYPE, code: 'NEEDS_UNIT_TYPE' });
         } else if (isDwellingUnitType(unit.unitType as string)) {
-          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_DWELLING });
+          issues.push({ path: ['units', unitIndex, 'unitType'], message: NON_RESIDENT_DWELLING, code: 'DWELLING' });
         }
       });
       return issues;
     }
     default:
       // A منزل is a dwelling, and a خيمة is somewhere somebody lives.
-      issues.push({ path: ['occupancyType'], message: NON_RESIDENT_DWELLING });
+      issues.push({ path: ['occupancyType'], message: NON_RESIDENT_DWELLING, code: 'DWELLING' });
       return issues;
   }
+}
+
+/**
+ * Why a card does not fit a non-resident record — and so what «تغيير الإقامة»
+ * has to settle before a household can become one:
+ *
+ *  - `DWELLING`: they rent or occupy somewhere people live. Moving away ends
+ *    that tenancy.
+ *  - `NEEDS_UNIT_TYPE`: what they rent is not known to be somewhere nobody lives.
+ *  - `OWNER_LIVES_THERE`: a home they own is marked as the one they live in.
+ */
+export type NonResidentCardIssueCode = 'DWELLING' | 'NEEDS_UNIT_TYPE' | 'OWNER_LIVES_THERE';
+
+export interface NonResidentCardIssue {
+  path: Array<string | number>;
+  message: string;
+  code: NonResidentCardIssueCode;
 }
 
 const NON_RESIDENT_DWELLING =
@@ -622,6 +640,7 @@ function shapeSubmission(input: SubmissionInput) {
     ...(input.expectedVersion ? { expectedVersion: input.expectedVersion } : {}),
     ...(input.removals?.length ? { removals: input.removals } : {}),
     ...(input.changeReason ? { changeReason: input.changeReason } : {}),
+    ...(input.movedOn ? { movedOn: input.movedOn } : {}),
   };
 }
 
@@ -710,6 +729,17 @@ const submissionEnvelope = {
    * the server when one of those changes; kept on the audit row with the change.
    */
   changeReason: z.string().trim().min(3, 'اذكر سبب التعديل').max(500, 'السبب طويل جداً').optional(),
+  /**
+   * «تاريخ الانتقال» — the day a change of نوع الملف took effect, when the
+   * person really moved into or out of the town («تغيير الإقامة»). Kept on the
+   * audit row, so a bill raised before the move reads as right and one raised
+   * after it as affected. Ignored when the residence does not change; absent on
+   * a correction of a residence recorded wrongly.
+   */
+  movedOn: z.coerce
+    .date({ invalid_type_error: 'تاريخ الانتقال غير صالح' })
+    .refine((value) => value.getTime() <= Date.now() + 60_000, 'تاريخ الانتقال في المستقبل')
+    .optional(),
 };
 
 /**

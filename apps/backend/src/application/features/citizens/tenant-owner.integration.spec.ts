@@ -688,6 +688,56 @@ describeIfDb('A tenant and the owner they rent from', () => {
     expect((last.after as { reason: string }).reason).toBe('خطأ في نسخ الرقم عن الهوية');
   });
 
+  it('records the day of a real move with the change of residence, and only then', async () => {
+    const mover = await person('منتقل');
+    const stored = await db.user.findUniqueOrThrow({ where: { id: mover.id } });
+    const nonResident = (over: { movedOn?: string; changeReason?: string; residencePlace: string }) =>
+      adminUpdateCitizenSubmissionSchema.parse({
+        residence: 'NON_RESIDENT_OWNER',
+        personal: { firstName: stored.firstName, lastName: stored.lastName, residencePlace: over.residencePlace },
+        contact: { phone: stored.phone, whatsappSameAsPhone: true },
+        properties: [],
+        flags: [],
+        ...(over.movedOn ? { movedOn: over.movedOn } : {}),
+        ...(over.changeReason ? { changeReason: over.changeReason } : {}),
+      });
+    const lastUpdate = async () => {
+      await pause();
+      const row = await db.auditLogEntry.findFirstOrThrow({
+        where: { entityId: mover.id, action: 'CITIZEN_UPDATED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      return row.after as Record<string, unknown>;
+    };
+
+    // A move a month ago: the residence changes, with its reason and its day.
+    await within(() =>
+      citizens.update({
+        tenantSlug: 'owners',
+        citizenId: mover.id,
+        payload: nonResident({ residencePlace: 'بيروت', movedOn: '2026-08-28', changeReason: 'انتقل للسكن في بيروت' }),
+        actor: actor(),
+      }),
+    );
+    expect((await db.user.findUniqueOrThrow({ where: { id: mover.id } })).residence).toBe('NON_RESIDENT_OWNER');
+    expect(await lastUpdate()).toMatchObject({ reason: 'انتقل للسكن في بيروت', movedOn: '2026-08-28T00:00:00.000Z' });
+
+    // A later edit that does not change the residence records no move, whatever it sends.
+    await within(() =>
+      citizens.update({
+        tenantSlug: 'owners',
+        citizenId: mover.id,
+        payload: nonResident({ residencePlace: 'صيدا', movedOn: '2026-09-01' }),
+        actor: actor(),
+      }),
+    );
+    expect(await lastUpdate()).not.toHaveProperty('movedOn');
+
+    // A move dated tomorrow is refused by the schema itself.
+    const tomorrow = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    expect(() => nonResident({ residencePlace: 'صيدا', movedOn: tomorrow })).toThrow(/تاريخ الانتقال في المستقبل/);
+  });
+
   it('reviews an edit without saving it: changes, the login, open bills, and what would refuse it', async () => {
     const { units } = await block('OWN-14');
     const flat = units[0]!.id;

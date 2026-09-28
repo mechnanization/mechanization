@@ -28,6 +28,12 @@ describe('traceChanges — edits to the file', () => {
     expect(kinds(traceChanges([row({ after: { reason: 'خطأ في النسخ', changed: ['residence'] } })], holder))).toEqual(['CORRECTION']);
   });
 
+  it('a move into or out of the town is a real change on the day it took effect', () => {
+    const after = { changed: ['residence'], cards: [{ kind: 'changed' }], reason: 'انتقل للسكن في بيروت', movedOn: '2026-08-01T00:00:00.000Z' };
+    const [change] = traceChanges([row({ after })], holder);
+    expect(change).toMatchObject({ kind: 'DATED_CHANGE', effectiveOn: new Date('2026-08-01T00:00:00.000Z') });
+  });
+
   it('an edit that touched no card is not a billing change', () => {
     expect(traceChanges([row({ after: { changed: ['phone', 'maritalStatus'] } })], holder)).toEqual([]);
   });

@@ -243,6 +243,7 @@ function fieldLabels(en: boolean): Record<string, string> {
     linesImported: ['خطوط استوردت', 'Lines imported'],
     amount: ['المبلغ', 'Amount'],
     amountNow: ['المبلغ لو صدرت اليوم', 'Amount if raised today'],
+    movedOn: ['تاريخ الانتقال', 'Moved on'],
     targetType: ['الجهة المستهدفة', 'Target'],
     issuedCount: ['عدد الإشعارات', 'Notices issued'],
     periodKey: ['الفترة', 'Period'],

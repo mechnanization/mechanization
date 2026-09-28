@@ -68,6 +68,7 @@ export function EndTenancyDialog({
   onOpenChange,
   onEnded,
   notice,
+  defaults,
   locale = 'ar',
 }: {
   tenant: string;
@@ -79,6 +80,11 @@ export function EndTenancyDialog({
   onEnded: (result: EndTenancyResult, cardEnded: boolean) => void;
   /** One line about the place it was opened from, shown above the buttons. */
   notice?: string;
+  /**
+   * What the place it was opened from already knows — «تغيير الإقامة» knows the
+   * tenant moved out, and on which day. Still shown and still changeable.
+   */
+  defaults?: { reason?: Reason; endedAt?: string };
   locale?: string;
 }) {
   const en = locale === 'en';
@@ -94,6 +100,8 @@ export function EndTenancyDialog({
   const [after, setAfter] = useState<AfterTenancyAnswer>({});
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const defaultReason = defaults?.reason;
+  const defaultEndedAt = defaults?.endedAt;
 
   useEffect(() => {
     if (!open) {
@@ -107,6 +115,8 @@ export function EndTenancyDialog({
       setBusy(false);
       return;
     }
+    if (defaultReason) setReason(defaultReason);
+    if (defaultEndedAt) setEndedAt(defaultEndedAt);
     const controller = new AbortController();
     getTenancyEndPreview(tenant, token, propertyEntryId)
       .then((found) => {
@@ -129,7 +139,7 @@ export function EndTenancyDialog({
         }
       });
     return () => controller.abort();
-  }, [open, tenant, token, propertyEntryId, en]);
+  }, [open, tenant, token, propertyEntryId, en, defaultReason, defaultEndedAt]);
 
   const rows = useMemo(() => preview?.rows ?? [], [preview]);
   /**

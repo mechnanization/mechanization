@@ -1969,6 +1969,10 @@ export class CitizensService {
         ...(changes.changed.length > 0 ? { changed: changes.changed } : {}),
         ...(changes.cards.length > 0 ? { cards: changes.cards } : {}),
         ...(input.payload.changeReason ? { reason: input.payload.changeReason } : {}),
+        // A real move («تغيير الإقامة»): the day it took effect. Only with a residence that changed.
+        ...(input.payload.movedOn && changes.changed.includes('residence')
+          ? { movedOn: input.payload.movedOn.toISOString() }
+          : {}),
         propertyCount: entries.length,
         propertiesRemoved: removedIds.length,
         // What the officer said about each removed card — the reason its flats

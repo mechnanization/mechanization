@@ -38,12 +38,15 @@ export function EditReviewDialog({
   open,
   onCancel,
   onConfirm,
+  initialReason,
   locale = 'ar',
 }: {
   review: CitizenEditReview | null;
   open: boolean;
   onCancel: () => void;
   onConfirm: (changeReason: string | undefined) => void;
+  /** What the officer already said — «تغيير الإقامة» asks it with the move. Still editable. */
+  initialReason?: string;
   locale?: string;
 }) {
   const en = locale === 'en';
@@ -57,8 +60,8 @@ export function EditReviewDialog({
   const [reason, setReason] = useState('');
 
   useEffect(() => {
-    if (open) setReason('');
-  }, [open]);
+    if (open) setReason(initialReason ?? '');
+  }, [open, initialReason]);
 
   if (!review) return null;
 
