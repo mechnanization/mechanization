@@ -1527,6 +1527,35 @@ export class BuildingsService {
       );
     }
 
+    /*
+      Fewer floors than the matrix already uses.
+
+      The matrix is drawn from these two counts, so a unit above the top floor
+      or below the deepest basement is on no row of it: it keeps billing and
+      counting while the editor cannot show it or remove it. Only a shrink can
+      do that, so only a shrink is checked. The editor removes the units first
+      and sends the smaller count afterwards; see `saveEdit`.
+    */
+    const floorsAfter = input.floorsCount ?? before.floorsCount;
+    const basementsAfter = input.basementsCount ?? before.basementsCount;
+    if (floorsAfter < before.floorsCount || basementsAfter < before.basementsCount) {
+      const outside = unitsOutsideFloors(
+        await this.db.unit.findMany({
+          where: { buildingId: id },
+          select: { unitCode: true, floor: true },
+          orderBy: [{ floor: 'asc' }, { sequence: 'asc' }],
+        }),
+        floorsAfter,
+        basementsAfter,
+      );
+      if (outside.length > 0) {
+        throw new ConflictError(
+          `لا يمكن إنقاص طوابق المبنى ${before.code}: ${outside.length === 1 ? 'الوحدة' : 'الوحدات'} ${listCodes(outside)} خارج الطوابق الجديدة. احذفها من مصفوفة الوحدات أو انقلها إلى طابق قائم أولاً`,
+          { unitCodes: outside.map((unit) => unit.unitCode), floorsCount: floorsAfter, basementsCount: basementsAfter },
+        );
+      }
+    }
+
     const updated = await this.db.building.update({
       where: { id },
       data: {
@@ -2235,50 +2264,167 @@ export class BuildingsService {
       );
     }
 
-    const updated = await this.db.unit.update({
-      where: { id: unitId },
-      data: {
-        ...(moved ? { floor, sequence, unitCode: formatUnitCode(floor, sequence) } : {}),
-        ...(input.startCol !== undefined ? { startCol: input.startCol } : {}),
-        ...(input.endCol !== undefined ? { endCol: input.endCol } : {}),
-        ...(input.unitType !== undefined ? { unitType: input.unitType as never } : {}),
-        ...(input.postedNumber !== undefined
-          ? { postedNumber: input.postedNumber?.trim() || null }
-          : {}),
-        ...(input.side !== undefined ? { side: input.side?.trim() || null } : {}),
-        ...(input.unitArea !== undefined ? { unitArea: input.unitArea ?? null } : {}),
-        /* Becoming structural clears it — see `becomingStructural` above. The
-           refusal there covers an officer *sending* one; this covers the value
-           already sitting on the row being retyped. */
-        ...(becomingStructural
-          ? { unitStatus: null }
-          : input.unitStatus !== undefined
-            ? { unitStatus: input.unitStatus as never }
+    /*
+      A محل retyped into a شقة under somebody who lives elsewhere.
+
+      The non-resident record may rent or occupy only what nobody lives in, and
+      an owner who lives elsewhere cannot be «مشغولة من المالك» on a dwelling
+      (`assertNonResidentOccupancy`). Both doors that record a person on a unit
+      refuse those states; this is the third door, which reaches them by
+      changing the unit under a person already recorded. Nothing refused it, so
+      the linked card copied the new type and the next save of that person's
+      file failed on a unit the officer had not touched.
+
+      Checked only when the edit makes the unit a dwelling or says the owner
+      lives in it. Refused rather than cascaded: whether the shop really became
+      a flat, or the person really moved into town, is for the officer to say.
+    */
+    const typeAfter = input.unitType ?? before.unitType;
+    const statusAfter = becomingStructural
+      ? null
+      : input.unitStatus !== undefined
+        ? input.unitStatus
+        : before.unitStatus;
+    const becomingDwelling = isDwellingUnitType(typeAfter) && !isDwellingUnitType(before.unitType);
+    const sayingOwnerLivesThere =
+      isDwellingUnitType(typeAfter) &&
+      statusAfter === 'OWNER_OCCUPIED' &&
+      (becomingDwelling || before.unitStatus !== 'OWNER_OCCUPIED');
+
+    if (becomingDwelling || sayingOwnerLivesThere) {
+      const names = { select: { firstName: true, middleName: true, lastName: true } } as const;
+      const nonOwner = { in: ['TENANT', 'FREE_OCCUPANT'] as never };
+      const [spells, rows, owners] = await Promise.all([
+        becomingDwelling
+          ? this.db.unitOccupancy.findMany({
+              where: {
+                unitId,
+                toDate: null,
+                role: nonOwner,
+                citizen: { residence: 'NON_RESIDENT_OWNER' as never },
+              },
+              select: { citizen: names },
+            })
+          : Promise.resolve([]),
+        becomingDwelling
+          ? this.db.buildingUnit.findMany({
+              where: {
+                unitId,
+                endedAt: null,
+                propertyEntry: {
+                  endedAt: null,
+                  occupancyType: nonOwner,
+                  registration: { citizen: { residence: 'NON_RESIDENT_OWNER' as never } },
+                },
+              },
+              select: { propertyEntry: { select: { registration: { select: { citizen: names } } } } },
+            })
+          : Promise.resolve([]),
+        sayingOwnerLivesThere
+          ? this.db.unitOccupancy.findMany({
+              where: { unitId, toDate: null, role: 'OWNER' as never },
+              select: { citizen: { select: { residence: true } } },
+            })
+          : Promise.resolve([]),
+      ]);
+
+      const conflict = nonResidentUnitConflict({
+        unitCode: before.unitCode,
+        nonResidentOccupants: [
+          ...spells.map((spell) => personName(spell.citizen)),
+          ...rows.map((row) => personName(row.propertyEntry.registration.citizen)),
+        ],
+        ownerOccupiedByNonResident:
+          sayingOwnerLivesThere &&
+          owners.length > 0 &&
+          owners.every((owner) => owner.citizen.residence === 'NON_RESIDENT_OWNER'),
+      });
+      if (conflict) {
+        throw new ConflictError(conflict, { unitCode: before.unitCode, unitType: typeAfter });
+      }
+    }
+
+    /*
+      Moving a unit past the building's floors grows the building, as adding a
+      unit there does (`addUnit`): an officer placing a flat on a fourth floor
+      of a building the register calls three storeys is correcting the
+      register. Without this the unit would sit on no row of the matrix.
+    */
+    const building = moved
+      ? await this.db.building.findUnique({
+          where: { id: before.buildingId },
+          select: { floorsCount: true, basementsCount: true },
+        })
+      : null;
+    const growFloors = building && floor + 1 > building.floorsCount ? floor + 1 : null;
+    const growBasements = building && floor < 0 && -floor > building.basementsCount ? -floor : null;
+
+    // One transaction: a moved unit and the floors that make room for it.
+    const updated = await this.atomic(async (tx) => {
+      const row = await tx.unit.update({
+        where: { id: unitId },
+        data: {
+          ...(moved ? { floor, sequence, unitCode: formatUnitCode(floor, sequence) } : {}),
+          ...(input.startCol !== undefined ? { startCol: input.startCol } : {}),
+          ...(input.endCol !== undefined ? { endCol: input.endCol } : {}),
+          ...(input.unitType !== undefined ? { unitType: input.unitType as never } : {}),
+          ...(input.postedNumber !== undefined
+            ? { postedNumber: input.postedNumber?.trim() || null }
             : {}),
-        ...(input.surveyStatus !== undefined
-          ? { surveyStatus: input.surveyStatus as never }
-          : {}),
-        ...(input.presenceMonths !== undefined ? { presenceMonths: input.presenceMonths } : {}),
-        ...(input.ownerLastStayAt !== undefined ? { ownerLastStayAt: input.ownerLastStayAt } : {}),
-        ...(input.vacancyDeclaredAt !== undefined
-          ? { vacancyDeclaredAt: input.vacancyDeclaredAt }
-          : {}),
-        ...(input.notes !== undefined ? { notes: input.notes?.trim() || null } : {}),
-      },
+          ...(input.side !== undefined ? { side: input.side?.trim() || null } : {}),
+          ...(input.unitArea !== undefined ? { unitArea: input.unitArea ?? null } : {}),
+          /* Becoming structural clears it — see `becomingStructural` above. The
+             refusal there covers an officer *sending* one; this covers the value
+             already sitting on the row being retyped. */
+          ...(becomingStructural
+            ? { unitStatus: null }
+            : input.unitStatus !== undefined
+              ? { unitStatus: input.unitStatus as never }
+              : {}),
+          ...(input.surveyStatus !== undefined
+            ? { surveyStatus: input.surveyStatus as never }
+            : {}),
+          ...(input.presenceMonths !== undefined ? { presenceMonths: input.presenceMonths } : {}),
+          ...(input.ownerLastStayAt !== undefined ? { ownerLastStayAt: input.ownerLastStayAt } : {}),
+          ...(input.vacancyDeclaredAt !== undefined
+            ? { vacancyDeclaredAt: input.vacancyDeclaredAt }
+            : {}),
+          ...(input.notes !== undefined ? { notes: input.notes?.trim() || null } : {}),
+        },
+      });
+
+      if (growFloors !== null || growBasements !== null) {
+        await tx.building.update({
+          where: { id: before.buildingId },
+          data: {
+            ...(growFloors !== null ? { floorsCount: growFloors } : {}),
+            ...(growBasements !== null ? { basementsCount: growBasements } : {}),
+          },
+        });
+      }
+      return row;
     });
 
+    /*
+      Every field this save changed, and only those — the rule the building's
+      own audit row follows (`changedBuildingFields`). This used to record the
+      code and the two statuses whatever moved, so a flat retyped from محل to
+      شقة, or re-measured from 40 m² to 140 m², left no trail, though both
+      change what its occupant is billed. `unitCode` is always on both sides:
+      it is how a reader finds the unit.
+    */
+    const changes = changedUnitFields(before, updated);
     this.record({
       action: 'UNIT_UPDATED',
       buildingId: before.buildingId,
-      before: {
-        unitCode: before.unitCode,
-        surveyStatus: before.surveyStatus,
-        unitStatus: before.unitStatus,
-      },
+      before: { ...changes.before, unitCode: before.unitCode },
       after: {
+        ...changes.after,
         unitCode: updated.unitCode,
-        surveyStatus: updated.surveyStatus,
-        unitStatus: updated.unitStatus,
+        changedFields: Object.keys(changes.after),
+        ...(growFloors !== null || growBasements !== null
+          ? { buildingGrown: { floorsCount: growFloors, basementsCount: growBasements } }
+          : {}),
       },
       actor,
     });
@@ -4189,6 +4335,99 @@ export function changedBuildingFields(
     changed.after[field] = after[field] ?? null;
   }
   return changed;
+}
+
+/** The unit fields `UNIT_UPDATED` records when they change. */
+const AUDITED_UNIT_FIELDS = [
+  'floor',
+  'sequence',
+  'unitCode',
+  'unitType',
+  'unitArea',
+  'unitStatus',
+  'surveyStatus',
+  'postedNumber',
+  'side',
+  'startCol',
+  'endCol',
+  'presenceMonths',
+  'ownerLastStayAt',
+  'vacancyDeclaredAt',
+  'notes',
+] as const;
+
+type AuditedUnit = { [K in (typeof AUDITED_UNIT_FIELDS)[number]]: unknown };
+
+/**
+ * The fields that differ between two versions of a unit, each side keyed by
+ * field — `changedBuildingFields` for a unit. Decimals and dates compare by
+ * their serialised form, so re-saving 120 m² as 120 m² is not a change.
+ * Exported for its spec.
+ */
+export function changedUnitFields(
+  before: AuditedUnit,
+  after: AuditedUnit,
+): { before: Record<string, unknown>; after: Record<string, unknown> } {
+  const changed = { before: {} as Record<string, unknown>, after: {} as Record<string, unknown> };
+  for (const field of AUDITED_UNIT_FIELDS) {
+    if (JSON.stringify(before[field] ?? null) === JSON.stringify(after[field] ?? null)) continue;
+    changed.before[field] = before[field] ?? null;
+    changed.after[field] = after[field] ?? null;
+  }
+  return changed;
+}
+
+/**
+ * The units a building's floors would no longer hold — above the top floor
+ * (`floorsCount - 1`) or below the deepest basement (`-basementsCount`).
+ * Exported for its spec.
+ */
+export function unitsOutsideFloors<T extends { floor: number }>(
+  units: readonly T[],
+  floorsCount: number,
+  basementsCount: number,
+): T[] {
+  return units.filter((unit) => unit.floor > floorsCount - 1 || unit.floor < -basementsCount);
+}
+
+/** «0401، 0402، 0403 و5 غيرها» — enough codes to find them, never a wall of them. */
+function listCodes(units: ReadonlyArray<{ unitCode: string }>, shown = 6): string {
+  const codes = units.map((unit) => unit.unitCode);
+  const head = codes.slice(0, shown).join('، ');
+  return codes.length > shown ? `${head} و${codes.length - shown} غيرها` : head;
+}
+
+/**
+ * Why a unit edit would put a non-resident somewhere the record cannot hold
+ * them, or null when it would not — the unit-edit face of
+ * `assertNonResidentOccupancy`. Each message names the people and both ways
+ * out, because only the officer knows which one is true. Exported for its spec.
+ */
+export function nonResidentUnitConflict(input: {
+  unitCode: string;
+  /** Tenants or free occupants of this unit whose file says they live elsewhere. */
+  nonResidentOccupants: readonly string[];
+  /** The edit says the owner lives here, and every recorded owner lives elsewhere. */
+  ownerOccupiedByNonResident: boolean;
+}): string | null {
+  const occupants = [...new Set(input.nonResidentOccupants.filter(Boolean))];
+
+  if (occupants.length > 0) {
+    return (
+      `لا يمكن جعل الوحدة ${input.unitCode} مسكناً: ${occupants.join('، ')} ` +
+      `${occupants.length === 1 ? 'مسجَّل عليها مستأجراً أو شاغلاً وملفه' : 'مسجَّلون عليها مستأجرين أو شاغلين وملفاتهم'} «غير مقيم في البلدة»، ` +
+      'وغير المقيم لا يستأجر مسكناً. إن كان يسكنها فعلاً فغيّر ملفه إلى «مقيم»، وإن كان قد تركها فأنهِ إيجاره أولاً'
+    );
+  }
+
+  if (input.ownerOccupiedByNonResident) {
+    return (
+      `لا يمكن تسجيل الوحدة ${input.unitCode} «مشغولة من المالك»: مالكها «غير مقيم في البلدة». ` +
+      'اختر «مسكن موسمي» أو «شاغرة»، أو غيّر ملف المالك إلى «مقيم» إن كان قد عاد ليسكنها'
+    );
+  }
+
+  return null;
 }
 
 /**

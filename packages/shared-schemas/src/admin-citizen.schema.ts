@@ -204,6 +204,29 @@ function branchFieldsOnly(card: Record<string, unknown>): Record<string, unknown
   return Object.fromEntries(Object.entries(card).filter(([key]) => keep.has(key)));
 }
 
+/**
+ * Why a saved card is being removed on the edit form.
+ *
+ * «سُجِّل بالخطأ» — it was never true, so the flats it claimed close as
+ * `RECORDED_IN_ERROR` and drop out of their history. «بيع أو نقل ملكية» — an
+ * owner who held it and no longer does, closing on the day it happened. A tenant
+ * who left is not asked here: the form sends them to «إنهاء الإيجار», which
+ * keeps the card as history.
+ */
+export const CARD_REMOVAL_REASON = ['RECORDED_IN_ERROR', 'OWNERSHIP_TRANSFERRED'] as const;
+export type CardRemovalReason = (typeof CARD_REMOVAL_REASON)[number];
+
+export const cardRemovalSchema = z.object({
+  propertyId: uuid,
+  reason: z.enum(CARD_REMOVAL_REASON, { errorMap: () => ({ message: 'سبب الحذف غير صالح' }) }),
+  endedAt: z.coerce
+    .date({ invalid_type_error: 'التاريخ غير صالح' })
+    // Judged at parse time — a bound computed at module load goes stale.
+    .refine((value) => value.getTime() <= Date.now() + 60_000, 'التاريخ في المستقبل')
+    .optional(),
+});
+export type CardRemoval = z.infer<typeof cardRemovalSchema>;
+
 interface SubmissionInput {
   residence: CitizenResidence;
   personal: Record<string, unknown>;
@@ -216,6 +239,7 @@ interface SubmissionInput {
   reviewDuplicates?: boolean;
   duplicateReview?: DuplicateReviewAnswer;
   expectedVersion?: string;
+  removals?: CardRemoval[];
 }
 
 /**
@@ -595,6 +619,7 @@ function shapeSubmission(input: SubmissionInput) {
     ...(input.reviewDuplicates ? { reviewDuplicates: true as const } : {}),
     ...(input.duplicateReview ? { duplicateReview: input.duplicateReview } : {}),
     ...(input.expectedVersion ? { expectedVersion: input.expectedVersion } : {}),
+    ...(input.removals?.length ? { removals: input.removals } : {}),
   };
 }
 
@@ -736,6 +761,12 @@ export const adminUpdateCitizenSubmissionSchema = z
     properties: z
       .array(z.object({ id: uuid.optional() }).passthrough())
       .max(25, 'عدد العقارات كبير جداً — يرجى مراجعة البلدية'),
+    /**
+     * The officer's answer for each saved card this edit removes — see
+     * `cardRemovalSchema`. Optional: an older client or a queued edit sends
+     * none, and its removals close the way they always did.
+     */
+    removals: z.array(cardRemovalSchema).max(25).optional(),
   })
   .superRefine(unexcusedIssues)
   .transform(shapeSubmission);
