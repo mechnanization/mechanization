@@ -8,8 +8,24 @@ import {
   StaffSummary,
   UserRepository,
 } from '../../domain/interfaces/user-repository.interface';
-import { COMMISSION_RATE, creditBillableUnits } from '@mechanization/shared-schemas';
+import { cardsFiledOn, COMMISSION_RATE, creditBillableUnits } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../context/tenant-context.service';
+
+/**
+ * The columns of a card the earnings rule reads — `endReason` on both levels,
+ * the unit's type and census link — plus where a merge filed it. Selecting
+ * only `id` here is what once let the roster disagree with the inspector's
+ * own page.
+ */
+const EARNINGS_CARD_SELECT = {
+  id: true,
+  propertyType: true,
+  endReason: true,
+  filedRegistrationId: true,
+  units: {
+    select: { id: true, unitId: true, unitType: true, endReason: true },
+  },
+} as const;
 
 @Injectable()
 export class PrismaUserRepository implements UserRepository {
@@ -319,15 +335,11 @@ export class PrismaUserRepository implements UserRepository {
           // `endReason` on both levels and the unit's type and census link are
           // what the earnings rule reads; selecting only `id` here is what let
           // this list disagree with the inspector's own page.
-          select: {
-            id: true,
-            propertyType: true,
-            endReason: true,
-            units: {
-              select: { id: true, unitId: true, unitType: true, endReason: true },
-            },
-          },
+          select: EARNINGS_CARD_SELECT,
         },
+        // Cards filed here that a merge has since moved onto another
+        // registration — still this officer's work. See `cardsFiledOn`.
+        movedCards: { select: EARNINGS_CARD_SELECT },
       },
     });
 
@@ -349,7 +361,7 @@ export class PrismaUserRepository implements UserRepository {
       // One dollar per distinct unit. The set spans this inspector's whole
       // history rather than one registration, so the owner's file and the
       // tenant's file for one flat are counted once between them.
-      creditBillableUnits(reg.properties, stat.units);
+      creditBillableUnits(cardsFiledOn(reg), stat.units);
     }
 
     // Query recorded payouts for each inspector

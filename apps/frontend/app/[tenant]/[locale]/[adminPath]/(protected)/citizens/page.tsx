@@ -12,6 +12,7 @@ import {
   Clock3,
   FileQuestion,
   FileSpreadsheet,
+  GitMerge,
   Loader2,
   MessageCircle,
   Pencil,
@@ -431,7 +432,15 @@ export default function CitizensPage({
                     : `يتطلب مراجعة (${citizen.unestablishedFieldCount})`}
                 </p>
               ) : null}
-              {!citizen.isActive ? (
+              {citizen.mergedIntoId ? (
+                <Link
+                  href={`${base}/citizens/${encodeURIComponent(citizen.mergedIntoId)}`}
+                  className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline"
+                >
+                  <GitMerge className="size-3.5 shrink-0" aria-hidden />
+                  {locale === 'en' ? 'Merged into another file' : 'مدموج في ملف آخر'}
+                </Link>
+              ) : !citizen.isActive ? (
                 <p className="flex items-center gap-1.5 text-muted-foreground">
                   <Ban className="size-3.5 shrink-0" aria-hidden />
                   {locale === 'en' ? 'Disabled' : 'معطّل'}
@@ -705,7 +714,7 @@ export default function CitizensPage({
                 </ActionTooltip>
               ) : null}
 
-              {canWrite ? (
+              {canWrite && !citizen.mergedIntoId ? (
                 <ActionTooltip label={locale === 'en' ? 'Edit information' : 'تعديل البيانات'}>
                   <Link
                     href={`${base}/citizens/${citizen.id}/edit`}
@@ -717,7 +726,8 @@ export default function CitizensPage({
                 </ActionTooltip>
               ) : null}
 
-              {canWrite ? (
+              {/* A merged file comes back through «التراجع عن الدمج», never by reactivation. */}
+              {canWrite && !citizen.mergedIntoId ? (
                 <ActionTooltip
                   label={
                     citizen.isActive
@@ -744,7 +754,8 @@ export default function CitizensPage({
                 </ActionTooltip>
               ) : null}
 
-              {canDelete && citizen.registrationCount === 0 ? (
+              {/* A merged file holds no filing, but it is the record of the merge — not deletable. */}
+              {canDelete && citizen.registrationCount === 0 && !citizen.mergedIntoId ? (
                 <ActionTooltip label={locale === 'en' ? 'Permanent delete — no applications on file' : 'حذف نهائي — لا طلبات على هذا الملف'}>
                   <Button
                     variant="ghost"

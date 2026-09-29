@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, ExternalLink, Loader2, Pencil, ShieldAlert } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { ArrowLeft, ExternalLink, GitMerge, Loader2, Pencil, ShieldAlert } from 'lucide-react';
 import {
   arabicOrLatinName,
   getLabels,
@@ -35,6 +36,7 @@ import { Input } from '@/components/ui/input';
 import { ErrorState, LoadingState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { MergeCitizensDialog } from '../merge-citizens-dialog';
 import { comparablePairOf, FindingDetail, SeverityMark } from './finding-parts';
 
 /**
@@ -447,6 +449,7 @@ function CitizenCompare({
   locale,
   token,
   canEdit,
+  canMerge,
   onBack,
   onChanged,
 }: {
@@ -457,12 +460,15 @@ function CitizenCompare({
   locale: string;
   token: string | null;
   canEdit: boolean;
+  canMerge: boolean;
   onBack: () => void;
   onChanged: () => void;
 }): React.JSX.Element {
   const en = locale === 'en';
   const labels = getLabels(locale);
   const toast = useToast();
+  const router = useRouter();
+  const [merging, setMerging] = useState(false);
 
   const query = useStaffQuery({
     queryKey: ['quality-compare-citizens', tenant, pair.a.id, pair.b.id],
@@ -775,11 +781,48 @@ function CitizenCompare({
         rows={withEditing}
       />
 
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        {en
-          ? 'Nothing here merges two records. If this is one person, correct the record that is wrong and move the property onto the file that stays — a merge cannot be undone.'
-          : 'لا شيء هنا يدمج سجلّين. إن كانا شخصاً واحداً فصحِّح السجل الخاطئ وانقل العقار إلى الملف الباقي — الدمج لا يمكن التراجع عنه.'}
-      </p>
+      {/*
+        «دمج الملفين» — an administrator's, and only once both records have been
+        read side by side, which is what this screen is. Everyone else is told
+        who can do it rather than shown a button the server would refuse.
+      */}
+      {canMerge && token ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {en
+              ? 'If these are one person, merge them: the file registered first stays, everything the other holds moves onto it, and the other is deactivated. It can be undone while neither file changes.'
+              : 'إن كانا شخصاً واحداً فادمجهما: يبقى الملف المسجَّل أولاً، وينتقل إليه كل ما على الآخر، ويُعطَّل الآخر. يمكن التراجع عن الدمج ما دام الملفان لم يتغيّرا.'}
+          </p>
+          <Button size="sm" className="shrink-0 gap-1.5" onClick={() => setMerging(true)}>
+            <GitMerge className="size-4" aria-hidden />
+            {en ? 'Merge the two files' : 'دمج الملفين'}
+          </Button>
+        </div>
+      ) : (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {en
+            ? 'If this is one person, an administrator can merge the two files from this screen. Until then, correct whichever record is wrong.'
+            : 'إن كانا شخصاً واحداً فيمكن لمدير النظام دمج الملفين من هذه الشاشة. وإلى ذلك الحين صحِّح السجل الخاطئ.'}
+        </p>
+      )}
+
+      {merging && token ? (
+        <MergeCitizensDialog
+          open
+          onOpenChange={(next) => (next ? undefined : setMerging(false))}
+          tenant={tenant}
+          token={token}
+          locale={locale}
+          firstId={people[0].id}
+          secondId={people[1].id}
+          onMerged={(result) => {
+            setMerging(false);
+            toast.success(en ? 'The two files were merged.' : 'دُمج الملفان.');
+            onChanged();
+            router.push(`${base}/citizens/${encodeURIComponent(result.keepId)}`);
+          }}
+        />
+      ) : null}
 
       <ConfirmDialog
         open={pending !== null}
@@ -954,6 +997,7 @@ export function FindingCompare({
   locale,
   token,
   canEdit,
+  canMerge = false,
   onBack,
   onChanged,
 }: {
@@ -964,6 +1008,8 @@ export function FindingCompare({
   token: string | null;
   /** Whether this viewer's role may write to a citizen's file at all. */
   canEdit: boolean;
+  /** SUPER_ADMIN — «دمج الملفين» on a pair that is one person. */
+  canMerge?: boolean;
   onBack: () => void;
   /** A correction landed — the queue behind this screen is now stale. */
   onChanged: () => void;
@@ -993,6 +1039,7 @@ export function FindingCompare({
       locale={locale}
       token={token}
       canEdit={canEdit}
+      canMerge={canMerge}
       onBack={onBack}
       onChanged={onChanged}
     />

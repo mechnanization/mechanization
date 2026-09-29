@@ -25,6 +25,7 @@ import {
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { ConflictError, NotFoundError } from '../../common/exceptions';
+import { assertNotMergedAway } from '../citizens/merged-away';
 import { searchTokens } from '../../common/search-terms';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { PaymentLedgerService } from './payment-ledger.service';
@@ -1866,6 +1867,8 @@ export class FeesService {
       select: { id: true },
     });
     if (!citizen) throw new NotFoundError('Citizen', input.citizenId);
+    // A bill on a file folded into another is one the person never sees.
+    await assertNotMergedAway(this.db, citizen.id);
 
     const created = await this.db.citizenPayment.create({
       data: {

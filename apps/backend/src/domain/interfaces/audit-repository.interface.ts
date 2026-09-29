@@ -4,6 +4,11 @@ export interface AuditQuery {
   actorId?: string;
   entityType?: string;
   entityId?: string;
+  /**
+   * More records whose trail belongs with `entityId`'s — the files «دمج ملفين»
+   * folded into it. Only read together with `entityId`.
+   */
+  alsoEntityIds?: string[];
   /** One or more action codes, any of which matches. */
   actions?: string[];
   /**

@@ -135,7 +135,7 @@ function summarise(items: QueuedSubmission[]) {
  * another's. `Math.random()` is not an option here; see the note in the README
  * about the reference numbers that were minted from it.
  */
-function newSubmissionId(): string {
+export function newSubmissionId(): string {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
 
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -206,8 +206,16 @@ export async function queueSubmission(
     QueuedSubmission,
     'id' | 'status' | 'savedAt' | 'attempts' | 'lastAttemptAt' | 'lastError'
   >,
+  /**
+   * The id an online attempt at this same filing already sent as its
+   * `clientSubmissionId`. A request that "never arrived" often did — only its
+   * response was lost — and queued under a new id it would be filed a second
+   * time on the next sync. Under the same id the server returns the file it
+   * already made.
+   */
+  options: { id?: string } = {},
 ): Promise<string> {
-  const id = newSubmissionId();
+  const id = options.id ?? newSubmissionId();
 
   await enqueue({
     ...submission,

@@ -545,6 +545,7 @@ export function FindingsList({
           locale={locale}
           token={token}
           canEdit={CITIZEN_EDIT_ROLES.includes(role ?? '')}
+          canMerge={role === 'SUPER_ADMIN'}
           onBack={() => setView({ mode: 'list' })}
           onChanged={() => query.refetch()}
         />

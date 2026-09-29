@@ -1202,6 +1202,7 @@ export class LandlordLinkService {
           buildingId: true,
           latitude: true,
           longitude: true,
+          filedRegistrationId: true,
           units: { where: { endedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true } },
         },
       }),
@@ -1227,6 +1228,8 @@ export class LandlordLinkService {
         buildingId: source.buildingId,
         latitude: source.latitude,
         longitude: source.longitude,
+        // A row split off a card «دمج ملفين» moved keeps crediting the officer who filed it.
+        filedRegistrationId: source.filedRegistrationId,
       },
     });
     await this.db.buildingUnit.update({ where: { id: rowId }, data: { propertyEntryId: created.id } });

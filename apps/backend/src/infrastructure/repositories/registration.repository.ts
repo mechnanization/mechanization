@@ -142,7 +142,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
         let attachedTo: string | null = null;
 
         if (identityDocType && identityDocNumber) {
-          const holder = await tx.user.findUnique({
+          let holder = await tx.user.findUnique({
             where: {
               identityDocType_identityDocNumber: {
                 identityDocType: identityDocType as never,
@@ -151,6 +151,24 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
             },
             select: { id: true, kind: true, firstName: true, middleName: true, lastName: true },
           });
+
+          /*
+            A holder «دمج ملفين» folded into another file is a record, not a
+            person to attach a filing to: it holds no filing, nobody bills it,
+            and a filing added to it would sit on flats under nobody. The
+            filing goes to the file that stays — asked the same «same name?»
+            question, since that file's name is the one that stands.
+          */
+          for (let hops = 0; holder && hops < 5; hops += 1) {
+            const merge = await tx.citizenMerge.findFirst({
+              where: { absorbedId: holder.id, undoneAt: null },
+              select: {
+                survivor: { select: { id: true, kind: true, firstName: true, middleName: true, lastName: true } },
+              },
+            });
+            if (!merge) break;
+            holder = merge.survivor;
+          }
 
           if (!holder) {
             identity = 'NEW';

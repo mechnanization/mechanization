@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
+  duplicateMatchedOnLabels,
   POSSIBLE_DUPLICATE_FLAG_PATH,
   type DismissFindingInput,
   type FieldFlag,
@@ -14,7 +15,13 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { ConflictError, NotFoundError } from '../../common/exceptions';
 import { metresBetween } from '../buildings/buildings.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
-import { duplicateSignals, foldNamePart, isLikelySamePerson, matchedOn } from '../citizens/possible-duplicates';
+import {
+  duplicateSignals,
+  foldNamePart,
+  foldRecordNumber,
+  isLikelySamePerson,
+  matchedOn,
+} from '../citizens/possible-duplicates';
 
 /**
  * Two buildings on one parcel closer than this are shown as a possible single
@@ -26,6 +33,9 @@ const NEAR_BUILDING_METRES = 10;
 
 /** A name block larger than this is compared only on its phones — see `duplicateCitizens`. */
 const MAX_BLOCK = 2000;
+
+/** How «شخص مسجَّل مرتين» names what the two records agree on. */
+const MATCHED_ON_AR = duplicateMatchedOnLabels('ar');
 
 export type FindingSeverity = 'HIGH' | 'MEDIUM' | 'LOW';
 
@@ -463,11 +473,16 @@ export class DataQualityService {
         motherName: true,
         phone: true,
         whatsapp: true,
+        civilRecordNumber: true,
+        residencyNumber: true,
+        gender: true,
+        isLebanese: true,
         referenceNumber: true,
         createdAt: true,
+        unitOccupancies: { where: { toDate: null }, select: { unitId: true } },
         registrations: { orderBy: { submittedAt: 'desc' }, take: 1, select: { createdById: true } },
       },
-    });
+    }).then((rows) => rows.map((row) => ({ ...row, unitIds: row.unitOccupancies.map((spell) => spell.unitId) })));
 
     const blocks = new Map<string, number[]>();
     const add = (key: string, index: number) => {
@@ -481,6 +496,13 @@ export class DataQualityService {
       add(`l:${foldNamePart(person.lastName)}`, index);
       if (person.phone) add(`p:${person.phone}`, index);
       if (person.whatsapp && person.whatsapp !== person.phone) add(`p:${person.whatsapp}`, index);
+      /*
+        A family's سجل, so a pair whose family name is spelled two ways — which
+        the name blocks above only reach through a first name that may be too
+        common to compare — is still set side by side.
+      */
+      const civil = foldRecordNumber(person.civilRecordNumber);
+      if (civil) add(`c:${civil}`, index);
     });
 
     const seen = new Set<string>();
@@ -501,9 +523,7 @@ export class DataQualityService {
             kind: 'DUPLICATE_CITIZEN',
             subjectKey: key,
             severity: 'HIGH',
-            detail: `تطابق في: ${on
-              .map((part) => ({ NAME: 'الاسم', NAME_SIMILAR: 'اسم مشابه', PHONE: 'الهاتف', MOTHER: 'اسم الأم' })[part])
-              .join('، ')}`,
+            detail: `تطابق في: ${on.map((part) => MATCHED_ON_AR[part]).join('، ')}`,
             subjects: [a, b].map((person) => ({
               kind: 'citizen' as const,
               id: person.id,
@@ -565,7 +585,8 @@ export class DataQualityService {
     const rows = await this.db.$queryRaw<
       Array<{ entryId: string; citizenId: string; createdById: string | null; createdAt: Date; landlordName: string | null; field: string }>
     >`
-      SELECT pe.id AS "entryId", u.id AS "citizenId", r."createdById", pe."createdAt",
+      -- The officer who filed the card, wherever «دمج ملفين» has since moved it (0061).
+      SELECT pe.id AS "entryId", u.id AS "citizenId", COALESCE(fr."createdById", r."createdById") AS "createdById", pe."createdAt",
              COALESCE(pe."landlordName", l."firstName" || ' ' || l."lastName") AS "landlordName",
              CASE
                WHEN u.phone IS NOT NULL AND (u.phone = pe."landlordPhone" OR u.phone = l.phone OR u.phone = l.whatsapp) THEN 'phone'
@@ -573,6 +594,7 @@ export class DataQualityService {
              END AS field
       FROM ${this.S}property_entries pe
       JOIN ${this.S}registrations r ON r.id = pe."registrationId"
+      LEFT JOIN ${this.S}registrations fr ON fr.id = pe."filedRegistrationId"
       JOIN ${this.S}users u ON u.id = r."citizenId" AND u.kind = 'CITIZEN' AND u."isActive"
       LEFT JOIN ${this.S}users l ON l.id = pe."landlordCitizenId"
       WHERE pe."occupancyType" <> 'OWNER'
@@ -679,10 +701,12 @@ export class DataQualityService {
     >`
       SELECT bu.id AS "rowId", u."unitCode", u."unitStatus"::text AS "unitStatus", bu."unitStatus"::text AS "cardStatus",
              b.id AS "buildingId", b.code AS "buildingCode", b.name AS "buildingName", b."parcelNumber",
-             r."citizenId", r."createdById", GREATEST(bu."updatedAt", u."updatedAt") AS "updatedAt"
+             r."citizenId", COALESCE(fr."createdById", r."createdById") AS "createdById",
+             GREATEST(bu."updatedAt", u."updatedAt") AS "updatedAt"
       FROM ${this.S}building_units bu
       JOIN ${this.S}property_entries pe ON pe.id = bu."propertyEntryId"
       JOIN ${this.S}registrations r ON r.id = pe."registrationId"
+      LEFT JOIN ${this.S}registrations fr ON fr.id = pe."filedRegistrationId"
       JOIN ${this.S}units u ON u.id = bu."unitId"
       JOIN ${this.S}buildings b ON b.id = u."buildingId"
       WHERE bu."endedAt" IS NULL

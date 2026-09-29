@@ -232,6 +232,19 @@ describe('queueSubmission', () => {
     expect(stored).toMatchObject({ id, tenant: TENANT, status: 'pending', attempts: 0 });
   });
 
+  it('keeps the id an online attempt already sent, so a lost response is not filed twice', async () => {
+    // The online save sent this as `clientSubmissionId`; if it did arrive, the
+    // sync delivers it again under the same name and the server answers with
+    // the file it already made.
+    const online = '3f2d8a4e-8f7a-4b8e-9c61-2d0a5b7e9f10';
+    const id = await queueSubmission(
+      { tenant: TENANT, displayName: 'Ahmad', payload: submissionPayload() } as never,
+      { id: online },
+    );
+    expect(id).toBe(online);
+    expect(submissions.get(online)).toMatchObject({ id: online, status: 'pending' });
+  });
+
   it('mints a distinct id per record', async () => {
     // The server's unique index on `clientSubmissionId` turns a collision into
     // one household's registration silently answering for another's, so this
