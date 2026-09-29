@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { internationalPhone, STRUCTURE_TYPE_MAP, unitStatusForRole } from '@mechanization/shared-schemas';
+import {
+  internationalPhone,
+  occupancyLiftsSurvey,
+  STRUCTURE_TYPE_MAP,
+  unitStatusForRole,
+} from '@mechanization/shared-schemas';
 import type { StructureType } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -1354,8 +1359,13 @@ export class LandlordLinkService {
         occupancyId,
         row: null,
         filledUnitStatus: !current && fillsStatus && unitStatus ? unitStatus : null,
+        /*
+          The state `recordOccupancy` is about to lift, read from the same
+          shared list it uses, so an unlink puts back exactly what the link
+          changed, including a «رفض» or «تعذّر الوصول» it answered.
+        */
         liftedSurveyFrom:
-          !current && OPEN_SURVEY_STATES.includes(unit.surveyStatus) ? unit.surveyStatus : null,
+          !current && occupancyLiftsSurvey(unit.surveyStatus) ? unit.surveyStatus : null,
         cases: openCases.map((row) => ({
           id: row.id,
           status: row.status,
@@ -2612,9 +2622,6 @@ export class LandlordLinkService {
 // ─────────────────────────────  Shapes  ─────────────────────────────
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** The survey states an occupancy lifts to «مكتملة» — see `recordOccupancy`. */
-const OPEN_SURVEY_STATES: readonly string[] = ['NOT_SURVEYED', 'VISITED_NO_ANSWER', 'PARTIAL'];
 
 const CANDIDATE_SELECT = {
   id: true,

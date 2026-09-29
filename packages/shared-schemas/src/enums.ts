@@ -618,6 +618,46 @@ export function isSurveyed(status: string | null | undefined): boolean {
 }
 
 /**
+ * The survey statuses that recording an occupant lifts to `COMPLETE`: exactly
+ * the ones that are not yet an answer, i.e. `SURVEY_STATUS` minus
+ * `SURVEYED_STATUS`.
+ *
+ * Recording who holds a flat produces the data the census collects. Any
+ * status that means "we do not have that data yet" is answered by it, and
+ * `REFUSED` and `INACCESSIBLE` are among them — see `SURVEYED_STATUS` above,
+ * which leaves them out of the coverage figure for exactly that reason. The
+ * refusal or the locked door was an attempt; a household recorded on the flat
+ * afterwards is the answer that attempt did not get. The follow-up case a
+ * refusal opens is already closed by the same recording
+ * (`CasesService.resolveForUnit`).
+ *
+ * The three `SURVEYED_STATUS` values are findings about the flat, and an
+ * occupant is not allowed to overwrite them. `VACANT_CONFIRMED` goes through
+ * its own lift (`closeActiveVacancy`), which asks before overwriting.
+ * `DEMOLISHED` against a household is a contradiction for a person to resolve.
+ *
+ * Until 2026-09-29 each door kept its own copy of this list, all three
+ * stopping at `PARTIAL`. A flat logged «رفض» and registered a week later kept
+ * `REFUSED` under a household and a «مكتملة» visit, and the building's
+ * «٤ من ٥ وحدة ممسوحة» never reached five. One constant, read by
+ * `BuildingsService.recordOccupancy`, `CensusSyncService.applyOccupancy` and
+ * `LandlordLinkService` (which records what it lifted so an unlink can put it
+ * back), keeps the three doors agreeing.
+ */
+export const OCCUPANCY_LIFTS_SURVEY_STATUS = [
+  'NOT_SURVEYED',
+  'VISITED_NO_ANSWER',
+  'PARTIAL',
+  'REFUSED',
+  'INACCESSIBLE',
+] as const satisfies readonly SurveyStatus[];
+
+/** Whether recording an occupant on a unit in this state marks it surveyed. */
+export function occupancyLiftsSurvey(status: string | null | undefined): boolean {
+  return status != null && (OCCUPANCY_LIFTS_SURVEY_STATUS as readonly string[]).includes(status);
+}
+
+/**
  * UN-Habitat's rapid building-level damage scale, verbatim.
  *
  * Not adjusted, not simplified and not extended — it is already the vocabulary
