@@ -60,6 +60,7 @@ import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
+import { UnitCorrectionDeleteButton, useStaffRole } from '@/components/admin/unit-correction-delete-dialog';
 import {
   type EndOccupancyAnswer,
   activeVacancy,
@@ -197,6 +198,8 @@ export function BuildingUnitMatrixDrawer({
   const [action, setAction] = useState<ActionKind>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** SUPER_ADMIN deletes through «حذف تصحيحي…», which previews and audits. */
+  const role = useStaffRole(tenant);
 
   const load = useCallback(async () => {
     if (!buildingId) return;
@@ -1042,7 +1045,21 @@ export function BuildingUnitMatrixDrawer({
                     not visible from here — so it still arrives as a message,
                     and `run` surfaces it verbatim.
                   */}
-                  {canWrite &&
+                  {role === 'SUPER_ADMIN' ? (
+                    <UnitCorrectionDeleteButton
+                      tenant={tenant}
+                      token={token}
+                      unit={selectedUnit}
+                      locale={locale}
+                      disabled={busy}
+                      onDeleted={() => {
+                        setSelectedUnitId(null);
+                        setAction(null);
+                        void load();
+                        onChanged?.();
+                      }}
+                    />
+                  ) : canWrite &&
                   selectedUnit.occupants.length === 0 &&
                   selectedUnit.visitCount === 0 ? (
                     <Button

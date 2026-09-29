@@ -74,6 +74,8 @@ export const FILE_ACTIONS = [
   'CITIZEN_MERGED',
   'CITIZEN_MERGED_INTO',
   'CITIZEN_MERGE_UNDONE',
+  // «حذف وحدة سُجِّلت بالخطأ»: the file's lines on it close RECORDED_IN_ERROR.
+  'UNIT_CORRECTION_FILE_ENDED',
 ] as const;
 
 /** Unit actions, recorded on the building, that can move its holders' bills. */
@@ -85,6 +87,7 @@ export const UNIT_ACTIONS = [
   'UNIT_VACANCY_CONFIRMED',
   'UNIT_VACANCY_ENDED',
   'UNIT_STATUS_AFTER_TENANCY',
+  'UNIT_CORRECTION_DELETED',
 ] as const;
 
 /** The unit fields `assessCitizen` reads. A rename or a floor move bills nothing. */
@@ -208,6 +211,7 @@ export function traceChanges(
         case 'CITIZEN_MERGED':
         case 'CITIZEN_MERGED_INTO':
         case 'CITIZEN_MERGE_UNDONE':
+        case 'UNIT_CORRECTION_FILE_ENDED':
           change = { kind: 'CORRECTION', effectiveOn: null };
           break;
         case 'LANDLORD_TENANCY_ENDED':
@@ -221,7 +225,9 @@ export function traceChanges(
       }
     } else if (row.entityType === 'Building') {
       if (!(UNIT_ACTIONS as readonly string[]).includes(row.action)) continue;
-      const named = [before.citizenId, after.citizenId, after.tenantId].includes(holder.citizenId);
+      const named =
+        [before.citizenId, after.citizenId, after.tenantId].includes(holder.citizenId) ||
+        (Array.isArray(after.citizens) && after.citizens.includes(holder.citizenId));
       const unitCode = text(after.unitCode) ?? text(before.unitCode);
       if (!named && !(unitCode && holder.unitCodes.has(unitCode))) continue;
 
@@ -232,6 +238,10 @@ export function traceChanges(
           break;
         case 'UNIT_STATUS_AFTER_TENANCY':
           change = tenantEnding(after.tenantId);
+          break;
+        case 'UNIT_CORRECTION_DELETED':
+          // The unit never existed: everything billed on it was a correction.
+          change = { kind: 'CORRECTION', effectiveOn: null };
           break;
         case 'UNIT_VACANCY_ENDED':
           change = after.reason === 'RECORDED_IN_ERROR'
