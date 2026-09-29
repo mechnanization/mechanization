@@ -67,6 +67,7 @@ import { cn } from '@/lib/utils';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import { ActivityTrail } from '@/components/admin/activity-trail';
+import { UnitCorrectionDeleteButton } from '@/components/admin/unit-correction-delete-dialog';
 import { AUDIT_ENTITY } from '@/lib/audit-labels';
 import {
   type EndOccupancyAnswer,
@@ -1124,7 +1125,24 @@ export function BuildingUnitMatrixView({
                     dialog behind it, so it does not get a cell the same size as
                     «تسجيل زيارة» right beside the thumb that meant to press that.
                   */}
-                  {selectedUnit.occupants.length === 0 && selectedUnit.visitCount === 0 ? (
+                  {/*
+                    SUPER_ADMIN gets «حذف تصحيحي…» instead: a previewed, audited
+                    delete that also works on a unit the ordinary one refuses.
+                  */}
+                  {role === 'SUPER_ADMIN' && token ? (
+                    <UnitCorrectionDeleteButton
+                      tenant={tenant}
+                      token={token}
+                      unit={selectedUnit}
+                      locale={locale}
+                      disabled={busy}
+                      onDeleted={() => {
+                        setSelectedUnitId(null);
+                        setAction(null);
+                        void load();
+                      }}
+                    />
+                  ) : selectedUnit.occupants.length === 0 && selectedUnit.visitCount === 0 ? (
                     <Button
                       size="sm"
                       variant="ghost"

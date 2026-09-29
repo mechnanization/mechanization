@@ -52,6 +52,9 @@ export function auditActionLabel(action: string, locale: string): string {
     // ── hand corrections ──
     DATA_CORRECTION: ['تصحيح يدوي للبيانات', 'Manual data correction'],
     DATA_CORRECTION_DELETE: ['حذف يدوي ضمن تصحيح', 'Manual deletion (correction)'],
+    // «حذف تصحيحي» from the matrix, by a SUPER_ADMIN (UnitCorrectionService).
+    UNIT_CORRECTION_DELETED: ['حذف تصحيحي لوحدة (المدير)', 'Unit removed by admin correction'],
+    UNIT_CORRECTION_FILE_ENDED: ['إغلاق بنود بحذف تصحيحي لوحدة', 'File lines closed by a unit correction'],
 
     // ── buildings and their units ──
     BUILDING_CREATED: ['إنشاء مبنى', 'Building created'],

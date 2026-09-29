@@ -181,7 +181,10 @@ export class AuditService {
     after?: Record<string, unknown>;
     actorId: string;
     actorRole: string;
+    /** Written by the emitter inside its own transaction (`UnitCorrectionService`); the event only clears caches. */
+    alreadyAudited?: boolean;
   }): Promise<void> {
+    if (payload.alreadyAudited) return;
     await this.record({
       actorId: payload.actorId,
       actorType: 'STAFF',
@@ -298,7 +301,10 @@ export class AuditService {
     after?: Record<string, unknown>;
     actorId?: string;
     actorRole?: string;
+    /** As on `onBuildingChanged`: the row is already in the trail. */
+    alreadyAudited?: boolean;
   }): Promise<void> {
+    if (payload.alreadyAudited) return;
     await this.record({
       actorId: payload.actorId ?? payload.citizenId,
       actorType: payload.actorRole ? 'STAFF' : 'CITIZEN',

@@ -4787,3 +4787,60 @@ export async function disableStaffTotp(
   });
 }
 
+
+// ── «حذف تصحيحي» (SUPER_ADMIN) ──────────────────────────────────────────────
+
+import type {
+  UnitCorrectionDeleteInput,
+  UnitCorrectionPreview,
+  UnitCorrectionResult,
+} from '@mechanization/shared-schemas';
+
+export type {
+  UnitCorrectionBlocker,
+  UnitCorrectionDeleteInput,
+  UnitCorrectionPreview,
+  UnitCorrectionResult,
+} from '@mechanization/shared-schemas';
+
+/** What deleting this unit would remove, close and change. Its `fingerprint` is what the delete must quote. */
+export function getUnitCorrectionPreview(tenant: string, token: string, unitId: string, signal?: AbortSignal) {
+  return apiFetch<UnitCorrectionPreview>(
+    tenant,
+    `/corrections/units/${encodeURIComponent(unitId)}`,
+    { token, signal },
+  );
+}
+
+/**
+ * Deletes the unit exactly as previewed, or changes nothing. Refused with
+ * `details.reason` — see `unitCorrectionRefusal` — when the preview is stale,
+ * a blocker appeared, or somebody else is writing the same records.
+ */
+export async function applyUnitCorrection(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: UnitCorrectionDeleteInput,
+) {
+  const result = await apiFetch<UnitCorrectionResult>(
+    tenant,
+    `/corrections/units/${encodeURIComponent(unitId)}`,
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/** Why a correction delete was refused, when the server said in a way the dialog can act on. */
+export function unitCorrectionRefusal(
+  caught: unknown,
+): 'PREVIEW_STALE' | 'BLOCKED' | 'BUSY' | 'UNVERIFIED' | 'CONFIRM_CODE' | null {
+  if (!(caught instanceof ApiRequestError)) return null;
+  const details = caught.payload.details as { reason?: unknown; confirmCode?: unknown } | undefined;
+  if (caught.payload.code === 'VALIDATION_FAILED' && details && 'confirmCode' in details) return 'CONFIRM_CODE';
+  const reason = details?.reason;
+  return reason === 'PREVIEW_STALE' || reason === 'BLOCKED' || reason === 'BUSY' || reason === 'UNVERIFIED'
+    ? reason
+    : null;
+}

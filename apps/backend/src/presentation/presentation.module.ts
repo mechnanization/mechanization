@@ -6,6 +6,7 @@ import { AuditController } from './controllers/audit.controller';
 import { AuthController } from './controllers/auth.controller';
 import { CadastreController } from './controllers/cadastre.controller';
 import { BuildingsController } from './controllers/buildings.controller';
+import { CorrectionsController } from './controllers/corrections.controller';
 import { CasesController } from './controllers/cases.controller';
 import { CitizenController } from './controllers/citizen.controller';
 import { DashboardController } from './controllers/dashboard.controller';
@@ -44,6 +45,7 @@ import { MetricsModule } from './metrics.module';
     CasesController,
     QualityController,
     BuildingsController,
+    CorrectionsController,
     /*
      * BackupController (`t/:tenantSlug/backup/export` and `/restore`) is not
      * registered. Backups are taken on the AWS side now, and the in-app page
