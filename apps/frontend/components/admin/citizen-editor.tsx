@@ -67,6 +67,7 @@ import { offlineStorageAvailable } from '@/lib/offline-db';
 import {
   getQueuedSubmission,
   queueBuilding,
+  newSubmissionId,
   queueSubmission,
   reviseSubmission,
   useOfflineQueue,
@@ -847,11 +848,32 @@ export function CitizenEditor({
   const willQueue = canQueue && !online;
 
   const [token, setToken] = useState<string | null>(null);
+  /** «دمج ملفين» is SUPER_ADMIN's alone — mirrored here, enforced by the server. */
+  const [canMerge, setCanMerge] = useState(false);
   const [config, setConfig] = useState<PublicTenantConfig | null>(null);
   const [initial, setInitial] = useState<CitizenFormValues | null>(null);
   const [reference, setReference] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /**
+   * One save at a time, decided synchronously.
+   *
+   * `submitting` disables the buttons only once React has re-rendered, and a
+   * double click — or two clicks on «حفظ كملف جديد» in the duplicate dialog,
+   * whose handler still held the pending review — landed two creates on the
+   * server within a millisecond: two files for one person (2026-09-29, found
+   * after a merge left the second one standing).
+   */
+  const inFlightRef = useRef(false);
+  /**
+   * This filing's name for itself on the server — the `clientSubmissionId` the
+   * offline queue has always sent, now sent by the online save too. Made once
+   * and kept for the life of the form, so a repeated request, or a queued copy
+   * of one whose response was lost, is recognised and answered with the file
+   * already made instead of a second one.
+   */
+  const submissionIdRef = useRef<string | null>(null);
+  const submissionId = () => (submissionIdRef.current ??= newSubmissionId());
   /**
    * A save held while the officer reads what it will and will not record.
    *
@@ -958,6 +980,7 @@ export function CitizenEditor({
       return;
     }
     setToken(session.accessToken);
+    setCanMerge(session.user.role === 'SUPER_ADMIN');
   }, [tenant, base, router]);
 
   useEffect(() => {
@@ -1288,7 +1311,7 @@ export function CitizenEditor({
     if (keepsDraft) clearCitizenDraft(tenant);
   }, [keepsDraft, tenant]);
 
-  const submit = useCallback(
+  const submitOnce = useCallback(
     async (
       values: CitizenFormValues,
       confirmed = false,
@@ -1584,6 +1607,7 @@ export function CitizenEditor({
           */
           const created = await createCitizen(tenant, token, {
             ...payload,
+            clientSubmissionId: submissionId(),
             reviewDuplicates: true,
             ...(duplicateAnswer ? { duplicateReview: duplicateAnswer } : {}),
           });
@@ -1678,7 +1702,7 @@ export function CitizenEditor({
         */
         if (canQueue && caught instanceof ApiRequestError && caught.status === 0) {
           try {
-            await queueSubmission({ tenant, displayName, payload });
+            await queueSubmission({ tenant, displayName, payload }, { id: submissionId() });
 
             toast.success(
               locale === 'en'
@@ -1718,6 +1742,20 @@ export function CitizenEditor({
       duplicateCleared,
       duplicateClearedReason,
     ],
+  );
+
+  /** `submitOnce`, refused while a save is already under way — see `inFlightRef`. */
+  const submit = useCallback(
+    async (...args: Parameters<typeof submitOnce>) => {
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+      try {
+        await submitOnce(...args);
+      } finally {
+        inFlightRef.current = false;
+      }
+    },
+    [submitOnce],
   );
 
   /**
@@ -2024,6 +2062,14 @@ export function CitizenEditor({
           toast.success(locale === 'en' ? 'File deactivated. It is kept and can be reactivated.' : 'عُطِّل الملف. يبقى محفوظاً ويمكن إعادة تفعيله.');
           shellNavigate(router, `${base}/citizens/${citizenId}`);
         }}
+        canMerge={canMerge && editing && !isQueuedEdit}
+        canOverrideDuplicates={canMerge}
+        onMerged={(result) => {
+          forgetDraft();
+          toast.success(locale === 'en' ? 'The two files were merged.' : 'دُمج الملفان.');
+          // Whichever side this form was, the file that stays is the one to read now.
+          shellNavigate(router, `${base}/citizens/${encodeURIComponent(result.keepId)}`);
+        }}
       />
 
       {/*
@@ -2144,6 +2190,8 @@ export function CitizenEditor({
           }}
           citizenHref={(id) => `${base}/citizens/${encodeURIComponent(id)}`}
           locale={locale}
+          // An administrator may file past a certain match, with a reason; nobody else can.
+          canOverride={canMerge}
           onCancel={() => setDuplicateReview(null)}
           onResolve={resolveDuplicateReview}
         />

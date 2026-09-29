@@ -36,6 +36,8 @@ function harness(
       findFirst: jest.fn().mockResolvedValue(holder ? { flaggedFields: holderFlags } : null),
     },
     propertyEntry: { create: jest.fn() },
+    // The holder is nobody's absorbed file — see the merge hop in `submit`.
+    citizenMerge: { findFirst: jest.fn().mockResolvedValue(null) },
   };
   const db = { $transaction: jest.fn((run: (client: typeof tx) => unknown) => run(tx)) };
   const repository = new PrismaRegistrationRepository({

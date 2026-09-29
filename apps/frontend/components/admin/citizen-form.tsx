@@ -13,6 +13,7 @@ import {
   Loader2,
   Plus,
   Save,
+  ShieldAlert,
   StickyNote,
   TriangleAlert,
   UsersRound,
@@ -24,7 +25,9 @@ import {
   getLabels,
   normalizeDigits,
   PROPERTY_FIELD_MAP,
+  type CitizenMergeResult,
   type CitizenResidence,
+  type PossibleDuplicateMatch,
 } from '@mechanization/shared-schemas';
 import type { PublicTenantConfig } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -38,11 +41,8 @@ import {
   PersonalStep,
 } from '@/components/citizen/steps';
 import { SegmentedControl } from '@/components/ui/segmented-control';
-import {
-  PossibleDuplicatesBar,
-  PossibleDuplicatesPanel,
-  usePossibleDuplicates,
-} from './possible-duplicates';
+import { DuplicateAlert, usePossibleDuplicates } from './possible-duplicates';
+import { MergeCitizensDialog } from './merge-citizens-dialog';
 import {
   PropertyCard,
   type CardRemovalAnswer,
@@ -762,6 +762,9 @@ export function CitizenForm({
   locale = 'ar',
   lockedCensusTarget,
   onDeactivated,
+  canMerge = false,
+  canOverrideDuplicates = false,
+  onMerged,
 }: {
   tenant: string;
   /**
@@ -821,6 +824,18 @@ export function CitizenForm({
   lockedCensusTarget?: LockedCensusTarget | null;
   /** «تغيير الإقامة» deactivated the file: the person holds nothing here any more. */
   onDeactivated?: () => void;
+  /**
+   * An administrator editing a saved file: each «قد يكون مسجَّلاً مسبقاً» match
+   * gets «دمج», which opens `MergeCitizensDialog` for this file and that one.
+   */
+  canMerge?: boolean;
+  /**
+   * SUPER_ADMIN: a new file for somebody certainly on file is asked about with
+   * a reason, not refused — so the save stays open for them.
+   */
+  canOverrideDuplicates?: boolean;
+  /** The merge went through — the form's file may no longer be the one that stays. */
+  onMerged?: (result: CitizenMergeResult) => void;
 }) {
   const [values, setValues] = useState<CitizenFormValues>(initial);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -1345,7 +1360,14 @@ export function CitizenForm({
     tenant,
     token,
     firstName: values.personal.firstName,
+    middleName: values.personal.middleName,
     lastName: values.personal.lastName,
+    motherName: values.personal.motherName,
+    civilRecordNumber: values.personal.civilRecordNumber,
+    residencyNumber: values.personal.residencyNumber,
+    gender: values.personal.gender,
+    isLebanese: values.personal.isLebanese,
+    unitIds: values.properties.flatMap((card) => (card.units ?? []).map((unit) => unit.unitId)),
     phone: values.contact.phone,
     whatsapp: values.contact.whatsappSameAsPhone === false ? values.contact.whatsapp : undefined,
     excludeId: citizenId,
@@ -1392,22 +1414,36 @@ export function CitizenForm({
       </p>
     ) : null;
 
-  const duplicatesPanel = (
-    <>
-      {phoneNote}
-      <PossibleDuplicatesPanel check={duplicateCheck} locale={locale} className="hidden lg:block" />
-    </>
+  /** «دمج» on a match — only for an administrator, only on a saved file. */
+  const [mergeWith, setMergeWith] = useState<string | null>(null);
+  const mergeFromMatch =
+    canMerge && citizenId && token && onMerged ? (match: PossibleDuplicateMatch) => setMergeWith(match.id) : undefined;
+
+  /**
+   * «قد يكون مسجَّلاً مسبقاً» — in the sticky step bar, on every step and every
+   * screen size. See `DuplicateAlert` for why it is not under الهاتف any more.
+   */
+  const duplicatesAlert = (
+    <DuplicateAlert
+      check={duplicateCheck}
+      locale={locale}
+      mode={mode}
+      canOverride={canOverrideDuplicates}
+      onMerge={mergeFromMatch}
+    />
   );
 
   /**
-   * On a phone or a tablet: pinned in the sticky header instead, so it is on
-   * screen on every step and at every scroll position. See
-   * `PossibleDuplicatesBar` for why below `lg` the in-place panel is not
-   * enough.
+   * A new file for somebody the register is certain about is refused by the
+   * server for an officer. The save is closed here too, with the reason beside
+   * it, rather than letting them fill in three steps to be told at the end.
    */
-  const duplicatesBar = (
-    <PossibleDuplicatesBar check={duplicateCheck} locale={locale} className="basis-full lg:hidden" />
-  );
+  const refusedAsDuplicate =
+    mode === 'create' && !canOverrideDuplicates && duplicateCheck.matches.some((match) => match.certain);
+  const refusedReason =
+    locale === 'en'
+      ? 'This person is already registered — add the property to their file.'
+      : 'هذا الشخص مسجَّل مسبقاً — أضف العقار إلى ملفه.';
 
   const sections = useMemo(
     () => [
@@ -1720,7 +1756,7 @@ export function CitizenForm({
           </span>
         </div>
 
-        {duplicatesBar}
+        {duplicatesAlert}
       </nav>
 
 
@@ -1744,7 +1780,14 @@ export function CitizenForm({
       ) : null}
 
       <FieldFocusProvider value={focus}>
-      <div data-review={reviewing ? '' : undefined} className="space-y-4 sm:space-y-5">
+      {/*
+        A field scrolled into view stops below the sticky step bar and its
+        duplicate alert rather than under them (WCAG 2.4.11).
+      */}
+      <div
+        data-review={reviewing ? '' : undefined}
+        className="space-y-4 sm:space-y-5 [&_input]:scroll-mt-40 [&_select]:scroll-mt-40 [&_textarea]:scroll-mt-40"
+      >
       {/* ── Page 1 — البيانات الشخصية ── */}
       <div className={cn(!reviewing && step !== 'personal' && 'hidden')}>
           <FormSection
@@ -1791,9 +1834,9 @@ export function CitizenForm({
             invalid={sectionInvalid('contact')}
           >
             {isNonResident ? (
-              <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
+              <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={phoneNote} />
             ) : (
-              <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={duplicatesPanel} />
+              <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={phoneNote} />
             )}
           </FormSection>
       </div>
@@ -1926,6 +1969,12 @@ export function CitizenForm({
           they were four different buttons and «غير مؤكَّد» was squeezed to fit
           what was left; equal, the bar reads as one control with four parts.
         */}
+        {refusedAsDuplicate ? (
+          <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-destructive">
+            <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
+            {refusedReason}
+          </p>
+        ) : null}
         <div className="grid grid-flow-col auto-cols-fr gap-2">
           {wizardIndex > 0 ? (
             <Button
@@ -1989,7 +2038,8 @@ export function CitizenForm({
             variant="outline"
             size="sm"
             onClick={() => setQuickSaveOpen(true)}
-            disabled={submitting}
+            disabled={submitting || refusedAsDuplicate}
+            title={refusedAsDuplicate ? refusedReason : undefined}
             className="h-10 w-full min-w-0 gap-1 px-1.5 text-xs font-medium"
           >
             <Zap className="size-3.5 shrink-0" aria-hidden />
@@ -2011,7 +2061,8 @@ export function CitizenForm({
               type="button"
               size="sm"
               onClick={() => handleSubmit()}
-              disabled={submitting}
+              disabled={submitting || refusedAsDuplicate}
+              title={refusedAsDuplicate ? refusedReason : undefined}
               className="h-10 w-full min-w-0 gap-1 bg-primary px-1.5 text-xs font-semibold text-primary-foreground shadow-sm"
             >
               {submitting ? (
@@ -2087,6 +2138,12 @@ export function CitizenForm({
             </Button>
           </div>
 
+          {refusedAsDuplicate ? (
+            <p className="flex items-center gap-1.5 text-xs font-medium text-destructive">
+              <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
+              {refusedReason}
+            </p>
+          ) : (
           <div className="hidden lg:flex items-center gap-2 text-xs text-muted-foreground">
             <span
               className={cn(
@@ -2104,6 +2161,7 @@ export function CitizenForm({
                   : (locale === 'en' ? 'New citizen registration' : 'تسجيل مواطن جديد')}
             </span>
           </div>
+          )}
 
           {/*
             One width for all three — the widest label's — rather than three
@@ -2117,7 +2175,8 @@ export function CitizenForm({
               variant="outline"
               size="sm"
               onClick={() => setQuickSaveOpen(true)}
-              disabled={submitting}
+              disabled={submitting || refusedAsDuplicate}
+              title={refusedAsDuplicate ? refusedReason : undefined}
               className="h-8 w-full gap-1.5 rounded-lg px-4 text-xs font-medium"
             >
               <Zap className="size-3.5" aria-hidden />
@@ -2137,7 +2196,8 @@ export function CitizenForm({
               type="button"
               size="sm"
               onClick={() => handleSubmit()}
-              disabled={submitting}
+              disabled={submitting || refusedAsDuplicate}
+              title={refusedAsDuplicate ? refusedReason : undefined}
               className="h-8 w-full px-4 text-xs font-medium rounded-lg shadow-2xs gap-1.5"
             >
               {submitting ? (
@@ -2214,6 +2274,21 @@ export function CitizenForm({
       }}
       locale={locale}
     />
+    {mergeWith && citizenId && token && onMerged ? (
+      <MergeCitizensDialog
+        open
+        onOpenChange={(next) => (next ? undefined : setMergeWith(null))}
+        tenant={tenant}
+        token={token}
+        locale={locale}
+        firstId={citizenId}
+        secondId={mergeWith}
+        onMerged={(result) => {
+          setMergeWith(null);
+          onMerged(result);
+        }}
+      />
+    ) : null}
     {residenceGuide && citizenId ? (
       <ResidenceChangeDialog
         open

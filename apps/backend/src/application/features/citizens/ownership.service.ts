@@ -4,6 +4,7 @@ import { isDwellingUnitType, statusForFlags, type AfterTenancyStatus, type Field
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
+import { assertNotMergedAway } from './merged-away';
 import { claimsFlat } from '../../../domain/entities/census-claim';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CasesService } from '../cases/cases.service';
@@ -454,6 +455,7 @@ export class OwnershipService {
         select: { id: true },
       });
       if (!buyer) throw new ValidationError('المالك الجديد غير موجود في السجل', { newOwnerId: input.newOwnerId });
+      await assertNotMergedAway(this.db, buyer.id);
     }
 
     /*

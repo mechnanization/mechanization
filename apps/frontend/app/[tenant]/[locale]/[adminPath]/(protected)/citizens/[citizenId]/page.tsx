@@ -79,6 +79,11 @@ import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog'
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
 import { CompleteRecordDialog } from '@/components/admin/complete-record-dialog';
+import {
+  CitizenMergeNotes,
+  MergeWithAnotherButton,
+  useCitizenMerges,
+} from '@/components/admin/citizen-merges';
 import { EmptyState, LoadingState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { formatPhone } from '@/lib/phone';
@@ -560,6 +565,10 @@ export default function CitizenProfilePage({
     setCitizen(await getCitizenProfile(tenant, token, citizenId));
   }, [tenant, token, citizenId]);
 
+  /** «دمج ملفين» — SUPER_ADMIN's alone; the server is the enforcement. */
+  const canMerge = role === 'SUPER_ADMIN';
+  const { merges, reload: reloadMerges } = useCitizenMerges(tenant, token, citizenId);
+
   useEffect(() => {
     const session = loadSession(tenant);
     if (!session || session.user.kind !== 'STAFF') {
@@ -924,7 +933,8 @@ export default function CitizenProfilePage({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {canEdit ? (
+            {/* A file folded into another is edited on the file that stays. */}
+            {canEdit && !merges?.into ? (
               <Link href={`${base}/citizens/${citizen.id}/edit`} className={buttonVariants()}>
                 <Pencil className="size-4" aria-hidden />
                 {locale === 'en' ? 'Edit Details' : 'تعديل البيانات'}
@@ -962,6 +972,30 @@ export default function CitizenProfilePage({
               </a>
             ) : null}
 
+            {/*
+              «دمج مع ملف آخر» — an icon beside the map, not a word beside
+              «تعديل البيانات»: it is the rare administrator's action, and the
+              dialog behind it says everything before anything happens. Not on
+              a file already folded away, nor a deactivated one.
+            */}
+            {canMerge && token && citizen.isActive && !merges?.into ? (
+              <MergeWithAnotherButton
+                citizenId={citizen.id}
+                tenant={tenant}
+                token={token}
+                locale={locale}
+                onMerged={(result) => {
+                  toast.success(en ? 'The two files were merged.' : 'دُمج الملفان.');
+                  if (result.keepId === citizen.id) {
+                    void reload();
+                    void reloadMerges();
+                  } else {
+                    router.push(`${base}/citizens/${encodeURIComponent(result.keepId)}`);
+                  }
+                }}
+              />
+            ) : null}
+
             <Link
               href={locatedProperty ? mapHref(base, locatedProperty) : `${base}/map`}
               className={buttonVariants({ variant: 'outline', size: 'icon' })}
@@ -982,6 +1016,21 @@ export default function CitizenProfilePage({
             </Link>
           </div>
         </div>
+
+        <CitizenMergeNotes
+          merges={merges}
+          citizenId={citizen.id}
+          base={base}
+          tenant={tenant}
+          token={token}
+          locale={locale}
+          canMerge={canMerge}
+          onChanged={() => {
+            toast.success(en ? 'The merge was undone.' : 'تمّ التراجع عن الدمج.');
+            void reload();
+            void reloadMerges();
+          }}
+        />
 
         {/*
           ── At a glance ──

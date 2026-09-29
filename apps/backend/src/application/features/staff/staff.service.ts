@@ -19,6 +19,7 @@ import { SessionRevocationService } from '../identity/session-revocation.service
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import {
   COMMISSION_RATE,
+  cardsFiledOn,
   creditBillableUnits,
   payoutAllowance,
   payoutRefusal,
@@ -410,6 +411,13 @@ export class StaffService {
             units: true,
           },
         },
+        // Cards filed here that a merge has since moved onto another
+        // registration. Still this officer's work — see `cardsFiledOn`.
+        movedCards: {
+          include: {
+            units: true,
+          },
+        },
       },
     });
 
@@ -451,7 +459,7 @@ export class StaffService {
     for (const reg of [...registrations].sort(
       (a, b) => a.submittedAt.getTime() - b.submittedAt.getTime(),
     )) {
-      creditedByRegistration.set(reg.id, creditBillableUnits(reg.properties, seenUnits));
+      creditedByRegistration.set(reg.id, creditBillableUnits(cardsFiledOn(reg), seenUnits));
     }
     const totalProperties = seenUnits.size;
 
@@ -464,7 +472,7 @@ export class StaffService {
       const propNums = new Set<string>();
       const propTypes = new Set<string>();
 
-      for (const p of reg.properties) {
+      for (const p of cardsFiledOn(reg)) {
         if (p.neighborhood) neighborhoods.add(p.neighborhood);
         if (p.propertyNumber) propNums.add(p.propertyNumber);
         if (p.propertyType) propTypes.add(p.propertyType);

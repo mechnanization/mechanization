@@ -65,6 +65,15 @@ export const FILE_ACTIONS = [
   'LANDLORD_LINK_REVERTED',
   'LANDLORD_TENANCY_ENDED',
   'LANDLORD_LINK_RELEASED_BY_SALE',
+  /*
+    «دمج ملفين» and its undo. A merge moves bills and holdings between two
+    files, and a bill both files carried stays on the one folded away — each is
+    a bill raised on a register that was wrong, which is a correction by
+    definition.
+  */
+  'CITIZEN_MERGED',
+  'CITIZEN_MERGED_INTO',
+  'CITIZEN_MERGE_UNDONE',
 ] as const;
 
 /** Unit actions, recorded on the building, that can move its holders' bills. */
@@ -196,6 +205,9 @@ export function traceChanges(
           change = byReason(text(after.reason), date(after.endedAt));
           break;
         case 'LANDLORD_UNLINKED':
+        case 'CITIZEN_MERGED':
+        case 'CITIZEN_MERGED_INTO':
+        case 'CITIZEN_MERGE_UNDONE':
           change = { kind: 'CORRECTION', effectiveOn: null };
           break;
         case 'LANDLORD_TENANCY_ENDED':

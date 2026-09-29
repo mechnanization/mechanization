@@ -113,3 +113,31 @@ export function creditBillableUnits(
 
   return credited;
 }
+
+/**
+ * The cards one registration's officer is credited for: those filed on it,
+ * wherever they sit now.
+ *
+ * A merge (migration 0061) moves a person's current cards onto their newest
+ * registration, because that is the one billing and the edit form read. The
+ * dollar does not move with them (user decision, 2026-09-28): a moved card
+ * carries `filedRegistrationId`, is skipped where it now sits, and is counted
+ * among the `movedCards` of the registration it was filed on. A card no merge
+ * has moved has no `filedRegistrationId` and counts where it is, which is every
+ * card filed before the column existed.
+ *
+ * Both pay screens read registrations through this — a second reading of «which
+ * cards did this officer file» would be a second answer to the pay question.
+ */
+export function cardsFiledOn<T extends { filedRegistrationId?: string | null }>(registration: {
+  id: string;
+  properties: readonly T[];
+  movedCards?: readonly T[];
+}): T[] {
+  return [
+    ...registration.properties.filter(
+      (card) => !card.filedRegistrationId || card.filedRegistrationId === registration.id,
+    ),
+    ...(registration.movedCards ?? []),
+  ];
+}

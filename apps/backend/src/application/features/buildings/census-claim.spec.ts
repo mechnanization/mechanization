@@ -120,6 +120,8 @@ function harness(options: HarnessOptions = {}) {
     });
 
   const db = {
+    // Nobody here has been folded into another file (see `assertNotMergedAway`).
+    citizenMerge: { findFirst: jest.fn().mockResolvedValue(null) },
     unit: {
       findUnique: jest.fn().mockImplementation(({ select }: { select: Record<string, unknown> }) =>
         // Two different reads of the same row: `recordOccupancy` wants the

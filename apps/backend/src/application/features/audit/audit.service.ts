@@ -523,9 +523,23 @@ export class AuditService {
         : await db.building.findUnique({ where: { id: query.entityId }, select: { id: true } });
     if (!exists) throw new NotFoundError(query.entityType === 'User' ? 'Citizen' : 'Building', query.entityId);
 
+    /*
+      A file others were folded into by «دمج ملفين» carries their history too:
+      the cards and flats that moved across were filed and edited there, and
+      «من سجّل هذه البطاقة؟» has to be answerable from the file they sit on.
+    */
+    const absorbed =
+      query.entityType === 'User'
+        ? await db.citizenMerge.findMany({
+            where: { survivorId: query.entityId, undoneAt: null },
+            select: { absorbedId: true },
+          })
+        : [];
+
     const result = await this.query({
       entityType: query.entityType,
       entityId: query.entityId,
+      ...(absorbed.length ? { alsoEntityIds: absorbed.map((merge) => merge.absorbedId) } : {}),
       excludeActions: [...HISTORY_EXCLUDED_ACTIONS],
       excludeActionPrefixes: [...HISTORY_EXCLUDED_PREFIXES],
       limit: query.limit,
@@ -618,6 +632,7 @@ export class AuditService {
       query.actorId ?? 'ALL',
       query.entityType ?? 'ALL',
       query.entityId ?? 'ALL',
+      query.alsoEntityIds?.length ? `also:${query.alsoEntityIds.join('|')}` : '-',
       query.actions?.length ? query.actions.join('|') : 'ALL',
       query.excludeActions?.length ? `not:${query.excludeActions.join('|')}` : '-',
       query.excludeActionPrefixes?.length ? `notp:${query.excludeActionPrefixes.join('|')}` : '-',

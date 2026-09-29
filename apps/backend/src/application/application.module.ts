@@ -16,6 +16,7 @@ import { CitizensService } from './features/citizens/citizens.service';
 import { LandlordLinkService } from './features/citizens/landlord-link.service';
 import { TenancyService } from './features/citizens/tenancy.service';
 import { OwnershipService } from './features/citizens/ownership.service';
+import { CitizenMergeService } from './features/citizens/citizen-merge.service';
 import { DocumentService } from './features/documents/document.service';
 import { IdentityService } from './features/identity/identity.service';
 import { OtpService } from './features/identity/otp.service';
@@ -62,6 +63,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     TenancyService,
 
     OwnershipService,
+    CitizenMergeService,
     FeesService,
     CorrectionBillsService,
     PaymentLedgerService,
@@ -94,6 +96,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     TenancyService,
 
     OwnershipService,
+    CitizenMergeService,
     FeesService,
     CorrectionBillsService,
     PaymentLedgerService,

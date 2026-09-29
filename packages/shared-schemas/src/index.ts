@@ -19,3 +19,4 @@ export * from './case.schema';
 export * from './quality.schema';
 export * from './payout-policy';
 export * from './inspector-earnings';
+export * from './citizen-merge.schema';

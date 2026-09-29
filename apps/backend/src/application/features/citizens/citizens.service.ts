@@ -7,6 +7,7 @@ import {
   FIELD_FLAG_KINDS,
   flaggedPaths,
   IMPORT_COLUMNS,
+  internationalPhone,
   POSSIBLE_DUPLICATE_FLAG_PATH,
   statusForFlags,
 } from '@mechanization/shared-schemas';
@@ -18,6 +19,7 @@ import type {
   CitizenRecordStatus,
   FieldFlag,
   ImportRow,
+  PossibleDuplicatesQuery,
 } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
@@ -54,9 +56,11 @@ import {
   NO_FINDINGS,
   outstandingFindings,
   possibleDuplicateFlag,
+  type DuplicateCandidate,
   type DuplicateReviewFindings,
 } from './possible-duplicates';
 import { normalizeSearchText } from '../../common/search-terms';
+import { assertNotMergedAway } from './merged-away';
 
 /**
  * The most register rows one duplicate lookup compares.
@@ -141,6 +145,12 @@ export interface CitizenListItem {
   /** نوع الملف — a household file, or «غير مقيم في البلدة» (stored as NON_RESIDENT_OWNER). */
   residence: string;
   isActive: boolean;
+  /**
+   * The file «دمج ملفين» folded this one into, while that merge stands. Every
+   * screen that offers people for picking skips a file carrying it, and the
+   * register shows where the person is now.
+   */
+  mergedIntoId: string | null;
   registeredAt: string;
 
   registrationCount: number;
@@ -193,6 +203,7 @@ interface CitizenListRow {
   residentStatus: string | null;
   residence: string;
   isActive: boolean;
+  mergedIntoId: string | null;
   createdAt: Date;
   registrationCount: number;
   propertyCount: number;
@@ -372,6 +383,9 @@ export class CitizensService {
           u."residentStatus"::text   AS "residentStatus",
           u.residence::text          AS residence,
           u."isActive",
+          (SELECT m."survivorId" FROM ${this.S}citizen_merges m
+            WHERE m."absorbedId" = u.id AND m."undoneAt" IS NULL LIMIT 1)
+            AS "mergedIntoId",
           u."createdAt",
           (SELECT count(*)::int FROM ${this.S}registrations r WHERE r."citizenId" = u.id)
             AS "registrationCount",
@@ -491,6 +505,7 @@ export class CitizensService {
         residentStatus: row.residentStatus,
         residence: row.residence,
         isActive: row.isActive,
+        mergedIntoId: row.mergedIntoId,
         registeredAt: row.createdAt.toISOString(),
         registrationCount: row.registrationCount,
         propertyCount: row.propertyCount,
@@ -836,11 +851,7 @@ export class CitizensService {
    * The form asks this before it writes anything (it may be about to create a
    * new structure for the household), and `create` asks it again, because a
    * question the browser skipped is not a question the register may skip.
-   *
-   * Blocked on what can be matched cheaply — either number, and each name part
-   * as a substring of the folded search column — and compared in the
-   * application, where the Arabic-aware edit distance lives. A typo in the
-   * family name is still found through the first name, and the other way round.
+   * The candidates come from `duplicateLookup`.
    */
   async reviewDuplicates(
     payload: AdminCitizenSubmission,
@@ -857,49 +868,19 @@ export class CitizensService {
       motherName: text(personal.motherName),
       phone: text(contact.phone),
       whatsapp: text(contact.whatsapp) ?? text(contact.phone),
+      civilRecordNumber: text(personal.civilRecordNumber),
+      residencyNumber: text(personal.residencyNumber),
+      gender: text(personal.gender),
+      isLebanese: typeof personal.isLebanese === 'boolean' ? personal.isLebanese : null,
+      // The flats this filing's cards name: the same door, filed a second time.
+      unitIds: (payload.properties as Array<{ units?: Array<{ unitId?: string | null }> }>)
+        .flatMap((card) => card.units ?? [])
+        .map((unit) => unit.unitId)
+        .filter((unitId): unitId is string => Boolean(unitId)),
     };
 
-    const numbers = [...new Set([incoming.phone, incoming.whatsapp].filter((v): v is string => Boolean(v)))];
-    const tokens = [
-      ...new Set(
-        [incoming.firstName, incoming.lastName]
-          .flatMap((part) => normalizeSearchText(part).split(' '))
-          .filter((token) => token.length >= 2),
-      ),
-    ];
-    if (numbers.length === 0 && tokens.length === 0) return NO_FINDINGS;
-
-    const rows = await this.db.user.findMany({
-      where: {
-        kind: 'CITIZEN',
-        isActive: true,
-        OR: [
-          ...(numbers.length ? [{ phone: { in: numbers } }, { whatsapp: { in: numbers } }] : []),
-          ...tokens.map((token) => ({ searchText: { contains: token } })),
-        ],
-      },
-      take: MAX_DUPLICATE_LOOKUP_ROWS,
-      select: {
-        id: true,
-        firstName: true,
-        middleName: true,
-        lastName: true,
-        motherName: true,
-        phone: true,
-        whatsapp: true,
-        referenceNumber: true,
-        residence: true,
-        registrations: {
-          orderBy: { submittedAt: 'desc' },
-          select: {
-            submittedAt: true,
-            createdById: true,
-            createdBy: { select: { firstName: true, lastName: true } },
-            _count: { select: { properties: { where: { endedAt: null } } } },
-          },
-        },
-      },
-    });
+    const rows = await this.duplicateLookup(incoming);
+    if (!rows) return NO_FINDINGS;
 
     return assessFindings({
       incoming,
@@ -912,6 +893,132 @@ export class CitizensService {
       actorId: actor.id,
       now: new Date(),
     });
+  }
+
+  /**
+   * «قد يكون مسجَّلاً مسبقاً» while the form is typed — the rule the save asks
+   * by, on whatever has been typed so far.
+   *
+   * The panel used to run the register's search box instead: the first name
+   * and the family name as two words, each of which had to appear *anywhere*
+   * in a row's folded text. That text holds the father's name and the
+   * mother's name too, so «حسين وطفى» offered «ابراهيم حسين برو» (حسين as his
+   * father, وطفى as his mother's family) — four warnings on one screen that the
+   * save's own check would never have raised, and a panel officers learned to
+   * read past. Now the two agree: the panel shows exactly who the save would
+   * ask about, compared part by part and never across fields.
+   *
+   * `excludeId` drops the file being edited, which is never its own duplicate.
+   */
+  async possibleDuplicates(query: PossibleDuplicatesQuery): Promise<DuplicateCandidate[]> {
+    const number = (value: string | undefined) => {
+      const parsed = value ? internationalPhone.safeParse(value) : null;
+      return parsed?.success ? parsed.data : null;
+    };
+    const phone = number(query.phone);
+    const incoming = {
+      firstName: query.firstName?.trim() ?? '',
+      middleName: query.middleName?.trim() || null,
+      lastName: query.lastName?.trim() ?? '',
+      motherName: query.motherName?.trim() || null,
+      phone,
+      whatsapp: number(query.whatsapp) ?? phone,
+      civilRecordNumber: query.civilRecordNumber?.trim() || null,
+      residencyNumber: query.residencyNumber?.trim() || null,
+      gender: query.gender ?? null,
+      isLebanese: query.isLebanese ?? null,
+      unitIds: query.unitIds ?? [],
+    };
+
+    const rows = await this.duplicateLookup(incoming, query.excludeId);
+    if (!rows) return [];
+
+    const { possibleDuplicates } = assessFindings({
+      incoming,
+      rows,
+      cards: [],
+      actorId: '',
+      now: new Date(),
+    });
+    // The strongest first: a match the save will refuse on, then a match on more facts.
+    return possibleDuplicates.sort(
+      (a, b) => Number(b.certain) - Number(a.certain) || b.matchedOn.length - a.matchedOn.length,
+    );
+  }
+
+  /**
+   * The citizens worth comparing with one person, or null when there is nothing
+   * to look up by.
+   *
+   * Blocked on what can be matched cheaply — either number, and each name part
+   * as a substring of the folded search column — and compared in the
+   * application, where the Arabic-aware edit distance lives. A typo in the
+   * family name is still found through the first name, and the other way round.
+   */
+  private async duplicateLookup(
+    incoming: {
+      firstName: string;
+      lastName: string;
+      phone: string | null;
+      whatsapp: string | null;
+      unitIds?: readonly string[];
+    },
+    excludeId?: string,
+  ) {
+    const numbers = [...new Set([incoming.phone, incoming.whatsapp].filter((v): v is string => Boolean(v)))];
+    const tokens = [
+      ...new Set(
+        [incoming.firstName, incoming.lastName]
+          .flatMap((part) => normalizeSearchText(part).split(' '))
+          .filter((token) => token.length >= 2),
+      ),
+    ];
+    if (numbers.length === 0 && tokens.length === 0) return null;
+
+    const rows = await this.db.user.findMany({
+      where: {
+        kind: 'CITIZEN',
+        isActive: true,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+        OR: [
+          ...(numbers.length ? [{ phone: { in: numbers } }, { whatsapp: { in: numbers } }] : []),
+          ...tokens.map((token) => ({ searchText: { contains: token } })),
+          ...(incoming.unitIds?.length
+            ? [{ unitOccupancies: { some: { unitId: { in: [...incoming.unitIds] }, toDate: null } } }]
+            : []),
+        ],
+      },
+      take: MAX_DUPLICATE_LOOKUP_ROWS,
+      select: {
+        id: true,
+        firstName: true,
+        middleName: true,
+        lastName: true,
+        motherName: true,
+        phone: true,
+        whatsapp: true,
+        civilRecordNumber: true,
+        residencyNumber: true,
+        gender: true,
+        isLebanese: true,
+        referenceNumber: true,
+        residence: true,
+        unitOccupancies: { where: { toDate: null }, select: { unitId: true } },
+        registrations: {
+          orderBy: { submittedAt: 'desc' },
+          select: {
+            submittedAt: true,
+            createdById: true,
+            createdBy: { select: { firstName: true, lastName: true } },
+            _count: { select: { properties: { where: { endedAt: null } } } },
+          },
+        },
+      },
+    });
+    return rows.map(({ unitOccupancies, ...row }) => ({
+      ...row,
+      unitIds: unitOccupancies.map((spell) => spell.unitId),
+    }));
   }
 
   async create(input: {
@@ -938,6 +1045,35 @@ export class CitizensService {
       : null;
     const findings = replay ? NO_FINDINGS : await this.reviewDuplicates(input.payload, input.actor);
     const open = outstandingFindings(findings, input.payload.duplicateReview);
+
+    /*
+      Somebody already on file beyond reasonable doubt — refused, not asked.
+
+      For every path: the form, the offline queue (the delivery parks on the
+      phone as «مرفوض» with this sentence, and nothing is lost) and the
+      spreadsheet import (the row fails with it). A question the officer can
+      answer «شخص آخر» to is what let the same household be filed twice; here
+      the answer is the file on record, and the message names it.
+
+      An administrator may still file past it by naming each blocking record as
+      a different person, with the reason `duplicateReview` already requires.
+    */
+    const blocking = findings.possibleDuplicates.filter((candidate) => candidate.certain);
+    const overridden =
+      input.actor.role === 'SUPER_ADMIN' &&
+      blocking.every((candidate) => input.payload.duplicateReview?.differentFrom.includes(candidate.id));
+    if (blocking.length > 0 && !overridden) {
+      const named = blocking
+        .slice(0, 3)
+        .map((candidate) =>
+          candidate.referenceNumber ? `${candidate.fullName} (${candidate.referenceNumber})` : candidate.fullName,
+        )
+        .join('، ');
+      throw new ConflictError(
+        `هذا الشخص مسجَّل مسبقاً: ${named}. لا يُنشأ له ملف ثانٍ — افتح ملفه وأضف العقار إليه. إن كان شخصاً آخر فعلاً فالقرار لمدير النظام.`,
+        { code: 'DUPLICATE_BLOCKED', duplicateReview: { ...open, possibleDuplicates: findings.possibleDuplicates } },
+      );
+    }
 
     if (input.payload.reviewDuplicates && hasFindings(open)) {
       throw new ConflictError(
@@ -1368,6 +1504,13 @@ export class CitizensService {
     if (!citizen) throw new NotFoundError('Citizen', input.citizenId);
 
     /*
+      A file «دمج ملفين» folded into another holds no filing, and a save here
+      would create one — cards, flats and all on a person nobody bills. The
+      officer meant the file that stays, and the refusal names it.
+    */
+    await assertNotMergedAway(this.db, citizen.id);
+
+    /*
       Somebody changed this file after the form was opened. Refused before any
       read that decides a write, with who and when, so the officer chooses
       between reloading and replacing — instead of the second save of the day
@@ -1375,6 +1518,17 @@ export class CitizensService {
     */
     if (input.payload.expectedVersion) {
       const current = await this.fileVersion(citizen.id);
+      /*
+        A different *filing* is the file now — «دمج ملفين» made the other
+        file's newer one the newest. The form on screen holds none of the cards
+        that came across, so «احفظ لتستبدلها» would end every one of them. Not
+        a replaceable edit: the form has to be opened again.
+      */
+      if (current !== input.payload.expectedVersion && current.split(':')[0] !== input.payload.expectedVersion.split(':')[0]) {
+        throw new ConflictError('تغيّر طلب التسجيل الذي يمثّل هذا الملف منذ فتحتَ النموذج (دُمج فيه ملف آخر). أعد فتح الملف قبل الحفظ.', {
+          code: 'STALE',
+        });
+      }
       if (current !== input.payload.expectedVersion) {
         const lastEdit = await this.lastStaffEdit(citizen.id);
         throw new ConflictError(
@@ -1621,6 +1775,26 @@ export class CitizensService {
         where: { id: citizen.id },
         data: citizenColumnsForEdit(input.payload, { identityDocType: citizen.identityDocType }),
       });
+
+      /*
+        Re-asked under the person's row lock, which the update above now holds
+        and which «دمج ملفين» takes too. Everything this save decided was read
+        before the transaction; a merge that committed in between may have
+        folded this file away, or made another filing the newest — and this
+        save would then write the flags, the note and the cards onto a filing
+        that is no longer the file.
+      */
+      await assertNotMergedAway(tx, citizen.id);
+      const newest = await tx.registration.findFirst({
+        where: { citizenId: citizen.id },
+        orderBy: { submittedAt: 'desc' },
+        select: { id: true },
+      });
+      if ((newest?.id ?? null) !== (existing?.id ?? null)) {
+        throw new ConflictError('تغيّر هذا الملف أثناء الحفظ (دُمج فيه ملف آخر). أعد فتح الملف ثم احفظ.', {
+          code: 'STALE',
+        });
+      }
 
       // A citizen with no registration at all (never expected from this form,
       // but reachable if their only claim was deleted) gets one rather than
@@ -2314,6 +2488,22 @@ export class CitizensService {
     });
     if (!citizen) throw new NotFoundError('Citizen', input.citizenId);
 
+    /*
+      A file on either side of a standing merge is not deleted: the delete
+      cascades to `citizen_merges`, taking the record of the merge and its undo
+      with it. The merge is undone first, or the file stays as the record of
+      what was filed.
+    */
+    const merged = await this.db.citizenMerge.count({
+      where: { undoneAt: null, OR: [{ survivorId: citizen.id }, { absorbedId: citizen.id }] },
+    });
+    if (merged > 0) {
+      throw new ConflictError(
+        'هذا الملف جزء من دمج قائم بين ملفين — لا يُحذف. تراجع عن الدمج أولاً إن كان يجب حذفه.',
+        { code: 'MERGED' },
+      );
+    }
+
     const [registrations, payments, feeNotices] = await Promise.all([
       this.db.registration.count({ where: { citizenId: citizen.id } }),
       this.db.citizenPayment.count({ where: { citizenId: citizen.id } }),
@@ -2358,6 +2548,13 @@ export class CitizensService {
       select: { id: true },
     });
     if (!citizen) throw new NotFoundError('Citizen', input.citizenId);
+
+    /*
+      Reactivating a file «دمج ملفين» folded away would bring back the double
+      bill the merge removed, on a file that holds nothing — the undo is what
+      makes it a file again, with everything it held.
+    */
+    if (input.isActive) await assertNotMergedAway(this.db, citizen.id);
 
     await this.db.user.update({
       where: { id: citizen.id },

@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ExternalLink, PhoneOff, UsersRound } from 'lucide-react';
+import { Ban, ExternalLink, PhoneOff, UsersRound } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import type {
   ContactNumberField,
@@ -72,6 +72,16 @@ const FIELDS: readonly ContactNumberField[] = ['phone', 'whatsapp'];
  * rather than keeping a number that would send the occupant's notices to the
  * landlord's handset.
  *
+ * ## When it does not ask
+ *
+ * A record the server is certain about (`certain`: the same three names, the
+ * same mother written in full, and a phone, رقم السجل, residence permit or flat
+ * of their own) is not a question. The officer is told the person is on file
+ * and the save stays shut — «شخص آخر» is not offered, because on that evidence
+ * it is the answer that makes the duplicate (user decision, 2026-09-29). An
+ * administrator is still asked, with a reason, since a rule this strict needs
+ * one way past it; the server enforces the same split.
+ *
  * ## Why a reason
  *
  * A checkbox records that someone pressed it. One sentence — «أخوان، الأم
@@ -83,10 +93,13 @@ export function DuplicateReviewDialog({
   numbers,
   citizenHref,
   locale,
+  canOverride = false,
   onCancel,
   onResolve,
 }: {
   findings: DuplicateReviewFindings;
+  /** SUPER_ADMIN: may file past a certain match as a different person, with a reason. */
+  canOverride?: boolean;
   /** The numbers as typed, for each question's wording. */
   numbers: Partial<Record<ContactNumberField, string | null>>;
   citizenHref: (id: string) => string;
@@ -100,6 +113,9 @@ export function DuplicateReviewDialog({
   const phoneOwners = findings.phoneOwners;
   const landlordCards = findings.landlordPhoneCards;
   const asksPerson = duplicates.length > 0;
+  /** Certain matches an officer cannot answer «شخص آخر» to. */
+  const certain = duplicates.filter((row) => row.certain);
+  const stopped = certain.length > 0 && !canOverride;
 
   /** One question per number that matched somebody: the phone, a separate WhatsApp number, or both. */
   const askedFields = useMemo(
@@ -115,6 +131,9 @@ export function DuplicateReviewDialog({
   const [person, setPerson] = useState<PersonAnswer>(null);
   const [phoneAnswers, setPhoneAnswers] = useState<Partial<Record<ContactNumberField, PhoneAnswer>>>({});
   const [reason, setReason] = useState('');
+  /** Answered once: a second click would resubmit the same filing. */
+  const sentRef = useRef(false);
+  const [sent, setSent] = useState(false);
 
   /** Who a number was found on, in one phrase, for its flag reason. */
   const holdersOf = (field: ContactNumberField) =>
@@ -128,16 +147,20 @@ export function DuplicateReviewDialog({
 
   const sharedFields = askedFields.filter((field) => phoneAnswers[field] === 'shared');
   const needsReason = person === 'different' || sharedFields.length > 0;
-  const reasonOk = !needsReason || reason.trim().length >= MIN_REASON;
+  // Filing past a certain match is an administrator's decision, and says why in full.
+  const minReason = person === 'different' && certain.length > 0 ? 10 : MIN_REASON;
+  const reasonOk = !needsReason || reason.trim().length >= minReason;
   const personOk = !asksPerson || person === 'different';
   const phonesOk = askedFields.every(
     (field) => phoneAnswers[field] === 'shared' || phoneAnswers[field] === 'notTheirs',
   );
-  const canSave = personOk && phonesOk && reasonOk;
+  const canSave = !stopped && personOk && phonesOk && reasonOk;
   const clearsAny = askedFields.some((field) => phoneAnswers[field] === 'notTheirs');
 
   const submit = () => {
-    if (!canSave) return;
+    if (!canSave || sentRef.current) return;
+    sentRef.current = true;
+    setSent(true);
     const answer: DuplicateReviewAnswer | undefined = needsReason
       ? {
           differentFrom: person === 'different' ? duplicates.map((row) => row.id) : [],
@@ -173,8 +196,12 @@ export function DuplicateReviewDialog({
     ({
       NAME: en ? 'same name' : 'الاسم نفسه',
       NAME_SIMILAR: en ? 'similar name' : 'اسم مشابه',
+      NAME_PARTIAL: en ? "same first and father's name" : 'الاسم واسم الأب نفسهما',
       PHONE: en ? 'same phone' : 'الهاتف نفسه',
       MOTHER: en ? "same mother's name" : 'اسم الأم نفسه',
+      CIVIL_RECORD: en ? 'same civil record no.' : 'رقم السجل نفسه',
+      RESIDENCY_NUMBER: en ? 'same residency permit' : 'رقم الإقامة نفسه',
+      SAME_UNIT: en ? 'same flat' : 'الوحدة نفسها',
     })[key];
 
   return (
@@ -193,16 +220,48 @@ export function DuplicateReviewDialog({
         </DialogHeader>
 
         <div className="space-y-5">
+          {stopped ? (
+            <p
+              role="alert"
+              className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm leading-relaxed"
+            >
+              <Ban className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+              <span>
+                <span className="block font-semibold">
+                  {en ? 'This person is already registered.' : 'هذا الشخص مسجَّل مسبقاً.'}
+                </span>
+                {en
+                  ? 'A second file cannot be created. Open their file below and add the property to it. If you are sure this is someone else, an administrator has to decide.'
+                  : 'لا يُنشأ له ملف ثانٍ. افتح ملفه أدناه وأضف العقار إليه. إن كنت متأكداً أنه شخص آخر فالقرار لمدير النظام.'}
+              </span>
+            </p>
+          ) : null}
+
           {asksPerson ? (
             <section className="space-y-2.5">
               <h3 className="text-sm font-semibold">
-                {en ? 'Is this person already registered?' : 'هل هذا الشخص مسجَّل مسبقاً؟'}
+                {stopped
+                  ? en
+                    ? 'Already on file'
+                    : 'الملف المسجَّل'
+                  : en
+                    ? 'Is this person already registered?'
+                    : 'هل هذا الشخص مسجَّل مسبقاً؟'}
               </h3>
               <ul className="space-y-1.5">
                 {duplicates.map((row) => (
-                  <li key={row.id} className="rounded-lg border bg-muted/30 p-2.5 text-xs">
+                  <li
+                    key={row.id}
+                    className={cn(
+                      'rounded-lg border p-2.5 text-xs',
+                      row.certain ? 'border-destructive/40 bg-destructive/5' : 'bg-muted/30',
+                    )}
+                  >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-semibold">{row.fullName}</span>
+                      {row.certain ? (
+                        <Badge variant="soft-destructive">{en ? 'same person' : 'الشخص نفسه'}</Badge>
+                      ) : null}
                       {row.referenceNumber ? (
                         <span dir="ltr" className="font-mono text-muted-foreground">
                           {row.referenceNumber}
@@ -244,20 +303,29 @@ export function DuplicateReviewDialog({
                 ))}
               </ul>
 
-              <Choice
-                options={[
-                  {
-                    value: 'same',
-                    label: en ? 'Yes — it is the same person' : 'نعم — هو الشخص نفسه',
-                  },
-                  {
-                    value: 'different',
-                    label: en ? 'No — a different person' : 'لا — شخص مختلف',
-                  },
-                ]}
-                value={person}
-                onChange={(value) => setPerson(value as PersonAnswer)}
-              />
+              {stopped ? null : (
+                <Choice
+                  options={[
+                    {
+                      value: 'same',
+                      label: en ? 'Yes — it is the same person' : 'نعم — هو الشخص نفسه',
+                    },
+                    {
+                      value: 'different',
+                      label:
+                        certain.length > 0
+                          ? en
+                            ? 'No — a different person (administrator decision)'
+                            : 'لا — شخص مختلف (قرار مدير النظام)'
+                          : en
+                            ? 'No — a different person'
+                            : 'لا — شخص مختلف',
+                    },
+                  ]}
+                  value={person}
+                  onChange={(value) => setPerson(value as PersonAnswer)}
+                />
+              )}
               {person === 'same' ? (
                 <p className="rounded-md border border-primary/30 bg-primary/5 p-2.5 text-xs leading-relaxed">
                   {en
@@ -357,7 +425,7 @@ export function DuplicateReviewDialog({
           </Button>
           <Button
             onClick={submit}
-            disabled={!canSave}
+            disabled={!canSave || sent}
             className="h-11 sm:h-10"
           >
             {clearsAny
