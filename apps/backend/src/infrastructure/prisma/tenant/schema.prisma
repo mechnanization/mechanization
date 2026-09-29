@@ -232,6 +232,11 @@ model User {
   qualityChecksAssigned QualityCheck[]       @relation("QualityCheckAssignedTo")
   qualityChecksDone     QualityCheck[]       @relation("QualityCheckCheckedBy")
   dataQualityDismissals DataQualityDismissal[] @relation("DataQualityDismissedBy")
+  /// «دمج ملفين» — merges this citizen was kept by, and the one they were folded into.
+  mergesKept            CitizenMerge[]       @relation("CitizenMergeSurvivor")
+  mergesAbsorbed        CitizenMerge[]       @relation("CitizenMergeAbsorbed")
+  mergesPerformed       CitizenMerge[]       @relation("CitizenMergedBy")
+  mergesUndone          CitizenMerge[]       @relation("CitizenMergeUndoneBy")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -388,6 +393,9 @@ model Registration {
   censusSyncFailedAt DateTime?
 
   properties      PropertyEntry[]
+  /// Cards filed on this registration that a merge has moved onto another
+  /// (`PropertyEntry.filedRegistrationId`). Still this registration's work.
+  movedCards      PropertyEntry[] @relation("CardFiledOn")
   documents       Document[]
   unitOccupancies UnitOccupancy[]
   reviews         RecordReview[]
@@ -623,6 +631,13 @@ model PropertyEntry {
 
   documents Document[]
   units     BuildingUnit[]
+
+  /// The registration this card was filed on, when a merge has since moved it
+  /// onto another (migration 0061). Null means `registrationId`. Read by the
+  /// pay rule only: the officer who filed a card keeps its credit wherever it
+  /// sits.
+  filedRegistrationId String?       @db.Uuid
+  filedRegistration   Registration? @relation("CardFiledOn", fields: [filedRegistrationId], references: [id], onDelete: SetNull)
 
   @@index([propertyType])
   @@index([propertyNumber])
@@ -1123,6 +1138,38 @@ model BuildingCodeAlias {
   @@index([buildingId])
   @@index([code])
   @@map("building_code_aliases")
+}
+
+/// «دمج ملفين» — one person filed twice, folded into one file (migration 0061).
+///
+/// The absorbed citizen is deactivated, not deleted; `footprint` records every
+/// row the merge moved and what it held before, which is what the undo reverts.
+/// The partial unique index `citizen_merges_absorbedId_live_key` (a file is
+/// folded into one other file at a time) lives in the migration: Prisma cannot
+/// express a `WHERE`.
+model CitizenMerge {
+  id String @id @default(uuid()) @db.Uuid
+
+  survivorId String @db.Uuid
+  survivor   User   @relation("CitizenMergeSurvivor", fields: [survivorId], references: [id], onDelete: Cascade)
+  absorbedId String @db.Uuid
+  absorbed   User   @relation("CitizenMergeAbsorbed", fields: [absorbedId], references: [id], onDelete: Cascade)
+
+  /// Why the administrator decided these are one person. Required.
+  reason    String
+  footprint Json
+
+  mergedById String?  @db.Uuid
+  mergedBy   User?    @relation("CitizenMergedBy", fields: [mergedById], references: [id], onDelete: SetNull)
+  mergedAt   DateTime @default(now())
+
+  undoneAt   DateTime?
+  undoneById String?   @db.Uuid
+  undoneBy   User?     @relation("CitizenMergeUndoneBy", fields: [undoneById], references: [id], onDelete: SetNull)
+  undoReason String?
+
+  @@index([survivorId])
+  @@map("citizen_merges")
 }
 
 /// One canonical unit inside a building — شقة, محل, عيادة.
