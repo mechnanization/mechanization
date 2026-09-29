@@ -95,6 +95,17 @@ export interface UnitCorrectionPreview {
   /** Officers whose billable units fall, one per officer (pay dedupes by unit). */
   pay: Array<{ officerId: string; officerName: string | null; unitsLost: number }>;
   counters: { totalBefore: number; totalAfter: number; surveyedBefore: number; surveyedAfter: number };
+  /**
+   * Standing «دمج ملفين» of a file this delete changes. The undo refuses once
+   * either file changes, so after this delete those merges are final.
+   */
+  mergesEnded: Array<{
+    mergeId: string;
+    survivorId: string;
+    survivorName: string;
+    absorbedName: string;
+    mergedAt: string;
+  }>;
 }
 
 export interface UnitCorrectionResult {

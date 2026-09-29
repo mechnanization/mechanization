@@ -232,6 +232,48 @@ describeIfDb('UnitCorrectionService', () => {
     expect(byCitizen[fixture.citizens.occupant]!.cards[0]).toMatchObject({ cardEnds: true, landlordLink: 'CLEARED' });
   });
 
+  it('credits a card a merge carried across to its filing officer, and warns that the merge becomes final', async () => {
+    const fixture = await seed();
+    const filer = randomUUID();
+    await db.user.create({
+      data: { id: filer, kind: 'STAFF', tenantSlug: 'uc', firstName: 'سارة', lastName: 'الميدانية', role: 'FIELD_INSPECTOR' as never },
+    });
+    const absorbed = await db.user.create({
+      data: { kind: 'CITIZEN', tenantSlug: 'uc', firstName: 'مالك', middleName: 'نسخة', lastName: 'مدموج', isActive: false },
+    });
+    // The owner's card was filed on the absorbed file by another officer, then moved by the merge.
+    const filedOn = await db.registration.create({
+      data: { citizenId: fixture.citizens.owner, referenceNumber: `UC-${randomUUID()}`, createdById: filer },
+    });
+    await db.propertyEntry.update({ where: { id: fixture.cards.ownerCard.id }, data: { filedRegistrationId: filedOn.id } });
+    const merge = await db.citizenMerge.create({
+      data: { survivorId: fixture.citizens.owner, absorbedId: absorbed.id, reason: 'اختبار', footprint: {}, mergedById: adminId },
+    });
+    const undone = await db.citizenMerge.create({
+      data: {
+        survivorId: fixture.citizens.owner,
+        absorbedId: absorbed.id,
+        reason: 'اختبار',
+        footprint: {},
+        mergedById: adminId,
+        undoneAt: new Date(),
+        undoneById: adminId,
+        undoReason: 'اختبار التراجع',
+      },
+    });
+
+    const preview = await within(() => service.preview(fixture.units.b101.id));
+
+    expect([...preview.pay].sort((a, b) => a.officerId.localeCompare(b.officerId))).toEqual(
+      [
+        { officerId, officerName: 'علي المراقب', unitsLost: 1 },
+        { officerId: filer, officerName: 'سارة الميدانية', unitsLost: 1 },
+      ].sort((a, b) => a.officerId.localeCompare(b.officerId)),
+    );
+    expect(preview.mergesEnded.map((row) => row.mergeId)).toEqual([merge.id]);
+    expect(preview.mergesEnded.map((row) => row.mergeId)).not.toContain(undone.id);
+  });
+
   it('deletes B101, ends every line naming it, and writes the trail in the same transaction', async () => {
     const fixture = await seed();
     const preview = await within(() => service.preview(fixture.units.b101.id));

@@ -74,6 +74,7 @@ function state(over: Partial<UnitCorrectionState> = {}): UnitCorrectionState {
     cases: [],
     cards: [],
     registrations: [],
+    merges: [],
     ...over,
   };
 }
@@ -313,9 +314,15 @@ describe('fingerprintOf', () => {
     ['a flag was added', (s: UnitCorrectionState) => (s.registrations[0]!.flaggedFields = [{ path: 'x' }])],
     ['the unit was renamed', (s: UnitCorrectionState) => (s.unit.unitCode = 'B103')],
     ['another unit was surveyed', (s: UnitCorrectionState) => (s.building.surveyedUnits += 1)],
+    ['a merge was undone', (s: UnitCorrectionState) => s.merges.pop()],
+    ['credit moved to another officer', (s: UnitCorrectionState) => (s.cards[0]!.filedById = 'off-2')],
   ])('changes when %s', (_label, mutate) => {
-    const before = a2424();
-    const after = a2424();
+    const withMerge = (s: UnitCorrectionState) => {
+      s.merges.push({ id: 'm1', survivorId: 'owner', survivorName: 'حسن', absorbedId: 'dup', absorbedName: 'حسن', mergedAt: t(20) });
+      return s;
+    };
+    const before = withMerge(a2424());
+    const after = withMerge(a2424());
     mutate(after);
     expect(fingerprintOf(after)).not.toBe(fingerprintOf(before));
   });
@@ -344,6 +351,38 @@ describe('previewOf', () => {
     expect(preview.files).toEqual([
       { citizenId: 'walk-in', citizenName: 'X', occupancyOnly: true, cards: [], flagsRemoved: 0 },
     ]);
+  });
+
+  it('warns of a standing merge whose file the delete changes, and of no other', () => {
+    const current = a2424();
+    // A card of someone else in the building that names another unit: untouched.
+    current.cards.push(card('bystander-card', 'bystander', [line('elsewhere', 'bystander-card', { unitId: OTHER_UNIT })]));
+    current.merges = [
+      { id: 'm-owner', survivorId: 'owner', survivorName: 'حسن', absorbedId: 'dup', absorbedName: 'حسن ب', mergedAt: t(20) },
+      { id: 'm-bystander', survivorId: 'bystander', survivorName: 'س', absorbedId: 'dup2', absorbedName: 'س ب', mergedAt: t(21) },
+    ];
+    const preview = previewOf(current, planUnitCorrection(current));
+    expect(preview.mergesEnded).toEqual([
+      { mergeId: 'm-owner', survivorId: 'owner', survivorName: 'حسن', absorbedName: 'حسن ب', mergedAt: t(20).toISOString() },
+    ]);
+  });
+
+  it('warns of a merge of the landlord a changed tenant card is linked to', () => {
+    const current = a2424();
+    // The occupant's card is linked to the owner; a merge that absorbed the owner's duplicate names that link.
+    current.merges = [{ id: 'm', survivorId: 'owner', survivorName: 'حسن', absorbedId: 'dup', absorbedName: 'حسن ب', mergedAt: t(20) }];
+    current.cards = current.cards.filter((row) => row.citizenId === 'occupant');
+    current.occupancies = current.occupancies.filter((row) => row.citizenId === 'occupant');
+    const plan = planUnitCorrection(current);
+    expect(plan.citizensAffected).not.toContain('owner');
+    expect(previewOf(current, plan).mergesEnded.map((row) => row.mergeId)).toEqual(['m']);
+  });
+
+  it('credits the officer the card was filed with', () => {
+    const current = a2424();
+    current.cards[1]!.filedById = 'filer';
+    current.cards[1]!.filedByName = 'م';
+    expect(planUnitCorrection(current).pay.map((row) => row.officerId).sort()).toEqual(['filer', OFFICER].sort());
   });
 
   it('says so when nothing hangs off the unit', () => {

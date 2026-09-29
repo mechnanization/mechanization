@@ -8,6 +8,7 @@ import {
   Ban,
   CheckCircle2,
   FileX2,
+  GitMerge,
   Info,
   RefreshCw,
   ShieldAlert,
@@ -436,6 +437,29 @@ function PreviewBody({
             )}
 
             <Stats preview={preview} en={en} />
+
+            {preview.mergesEnded.length > 0 ? (
+              <Callout
+                tone="warning"
+                icon={GitMerge}
+                title={en ? 'A merge can no longer be undone' : 'لن يعود التراجع عن الدمج ممكناً'}
+              >
+                <ul className="list-disc space-y-1 ps-4">
+                  {preview.mergesEnded.map((merge) => (
+                    <li key={merge.mergeId}>
+                      {en
+                        ? `${merge.absorbedName} was merged into ${merge.survivorName} on ${formatDate(merge.mergedAt)}.`
+                        : `دُمج ملف ${merge.absorbedName} في ملف ${merge.survivorName} بتاريخ ${formatDate(merge.mergedAt)}.`}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2">
+                  {en
+                    ? 'This delete changes that file, and a merge is undone only while neither file has changed since. If the merge was wrong, undo it first.'
+                    : 'هذا الحذف يغيّر ذلك الملف، والتراجع عن الدمج لا يُقبل بعد أي تغيير على أحد الملفين. إن كان الدمج خطأً فتراجع عنه أولاً.'}
+                </p>
+              </Callout>
+            ) : null}
 
             {preview.nothingRecorded ? (
               <Callout tone="success" icon={CheckCircle2}>

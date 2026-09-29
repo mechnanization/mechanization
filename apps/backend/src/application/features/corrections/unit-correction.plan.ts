@@ -118,7 +118,12 @@ export interface CorrectionCard {
   endReason: string | null;
   landlordCitizenId: string | null;
   landlordLinkFootprint: unknown;
-  /** Who filed the registration, which is who the card's units are credited to. */
+  /**
+   * Who the card's units are credited to: the officer of the registration it
+   * was filed on. A merge moves a card onto another registration but not its
+   * credit (`cardsFiledOn`), so that is `filedRegistrationId`'s officer when
+   * set, and the registration's own otherwise.
+   */
   filedById: string | null;
   filedByName: string | null;
   /** Every row on the card, current and ended, in creation order. */
@@ -134,6 +139,19 @@ export interface CorrectionRegistration {
   currentCardIds: string[];
 }
 
+/**
+ * A «دمج ملفين» that has not been undone, with a file this correction may
+ * change. The undo is refused once either file changes, so the delete ends it.
+ */
+export interface CorrectionMerge {
+  id: string;
+  survivorId: string;
+  survivorName: string;
+  absorbedId: string;
+  absorbedName: string;
+  mergedAt: Date;
+}
+
 export interface UnitCorrectionState {
   unit: CorrectionUnit;
   building: CorrectionBuilding;
@@ -146,6 +164,8 @@ export interface UnitCorrectionState {
   cards: CorrectionCard[];
   /** The registrations those cards belong to. */
   registrations: CorrectionRegistration[];
+  /** Standing merges of anyone on those cards or in the unit, or their landlords. */
+  merges: CorrectionMerge[];
 }
 
 export interface LineChange {
@@ -323,10 +343,9 @@ export function planUnitCorrection(state: UnitCorrectionState): UnitCorrectionPl
     unit ends up RECORDED_IN_ERROR, so each officer who is credited for the
     unit today loses exactly one unit — however many lines of theirs name it.
 
-    Credit follows `registrations.createdById` on develop. The citizen-merge
-    work (`cardsFiledOn`, `property_entries.filedRegistrationId`) moves it for
-    cards a merge carried across; when that lands, this is the one place to
-    switch.
+    Credit follows the registration a card was filed on (`cardsFiledOn`): a
+    card a merge carried across still pays the officer who filed it, and
+    `load` resolves `filedById` to that officer.
   */
   const pay = new Map<string, { officerId: string; officerName: string | null; unitsLost: number }>();
   for (const card of state.cards) {
@@ -409,6 +428,7 @@ export function fingerprintOf(state: UnitCorrectionState): string {
       card.endReason,
       card.landlordCitizenId,
       card.landlordLinkFootprint ?? null,
+      card.filedById,
       at(card.updatedAt),
       sorted(card.rows).map((row) => [row.id, row.unitId, at(row.endedAt), row.endReason, at(row.updatedAt)]),
     ]),
@@ -418,6 +438,7 @@ export function fingerprintOf(state: UnitCorrectionState): string {
       row.currentCardIds,
       at(row.updatedAt),
     ]),
+    merges: sorted(state.merges).map((row) => row.id),
   };
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
@@ -523,5 +544,36 @@ export function previewOf(state: UnitCorrectionState, plan: UnitCorrectionPlan):
     casesUnlinked: state.cases.map((row) => ({ id: row.id, caseType: row.caseType, status: row.status })),
     pay: plan.pay,
     counters: plan.counters,
+    mergesEnded: mergesEnded(state, plan),
   };
+}
+
+/**
+ * The standing merges this delete makes impossible to undo: those with a file
+ * whose cards, lines or census record it changes. The undo compares each file
+ * row by row with how the merge left it, so any change here is one.
+ */
+function mergesEnded(state: UnitCorrectionState, plan: UnitCorrectionPlan): UnitCorrectionPreview['mergesEnded'] {
+  const changedCards = new Set([
+    ...plan.cardsToEnd,
+    ...plan.lineChanges.map((change) => change.cardId),
+    ...plan.landlordLinks.map((change) => change.cardId),
+  ]);
+  const touched = new Set(plan.citizensAffected);
+  for (const card of state.cards) {
+    if (!changedCards.has(card.id)) continue;
+    touched.add(card.citizenId);
+    // A tenant's card linked to a merged owner is named in that merge's footprint.
+    if (card.landlordCitizenId) touched.add(card.landlordCitizenId);
+  }
+  return [...state.merges]
+    .filter((merge) => touched.has(merge.survivorId) || touched.has(merge.absorbedId))
+    .sort((a, b) => a.mergedAt.getTime() - b.mergedAt.getTime() || a.id.localeCompare(b.id))
+    .map((merge) => ({
+      mergeId: merge.id,
+      survivorId: merge.survivorId,
+      survivorName: merge.survivorName,
+      absorbedName: merge.absorbedName,
+      mergedAt: merge.mergedAt.toISOString(),
+    }));
 }

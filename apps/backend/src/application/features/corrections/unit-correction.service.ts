@@ -429,6 +429,12 @@ export class UnitCorrectionService {
               endReason: true,
               landlordCitizenId: true,
               landlordLinkFootprint: true,
+              filedRegistration: {
+                select: {
+                  createdById: true,
+                  createdBy: { select: { firstName: true, middleName: true, lastName: true } },
+                },
+              },
               registration: {
                 select: {
                   citizenId: true,
@@ -472,6 +478,32 @@ export class UnitCorrectionService {
                 orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
                 select: { id: true },
               },
+            },
+          });
+
+    /*
+      Standing merges of anyone this could change — the plan narrows them to the
+      files it actually changes. Undone merges are history and are not asked about.
+    */
+    const people = [
+      ...new Set([
+        ...occupancies.map((row) => row.citizenId),
+        ...cards.map((card) => card.registration.citizenId),
+        ...cards.flatMap((card) => (card.landlordCitizenId ? [card.landlordCitizenId] : [])),
+      ]),
+    ];
+    const merges =
+      people.length === 0
+        ? []
+        : await this.db.citizenMerge.findMany({
+            where: { undoneAt: null, OR: [{ survivorId: { in: people } }, { absorbedId: { in: people } }] },
+            select: {
+              id: true,
+              survivorId: true,
+              absorbedId: true,
+              mergedAt: true,
+              survivor: { select: { firstName: true, middleName: true, lastName: true } },
+              absorbed: { select: { firstName: true, middleName: true, lastName: true } },
             },
           });
 
@@ -532,8 +564,9 @@ export class UnitCorrectionService {
         endReason: card.endReason,
         landlordCitizenId: card.landlordCitizenId,
         landlordLinkFootprint: card.landlordLinkFootprint,
-        filedById: card.registration.createdById,
-        filedByName: fullName(card.registration.createdBy),
+        // A card a merge moved still pays whoever filed it (`cardsFiledOn`).
+        filedById: card.filedRegistration ? card.filedRegistration.createdById : card.registration.createdById,
+        filedByName: fullName(card.filedRegistration ? card.filedRegistration.createdBy : card.registration.createdBy),
         rows: card.units.map((row) => ({
           id: row.id,
           propertyEntryId: row.propertyEntryId,
@@ -553,6 +586,14 @@ export class UnitCorrectionService {
         updatedAt: row.updatedAt,
         flaggedFields: row.flaggedFields,
         currentCardIds: row.properties.map((card) => card.id),
+      })),
+      merges: merges.map((row) => ({
+        id: row.id,
+        survivorId: row.survivorId,
+        survivorName: fullName(row.survivor) ?? '—',
+        absorbedId: row.absorbedId,
+        absorbedName: fullName(row.absorbed) ?? '—',
+        mergedAt: row.mergedAt,
       })),
     };
   }

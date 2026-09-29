@@ -151,6 +151,37 @@ describe('traceChanges — rows on the building', () => {
   });
 });
 
+describe('traceChanges — «حذف وحدة سُجِّلت بالخطأ»', () => {
+  it('the file’s side is a correction', () => {
+    expect(kinds(traceChanges([row({ action: 'UNIT_CORRECTION_FILE_ENDED', after: { reason: 'RECORDED_IN_ERROR' } })], holder))).toEqual(['CORRECTION']);
+  });
+
+  it('the building’s side is a correction for everyone it names, or who held the unit', () => {
+    const named = row({
+      action: 'UNIT_CORRECTION_DELETED',
+      entityType: 'Building',
+      entityId: 'bld',
+      before: { unitCode: 'Z-1-45-A-999' },
+      after: { citizens: [CITIZEN] },
+    });
+    const byCode = row({
+      action: 'UNIT_CORRECTION_DELETED',
+      entityType: 'Building',
+      entityId: 'bld',
+      before: { unitCode: 'Z-1-45-A-101' },
+      after: { citizens: [] },
+    });
+    const neither = row({
+      action: 'UNIT_CORRECTION_DELETED',
+      entityType: 'Building',
+      entityId: 'bld',
+      before: { unitCode: 'Z-1-45-A-999' },
+      after: { citizens: [TENANT] },
+    });
+    expect(kinds(traceChanges([named, byCode, neither], holder))).toEqual(['CORRECTION', 'CORRECTION']);
+  });
+});
+
 describe('affectsBill', () => {
   const raisedAt = new Date('2026-09-15T09:30:00Z');
   const dated = (on: string): TracedChange => ({ row: row({}), kind: 'DATED_CHANGE', effectiveOn: new Date(on) });
