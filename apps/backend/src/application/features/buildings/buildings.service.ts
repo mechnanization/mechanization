@@ -32,6 +32,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { assertNotMergedAway } from '../citizens/merged-away';
 import { cardClaiming, takesAnotherFlat } from '../../../domain/entities/census-claim';
 import { CasesService } from '../cases/cases.service';
 import type {
@@ -3085,6 +3086,8 @@ export class BuildingsService {
     if (!citizen || citizen.kind !== 'CITIZEN') {
       throw new ValidationError('المواطن غير موجود', { citizenId: input.citizenId });
     }
+    // A file folded into another is nobody to record in a flat — see `assertNotMergedAway`.
+    await assertNotMergedAway(this.db, citizen.id);
 
     assertNonResidentOccupancy({
       residence: citizen.residence,

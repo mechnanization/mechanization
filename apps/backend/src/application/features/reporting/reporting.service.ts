@@ -614,7 +614,7 @@ export class ReportingService {
           (SELECT COALESCE(json_object_agg("residentStatus", cnt), '{}'::json)
              FROM (
                SELECT "residentStatus", count(*)::int AS cnt FROM ${this.S}users
-               WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND "residentStatus" IS NOT NULL
+               WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND ${this.S}users.id NOT IN (SELECT "absorbedId" FROM ${this.S}citizen_merges WHERE "undoneAt" IS NULL) AND "residentStatus" IS NOT NULL
                GROUP BY "residentStatus"
              ) u
           ) AS "byResidentStatus"
@@ -685,35 +685,39 @@ export class ReportingService {
              AND pe."endedAt" IS NULL
         )
         SELECT
+          -- A file «دمج ملفين» folded into another is the same household
+          -- counted once already, on the file that stays: every people-count
+          -- below leaves it out (migration 0061).
           -- Households only. A non-resident record («غير مقيم في البلدة», migration 0040)
           -- is somebody who lives elsewhere: counting them — or whatever
           -- household size a file converted to a non-resident record still carries —
           -- would put people in the town's population who are not in the town.
           -- The residence column is NOT NULL, so this comparison drops no existing row.
-          (SELECT count(*)::int FROM ${this.S}users WHERE kind = 'CITIZEN' AND residence = 'RESIDENT')
+          (SELECT count(*)::int FROM ${this.S}users WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND ${this.S}users.id NOT IN (SELECT "absorbedId" FROM ${this.S}citizen_merges WHERE "undoneAt" IS NULL))
             AS "citizenRecords",
           (SELECT COALESCE(sum("actualHouseholdMembers"), 0)::int FROM ${this.S}users
-            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT')
+            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND ${this.S}users.id NOT IN (SELECT "absorbedId" FROM ${this.S}citizen_merges WHERE "undoneAt" IS NULL))
             AS "populationTotal",
           (SELECT COALESCE(sum("totalRegisteredMembers"), 0)::int FROM ${this.S}users
-            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT')
+            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND ${this.S}users.id NOT IN (SELECT "absorbedId" FROM ${this.S}citizen_merges WHERE "undoneAt" IS NULL))
             AS "grossRegisteredTotal",
           (SELECT COALESCE(sum("totalRegisteredMembers" - "actualHouseholdMembers"), 0)::int
              FROM ${this.S}users
             WHERE kind = 'CITIZEN'
               AND residence = 'RESIDENT'
+              AND ${this.S}users.id NOT IN (SELECT "absorbedId" FROM ${this.S}citizen_merges WHERE "undoneAt" IS NULL)
               AND "totalRegisteredMembers" IS NOT NULL
               AND "actualHouseholdMembers" IS NOT NULL)
             AS "marriedOffspringTotal",
           (SELECT count(*)::int FROM ${this.S}users
-            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND "actualHouseholdMembers" IS NULL)
+            WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND ${this.S}users.id NOT IN (SELECT "absorbedId" FROM ${this.S}citizen_merges WHERE "undoneAt" IS NULL) AND "actualHouseholdMembers" IS NULL)
             AS "householdsWithoutSize",
           (SELECT COALESCE(
                     json_agg(json_build_object('size', size, 'households', c) ORDER BY size),
                     '[]'::json)
              FROM (SELECT "actualHouseholdMembers" AS size, count(*)::int AS c
                      FROM ${this.S}users
-                    WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND "actualHouseholdMembers" IS NOT NULL
+                    WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND ${this.S}users.id NOT IN (SELECT "absorbedId" FROM ${this.S}citizen_merges WHERE "undoneAt" IS NULL) AND "actualHouseholdMembers" IS NOT NULL
                     GROUP BY 1) f)
             AS "familySizes",
           (SELECT COALESCE(json_object_agg("propertyType", cnt), '{}'::json)

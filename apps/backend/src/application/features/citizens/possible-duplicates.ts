@@ -1,5 +1,6 @@
 import {
   POSSIBLE_DUPLICATE_FLAG_PATH,
+  type DuplicateMatchedOn,
   type DuplicateReviewAnswer,
   type FieldFlag,
 } from '@mechanization/shared-schemas';
@@ -50,10 +51,25 @@ export interface PersonKey extends PersonName {
   motherName?: string | null;
   phone?: string | null;
   whatsapp?: string | null;
+  /** رقم السجل — a family's register entry, shared by everyone in it. */
+  civilRecordNumber?: string | null;
+  /** رقم الإقامة — a non-Lebanese person's permit. */
+  residencyNumber?: string | null;
+  gender?: string | null;
+  isLebanese?: boolean | null;
+  /**
+   * The census units this person holds now: their open spells on file, or the
+   * flats the cards being typed name. The same person filed twice was most
+   * often filed twice *at the same door*.
+   */
+  unitIds?: readonly string[] | null;
 }
 
-/** EXACT: same names. NEAR: a typo apart. NONE: different names. */
-export type NameMatch = 'EXACT' | 'NEAR' | 'NONE';
+/**
+ * EXACT: same names. NEAR: a typo apart. PARTIAL: first and father's name
+ * agree, the family name does not. NONE: different people's names.
+ */
+export type NameMatch = 'EXACT' | 'NEAR' | 'PARTIAL' | 'NONE';
 
 /**
  * Below this many letters a part must match exactly.
@@ -93,6 +109,43 @@ export function editDistance(a: string, b: string): number {
 }
 
 /**
+ * Real names one letter apart — never a typo of each other, however long.
+ *
+ * Folded and unspaced, as `foldNamePart` leaves them. Adding one letter to an
+ * Arabic name very often makes another valid name (El-Shishtawy, ACL O14-2003),
+ * and in a family register the other name is usually a brother's. The list
+ * holds the pairs long enough to slip past `MIN_LETTERS_FOR_TYPO`; the short
+ * ones (حسن/حسين، محمد/محمود) are already compared exactly. A misspelling that
+ * is not a name — «عبد المريم» for «عبد الكريم» — stays a typo.
+ */
+const DISTINCT_NAMES: ReadonlyArray<readonly [string, string]> = [
+  ['عبدالحسن', 'عبدالحسين'],
+  ['عبدالله', 'عبدالاله'],
+  ['سليمان', 'سلمان'],
+];
+
+/**
+ * Whether two parts a letter apart are two different names.
+ *
+ * Besides the listed pairs: one name that is the other with the feminine ة
+ * (folded to ه) added — جميل/جميلة، نبيل/نبيلة، كامل/كاملة. That is a man and a
+ * woman, not a slip.
+ */
+function distinctNames(a: string, b: string): boolean {
+  if (a + 'ه' === b || b + 'ه' === a) return true;
+  return DISTINCT_NAMES.some(([x, y]) => (a === x && b === y) || (a === y && b === x));
+}
+
+/**
+ * A family name without its article: «الخطيب» and «خطيب» are one family,
+ * written with and without «ال» at two doors.
+ */
+function familyPart(value: string | null | undefined): string {
+  const folded = foldNamePart(value);
+  return folded.startsWith('ال') && folded.length >= 5 ? folded.slice(2) : folded;
+}
+
+/**
  * The edits between two parts, or null where they are different names.
  *
  * Null rather than a large number so a caller cannot sum its way past it: one
@@ -102,6 +155,7 @@ export function editDistance(a: string, b: string): number {
 function partEdits(a: string, b: string): number | null {
   if (a === b) return 0;
   if (a.length < MIN_LETTERS_FOR_TYPO || b.length < MIN_LETTERS_FOR_TYPO) return null;
+  if (distinctNames(a, b)) return null;
   const distance = editDistance(a, b);
   return distance <= 1 ? distance : null;
 }
@@ -191,20 +245,30 @@ export function compareMothers(
  * says «بسام نسر» is not somebody other than «بسام حبيب نسر». But a match that
  * never compared the middle name is weaker, and `isLikelySamePerson` asks for
  * corroboration before it treats one as a question worth putting.
+ *
+ * `PARTIAL` is the first name and the father's name agreeing (or the father's
+ * name missing on one side) while the family name does not — «حسين علي وطفى»
+ * and «حسين علي وطفه» where the family name is too short to be allowed a typo,
+ * or spelled two ways nobody would call a slip. On its own it is nothing: it
+ * only ever counts toward a question when several other facts agree too.
+ * A first name or a father's name that disagrees is still `NONE` — brothers
+ * differ in the first, cousins in the second.
  */
 export function compareNames(
   a: PersonName,
   b: PersonName,
 ): { match: NameMatch; middleCompared: boolean } {
   const first = partEdits(foldNamePart(a.firstName), foldNamePart(b.firstName));
-  const last = partEdits(foldNamePart(a.lastName), foldNamePart(b.lastName));
-  if (first === null || last === null) return { match: 'NONE', middleCompared: false };
+  const last = partEdits(familyPart(a.lastName), familyPart(b.lastName));
 
   const middleA = foldNamePart(a.middleName);
   const middleB = foldNamePart(b.middleName);
   const middleCompared = Boolean(middleA && middleB);
   const middle = middleCompared ? partEdits(middleA, middleB) : 0;
+
+  if (first === null) return { match: 'NONE', middleCompared: false };
   if (middle === null) return { match: 'NONE', middleCompared };
+  if (last === null) return { match: 'PARTIAL', middleCompared };
 
   const edits = first + last + middle;
   if (edits === 0) return { match: 'EXACT', middleCompared };
@@ -219,6 +283,41 @@ export interface DuplicateSignals {
   sameMother: boolean;
   /** Both mothers are on file and are not a typo apart: two people. */
   motherDiffers: boolean;
+  /**
+   * Both mothers written with at least her own name and a family name. A lone
+   * «فاطمة» agrees with half the register, so it may count toward a question
+   * but never toward refusing a save.
+   */
+  motherInFull: boolean;
+  /** رقم السجل — both on file and the same register entry. */
+  sameCivilRecord: boolean;
+  /** رقم الإقامة — a non-Lebanese person's permit, which is theirs alone. */
+  sameResidencyNumber: boolean;
+  /** Both hold an open spell on the same census unit — filed twice at one door. */
+  sameUnit: boolean;
+  /**
+   * Facts on file on both sides that contradict one person: a different
+   * gender, one Lebanese and one not, or two different residence permits.
+   * Each is a typing slip at most once in a long while, so each counts hard
+   * against the question — and none may ever stop a save.
+   */
+  genderDiffers: boolean;
+  nationalityDiffers: boolean;
+  permitDiffers: boolean;
+}
+
+/**
+ * A register number as it compares: folded digits, no separators, no leading
+ * zeros — «٠٤٠», «40» and «4-0» are one سجل. Blank when nothing is left, and
+ * blank for a placeholder of zeros: رقم السجل is required of every Lebanese
+ * file, so «0» is what a field typed without the paper looks like, and two
+ * placeholders agreeing is not two people agreeing.
+ */
+export function foldRecordNumber(value: string | null | undefined): string {
+  if (!value) return '';
+  const folded = normalizeSearchText(value).replace(/\s+/g, '');
+  if (/^0+$/.test(folded)) return '';
+  return /^\d+$/.test(folded) ? folded.replace(/^0+(?=\d)/, '') : folded;
 }
 
 export function duplicateSignals(incoming: PersonKey, existing: PersonKey): DuplicateSignals {
@@ -235,22 +334,106 @@ export function duplicateSignals(incoming: PersonKey, existing: PersonKey): Dupl
   */
   const mother = compareMothers(incoming.motherName, existing.motherName);
 
+  const same = (a: string | null | undefined, b: string | null | undefined) => {
+    const left = foldRecordNumber(a);
+    return Boolean(left) && left === foldRecordNumber(b);
+  };
+  const bothDiffer = (a: string | null | undefined, b: string | null | undefined) => {
+    const left = foldRecordNumber(a);
+    const right = foldRecordNumber(b);
+    return Boolean(left && right) && left !== right;
+  };
+  const theirUnits = new Set(existing.unitIds ?? []);
+
   return {
     name: match,
     middleCompared,
     samePhone,
     sameMother: mother === 'SAME',
     motherDiffers: mother === 'DIFFERENT',
+    motherInFull: nameParts(incoming.motherName).length >= 2 && nameParts(existing.motherName).length >= 2,
+    sameCivilRecord: same(incoming.civilRecordNumber, existing.civilRecordNumber),
+    sameResidencyNumber: same(incoming.residencyNumber, existing.residencyNumber),
+    sameUnit: (incoming.unitIds ?? []).some((unitId) => theirUnits.has(unitId)),
+    genderDiffers: Boolean(incoming.gender && existing.gender) && incoming.gender !== existing.gender,
+    nationalityDiffers:
+      typeof incoming.isLebanese === 'boolean' &&
+      typeof existing.isLebanese === 'boolean' &&
+      incoming.isLebanese !== existing.isLebanese,
+    permitDiffers: bothDiffer(incoming.residencyNumber, existing.residencyNumber),
   };
+}
+
+/**
+ * How much each fact counts toward «هل هو الشخص نفسه؟».
+ *
+ * The question is put at `ASK_AT`. The weights follow record-linkage practice
+ * (Fellegi–Sunter: a fact counts by how rarely two different people share it —
+ * US Census PVS, ONS 2021, AHIMA patient matching; researched 2026-09-29), set
+ * so the rule this replaced still answers every pair it was pinned on:
+ *
+ *  - the name: three identical parts 3; identical without the father's name,
+ *    or a typo apart, 2; first and father's name agreeing with a different
+ *    family name 1, and 0 without the father's name to compare;
+ *  - the mother: +2 written in full on both sides — after the name, the
+ *    strongest fact this register holds, since siblings differ in the first
+ *    name and cousins in the mother — and +1 where one side is a lone first
+ *    name, which half the village shares;
+ *  - the same phone, the same رقم السجل, the same flat: +1 each. None is
+ *    anybody's alone — a household shares a line and a flat, a whole family one
+ *    سجل (and a سجل number repeats across villages, and changes when a woman
+ *    marries) — so each only ever tips a name that already agrees;
+ *  - the same رقم الإقامة: +2. A residence permit is one person's.
+ *  - a contradiction on file: −4 for a different gender or two different
+ *    permits, −3 for one Lebanese and one not.
+ *
+ * Not yet used, because the register does not hold them: year of birth and
+ * محل القيد, which every registry that matches without an ID leans on first.
+ * Adding them is a decision about what is collected (Law 81/2018 Art. 87–88),
+ * not a tuning — see docs/citizen-duplicates.md.
+ */
+const NAME_WEIGHT: Record<NameMatch, number> = { EXACT: 2, NEAR: 2, PARTIAL: 1, NONE: 0 };
+const ASK_AT = 3;
+
+export function duplicateScore(signals: DuplicateSignals): number {
+  const name =
+    signals.name === 'EXACT' && signals.middleCompared
+      ? 3
+      : signals.name === 'PARTIAL' && !signals.middleCompared
+        ? 0
+        : NAME_WEIGHT[signals.name];
+  /*
+    A سجل is a family's, and cousins named after one grandfather can share
+    one. It tips a name only once the father's names were compared, or with a
+    fact of this person's own beside it.
+  */
+  const civil =
+    signals.sameCivilRecord &&
+    (signals.middleCompared || signals.samePhone || signals.sameMother || signals.sameUnit);
+  // A permit is one person's — but not enough to carry a different family name with no father to compare.
+  const permit = signals.sameResidencyNumber && !(signals.name === 'PARTIAL' && !signals.middleCompared);
+  return (
+    name +
+    (signals.sameMother ? (signals.motherInFull ? 2 : 1) : 0) +
+    (signals.samePhone ? 1 : 0) +
+    (civil ? 1 : 0) +
+    (signals.sameUnit ? 1 : 0) +
+    (permit ? 2 : 0) -
+    (signals.genderDiffers ? 4 : 0) -
+    (signals.permitDiffers ? 4 : 0) -
+    (signals.nationalityDiffers ? 3 : 0)
+  );
 }
 
 /**
  * Whether to stop and ask "is this the same person?".
  *
  *  - different mothers on file → never: that is two people, however alike;
- *  - three identical names → yes, with nothing further needed;
- *  - identical names without a middle name to compare, or a typo apart →
- *    only with a second fact agreeing: the same phone or the same mother.
+ *  - a first name or a father's name that disagrees → never: brothers,
+ *    cousins, a father and his son;
+ *  - otherwise, when the facts that agree add up — see `duplicateScore`.
+ *    Three identical names are enough alone; «حسين علي وطفى» against
+ *    «حسين علي وطفه» needs, say, the same mother and the same رقم السجل.
  *
  * A shared phone with a different name is deliberately *not* a duplicate. A
  * household line is ordinary (father and son, brothers); that case is the
@@ -258,17 +441,56 @@ export function duplicateSignals(incoming: PersonKey, existing: PersonKey): Dupl
  */
 export function isLikelySamePerson(signals: DuplicateSignals): boolean {
   if (signals.motherDiffers || signals.name === 'NONE') return false;
-  if (signals.name === 'EXACT' && signals.middleCompared) return true;
-  return signals.samePhone || signals.sameMother;
+  return duplicateScore(signals) >= ASK_AT;
+}
+
+/**
+ * What the register does about a candidate: nothing, ask, or refuse.
+ *
+ * `BLOCK` is the officer being *stopped*, not asked (user decision,
+ * 2026-09-29: «know when to stop an officer from creating a duplicate, do not
+ * just warn»). It is reserved for evidence no two different people in this town
+ * would share:
+ *
+ *  - all three names the same (or a typo apart), the father's name compared,
+ *    the same mother — written in full on both, not a lone «فاطمة» that
+ *    matches half the register — and one more fact of their own: the same
+ *    phone, the same رقم السجل, or the same residence permit;
+ *  - or the same name and the same residence permit, which is one person's.
+ *
+ * Brothers never reach it (different first names), nor cousins (different
+ * fathers), nor a namesake with a different mother. What stops an officer is
+ * the save; the way on is to open the file on record and add the property to
+ * it. An administrator may still file it as a different person, with a reason
+ * — the one escape a rule this strict needs, kept away from the screen where
+ * the duplicate would be made.
+ */
+export type DuplicateVerdict = 'NONE' | 'ASK' | 'BLOCK';
+
+export function duplicateVerdict(signals: DuplicateSignals): DuplicateVerdict {
+  if (!isLikelySamePerson(signals)) return 'NONE';
+  // Anything on file that says «two people» leaves the question to the officer.
+  if (signals.genderDiffers || signals.nationalityDiffers || signals.permitDiffers) return 'ASK';
+  const fullName = (signals.name === 'EXACT' || signals.name === 'NEAR') && signals.middleCompared;
+  const ownFact = signals.samePhone || signals.sameCivilRecord || signals.sameResidencyNumber || signals.sameUnit;
+  if (fullName && signals.sameMother && signals.motherInFull && ownFact) return 'BLOCK';
+  if (signals.name === 'EXACT' && signals.sameResidencyNumber && (signals.middleCompared || signals.sameMother)) {
+    return 'BLOCK';
+  }
+  return 'ASK';
 }
 
 /** The facts the dialog names beside a candidate, in the order a person weighs them. */
-export function matchedOn(signals: DuplicateSignals): Array<'NAME' | 'NAME_SIMILAR' | 'PHONE' | 'MOTHER'> {
+export function matchedOn(signals: DuplicateSignals): DuplicateMatchedOn[] {
   return [
     ...(signals.name === 'EXACT' ? (['NAME'] as const) : []),
     ...(signals.name === 'NEAR' ? (['NAME_SIMILAR'] as const) : []),
+    ...(signals.name === 'PARTIAL' ? (['NAME_PARTIAL'] as const) : []),
     ...(signals.samePhone ? (['PHONE'] as const) : []),
     ...(signals.sameMother ? (['MOTHER'] as const) : []),
+    ...(signals.sameCivilRecord ? (['CIVIL_RECORD'] as const) : []),
+    ...(signals.sameResidencyNumber ? (['RESIDENCY_NUMBER'] as const) : []),
+    ...(signals.sameUnit ? (['SAME_UNIT'] as const) : []),
   ];
 }
 
@@ -309,6 +531,11 @@ export interface DuplicateCandidate {
   registeredAt: string | null;
   registeredBy: string | null;
   matchedOn: ReturnType<typeof matchedOn>;
+  /**
+   * `duplicateVerdict` said BLOCK: the save is refused, not asked about — see
+   * `CitizensService.create`. Only an administrator may file past it.
+   */
+  certain: boolean;
 }
 
 /**
@@ -407,6 +634,7 @@ export function assessFindings(input: {
           ? `${latest.createdBy.firstName} ${latest.createdBy.lastName}`
           : null,
         matchedOn: matchedOn(signals),
+        certain: duplicateVerdict(signals) === 'BLOCK',
       });
       continue;
     }

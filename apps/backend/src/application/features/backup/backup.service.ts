@@ -18,8 +18,12 @@ import { ValidationError } from '../../common/exceptions';
  * `TABLE_ORDER` before writing. Accepting a v2 file under v3 would therefore
  * delete every recorded commission and put nothing back — silently, with the
  * restore reporting success. The strict `!==` check below refuses them instead.
+ *
+ * **4** adds `citizenMerge` (migration 0061), for the same reason: both
+ * citizens of a merge cascade from `users`, which restore empties, so a v3
+ * file would erase every «دمج ملفين» and its undo and restore none of them.
  */
-const SNAPSHOT_VERSION = 3;
+const SNAPSHOT_VERSION = 4;
 
 /**
  * Ceiling on the *decompressed* snapshot, enforced by `gunzipSync`.
@@ -92,6 +96,8 @@ const MAX_SNAPSHOT_INFLATED_BYTES = 512 * 1024 * 1024;
  */
 const TABLE_ORDER = [
   'user',
+  // «دمج ملفين»: both citizens and the staff who merged and undid, all `users`.
+  'citizenMerge',
   'otpChallenge',
   'parcel',
   'zone',
