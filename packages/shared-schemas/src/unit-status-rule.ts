@@ -115,8 +115,20 @@ export function settleUnitStatus(facts: UnitStatusFacts): SettledUnitStatus {
     status = facts.current;
   }
 
-  if (!facts.standingVacancy && !implied && status !== null && LET.has(status)) {
-    conflicts.push({ kind: 'LET_WITHOUT_OCCUPANT', status });
+  /*
+    «مؤجرة» / «مشغولة بتسامح» with nobody of that kind registered — read from
+    the unit, or, while the unit has no answer, from an owner's card: billing
+    reads the card then, so the owner is exempt on the card's word alone and
+    nobody is billed for the flat.
+  */
+  if (!facts.standingVacancy && !implied) {
+    const letStatus =
+      status !== null
+        ? LET.has(status)
+          ? status
+          : null
+        : (facts.ownerStatements.find((stated): stated is string => stated != null && LET.has(stated)) ?? null);
+    if (letStatus) conflicts.push({ kind: 'LET_WITHOUT_OCCUPANT', status: letStatus });
   }
 
   /*

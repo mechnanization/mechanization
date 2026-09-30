@@ -897,6 +897,7 @@ export function PropertyCard({
                     </header>
                     <UnitFields
                       idPrefix={`${index}-m${position}`}
+                      statusPath={flagPath(index, `units.${position}.unitStatus`)}
                       unit={row}
                       census={row.unitId ? censusUnits[row.unitId] : undefined}
                       errors={scopeErrors(scopeErrors(errors, 'units'), String(position))}

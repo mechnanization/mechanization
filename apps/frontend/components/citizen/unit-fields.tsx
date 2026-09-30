@@ -711,6 +711,7 @@ export function UnitsEditor({
                   unitTypes={unitTypes}
                   nonResident={nonResident}
                   onPatch={(patch) => setUnit(unitIndex, patch)}
+                  statusPath={flagPath(index, `units.${unitIndex}.unitStatus`)}
                   locale={locale}
                 />
               )}
@@ -754,10 +755,13 @@ export function UnitFields({
   nonResident = false,
   onPatch,
   layout = 'stack',
+  statusPath,
   locale = 'ar',
 }: {
   /** Disambiguates every `id`/`htmlFor` on the page — a card index and a row. */
   idPrefix: string;
+  /** `properties.N.units.M.unitStatus` — where this flat's «حالة الوحدة» can be marked «غير مؤكَّد». */
+  statusPath?: string;
   /**
    * `wide` for a flat opened full width under the matrix: type beside floor,
    * area beside side, the shared rights four across. `stack` for a row in
@@ -952,6 +956,7 @@ export function UnitFields({
                     value={unit.unitStatus}
                     onChange={(unitStatus) => onPatch({ unitStatus })}
                     omit={nonResident && isDwellingUnitType(unit.unitType) ? ['OWNER_OCCUPIED'] : []}
+                    path={statusPath}
                     required
                     error={errors.unitStatus}
                     locale={locale}

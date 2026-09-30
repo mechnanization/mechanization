@@ -795,12 +795,27 @@ export class OwnershipService {
         result.vacanciesConfirmed += 1;
         break;
       }
-      case 'RENTED_TO_OTHER':
+      case 'RENTED_TO_OTHER': {
         await this.db.unit.update({ where: { id: unit.unitId }, data: { unitStatus: 'RENTED' } });
-        await this.openCase(unit, actor, result, 'GENERAL_NOTE',
-          `انتقلت ملكية الوحدة ${unit.unitCode} من ${target.citizenName}، ويسكنها مستأجر غير مسجَّل — سجِّله على الوحدة.`,
+        /*
+          «مؤجرة» with the tenant not yet registered is a «تعارض في حالة الوحدة»
+          — the one review `settleUnit` keeps on the flat and closes when the
+          tenant is recorded. A general note beside it asked the same question
+          twice and never closed itself.
+        */
+        const { opened } = await this.cases.openUnlessStanding(
+          {
+            notes: `انتقلت ملكية الوحدة ${unit.unitCode} من ${target.citizenName}، ويسكنها مستأجر غير مسجَّل — سجِّله على الوحدة.`,
+            caseType: 'STATUS_CONFLICT',
+            buildingId: unit.buildingId,
+            unitId: unit.unitId,
+            propertyNumber: unit.parcelNumber ?? undefined,
+          } as never,
+          actor,
         );
+        if (opened) result.casesOpened += 1;
         break;
+      }
       case 'UNKNOWN': {
         /*
           Cleared, not guessed: «يسكنها المالك» described the seller. With no

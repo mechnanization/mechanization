@@ -225,6 +225,46 @@ export async function unitsUnderReview(
   return held;
 }
 
+/**
+ * Closes these reviews, one row at a time and only while still open — so a case
+ * somebody resolved in between is neither re-resolved nor reported as closed
+ * by this.
+ */
+async function resolveReviews(
+  db: UnitStatusDb,
+  open: ReadonlyArray<{ id: string; status: string }>,
+  input: { unitId: string; actor: { id: string; role: string }; via: string },
+  reason: string,
+): Promise<{ count: number; events: UnitStatusEvent[] }> {
+  const events: UnitStatusEvent[] = [];
+  let count = 0;
+  for (const row of open) {
+    const resolved = await db.case.updateMany({
+      where: {
+        id: row.id,
+        unitId: input.unitId,
+        caseType: 'STATUS_CONFLICT' as never,
+        status: { in: ['OPEN', 'SCHEDULED'] as never },
+      },
+      data: { status: 'RESOLVED' as never, resolvedAt: new Date(), scheduledRevisitAt: null },
+    });
+    if (resolved.count === 0) continue;
+    count += 1;
+    events.push({
+      channel: 'case.changed',
+      payload: {
+        caseId: row.id,
+        action: 'CASE_RESOLVED',
+        before: { status: row.status },
+        after: { status: 'RESOLVED', via: reason, settledBy: input.via },
+        actorId: input.actor.id,
+        actorRole: input.actor.role,
+      },
+    });
+  }
+  return { count, events };
+}
+
 export interface SettleOutcome {
   unitId: string;
   before: string | null;
@@ -252,8 +292,31 @@ export async function settleUnit(
     via: string;
   },
 ): Promise<SettleOutcome | null> {
+  const open = await db.case.findMany({
+    where: { unitId: input.unitId, caseType: 'STATUS_CONFLICT' as never, status: { in: ['OPEN', 'SCHEDULED'] as never } },
+    select: { id: true, status: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
   const facts = (await loadUnitStatusFacts(db, [input.unitId])).get(input.unitId);
-  if (!facts) return null;
+  if (!facts) {
+    /*
+      A unit retyped to «طابق أعمدة» / «طابق فارغ» holds nobody and has no
+      status to settle — so a review left on it could never be closed by the
+      rule. It is closed here instead.
+    */
+    if (open.length === 0) return null;
+    const closed = await resolveReviews(db, open, input, 'UNIT_NOT_OCCUPIABLE');
+    return {
+      unitId: input.unitId,
+      before: null,
+      after: null,
+      conflicts: [],
+      caseOpened: false,
+      casesResolved: closed.count,
+      events: closed.events,
+    };
+  }
 
   const settled = settleUnitStatus(facts);
   const events: UnitStatusEvent[] = [];
@@ -283,12 +346,6 @@ export async function settleUnit(
     });
   }
 
-  const open = await db.case.findMany({
-    where: { unitId: input.unitId, caseType: 'STATUS_CONFLICT' as never, status: { in: ['OPEN', 'SCHEDULED'] as never } },
-    select: { id: true, notes: true, status: true },
-    orderBy: { createdAt: 'asc' },
-  });
-
   let caseOpened = false;
   let casesResolved = 0;
 
@@ -301,48 +358,47 @@ export async function settleUnit(
         where: { id: input.unitId },
         select: { building: { select: { parcelNumber: true } } },
       });
-      const created = await db.case.create({
-        data: {
-          notes: `الوحدة ${facts.unitCode}: ${notes}`,
-          caseType: 'STATUS_CONFLICT' as never,
-          buildingId: facts.buildingId,
-          unitId: input.unitId,
-          propertyNumber: building?.building.parcelNumber ?? null,
-          createdById: input.actor.id,
-        },
-        select: { id: true },
+      /*
+        `ON CONFLICT DO NOTHING` (Prisma's `skipDuplicates`) against the
+        partial unique index of migration 0063 — one open review per flat. Two
+        saves settling the same flat at once used to be able to open two.
+      */
+      const inserted = await db.case.createMany({
+        data: [
+          {
+            notes: `الوحدة ${facts.unitCode}: ${notes}`,
+            caseType: 'STATUS_CONFLICT' as never,
+            buildingId: facts.buildingId,
+            unitId: input.unitId,
+            propertyNumber: building?.building.parcelNumber ?? null,
+            createdById: input.actor.id,
+          },
+        ],
+        skipDuplicates: true,
       });
-      caseOpened = true;
-      events.push({
-        channel: 'case.changed',
-        payload: {
-          caseId: created.id,
-          action: 'CASE_CREATED',
-          after: { caseType: 'STATUS_CONFLICT', unitCode: facts.unitCode, conflicts: settled.conflicts, via: input.via },
-          actorId: input.actor.id,
-          actorRole: input.actor.role,
-        },
-      });
+      if (inserted.count > 0) {
+        const created = await db.case.findFirst({
+          where: { unitId: input.unitId, caseType: 'STATUS_CONFLICT' as never, status: { in: ['OPEN', 'SCHEDULED'] as never } },
+          select: { id: true },
+          orderBy: { createdAt: 'desc' },
+        });
+        caseOpened = true;
+        events.push({
+          channel: 'case.changed',
+          payload: {
+            caseId: created?.id,
+            action: 'CASE_CREATED',
+            after: { caseType: 'STATUS_CONFLICT', unitCode: facts.unitCode, conflicts: settled.conflicts, via: input.via },
+            actorId: input.actor.id,
+            actorRole: input.actor.role,
+          },
+        });
+      }
     }
   } else if (open.length > 0) {
-    const resolved = await db.case.updateMany({
-      where: { id: { in: open.map((row) => row.id) } },
-      data: { status: 'RESOLVED' as never, resolvedAt: new Date() },
-    });
-    casesResolved = resolved.count;
-    for (const row of open) {
-      events.push({
-        channel: 'case.changed',
-        payload: {
-          caseId: row.id,
-          action: 'CASE_RESOLVED',
-          before: { status: row.status },
-          after: { status: 'RESOLVED', via: 'STATUS_SETTLED', settledBy: input.via },
-          actorId: input.actor.id,
-          actorRole: input.actor.role,
-        },
-      });
-    }
+    const closed = await resolveReviews(db, open, input, 'STATUS_SETTLED');
+    casesResolved = closed.count;
+    events.push(...closed.events);
   }
 
   return {

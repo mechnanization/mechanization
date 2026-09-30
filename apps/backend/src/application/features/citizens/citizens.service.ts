@@ -1865,6 +1865,8 @@ export class CitizensService {
           landlordCitizenId: string | null;
           landlordLinkFootprint: Prisma.JsonValue;
           unitStatus: string | null;
+          buildingId: string | null;
+          propertyType: string;
         }
       >();
       if (existing?.id) {
@@ -1882,6 +1884,8 @@ export class CitizensService {
             landlordCitizenId: true,
             landlordLinkFootprint: true,
             unitStatus: true,
+            buildingId: true,
+            propertyType: true,
           },
         });
         for (const card of cards) linkState.set(card.id, card);
@@ -1950,7 +1954,15 @@ export class CitizensService {
 
         if (id) {
           const state = linkState.get(id);
-          if (state && (state.unitStatus ?? null) === (data.unitStatus ?? null)) unchangedStatements.add(id);
+          // The same answer about the same flat: same status, same structure, still a منزل.
+          if (
+            state &&
+            (state.unitStatus ?? null) === (data.unitStatus ?? null) &&
+            (state.buildingId ?? null) === (data.buildingId ?? null) &&
+            state.propertyType === data.propertyType
+          ) {
+            unchangedStatements.add(id);
+          }
           const locked =
             Boolean(state?.landlordCitizenId) &&
             linkLocked.has(index) &&

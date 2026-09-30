@@ -64,6 +64,8 @@ export interface BillableUnit {
    * with no canonical unit has nothing to disagree with.
    */
   underReview: boolean;
+  /** The canonical unit, when there is one — so a held flat is counted once, however many cards bill it. */
+  unitId?: string | null;
 }
 
 /**
@@ -81,6 +83,7 @@ export interface BillableUnit {
  * would stop charging for most of the register.
  */
 export interface LinkedUnit {
+  id?: string;
   unitType: string | null;
   unitArea: { toString(): string } | number | null;
   unitStatus?: string | null;
@@ -102,6 +105,8 @@ export interface BillablePropertyEntry {
    * twin of `LinkedUnit.underReview`, for the shape that has no unit rows.
    */
   underReview?: boolean;
+  /** The one flat of the structure a منزل card names, when billing found it. */
+  soleUnitId?: string | null;
   /**
    * `unitType` is nullable here for the same reason `unitArea` always was: a
    * per-unit «غير مؤكَّد» flag blanks the field it excuses (migration 0031), so
@@ -133,6 +138,7 @@ export interface BillablePropertyEntry {
   occupiedUnits?: ReadonlyArray<{
     /** `OWNER`, `TENANT` or `FREE_OCCUPANT` — this citizen's capacity in this flat. */
     role: string;
+    unitId?: string;
     unitType: string | null;
     unitArea: { toString(): string } | number | null;
     unitStatus?: string | null;
@@ -212,6 +218,7 @@ function heldThroughOccupancy(entry: BillablePropertyEntry): BillableUnit[] | nu
     propertyType: entry.propertyType,
     propertyNumber: entry.propertyNumber,
     underReview: occupancy.underReview ?? false,
+    unitId: occupancy.unitId ?? null,
   }));
 }
 
@@ -293,6 +300,7 @@ function collectBillableUnits(entry: BillablePropertyEntry): BillableUnit[] {
       propertyType: entry.propertyType,
       propertyNumber: entry.propertyNumber,
       underReview: line.unit?.underReview ?? false,
+      unitId: line.unit?.id ?? null,
     }));
   }
 
@@ -316,6 +324,7 @@ function collectBillableUnits(entry: BillablePropertyEntry): BillableUnit[] {
       propertyType: entry.propertyType,
       propertyNumber: entry.propertyNumber,
       underReview: entry.underReview ?? false,
+      unitId: entry.soleUnitId ?? null,
     },
   ];
 }

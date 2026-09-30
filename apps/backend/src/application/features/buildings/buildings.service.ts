@@ -2753,6 +2753,67 @@ export class BuildingsService {
       : work(this.db as unknown as Prisma.TransactionClient);
   }
 
+  /** See `endVacancy`: an owner's «شاغرة» on their own card, cleared with the vacancy. */
+  private async withdrawOwnerVacancyStatements(
+    unitId: string,
+    unitCode: string,
+    actor: { id: string; role: string },
+  ): Promise<void> {
+    const unit = await this.db.unit.findUnique({ where: { id: unitId }, select: { buildingId: true } });
+    if (!unit) return;
+    const soleUnit = (await this.db.unit.count({ where: { buildingId: unit.buildingId } })) === 1;
+    const [lines, houses] = await Promise.all([
+      this.db.buildingUnit.findMany({
+        where: {
+          unitId,
+          endedAt: null,
+          unitStatus: 'VACANT' as never,
+          propertyEntry: { occupancyType: 'OWNER' as never, endedAt: null },
+        },
+        select: { id: true, propertyEntryId: true, propertyEntry: { select: { registration: { select: { citizenId: true } } } } },
+      }),
+      soleUnit
+        ? this.db.propertyEntry.findMany({
+            where: {
+              buildingId: unit.buildingId,
+              propertyType: 'HOUSE' as never,
+              occupancyType: 'OWNER' as never,
+              endedAt: null,
+              unitStatus: 'VACANT' as never,
+              units: { none: { endedAt: null } },
+            },
+            select: { id: true, registration: { select: { citizenId: true } } },
+          })
+        : Promise.resolve([]),
+    ]);
+    if (lines.length > 0) {
+      await this.db.buildingUnit.updateMany({ where: { id: { in: lines.map((line) => line.id) } }, data: { unitStatus: null } });
+    }
+    if (houses.length > 0) {
+      await this.db.propertyEntry.updateMany({ where: { id: { in: houses.map((card) => card.id) } }, data: { unitStatus: null } });
+    }
+    const touched = [
+      ...lines.map((line) => ({ citizenId: line.propertyEntry.registration.citizenId, propertyEntryId: line.propertyEntryId })),
+      ...houses.map((card) => ({ citizenId: card.registration.citizenId, propertyEntryId: card.id })),
+    ];
+    for (const change of touched) {
+      this.events.emit('citizen.changed', {
+        tenantSlug: this.tenantContext.tenantSlug,
+        citizenId: change.citizenId,
+        action: 'CITIZEN_UPDATED',
+        before: { unitStatus: 'VACANT' },
+        after: {
+          cards: [{ kind: 'changed', propertyEntryId: change.propertyEntryId, fields: ['unitStatus'] }],
+          unitCode,
+          unitStatus: null,
+          via: 'VACANCY_ENDED',
+        },
+        actorId: actor.id,
+        actorRole: actor.role,
+      });
+    }
+  }
+
   /** See `updateUnit`: an owner-side status over a registered tenant is a double charge. */
   private async assertNoOccupantBesidesOwner(
     unit: { id: string; unitCode: string },
@@ -2768,6 +2829,12 @@ export class BuildingsService {
       },
     });
     if (live > 0) {
+      if (feeBearerClass(status) === 'NOBODY') {
+        const empty = status === 'UNDER_CONSTRUCTION' ? 'قيد الإنجاز' : 'شاغرة';
+        throw new ConflictError(
+          `لا يمكن تسجيل الوحدة ${unit.unitCode} ${empty}: يسكنها ${live} مستأجر أو شاغل مسجَّل. أنهِ إشغاله أولاً`,
+        );
+      }
       const label = status === 'SEASONAL' ? 'مسكناً موسمياً' : 'مشغولة من المالك';
       throw new ConflictError(
         `لا يمكن تسجيل الوحدة ${unit.unitCode} ${label}: يسكنها ${live} مستأجر أو شاغل مسجَّل، وكلاهما يُكلَّف برسم الإشغال عندها. أنهِ إشغاله أولاً، أو اختر «مؤجرة» / «مشغولة بتسامح»`,
@@ -2775,12 +2842,15 @@ export class BuildingsService {
     }
   }
 
-  private async assertMayBeCalledEmpty(unit: {
-    id: string;
-    buildingId: string;
-    unitCode: string;
-    unitStatus: string | null;
-  }): Promise<void> {
+  private async assertMayBeCalledEmpty(
+    unit: {
+      id: string;
+      buildingId: string;
+      unitCode: string;
+      unitStatus: string | null;
+    },
+    options: { seasonalAllowed?: boolean } = {},
+  ): Promise<void> {
     const live = await this.db.unitOccupancy.count({
       where: { unitId: unit.id, toDate: null, role: { in: ['TENANT', 'FREE_OCCUPANT'] as never } },
     });
@@ -2790,7 +2860,7 @@ export class BuildingsService {
       );
     }
 
-    if (await this.isSeasonal(unit)) {
+    if (!options.seasonalAllowed && (await this.isSeasonal(unit))) {
       throw new ConflictError(
         `لا يمكن تسجيل الوحدة ${unit.unitCode} كشاغرة: هي مسكن موسمي، وغياب أصحابه لا يجعلها شاغرة. سجّل تصريح الشغور في بيانات السكن الموسمي، أو أعد ربط المالك بحالة «شاغرة» إن لم يعودوا يأتون`,
       );
@@ -2832,6 +2902,15 @@ export class BuildingsService {
     unitId: string,
     input: ConfirmVacancyInput,
     actor: { id: string; role: string },
+    /**
+     * For callers inside another write. `settle: false` — the caller settles
+     * the flat once its own writes are done, so a half-written flat is never
+     * judged (and a review opened and closed in one request). `ownerStatement`
+     * — the owner's own «شاغرة»: a seasonal home's owner saying it is no longer
+     * used is exactly how one stops being seasonal, so the seasonal refusal does
+     * not apply to them.
+     */
+    options: { settle?: boolean; ownerStatement?: boolean } = {},
   ): Promise<{ vacancy: VacancyRow; unit: UnitRow; casesResolved: number }> {
     const unit = await this.db.unit.findUnique({ where: { id: unitId } });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
@@ -2862,7 +2941,7 @@ export class BuildingsService {
       );
     }
 
-    await this.assertMayBeCalledEmpty(unit);
+    await this.assertMayBeCalledEmpty(unit, { seasonalAllowed: options.ownerStatement === true });
 
     /*
       One transaction, because the row and the effect are one fact. A
@@ -2919,7 +2998,7 @@ export class BuildingsService {
       actor,
     });
 
-    await this.settle(unitId, actor, 'VACANCY_CONFIRMED');
+    if (options.settle !== false) await this.settle(unitId, actor, 'VACANCY_CONFIRMED');
 
     return { vacancy: toVacancyRow(vacancy), unit: toUnitRow(updated), casesResolved };
   }
@@ -3027,6 +3106,16 @@ export class BuildingsService {
       },
       actor,
     });
+
+    /*
+      An owner's «شاغرة» left on their card would outlive the vacancy it stood
+      for: billing reads the card while the unit has no answer, so the owner
+      stayed exempt after an officer found the flat lived in, and the next save
+      of their file could re-open the vacancy. The officer's finding is the
+      newer one, so the card's «شاغرة» goes with it — audited on the owner's
+      file like any edit of it.
+    */
+    await this.withdrawOwnerVacancyStatements(unitId, unit.unitCode, actor);
 
     /*
       «سُجِّل بالخطأ» restores the status the vacancy replaced — which, after a
@@ -3440,6 +3529,7 @@ export class BuildingsService {
           input.unitId,
           { basis: 'OWNER_STATEMENT', notes: 'تصريح المالك عند تسجيله على الوحدة' } as never,
           actor,
+          { settle: false, ownerStatement: true },
         );
       }
     } else if (input.unitStatus) {

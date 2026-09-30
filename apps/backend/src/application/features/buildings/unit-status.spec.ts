@@ -66,6 +66,16 @@ describe('settleUnitStatus — what it puts to a person', () => {
     ]);
   });
 
+  it('flags «مؤجرة» on an owner’s card over a unit with no answer — billing reads the card then', () => {
+    expect(settleUnitStatus(facts({ current: null, ownerStatements: ['RENTED'] })).conflicts).toEqual([
+      { kind: 'LET_WITHOUT_OCCUPANT', status: 'RENTED' },
+    ]);
+    // …but not once the tenant is registered.
+    expect(
+      settleUnitStatus(facts({ current: null, liveRoles: ['TENANT'], ownerStatements: ['RENTED'] })).conflicts,
+    ).toEqual([]);
+  });
+
   it('flags an owner’s card that disagrees with the unit about who pays', () => {
     // X-78-A/0001: the card «مشغولة من المالك», the unit «شاغرة».
     expect(

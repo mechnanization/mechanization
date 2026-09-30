@@ -63,7 +63,10 @@ function getFlaggableFields(values: CitizenFormValues, locale: string): Flaggabl
     .filter((entry) => isFlaggablePath(entry.path))
     .map((entry) => ({
       path: entry.path,
-      label: labels.citizenField[entry.field] ?? entry.field,
+      label:
+        entry.unitIndex !== undefined
+          ? `${labels.citizenField[entry.field] ?? entry.field} — ${locale === 'en' ? 'unit' : 'الوحدة'} ${entry.unitIndex + 1}`
+          : (labels.citizenField[entry.field] ?? entry.field),
       sectionId: entry.section,
       sectionTitle: sectionTitle(entry),
       propertyIndex: entry.propertyIndex,

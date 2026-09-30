@@ -410,10 +410,15 @@ export default function FeesPage({
       if (res.exemptedUnits) {
         toast.info(`${res.exemptedUnits} وحدة لم تُحتسب حسب صفة المكلَّف بالرسم.`);
       }
-      // Held, not exempt: charged once their «تعارض في حالة الوحدة» is settled.
+      /*
+        Held, not exempt — and not charged on this notice's period at all: the
+        period's invoice is written once. Said plainly so a clerk who wants the
+        period recovered knows it is a manual charge, not something that will
+        happen by itself.
+      */
       if (res.heldUnits) {
         toast.info(
-          `${res.heldUnits} وحدة موقوفة للمراجعة (تعارض في حالة الوحدة) — لم يُحتسب عليها رسم الإشغال بعد. تجدها في «جودة البيانات».`,
+          `${res.heldUnits} وحدة موقوفة للمراجعة (تعارض في حالة الوحدة) — لم يُحتسب عليها رسم الإشغال في هذه الفترة. بعد تسويتها تُحتسب ابتداءً من الفترة التالية؛ ولتحصيل هذه الفترة أصدر رسماً فردياً. تجدها في «جودة البيانات».`,
         );
       }
       setIssueOpen(false);

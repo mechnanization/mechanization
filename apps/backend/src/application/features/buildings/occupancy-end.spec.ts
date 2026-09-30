@@ -402,7 +402,11 @@ describe('endVacancy', () => {
       unitVisit: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     return Object.assign(store, {
+      // No owner card says «شاغرة» here — see `withdrawOwnerVacancyStatements`.
+      buildingUnit: { findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn() },
+      propertyEntry: { findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn() },
       unit: {
+        count: jest.fn().mockResolvedValue(3),
         findUnique: jest.fn().mockResolvedValue({
           id: 'unit-1',
           buildingId: 'building-1',

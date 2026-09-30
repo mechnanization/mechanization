@@ -684,13 +684,18 @@ export class DataQualityService {
 
   /**
    * The unit says one thing and the owner's own card another — X-78-A flat 0001
-   * on 2026-09-16: «شاغرة» on the unit, «مشغولة من المالك» on the card. Billing
-   * reads the unit, so the owner was charged nothing.
+   * on 2026-09-16: «شاغرة» on the unit, «مشغولة من المالك» on the card.
+   *
+   * Since 2026-09-30 a disagreement that changes who pays is the status rule's
+   * (`UNIT_UNDER_REVIEW`, which also holds the fee) and is not repeated here.
+   * What is left is wording that bills the same — «مؤجرة» against «مشغولة
+   * بتسامح», «موسمي» against «مشغولة من المالك» — worth correcting, not holding.
    */
   private async unitStatusContradictions(): Promise<RawFinding[]> {
     const rows = await this.db.$queryRaw<
       Array<{
         rowId: string;
+        unitId: string;
         unitCode: string;
         unitStatus: string;
         cardStatus: string;
@@ -703,7 +708,7 @@ export class DataQualityService {
         updatedAt: Date;
       }>
     >`
-      SELECT bu.id AS "rowId", u."unitCode", u."unitStatus"::text AS "unitStatus", bu."unitStatus"::text AS "cardStatus",
+      SELECT bu.id AS "rowId", u.id AS "unitId", u."unitCode", u."unitStatus"::text AS "unitStatus", bu."unitStatus"::text AS "cardStatus",
              b.id AS "buildingId", b.code AS "buildingCode", b.name AS "buildingName", b."parcelNumber",
              r."citizenId", COALESCE(fr."createdById", r."createdById") AS "createdById",
              GREATEST(bu."updatedAt", u."updatedAt") AS "updatedAt"
@@ -721,12 +726,15 @@ export class DataQualityService {
         AND bu."unitStatus"::text <> u."unitStatus"::text
     `;
     if (rows.length === 0) return [];
-    const citizens = await this.citizenLabels(rows.map((row) => row.citizenId));
-    return rows.map((row) => ({
+    const review = await unitsUnderReview(this.db, [...new Set(rows.map((row) => row.unitId))]);
+    const wording = rows.filter((row) => (review.get(row.unitId)?.conflicts.length ?? 0) === 0);
+    if (wording.length === 0) return [];
+    const citizens = await this.citizenLabels(wording.map((row) => row.citizenId));
+    return wording.map((row) => ({
       kind: 'UNIT_STATUS_CONTRADICTION' as const,
       subjectKey: row.rowId,
-      severity: 'HIGH' as const,
-      detail: `الوحدة ${row.unitCode}: على الوحدة «${row.unitStatus}» وعلى بطاقة المالك «${row.cardStatus}» — الفوترة تقرأ الوحدة`,
+      severity: 'LOW' as const,
+      detail: `الوحدة ${row.unitCode}: على الوحدة «${row.unitStatus}» وعلى بطاقة المالك «${row.cardStatus}» — الفاتورة واحدة في الحالتين، لكن أحدهما خطأ`,
       subjects: [
         {
           kind: 'building' as const,

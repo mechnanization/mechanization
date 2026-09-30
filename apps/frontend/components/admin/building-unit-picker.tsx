@@ -760,9 +760,12 @@ export function BuildingUnitPicker({
       */
       const blankIndex = units.findIndex((row) => !row.unitId && isBlankUnit(row));
       if (blankIndex >= 0) {
+        // The officer's own answer on the line being reused — never another row's.
+        const kept = units[blankIndex]!.unitStatus;
+        const filled = row.unitStatus === undefined && kept !== undefined ? { ...row, unitStatus: kept } : row;
         return {
           ...current,
-          units: units.map((existing, i) => (i === blankIndex ? row : existing)),
+          units: units.map((existing, i) => (i === blankIndex ? filled : existing)),
         };
       }
 
@@ -1901,8 +1904,9 @@ function occupancyStatusOf(unit: UnitWithOccupants): UnitStatus | undefined {
 /**
  * A unit line nobody has typed into yet.
  *
- * `unitType` and `unitStatus` are excluded on purpose: «إضافة وحدة» seeds both
- * from the previous row, so a freshly added line already carries them and
+ * `unitType` and `unitStatus` are excluded on purpose: «إضافة وحدة» seeds the
+ * type from the previous row (and an officer may already have answered the
+ * status on the empty line, which the tick then keeps), so a line carrying them
  * would never look blank by an "every field is empty" test — which is exactly
  * the line that should be reused when the officer then ticks a flat on the
  * matrix. What marks a line as really answered is the detail somebody had to

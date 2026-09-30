@@ -76,6 +76,16 @@ export class CasesService {
 
   /** An officer opening a case. Refuses a second open one of a one-per-door type. */
   async create(input: CreateCaseInput, actor: { id: string; role: string }): Promise<Case> {
+    /*
+      «تعارض في حالة الوحدة» is the status rule's (`settleUnit`): it opens one
+      when a flat's records disagree and closes it when they stop. Opened by
+      hand, it would be closed by the next save of the flat whatever it said.
+    */
+    if (input.caseType === 'STATUS_CONFLICT') {
+      throw new ValidationError('«تعارض في حالة الوحدة» يُفتح تلقائياً عند تعارض سجلات الوحدة — اختر نوعاً آخر', {
+        caseType: input.caseType,
+      });
+    }
     const standing = await this.standingCase(input);
     if (standing) {
       throw new ConflictError('توجد حالة متابعة مفتوحة من النوع نفسه على هذه الوحدة — لم تُفتح حالة ثانية', {
@@ -131,6 +141,16 @@ export class CasesService {
   ): Promise<Case> {
     const existing = await this.cases.findById(id);
     if (!existing) throw new NotFoundError('الحالة غير موجودة');
+
+    // Neither into the rule's review type nor out of it — see `create`.
+    const retyped = (input as { caseType?: string }).caseType;
+    if (
+      retyped !== undefined &&
+      retyped !== existing.caseType &&
+      (retyped === 'STATUS_CONFLICT' || existing.caseType === 'STATUS_CONFLICT')
+    ) {
+      throw new ValidationError('لا يمكن تغيير نوع «تعارض في حالة الوحدة» أو التحويل إليه', { caseType: retyped });
+    }
 
     let patch: UpdateCaseInput = input;
 

@@ -52,8 +52,9 @@ export function describeAssessment(
  * The units left out, said out loud: those the bearer rule did not charge this
  * person for, and — separately, because it is a different fact — the flats
  * whose occupancy fee is held while their records are under review
- * («تعارض في حالة الوحدة»). A held flat is not exempt: it is charged to whoever
- * the review finds bears it, on a later run.
+ * («تعارض في حالة الوحدة»). A held flat is not exempt, but it is not charged on
+ * this invoice either: once settled it is charged from the next period, to
+ * whoever the review finds bears it.
  */
 function withLeftOut(line: string, assessment: FeeAssessment, isEnglish: boolean): string {
   const notes: string[] = [];

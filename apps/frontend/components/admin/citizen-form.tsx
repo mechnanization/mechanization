@@ -284,6 +284,8 @@ export interface AskableField {
   section: 'personal' | 'contact' | 'properties';
   /** Which card, for a property field. */
   propertyIndex?: number;
+  /** Which flat of that card, for a per-flat field — «حالة الوحدة» on a مبنى. */
+  unitIndex?: number;
 }
 
 /**
@@ -426,9 +428,30 @@ function propertyAskableFields(values: CitizenFormValues): AskableField[] {
       was never going to fail, which is how a flag list stops meaning
       "this record is missing something".
 
-      حالة الوحدة is absent here for the same reason and more strongly: it is
-      optional on every card that shows it, so it can never hold a record up.
+      حالة الوحدة is the exception since 2026-09-30: required of an owner on a
+      منزل and on each flat of a مبنى, so it can be the reason a record is
+      incomplete and has to be excusable — below. (It stays unasked on أرض,
+      where it is still optional.)
     */
+    if (property.occupancyType === 'OWNER' && property.propertyType === 'HOUSE') {
+      fields.push({
+        path: `properties.${propertyIndex}.unitStatus`,
+        field: 'unitStatus',
+        section: 'properties',
+        propertyIndex,
+      });
+    }
+    if (property.occupancyType === 'OWNER' && property.propertyType === 'BUILDING') {
+      (property.units ?? []).forEach((_unit, unitIndex) => {
+        fields.push({
+          path: `properties.${propertyIndex}.units.${unitIndex}.unitStatus`,
+          field: 'unitStatus',
+          section: 'properties',
+          propertyIndex,
+          unitIndex,
+        });
+      });
+    }
     /*
       Neither is asked of a card whose owner is a confirmed or agreed link: the
       register established both, the fields are locked, and a «غير مؤكَّد» on
@@ -611,6 +634,12 @@ export function toSubmission(values: CitizenFormValues) {
     ...(values.notes?.trim() ? { notes: values.notes.trim() } : {}),
     // Only on an edit, and only what the officer answered — see `removals`.
     ...(values.removals?.length ? { removals: values.removals } : {}),
+    /*
+      This form asks «حالة الوحدة» of an owner and will not send without it
+      (or its «غير مؤكَّد»). A payload without this came from a form that did
+      not ask, and the server flags its gaps rather than refusing them.
+    */
+    unitStatusAsked: true,
     ...(values.residenceMove ? { movedOn: values.residenceMove.movedOn } : {}),
   };
 }

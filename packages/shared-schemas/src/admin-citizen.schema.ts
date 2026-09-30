@@ -237,6 +237,8 @@ interface SubmissionInput {
   notes?: string;
   clientSubmissionId?: string;
   reviewDuplicates?: boolean;
+  /** See `submissionEnvelope.unitStatusAsked`. */
+  unitStatusAsked?: boolean;
   duplicateReview?: DuplicateReviewAnswer;
   expectedVersion?: string;
   removals?: CardRemoval[];
@@ -320,8 +322,11 @@ function strictIssuePaths(input: SubmissionInput, excused: ReadonlySet<string>):
   input.properties.forEach((card, index) => {
     const prefix = `properties.${index}`;
     collect(prefix, propertyEntrySchema.safeParse(withoutFlagged(card, prefix, excused)));
-    for (const path of ownerUnitStatusIssues(card, prefix)) {
-      if (!excused.has(path)) paths.push(path);
+    if (input.unitStatusAsked) {
+      for (const path of ownerUnitStatusIssues(card, prefix)) {
+        if (excused.has(path) || (excused.has(`${prefix}.units`) && path.startsWith(`${prefix}.units.`))) continue;
+        paths.push(path);
+      }
     }
   });
 
@@ -382,7 +387,33 @@ function autoFlags(input: SubmissionInput, explicit: ReadonlySet<string>): Field
  */
 function allFlags(input: SubmissionInput): FieldFlag[] {
   const explicit = flaggedPaths(input.flags);
-  return [...input.flags, ...autoFlags(input, explicit)];
+  const auto = autoFlags(input, explicit);
+  return [...input.flags, ...auto, ...unasked(input, new Set([...explicit, ...auto.map((flag) => flag.path)]))];
+}
+
+const UNIT_STATUS_NOT_ASKED =
+  'لم يُسأل عن حالة الوحدة — أُرسل السجل من نسخة سابقة من النموذج أو من طابور الإرسال قبل أن تصبح إلزامية';
+
+/**
+ * A payload from a form that never asked «حالة الوحدة» — an older build, or a
+ * record queued on a phone before the requirement shipped and delivered hours
+ * later with nobody at the screen. Refusing it would park a household's record
+ * as blocked over a question its officer was never shown. So each missing
+ * answer is flagged «غير مؤكَّد» with a reason that says exactly that, and the
+ * record lands in «يتطلب مراجعة», where the answer can be supplied.
+ *
+ * The current form marks every submission `unitStatusAsked` (it enforces the
+ * requirement on screen before sending), so this never excuses a form that
+ * asked.
+ */
+function unasked(input: SubmissionInput, excused: ReadonlySet<string>): FieldFlag[] {
+  if (input.unitStatusAsked) return [];
+  return input.properties.flatMap((card, index) => {
+    const prefix = `properties.${index}`;
+    return ownerUnitStatusIssues(card, prefix)
+      .filter((path) => !excused.has(path) && !(excused.has(`${prefix}.units`) && path.startsWith(`${prefix}.units.`)))
+      .map((path) => ({ path, reason: UNIT_STATUS_NOT_ASKED, kind: 'UNESTABLISHED' as const }));
+  });
 }
 
 /**
@@ -572,6 +603,8 @@ function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
   input.properties.forEach((card, index) => {
     const prefix = `properties.${index}`;
     report(prefix, propertyEntrySchema.safeParse(withoutFlagged(card, prefix, paths)));
+    // Only of a form that asked — see `unasked` for a payload that did not.
+    if (!input.unitStatusAsked) return;
     for (const path of ownerUnitStatusIssues(card, prefix)) {
       if (paths.has(path) || (paths.has(`${prefix}.units`) && path.startsWith(`${prefix}.units.`))) continue;
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: path.split('.').map(pathSegment), message: UNIT_STATUS_REQUIRED });
@@ -737,6 +770,13 @@ const submissionEnvelope = {
     .min(4, 'يرجى ذكر سبب عدم اكتمال البيانات')
     .max(300, 'السبب طويل جداً')
     .optional(),
+  /**
+   * «حالة الوحدة» was asked — the current form sets this on every submission,
+   * because it requires the answer of an owner on screen before sending
+   * (2026-09-30). A payload without it came from a form that never asked, and
+   * its missing answers are flagged rather than refused (`unasked`).
+   */
+  unitStatusAsked: z.boolean().optional(),
   /**
    * «ملاحظات» — whatever the officer needs to say that no field asks for.
    *

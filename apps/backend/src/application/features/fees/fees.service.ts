@@ -49,6 +49,8 @@ export interface CitizenAssessment {
   amount: number;
   /** Null under a flat charge, which needs no explanation beyond its amount. */
   assessment: FeeAssessment | null;
+  /** The flats held under review on this bill — for counting each once across a run. Not stored. */
+  heldUnitIds?: string[];
 }
 
 /** What one citizen holds today, as billing reads it. See `FeesService.holdingsOf`. */
@@ -127,6 +129,20 @@ function bearsFee(unit: BillableUnit, bearer: FeeBearer): boolean {
   return !isOccupiedByOthers(unit.unitStatus) && !isUnoccupied(unit.unitStatus);
 }
 
+/** Held flats across a run, each counted once — by id where known, by count where not. */
+function distinctHeld(
+  assessed: ReadonlyArray<{ heldUnitIds?: readonly string[]; assessment?: FeeAssessment | null }>,
+): number {
+  const ids = new Set<string>();
+  let unidentified = 0;
+  for (const entry of assessed) {
+    const known = entry.heldUnitIds ?? [];
+    for (const id of known) ids.add(id);
+    unidentified += Math.max(0, (entry.assessment?.heldUnitCount ?? 0) - known.length);
+  }
+  return ids.size + unidentified;
+}
+
 /**
  * Whether an unsurveyed building could hold any of what this notice charges for.
  *
@@ -196,7 +212,7 @@ export function assessCitizen(
     bearer?: FeeBearer;
   },
 ):
-  | { kind: 'assessed'; amount: number; assessment: FeeAssessment }
+  | { kind: 'assessed'; amount: number; assessment: FeeAssessment; heldUnitIds?: string[] }
   | { kind: 'unassessable'; reason: string } {
   /*
     A flat charge never asks the register anything.
@@ -258,8 +274,10 @@ export function assessCitizen(
     contradicting the unit about who pays. Charging on either is a guess about
     who lives there, and the guesses that were being made — the owner exempt,
     or the owner and the tenant both — are the two this whole rule exists to
-    stop. Held rather than dropped: counted on the bill, and released by the
-    next run once the flat is settled.
+    stop. Held rather than dropped: counted on the bill (`heldUnitCount`), and
+    charged from the next period once the flat is settled. The held period
+    itself is not charged by any later run — a period's invoice is written once
+    — so recovering it is a deliberate charge, as with any missed period.
 
     Only the occupancy fee. An owner-borne fee follows the deed, and nobody
     disputes whose deed it is.
@@ -273,6 +291,8 @@ export function assessCitizen(
   const units = decided.filter((unit) => bearsFee(unit, bearer));
   const excludedUnitCount = decided.length - units.length;
   const heldUnitCount = reviewing.length;
+  // Which flats, so a run can count each once — an owner and a tenant hold the same one.
+  const heldUnitIds = reviewing.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
 
   if (notice.basis === 'PER_AREA') {
     /*
@@ -306,6 +326,7 @@ export function assessCitizen(
       amount describing the same arithmetic.
     */
     amount: Math.round(notice.amount * multiplier),
+    heldUnitIds,
     assessment: {
       basis: notice.basis,
       rate: notice.amount,
@@ -837,11 +858,8 @@ export class FeesService {
       (sum, entry) => sum + (entry.assessment?.excludedUnitCount ?? 0),
       0,
     );
-    /** Flats whose occupancy fee is held under review — see `assessCitizen`. */
-    const heldUnits = assessed.reduce(
-      (sum, entry) => sum + (entry.assessment?.heldUnitCount ?? 0),
-      0,
-    );
+    /** Flats whose occupancy fee is held under review — see `assessCitizen`. Each flat once. */
+    const heldUnits = distinctHeld(assessed);
 
     if (billable.length === 0) {
       /*
@@ -852,14 +870,20 @@ export class FeesService {
         the notice was aimed at — which is usually a mis-set toggle, and would
         otherwise read as a fee that targets nobody.
       */
+      /*
+        Every reason that applies, not the first one: a notice that held three
+        flats and exempted five was reported as "everything held", and the
+        clerk went looking for the wrong thing.
+      */
+      const reasons = [
+        heldUnits > 0 ? `${heldUnits} وحدة موقوفة للمراجعة (تعارض في حالة الوحدة)` : null,
+        exemptedUnits > 0 ? `${exemptedUnits} وحدة شاغرة أو قيد الإنجاز أو معفاة حسب المكلَّف` : null,
+        unassessable.length > 0 ? `${unassessable.length} مواطن تحتاج سجلاته إلى جرد ميداني أولاً` : null,
+      ].filter(Boolean);
       throw new ConflictError(
-        heldUnits > 0 && exemptedUnits === 0 && unassessable.length === 0
-          ? 'كل الوحدات المستهدفة موقوفة للمراجعة (تعارض في حالة الوحدة) — لن يتم إصدار أي إشعار حتى تُسوّى'
-          : exemptedUnits > 0 && unassessable.length === 0
-          ? 'كل الوحدات المستهدفة مسجَّلة شاغرة أو قيد الإنجاز وهذا الرسم يعفيها — لن يتم إصدار أي إشعار'
-          : unassessable.length > 0
-            ? 'لا يمكن احتساب هذا الرسم لأي مواطن — السجلات المستهدفة تحتاج إلى جرد ميداني أولاً'
-            : 'لا يوجد مواطنون مطابقون لهذه الفئة — لن يتم إصدار أي إشعار',
+        reasons.length > 0
+          ? `لا يوجد ما يُحتسب — ${reasons.join('، ')} — لن يتم إصدار أي إشعار`
+          : 'لا يوجد مواطنون مطابقون لهذه الفئة — لن يتم إصدار أي إشعار',
       );
     }
 
@@ -1065,6 +1089,18 @@ export class FeesService {
       });
 
       const billable = assessed.filter((entry) => entry.amount > 0);
+      /*
+        Flats held under review this period — logged, never silent. They are
+        not charged for this period by this run or any later one (a period's
+        invoice is written once); charging them for it after the review is the
+        municipality's decision, not the job's.
+      */
+      const heldUnits = distinctHeld(assessed);
+      if (heldUnits > 0) {
+        this.logger.warn(
+          `Recurring "${notice.title}" (${periodKey}): ${heldUnits} unit(s) held under review (تعارض في حالة الوحدة) — not charged this period`,
+        );
+      }
       if (billable.length === 0) {
         await this.recordBillingRun(notice.id, periodKey, startedAt, {
           outcome: 'SKIPPED',
@@ -1107,6 +1143,7 @@ export class FeesService {
           issuedCount: created.count,
           recurring: true,
           periodKey,
+          heldUnitCount: heldUnits,
         });
       }
 
@@ -1359,6 +1396,7 @@ export class FeesService {
           citizenId: holding.citizenId,
           amount: outcome.amount,
           assessment: outcome.assessment,
+          heldUnitIds: outcome.heldUnitIds,
         });
       }
     }
@@ -1389,31 +1427,6 @@ export class FeesService {
       Batching bounds both, and costs nothing: the work is a pure fold, so the
       batches never need to meet.
     */
-    /*
-      The flats under review, once for the whole run — the same rule the census
-      writes by (`settleUnitStatus`), recomputed rather than read from the case
-      list, so a case closed by hand does not release a flat whose records still
-      disagree, and a flat fixed from any screen is released without anyone
-      closing anything.
-    */
-    const review = await withConnectionRetry(() => unitsUnderReview(this.db));
-    /** Held: the flat's records disagree in a way the rule cannot settle. */
-    const underReview = (unitId: string | undefined | null) =>
-      Boolean(unitId && (review.get(unitId)?.conflicts.length ?? 0) > 0);
-    /*
-      The status the rule decides, where the stored one lags it — a flat with a
-      registered tenant still stored as «مشغولة من المالك» is billed as the
-      «مؤجرة» it is, so the tenant pays and the owner does not, today, rather
-      than after somebody next saves it.
-    */
-    const settledStatus = (unitId: string | undefined | null, stored: string | null) =>
-      unitId && review.has(unitId) ? review.get(unitId)!.status : stored;
-    const reviewedSoleUnit = new Set(
-      [...review.values()]
-        .filter((row) => row.soleUnitOfBuilding && row.conflicts.length > 0)
-        .map((row) => row.buildingId),
-    );
-
     for (let offset = 0; offset < citizenIds.length; offset += ASSESSMENT_BATCH_SIZE) {
       const batch = citizenIds.slice(offset, offset + ASSESSMENT_BATCH_SIZE);
 
@@ -1526,6 +1539,68 @@ export class FeesService {
         }),
       );
 
+      /*
+        The flats under review among this batch's — the same rule the census
+        writes by (`settleUnitStatus`), recomputed rather than read from the case
+        list, so a case closed by hand does not release a flat whose records
+        still disagree, and a flat fixed from any screen is released without
+        anyone closing anything. Scoped to the flats this batch holds (and every
+        flat of a structure a منزل card here names, which is how a منزل finds its
+        one flat), for the reason the batching above gives.
+      */
+      const heldHere = new Set<string>();
+      for (const row of rows) {
+        for (const card of row.registrations[0]?.properties ?? []) {
+          for (const line of card.units) if (line.unit?.id) heldHere.add(line.unit.id);
+        }
+        for (const occupancy of row.unitOccupancies) heldHere.add(occupancy.unit.id);
+      }
+      /** The one flat of each structure a منزل card here names — what the card bills. */
+      const soleUnits = new Map<string, { id: string; unitStatus: string | null }>();
+      const houseBuildings = [
+        ...new Set(
+          rows.flatMap((row) =>
+            (row.registrations[0]?.properties ?? [])
+              .filter((card) => card.propertyType === 'HOUSE' && card.units.length === 0 && card.buildingId)
+              .map((card) => card.buildingId!),
+          ),
+        ),
+      ];
+      if (houseBuildings.length > 0) {
+        const houseUnits = await withConnectionRetry(() =>
+          this.db.unit.findMany({
+            where: { buildingId: { in: houseBuildings } },
+            select: { id: true, buildingId: true, unitStatus: true },
+          }),
+        );
+        const perBuilding = new Map<string, typeof houseUnits>();
+        for (const unit of houseUnits) {
+          heldHere.add(unit.id);
+          perBuilding.set(unit.buildingId, [...(perBuilding.get(unit.buildingId) ?? []), unit]);
+        }
+        for (const [buildingId, units] of perBuilding) if (units.length === 1) soleUnits.set(buildingId, units[0]!);
+      }
+      const review: Awaited<ReturnType<typeof unitsUnderReview>> =
+        heldHere.size === 0
+          ? new Map()
+          : await withConnectionRetry(() => unitsUnderReview(this.db, [...heldHere]));
+      /** Held: the flat's records disagree in a way the rule cannot settle. */
+      const underReview = (unitId: string | undefined | null) =>
+        Boolean(unitId && (review.get(unitId)?.conflicts.length ?? 0) > 0);
+      /*
+        The status the rule decides, where the stored one lags it — a flat with a
+        registered tenant still stored as «مشغولة من المالك» is billed as the
+        «مؤجرة» it is, so the tenant pays and the owner does not, today, rather
+        than after somebody next saves it.
+      */
+      const settledStatus = (unitId: string | undefined | null, stored: string | null) =>
+        unitId && review.has(unitId) ? review.get(unitId)!.status : stored;
+      const reviewedSoleUnit = new Set(
+        [...review.values()]
+          .filter((fact) => fact.soleUnitOfBuilding && fact.conflicts.length > 0)
+          .map((fact) => fact.buildingId),
+      );
+
       yield rows.map((row) => {
         /*
           Occupancies attached to the card they belong to.
@@ -1541,6 +1616,7 @@ export class FeesService {
           unitArea: unknown;
           unitStatus: string | null;
           underReview: boolean;
+          unitId: string;
         }>>();
         for (const occupancy of row.unitOccupancies) {
           const buildingId = occupancy.unit.buildingId;
@@ -1549,6 +1625,7 @@ export class FeesService {
             role: occupancy.role,
             unitType: occupancy.unit.unitType,
             unitArea: occupancy.unit.unitArea,
+            unitId: occupancy.unit.id,
             unitStatus: settledStatus(occupancy.unit.id, occupancy.unit.unitStatus),
             underReview: underReview(occupancy.unit.id),
           });
@@ -1585,6 +1662,22 @@ export class FeesService {
               card.propertyType === 'HOUSE' &&
               card.units.length === 0 &&
               Boolean(card.buildingId && reviewedSoleUnit.has(card.buildingId)),
+            ...(card.propertyType === 'HOUSE' && card.units.length === 0 && card.buildingId && soleUnits.has(card.buildingId)
+              ? (() => {
+                  const sole = soleUnits.get(card.buildingId!)!;
+                  return {
+                    soleUnitId: sole.id,
+                    /*
+                      A منزل card that states nothing bills by its flat's answer —
+                      «مؤجرة» with a tenant registered in it, «شاغرة» under a
+                      confirmed vacancy — rather than as "nobody was asked", which
+                      charged the owner beside the tenant. A card that states
+                      something keeps its own (a disagreement there is a review).
+                    */
+                    unitStatus: (card.unitStatus ?? settledStatus(sole.id, sole.unitStatus)) as never,
+                  };
+                })()
+              : {}),
             units: card.units.map((line) => ({
               ...line,
               unit: line.unit

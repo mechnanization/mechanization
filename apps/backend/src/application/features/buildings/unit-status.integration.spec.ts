@@ -13,7 +13,7 @@ import { OwnershipService } from '../citizens/ownership.service';
 import { TenancyService } from '../citizens/tenancy.service';
 import { BuildingsService } from './buildings.service';
 import { CensusSyncService } from './census-sync.service';
-import { unitsUnderReview } from './unit-status';
+import { settleUnit, unitsUnderReview } from './unit-status';
 
 /**
  * «حالة الوحدة» kept in step with who is recorded in the flat — against a real
@@ -44,6 +44,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
   let census: CensusSyncService;
   let tenancy: TenancyService;
   let fees: FeesService;
+  let cases: CasesService;
   let officerId: string;
 
   const actor = () => ({ id: officerId, role: 'SUPER_ADMIN' });
@@ -59,7 +60,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
     context = new TenantContextService();
     const events = new EventEmitter2();
-    const cases = new CasesService(
+    cases = new CasesService(
       new PrismaCaseRepository(context),
       { findById: async () => ({ id: officerId, kind: 'CITIZEN' }) } as never,
       events,
@@ -377,5 +378,135 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
     expect(again.statusesChanged).toBe(0);
     expect(again.casesOpened).toBe(0);
     expect(await openReviews(empty)).toBe(1);
+  });
+
+  // ─────────────────────  What the review of this change found  ─────────────────────
+
+  it('ends a tenancy into «شاغرة» without putting the flat to review over the owner’s old «مؤجرة»', async () => {
+    const { building, units } = await block('US-9');
+    const unitId = units[0]!.id;
+    // The owner's line says «مؤجرة» — what a landlord link writes.
+    const owner = await filing({ role: 'OWNER', parcelNumber: 'US-9', buildingId: building.id, units: [{ unitId, status: 'RENTED' }] });
+    const tenant = await filing({ role: 'TENANT', parcelNumber: 'US-9', buildingId: building.id, units: [{ unitId }] });
+    const spell = await db.unitOccupancy.findFirstOrThrow({ where: { unitId, citizenId: tenant.citizenId, toDate: null } });
+
+    await within(() =>
+      tenancy.endOccupancy(
+        spell.id,
+        { reason: 'MOVED_OUT', afterStatus: 'VACANT', vacancyBasis: 'FIELD_INSPECTION' } as never,
+        actor(),
+      ),
+    );
+
+    expect(await unitStatus(unitId)).toBe('VACANT');
+    expect(await openReviews(unitId)).toBe(0);
+    expect((await db.buildingUnit.findUniqueOrThrow({ where: { id: owner.lines[0]!.id } })).unitStatus).toBeNull();
+  });
+
+  it('clears the owner’s «شاغرة» when an officer lifts the vacancy, so the next save does not re-open it', async () => {
+    const { building, units } = await block('US-10');
+    const unitId = units[0]!.id;
+    const owner = await filing({ role: 'OWNER', parcelNumber: 'US-10', buildingId: building.id, units: [{ unitId, status: 'VACANT' }] });
+
+    await within(() => buildings.endVacancy(unitId, { reason: 'NO_LONGER_VACANT' } as never, actor()));
+    expect((await db.buildingUnit.findUniqueOrThrow({ where: { id: owner.lines[0]!.id } })).unitStatus).toBeNull();
+
+    // The owner's file saved again for something else.
+    await within(() =>
+      census.syncRegistration({ registrationId: owner.registrationId, citizenId: owner.citizenId, actor: actor() }),
+    );
+    expect(await db.unitVacancyConfirmation.count({ where: { unitId, endedAt: null } })).toBe(0);
+    expect(await occupancyBill(owner.citizenId)).toEqual({ amount: 1000, held: 0 });
+  });
+
+  it('ends the vacancy an owner declared when they take the «شاغرة» back', async () => {
+    const { building, units } = await block('US-11');
+    const unitId = units[0]!.id;
+    const owner = await filing({ role: 'OWNER', parcelNumber: 'US-11', buildingId: building.id, units: [{ unitId, status: 'VACANT' }] });
+    const vacancy = await db.unitVacancyConfirmation.findFirstOrThrow({ where: { unitId, endedAt: null } });
+
+    await db.buildingUnit.update({ where: { id: owner.lines[0]!.id }, data: { unitStatus: null } });
+    await within(() =>
+      census.syncRegistration({ registrationId: owner.registrationId, citizenId: owner.citizenId, actor: actor() }),
+    );
+
+    expect(await db.unitVacancyConfirmation.findUniqueOrThrow({ where: { id: vacancy.id } })).toMatchObject({
+      endReason: 'RECORDED_IN_ERROR',
+    });
+    expect(await db.unit.findUniqueOrThrow({ where: { id: unitId } })).toMatchObject({ surveyStatus: 'COMPLETE' });
+  });
+
+  it('keeps one open review per flat when two saves settle it at once', async () => {
+    const { units } = await block('US-12');
+    const unitId = units[0]!.id;
+    await db.unit.update({ where: { id: unitId }, data: { unitStatus: 'RENTED' } });
+
+    await within(() =>
+      Promise.all([
+        settleUnit(db, { unitId, tenantSlug: 'us', actor: actor(), via: 'TEST' }),
+        settleUnit(db, { unitId, tenantSlug: 'us', actor: actor(), via: 'TEST' }),
+        settleUnit(db, { unitId, tenantSlug: 'us', actor: actor(), via: 'TEST' }),
+      ]),
+    );
+    expect(await openReviews(unitId)).toBe(1);
+  });
+
+  it('lets an owner say their seasonal home is empty now, as a vacancy on their statement', async () => {
+    const { building, units } = await block('US-13');
+    const unitId = units[0]!.id;
+    const owner = await filing({ role: 'OWNER', parcelNumber: 'US-13', buildingId: building.id, units: [{ unitId }] });
+    await within(() => buildings.updateUnit(unitId, { unitStatus: 'SEASONAL' } as never, actor()));
+
+    await within(() =>
+      buildings.recordOccupancy(
+        { unitId, citizenId: owner.citizenId, role: 'OWNER', unitStatus: 'VACANT' } as never,
+        actor(),
+        { fromMatrix: true },
+      ),
+    );
+
+    expect(await db.unitVacancyConfirmation.findFirstOrThrow({ where: { unitId, endedAt: null } })).toMatchObject({
+      basis: 'OWNER_STATEMENT',
+      previousUnitStatus: 'SEASONAL',
+    });
+    expect(await unitStatus(unitId)).toBe('VACANT');
+    expect(await openReviews(unitId)).toBe(0);
+  });
+
+  it('bills a منزل card that states nothing by its flat — not its owner beside a registered tenant', async () => {
+    const { building, units } = await block('US-14', 1);
+    const unitId = units[0]!.id;
+    const ownerId = await citizen('مالك منزل');
+    const registration = await db.registration.create({
+      data: { citizenId: ownerId, referenceNumber: `REF-${randomUUID().slice(0, 10)}` },
+      select: { id: true },
+    });
+    await db.propertyEntry.create({
+      data: {
+        registrationId: registration.id,
+        occupancyType: 'OWNER',
+        propertyType: 'HOUSE',
+        neighborhood: 'الحي الشرقي',
+        propertyNumber: 'US-14',
+        buildingId: building.id,
+        unitArea: 120,
+      },
+    });
+    await filing({ role: 'TENANT', parcelNumber: 'US-14', buildingId: building.id, units: [{ unitId }] });
+
+    expect(await unitStatus(unitId)).toBe('RENTED');
+    expect(await occupancyBill(ownerId)).toEqual({ amount: 0, held: 0 });
+  });
+
+  it('refuses a «تعارض في حالة الوحدة» opened by hand — the rule opens and closes it', async () => {
+    const { building, units } = await block('US-15');
+    await expect(
+      within(() =>
+        cases.create(
+          { notes: 'تجربة', caseType: 'STATUS_CONFLICT', buildingId: building.id, unitId: units[0]!.id } as never,
+          actor(),
+        ),
+      ),
+    ).rejects.toThrow(/يُفتح تلقائياً/);
   });
 });

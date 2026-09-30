@@ -185,6 +185,13 @@ export class CensusSyncService {
       }
     >();
     const changed = (statementId: string) => !input.unchangedStatements?.has(statementId);
+    /*
+      Flats named by a card the census cannot place — no building of its own and
+      lines in more than one. Not applied, and not released either: ending the
+      spells an earlier save recorded because this one cannot tell which
+      building the card means would evict on an ambiguity.
+    */
+    const unresolved = new Set<string>();
 
     for (const property of properties) {
       /*
@@ -196,7 +203,10 @@ export class CensusSyncService {
         ...new Set(property.units.map((unit) => unit.unit?.buildingId).filter((id): id is string => Boolean(id))),
       ];
       const buildingId = property.buildingId ?? (lineBuildings.length === 1 ? lineBuildings[0]! : null);
-      if (!buildingId) continue;
+      if (!buildingId) {
+        for (const unit of property.units) if (unit.unitId) unresolved.add(unit.unitId);
+        continue;
+      }
 
       /*
         The building's name, learned from the person standing in front of it.
@@ -328,7 +338,7 @@ export class CensusSyncService {
     result.occupanciesEnded = await this.endUnclaimed({
       registrationId: input.registrationId,
       citizenId: input.citizenId,
-      keep: [...claimed.keys()],
+      keep: [...claimed.keys(), ...unresolved],
       actor: input.actor,
       scope: input.scope ?? 'CITIZEN',
       endings: input.endings,
@@ -579,7 +589,19 @@ export class CensusSyncService {
       inference. Narrowing it to `unitStatus: null` would fix a first filing and
       silently drop every correction after it — which is the bug.
     */
-    await this.declareUnitStatus({ ...input, unit });
+    /*
+      Against the unit as the lift just left it — so a vacancy opened on the
+      owner's statement snapshots «مكتملة», not the «غير ممسوحة» before the
+      household was recorded — and the lift runs again after: an owner who
+      withdraws their own «شاغرة» leaves the survey at «بيانات ناقصة» from the
+      vacancy's undo, and they are recorded here, which answers it.
+    */
+    const afterLift = lifted.count > 0 ? { ...unit, surveyStatus: 'COMPLETE' } : unit;
+    await this.declareUnitStatus({ ...input, unit: afterLift });
+    await this.db.unit.updateMany({
+      where: { id: input.unitId, surveyStatus: { in: OCCUPANCY_LIFTS_SURVEY_STATUS as never } },
+      data: { surveyStatus: 'COMPLETE' },
+    });
 
     /*
       A visit is logged only the first time this household is recorded here —
@@ -695,7 +717,18 @@ export class CensusSyncService {
     actor: { id: string; role: string };
   }): Promise<void> {
     const declared = input.declaredStatus;
-    if (input.role !== 'OWNER' || !declared) return;
+    if (input.role !== 'OWNER') return;
+
+    /*
+      The owner took their «شاغرة» back — cleared it, or marked it «غير مؤكَّد».
+      A vacancy that rested on nothing but an owner's word has nothing left to
+      rest on, unless another owner of the flat still says it is empty; it is
+      closed as «سُجِّل بالخطأ», which puts the unit back to what it said before.
+    */
+    if (!declared) {
+      if (input.statementChanged) await this.withdrawOwnerVacancy(input);
+      return;
+    }
     // Already what the card says. Not a no-op worth an audit row.
     if (declared === input.unit.unitStatus) return;
 
@@ -723,7 +756,11 @@ export class CensusSyncService {
         an officer's visit, a neighbour or a filed تصريح is a finding, and an
         owner's card does not overrule it: that disagreement goes to review.
       */
-      if (standing.basis === 'OWNER_STATEMENT' && feeBearerClass(declared) !== 'NOBODY') {
+      if (
+        standing.basis === 'OWNER_STATEMENT' &&
+        feeBearerClass(declared) !== 'NOBODY' &&
+        !(await this.anotherOwnerSaysEmpty(input.unitId, input.citizenId))
+      ) {
         const closed = await closeActiveVacancy(this.db, {
           unitId: input.unitId,
           unit: input.unit,
@@ -815,6 +852,16 @@ export class CensusSyncService {
       made just above; a vacancy already standing returned earlier.
     */
     if (declared === 'VACANT') {
+      /*
+        Only a «شاغرة» this save made — or one on a flat that has never had a
+        vacancy recorded at all (a card filed before this rule). An unchanged one
+        must not re-open a vacancy an officer has since lifted: the lift is the
+        newer finding. (`endVacancy` also clears the card's «شاغرة», so this is
+        the backstop, not the rule.)
+      */
+      const everVacant =
+        (await this.db.unitVacancyConfirmation.count({ where: { unitId: input.unitId } })) > 0;
+      if (!input.statementChanged && everVacant) return;
       const confirmation = await openVacancy(this.db, {
         unitId: input.unitId,
         unit: input.unit,
@@ -1061,6 +1108,80 @@ export class CensusSyncService {
    * than hide: the record is safe, the census is behind, and the link can be
    * re-made from the ledger. Silence is the one option not on the table.
    */
+  /** Whether a current owner other than this citizen says the flat is empty. */
+  private async anotherOwnerSaysEmpty(unitId: string, citizenId: string): Promise<boolean> {
+    const lines = await this.db.buildingUnit.count({
+      where: {
+        unitId,
+        endedAt: null,
+        unitStatus: { in: ['VACANT', 'UNDER_CONSTRUCTION'] as never },
+        propertyEntry: {
+          occupancyType: 'OWNER' as never,
+          endedAt: null,
+          registration: { citizenId: { not: citizenId } },
+        },
+      },
+    });
+    if (lines > 0) return true;
+    const unit = await this.db.unit.findUnique({ where: { id: unitId }, select: { buildingId: true } });
+    if (!unit || (await this.db.unit.count({ where: { buildingId: unit.buildingId } })) !== 1) return false;
+    const houses = await this.db.propertyEntry.count({
+      where: {
+        buildingId: unit.buildingId,
+        propertyType: 'HOUSE' as never,
+        occupancyType: 'OWNER' as never,
+        endedAt: null,
+        unitStatus: { in: ['VACANT', 'UNDER_CONSTRUCTION'] as never },
+        units: { none: { endedAt: null } },
+        registration: { citizenId: { not: citizenId } },
+      },
+    });
+    return houses > 0;
+  }
+
+  /** See `declareUnitStatus`: an owner withdrawing their own «شاغرة». */
+  private async withdrawOwnerVacancy(input: {
+    unitId: string;
+    citizenId: string;
+    unit: { buildingId: string; unitCode: string; unitStatus: string | null; surveyStatus: string };
+    actor: { id: string; role: string };
+  }): Promise<void> {
+    const standing = await activeVacancy(this.db, input.unitId);
+    if (standing?.basis !== 'OWNER_STATEMENT') return;
+    if (await this.anotherOwnerSaysEmpty(input.unitId, input.citizenId)) return;
+
+    const closed = await closeActiveVacancy(this.db, {
+      unitId: input.unitId,
+      unit: input.unit,
+      reason: 'RECORDED_IN_ERROR',
+      notes: 'سحب المالك تصريحه بالشغور عن بطاقته',
+      actorId: input.actor.id,
+    });
+    if (!closed) return;
+    await this.db.unit.update({
+      where: { id: input.unitId },
+      data: {
+        ...(closed.restore.unitStatus !== undefined ? { unitStatus: closed.restore.unitStatus as never } : {}),
+        ...(closed.restore.surveyStatus !== undefined ? { surveyStatus: closed.restore.surveyStatus as never } : {}),
+      },
+    });
+    this.events.emit('building.changed', {
+      tenantSlug: this.tenantContext.tenantSlug,
+      action: 'UNIT_VACANCY_ENDED',
+      buildingId: input.unit.buildingId,
+      before: { unitStatus: input.unit.unitStatus, surveyStatus: input.unit.surveyStatus },
+      after: {
+        unitCode: input.unit.unitCode,
+        vacancyId: closed.confirmation!.id,
+        reason: 'RECORDED_IN_ERROR',
+        citizenId: input.citizenId,
+        via: 'REGISTRATION',
+      },
+      actorId: input.actor.id,
+      actorRole: input.actor.role,
+    });
+  }
+
   /** `settleUnit`, with its audit rows emitted. This service runs outside any transaction. */
   private async settle(unitId: string, actor: { id: string; role: string }): Promise<void> {
     const outcome = await settleUnit(this.db, {

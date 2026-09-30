@@ -790,9 +790,28 @@ export class TenancyService {
       }
       case 'VACANT': {
         /*
+          The owner's «مؤجرة» — written by the tenancy or its landlord link, not
+          said by the owner about an empty flat — goes first, or it would stand
+          on their card against the «شاغرة» below and put the flat to review
+          for no reason. Cleared on a مبنى's row (not a statement, so nothing to
+          contradict when the next tenant arrives), and a منزل, which bills
+          from its own column, says «شاغرة» with the unit.
+        */
+        await this.db.buildingUnit.updateMany({
+          where: {
+            unitId: unit.unitId,
+            endedAt: null,
+            unitStatus: implied,
+            propertyEntry: { occupancyType: 'OWNER' as never, endedAt: null },
+          },
+          data: { unitStatus: null },
+        });
+        await setOwnerCards('VACANT', false);
+        /*
           Through `confirmVacancy`, not a status write: a vacancy exempts the
           owner, so it is a recorded finding with what it rests on, and it can be
-          lifted again. It runs inside this transaction.
+          lifted again. It runs inside this transaction, and step 5 settles the
+          flat once everything here is written.
         */
         await this.buildings.confirmVacancy(
           unit.unitId,
@@ -802,15 +821,21 @@ export class TenancyService {
             notes: input.vacancyNotes?.trim() || `خرج ${tenantName} من الوحدة`,
           },
           actor,
+          { settle: false },
         );
-        // A منزل bills from its own column; the unit's «شاغرة» never reaches it.
-        await setOwnerCards('VACANT', false);
         result.vacanciesConfirmed += 1;
         break;
       }
       case 'RENTED_TO_OTHER': {
-        await this.db.unit.updateMany({
-          where: { id: unit.unitId, ...replaceable },
+        /*
+          The officer has just said somebody else is renting it — a finding, so
+          it is written whatever the unit said before, like the sale's own
+          «مؤجرة لمستأجر آخر». Left conditional, a flat stored «موسمي» kept that,
+          step 5 settled it clean, and the review opened below closed in the same
+          transaction.
+        */
+        await this.db.unit.update({
+          where: { id: unit.unitId },
           data: { unitStatus: 'RENTED' },
         });
         await setOwnerCards('RENTED', true);

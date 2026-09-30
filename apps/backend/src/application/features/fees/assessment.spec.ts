@@ -362,6 +362,7 @@ describe('billable units — one list from two storage shapes', () => {
         propertyType: 'LAND',
         // A plot has no canonical unit, so nothing can hold it for review.
         underReview: false,
+        unitId: null,
         propertyNumber: '1553',
       },
     ]);
