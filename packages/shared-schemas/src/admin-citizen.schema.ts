@@ -320,6 +320,9 @@ function strictIssuePaths(input: SubmissionInput, excused: ReadonlySet<string>):
   input.properties.forEach((card, index) => {
     const prefix = `properties.${index}`;
     collect(prefix, propertyEntrySchema.safeParse(withoutFlagged(card, prefix, excused)));
+    for (const path of ownerUnitStatusIssues(card, prefix)) {
+      if (!excused.has(path)) paths.push(path);
+    }
   });
 
   return paths;
@@ -481,6 +484,57 @@ const NON_RESIDENT_NEEDS_UNIT_TYPE =
 const OWNER_NOT_LIVING_THERE =
   'غير المقيم لا يسكن هذه الوحدة — اختر «مسكن موسمي» إن كان يحضر في مواسم، أو «شاغرة»، أو حالة من يشغلها';
 
+const UNIT_STATUS_REQUIRED = 'حالة الوحدة مطلوبة — اختر من يشغلها';
+
+/** `properties.0.units.2.unitStatus` → the path Zod expects, numbers as numbers. */
+const pathSegment = (part: string): string | number => (/^\d+$/.test(part) ? Number(part) : part);
+
+/**
+ * «حالة الوحدة», required of an owner on what this submission adds — a new
+ * منزل card, and each new flat of a مبنى (the user's decision, 2026-09-30).
+ *
+ * Officers were leaving it blank, or accepting whatever the previous flat said,
+ * and a blank or copied answer decides who pays the occupancy fee. So a card or
+ * a flat entered now must say who lives there — or be flagged «غير مؤكَّد» with
+ * a reason, individually or by «حفظ سريع»'s blanket reason, like any field.
+ *
+ * **Only what is new.** A card or a flat already on the file carries an `id`,
+ * and one filed before this rule may have no answer. Requiring it there would
+ * refuse an officer's unrelated correction — a phone number on the profile
+ * re-submits the whole record — until they answered a question they did not
+ * come to answer. Those old gaps are the quality scan's to surface, not a lock
+ * on the file. A tenant or شاغل بتسامح is never asked: their capacity is the
+ * answer. أرض keeps it optional.
+ *
+ * Read from the raw submission rather than inside the card schema, because the
+ * card schema strips `id` — and the CSV import, which shares that schema,
+ * carries no «غير مؤكَّد» flags to answer a requirement with.
+ */
+function ownerUnitStatusIssues(card: unknown, prefix: string): string[] {
+  if (!card || typeof card !== 'object') return [];
+  const raw = card as {
+    id?: unknown;
+    occupancyType?: unknown;
+    propertyType?: unknown;
+    unitStatus?: unknown;
+    units?: unknown;
+  };
+  if (raw.occupancyType !== 'OWNER') return [];
+  const blank = (value: unknown) => value === undefined || value === null || value === '';
+  const isNew = (row: { id?: unknown }) => typeof row.id !== 'string' || row.id.length === 0;
+
+  if (raw.propertyType === 'HOUSE') {
+    return isNew(raw) && blank(raw.unitStatus) ? [`${prefix}.unitStatus`] : [];
+  }
+  if (raw.propertyType === 'BUILDING' && Array.isArray(raw.units)) {
+    return raw.units.flatMap((unit, index) => {
+      const row = (unit ?? {}) as { id?: unknown; unitStatus?: unknown };
+      return isNew(row) && blank(row.unitStatus) ? [`${prefix}.units.${index}.unitStatus`] : [];
+    });
+  }
+  return [];
+}
+
 /** Every issue the strict schemas raise that no flag accounts for. */
 function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
   const flags = allFlags(input);
@@ -518,6 +572,10 @@ function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
   input.properties.forEach((card, index) => {
     const prefix = `properties.${index}`;
     report(prefix, propertyEntrySchema.safeParse(withoutFlagged(card, prefix, paths)));
+    for (const path of ownerUnitStatusIssues(card, prefix)) {
+      if (paths.has(path) || (paths.has(`${prefix}.units`) && path.startsWith(`${prefix}.units.`))) continue;
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: path.split('.').map(pathSegment), message: UNIT_STATUS_REQUIRED });
+    }
   });
 
   if (input.residence === 'NON_RESIDENT_OWNER') {

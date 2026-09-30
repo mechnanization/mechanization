@@ -3,6 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { isDwellingUnitType, statusForFlags, type AfterTenancyStatus, type FieldFlag } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { settleUnit, type UnitStatusEvent } from '../buildings/unit-status';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { assertNotMergedAway } from './merged-away';
 import { claimsFlat } from '../../../domain/entities/census-claim';
@@ -503,6 +504,7 @@ export class OwnershipService {
     let newOwnerRecorded = false;
     const buyerTenancyEndedOn: string[] = [];
 
+    const settleEvents: UnitStatusEvent[] = [];
     await runInTenantTransaction(this.tenantContext, async () => {
       // 1 — the spells.
       for (const spell of target.spells) {
@@ -697,7 +699,24 @@ export class OwnershipService {
           if (opened) result.casesOpened += 1;
         }
       }
+
+      /*
+        And every flat this ownership held settles by the one rule
+        (`settleUnit`) — a tenant still living in one keeps it «مؤجرة» for
+        whoever owns it now; «مؤجرة» left with nobody in it goes to review.
+      */
+      for (const unit of ending) {
+        const outcome = await settleUnit(this.db, {
+          unitId: unit.unitId,
+          tenantSlug: this.tenantContext.tenantSlug,
+          actor,
+          via: 'OWNERSHIP_ENDED',
+        });
+        settleEvents.push(...(outcome?.events ?? []));
+      }
     });
+
+    for (const event of settleEvents) this.events.emit(event.channel, event.payload);
 
     result.tenantsReleased = tenantsReleased;
     result.newOwnerRecorded = newOwnerRecorded;

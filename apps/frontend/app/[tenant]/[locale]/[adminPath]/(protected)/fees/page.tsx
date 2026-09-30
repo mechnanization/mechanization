@@ -410,6 +410,12 @@ export default function FeesPage({
       if (res.exemptedUnits) {
         toast.info(`${res.exemptedUnits} وحدة لم تُحتسب حسب صفة المكلَّف بالرسم.`);
       }
+      // Held, not exempt: charged once their «تعارض في حالة الوحدة» is settled.
+      if (res.heldUnits) {
+        toast.info(
+          `${res.heldUnits} وحدة موقوفة للمراجعة (تعارض في حالة الوحدة) — لم يُحتسب عليها رسم الإشغال بعد. تجدها في «جودة البيانات».`,
+        );
+      }
       setIssueOpen(false);
       void load();
     } catch (caught) {

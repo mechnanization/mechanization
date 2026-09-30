@@ -26,10 +26,7 @@ export function describeAssessment(
   if (assessment.basis === 'PER_AREA') {
     const area = Math.round(assessment.totalArea).toLocaleString('en-US');
     const line = isEnglish ? `${area} m² × ${rate}` : `${area} م² × ${rate}`;
-    if (!assessment.excludedUnitCount) return line;
-    return isEnglish
-      ? `${line} (${assessment.excludedUnitCount} not charged)`
-      : `${line} (${assessment.excludedUnitCount} وحدة غير محتسبة)`;
+    return withLeftOut(line, assessment, isEnglish);
   }
 
   const counted = `${assessment.unitCount} ${countedThing(assessment, locale)} × ${rate}`;
@@ -48,11 +45,33 @@ export function describeAssessment(
     person holding the bill needs; which of three rules dropped each one is a
     question for the register, not for a line on an invoice.
   */
-  if (!assessment.excludedUnitCount) return counted;
+  return withLeftOut(counted, assessment, isEnglish);
+}
 
-  return isEnglish
-    ? `${counted} (${assessment.excludedUnitCount} not charged)`
-    : `${counted} (${assessment.excludedUnitCount} وحدة غير محتسبة)`;
+/**
+ * The units left out, said out loud: those the bearer rule did not charge this
+ * person for, and — separately, because it is a different fact — the flats
+ * whose occupancy fee is held while their records are under review
+ * («تعارض في حالة الوحدة»). A held flat is not exempt: it is charged to whoever
+ * the review finds bears it, on a later run.
+ */
+function withLeftOut(line: string, assessment: FeeAssessment, isEnglish: boolean): string {
+  const notes: string[] = [];
+  if (assessment.excludedUnitCount) {
+    notes.push(
+      isEnglish
+        ? `${assessment.excludedUnitCount} not charged`
+        : `${assessment.excludedUnitCount} وحدة غير محتسبة`,
+    );
+  }
+  if (assessment.heldUnitCount) {
+    notes.push(
+      isEnglish
+        ? `${assessment.heldUnitCount} held for review`
+        : `${assessment.heldUnitCount} وحدة موقوفة للمراجعة`,
+    );
+  }
+  return notes.length === 0 ? line : `${line} (${notes.join(isEnglish ? '; ' : '، ')})`;
 }
 
 /**

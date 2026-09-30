@@ -10,6 +10,7 @@ import {
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { settleUnit, type UnitStatusEvent } from '../buildings/unit-status';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { claimsFlat } from '../../../domain/entities/census-claim';
 import { BuildingsService } from '../buildings/buildings.service';
@@ -98,7 +99,7 @@ export class TenancyService {
     }
   > {
     return this.inTransaction(async () => {
-      const recorded = await this.buildings.recordOccupancy(input, actor);
+      const recorded = await this.buildings.recordOccupancy(input, actor, { fromMatrix: true });
       const ownerLink =
         input.role !== 'OWNER' && input.landlordCitizenId
           ? await this.links.linkRecordedOwner({
@@ -528,6 +529,7 @@ export class TenancyService {
     };
     const droppedFlags: Array<Record<string, unknown>> = [];
 
+    const settleEvents: UnitStatusEvent[] = [];
     await this.inTransaction(async () => {
       // 1 — the spells.
       for (const spell of target.spells) {
@@ -674,8 +676,24 @@ export class TenancyService {
       for (const unit of freed) {
         await this.applyAfterStatus(unit, target, input, endedAt, actor, result, events);
       }
+
+      /*
+        5 — and every flat this tenancy was on settles by the one rule
+        (`settleUnit`): a flat another tenant still lives in stays «مؤجرة»,
+        and a «مؤجرة» left with nobody in it goes to review.
+      */
+      for (const unit of target.units) {
+        const outcome = await settleUnit(this.db, {
+          unitId: unit.unitId,
+          tenantSlug: this.tenantContext.tenantSlug,
+          actor,
+          via: 'TENANCY_ENDED',
+        });
+        settleEvents.push(...(outcome?.events ?? []));
+      }
     });
 
+    for (const event of settleEvents) this.events.emit(event.channel, event.payload);
     this.links.emitAll(events, actor);
     this.events.emit('citizen.changed', {
       tenantSlug: this.tenantContext.tenantSlug,
@@ -796,17 +814,25 @@ export class TenancyService {
           data: { unitStatus: 'RENTED' },
         });
         await setOwnerCards('RENTED', true);
-        await this.cases.create(
+        /*
+          «مؤجرة» with the new tenant not yet registered is exactly what a
+          «تعارض في حالة الوحدة» case is for, and this is its most specific note.
+          Opened as that type (it used to be a general note) so it is the one
+          review `settleUnit` keeps on the unit, and closes by itself when the
+          new tenant is recorded — and so the flat's occupancy fee is held until
+          then rather than the owner exempted for a tenant nobody has found.
+        */
+        const { opened } = await this.cases.openUnlessStanding(
           {
             notes: `خرج ${tenantName} من الوحدة ${unit.unitCode}، ويسكنها مستأجر آخر غير مسجَّل — سجِّله على الوحدة.`,
-            caseType: 'GENERAL_NOTE',
+            caseType: 'STATUS_CONFLICT',
             buildingId: unit.buildingId,
             unitId: unit.unitId,
             propertyNumber: building?.parcelNumber ?? undefined,
           } as never,
           actor,
         );
-        result.casesOpened += 1;
+        if (opened) result.casesOpened += 1;
         break;
       }
       case 'UNKNOWN': {

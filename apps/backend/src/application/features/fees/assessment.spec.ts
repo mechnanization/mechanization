@@ -360,6 +360,8 @@ describe('billable units — one list from two storage shapes', () => {
         unitStatus: null,
         occupancyType: 'OWNER',
         propertyType: 'LAND',
+        // A plot has no canonical unit, so nothing can hold it for review.
+        underReview: false,
         propertyNumber: '1553',
       },
     ]);
@@ -940,5 +942,42 @@ describe('assessment', () => {
     });
 
     expect(result.kind === 'assessed' && result.amount).toBe(0);
+  });
+});
+
+describe('a flat under review — its occupancy fee held (2026-09-30)', () => {
+  const ownerFlat = (unitStatus: string | null, underReview: boolean) => ({
+    propertyType: 'BUILDING',
+    propertyNumber: '4211',
+    occupancyType: 'OWNER',
+    unitType: null,
+    unitArea: null,
+    units: [
+      {
+        unitType: 'APARTMENT',
+        unitArea: 100,
+        unitStatus,
+        unit: { unitType: 'APARTMENT', unitArea: 100, unitStatus, underReview },
+      },
+    ],
+  });
+
+  it('holds it before the bearer rule, so «مؤجرة» with nobody in it is not reported as an exemption', () => {
+    const outcome = assessCitizen([ownerFlat('RENTED', true)], { amount: 1000, basis: 'PER_UNIT', bearer: 'OCCUPANT' });
+    expect(outcome).toMatchObject({
+      kind: 'assessed',
+      amount: 0,
+      assessment: { heldUnitCount: 1, excludedUnitCount: 0, unitCount: 0 },
+    });
+  });
+
+  it('holds only the occupancy fee — an owner-borne fee follows the deed', () => {
+    const outcome = assessCitizen([ownerFlat('RENTED', true)], { amount: 1000, basis: 'PER_UNIT', bearer: 'OWNER' });
+    expect(outcome).toMatchObject({ kind: 'assessed', amount: 1000, assessment: { heldUnitCount: 0 } });
+  });
+
+  it('charges a flat that is not under review exactly as before', () => {
+    const outcome = assessCitizen([ownerFlat('OWNER_OCCUPIED', false)], { amount: 1000, basis: 'PER_UNIT' });
+    expect(outcome).toMatchObject({ kind: 'assessed', amount: 1000, assessment: { heldUnitCount: 0 } });
   });
 });

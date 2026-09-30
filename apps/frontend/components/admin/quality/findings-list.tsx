@@ -5,7 +5,7 @@ import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { CircleCheck, ShieldQuestion } from 'lucide-react';
 import { qualityLabels, type QualityFindingKind } from '@mechanization/shared-schemas';
-import { ApiRequestError, logApiError } from '@/lib/api-client';
+import { ApiRequestError, logApiError, settleAllUnitStatuses } from '@/lib/api-client';
 import {
   dismissFinding,
   getFindings,
@@ -574,8 +574,65 @@ export function FindingsList({
     );
   }
 
+  /*
+    «مراجعة حالة الوحدات» — SUPER_ADMIN only, and beside the list it feeds.
+
+    Every screen that changes a flat now settles it, but flats nobody has
+    touched since keep what the old rules left. This settles them in one pass
+    and opens a «تعارض في حالة الوحدة» case on each one a person must decide;
+    until then billing already holds their occupancy fee.
+  */
+  const settleAll = async () => {
+    if (!token) return;
+    setBusy('settle-all');
+    try {
+      const res = await settleAllUnitStatuses(tenant, token);
+      toast.success(
+        en
+          ? `${res.unitsChecked} flats checked — ${res.statusesChanged} statuses corrected, ${res.casesOpened} review cases opened, ${res.casesResolved} closed. ${res.stillUnderReview} still under review.`
+          : `فُحصت ${res.unitsChecked} وحدة — صُحِّحت حالة ${res.statusesChanged}، وفُتحت ${res.casesOpened} حالة مراجعة وأُغلقت ${res.casesResolved}. ما زالت ${res.stillUnderReview} وحدة قيد المراجعة.`,
+      );
+      await query.refetch();
+    } catch (caught) {
+      logApiError(caught);
+      toast.error(
+        caught instanceof ApiRequestError
+          ? caught.message
+          : en
+            ? 'The review could not run.'
+            : 'تعذّر تشغيل المراجعة.',
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
+      {role === 'SUPER_ADMIN' ? (
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 p-3">
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            {en
+              ? 'Apply the unit-status rule to every flat: statuses follow who is registered inside, and each flat whose records still disagree gets a review case. Its occupancy fee is held until the case is settled.'
+              : 'طبّق قاعدة حالة الوحدة على كل الوحدات: تتبع الحالة من هو مسجَّل فيها، وتُفتح حالة مراجعة لكل وحدة ما زالت سجلاتها متعارضة. يبقى رسم الإشغال عليها معلَّقاً حتى تُسوّى.'}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void settleAll()}
+            disabled={busy === 'settle-all' || !token}
+          >
+            {busy === 'settle-all'
+              ? en
+                ? 'Reviewing…'
+                : 'جارٍ المراجعة…'
+              : en
+                ? 'Review unit statuses'
+                : 'مراجعة حالة الوحدات'}
+          </Button>
+        </section>
+      ) : null}
       <DataTable
         columns={columns}
         data={items}

@@ -168,7 +168,18 @@ export class PrismaCaseRepository implements CaseRepository {
    */
   async resolveOpenForUnit(unitId: string, citizenId: string): Promise<number> {
     const result = await this.db.case.updateMany({
-      where: { unitId, status: { in: ['OPEN', 'SCHEDULED'] as never } },
+      /*
+        «تعارض في حالة الوحدة» is not answered by a person being recorded here —
+        it asks whether the flat's records agree, and only `settleUnit`, which
+        re-checks them, may close it. Closing it here would drop the review the
+        moment an officer recorded, say, the owner of a flat marked «مؤجرة»
+        with no tenant, while the missing tenant was still missing.
+      */
+      where: {
+        unitId,
+        status: { in: ['OPEN', 'SCHEDULED'] as never },
+        caseType: { not: 'STATUS_CONFLICT' as never },
+      },
       data: {
         status: 'RESOLVED',
         resolvedCitizenId: citizenId,

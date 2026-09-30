@@ -332,6 +332,17 @@ export class BuildingsController {
    * Through `TenancyService`, so a مستأجر or شاغل بتسامح and the owner they hold
    * the flat from are recorded and linked as one write.
    */
+  /**
+   * «مراجعة حالة الوحدات» — settles every flat whose records disagree and opens
+   * a «تعارض في حالة الوحدة» case on each one a person must decide. SUPER_ADMIN
+   * only: it writes across the whole register at once.
+   */
+  @Roles('SUPER_ADMIN')
+  @Post('units/status-review')
+  async settleAllUnits(@CurrentUser() user: SessionClaims) {
+    return this.buildings.settleAllUnits(this.actor(user));
+  }
+
   @Roles(...WRITE_ROLES)
   @Post('occupancies')
   async recordOccupancy(

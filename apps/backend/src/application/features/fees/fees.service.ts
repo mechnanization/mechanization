@@ -24,6 +24,7 @@ import {
 } from '../../../domain/entities/billable-unit';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
+import { unitsUnderReview } from '../buildings/unit-status';
 import { ConflictError, NotFoundError } from '../../common/exceptions';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { searchTokens } from '../../common/search-terms';
@@ -217,6 +218,7 @@ export function assessCitizen(
         unitCount: 0,
         totalArea: 0,
         excludedUnitCount: 0,
+        heldUnitCount: 0,
         lines: [],
       },
     };
@@ -246,8 +248,31 @@ export function assessCitizen(
     dispute against the property card that caused it.
   */
   const bearer = notice.bearer ?? 'OCCUPANT';
-  const units = held.filter((unit) => bearsFee(unit, bearer));
-  const excludedUnitCount = held.length - units.length;
+
+  /*
+    A flat under review is not charged its occupancy fee — to anybody — until
+    its records agree (the user's decision, 2026-09-30).
+
+    «Under review» is `settleUnitStatus` finding a conflict it cannot settle: a
+    flat marked «مؤجرة» with no tenant registered, or an owner's card
+    contradicting the unit about who pays. Charging on either is a guess about
+    who lives there, and the guesses that were being made — the owner exempt,
+    or the owner and the tenant both — are the two this whole rule exists to
+    stop. Held rather than dropped: counted on the bill, and released by the
+    next run once the flat is settled.
+
+    Only the occupancy fee. An owner-borne fee follows the deed, and nobody
+    disputes whose deed it is.
+
+    Held *before* the bearer rule, not after it: the owner's exemption on a flat
+    marked «مؤجرة» with nobody in it is exactly the guess under review, so
+    counting it as an exemption would report as settled what is not.
+  */
+  const reviewing = bearer === 'OCCUPANT' ? held.filter((unit) => unit.underReview) : [];
+  const decided = bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview) : held;
+  const units = decided.filter((unit) => bearsFee(unit, bearer));
+  const excludedUnitCount = decided.length - units.length;
+  const heldUnitCount = reviewing.length;
 
   if (notice.basis === 'PER_AREA') {
     /*
@@ -287,6 +312,7 @@ export function assessCitizen(
       unitCount: units.length,
       totalArea,
       excludedUnitCount,
+      heldUnitCount,
       lines: units.map((unit) => ({
         propertyNumber: unit.propertyNumber,
         propertyType: unit.propertyType,
@@ -811,6 +837,11 @@ export class FeesService {
       (sum, entry) => sum + (entry.assessment?.excludedUnitCount ?? 0),
       0,
     );
+    /** Flats whose occupancy fee is held under review — see `assessCitizen`. */
+    const heldUnits = assessed.reduce(
+      (sum, entry) => sum + (entry.assessment?.heldUnitCount ?? 0),
+      0,
+    );
 
     if (billable.length === 0) {
       /*
@@ -822,7 +853,9 @@ export class FeesService {
         otherwise read as a fee that targets nobody.
       */
       throw new ConflictError(
-        exemptedUnits > 0 && unassessable.length === 0
+        heldUnits > 0 && exemptedUnits === 0 && unassessable.length === 0
+          ? 'كل الوحدات المستهدفة موقوفة للمراجعة (تعارض في حالة الوحدة) — لن يتم إصدار أي إشعار حتى تُسوّى'
+          : exemptedUnits > 0 && unassessable.length === 0
           ? 'كل الوحدات المستهدفة مسجَّلة شاغرة أو قيد الإنجاز وهذا الرسم يعفيها — لن يتم إصدار أي إشعار'
           : unassessable.length > 0
             ? 'لا يمكن احتساب هذا الرسم لأي مواطن — السجلات المستهدفة تحتاج إلى جرد ميداني أولاً'
@@ -914,6 +947,7 @@ export class FeesService {
       issuedCount: result.issued,
       unassessableCount: unassessable.length,
       exemptedUnitCount: exemptedUnits,
+      heldUnitCount: heldUnits,
       actorId: actor.id,
       actorRole: actor.role,
     });
@@ -928,7 +962,13 @@ export class FeesService {
       is the entire argument for refusing to guess at the number in the first
       place.
     */
-    return { ...result, unassessable, exemptedUnits };
+    if (heldUnits > 0) {
+      this.logger.log(
+        `Fee "${input.title}": ${heldUnits} unit(s) held under review (تعارض في حالة الوحدة)`,
+      );
+    }
+
+    return { ...result, unassessable, exemptedUnits, heldUnits };
   }
 
   /**
@@ -1349,6 +1389,31 @@ export class FeesService {
       Batching bounds both, and costs nothing: the work is a pure fold, so the
       batches never need to meet.
     */
+    /*
+      The flats under review, once for the whole run — the same rule the census
+      writes by (`settleUnitStatus`), recomputed rather than read from the case
+      list, so a case closed by hand does not release a flat whose records still
+      disagree, and a flat fixed from any screen is released without anyone
+      closing anything.
+    */
+    const review = await withConnectionRetry(() => unitsUnderReview(this.db));
+    /** Held: the flat's records disagree in a way the rule cannot settle. */
+    const underReview = (unitId: string | undefined | null) =>
+      Boolean(unitId && (review.get(unitId)?.conflicts.length ?? 0) > 0);
+    /*
+      The status the rule decides, where the stored one lags it — a flat with a
+      registered tenant still stored as «مشغولة من المالك» is billed as the
+      «مؤجرة» it is, so the tenant pays and the owner does not, today, rather
+      than after somebody next saves it.
+    */
+    const settledStatus = (unitId: string | undefined | null, stored: string | null) =>
+      unitId && review.has(unitId) ? review.get(unitId)!.status : stored;
+    const reviewedSoleUnit = new Set(
+      [...review.values()]
+        .filter((row) => row.soleUnitOfBuilding && row.conflicts.length > 0)
+        .map((row) => row.buildingId),
+    );
+
     for (let offset = 0; offset < citizenIds.length; offset += ASSESSMENT_BATCH_SIZE) {
       const batch = citizenIds.slice(offset, offset + ASSESSMENT_BATCH_SIZE);
 
@@ -1419,7 +1484,7 @@ export class FeesService {
                         unitArea: true,
                         unitStatus: true,
                         unit: {
-                          select: { unitType: true, unitArea: true, unitStatus: true, unitCode: true },
+                          select: { id: true, unitType: true, unitArea: true, unitStatus: true, unitCode: true },
                         },
                       },
                     },
@@ -1447,6 +1512,7 @@ export class FeesService {
                 role: true,
                 unit: {
                   select: {
+                    id: true,
                     buildingId: true,
                     unitType: true,
                     unitArea: true,
@@ -1474,6 +1540,7 @@ export class FeesService {
           unitType: string | null;
           unitArea: unknown;
           unitStatus: string | null;
+          underReview: boolean;
         }>>();
         for (const occupancy of row.unitOccupancies) {
           const buildingId = occupancy.unit.buildingId;
@@ -1482,7 +1549,8 @@ export class FeesService {
             role: occupancy.role,
             unitType: occupancy.unit.unitType,
             unitArea: occupancy.unit.unitArea,
-            unitStatus: occupancy.unit.unitStatus,
+            unitStatus: settledStatus(occupancy.unit.id, occupancy.unit.unitStatus),
+            underReview: underReview(occupancy.unit.id),
           });
           occupanciesByBuilding.set(buildingId, list);
         }
@@ -1510,7 +1578,24 @@ export class FeesService {
             time.
         */
         const entries = attachOccupancies(
-          row.registrations[0]?.properties ?? [],
+          (row.registrations[0]?.properties ?? []).map((card) => ({
+            ...card,
+            // A منزل bills its one flat from its own columns; under review is that flat's.
+            underReview:
+              card.propertyType === 'HOUSE' &&
+              card.units.length === 0 &&
+              Boolean(card.buildingId && reviewedSoleUnit.has(card.buildingId)),
+            units: card.units.map((line) => ({
+              ...line,
+              unit: line.unit
+                ? {
+                    ...line.unit,
+                    unitStatus: settledStatus(line.unit.id, line.unit.unitStatus) as never,
+                    underReview: underReview(line.unit.id),
+                  }
+                : line.unit,
+            })),
+          })),
           occupanciesByBuilding,
         );
         const properties = row.registrations[0]?.properties ?? [];

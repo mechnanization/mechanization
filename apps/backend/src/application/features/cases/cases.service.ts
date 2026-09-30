@@ -22,6 +22,8 @@ const ONE_OPEN_PER_UNIT: ReadonlySet<string> = new Set([
   'UNIT_UNREACHABLE',
   'ACCESS_REFUSED',
   'VACANT_UNCONFIRMED',
+  // One review per flat: `settleUnit` keeps it in step, and a second would be the same question twice.
+  'STATUS_CONFLICT',
 ]);
 
 @Injectable()
@@ -200,7 +202,8 @@ export class CasesService {
   ): Promise<number> {
     const open = await this.cases.findAll({ unitId, status: 'OPEN' });
     const scheduled = await this.cases.findAll({ unitId, status: 'SCHEDULED' });
-    const affected = [...open, ...scheduled];
+    // `resolveOpenForUnit` leaves «تعارض في حالة الوحدة» to `settleUnit`; so does the audit.
+    const affected = [...open, ...scheduled].filter((existing) => existing.caseType !== 'STATUS_CONFLICT');
     if (affected.length === 0) return 0;
 
     const resolved = await this.cases.resolveOpenForUnit(unitId, citizenId);

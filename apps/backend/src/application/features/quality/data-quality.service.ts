@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
+  ar,
+  describeUnitStatusConflict,
   duplicateMatchedOnLabels,
   POSSIBLE_DUPLICATE_FLAG_PATH,
   type DismissFindingInput,
@@ -15,6 +17,7 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { ConflictError, NotFoundError } from '../../common/exceptions';
 import { metresBetween } from '../buildings/buildings.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
+import { unitsUnderReview } from '../buildings/unit-status';
 import {
   duplicateSignals,
   foldNamePart,
@@ -146,6 +149,7 @@ export class DataQualityService {
       this.occupantsWithLandlordPhone(),
       this.nearDuplicateBuildings(),
       this.unitStatusContradictions(),
+      this.unitsHeldForReview(),
       this.buildingsWithoutPin(),
       this.unitsWithoutArea(),
       this.unlinkedLandlords(),
@@ -433,7 +437,7 @@ export class DataQualityService {
             duplicateCitizens: countKind('DUPLICATE_CITIZEN') + countKind('HELD_AS_POSSIBLE_DUPLICATE'),
             landlordPhoneCopies: countKind('OCCUPANT_HAS_LANDLORD_PHONE'),
             nearDuplicateBuildings: countKind('NEAR_DUPLICATE_BUILDINGS'),
-            statusContradictions: countKind('UNIT_STATUS_CONTRADICTION'),
+            statusContradictions: countKind('UNIT_STATUS_CONTRADICTION') + countKind('UNIT_UNDER_REVIEW'),
           },
           acknowledgedDuplicateBuildings: {
             count: ack?.count ?? 0,
@@ -736,6 +740,54 @@ export class DataQualityService {
       at: row.updatedAt.toISOString(),
       dismissable: true,
     }));
+  }
+
+  /**
+   * Flats whose occupancy fee billing is holding — the same rule, read the same
+   * way (`unitsUnderReview`), so this list and the held flats on a bill are one
+   * list. Each clears itself once the flat's records agree.
+   */
+  private async unitsHeldForReview(): Promise<RawFinding[]> {
+    const held = await unitsUnderReview(this.db);
+    if (held.size === 0) return [];
+    const buildings = await this.db.building.findMany({
+      where: { id: { in: [...new Set([...held.values()].map((row) => row.buildingId))] } },
+      select: { id: true, code: true, name: true, parcelNumber: true },
+    });
+    const byId = new Map(buildings.map((building) => [building.id, building]));
+    const label = (status: string | null) =>
+      status ? ((ar.unitStatus as Record<string, string>)[status] ?? status) : 'غير محددة';
+
+    return [...held.values()].flatMap((row) => {
+      const building = byId.get(row.buildingId);
+      if (!building) return [];
+      const feeHeld = row.conflicts.length > 0;
+      const detail = feeHeld
+        ? `الوحدة ${row.unitCode}: ${row.conflicts
+            .map((conflict) => describeUnitStatusConflict(conflict, label))
+            .join('؛ ')}. رسم الإشغال عليها معلَّق حتى تُسوّى`
+        : `الوحدة ${row.unitCode}: مسجَّلة «${label(row.current)}» والصحيح «${label(row.status)}» حسب من هو مسجَّل فيها — الفوترة تحتسب «${label(row.status)}» منذ الآن، و«مراجعة حالة الوحدات» تصحّح السجل`;
+      return [
+        {
+          kind: 'UNIT_UNDER_REVIEW' as const,
+          subjectKey: row.unitId,
+          severity: feeHeld ? ('HIGH' as const) : ('LOW' as const),
+          detail,
+          subjects: [
+            {
+              kind: 'building' as const,
+              id: building.id,
+              label: building.name ? `${building.code} — ${building.name}` : building.code,
+              secondary: `عقار ${building.parcelNumber}`,
+            },
+          ],
+          officerIds: [],
+          // When it was found, not when it began: the rule is recomputed on every scan.
+          at: new Date().toISOString(),
+          dismissable: false,
+        },
+      ];
+    });
   }
 
   /** Structures with no entrance — the duplicate prompt cannot measure from them. */

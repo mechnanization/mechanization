@@ -1761,6 +1761,13 @@ export class CitizensService {
 
     /** What undoing links during this save wrote, emitted once it commits. */
     const revertEvents: PendingEvent[] = [];
+    /*
+      «حالة الوحدة» statements this save left as they were — card lines and منزل
+      cards, by id. The census sync carries only a changed statement over the
+      unit, so opening a file to fix a phone number never replays an old answer
+      over a newer finding on the matrix (`CensusSyncService.declareUnitStatus`).
+    */
+    const unchangedStatements = new Set<string>();
     const unlinkedBySave: Array<{ propertyEntryId: string; report: RevertReport }> = [];
 
     // Where the record stands *after* this save. A record whose last gap was
@@ -1857,6 +1864,7 @@ export class CitizensService {
           landlordName: string | null;
           landlordCitizenId: string | null;
           landlordLinkFootprint: Prisma.JsonValue;
+          unitStatus: string | null;
         }
       >();
       if (existing?.id) {
@@ -1873,6 +1881,7 @@ export class CitizensService {
             landlordName: true,
             landlordCitizenId: true,
             landlordLinkFootprint: true,
+            unitStatus: true,
           },
         });
         for (const card of cards) linkState.set(card.id, card);
@@ -1941,6 +1950,7 @@ export class CitizensService {
 
         if (id) {
           const state = linkState.get(id);
+          if (state && (state.unitStatus ?? null) === (data.unitStatus ?? null)) unchangedStatements.add(id);
           const locked =
             Boolean(state?.landlordCitizenId) &&
             linkLocked.has(index) &&
@@ -1985,7 +1995,7 @@ export class CitizensService {
           */
           const stored = await tx.buildingUnit.findMany({
             where: { propertyEntryId: id },
-            select: { id: true, endedAt: true, createdAt: true },
+            select: { id: true, endedAt: true, createdAt: true, unitStatus: true, unitId: true },
           });
           const storedById = new Map(stored.map((row) => [row.id, row]));
           const kept = new Set<string>();
@@ -2000,6 +2010,10 @@ export class CitizensService {
             }
             if (row && !kept.has(row.id)) {
               kept.add(row.id);
+              // The owner said the same thing about the same flat as last time — see `unchangedStatements`.
+              if ((row.unitStatus ?? null) === (unit.unitStatus ?? null) && (row.unitId ?? null) === (unit.unitId ?? null)) {
+                unchangedStatements.add(row.id);
+              }
               return { unit, row };
             }
             return { unit, row: undefined };
@@ -2095,6 +2109,7 @@ export class CitizensService {
       citizenId: citizen.id,
       actor: input.actor,
       endings,
+      unchangedStatements,
     });
 
     /*

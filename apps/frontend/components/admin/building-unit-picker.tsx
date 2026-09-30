@@ -727,23 +727,14 @@ export function BuildingUnitPicker({
         person says it rather than as "0". `parseFloorLabel` is the door back
         the other way; this is the door out.
 
-        `unitStatus` falls back to the last row's answer, because `Unit.
-        unitStatus` is nullable and usually null: the census records that a flat
-        exists long before anybody asks whether it is lived in. Ticking a flat
-        therefore produced a row with «حالة الوحدة» blank, and a landlord
-        ticking eight of them was asked the same question eight times — which is
-        the exact inflation `addUnit` already avoids by inheriting it. The
-        canonical answer still wins wherever the census has one.
-
-        The inheritance stops dead at a flat somebody else is living in, and
-        that exception is the whole billing fix on this side. A landlord ticking
-        eight flats, one of which is let, used to have the *previous* flat's
-        «مشغولة من المالك» copied onto the let one — and `bearsFee` then charged
-        them the occupancy fee for a flat whose tenant was being charged it too.
-        A guess about flat 7 is not evidence about flat 8, least of all when the
-        census is holding the answer for flat 8. `occupancyStatusOf` reads it.
+        `unitStatus` is the census's own answer for the flat — its حالة, or what a
+        tenant or شاغل بتسامح recorded in it implies (`occupancyStatusOf`) — and
+        otherwise nothing. It used to fall back to the previous row's answer, so a
+        landlord ticking eight flats had the first one's «مشغولة من المالك» copied
+        onto the rest, including onto flats nobody had asked about. Since
+        2026-09-30 the field is required of an owner and starts empty: a copied
+        answer is a guess, and an empty one is a question the form asks.
       */
-      const previous = units.at(-1);
       const occupied = occupancyStatusOf(unit);
       const row: UnitDraft = {
         unitId: unit.id,
@@ -751,7 +742,7 @@ export function BuildingUnitPicker({
         floor: floorText(unit.floor, en),
         side: unit.side ?? undefined,
         unitArea: unit.unitArea != null ? String(unit.unitArea) : undefined,
-        unitStatus: unit.unitStatus ?? occupied ?? previous?.unitStatus,
+        unitStatus: unit.unitStatus ?? occupied ?? undefined,
       };
 
       /*
@@ -877,9 +868,8 @@ export function BuildingUnitPicker({
             floor: floorText(created.floor, en),
             side: created.side ?? undefined,
             unitArea: created.unitArea != null ? String(created.unitArea) : undefined,
-            // Inherited for the same reason `toggleUnit` inherits it: a flat
-            // the census has only just heard of has no status of its own yet.
-            unitStatus: created.unitStatus ?? (current.units ?? []).at(-1)?.unitStatus,
+            // A flat the census has only just heard of has no status yet — asked, not copied.
+            unitStatus: created.unitStatus ?? undefined,
           },
         ],
       }));

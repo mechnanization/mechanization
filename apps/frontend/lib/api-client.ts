@@ -2394,6 +2394,23 @@ export async function confirmVacancy(
  * حالة the confirmation replaced, «لم تعد شاغرة» leaves it occupied by somebody
  * not yet recorded, which is what bills the owner again until they are.
  */
+/**
+ * «مراجعة حالة الوحدات» — SUPER_ADMIN. Applies the one status rule to every
+ * flat whose records disagree, and opens a «تعارض في حالة الوحدة» case on each
+ * one a person has to decide. Safe to run again.
+ */
+export async function settleAllUnitStatuses(tenant: string, token: string) {
+  const result = await apiFetch<{
+    unitsChecked: number;
+    statusesChanged: number;
+    casesOpened: number;
+    casesResolved: number;
+    stillUnderReview: number;
+  }>(tenant, '/buildings/units/status-review', { token, method: 'POST' });
+  invalidateCensus(tenant);
+  return result;
+}
+
 export async function endVacancy(
   tenant: string,
   token: string,
@@ -4263,6 +4280,12 @@ export async function issueFeeNotice(
      * bearer rule left out has something to take to the council.
      */
     exemptedUnits?: number;
+    /**
+     * Flats whose occupancy fee this notice held because their records
+     * disagree — see `FeeAssessment.heldUnitCount`. Charged on a later run
+     * once the «تعارض في حالة الوحدة» is settled.
+     */
+    heldUnits?: number;
   }>(tenant, '/fees/notices', {
     token,
     method: 'POST',

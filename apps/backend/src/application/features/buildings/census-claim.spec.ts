@@ -1,5 +1,17 @@
 import { BuildingsService } from './buildings.service';
 
+/*
+  `settleUnit` (the one status rule) reads a dozen tables these fakes do not
+  model. Its behaviour is pinned by `unit-status.spec.ts` and the DB suites;
+  here it is a collaborator, and what these tests check is that it is asked.
+*/
+import { settleUnit } from './unit-status';
+
+jest.mock('./unit-status', () => ({
+  ...jest.requireActual('./unit-status'),
+  settleUnit: jest.fn().mockResolvedValue(null),
+}));
+
 /**
  * Recording a spell establishes the citizen's own claim on the flat.
  *
@@ -827,20 +839,25 @@ describe('recordOccupancy — حالة الوحدة', () => {
     expect(unitUpdate).not.toHaveBeenCalled();
   });
 
-  it('still only infers a non-owner’s حالة into a unit nobody has answered for', async () => {
+  it('leaves a non-owner’s حالة to the one rule rather than filling it here', async () => {
     /*
-      Unchanged, and deliberately so: an inference may fill a gap, never
-      overwrite a finding. An officer who recorded «شاغرة» and a tenancy that
-      says otherwise are a contradiction for a person to resolve.
+      Changed 2026-09-30. This used to fill «مؤجرة» only into a unit nobody
+      had answered for, so a tenant recorded on a flat already marked «موسمي»
+      or «مشغولة من المالك» left that standing and the owner was billed beside
+      the tenant. The status now follows who is recorded, by `settleUnit`,
+      whatever the unit said before; this path writes nothing of its own.
     */
     const { service, unitUpdate, unitUpdateMany } = harness({ role: 'TENANT' });
 
     await record(service, { role: 'TENANT' });
 
     expect(unitUpdate).not.toHaveBeenCalled();
-    expect(unitUpdateMany).toHaveBeenCalledWith({
-      where: { id: UNIT, unitStatus: null },
-      data: { unitStatus: 'RENTED' },
-    });
+    expect(unitUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { unitStatus: expect.anything() } }),
+    );
+    expect(settleUnit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ unitId: UNIT, via: 'OCCUPANCY_RECORDED' }),
+    );
   });
 });

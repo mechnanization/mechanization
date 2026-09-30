@@ -5,12 +5,13 @@ import {
   contradictsVacancy,
   isStructuralUnitType,
   isUnoccupied,
+  feeBearerClass,
   OCCUPANCY_LIFTS_SURVEY_STATUS,
-  unitStatusForRole,
 } from '@mechanization/shared-schemas';
 import type { OccupancyRole, OccupancyType } from '@mechanization/shared-schemas';
 import { CasesService } from '../cases/cases.service';
-import { activeVacancy, closeActiveVacancy } from './unit-vacancy';
+import { activeVacancy, closeActiveVacancy, openVacancy } from './unit-vacancy';
+import { settleUnit } from './unit-status';
 
 /**
  * The write path from a citizen's registration back into the census (P5-T1).
@@ -99,6 +100,12 @@ export class CensusSyncService {
     scope?: 'CITIZEN' | 'REGISTRATION';
     /** Why the flats of cards removed on this save stopped being held — see `CardEnding`. */
     endings?: ReadonlyMap<string, CardEnding>;
+    /**
+     * Card lines (by id) and منزل cards (by id) whose «حالة الوحدة» this save did
+     * not change. An unchanged statement is not repeated over the unit — see
+     * `declareUnitStatus`. Absent on a new filing, where every statement is new.
+     */
+    unchangedStatements?: ReadonlySet<string>;
   }): Promise<CensusSyncResult> {
     const result: CensusSyncResult = {
       occupanciesCreated: 0,
@@ -118,8 +125,23 @@ export class CensusSyncService {
       re-open the very spell «إنهاء الإيجار» just closed, the next time anybody
       saved the household's file for any reason.
     */
+    /*
+      A card whose own building link is empty but whose lines name flats is read
+      too. Production held one on 2026-09-30 (A3-1292-B): the line named flat
+      0001 and the card had no `buildingId`, so this query skipped it on every
+      save — the owner was billed for the flat through the line while the census
+      never recorded them in it and the flat stayed «غير ممسوحة». The building is
+      taken from the flats the lines name (below); the card is left as filed.
+    */
     const properties = await this.db.propertyEntry.findMany({
-      where: { registrationId: input.registrationId, buildingId: { not: null }, endedAt: null },
+      where: {
+        registrationId: input.registrationId,
+        endedAt: null,
+        OR: [
+          { buildingId: { not: null } },
+          { units: { some: { endedAt: null, unitId: { not: null } } } },
+        ],
+      },
       select: {
         id: true,
         propertyType: true,
@@ -136,7 +158,7 @@ export class CensusSyncService {
         unitStatus: true,
         units: {
           where: { endedAt: null },
-          select: { id: true, unitId: true, unitStatus: true },
+          select: { id: true, unitId: true, unitStatus: true, unit: { select: { buildingId: true } } },
         },
       },
     });
@@ -158,11 +180,22 @@ export class CensusSyncService {
         buildingId: string;
         /** حالة الوحدة this card states about the flat, or null where it states none. */
         declaredStatus: string | null;
+        /** Whether this save changed that statement (or this is a new filing). */
+        statementChanged: boolean;
       }
     >();
+    const changed = (statementId: string) => !input.unchangedStatements?.has(statementId);
 
     for (const property of properties) {
-      const buildingId = property.buildingId;
+      /*
+        The card's own link, or — where it has none — the one building every
+        flat its lines name is in. Lines spanning two buildings name no single
+        one, and the card is left for a person (the quality scan lists it).
+      */
+      const lineBuildings = [
+        ...new Set(property.units.map((unit) => unit.unit?.buildingId).filter((id): id is string => Boolean(id))),
+      ];
+      const buildingId = property.buildingId ?? (lineBuildings.length === 1 ? lineBuildings[0]! : null);
       if (!buildingId) continue;
 
       /*
@@ -196,6 +229,7 @@ export class CensusSyncService {
             propertyId: property.id,
             buildingId,
             declaredStatus: unit.unitStatus ?? null,
+            statementChanged: changed(unit.id),
           });
         }
         continue;
@@ -229,6 +263,7 @@ export class CensusSyncService {
           propertyId: property.id,
           buildingId,
           declaredStatus: property.unitStatus ?? null,
+          statementChanged: changed(property.id),
         });
     }
 
@@ -250,7 +285,7 @@ export class CensusSyncService {
     */
     let firstFailure: unknown = null;
 
-    for (const [unitId, { role, buildingId, declaredStatus }] of claimed) {
+    for (const [unitId, { role, buildingId, declaredStatus, statementChanged }] of claimed) {
       try {
         const applied = await this.applyOccupancy({
           unitId,
@@ -259,6 +294,7 @@ export class CensusSyncService {
           registrationId: input.registrationId,
           role,
           declaredStatus,
+          statementChanged,
           actor: input.actor,
         });
 
@@ -324,6 +360,8 @@ export class CensusSyncService {
      * own answer, carried onto the unit by `declareUnitStatus` below.
      */
     declaredStatus: string | null;
+    /** Whether this save changed that statement — see `declareUnitStatus`. */
+    statementChanged: boolean;
     actor: { id: string; role: string };
   }): Promise<{
     created: boolean;
@@ -520,24 +558,6 @@ export class CensusSyncService {
     });
 
     /*
-      حالة الوحدة, from the capacity just recorded — the same write
-      `recordOccupancy` now makes, because the two paths must leave the census
-      in the same state or the door an officer came through changes the answer.
-
-      Null-only, so a status somebody set by hand survives. See the note there
-      for the double-charge this closes: a مستأجر recorded here with the unit
-      left null meant the landlord's card kept «مشغولة من المالك» and both of
-      them were billed for the flat.
-    */
-    const impliedStatus = unitStatusForRole(input.role);
-    if (impliedStatus) {
-      await this.db.unit.updateMany({
-        where: { id: input.unitId, unitStatus: null },
-        data: { unitStatus: impliedStatus as never },
-      });
-    }
-
-    /*
       …and حالة الوحدة as the owner's own card states it, which *replaces*.
 
       This is the half that was missing, and the gap it left is a split record
@@ -601,6 +621,18 @@ export class CensusSyncService {
       input.actor,
     );
 
+    /*
+      And حالة الوحدة follows who is now recorded here, by the one rule
+      (`settleUnitStatus`). This replaces a write that filled the status from the
+      capacity only when it was empty — so a tenant filed on a flat already
+      marked «مسكن موسمي» or «مشغولة من المالك» left that in place, and the owner
+      went on paying beside the tenant. Z-5-257-A/0201 was exactly that on
+      2026-09-30: «موسمي» set at 17:06, tenant filed at 17:10, both billed.
+      A registered tenant is the better evidence of who lives there; what the
+      rule cannot settle becomes a «تعارض في حالة الوحدة» case on the unit.
+    */
+    await this.settle(input.unitId, input.actor);
+
     this.events.emit('building.changed', {
       tenantSlug: this.tenantContext.tenantSlug,
       action: 'OCCUPANCY_RECORDED',
@@ -658,7 +690,8 @@ export class CensusSyncService {
     citizenId: string;
     role: OccupancyRole;
     declaredStatus: string | null;
-    unit: { buildingId: string; unitCode: string; unitStatus: string | null };
+    statementChanged: boolean;
+    unit: { buildingId: string; unitCode: string; unitStatus: string | null; surveyStatus: string };
     actor: { id: string; role: string };
   }): Promise<void> {
     const declared = input.declaredStatus;
@@ -666,12 +699,68 @@ export class CensusSyncService {
     // Already what the card says. Not a no-op worth an audit row.
     if (declared === input.unit.unitStatus) return;
 
+    /*
+      Only a statement this save made is carried onto the unit — or any
+      statement, while the unit has none.
+
+      Without this, every save of the owner's file for any reason — a phone
+      number, a spelling — replayed whatever the card said months ago over a
+      newer finding on the matrix: an officer's «مشغولة من المالك» corrected to
+      «مسكن موسمي» in the unit editor went back to «مشغولة من المالك» the next
+      time anybody opened the owner's file. An unchanged statement that
+      disagrees with the unit is left where it is, and `settleUnit` puts the
+      disagreement to a person as a «تعارض في حالة الوحدة» case instead.
+    */
+    if (!input.statementChanged && input.unit.unitStatus !== null) return;
+
     const standing = await activeVacancy(this.db, input.unitId);
-    if (standing && contradictsVacancy(input.role, declared)) {
-      this.logger.warn(
-        `census sync: unit ${input.unit.unitCode} is confirmed vacant (${standing.id}); the owner's card says ${declared} — unit left as recorded, card unchanged`,
-      );
-      return;
+    if (standing) {
+      if (declared === 'VACANT') return;
+      /*
+        The owner withdrawing their own vacancy declaration. A vacancy that
+        rests on nothing but what this owner said is ended by what this owner
+        now says — «لم تعد شاغرة», as when a household moves in. One resting on
+        an officer's visit, a neighbour or a filed تصريح is a finding, and an
+        owner's card does not overrule it: that disagreement goes to review.
+      */
+      if (standing.basis === 'OWNER_STATEMENT' && feeBearerClass(declared) !== 'NOBODY') {
+        const closed = await closeActiveVacancy(this.db, {
+          unitId: input.unitId,
+          unit: input.unit,
+          reason: 'NO_LONGER_VACANT',
+          notes: 'عدّل المالك تصريحه على بطاقته',
+          actorId: input.actor.id,
+        });
+        if (closed) {
+          await this.db.unit.update({
+            where: { id: input.unitId },
+            data: {
+              ...(closed.restore.unitStatus !== undefined ? { unitStatus: closed.restore.unitStatus as never } : {}),
+              ...(closed.restore.surveyStatus !== undefined ? { surveyStatus: closed.restore.surveyStatus as never } : {}),
+            },
+          });
+          this.events.emit('building.changed', {
+            tenantSlug: this.tenantContext.tenantSlug,
+            action: 'UNIT_VACANCY_ENDED',
+            buildingId: input.unit.buildingId,
+            before: { unitStatus: input.unit.unitStatus, surveyStatus: input.unit.surveyStatus },
+            after: {
+              unitCode: input.unit.unitCode,
+              vacancyId: closed.confirmation!.id,
+              reason: 'NO_LONGER_VACANT',
+              citizenId: input.citizenId,
+              via: 'REGISTRATION',
+            },
+            actorId: input.actor.id,
+            actorRole: input.actor.role,
+          });
+        }
+      } else if (contradictsVacancy(input.role, declared)) {
+        this.logger.warn(
+          `census sync: unit ${input.unit.unitCode} is confirmed vacant (${standing.id}); the owner's card says ${declared} — unit left as recorded, put to review`,
+        );
+        return;
+      }
     }
 
     /*
@@ -712,6 +801,45 @@ export class CensusSyncService {
       this.logger.warn(
         `census sync: unit ${input.unit.unitCode} is a seasonal home; the owner's card says ${declared} — unit left as recorded, card unchanged`,
       );
+      return;
+    }
+
+    /*
+      «شاغرة» on the owner's own card is a تصريح بالشغور, made on the owner's
+      responsibility, and it exempts them straight away (the user's decision,
+      2026-09-30; هيئة التشريع والاستشارات 725/2003). So it is recorded as a
+      vacancy resting on `OWNER_STATEMENT` — dated, attributed and undoable from
+      the drawer like any other — rather than a bare «شاغرة» on the unit that
+      nothing could later tell apart from an officer's finding. The two checks
+      `confirmVacancy` makes (nobody else living there, not a seasonal home) were
+      made just above; a vacancy already standing returned earlier.
+    */
+    if (declared === 'VACANT') {
+      const confirmation = await openVacancy(this.db, {
+        unitId: input.unitId,
+        unit: input.unit,
+        basis: 'OWNER_STATEMENT',
+        notes: 'تصريح المالك على بطاقته في ملفه',
+        actorId: input.actor.id,
+      });
+      const casesResolved = await this.cases.resolveVacancyCasesForUnit(input.unitId, input.actor);
+      this.events.emit('building.changed', {
+        tenantSlug: this.tenantContext.tenantSlug,
+        action: 'UNIT_VACANCY_CONFIRMED',
+        buildingId: input.unit.buildingId,
+        before: { unitStatus: input.unit.unitStatus, surveyStatus: input.unit.surveyStatus },
+        after: {
+          unitCode: input.unit.unitCode,
+          vacancyId: confirmation.id,
+          basis: 'OWNER_STATEMENT',
+          observedAt: confirmation.observedAt,
+          citizenId: input.citizenId,
+          casesResolved,
+          via: 'REGISTRATION',
+        },
+        actorId: input.actor.id,
+        actorRole: input.actor.role,
+      });
       return;
     }
 
@@ -907,6 +1035,17 @@ export class CensusSyncService {
       });
     }
 
+    /*
+      A tenant unticked or removed on the edit form has left the flat on paper,
+      and the «مؤجرة» their spell made the unit is no longer anyone's to bear.
+      This used to stay: the owner exempt as the landlord of a flat nobody was
+      in, and nobody billed. The rule puts it to review instead of guessing
+      whether the owner moved back in, it stood empty, or a new tenant came.
+    */
+    for (const unitId of new Set(closing.map((row) => row.unitId))) {
+      await this.settle(unitId, input.actor);
+    }
+
     return endedCount;
   }
 
@@ -922,12 +1061,24 @@ export class CensusSyncService {
    * than hide: the record is safe, the census is behind, and the link can be
    * re-made from the ledger. Silence is the one option not on the table.
    */
+  /** `settleUnit`, with its audit rows emitted. This service runs outside any transaction. */
+  private async settle(unitId: string, actor: { id: string; role: string }): Promise<void> {
+    const outcome = await settleUnit(this.db, {
+      unitId,
+      tenantSlug: this.tenantContext.tenantSlug,
+      actor,
+      via: 'REGISTRATION',
+    });
+    for (const event of outcome?.events ?? []) this.events.emit(event.channel, event.payload);
+  }
+
   async syncQuietly(input: {
     registrationId: string;
     citizenId: string;
     actor: { id: string; role: string };
     scope?: 'CITIZEN' | 'REGISTRATION';
     endings?: ReadonlyMap<string, CardEnding>;
+    unchangedStatements?: ReadonlySet<string>;
   }): Promise<CensusSyncResult | null> {
     try {
       const result = await this.syncRegistration(input);

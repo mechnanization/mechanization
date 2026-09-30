@@ -156,6 +156,50 @@ export async function closeActiveVacancy(
   };
 }
 
+/**
+ * Records a vacancy the way `BuildingsService.confirmVacancy` does — the row and
+ * its effect on the unit, together — for callers that have already made that
+ * method's checks themselves and have no officer to put a refusal to.
+ *
+ * The census sync is the one that needs it: an owner whose own card says
+ * «شاغرة» has made a تصريح بالشغور on their own responsibility (Law 60/1988;
+ * هيئة التشريع والاستشارات 725/2003), and that declaration exempts them
+ * straight away (the user's decision, 2026-09-30) — so it is recorded as what it
+ * is, a vacancy resting on `OWNER_STATEMENT`, with a date and an undo, rather
+ * than as a bare «شاغرة» written onto the unit that nothing can later tell
+ * apart from an officer's finding.
+ *
+ * The caller must already have refused what `confirmVacancy` refuses: a
+ * structural unit, a vacancy already standing, and a flat somebody else is
+ * registered in or that is a seasonal home (`assertMayBeCalledEmpty`).
+ */
+export async function openVacancy(
+  db: Pick<TenantPrismaClient, 'unitVacancyConfirmation' | 'unit'>,
+  input: {
+    unitId: string;
+    unit: { unitStatus: string | null; surveyStatus: string };
+    basis: 'FIELD_INSPECTION' | 'OWNER_STATEMENT' | 'NEIGHBOUR_OR_CARETAKER' | 'DECLARATION_FILED';
+    notes?: string | null;
+    actorId: string | null;
+  },
+) {
+  const confirmation = await db.unitVacancyConfirmation.create({
+    data: {
+      unitId: input.unitId,
+      basis: input.basis as never,
+      notes: input.notes?.trim() || null,
+      confirmedById: input.actorId,
+      previousUnitStatus: input.unit.unitStatus as never,
+      previousSurveyStatus: input.unit.surveyStatus as never,
+    },
+  });
+  await db.unit.update({
+    where: { id: input.unitId },
+    data: { unitStatus: 'VACANT', surveyStatus: 'VACANT_CONFIRMED' },
+  });
+  return confirmation;
+}
+
 export function toVacancyRow(row: {
   id: string;
   unitId: string;

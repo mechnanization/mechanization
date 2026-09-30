@@ -106,6 +106,14 @@ export const QUALITY_FINDING_KIND = [
   'OCCUPANT_HAS_LANDLORD_PHONE',
   'NEAR_DUPLICATE_BUILDINGS',
   'UNIT_STATUS_CONTRADICTION',
+  /**
+   * A flat the status rule has something to say about. HIGH: its records
+   * disagree in a way that decides who pays (`settleUnitStatus` found a
+   * conflict), and billing holds its occupancy fee. LOW: its stored status lags
+   * what the rule decides; billing already uses the rule's. Not dismissable:
+   * dismissing it would not change the bill, only hide why.
+   */
+  'UNIT_UNDER_REVIEW',
   'BUILDING_WITHOUT_PIN',
   'UNITS_WITHOUT_AREA',
   'UNLINKED_LANDLORDS',
@@ -155,6 +163,7 @@ export function qualityLabels(locale: string) {
       OCCUPANT_HAS_LANDLORD_PHONE: en ? "Occupant carries the owner's number" : 'رقم الشاغل هو رقم المالك',
       NEAR_DUPLICATE_BUILDINGS: en ? 'Buildings metres apart on one parcel' : 'مبانٍ متلاصقة على العقار نفسه',
       UNIT_STATUS_CONTRADICTION: en ? 'Unit and owner card disagree' : 'حالة الوحدة تخالف بطاقة المالك',
+      UNIT_UNDER_REVIEW: en ? 'Unit status to review' : 'حالة الوحدة للمراجعة',
       BUILDING_WITHOUT_PIN: en ? 'Building with no entrance pin' : 'مبنى بلا مدخل مُثبت',
       UNITS_WITHOUT_AREA: en ? 'Occupied units with no area' : 'وحدات مشغولة بلا مساحة',
       UNLINKED_LANDLORDS: en ? 'Owners named but not linked' : 'مالكون مذكورون غير مربوطين',

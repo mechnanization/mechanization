@@ -1356,6 +1356,9 @@ export function PropertyCard({
                 onChange={(unitStatus) => set({ unitStatus })}
                 // A منزل is a dwelling; its owner lives elsewhere, so not in it.
                 omit={nonResident ? ['OWNER_OCCUPIED'] : []}
+                path={flagPath(index, 'unitStatus')}
+                required
+                error={errors.unitStatus}
                 locale={locale}
               />
             ) : null}

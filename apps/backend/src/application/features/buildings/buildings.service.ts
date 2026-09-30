@@ -12,6 +12,7 @@ import {
   isDwellingUnitType,
   isStructuralUnitType,
   isUnoccupied,
+  feeBearerClass,
   OCCUPANCY_LIFTS_SURVEY_STATUS,
   SURVEYED_STATUS,
   unitStatusForRole,
@@ -51,6 +52,7 @@ import type {
   VisitRow,
 } from './building.types';
 import { activeVacancy, closeActiveVacancy, toVacancyRow } from './unit-vacancy';
+import { settleUnit, unitsUnderReview } from './unit-status';
 
 /**
  * The census's write side: structures, their unit matrices, and who is in them.
@@ -321,6 +323,83 @@ export class BuildingsService {
       actorId: input.actor.id,
       actorRole: input.actor.role,
     });
+  }
+
+  /**
+   * «حالة الوحدة» brought back in line with who is recorded in the flat, and the
+   * unit's «تعارض» case with it — see `settleUnit`. Called last by every action
+   * here that changes who is in a flat or what anyone says about it.
+   */
+  private async settle(
+    unitId: string,
+    actor: { id: string; role: string },
+    via: string,
+  ): Promise<{ statusChanged: boolean }> {
+    const outcome = await settleUnit(this.db, {
+      unitId,
+      tenantSlug: this.tenantContext.tenantSlug,
+      actor,
+      via,
+    });
+    for (const event of outcome?.events ?? []) this.events.emit(event.channel, event.payload);
+    return { statusChanged: Boolean(outcome && outcome.before !== outcome.after) };
+  }
+
+  /**
+   * «مراجعة حالة الوحدات» — the rule applied to every flat that needs it, once.
+   *
+   * Every write path settles the flat it touches from now on, but the flats
+   * nobody touches keep whatever the old paths left: on 2026-09-30 that was 23
+   * flats marked «مؤجرة» with no tenant anywhere, and a seasonal home billed
+   * to its owner and its tenant both. Billing already holds them (it reads the
+   * rule, not the stored status); this writes the settled status and opens the
+   * «تعارض في حالة الوحدة» case on each, so an officer has something to act on,
+   * and closes cases whose disagreement is gone. Safe to run again: a settled
+   * flat is left alone.
+   */
+  async settleAllUnits(actor: { id: string; role: string }): Promise<{
+    unitsChecked: number;
+    statusesChanged: number;
+    casesOpened: number;
+    casesResolved: number;
+    stillUnderReview: number;
+  }> {
+    const held = await unitsUnderReview(this.db);
+    const withCases = await this.db.case.findMany({
+      where: {
+        caseType: 'STATUS_CONFLICT' as never,
+        status: { in: ['OPEN', 'SCHEDULED'] as never },
+        unitId: { not: null },
+      },
+      select: { unitId: true },
+    });
+    const unitIds = new Set<string>([...held.keys(), ...withCases.map((row) => row.unitId!)]);
+
+    let statusesChanged = 0;
+    let casesOpened = 0;
+    let casesResolved = 0;
+    for (const unitId of unitIds) {
+      const outcome = await settleUnit(this.db, {
+        unitId,
+        tenantSlug: this.tenantContext.tenantSlug,
+        actor,
+        via: 'STATUS_REVIEW',
+      });
+      if (!outcome) continue;
+      if (outcome.before !== outcome.after) statusesChanged += 1;
+      if (outcome.caseOpened) casesOpened += 1;
+      casesResolved += outcome.casesResolved;
+      for (const event of outcome.events) this.events.emit(event.channel, event.payload);
+    }
+
+    const after = await unitsUnderReview(this.db);
+    return {
+      unitsChecked: unitIds.size,
+      statusesChanged,
+      casesOpened,
+      casesResolved,
+      stillUnderReview: after.size,
+    };
   }
 
   // ───────────────────────────────  Reads  ───────────────────────────────
@@ -2361,6 +2440,20 @@ export class BuildingsService {
     }
 
     /*
+      …and calling it the owner's is refused over the same people.
+
+      «مشغولة من المالك» or «مسكن موسمي» on a flat a مستأجر or شاغل بتسامح is
+      registered in says the owner bears the occupancy fee there — and the tenant
+      bears it too, on their own card. Nothing refused this, and the matrix tile
+      went on showing «مؤجرة» from the spell, so nobody saw the double charge.
+      The tenant is ended first, with the day they left, or the flat is left as
+      it is.
+    */
+    if (input.unitStatus != null && feeBearerClass(input.unitStatus) === 'OWNER') {
+      await this.assertNoOccupantBesidesOwner(before, input.unitStatus);
+    }
+
+    /*
       Retyping a real unit into «طابق أعمدة».
 
       The correction this exists to allow is the common one: a block painted
@@ -2608,6 +2701,14 @@ export class BuildingsService {
       actor,
     });
 
+    if (input.unitStatus !== undefined || becomingStructural) {
+      const { statusChanged } = await this.settle(unitId, actor, 'UNIT_EDITOR');
+      if (statusChanged) {
+        const settled = await this.db.unit.findUnique({ where: { id: unitId } });
+        if (settled) return toUnitRow(settled);
+      }
+    }
+
     return toUnitRow(updated);
   }
 
@@ -2650,6 +2751,28 @@ export class BuildingsService {
     return typeof client.$transaction === 'function'
       ? this.db.$transaction(work, { maxWait: 15_000, timeout: 30_000 })
       : work(this.db as unknown as Prisma.TransactionClient);
+  }
+
+  /** See `updateUnit`: an owner-side status over a registered tenant is a double charge. */
+  private async assertNoOccupantBesidesOwner(
+    unit: { id: string; unitCode: string },
+    status: string,
+    exceptCitizenId?: string,
+  ): Promise<void> {
+    const live = await this.db.unitOccupancy.count({
+      where: {
+        unitId: unit.id,
+        toDate: null,
+        role: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+        ...(exceptCitizenId ? { citizenId: { not: exceptCitizenId } } : {}),
+      },
+    });
+    if (live > 0) {
+      const label = status === 'SEASONAL' ? 'مسكناً موسمياً' : 'مشغولة من المالك';
+      throw new ConflictError(
+        `لا يمكن تسجيل الوحدة ${unit.unitCode} ${label}: يسكنها ${live} مستأجر أو شاغل مسجَّل، وكلاهما يُكلَّف برسم الإشغال عندها. أنهِ إشغاله أولاً، أو اختر «مؤجرة» / «مشغولة بتسامح»`,
+      );
+    }
   }
 
   private async assertMayBeCalledEmpty(unit: {
@@ -2796,6 +2919,8 @@ export class BuildingsService {
       actor,
     });
 
+    await this.settle(unitId, actor, 'VACANCY_CONFIRMED');
+
     return { vacancy: toVacancyRow(vacancy), unit: toUnitRow(updated), casesResolved };
   }
 
@@ -2903,7 +3028,15 @@ export class BuildingsService {
       actor,
     });
 
-    return { vacancy: toVacancyRow(vacancy), unit: toUnitRow(updated) };
+    /*
+      «سُجِّل بالخطأ» restores the status the vacancy replaced — which, after a
+      tenancy ended into it, can be the «مؤجرة» of a tenant who has gone. The
+      rule puts a let flat with nobody in it to review instead of billing nobody.
+    */
+    const { statusChanged } = await this.settle(unitId, actor, 'VACANCY_ENDED');
+    const settled = statusChanged ? await this.db.unit.findUnique({ where: { id: unitId } }) : null;
+
+    return { vacancy: toVacancyRow(vacancy), unit: toUnitRow(settled ?? updated) };
   }
 
   /**
@@ -3060,6 +3193,13 @@ export class BuildingsService {
   async recordOccupancy(
     input: UpsertOccupancyInput,
     actor: { id: string; role: string },
+    /**
+     * `fromMatrix`: an officer at the drawer, not another flow recording a
+     * party on the way (a sale's buyer, a landlord link's owner). Only then is
+     * an owner's answer that contradicts a registered tenant refused, and only
+     * then is the answer written onto the owner's own card.
+     */
+    options: { fromMatrix?: boolean } = {},
   ): Promise<{ occupancy: OccupancyRow; casesResolved: number; fileLink: FileLinkResult }> {
     const unit = await this.db.unit.findUnique({
       where: { id: input.unitId },
@@ -3186,6 +3326,21 @@ export class BuildingsService {
       left alone: someone who moved out and back in is two spells, which is
       exactly the history D2 exists to keep.
     */
+    /*
+      An owner said to live in, or to have emptied, a flat a registered tenant
+      lives in — refused at the drawer, for `updateUnit`'s reason. «شاغرة» is
+      also refused below by `confirmVacancy`; this says it first, in the words
+      that apply to an owner.
+    */
+    if (
+      options.fromMatrix &&
+      input.role === 'OWNER' &&
+      input.unitStatus &&
+      feeBearerClass(input.unitStatus) !== 'OTHERS'
+    ) {
+      await this.assertNoOccupantBesidesOwner(unit, input.unitStatus, input.citizenId);
+    }
+
     const current = await this.db.unitOccupancy.findFirst({
       where: { unitId: input.unitId, citizenId: input.citizenId, toDate: null },
     });
@@ -3268,16 +3423,29 @@ export class BuildingsService {
       recording the owner used to state none of them — so `bearsFee` read the null
       as «nobody was asked» and charged them the occupancy fee regardless.
     */
+    /*
+      Since 2026-09-30 the owner's «شاغرة» is a تصريح بالشغور and becomes a
+      vacancy resting on the owner's statement — dated, attributed, undoable —
+      instead of a bare «شاغرة» nothing could tell apart from a finding (the
+      user's decision). Every other owner answer replaces the unit's status as
+      before. What a tenant or شاغل بتسامح implies is no longer written here at
+      all: `settle` below derives it from who is recorded, whatever the unit said
+      before — the empty-only fill it replaces left a seasonal home «موسمي»
+      under a registered tenant, and both were billed.
+    */
     const impliedStatus = unitStatusForRole(input.role);
-    if (input.unitStatus) {
+    if (input.role === 'OWNER' && input.unitStatus === 'VACANT') {
+      if (!(await activeVacancy(this.db, input.unitId))) {
+        await this.confirmVacancy(
+          input.unitId,
+          { basis: 'OWNER_STATEMENT', notes: 'تصريح المالك عند تسجيله على الوحدة' } as never,
+          actor,
+        );
+      }
+    } else if (input.unitStatus) {
       await this.db.unit.update({
         where: { id: input.unitId },
         data: { unitStatus: input.unitStatus as never },
-      });
-    } else if (impliedStatus) {
-      await this.db.unit.updateMany({
-        where: { id: input.unitId, unitStatus: null },
-        data: { unitStatus: impliedStatus as never },
       });
     }
 
@@ -3330,6 +3498,28 @@ export class BuildingsService {
       landlord,
     });
 
+    /*
+      The owner's answer, on the owner's own card too.
+
+      A flat already on the owner's file came back `ALREADY_CLAIMED` and nothing
+      was written to it, so an owner re-recorded on the matrix as «مسكن موسمي»
+      kept «مشغولة من المالك» on their card — and the next save of their file
+      put that back on the unit. The two now say the same thing.
+    */
+    if (
+      options.fromMatrix &&
+      input.role === 'OWNER' &&
+      input.unitStatus &&
+      fileLink.outcome === 'ALREADY_CLAIMED' &&
+      fileLink.propertyEntryId
+    ) {
+      await this.stateOnOwnerCard(fileLink.propertyEntryId, input.unitId, input.unitStatus, {
+        citizenId: input.citizenId,
+        unitCode: unit.unitCode,
+        actor,
+      });
+    }
+
     this.record({
       action: 'OCCUPANCY_RECORDED',
       buildingId: unit.buildingId,
@@ -3368,7 +3558,62 @@ export class BuildingsService {
       actor,
     });
 
+    await this.settle(input.unitId, actor, 'OCCUPANCY_RECORDED');
+
     return { occupancy: toOccupancyRow(occupancy, fileLink.backed), casesResolved, fileLink };
+  }
+
+  /**
+   * Writes an owner's «حالة الوحدة» onto the card that already claims the flat:
+   * the line naming it, or — for a منزل on a one-unit structure — the card.
+   * Audited as an edit of the owner's file, which is what it is.
+   */
+  private async stateOnOwnerCard(
+    propertyEntryId: string,
+    unitId: string,
+    status: string,
+    context: { citizenId: string; unitCode: string; actor: { id: string; role: string } },
+  ): Promise<void> {
+    const card = await this.db.propertyEntry.findUnique({
+      where: { id: propertyEntryId },
+      select: {
+        id: true,
+        occupancyType: true,
+        propertyType: true,
+        unitStatus: true,
+        units: { where: { endedAt: null, unitId }, select: { id: true, unitStatus: true } },
+      },
+    });
+    if (!card || card.occupancyType !== 'OWNER') return;
+
+    let before: string | null = null;
+    if (card.units.length > 0) {
+      const line = card.units[0]!;
+      if (line.unitStatus === status) return;
+      before = line.unitStatus;
+      await this.db.buildingUnit.update({ where: { id: line.id }, data: { unitStatus: status as never } });
+    } else if (card.propertyType === 'HOUSE') {
+      if (card.unitStatus === status) return;
+      before = card.unitStatus;
+      await this.db.propertyEntry.update({ where: { id: card.id }, data: { unitStatus: status as never } });
+    } else {
+      return;
+    }
+
+    this.events.emit('citizen.changed', {
+      tenantSlug: this.tenantContext.tenantSlug,
+      citizenId: context.citizenId,
+      action: 'CITIZEN_UPDATED',
+      before: { unitStatus: before },
+      after: {
+        cards: [{ kind: 'changed', propertyEntryId: card.id, fields: ['unitStatus'] }],
+        unitCode: context.unitCode,
+        unitStatus: status,
+        via: 'OCCUPANCY',
+      },
+      actorId: context.actor.id,
+      actorRole: context.actor.role,
+    });
   }
 
   /**
@@ -3902,6 +4147,9 @@ export class BuildingsService {
       },
       actor,
     });
+
+    // A tenant ended here leaves «مؤجرة» on a flat nobody is in — see `settle`.
+    await this.settle(existing.unitId, actor, 'OCCUPANCY_ENDED');
 
     return toOccupancyRow(updated);
   }
