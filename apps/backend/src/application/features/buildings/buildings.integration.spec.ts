@@ -737,6 +737,43 @@ describeIfDb('BuildingsService', () => {
     );
   });
 
+  /*
+    «رفض» and «تعذّر الوصول» are attempts that got no data, and an occupant
+    recorded afterwards is that data. The matrix path lifts them for the same
+    reason the registration path does, and from the same shared list, so the
+    screen the officer used cannot change the answer.
+  */
+  it.each([
+    ['REFUSED', '6110'],
+    ['INACCESSIBLE', '6120'],
+  ] as const)(
+    'marks a unit last logged %s surveyed once an occupant is recorded',
+    async (outcome, parcelNumber) => {
+      const { building } = await createBuilding(
+        { parcelNumber, structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+        actor(),
+      );
+      const { units } = await buildings.generateUnits(
+        building.id,
+        { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+        actor(),
+      );
+      await buildings.logVisit({ unitId: units[0]!.id, outcome }, actor());
+
+      await buildings.recordOccupancy(
+        { unitId: units[0]!.id, citizenId: await citizen('ليلى'), role: 'OWNER' },
+        actor(),
+      );
+
+      expect((await db.unit.findUnique({ where: { id: units[0]!.id } }))?.surveyStatus).toBe(
+        'COMPLETE',
+      );
+      const stored = await db.building.findUniqueOrThrow({ where: { id: building.id } });
+      expect(stored.unitsSurveyed).toBe(1);
+      expect(stored.unitsTotal).toBe(1);
+    },
+  );
+
   it('keeps a previous tenant rather than overwriting them', async () => {
     // D2: a former tenant is information the municipality needs, not history to
     // discard the moment somebody else moves in.

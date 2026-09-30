@@ -5,6 +5,7 @@ import {
   contradictsVacancy,
   isStructuralUnitType,
   isUnoccupied,
+  OCCUPANCY_LIFTS_SURVEY_STATUS,
   unitStatusForRole,
 } from '@mechanization/shared-schemas';
 import type { OccupancyRole, OccupancyType } from '@mechanization/shared-schemas';
@@ -504,14 +505,17 @@ export class CensusSyncService {
     /*
       A unit with a registered household in it has been surveyed.
 
-      Narrowed to the three states that mean "we still do not know", exactly as
-      `recordOccupancy` narrows it. `VACANT_CONFIRMED`, `DEMOLISHED`, `REFUSED`
-      and `INACCESSIBLE` are findings that contradict this one, and a
-      contradiction is for a person to look at — not for a side effect of
-      somebody saving a phone number to overwrite.
+      Narrowed to the states that mean "we still do not have the answer",
+      with the same list `recordOccupancy` uses (`OCCUPANCY_LIFTS_SURVEY_STATUS`).
+      That list includes `REFUSED` and `INACCESSIBLE`. A door that stayed shut
+      last week is answered by the household registered on the flat today, and
+      the «مكتملة» visit logged below already says so. `VACANT_CONFIRMED` and
+      `DEMOLISHED` are findings that contradict this one, and a contradiction is
+      for a person to look at, not something a side effect of saving a phone
+      number should overwrite.
     */
     const lifted = await this.db.unit.updateMany({
-      where: { id: input.unitId, surveyStatus: { in: UNRESOLVED_SURVEY_STATES as never } },
+      where: { id: input.unitId, surveyStatus: { in: OCCUPANCY_LIFTS_SURVEY_STATUS as never } },
       data: { surveyStatus: 'COMPLETE' },
     });
 
@@ -1062,15 +1066,3 @@ const OCCUPANCY_ROLE_BY_TYPE: Record<OccupancyType, OccupancyRole> = {
   TENANT: 'TENANT',
   FREE_OCCUPANT: 'FREE_OCCUPANT',
 };
-
-/**
- * The survey states an occupancy is allowed to lift.
- *
- * Mirrors the list in `BuildingsService.recordOccupancy` and must keep
- * mirroring it: these are the three that mean nobody has an answer yet.
- */
-const UNRESOLVED_SURVEY_STATES: readonly string[] = [
-  'NOT_SURVEYED',
-  'VISITED_NO_ANSWER',
-  'PARTIAL',
-];

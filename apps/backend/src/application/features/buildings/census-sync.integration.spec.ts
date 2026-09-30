@@ -968,6 +968,88 @@ describeIfDb('CensusSyncService', () => {
     expect(unit.surveyStatus).toBe('DEMOLISHED');
   });
 
+  /*
+    A refused or locked door is an attempt, not a finding (`SURVEYED_STATUS`
+    leaves both out of the coverage figure). The household registered on the
+    flat afterwards is the answer that attempt did not get.
+
+    Production, 2026-09-28: flat 0102 of A2-415-C was logged «تعذّر الوصول» at
+    11:17 and its owner registered at 11:24. The sync logged a «مكتملة» visit
+    but left the unit at INACCESSIBLE, because the lift stopped at `PARTIAL`.
+    The building read «٤ من ٥ وحدة ممسوحة» with every flat on the matrix
+    showing an occupant.
+  */
+  it.each([
+    ['REFUSED', 'SYNC-16'],
+    ['INACCESSIBLE', 'SYNC-17'],
+  ] as const)(
+    'answers a door logged %s when the household is registered afterwards',
+    async (outcome, parcelNumber) => {
+      const { building, units } = await surveyedBlock(parcelNumber);
+      await buildings.logVisit({ unitId: units[0]!.id, outcome }, actor());
+
+      const citizenId = await citizen('صباح');
+      const registrationId = await registrationFor({
+        citizenId,
+        propertyType: 'BUILDING',
+        parcelNumber,
+        buildingId: building.id,
+        unitIds: [units[0]!.id],
+      });
+
+      const result = await census.syncRegistration({ registrationId, citizenId, actor: actor() });
+
+      expect(result.unitsSurveyed).toBe(1);
+      const unit = await db.unit.findUniqueOrThrow({ where: { id: units[0]!.id } });
+      expect(unit.surveyStatus).toBe('COMPLETE');
+
+      // The counter the summary row and the map read, maintained by the trigger.
+      const stored = await db.building.findUniqueOrThrow({ where: { id: building.id } });
+      expect(stored.unitsSurveyed).toBe(1);
+
+      // Both attempts stay on the record, and the unit now agrees with the last one.
+      const visits = await db.unitVisit.findMany({
+        where: { unitId: units[0]!.id },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(visits.map((visit) => visit.outcome)).toEqual([outcome, 'COMPLETE']);
+    },
+  );
+
+  /*
+    The repair path for the flats the old rule already left stuck: saving the
+    household's file again re-runs this sync. The spell is found current, so
+    no second visit is logged («٢ محاولة» for a door somebody stood at once),
+    and the lift, which runs on every save, now answers the stale status.
+  */
+  it('repairs a flat an earlier release left stuck under its household, without logging another visit', async () => {
+    const { building, units } = await surveyedBlock('SYNC-18');
+    const citizenId = await citizen('عباس');
+    const registrationId = await registrationFor({
+      citizenId,
+      propertyType: 'BUILDING',
+      parcelNumber: 'SYNC-18',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+    });
+    await census.syncRegistration({ registrationId, citizenId, actor: actor() });
+
+    // The state production holds for the flats filed before this fix.
+    await db.unit.update({ where: { id: units[0]!.id }, data: { surveyStatus: 'INACCESSIBLE' } });
+    expect((await db.building.findUniqueOrThrow({ where: { id: building.id } })).unitsSurveyed).toBe(0);
+
+    const resaved = await census.syncRegistration({ registrationId, citizenId, actor: actor() });
+
+    expect(resaved.occupanciesCreated).toBe(0);
+    expect(resaved.occupanciesRefreshed).toBe(1);
+    expect(resaved.unitsSurveyed).toBe(1);
+    expect((await db.unit.findUniqueOrThrow({ where: { id: units[0]!.id } })).surveyStatus).toBe(
+      'COMPLETE',
+    );
+    expect((await db.building.findUniqueOrThrow({ where: { id: building.id } })).unitsSurveyed).toBe(1);
+    expect(await db.unitVisit.count({ where: { unitId: units[0]!.id } })).toBe(1);
+  });
+
   it('skips a link whose unit has since been corrected away', async () => {
     const { building, units } = await surveyedBlock('SYNC-15');
     const citizenId = await citizen('ليلى');
