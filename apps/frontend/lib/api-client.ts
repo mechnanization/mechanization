@@ -3,6 +3,10 @@ import { cachedRequest, invalidateRequests, peekCachedRequest } from './request-
 import type {
   BackupSchedule,
   CitizenImportResult,
+  CitizenMergePreview,
+  CitizenMergeRecord,
+  CitizenMergeResult,
+  CitizenUnmergePreview,
   CaseStatus,
   CaseType,
   CitizenRecordStatus,
@@ -10,6 +14,7 @@ import type {
   CurrencyCode,
   DamageLevel,
   DamageSource,
+  DuplicateMatchedOn,
   FeeAssessment,
   FeeAssessmentLine,
   FeeBasis,
@@ -23,6 +28,8 @@ import type {
   OccupancyEndReason,
   OccupancyRole,
   PaymentMethod,
+  PossibleDuplicateMatch,
+  PossibleDuplicatesQuery,
   PaymentStatus,
   RecordInspectorPayoutInput,
   SequenceKey,
@@ -2865,6 +2872,8 @@ export interface CitizenListItem {
   /** نوع الملف — a household file, or «غير مقيم في البلدة» (stored as NON_RESIDENT_OWNER). */
   residence?: CitizenResidence;
   isActive: boolean;
+  /** The file «دمج ملفين» folded this one into — pickers skip it, the register points to it. */
+  mergedIntoId?: string | null;
   registeredAt: string;
 
   registrationCount: number;
@@ -3102,7 +3111,12 @@ export interface DuplicateCandidate {
   propertyCount: number;
   registeredAt: string | null;
   registeredBy: string | null;
-  matchedOn: Array<'NAME' | 'NAME_SIMILAR' | 'PHONE' | 'MOTHER'>;
+  matchedOn: DuplicateMatchedOn[];
+  /**
+   * The server is certain this is the same person: the save is refused for an
+   * officer rather than asked about. See `DuplicateReviewDialog`.
+   */
+  certain?: boolean;
 }
 
 /** Which of the record's two numbers a match was on. `whatsapp` only when it differs from the phone. */
@@ -3164,6 +3178,73 @@ export function duplicateReviewOf(caught: unknown): DuplicateReviewFindings | nu
   if (!details || Array.isArray(details)) return null;
   const review = (details as { duplicateReview?: unknown }).duplicateReview;
   return review && typeof review === 'object' ? (review as DuplicateReviewFindings) : null;
+}
+
+/**
+ * «قد يكون مسجَّلاً مسبقاً» while the form is typed — the save's own rule on
+ * what has been typed so far, never the register's search box.
+ */
+export function checkPossibleDuplicates(tenant: string, token: string, query: PossibleDuplicatesQuery) {
+  return apiFetch<PossibleDuplicateMatch[]>(tenant, '/citizens/possible-duplicates', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(query),
+  });
+}
+
+// ─────────────────────────  «دمج ملفين» — SUPER_ADMIN only  ─────────────────────────
+
+/** What folding `absorbId` into `keepId` would do. Read-only. */
+export function previewCitizenMerge(tenant: string, token: string, pair: { keepId: string; absorbId: string }) {
+  return apiFetch<CitizenMergePreview>(tenant, '/citizens/merge/preview', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(pair),
+  });
+}
+
+/** The merge, refused if either file moved since the preview whose versions it sends. */
+export async function mergeCitizens(
+  tenant: string,
+  token: string,
+  input: { keepId: string; absorbId: string; reason: string; expected: { keep: string; absorb: string } },
+) {
+  const result = await apiFetch<CitizenMergeResult>(tenant, '/citizens/merge', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  // Occupants moved between people, so every census screen is stale.
+  invalidateCensus(tenant);
+  invalidateParcelChecks(tenant);
+  return result;
+}
+
+/** The file this one was folded into, and the ones folded into it. */
+export function getCitizenMerges(tenant: string, token: string, citizenId: string) {
+  return apiFetch<{ into: CitizenMergeRecord | null; from: CitizenMergeRecord[] }>(
+    tenant,
+    `/citizens/${encodeURIComponent(citizenId)}/merges`,
+    { token },
+  );
+}
+
+export function previewCitizenUnmerge(tenant: string, token: string, mergeId: string) {
+  return apiFetch<CitizenUnmergePreview>(tenant, `/citizens/merges/${encodeURIComponent(mergeId)}/undo-preview`, {
+    token,
+  });
+}
+
+/** «التراجع عن الدمج» — refused once either file has changed since the merge. */
+export async function undoCitizenMerge(tenant: string, token: string, mergeId: string, reason: string) {
+  const result = await apiFetch<CitizenMergeRecord>(tenant, `/citizens/merges/${encodeURIComponent(mergeId)}/undo`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+  invalidateCensus(tenant);
+  invalidateParcelChecks(tenant);
+  return result;
 }
 
 /**
@@ -4787,3 +4868,60 @@ export async function disableStaffTotp(
   });
 }
 
+
+// ── «حذف تصحيحي» (SUPER_ADMIN) ──────────────────────────────────────────────
+
+import type {
+  UnitCorrectionDeleteInput,
+  UnitCorrectionPreview,
+  UnitCorrectionResult,
+} from '@mechanization/shared-schemas';
+
+export type {
+  UnitCorrectionBlocker,
+  UnitCorrectionDeleteInput,
+  UnitCorrectionPreview,
+  UnitCorrectionResult,
+} from '@mechanization/shared-schemas';
+
+/** What deleting this unit would remove, close and change. Its `fingerprint` is what the delete must quote. */
+export function getUnitCorrectionPreview(tenant: string, token: string, unitId: string, signal?: AbortSignal) {
+  return apiFetch<UnitCorrectionPreview>(
+    tenant,
+    `/corrections/units/${encodeURIComponent(unitId)}`,
+    { token, signal },
+  );
+}
+
+/**
+ * Deletes the unit exactly as previewed, or changes nothing. Refused with
+ * `details.reason` — see `unitCorrectionRefusal` — when the preview is stale,
+ * a blocker appeared, or somebody else is writing the same records.
+ */
+export async function applyUnitCorrection(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: UnitCorrectionDeleteInput,
+) {
+  const result = await apiFetch<UnitCorrectionResult>(
+    tenant,
+    `/corrections/units/${encodeURIComponent(unitId)}`,
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/** Why a correction delete was refused, when the server said in a way the dialog can act on. */
+export function unitCorrectionRefusal(
+  caught: unknown,
+): 'PREVIEW_STALE' | 'BLOCKED' | 'BUSY' | 'UNVERIFIED' | 'CONFIRM_CODE' | null {
+  if (!(caught instanceof ApiRequestError)) return null;
+  const details = caught.payload.details as { reason?: unknown; confirmCode?: unknown } | undefined;
+  if (caught.payload.code === 'VALIDATION_FAILED' && details && 'confirmCode' in details) return 'CONFIRM_CODE';
+  const reason = details?.reason;
+  return reason === 'PREVIEW_STALE' || reason === 'BLOCKED' || reason === 'BUSY' || reason === 'UNVERIFIED'
+    ? reason
+    : null;
+}

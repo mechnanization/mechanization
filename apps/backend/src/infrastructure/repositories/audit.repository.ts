@@ -115,7 +115,13 @@ export class PrismaAuditRepository implements AuditRepository {
       const patterns = query.excludeActionPrefixes.map((prefix) => `${prefix.replace(/[\\%_]/g, '\\$&')}%`);
       conditions.push(Prisma.sql`NOT ("action" LIKE ANY(${patterns}::text[]))`);
     }
-    if (query.entityId) conditions.push(Prisma.sql`"entityId" = ${query.entityId}`);
+    if (query.entityId && query.alsoEntityIds?.length) {
+      conditions.push(
+        Prisma.sql`("entityId" = ${query.entityId} OR "entityId" = ANY(${query.alsoEntityIds}::text[]))`,
+      );
+    } else if (query.entityId) {
+      conditions.push(Prisma.sql`"entityId" = ${query.entityId}`);
+    }
     if (query.from) conditions.push(Prisma.sql`"createdAt" >= ${query.from}`);
     if (query.to) conditions.push(Prisma.sql`"createdAt" <= ${query.to}`);
 

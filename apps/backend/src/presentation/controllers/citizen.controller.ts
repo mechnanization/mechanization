@@ -12,18 +12,27 @@ import {
   adminCreateCitizenSubmissionSchema,
   adminUpdateCitizenSubmissionSchema,
   citizenImportSchema,
+  citizenMergePairSchema,
+  citizenMergeSchema,
+  citizenUnmergeSchema,
   endOwnershipSchema,
   endTenancySchema,
+  possibleDuplicatesQuerySchema,
   setCitizenActiveSchema,
 } from '@mechanization/shared-schemas';
 import type {
   AdminCitizenSubmission,
   AdminCitizenUpdateSubmission,
   CitizenImportRequest,
+  CitizenMergeInput,
+  CitizenMergePair,
+  CitizenUnmergeInput,
   EndOwnershipInput,
   EndTenancyInput,
+  PossibleDuplicatesQuery,
   SetCitizenActive,
 } from '@mechanization/shared-schemas';
+import { CitizenMergeService } from '../../application/features/citizens/citizen-merge.service';
 import { CitizensService } from '../../application/features/citizens/citizens.service';
 import { LandlordLinkService } from '../../application/features/citizens/landlord-link.service';
 import { OwnershipService } from '../../application/features/citizens/ownership.service';
@@ -80,6 +89,7 @@ export class CitizenController {
     private readonly tenancy: TenancyService,
     private readonly ownership: OwnershipService,
     private readonly audit: AuditService,
+    private readonly merges: CitizenMergeService,
   ) {}
 
   /**
@@ -561,6 +571,82 @@ export class CitizenController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.citizens.reviewDuplicates(payload, { id: user.sub });
+  }
+
+  /**
+   * «قد يكون مسجَّلاً مسبقاً» while the form is typed — the save's own rule on
+   * what has been typed so far (`CitizensService.possibleDuplicates`). Same
+   * roles as `create` and `update`, the two forms that show it.
+   */
+  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Post('possible-duplicates')
+  async possibleDuplicates(
+    @Body(new ZodValidationPipe(possibleDuplicatesQuerySchema)) query: PossibleDuplicatesQuery,
+  ) {
+    return this.citizens.possibleDuplicates(query);
+  }
+
+  /**
+   * «دمج ملفين» — what folding one file into another would do, read-only.
+   *
+   * SUPER_ADMIN only, like the merge itself: the preview names every bill,
+   * flat and officer's credit the merge would touch, which is the decision's
+   * whole content.
+   */
+  @Roles('SUPER_ADMIN')
+  @Post('merge/preview')
+  async mergePreview(@Body(new ZodValidationPipe(citizenMergePairSchema)) pair: CitizenMergePair) {
+    return this.merges.preview(pair);
+  }
+
+  /**
+   * «دمج ملفين». SUPER_ADMIN only — it rewrites whose a filing, a bill and a
+   * flat are, and the launch-day merge of three brothers is what it looks like
+   * decided by anyone else. Refused if either file moved since the preview.
+   */
+  @Roles('SUPER_ADMIN')
+  @Post('merge')
+  async merge(
+    @Param('tenantSlug') tenantSlug: string,
+    @Body(new ZodValidationPipe(citizenMergeSchema)) body: CitizenMergeInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.merges.merge({ ...body, tenantSlug, actor: { id: user.sub, role: user.role ?? '' } });
+  }
+
+  /**
+   * The file this one was folded into, and the files folded into it — the
+   * profile's «دُمج في» / «دُمج فيه» notes. Open to everyone who can open the
+   * file: a clerk who lands on a merged record needs to be sent to the live one.
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Get(':id/merges')
+  async mergesOf(@Param('id') id: string) {
+    return this.merges.mergesOf(id);
+  }
+
+  /** Whether «التراجع عن الدمج» would go through, and if not, why. */
+  @Roles('SUPER_ADMIN')
+  @Get('merges/:mergeId/undo-preview')
+  async unmergePreview(@Param('mergeId') mergeId: string) {
+    return this.merges.unmergePreview(mergeId);
+  }
+
+  /** «التراجع عن الدمج» — refused once either file has changed since the merge. */
+  @Roles('SUPER_ADMIN')
+  @Post('merges/:mergeId/undo')
+  async unmerge(
+    @Param('tenantSlug') tenantSlug: string,
+    @Param('mergeId') mergeId: string,
+    @Body(new ZodValidationPipe(citizenUnmergeSchema)) body: CitizenUnmergeInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.merges.unmerge({
+      mergeId,
+      reason: body.reason,
+      tenantSlug,
+      actor: { id: user.sub, role: user.role ?? '' },
+    });
   }
 
   /**

@@ -1010,7 +1010,8 @@ export function AddPersonForm({
       listCitizens(tenant, token, { search: term.trim(), limit: 6 })
         .then((result) => {
           if (cancelled) return;
-          setResults(result.items);
+          // A file «دمج ملفين» folded into another is nobody to record in a flat.
+          setResults(result.items.filter((row) => !row.mergedIntoId));
           setSearched(term.trim());
         })
         .catch((caught) => {

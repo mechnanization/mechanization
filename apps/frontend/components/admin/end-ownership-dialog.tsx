@@ -834,7 +834,8 @@ function BuyerPicker({
       listCitizens(tenant, token, { search: trimmed, limit: 6 })
         .then((found) => {
           if (cancelled) return;
-          setResults(found.items.filter((row) => row.id !== sellerId));
+          // Not the seller, and not a file «دمج ملفين» folded into another.
+          setResults(found.items.filter((row) => row.id !== sellerId && !row.mergedIntoId));
           setSearched(trimmed);
         })
         .catch((caught) => {

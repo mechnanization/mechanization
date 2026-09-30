@@ -27,6 +27,9 @@ export function auditActionLabel(action: string, locale: string): string {
     CITIZEN_DELETED: ['حذف مواطن', 'Citizen deleted'],
     CITIZEN_DEACTIVATED: ['إلغاء تفعيل مواطن', 'Citizen deactivated'],
     CITIZEN_REACTIVATED: ['إعادة تفعيل مواطن', 'Citizen reactivated'],
+    CITIZEN_MERGED: ['دمج ملف في هذا الملف', 'File merged into this one'],
+    CITIZEN_MERGED_INTO: ['دمج هذا الملف في ملف آخر', 'File merged into another'],
+    CITIZEN_MERGE_UNDONE: ['التراجع عن دمج ملفين', 'Merge undone'],
     HOUSEHOLD_LINKED: ['ربط أسرة', 'Household linked'],
     LANDLORD_LINKED: ['ربط مالك بمستأجر', 'Owner linked'],
     LANDLORD_UNLINKED: ['إلغاء ربط مالك', 'Owner unlinked'],
@@ -52,6 +55,9 @@ export function auditActionLabel(action: string, locale: string): string {
     // ── hand corrections ──
     DATA_CORRECTION: ['تصحيح يدوي للبيانات', 'Manual data correction'],
     DATA_CORRECTION_DELETE: ['حذف يدوي ضمن تصحيح', 'Manual deletion (correction)'],
+    // «حذف تصحيحي» from the matrix, by a SUPER_ADMIN (UnitCorrectionService).
+    UNIT_CORRECTION_DELETED: ['حذف تصحيحي لوحدة (المدير)', 'Unit removed by admin correction'],
+    UNIT_CORRECTION_FILE_ENDED: ['إغلاق بنود بحذف تصحيحي لوحدة', 'File lines closed by a unit correction'],
 
     // ── buildings and their units ──
     BUILDING_CREATED: ['إنشاء مبنى', 'Building created'],

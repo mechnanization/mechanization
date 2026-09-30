@@ -71,7 +71,8 @@ export function LinkCaseCitizenDialog({
     const timer = setTimeout(() => {
       listCitizens(tenant, token, { search: term.trim(), limit: 8 })
         .then((result) => {
-          if (!cancelled) setResults(result.items);
+          // A file «دمج ملفين» folded into another is not who the door resolves to.
+          if (!cancelled) setResults(result.items.filter((row) => !row.mergedIntoId));
         })
         .catch((caught) => {
           logApiError(caught);

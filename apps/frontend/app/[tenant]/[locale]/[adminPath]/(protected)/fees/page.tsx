@@ -278,7 +278,8 @@ export default function FeesPage({
           configRes.status === 'fulfilled'
             ? configRes.value.nameAr || configRes.value.name
             : '',
-        citizens: citizensRes.status === 'fulfilled' ? citizensRes.value.items : [],
+        // A file «دمج ملفين» folded into another is charged on the file that stays.
+        citizens: citizensRes.status === 'fulfilled' ? citizensRes.value.items.filter((row) => !row.mergedIntoId) : [],
       };
     },
     tenant,

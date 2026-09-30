@@ -140,6 +140,15 @@ export class CasesService {
             resolvedCitizenId: input.resolvedCitizenId,
           });
         }
+        /*
+          A deactivated file — somebody who left, or a file «دمج ملفين» folded
+          into another — is not who a door visited today resolves to.
+        */
+        if (citizen.isActive === false) {
+          throw new ValidationError('هذا الملف معطّل أو مدموج في ملف آخر — اختر الملف النشط للشخص.', {
+            resolvedCitizenId: input.resolvedCitizenId,
+          });
+        }
         patch = { ...input, status: 'RESOLVED' };
       }
     }

@@ -12,6 +12,7 @@ import {
   isDwellingUnitType,
   isStructuralUnitType,
   isUnoccupied,
+  OCCUPANCY_LIFTS_SURVEY_STATUS,
   SURVEYED_STATUS,
   unitStatusForRole,
   type ConfirmVacancyInput,
@@ -32,6 +33,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { assertNotMergedAway } from '../citizens/merged-away';
 import { cardClaiming, takesAnotherFlat } from '../../../domain/entities/census-claim';
 import { CasesService } from '../cases/cases.service';
 import type {
@@ -3085,6 +3087,8 @@ export class BuildingsService {
     if (!citizen || citizen.kind !== 'CITIZEN') {
       throw new ValidationError('المواطن غير موجود', { citizenId: input.citizenId });
     }
+    // A file folded into another is nobody to record in a flat — see `assertNotMergedAway`.
+    await assertNotMergedAway(this.db, citizen.id);
 
     assertNonResidentOccupancy({
       residence: citizen.residence,
@@ -3212,15 +3216,17 @@ export class BuildingsService {
     /*
       A unit with somebody in it has been surveyed.
 
-      Only lifted from the states that mean "we still do not know": an officer
-      who has recorded an occupant has, by definition, been answered. A unit
+      Only lifted from the states that mean "we still do not have the answer"
+      (`OCCUPANCY_LIFTS_SURVEY_STATUS`, shared with the registration path so
+      the two cannot drift). An officer who has recorded an occupant has, by
+      definition, been answered, and that includes a flat whose last visit was
+      «رفض» or «تعذّر الوصول». A unit
       already marked `DEMOLISHED` or `VACANT_CONFIRMED` is left alone — those
       are findings that contradict this one, and a contradiction is for a person
       to resolve, not for a side effect to overwrite.
     */
-    const OPEN_STATES = ['NOT_SURVEYED', 'VISITED_NO_ANSWER', 'PARTIAL'];
     await this.db.unit.updateMany({
-      where: { id: input.unitId, surveyStatus: { in: OPEN_STATES as never } },
+      where: { id: input.unitId, surveyStatus: { in: OCCUPANCY_LIFTS_SURVEY_STATUS as never } },
       data: { surveyStatus: 'COMPLETE' },
     });
 

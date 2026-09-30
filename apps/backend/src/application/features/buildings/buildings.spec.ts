@@ -2,6 +2,10 @@ import {
   buildingFilterSchema,
   createBuildingSchema,
   createDamageAssessmentSchema,
+  OCCUPANCY_LIFTS_SURVEY_STATUS,
+  occupancyLiftsSurvey,
+  SURVEY_STATUS,
+  SURVEYED_STATUS,
   unitBlueprintSchema,
   upsertOccupancySchema,
 } from '@mechanization/shared-schemas';
@@ -65,6 +69,37 @@ describe('survey rollup — the worst status, never the majority (D11)', () => {
 
   it('does not take a map down over a status nobody added to the ladder', () => {
     expect(rollupOf(['COMPLETE', 'SOMETHING_NEW'])).toBe('COMPLETE');
+  });
+});
+
+describe('what recording an occupant answers', () => {
+  /*
+    The lift and the coverage figure are one rule seen from two sides: every
+    status that is not yet an answer is answered by a household on the flat,
+    and none that is an answer is overwritten by one. Pinned as a partition so
+    a status added to `SURVEY_STATUS` has to be placed on one side on purpose.
+    Until 2026-09-29 REFUSED and INACCESSIBLE were on neither side: not
+    counted as surveyed, and never lifted.
+  */
+  it('lifts exactly the statuses the coverage figure does not count', () => {
+    const lifted = new Set<string>(OCCUPANCY_LIFTS_SURVEY_STATUS);
+    const surveyed = new Set<string>(SURVEYED_STATUS);
+
+    for (const status of SURVEY_STATUS) {
+      expect([status, lifted.has(status) !== surveyed.has(status)]).toEqual([status, true]);
+    }
+    expect(lifted.size + surveyed.size).toBe(SURVEY_STATUS.length);
+  });
+
+  it('answers a refused or locked door, and leaves a finding alone', () => {
+    expect(occupancyLiftsSurvey('REFUSED')).toBe(true);
+    expect(occupancyLiftsSurvey('INACCESSIBLE')).toBe(true);
+    expect(occupancyLiftsSurvey('VISITED_NO_ANSWER')).toBe(true);
+
+    expect(occupancyLiftsSurvey('COMPLETE')).toBe(false);
+    expect(occupancyLiftsSurvey('VACANT_CONFIRMED')).toBe(false);
+    expect(occupancyLiftsSurvey('DEMOLISHED')).toBe(false);
+    expect(occupancyLiftsSurvey(null)).toBe(false);
   });
 });
 
