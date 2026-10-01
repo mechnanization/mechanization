@@ -1,0 +1,39 @@
+-- 0062_status_conflict_case
+--
+-- «تعارض في حالة الوحدة» — a follow-up case for a flat whose records disagree.
+--
+-- == What it is for ======================================================
+--
+-- A flat's state is stated in more than one place: the unit on the building
+-- matrix (`units.unitStatus`), the owner's own card (`building_units.unitStatus`,
+-- or `property_entries.unitStatus` on a منزل), and who is recorded living in it
+-- (`unit_occupancies`). The production audit of 2026-09-30 found flats where
+-- these disagree in ways that decide a bill — a flat marked «مؤجرة» with no
+-- tenant registered anywhere, so the owner is exempt and nobody is charged; an
+-- owner's card saying «مشغولة من المالك» about a unit the matrix says is empty.
+--
+-- The code now settles what it can by one rule (a standing vacancy, else a
+-- registered tenant or شاغل بتسامح). What it cannot settle is a question for a
+-- person, and it is put to them as a case on the unit — the municipal register's
+-- equivalent of the Dutch «in onderzoek» flag or the Danish BBR review inbox —
+-- rather than a line in a server log. While the disagreement stands, the
+-- occupancy fee on that flat is held (the user's decision, 2026-09-30).
+--
+-- The case type is its own value rather than a GENERAL_NOTE so the code that
+-- opens one can also close it when the disagreement goes away, without touching
+-- an officer's own notes on the same flat.
+--
+-- == Why this migration is alone =========================================
+--
+-- `ALTER TYPE … ADD VALUE` may not have its new value *used* by the transaction
+-- that added it, and the migrator wraps each migration in one — the reason 0051
+-- and 0053 were split from their neighbours. It is also the "enum value before
+-- the code" rule: this ships to production on its own, ahead of the code that
+-- writes it.
+--
+-- No row is rewritten. Nothing reads the new value until the code ships.
+--
+-- Written unqualified: the migrator sets `search_path` to the target tenant
+-- schema before running this.
+
+ALTER TYPE "CaseType" ADD VALUE IF NOT EXISTS 'STATUS_CONFLICT';
