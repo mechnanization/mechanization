@@ -718,6 +718,12 @@ export const CASE_TYPE = [
   'VACANT_UNCONFIRMED',
   'OWNERSHIP_DISPUTE',
   'GENERAL_NOTE',
+  /**
+   * «تعارض في حالة الوحدة» (migration 0062) — the flat's records disagree in a
+   * way `settleUnitStatus` cannot settle. Opened and closed by the code; the
+   * flat's occupancy fee is held while the disagreement stands.
+   */
+  'STATUS_CONFLICT',
 ] as const;
 export const caseTypeSchema = arabicEnum(CASE_TYPE, 'نوع الحالة غير صالح');
 export type CaseType = z.infer<typeof caseTypeSchema>;

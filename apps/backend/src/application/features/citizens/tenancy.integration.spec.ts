@@ -448,7 +448,9 @@ describeIfDb('TenancyService', () => {
     );
 
     expect((await db.unit.findUniqueOrThrow({ where: { id: unitId } })).unitStatus).toBe('RENTED');
-    expect(await db.case.count({ where: { unitId, caseType: 'GENERAL_NOTE', status: 'OPEN' } })).toBe(1);
+    // A «تعارض في حالة الوحدة» review since 2026-09-30 — the one `settleUnit` keeps and closes.
+    expect(await db.case.count({ where: { unitId, caseType: 'STATUS_CONFLICT', status: 'OPEN' } })).toBe(1);
+    expect(await db.case.count({ where: { unitId, status: 'OPEN' } })).toBe(1);
   });
 
   it('does not ask about a flat somebody else still lives in', async () => {

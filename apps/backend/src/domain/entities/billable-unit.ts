@@ -58,6 +58,14 @@ export interface BillableUnit {
   /** The card this came from, for the invoice's breakdown. */
   propertyType: string;
   propertyNumber: string | null;
+  /**
+   * The flat's records disagree and are under review — its occupancy fee is
+   * held (`assessCitizen`). Only ever true for a flat the census holds; a card
+   * with no canonical unit has nothing to disagree with.
+   */
+  underReview: boolean;
+  /** The canonical unit, when there is one — so a held flat is counted once, however many cards bill it. */
+  unitId?: string | null;
 }
 
 /**
@@ -75,9 +83,12 @@ export interface BillableUnit {
  * would stop charging for most of the register.
  */
 export interface LinkedUnit {
+  id?: string;
   unitType: string | null;
   unitArea: { toString(): string } | number | null;
   unitStatus?: string | null;
+  /** See `BillableUnit.underReview`. */
+  underReview?: boolean;
 }
 
 /** The stored shape this reads — a property card and its unit rows. */
@@ -89,6 +100,13 @@ export interface BillablePropertyEntry {
   /** Prisma hands Decimal back; a plain number or null is equally acceptable. */
   unitArea: { toString(): string } | number | null;
   unitStatus?: string | null;
+  /**
+   * A منزل on a one-unit structure whose flat is under review — the card-level
+   * twin of `LinkedUnit.underReview`, for the shape that has no unit rows.
+   */
+  underReview?: boolean;
+  /** The one flat of the structure a منزل card names, when billing found it. */
+  soleUnitId?: string | null;
   /**
    * `unitType` is nullable here for the same reason `unitArea` always was: a
    * per-unit «غير مؤكَّد» flag blanks the field it excuses (migration 0031), so
@@ -120,9 +138,11 @@ export interface BillablePropertyEntry {
   occupiedUnits?: ReadonlyArray<{
     /** `OWNER`, `TENANT` or `FREE_OCCUPANT` — this citizen's capacity in this flat. */
     role: string;
+    unitId?: string;
     unitType: string | null;
     unitArea: { toString(): string } | number | null;
     unitStatus?: string | null;
+    underReview?: boolean;
   }>;
 }
 
@@ -197,6 +217,8 @@ function heldThroughOccupancy(entry: BillablePropertyEntry): BillableUnit[] | nu
     occupancyType: occupancy.role,
     propertyType: entry.propertyType,
     propertyNumber: entry.propertyNumber,
+    underReview: occupancy.underReview ?? false,
+    unitId: occupancy.unitId ?? null,
   }));
 }
 
@@ -277,6 +299,8 @@ function collectBillableUnits(entry: BillablePropertyEntry): BillableUnit[] {
       occupancyType: entry.occupancyType,
       propertyType: entry.propertyType,
       propertyNumber: entry.propertyNumber,
+      underReview: line.unit?.underReview ?? false,
+      unitId: line.unit?.id ?? null,
     }));
   }
 
@@ -299,6 +323,8 @@ function collectBillableUnits(entry: BillablePropertyEntry): BillableUnit[] {
       occupancyType: entry.occupancyType,
       propertyType: entry.propertyType,
       propertyNumber: entry.propertyNumber,
+      underReview: entry.underReview ?? false,
+      unitId: entry.soleUnitId ?? null,
     },
   ];
 }

@@ -1,5 +1,15 @@
 import { BuildingsService } from './buildings.service';
 
+/*
+  `settleUnit` (the one status rule) reads a dozen tables these fakes do not
+  model. Its behaviour is pinned by `unit-status.spec.ts` and the DB suites;
+  here it is a collaborator, and what these tests check is that it is asked.
+*/
+jest.mock('./unit-status', () => ({
+  ...jest.requireActual('./unit-status'),
+  settleUnit: jest.fn().mockResolvedValue(null),
+}));
+
 /**
  * «إنهاء الإشغال» and «تأكيد الشغور», after the first week in the field.
  *
@@ -392,7 +402,11 @@ describe('endVacancy', () => {
       unitVisit: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     return Object.assign(store, {
+      // No owner card says «شاغرة» here — see `withdrawOwnerVacancyStatements`.
+      buildingUnit: { findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn() },
+      propertyEntry: { findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn() },
       unit: {
+        count: jest.fn().mockResolvedValue(3),
         findUnique: jest.fn().mockResolvedValue({
           id: 'unit-1',
           buildingId: 'building-1',

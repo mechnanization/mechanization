@@ -1723,9 +1723,13 @@ export const FOLLOW_UP_CASE: Partial<Record<SurveyStatus, CaseType>> = {
   REFUSED: 'ACCESS_REFUSED',
 };
 
-/** The case types «فتح حالة متابعة» offers on a unit — the ones no visit outcome opens. */
+/**
+ * The case types «فتح حالة متابعة» offers on a unit — the ones no visit outcome
+ * opens, and not «تعارض في حالة الوحدة», which the status rule opens and closes
+ * itself (the server refuses it from here).
+ */
 const UNIT_CASE_TYPES = CASE_TYPE.filter(
-  (type) => !Object.values(FOLLOW_UP_CASE).includes(type),
+  (type) => !Object.values(FOLLOW_UP_CASE).includes(type) && type !== 'STATUS_CONFLICT',
 );
 
 /**

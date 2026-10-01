@@ -2394,6 +2394,23 @@ export async function confirmVacancy(
  * حالة the confirmation replaced, «لم تعد شاغرة» leaves it occupied by somebody
  * not yet recorded, which is what bills the owner again until they are.
  */
+/**
+ * «مراجعة حالة الوحدات» — SUPER_ADMIN. Applies the one status rule to every
+ * flat whose records disagree, and opens a «تعارض في حالة الوحدة» case on each
+ * one a person has to decide. Safe to run again.
+ */
+export async function settleAllUnitStatuses(tenant: string, token: string) {
+  const result = await apiFetch<{
+    unitsChecked: number;
+    statusesChanged: number;
+    casesOpened: number;
+    casesResolved: number;
+    stillUnderReview: number;
+  }>(tenant, '/buildings/units/status-review', { token, method: 'POST' });
+  invalidateCensus(tenant);
+  return result;
+}
+
 export async function endVacancy(
   tenant: string,
   token: string,
@@ -3044,6 +3061,8 @@ export interface CitizenWriteInput {
    * refused on arrival. See `adminCreateCitizenSubmissionSchema`.
    */
   reviewDuplicates?: boolean;
+  /** Set by the current form on every submission — see `submissionEnvelope.unitStatusAsked`. */
+  unitStatusAsked?: boolean;
   /** The officer's answer to the duplicate question, when it was asked. */
   duplicateReview?: DuplicateReviewAnswer;
   /** On an edit: the version the form was opened at. See `CitizenFormData.version`. */
@@ -4263,6 +4282,14 @@ export async function issueFeeNotice(
      * bearer rule left out has something to take to the council.
      */
     exemptedUnits?: number;
+    /**
+     * Flats whose occupancy fee this notice held because their records
+     * disagree — see `FeeAssessment.heldUnitCount`. Not charged for this
+     * notice's period; once the «تعارض في حالة الوحدة» is settled they are
+     * charged from the next period a recurring notice runs. Recovering the held
+     * period itself is a manual charge.
+     */
+    heldUnits?: number;
   }>(tenant, '/fees/notices', {
     token,
     method: 'POST',
