@@ -401,7 +401,12 @@ describeIfDb('Quality review', () => {
       finding.subjects.some((subject) => subject.id === second.building.id),
     );
     expect(near?.officers.map((officer) => officer.name).sort()).toEqual(['جواد موظف', 'حسين موظف']);
-    expect(of('UNIT_STATUS_CONTRADICTION').some((finding) => finding.detail.includes('VACANT'))).toBe(true);
+    // «شاغرة» on the unit against «مشغولة من المالك» on the owner's card changes who pays, so since
+    // 2026-09-30 it is the status rule's finding (and its fee is held), not the wording one.
+    expect(
+      of('UNIT_UNDER_REVIEW').some((finding) => finding.severity === 'HIGH' && finding.detail.includes('بطاقة المالك')),
+    ).toBe(true);
+    expect(of('UNIT_STATUS_CONTRADICTION').some((finding) => finding.detail.includes('VACANT'))).toBe(false);
 
     // «ليست مشكلة», with a reason, hides it — and restoring brings it back.
     await within(() =>

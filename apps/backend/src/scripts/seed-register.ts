@@ -924,7 +924,8 @@ function drawCards(
         floor: d.chance(0.08) && floor === '0' ? 'أرضي' : floor,
         ...(d.chance(0.3) ? { side: d.pick(SIDES) } : {}),
         unitArea: d.step(80, 220, 5),
-        ...(occupancy === 'OWNER' && d.chance(0.55)
+        // Every owner states it: the form requires حالة الوحدة of an owner (2026-09-30).
+        ...(occupancy === 'OWNER'
           ? {
               unitStatus:
                 u === 0 && draft.residence === 'RESIDENT'
@@ -1007,7 +1008,7 @@ function drawCards(
             unitType,
             floor: '0',
             unitArea: d.step(area[unitType][0], area[unitType][1], 1),
-            ...(occupancy === 'OWNER' && d.chance(0.5)
+            ...(occupancy === 'OWNER'
               ? { unitStatus: d.weighted([['OWNER_OCCUPIED', 4], ['RENTED', 4], ['VACANT', 2]]) }
               : {}),
           },
@@ -1079,7 +1080,7 @@ function drawCards(
       default:
         cards.push(
           choose([
-            [() => house('OWNER', d.chance(0.7) ? 'OWNER_OCCUPIED' : undefined), 50],
+            [() => house('OWNER', d.chance(0.7) ? 'OWNER_OCCUPIED' : d.pick(['RENTED', 'SEASONAL'])), 50],
             [() => apartment('OWNER', d.chance(0.6) ? 1 : d.int(2, 4)), 20],
             [() => apartment('TENANT', 1), 15],
             [() => house('TENANT'), 7],

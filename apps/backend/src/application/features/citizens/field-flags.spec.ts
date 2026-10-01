@@ -1,5 +1,6 @@
 import {
   adminCreateCitizenSubmissionSchema,
+  adminUpdateCitizenSubmissionSchema,
   CADASTRE_UNVERIFIED_REASON,
   cadastreFlags,
   isFlaggablePath,
@@ -145,10 +146,41 @@ describe('citizen submission — occupancy-gated fields', () => {
     expect(result.data.properties[0]?.unitStatus).toBe('VACANT');
   });
 
-  it('does not require one', () => {
-    // Optional everywhere it appears, so a card without it is complete and a
-    // clerk is never blocked on a question they could not answer.
-    expect(failures(ownedHouse())).toEqual([]);
+  /*
+    Required of an owner since 2026-09-30 (the user's decision): a blank or
+    copied «حالة الوحدة» decides who pays the occupancy fee, and officers were
+    leaving it blank. An officer who cannot find out still has a way through —
+    the field is flaggable like any other — so the requirement never blocks a
+    save; it makes the gap explicit.
+  */
+  // The current form marks every submission `unitStatusAsked` — see `unasked` for one that is not.
+  const asked = (input: Record<string, unknown>) => ({ ...input, unitStatusAsked: true });
+
+  it('requires one of an owner', () => {
+    expect(failures(asked(ownedHouse()))).toEqual(['properties.0.unitStatus']);
+  });
+
+  it('flags it rather than refusing a payload from a form that never asked — an older build or the offline queue', () => {
+    const result = adminCreateCitizenSubmissionSchema.safeParse(ownedHouse());
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.flags).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'properties.0.unitStatus', reason: expect.stringContaining('لم يُسأل عن حالة الوحدة') }),
+      ]),
+    );
+  });
+
+  it('accepts it flagged «غير مؤكَّد» with a reason', () => {
+    const input = asked(ownedHouse()) as Record<string, unknown>;
+    input.flags = [{ path: 'properties.0.unitStatus', reason: 'المالك مسافر ولم يُعرف من يسكنها' }];
+    expect(failures(input)).toEqual([]);
+  });
+
+  it('accepts it under the blanket reason of «حفظ سريع»', () => {
+    const input = asked(ownedHouse()) as Record<string, unknown>;
+    input.blanketFlagReason = 'زيارة سريعة — تُستكمل البيانات لاحقاً';
+    expect(failures(input)).toEqual([]);
   });
 
   it('accepts a free occupant who names the owner but has no number for them', () => {
@@ -327,7 +359,55 @@ describe('citizen submission — per-unit flags', () => {
     unitType: 'APARTMENT',
     floor: '3',
     unitArea: '120',
+    // Required of an owner on each flat (2026-09-30); these cards are an owner's.
+    unitStatus: 'OWNER_OCCUPIED',
     ...extra,
+  });
+
+  it('requires حالة الوحدة on each flat of an owner’s building', () => {
+    const input = { ...building([unit(), unit({ unitStatus: undefined })]), unitStatusAsked: true };
+    expect(failures(input)).toEqual(['properties.0.units.1.unitStatus']);
+  });
+
+  it('lets a whole-units flag excuse each flat’s status too', () => {
+    const input = {
+      ...building([unit({ unitStatus: undefined })]),
+      unitStatusAsked: true,
+      flags: [{ path: 'properties.0.units', reason: 'لم نتمكن من جرد وحدات المبنى' }],
+    };
+    expect(failures(input)).toEqual([]);
+  });
+
+  /*
+    On an edit, only what the edit adds. A flat filed before the rule may have
+    no answer, and the profile's one-field correction re-submits the whole
+    record — refusing it until someone answered a question they did not come to
+    answer would lock officers out of old files over an unrelated fix.
+  */
+  const editFailures = (input: unknown): string[] => {
+    const result = adminUpdateCitizenSubmissionSchema.safeParse(input);
+    return result.success ? [] : result.error.issues.map((issue) => issue.path.join('.'));
+  };
+  const existing = (units: Array<Record<string, unknown>>) => {
+    const input = building(units) as { properties: Array<Record<string, unknown>> };
+    input.properties[0]!.id = '11111111-1111-4111-8111-111111111111';
+    return input;
+  };
+
+  it('does not require it of a flat already on the file, so an old record can still be corrected', () => {
+    const input = existing([unit({ id: '22222222-2222-4222-8222-222222222222', unitStatus: undefined })]);
+    expect(editFailures(input)).toEqual([]);
+  });
+
+  it('requires it of a flat an edit adds to a card already on the file', () => {
+    const input = {
+      ...existing([
+        unit({ id: '22222222-2222-4222-8222-222222222222', unitStatus: undefined }),
+        unit({ unitStatus: undefined }),
+      ]),
+      unitStatusAsked: true,
+    };
+    expect(editFailures(input)).toEqual(['properties.0.units.1.unitStatus']);
   });
 
   it('accepts a per-unit path as flaggable', () => {

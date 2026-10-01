@@ -3,6 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { isDwellingUnitType, statusForFlags, type AfterTenancyStatus, type FieldFlag } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { settleUnit, type UnitStatusEvent } from '../buildings/unit-status';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { assertNotMergedAway } from './merged-away';
 import { claimsFlat } from '../../../domain/entities/census-claim';
@@ -503,6 +504,7 @@ export class OwnershipService {
     let newOwnerRecorded = false;
     const buyerTenancyEndedOn: string[] = [];
 
+    const settleEvents: UnitStatusEvent[] = [];
     await runInTenantTransaction(this.tenantContext, async () => {
       // 1 — the spells.
       for (const spell of target.spells) {
@@ -697,7 +699,24 @@ export class OwnershipService {
           if (opened) result.casesOpened += 1;
         }
       }
+
+      /*
+        And every flat this ownership held settles by the one rule
+        (`settleUnit`) — a tenant still living in one keeps it «مؤجرة» for
+        whoever owns it now; «مؤجرة» left with nobody in it goes to review.
+      */
+      for (const unit of ending) {
+        const outcome = await settleUnit(this.db, {
+          unitId: unit.unitId,
+          tenantSlug: this.tenantContext.tenantSlug,
+          actor,
+          via: 'OWNERSHIP_ENDED',
+        });
+        settleEvents.push(...(outcome?.events ?? []));
+      }
     });
+
+    for (const event of settleEvents) this.events.emit(event.channel, event.payload);
 
     result.tenantsReleased = tenantsReleased;
     result.newOwnerRecorded = newOwnerRecorded;
@@ -776,12 +795,27 @@ export class OwnershipService {
         result.vacanciesConfirmed += 1;
         break;
       }
-      case 'RENTED_TO_OTHER':
+      case 'RENTED_TO_OTHER': {
         await this.db.unit.update({ where: { id: unit.unitId }, data: { unitStatus: 'RENTED' } });
-        await this.openCase(unit, actor, result, 'GENERAL_NOTE',
-          `انتقلت ملكية الوحدة ${unit.unitCode} من ${target.citizenName}، ويسكنها مستأجر غير مسجَّل — سجِّله على الوحدة.`,
+        /*
+          «مؤجرة» with the tenant not yet registered is a «تعارض في حالة الوحدة»
+          — the one review `settleUnit` keeps on the flat and closes when the
+          tenant is recorded. A general note beside it asked the same question
+          twice and never closed itself.
+        */
+        const { opened } = await this.cases.openUnlessStanding(
+          {
+            notes: `انتقلت ملكية الوحدة ${unit.unitCode} من ${target.citizenName}، ويسكنها مستأجر غير مسجَّل — سجِّله على الوحدة.`,
+            caseType: 'STATUS_CONFLICT',
+            buildingId: unit.buildingId,
+            unitId: unit.unitId,
+            propertyNumber: unit.parcelNumber ?? undefined,
+          } as never,
+          actor,
         );
+        if (opened) result.casesOpened += 1;
         break;
+      }
       case 'UNKNOWN': {
         /*
           Cleared, not guessed: «يسكنها المالك» described the seller. With no

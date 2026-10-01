@@ -277,6 +277,7 @@ export const ar = {
     VACANT_UNCONFIRMED: 'شاغرة قيد التحقق',
     OWNERSHIP_DISPUTE: 'نزاع ملكية',
     GENERAL_NOTE: 'ملاحظة عامة',
+    STATUS_CONFLICT: 'تعارض في حالة الوحدة',
   } satisfies Record<CaseType, string>,
 
   /** أين وصلت الحالة. «مجدولة» means a revisit date is already set. */
@@ -606,6 +607,7 @@ export const en = {
     VACANT_UNCONFIRMED: 'Vacancy Unconfirmed',
     OWNERSHIP_DISPUTE: 'Ownership Dispute',
     GENERAL_NOTE: 'General Note',
+    STATUS_CONFLICT: 'Unit status conflict',
   } satisfies Record<CaseType, string>,
 
   caseStatus: {

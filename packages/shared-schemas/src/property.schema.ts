@@ -136,7 +136,18 @@ export const sharesField = z.coerce
   .max(2400, 'الحد الأقصى 2400 سهم');
 
 /**
- * حالة الوحدة — optional everywhere, on purpose.
+ * حالة الوحدة — the field. Optional in the card schema; required of an owner on
+ * a new منزل card and on each new flat of a مبنى when an officer files through
+ * the form, since 2026-09-30 (`ownerUnitStatusIssues` in admin-citizen.schema).
+ *
+ * What follows is why it was optional before, and it still holds wherever it is
+ * still optional: a plot, a non-owner's card, and the CSV import, where an old
+ * paper register never asked the question and carries no «غير مؤكَّد» to say so.
+ * The user reversed it for owners on the form after the production audit that
+ * day: officers were leaving it blank, or accepting whatever the previous flat
+ * said, and a blank or copied answer decides who pays the occupancy fee. An
+ * officer who genuinely cannot find out says so with «غير مؤكَّد» and a reason
+ * instead of the form letting the question pass unasked.
  *
  * Never required, and the omission is the design rather than a gap in it. A
  * مبنى of twenty flats would otherwise demand twenty four-way choices from an

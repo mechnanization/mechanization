@@ -160,11 +160,19 @@ export function UnitStatusChoice({
   onChange,
   omit = [],
   label,
+  path,
+  required = false,
+  error,
   locale = 'ar',
 }: {
   idPrefix: string;
   /** «حالة الأرض» on a plot; «حالة الوحدة» everywhere else. */
   label?: string;
+  /** The flag path, where this field can be marked «غير مؤكَّد» on its own. */
+  path?: string;
+  /** Required of an owner on a منزل and on each flat (see `ownerUnitStatus`). */
+  required?: boolean;
+  error?: string;
   value: UnitStatus | undefined;
   onChange: (next: UnitStatus | undefined) => void;
   /**
@@ -183,6 +191,9 @@ export function UnitStatusChoice({
     <Field
       label={label ?? (isEnglish ? 'Unit Status' : 'حالة الوحدة')}
       htmlFor={idPrefix}
+      path={path}
+      required={required}
+      error={error}
     >
       <div id={idPrefix} className="flex flex-wrap gap-2 pt-1">
         {UNIT_STATUS.filter((option) => option === value || !omit.includes(option)).map((option) => {
@@ -442,9 +453,11 @@ export function UnitsEditor({
     });
 
   const addUnit = () => {
-    // Inherits the previous unit's type *and* status: a floor of eight
-    // identical rented flats is the ordinary case, and re-answering both
-    // questions eight times is how the second one stops being answered.
+    // Inherits the previous unit's type, not its status. A copied «مشغولة من
+    // المالك» on a flat nobody asked about was how the question went
+    // unanswered (2026-09-30); it now starts empty and is required of an owner.
+    // «تعيين حالة الوحدات جميعاً» below is still one tap for a floor of
+    // identical flats — a choice the officer makes, not one made for them.
     onChange((current) => {
       const previous = current.at(-1);
       return [
@@ -456,7 +469,6 @@ export function UnitsEditor({
           unitType:
             previous?.unitType ??
             (defaultUnitType && unitTypes.includes(defaultUnitType) ? defaultUnitType : undefined),
-          unitStatus: previous?.unitStatus,
         },
       ];
     });
@@ -699,6 +711,7 @@ export function UnitsEditor({
                   unitTypes={unitTypes}
                   nonResident={nonResident}
                   onPatch={(patch) => setUnit(unitIndex, patch)}
+                  statusPath={flagPath(index, `units.${unitIndex}.unitStatus`)}
                   locale={locale}
                 />
               )}
@@ -742,10 +755,13 @@ export function UnitFields({
   nonResident = false,
   onPatch,
   layout = 'stack',
+  statusPath,
   locale = 'ar',
 }: {
   /** Disambiguates every `id`/`htmlFor` on the page — a card index and a row. */
   idPrefix: string;
+  /** `properties.N.units.M.unitStatus` — where this flat's «حالة الوحدة» can be marked «غير مؤكَّد». */
+  statusPath?: string;
   /**
    * `wide` for a flat opened full width under the matrix: type beside floor,
    * area beside side, the shared rights four across. `stack` for a row in
@@ -940,6 +956,9 @@ export function UnitFields({
                     value={unit.unitStatus}
                     onChange={(unitStatus) => onPatch({ unitStatus })}
                     omit={nonResident && isDwellingUnitType(unit.unitType) ? ['OWNER_OCCUPIED'] : []}
+                    path={statusPath}
+                    required
+                    error={errors.unitStatus}
                     locale={locale}
                   />
                 ) : null}

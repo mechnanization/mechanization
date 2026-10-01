@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
+  ar,
+  describeUnitStatusConflict,
   duplicateMatchedOnLabels,
   POSSIBLE_DUPLICATE_FLAG_PATH,
   type DismissFindingInput,
@@ -15,6 +17,7 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { ConflictError, NotFoundError } from '../../common/exceptions';
 import { metresBetween } from '../buildings/buildings.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
+import { unitsUnderReview } from '../buildings/unit-status';
 import {
   duplicateSignals,
   foldNamePart,
@@ -146,6 +149,7 @@ export class DataQualityService {
       this.occupantsWithLandlordPhone(),
       this.nearDuplicateBuildings(),
       this.unitStatusContradictions(),
+      this.unitsHeldForReview(),
       this.buildingsWithoutPin(),
       this.unitsWithoutArea(),
       this.unlinkedLandlords(),
@@ -433,7 +437,7 @@ export class DataQualityService {
             duplicateCitizens: countKind('DUPLICATE_CITIZEN') + countKind('HELD_AS_POSSIBLE_DUPLICATE'),
             landlordPhoneCopies: countKind('OCCUPANT_HAS_LANDLORD_PHONE'),
             nearDuplicateBuildings: countKind('NEAR_DUPLICATE_BUILDINGS'),
-            statusContradictions: countKind('UNIT_STATUS_CONTRADICTION'),
+            statusContradictions: countKind('UNIT_STATUS_CONTRADICTION') + countKind('UNIT_UNDER_REVIEW'),
           },
           acknowledgedDuplicateBuildings: {
             count: ack?.count ?? 0,
@@ -680,13 +684,18 @@ export class DataQualityService {
 
   /**
    * The unit says one thing and the owner's own card another — X-78-A flat 0001
-   * on 2026-09-16: «شاغرة» on the unit, «مشغولة من المالك» on the card. Billing
-   * reads the unit, so the owner was charged nothing.
+   * on 2026-09-16: «شاغرة» on the unit, «مشغولة من المالك» on the card.
+   *
+   * Since 2026-09-30 a disagreement that changes who pays is the status rule's
+   * (`UNIT_UNDER_REVIEW`, which also holds the fee) and is not repeated here.
+   * What is left is wording that bills the same — «مؤجرة» against «مشغولة
+   * بتسامح», «موسمي» against «مشغولة من المالك» — worth correcting, not holding.
    */
   private async unitStatusContradictions(): Promise<RawFinding[]> {
     const rows = await this.db.$queryRaw<
       Array<{
         rowId: string;
+        unitId: string;
         unitCode: string;
         unitStatus: string;
         cardStatus: string;
@@ -699,7 +708,7 @@ export class DataQualityService {
         updatedAt: Date;
       }>
     >`
-      SELECT bu.id AS "rowId", u."unitCode", u."unitStatus"::text AS "unitStatus", bu."unitStatus"::text AS "cardStatus",
+      SELECT bu.id AS "rowId", u.id AS "unitId", u."unitCode", u."unitStatus"::text AS "unitStatus", bu."unitStatus"::text AS "cardStatus",
              b.id AS "buildingId", b.code AS "buildingCode", b.name AS "buildingName", b."parcelNumber",
              r."citizenId", COALESCE(fr."createdById", r."createdById") AS "createdById",
              GREATEST(bu."updatedAt", u."updatedAt") AS "updatedAt"
@@ -717,12 +726,15 @@ export class DataQualityService {
         AND bu."unitStatus"::text <> u."unitStatus"::text
     `;
     if (rows.length === 0) return [];
-    const citizens = await this.citizenLabels(rows.map((row) => row.citizenId));
-    return rows.map((row) => ({
+    const review = await unitsUnderReview(this.db, [...new Set(rows.map((row) => row.unitId))]);
+    const wording = rows.filter((row) => (review.get(row.unitId)?.conflicts.length ?? 0) === 0);
+    if (wording.length === 0) return [];
+    const citizens = await this.citizenLabels(wording.map((row) => row.citizenId));
+    return wording.map((row) => ({
       kind: 'UNIT_STATUS_CONTRADICTION' as const,
       subjectKey: row.rowId,
-      severity: 'HIGH' as const,
-      detail: `الوحدة ${row.unitCode}: على الوحدة «${row.unitStatus}» وعلى بطاقة المالك «${row.cardStatus}» — الفوترة تقرأ الوحدة`,
+      severity: 'LOW' as const,
+      detail: `الوحدة ${row.unitCode}: على الوحدة «${row.unitStatus}» وعلى بطاقة المالك «${row.cardStatus}» — الفاتورة واحدة في الحالتين، لكن أحدهما خطأ`,
       subjects: [
         {
           kind: 'building' as const,
@@ -736,6 +748,54 @@ export class DataQualityService {
       at: row.updatedAt.toISOString(),
       dismissable: true,
     }));
+  }
+
+  /**
+   * Flats whose occupancy fee billing is holding — the same rule, read the same
+   * way (`unitsUnderReview`), so this list and the held flats on a bill are one
+   * list. Each clears itself once the flat's records agree.
+   */
+  private async unitsHeldForReview(): Promise<RawFinding[]> {
+    const held = await unitsUnderReview(this.db);
+    if (held.size === 0) return [];
+    const buildings = await this.db.building.findMany({
+      where: { id: { in: [...new Set([...held.values()].map((row) => row.buildingId))] } },
+      select: { id: true, code: true, name: true, parcelNumber: true },
+    });
+    const byId = new Map(buildings.map((building) => [building.id, building]));
+    const label = (status: string | null) =>
+      status ? ((ar.unitStatus as Record<string, string>)[status] ?? status) : 'غير محددة';
+
+    return [...held.values()].flatMap((row) => {
+      const building = byId.get(row.buildingId);
+      if (!building) return [];
+      const feeHeld = row.conflicts.length > 0;
+      const detail = feeHeld
+        ? `الوحدة ${row.unitCode}: ${row.conflicts
+            .map((conflict) => describeUnitStatusConflict(conflict, label))
+            .join('؛ ')}. رسم الإشغال عليها معلَّق حتى تُسوّى`
+        : `الوحدة ${row.unitCode}: مسجَّلة «${label(row.current)}» والصحيح «${label(row.status)}» حسب من هو مسجَّل فيها — الفوترة تحتسب «${label(row.status)}» منذ الآن، و«مراجعة حالة الوحدات» تصحّح السجل`;
+      return [
+        {
+          kind: 'UNIT_UNDER_REVIEW' as const,
+          subjectKey: row.unitId,
+          severity: feeHeld ? ('HIGH' as const) : ('LOW' as const),
+          detail,
+          subjects: [
+            {
+              kind: 'building' as const,
+              id: building.id,
+              label: building.name ? `${building.code} — ${building.name}` : building.code,
+              secondary: `عقار ${building.parcelNumber}`,
+            },
+          ],
+          officerIds: [],
+          // When it was found, not when it began: the rule is recomputed on every scan.
+          at: new Date().toISOString(),
+          dismissable: false,
+        },
+      ];
+    });
   }
 
   /** Structures with no entrance — the duplicate prompt cannot measure from them. */

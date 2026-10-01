@@ -237,6 +237,14 @@ export const feeAssessmentSchema = z.object({
    * Defaulted for every assessment stored before any of this existed.
    */
   excludedUnitCount: z.number().default(0),
+  /**
+   * Flats whose occupancy fee this bill holds because their records disagree
+   * and are under review — a «تعارض في حالة الوحدة» (`settleUnitStatus`). Not
+   * charged to anybody until the disagreement is settled (the user's decision,
+   * 2026-09-30), and counted here so the bill says so rather than reading as a
+   * smaller holding. Owner-borne fees are never held: they follow the deed.
+   */
+  heldUnitCount: z.number().default(0),
   lines: z.array(feeAssessmentLineSchema),
 });
 

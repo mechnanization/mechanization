@@ -232,6 +232,7 @@ export function fixHref(finding: QualityFinding, base: string): string | null {
       return building ? `${base}/buildings/${encodeURIComponent(building.id)}/edit` : null;
     case 'UNITS_WITHOUT_AREA':
     case 'UNIT_STATUS_CONTRADICTION':
+    case 'UNIT_UNDER_REVIEW':
       return building ? `${base}/buildings/${encodeURIComponent(building.id)}/matrix` : null;
     default:
       return citizen ? subjectHref(citizen, base) : building ? subjectHref(building, base) : null;
