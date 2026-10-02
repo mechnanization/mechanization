@@ -216,6 +216,15 @@ export function NotificationsBell({
                       .filter(Boolean)
                       .join(' · ')}
                   </p>
+                  {/* The transfer's own number — what a reviewer checks against the Whish statement. */}
+                  {payment.whishTransactionRef ? (
+                    <p className="truncate text-xs text-muted-foreground">
+                      {en ? 'Ref ' : 'رقم العملية '}
+                      <bdi dir="ltr" className="font-mono">
+                        {payment.whishTransactionRef}
+                      </bdi>
+                    </p>
+                  ) : null}
                 </div>
                 <Button
                   type="button"

@@ -653,6 +653,7 @@ export function BuildingUnitMatrixDrawer({
                       setAction(null);
                       setActionError(null);
                     }}
+                    locale={locale}
                   />
                 </div>
               </section>

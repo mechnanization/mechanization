@@ -1,8 +1,8 @@
 'use client';
 
-import { use, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { use, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Briefcase,
   Building,
@@ -16,7 +16,6 @@ import {
   IdCard,
   KeyRound,
   LandPlot,
-  Loader2,
   MapPin,
   SquareDashed,
   Stethoscope,
@@ -25,19 +24,22 @@ import {
   Unlink,
   Warehouse,
 } from 'lucide-react';
-import { getLabels, isUnoccupied } from '@mechanization/shared-schemas';
+import { getLabels, OWNER_BILLED_WHILE_ABSENT } from '@mechanization/shared-schemas';
 import {
-  ApiRequestError,
   getBuilding,
   getCitizenProfile,
-  logApiError,
   type BuildingDetail,
-  type CitizenProfile,
   type CitizenProfileProperty,
   type CitizenProfileUnit,
 } from '@/lib/api-client';
-import { clearSession, loadSession } from '@/lib/session';
-import { formatDate } from '@/lib/dates';
+import { useStaffSession } from '@/lib/use-staff-session';
+import { useStaffQuery } from '@/lib/use-staff-query';
+import { formatDate, formatMonthList } from '@/lib/dates';
+import { mapHref } from '@/lib/map-link';
+import { occupancyDot } from '@/lib/occupancy';
+import { formatPhone } from '@/lib/phone';
+import { PageHeader } from '@/components/ui/page-header';
+import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -66,11 +68,22 @@ function labelOf(map: Record<string, string>, key: string | null | undefined): s
   return map[key] ?? key;
 }
 
-/** Green while somebody lives there, grey while nobody does, a ring for a seasonal home. */
-function occupancyDot(status: string | null | undefined): 'occupied' | 'vacant' | 'seasonal' | null {
-  if (!status) return null;
-  if (status === 'SEASONAL') return 'seasonal';
-  return isUnoccupied(status) ? 'vacant' : 'occupied';
+/** m² in either locale — «م²» on an English page is a language leak (TXT-2). */
+function areaUnit(en: boolean): string {
+  return en ? 'm²' : 'م²';
+}
+
+/**
+ * Why a home nobody lives in is still charged to its owner — the sentence the
+ * citizen file used to carry on every seasonal flat. A building is presumed
+ * occupied until a تصريح بالشغور is filed (هيئة التشريع والاستشارات 725/2003)
+ * and the fee is owed on actual occupancy (Law 60/1988, Art. 11).
+ */
+function ownerBilledHint(status: string | null | undefined, en: boolean): string | null {
+  if (!(OWNER_BILLED_WHILE_ABSENT as readonly string[]).includes(status ?? '')) return null;
+  return en
+    ? 'Nobody lives here most of the year; the occupancy fee stays with the owner unless a vacancy declaration is filed.'
+    : 'لا يسكنها أحد معظم السنة، ويبقى رسم الإشغال على المالك ما لم يُقدَّم تصريح بالشغور.';
 }
 
 /**
@@ -102,78 +115,61 @@ export default function CitizenPropertiesPage({
   params: Promise<{ tenant: string; locale: string; adminPath: string; citizenId: string }>;
 }) {
   const { tenant, locale, adminPath, citizenId } = use(params);
-  const router = useRouter();
   const en = locale === 'en';
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
+  const queryClient = useQueryClient();
 
-  const [citizen, setCitizen] = useState<CitizenProfile | null>(null);
-  const [buildings, setBuildings] = useState<ReadonlyMap<string, BuildingDetail>>(new Map());
-  const [error, setError] = useState<string | null>(null);
+  const { token, user } = useStaffSession(tenant, base);
   const [filter, setFilter] = useState<Filter>('all');
+  // The roles that edit a citizen's file — the same three the file itself offers these actions to.
+  const auth = token && user ? { token, canEdit: EDIT_ROLES.includes(user.role) } : null;
 
-  /** Who is looking: what the card actions need, and who may use them. */
-  const [auth, setAuth] = useState<{ token: string; canEdit: boolean } | null>(null);
-  /** Bumped after an action changes the file, which reloads it. */
-  const [version, setVersion] = useState(0);
-
-  useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    const token = session.accessToken;
-    // The roles that edit a citizen's file — the same three the file itself offers these actions to.
-    setAuth({ token, canEdit: EDIT_ROLES.includes(session.user.role ?? '') });
-    getCitizenProfile(tenant, token, citizenId)
-      .then((profile) => {
-        setCitizen(profile);
-        /*
-          The drawings, fetched after the cards and never in their way: a
-          building that fails to load keeps its block, drawn generically.
-        */
-        const ids = [
-          ...new Set(
-            profile.registrations
-              .flatMap((registration) => registration.properties)
-              .map((property) => property.buildingId)
-              .filter((id): id is string => Boolean(id)),
-          ),
-        ];
-        void Promise.allSettled(ids.map((id) => getBuilding(tenant, token, id))).then((results) => {
-          const loaded = new Map<string, BuildingDetail>();
-          for (const result of results) {
-            if (result.status === 'fulfilled') loaded.set(result.value.id, result.value);
-          }
-          setBuildings(loaded);
-        });
-      })
-      .catch((caught: unknown) => {
-        logApiError(caught);
-        if (caught instanceof ApiRequestError && caught.status === 401) {
-          clearSession(tenant);
-          router.replace(`${base}/login`);
-          return;
-        }
-        setError(
-          caught instanceof ApiRequestError && caught.status === 404
-            ? en
-              ? 'No citizen found with this ID.'
-              : 'لا يوجد مواطن بهذا المعرّف.'
-            : en
-              ? 'Could not load the properties.'
-              : 'تعذّر تحميل العقارات.',
-        );
-      });
-  }, [tenant, base, citizenId, router, en, version]);
+  const profile = useStaffQuery({
+    queryKey: ['citizen-profile', tenant, citizenId],
+    queryFn: (tok) => getCitizenProfile(tenant, tok, citizenId),
+    tenant,
+    base,
+    token,
+    errorMessage: en ? 'Could not load the properties.' : 'تعذّر تحميل العقارات.',
+  });
+  const citizen = profile.data ?? null;
 
   const properties = useMemo(
     () => citizen?.registrations.flatMap((registration) => registration.properties) ?? [],
     [citizen],
   );
-  const current = properties.filter((property) => !property.endedAt);
+  /*
+    The drawings, fetched after the cards and never in their way: a building
+    that fails to load keeps its block, drawn generically. One request per
+    building the citizen holds in — usually one or two.
+  */
+  const buildingIds = useMemo(
+    () => [...new Set(properties.map((property) => property.buildingId).filter((id): id is string => Boolean(id)))].sort(),
+    [properties],
+  );
+  const drawings = useStaffQuery({
+    queryKey: ['citizen-property-buildings', tenant, citizenId, buildingIds.join(',')],
+    queryFn: async (tok) => {
+      const results = await Promise.allSettled(buildingIds.map((id) => getBuilding(tenant, tok, id)));
+      const loaded = new Map<string, BuildingDetail>();
+      for (const result of results) if (result.status === 'fulfilled') loaded.set(result.value.id, result.value);
+      return loaded as ReadonlyMap<string, BuildingDetail>;
+    },
+    tenant,
+    base,
+    token: citizen && buildingIds.length > 0 ? token : null,
+    errorMessage: en ? 'Could not load the building drawings.' : 'تعذّر تحميل رسوم المباني.',
+  });
+  const buildings = drawings.data ?? new Map<string, BuildingDetail>();
 
+  /** After an action changes the file, its cards and drawings are read again. */
+  const reload = () => {
+    void queryClient.invalidateQueries({ queryKey: ['citizen-profile', tenant, citizenId] });
+    void queryClient.invalidateQueries({ queryKey: ['citizen-property-buildings', tenant, citizenId] });
+  };
+
+  const current = properties.filter((property) => !property.endedAt);
   const counts = {
     all: properties.length,
     owned: current.filter((property) => property.occupancyType === 'OWNER').length,
@@ -190,78 +186,58 @@ export default function CitizenPropertiesPage({
   });
 
   const profileHref = `${base}/citizens/${encodeURIComponent(citizenId)}`;
+  // A tenant and a free occupant both live in someone else's property; the label says both.
+  const occupiedLabel = en ? 'Rented or occupied' : 'إيجار أو إشغال';
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/citizens`} label={en ? 'Back' : 'رجوع'} className="text-sm" />
+      <BackLink fallbackHref={`${base}/citizens`} label={en ? 'Back' : 'رجوع'} />
 
-      {error ? (
-        <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive">
-          {error}
-        </p>
+      {profile.error ? (
+        <ErrorState description={profile.error} onRetry={() => void profile.refetch()} retryLabel={en ? 'Try again' : 'إعادة المحاولة'} />
       ) : !citizen ? (
-        <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          {en ? 'Loading properties…' : 'جارٍ تحميل العقارات…'}
-        </div>
+        <LoadingState fullHeight label={en ? 'Loading properties…' : 'جارٍ تحميل العقارات…'} />
       ) : (
         <>
-          {/*
-            Whose properties these are, on one row at every width: the icon
-            tile centred on the two lines beside it, the name as the title,
-            what the page is and the file's reference under it — the reference
-            as a badge, which sits on the line's centre where a dot-separated
-            Latin code did not — and the way to the citizen's file at the end,
-            shrinking to its icon on a phone rather than dropping under.
-          */}
-          <header className="flex items-center gap-3 border-b pb-4 sm:gap-4">
-            <span
-              aria-hidden
-              className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-inset ring-primary/20"
-            >
-              <Building2 className="size-6" />
-            </span>
-            <div className="min-w-0 flex-1 space-y-1">
-              <h1 className="truncate text-xl font-bold leading-tight tracking-tight md:text-2xl">
-                {citizen.fullName}
-              </h1>
-              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <PageHeader
+            icon={Building2}
+            title={citizen.fullName}
+            subtitle={
+              <span className="flex flex-wrap items-center gap-2">
                 <span>{en ? 'Properties & units' : 'العقارات والوحدات'}</span>
                 {citizen.referenceNumber ? (
-                  <Badge variant="outline" className="h-5 px-1.5 font-mono text-[11px] font-medium">
+                  <Badge variant="soft-muted" className="font-mono">
                     <bdi dir="ltr">{citizen.referenceNumber}</bdi>
                   </Badge>
                 ) : null}
-              </div>
-            </div>
-            <Link
-              href={profileHref}
-              aria-label={en ? 'Citizen file' : 'ملف المواطن'}
-              className={buttonVariants({ variant: 'outline', size: 'sm', className: 'shrink-0' })}
-            >
-              <IdCard className="size-4" aria-hidden />
-              <span className="hidden sm:inline">{en ? 'Citizen file' : 'ملف المواطن'}</span>
-            </Link>
-          </header>
+              </span>
+            }
+            actions={
+              <Link href={profileHref} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                <IdCard className="size-4" aria-hidden />
+                {en ? 'Citizen file' : 'ملف المواطن'}
+              </Link>
+            }
+          />
 
           {/* ── The household's holdings at a glance ─────────────── */}
           <StatStrip>
             <StatItem value={current.length} label={en ? 'Properties' : 'عقارات'} />
             <StatItem value={unitsHeld} label={en ? 'Units' : 'وحدات'} />
             <StatItem value={counts.owned} label={en ? 'Owned' : 'ملكية'} />
-            <StatItem value={counts.occupied} label={en ? 'Rented' : 'إيجار'} />
+            <StatItem value={counts.occupied} label={occupiedLabel} />
           </StatStrip>
 
           {properties.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-16 text-center">
-              <Home className="size-8 text-muted-foreground" aria-hidden />
-              <p className="font-semibold">{en ? 'No properties on file' : 'لا توجد عقارات مسجّلة'}</p>
-              <p className="max-w-sm text-sm text-muted-foreground">
-                {en
+            <EmptyState
+              icon={Home}
+              title={en ? 'No properties on file' : 'لا توجد عقارات مسجّلة'}
+              description={
+                en
                   ? 'No building, flat, house or land has been recorded for this citizen yet.'
-                  : 'لم يُسجَّل لهذا المواطن أي مبنى أو شقة أو منزل أو أرض بعد.'}
-              </p>
-            </div>
+                  : 'لم يُسجَّل لهذا المواطن أي مبنى أو شقة أو منزل أو أرض بعد.'
+              }
+            />
           ) : (
             <>
               {/* Only the filters that would show something; the counts are in the strip above. */}
@@ -275,7 +251,7 @@ export default function CitizenPropertiesPage({
                     [
                       ['all', en ? 'All' : 'الكل'],
                       ['owned', en ? 'Owned' : 'ملكية'],
-                      ['occupied', en ? 'Rented' : 'إيجار'],
+                      ['occupied', occupiedLabel],
                       ['ended', en ? 'Ended' : 'منتهية'],
                     ] as const
                   )
@@ -297,7 +273,7 @@ export default function CitizenPropertiesPage({
                     tenant={tenant}
                     locale={locale}
                     auth={auth}
-                    onChanged={() => setVersion((value) => value + 1)}
+                    onChanged={reload}
                   />
                 ))}
               </div>
@@ -345,18 +321,28 @@ function PropertyBlock({
   */
   const [dialog, setDialog] = useState<'ownership' | 'tenancy' | 'unlink' | null>(null);
   const editable = Boolean(auth?.canEdit) && !property.endedAt;
+  const owner = property.occupancyType === 'OWNER';
+  // Shares are a share *of ownership*: legacy tenant cards still carry a number that means nothing here.
+  const shares = owner ? property.shares : null;
+  /*
+    The same three actions, gated as the citizen file gated them: an owner's
+    card ends an ownership; a tenant's ends a tenancy and a free occupant's an
+    occupancy (the law's words differ, so the label does); and only a
+    non-owner's card has a landlord to unlink.
+  */
   const actions = editable
     ? [
-        ...(property.occupancyType === 'OWNER'
+        ...(owner
           ? [{ key: 'ownership' as const, label: en ? 'End ownership' : 'إنهاء الملكية', icon: KeyRound }]
-          : [{ key: 'tenancy' as const, label: en ? 'End tenancy' : 'إنهاء الإيجار', icon: DoorOpen }]),
-        ...(property.landlordCitizenId
+          : property.occupancyType === 'FREE_OCCUPANT'
+            ? [{ key: 'tenancy' as const, label: en ? 'End occupancy' : 'إنهاء الإشغال', icon: DoorOpen }]
+            : [{ key: 'tenancy' as const, label: en ? 'End tenancy' : 'إنهاء الإيجار', icon: DoorOpen }]),
+        ...(!owner && property.landlordCitizenId
           ? [{ key: 'unlink' as const, label: en ? 'Unlink landlord' : 'فك الربط بالمالك', icon: Unlink }]
           : []),
       ]
     : [];
 
-  const owner = property.occupancyType === 'OWNER';
   const tone: PropertyTone = owner ? 'owner' : 'occupant';
   const ended = Boolean(property.endedAt);
   const typeText = labelOf(labels.propertyType, property.propertyType);
@@ -408,6 +394,19 @@ function PropertyBlock({
   );
   const index = Math.min(selectedIndex, Math.max(0, units.length - 1));
   const selectedUnit = units[index] ?? null;
+  /** The lines still held — what the counts and the area describe. Ended ones stay listable. */
+  const liveUnits = units.filter((unit) => !unit.endedAt);
+  /*
+    Co-owners are read from the units, never stored on the card (they change
+    with the register). Only the current lines count.
+  */
+  const recordedOwners = liveUnits
+    .flatMap((unit) => unit.owners ?? [])
+    .filter(
+      (person, at, all) =>
+        all.findIndex((other) => (other.citizenId ?? other.name) === (person.citizenId ?? person.name)) === at,
+    );
+  const linkedIsOwner = recordedOwners.some((person) => person.citizenId === property.landlordCitizenId);
   /** A lit unit pressed in the drawing opens the card line linked to it, if there is one. */
   const selectFromDrawing = (censusUnitId: string) => {
     const at = units.findIndex((unit) => unit.unitId === censusUnitId);
@@ -433,7 +432,7 @@ function PropertyBlock({
 
   const scene =
     property.propertyType === 'LAND' ? (
-      <LandArt tone={tone} shares={property.shares} landType={property.landType} />
+      <LandArt tone={tone} shares={shares} landType={property.landType} />
     ) : !manyUnits && (property.propertyType === 'TENT' || building?.structureType === 'TENT_SHELTER') ? (
       <TentArt tone={tone} />
     ) : manyUnits && building ? (
@@ -443,6 +442,7 @@ function PropertyBlock({
         tone={tone}
         selected={selectedUnit?.unitId ?? null}
         onSelect={units.length > 0 ? selectFromDrawing : undefined}
+        locale={locale}
       />
     ) : soleType ? (
       <UnitArt unitType={soleType} tone={tone} />
@@ -467,23 +467,23 @@ function PropertyBlock({
     (property.propertyNumber ? (en ? `Parcel ${property.propertyNumber}` : `عقار رقم ${property.propertyNumber}`) : typeText);
   const area =
     property.unitArea ??
-    (units.length ? units.reduce((sum, unit) => sum + (unit.unitArea ?? 0), 0) || null : null);
+    (liveUnits.length ? liveUnits.reduce((sum, unit) => sum + (unit.unitArea ?? 0), 0) || null : null);
   const neighbourhood = property.neighborhood || property.tentLocation;
   // Said once: a zone named the same as the neighbourhood adds nothing.
   const zone = building?.zoneName && building.zoneName !== neighbourhood ? building.zoneName : null;
 
   return (
     <article
-      className={cn(
-        'flex flex-col overflow-hidden rounded-2xl border bg-card shadow-sm transition-shadow hover:shadow-md md:flex-row',
-        ended && 'opacity-70 grayscale-[40%]',
-      )}
+      className="flex flex-col overflow-hidden rounded-lg border bg-card shadow-sm md:flex-row"
     >
       {/* ── The picture, with its badges over the sky ────────────── */}
       <div
         className="relative h-64 shrink-0 border-b bg-muted/40 md:order-last md:h-auto md:min-h-[22rem] md:w-80 md:border-b-0 md:border-s lg:w-96"
       >
-        <div className="absolute inset-x-8 bottom-10 top-12 overflow-hidden md:inset-x-10 md:bottom-14 md:top-16">{scene}</div>
+        {/* An ended card's picture is greyed; its text is not, so it stays readable (COL-4). */}
+        <div className={cn('absolute inset-x-8 bottom-10 top-12 overflow-hidden md:inset-x-10 md:bottom-14 md:top-16', ended && 'grayscale')}>
+          {scene}
+        </div>
         <div className="absolute inset-x-3 top-3 flex items-start justify-between gap-2">
           <Badge variant={owner ? 'soft-success' : 'soft-info'} className="backdrop-blur">
             {owner ? <KeyRound className="size-3" aria-hidden /> : <DoorOpen className="size-3" aria-hidden />}
@@ -516,11 +516,11 @@ function PropertyBlock({
         <span
           aria-hidden
           className={cn(
-            'flex size-12 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset',
-            owner ? 'bg-success/10 text-success ring-success/20' : 'bg-info/10 text-info ring-info/20',
+            'flex size-10 shrink-0 items-center justify-center rounded-lg',
+            owner ? 'bg-success/10 text-success' : 'bg-info/10 text-info',
           )}
         >
-          <TypeIcon className="size-6" />
+          <TypeIcon className="size-5" />
         </span>
         <div className="min-w-0 flex-1 space-y-1">
           <h2 className="truncate text-lg font-bold leading-tight">{title}</h2>
@@ -532,20 +532,16 @@ function PropertyBlock({
                   <span className="truncate">{neighbourhood}</span>
                 </span>
               ) : null}
-              {zone ? (
-                <Badge variant="outline" className="h-5 px-1.5 text-[11px] font-medium">
-                  {zone}
-                </Badge>
-              ) : null}
+              {zone ? <Badge variant="soft-muted">{zone}</Badge> : null}
             </div>
           ) : null}
         </div>
       </div>
 
       <StatStrip className="mx-4 mt-3">
-        {units.length > 0 ? (
+        {liveUnits.length > 0 ? (
           <StatItem
-            value={units.length}
+            value={liveUnits.length}
             label={owner ? (en ? 'Units owned' : 'وحدات يملكها') : en ? 'Units' : 'وحدات'}
             className={owner ? 'text-success' : 'text-info'}
           />
@@ -554,13 +550,9 @@ function PropertyBlock({
         {building && building.unitsTotal > 1 ? (
           <StatItem value={building.unitsTotal} label={en ? 'Units in building' : 'وحدات المبنى'} />
         ) : null}
-        {area ? <StatItem value={area} unit="م²" label={en ? 'Area' : 'المساحة'} /> : null}
-        {property.shares != null ? (
-          <StatItem
-            value={Math.round((property.shares / 2400) * 100)}
-            unit="%"
-            label={en ? 'Of the plot' : 'من العقار'}
-          />
+        {area ? <StatItem value={area} unit={areaUnit(en)} label={en ? 'Area' : 'المساحة'} /> : null}
+        {shares != null ? (
+          <StatItem value={Math.round((shares / 2400) * 100)} unit="%" label={en ? 'Of the plot' : 'من العقار'} />
         ) : null}
       </StatStrip>
 
@@ -572,8 +564,8 @@ function PropertyBlock({
         value={tab}
         onChange={(next) => setTab(next as typeof tab)}
         options={[
-          ...(property.units.length > 0
-            ? [{ value: 'units', label: en ? `Units (${property.units.length})` : `الوحدات (${property.units.length})` }]
+          ...(units.length > 0
+            ? [{ value: 'units', label: en ? `Units (${liveUnits.length})` : `الوحدات (${liveUnits.length})` }]
             : []),
           { value: 'property', label: en ? 'Property' : 'العقار' },
           ...(hasBuilding ? [{ value: 'building', label: en ? 'Building' : 'المبنى' }] : []),
@@ -596,25 +588,32 @@ function PropertyBlock({
           <SummaryRow label={en ? 'Neighbourhood' : 'الحي'}>{property.neighborhood}</SummaryRow>
         ) : null}
         {building?.zoneName ? <SummaryRow label={en ? 'Zone' : 'المنطقة'}>{building.zoneName}</SummaryRow> : null}
-        {property.propertyNumber ? (
-          <SummaryRow label={en ? 'Parcel no.' : 'رقم العقار'} className="font-mono">
-            {property.propertyNumber}
-          </SummaryRow>
-        ) : null}
+        <SummaryRow label={en ? 'Parcel no.' : 'رقم العقار'}>
+          {property.propertyNumber ? (
+            <bdi dir="ltr" className="font-mono">
+              {property.propertyNumber}
+            </bdi>
+          ) : (
+            // Said, not hidden: a card with no confirmed parcel is a thing to fix.
+            <span className="text-warning">{en ? 'Unverified' : 'غير مؤكَّد'}</span>
+          )}
+        </SummaryRow>
         {property.tentLocation ? (
           <SummaryRow label={en ? 'Tent location' : 'موقع الخيمة'}>{property.tentLocation}</SummaryRow>
         ) : null}
         {area ? (
-          <SummaryRow label={en ? 'Area' : 'المساحة'} className="font-mono">
-            {area} م²
+          <SummaryRow label={en ? 'Area' : 'المساحة'} className="tabular-nums">
+            {area} {areaUnit(en)}
           </SummaryRow>
         ) : null}
         {property.landType ? (
           <SummaryRow label={en ? 'Land type' : 'نوع الأرض'}>{labelOf(labels.landType, property.landType)}</SummaryRow>
         ) : null}
-        {property.shares != null ? (
-          <SummaryRow label={en ? 'Shares' : 'الأسهم'} className="font-mono">
-            {property.shares} / 2400 ({Math.round((property.shares / 2400) * 100)}%)
+        {shares != null ? (
+          <SummaryRow label={en ? 'Shares' : 'الأسهم'} className="tabular-nums">
+            <bdi dir="ltr">
+              {shares} / 2400 ({Math.round((shares / 2400) * 100)}%)
+            </bdi>
           </SummaryRow>
         ) : null}
         {property.sharedRights.length > 0 ? (
@@ -649,9 +648,46 @@ function PropertyBlock({
             )}
           </SummaryRow>
         ) : null}
+        {/*
+          The owner's name is derived from their file once linked; what the
+          tenant actually said is kept and shown (a recorded user decision), so
+          a link made to the wrong person can be seen to be wrong.
+        */}
+        {!owner &&
+        property.landlordCitizenId &&
+        property.landlordNameAsTyped &&
+        property.landlordNameAsTyped !== property.landlordName ? (
+          <SummaryRow label={en ? 'As the tenant gave it' : 'كما ذكره المستأجر'}>{property.landlordNameAsTyped}</SummaryRow>
+        ) : null}
         {!owner && property.landlordPhone ? (
-          <SummaryRow label={en ? 'Landlord phone' : 'هاتف المالك'} className="font-mono">
-            <bdi dir="ltr">{property.landlordPhone}</bdi>
+          <SummaryRow label={en ? 'Landlord phone' : 'هاتف المالك'}>
+            <a href={`tel:${property.landlordPhone}`} dir="ltr" className="text-primary tabular-nums hover:underline">
+              {formatPhone(property.landlordPhone)}
+            </a>
+          </SummaryRow>
+        ) : null}
+        {/*
+          Everyone the building register records as owning these flats — a
+          tenancy names the one owner the tenant deals with; heirs may be
+          several. With the two warnings the file carried: a linked landlord who
+          is not among them, and a tenancy linked to none of them.
+        */}
+        {!owner && !ended && recordedOwners.length > 0 ? (
+          <SummaryRow label={en ? 'Owners in the register' : 'مالكو الوحدة في السجل'}>
+            <span className="flex flex-col items-end gap-1">
+              <OwnerList owners={recordedOwners} base={base} en={en} />
+              {property.landlordCitizenId && !linkedIsOwner ? (
+                <span className="text-xs text-warning">
+                  {en
+                    ? 'The linked landlord is not recorded as an owner of this unit — check the link or the unit.'
+                    : 'المالك المربوط غير مسجَّل مالكاً لهذه الوحدة — راجِع الربط أو الوحدة.'}
+                </span>
+              ) : !property.landlordCitizenId ? (
+                <span className="text-xs text-muted-foreground">
+                  {en ? 'This tenancy is not linked to any of them.' : 'هذا الإيجار غير مربوط بأيٍّ منهم.'}
+                </span>
+              ) : null}
+            </span>
           </SummaryRow>
         ) : null}
         {ended ? (
@@ -706,7 +742,7 @@ function PropertyBlock({
       {/* ── The units: one table each, picked from the drawing ───── */}
       {units.map((unit, at) => (
         <Panel key={unit.id} active={tab === 'units' && at === index}>
-          <UnitRows unit={unit} labels={labels} en={en} tone={tone} />
+          <UnitRows unit={unit} labels={labels} en={en} tone={tone} base={base} ended={ended || Boolean(unit.endedAt)} />
         </Panel>
       ))}
       </div>
@@ -732,7 +768,7 @@ function PropertyBlock({
         </div>
       ) : null}
 
-      {property.buildingId || actions.length > 0 ? (
+      {property.buildingId || actions.length > 0 || property.latitude != null ? (
         <footer className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t bg-muted/20 px-4 py-2.5">
           <div className="flex flex-wrap gap-2">
             {actions.map(({ key, label, icon: Icon }) => (
@@ -742,16 +778,28 @@ function PropertyBlock({
               </Button>
             ))}
           </div>
-          {property.buildingId ? (
-            <Link
-              href={`${base}/buildings/${encodeURIComponent(property.buildingId)}`}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-            >
-              <Building2 className="size-3.5" aria-hidden />
-              {en ? 'Open in building register' : 'عرض في سجل المباني'}
-              <ExternalLink className="size-3 rtl:-scale-x-100" aria-hidden />
-            </Link>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            {property.latitude != null ? (
+              <Link
+                href={mapHref(base, property)}
+                className="inline-flex min-h-9 items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+              >
+                <MapPin className="size-3.5" aria-hidden />
+                {en ? 'View on map' : 'عرض على الخريطة'}
+              </Link>
+            ) : null}
+            {property.buildingId ? (
+              // The building's page is its matrix — there is no /buildings/:id page of its own.
+              <Link
+                href={`${base}/buildings/${encodeURIComponent(property.buildingId)}/matrix`}
+                className="inline-flex min-h-9 items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+              >
+                <Building2 className="size-3.5" aria-hidden />
+                {en ? 'Open in building register' : 'عرض في سجل المباني'}
+                <ExternalLink className="size-3 rtl:-scale-x-100" aria-hidden />
+              </Link>
+            ) : null}
+          </div>
         </footer>
       ) : null}
 
@@ -817,24 +865,16 @@ const UNIT_ICON: Record<string, typeof Building2> = {
 };
 
 
-/** The open tab's panel inside a block — its tab names it, so it carries no heading of its own. */
-/*
-  One height for every panel, in every block: switching tab or unit never
-  moves the page, and blocks side by side line up. What does not fit scrolls
-  inside the panel rather than stretching it.
-*/
 /**
- * One tab's table. Inactive panels stay laid out but invisible — hidden from
- * sight, focus and screen readers alike — so they still hold the block open
- * to the tallest of them.
+ * One section's facts. Every panel sits in the same grid cell; inactive ones
+ * stay laid out but `invisible` — out of sight, focus order and the
+ * accessibility tree alike — so the block is always as tall as its tallest
+ * panel and switching section never moves the page. The section switch is a
+ * radio group (SegmentedControl), so these are plain regions, not tab panels.
  */
 function Panel({ active, children }: { active: boolean; children: ReactNode }) {
   return (
-    <div
-      role="tabpanel"
-      aria-hidden={!active}
-      className={cn('rounded-xl border px-3 [grid-area:1/1]', !active && 'invisible')}
-    >
+    <div aria-hidden={!active} className={cn('rounded-lg border px-3 [grid-area:1/1]', !active && 'invisible')}>
       <SummaryList>{children}</SummaryList>
     </div>
   );
@@ -871,83 +911,167 @@ function UnitRows({
   labels,
   en,
   tone,
+  base,
+  ended,
 }: {
   unit: CitizenProfileUnit;
   labels: Labels;
   en: boolean;
   tone: PropertyTone;
+  base: string;
+  /**
+   * The line, or its card, has ended. The flat's *current* status, vacancy,
+   * owners and seasonal record describe whoever is there now — not this
+   * person, who has left — so they are not shown under an ended line.
+   */
+  ended: boolean;
 }) {
   const Icon = (unit.unitType && UNIT_ICON[unit.unitType]) || Building;
   const status = unit.censusUnitStatus ?? unit.unitStatus;
   const disagree = Boolean(unit.censusUnitStatus && unit.unitStatus && unit.censusUnitStatus !== unit.unitStatus);
   const owners = unit.owners ?? [];
+  const seasonal = unit.unitStatus === 'SEASONAL' || unit.censusUnitStatus === 'SEASONAL';
+  const billedHint = ownerBilledHint(status, en);
 
   return (
     <>
-        <SummaryRow label={en ? 'Unit' : 'الوحدة'} className="font-mono">
-          <bdi dir="ltr">{unit.unitCode ?? unit.unitPostedNumber ?? '—'}</bdi>
+      <SummaryRow label={en ? 'Unit' : 'الوحدة'} className="font-mono">
+        <bdi dir="ltr">{unit.unitCode ?? unit.unitPostedNumber ?? '—'}</bdi>
+      </SummaryRow>
+      <SummaryRow label={en ? 'Unit type' : 'نوع الوحدة'}>
+        <span className="inline-flex items-center gap-1.5">
+          <Icon className={cn('size-4', tone === 'owner' ? 'text-success' : 'text-info')} aria-hidden />
+          {labelOf(labels.unitType, unit.unitType) ?? (en ? 'Unverified' : 'غير مؤكَّد')}
+        </span>
+      </SummaryRow>
+      {unit.unitPostedNumber && unit.unitCode ? (
+        <SummaryRow label={en ? 'Number on door' : 'الرقم على الباب'} className="font-mono">
+          <bdi dir="ltr">{unit.unitPostedNumber}</bdi>
         </SummaryRow>
-        <SummaryRow label={en ? 'Unit type' : 'نوع الوحدة'}>
-          <span className="inline-flex items-center gap-1.5">
-            <Icon className={cn('size-4', tone === 'owner' ? 'text-success' : 'text-info')} aria-hidden />
-            {labelOf(labels.unitType, unit.unitType) ?? (en ? 'Unit' : 'وحدة')}
-          </span>
-        </SummaryRow>
-        {unit.unitPostedNumber && unit.unitCode ? (
-          <SummaryRow label={en ? 'Number on door' : 'الرقم على الباب'} className="font-mono">
-            <bdi dir="ltr">{unit.unitPostedNumber}</bdi>
-          </SummaryRow>
-        ) : null}
-        {unit.floor ? <SummaryRow label={en ? 'Floor' : 'الطابق'}>{floorText(unit.floor, en)}</SummaryRow> : null}
-        {unit.side ? <SummaryRow label={en ? 'Side' : 'الجهة'}>{unit.side}</SummaryRow> : null}
+      ) : null}
+      {unit.floor ? <SummaryRow label={en ? 'Floor' : 'الطابق'}>{floorText(unit.floor, en)}</SummaryRow> : null}
+      {unit.side ? <SummaryRow label={en ? 'Side' : 'الجهة'}>{unit.side}</SummaryRow> : null}
+      <SummaryRow label={en ? 'Area' : 'المساحة'} className="tabular-nums">
         {unit.unitArea ? (
-          <SummaryRow label={en ? 'Area' : 'المساحة'} className="font-mono">
-            {unit.unitArea} م²
-          </SummaryRow>
-        ) : null}
-        {status ? (
-          <SummaryRow label={disagree ? (en ? 'Status (register)' : 'الحالة في السجل') : en ? 'Status' : 'حالة الوحدة'}>
-            <StatusLine status={status} labels={labels} />
-          </SummaryRow>
-        ) : null}
-        {disagree ? (
-          <SummaryRow label={en ? 'Status (card)' : 'الحالة على البطاقة'} className="text-warning">
-            <StatusLine status={unit.unitStatus} labels={labels} />
-          </SummaryRow>
-        ) : null}
-        {unit.vacancy ? (
-          <SummaryRow label={en ? 'Vacancy' : 'الشغور'}>{en ? 'Confirmed' : 'مؤكَّد'}</SummaryRow>
-        ) : null}
-        {owners.length > 0 ? (
-          <SummaryRow label={owners.length > 1 ? (en ? 'Co-owners' : 'المالكون') : en ? 'Owner' : 'المالك'}>
-            <span className="flex flex-col items-end gap-0.5">
-              {owners.map((person) => (
-                <span key={`${person.citizenId ?? person.name}`}>
-                  {person.name}
-                  {person.shares != null ? (
-                    <span className="ms-1 font-mono text-xs text-muted-foreground">({person.shares})</span>
-                  ) : null}
-                </span>
-              ))}
-            </span>
-          </SummaryRow>
-        ) : null}
-        {unit.sharedRights.length > 0 ? (
-          <SummaryRow label={en ? 'Shared rights' : 'الحقوق المشتركة'}>{unit.sharedRights.join('، ')}</SummaryRow>
-        ) : null}
-        {unit.presenceMonths && unit.presenceMonths.length > 0 ? (
-          <SummaryRow label={en ? 'Present in months' : 'أشهر الحضور'}>{unit.presenceMonths.join('، ')}</SummaryRow>
-        ) : null}
-        {unit.ownerLastStayAt ? (
-          <SummaryRow label={en ? 'Last stay' : 'آخر إقامة'}>{formatDate(unit.ownerLastStayAt)}</SummaryRow>
-        ) : null}
-        {unit.endedAt ? (
+          `${unit.unitArea} ${areaUnit(en)}`
+        ) : (
+          <span className="text-muted-foreground">{en ? 'Not recorded' : 'غير مسجَّلة'}</span>
+        )}
+      </SummaryRow>
+      {ended ? (
+        unit.endedAt ? (
           <SummaryRow label={en ? 'Ended on' : 'تاريخ الانتهاء'}>{formatDate(unit.endedAt)}</SummaryRow>
-        ) : null}
+        ) : null
+      ) : (
+        <>
+          {status ? (
+            <SummaryRow label={disagree ? (en ? 'Status (register)' : 'الحالة في السجل') : en ? 'Status' : 'حالة الوحدة'}>
+              <span className="flex flex-col items-end gap-0.5">
+                <StatusLine status={status} labels={labels} />
+                {billedHint ? <span className="text-xs text-muted-foreground">{billedHint}</span> : null}
+              </span>
+            </SummaryRow>
+          ) : null}
+          {disagree ? (
+            <SummaryRow label={en ? 'Status (card)' : 'الحالة على البطاقة'} className="text-warning">
+              <StatusLine status={unit.unitStatus} labels={labels} />
+            </SummaryRow>
+          ) : null}
+          {/*
+            «تأكيد الشغور» — stated with what it rests on and when, never reduced
+            to a word: the owner disputing a bill and the resident disputing
+            its absence are both entitled to read which basis an officer had
+            (Shura 518/2007 — a missing declaration does not make an occupied
+            flat vacant, and a neighbour's word is not a تصريح).
+          */}
+          {unit.vacancy ? (
+            <>
+              <SummaryRow label={en ? 'Confirmed vacant' : 'شغور مؤكَّد'}>{formatDate(unit.vacancy.observedAt)}</SummaryRow>
+              <SummaryRow label={en ? 'Basis' : 'المستند'}>
+                {unit.vacancy.basis
+                  ? labelOf(labels.vacancyBasis, unit.vacancy.basis)
+                  : en
+                    ? 'Not recorded (backfilled)'
+                    : 'دون مستند مسجَّل (سجل مُرحَّل)'}
+              </SummaryRow>
+            </>
+          ) : null}
+          {owners.length > 0 ? (
+            <SummaryRow label={owners.length > 1 ? (en ? 'Co-owners' : 'المالكون') : en ? 'Owner' : 'المالك'}>
+              <OwnerList owners={owners} base={base} en={en} />
+            </SummaryRow>
+          ) : null}
+          {/*
+            «مسكن موسمي» — what the council's decision to shorten the fee would
+            rest on: the months present, the last stay, and any declaration.
+          */}
+          {seasonal ? (
+            <>
+              <SummaryRow label={en ? 'Present' : 'أشهر الحضور'}>
+                {unit.presenceMonths?.length ? (
+                  formatMonthList(unit.presenceMonths, en ? 'en' : 'ar')
+                ) : (
+                  <span className="text-muted-foreground">{en ? 'Not recorded' : 'لم يُسجَّل'}</span>
+                )}
+              </SummaryRow>
+              {unit.ownerLastStayAt ? (
+                <SummaryRow label={en ? 'Last stay' : 'آخر إقامة'}>{formatDate(unit.ownerLastStayAt)}</SummaryRow>
+              ) : null}
+              {unit.vacancyDeclaredAt ? (
+                <SummaryRow label={en ? 'Vacancy declared' : 'تصريح بالشغور'}>{formatDate(unit.vacancyDeclaredAt)}</SummaryRow>
+              ) : null}
+            </>
+          ) : null}
+        </>
+      )}
+      {unit.sharedRights.length > 0 ? (
+        <SummaryRow label={en ? 'Shared rights' : 'الحقوق المشتركة'}>{unit.sharedRights.join('، ')}</SummaryRow>
+      ) : null}
     </>
   );
 }
 
+/** Owners as the register records them: a link to each file, the phone to call, the shares out of 2400. */
+function OwnerList({
+  owners,
+  base,
+  en,
+}: {
+  owners: ReadonlyArray<{ citizenId?: string; name: string; phone?: string | null; shares: number | null }>;
+  base: string;
+  en: boolean;
+}) {
+  return (
+    <span className="flex flex-col items-end gap-0.5">
+      {owners.map((person) => (
+        <span key={person.citizenId ?? person.name} className="inline-flex flex-wrap items-baseline justify-end gap-x-1.5">
+          {person.citizenId ? (
+            <Link href={`${base}/citizens/${encodeURIComponent(person.citizenId)}`} className="text-primary hover:underline">
+              {person.name}
+            </Link>
+          ) : (
+            person.name
+          )}
+          {person.phone ? (
+            <a
+              href={`tel:${person.phone}`}
+              dir="ltr"
+              aria-label={`${en ? 'Call' : 'اتصال'} ${person.name}`}
+              className="text-xs tabular-nums text-primary hover:underline"
+            >
+              {formatPhone(person.phone)}
+            </a>
+          ) : null}
+          {person.shares ? (
+            <bdi dir="ltr" className="text-xs tabular-nums text-muted-foreground">
+              ({person.shares}/2400)
+            </bdi>
+          ) : null}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 /** A card's floor as it is spoken: «0» is the ground floor. */
 function floorText(floor: string, en: boolean): string {
@@ -955,5 +1079,9 @@ function floorText(floor: string, en: boolean): string {
   return floor;
 }
 
-/** The roles that edit a citizen's file, and so may end a card or unlink its landlord. */
+/**
+ * The roles that edit a citizen's file, and so may end a card or unlink its
+ * landlord. Mirrors `@Roles` on the tenancy, ownership and unlink routes in
+ * citizen.controller and the file's own `canEdit`; the server is the enforcement.
+ */
 const EDIT_ROLES = ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'];

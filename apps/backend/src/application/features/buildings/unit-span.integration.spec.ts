@@ -119,6 +119,27 @@ describeIfDb('BuildingsService.resizeUnitSpan', () => {
     expect(trail.filter((entry) => (entry.after as { pinnedBy?: string }).pinnedBy === '0003')).toHaveLength(2);
   });
 
+  it('moves the building’s version, so a screen opened before the resize cannot write over it', async () => {
+    const { id, units } = await building('SPAN-STALE');
+    const before = await db.building.findUniqueOrThrow({ where: { id }, select: { updatedAt: true } });
+    await pause();
+
+    await within(() => buildings.resizeUnitSpan(units[2]!.id, { startCol: 3, endCol: 5 }, actor()));
+
+    const after = await db.building.findUniqueOrThrow({ where: { id }, select: { updatedAt: true } });
+    expect(after.updatedAt.getTime()).toBeGreaterThan(before.updatedAt.getTime());
+    // The stale screen's save is refused as a stale edit instead of undoing the resize.
+    await expect(
+      within(() =>
+        buildings.saveMatrix(
+          id,
+          { expectedUpdatedAt: before.updatedAt.toISOString(), building: {}, remove: [], update: [], add: [] } as never,
+          actor(),
+        ),
+      ),
+    ).rejects.toMatchObject({ details: { staleEdit: expect.anything() } });
+  });
+
   it('refuses drawing over a neighbour and writes nothing', async () => {
     const { id, units } = await building('SPAN-2');
     await expect(

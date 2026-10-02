@@ -1,6 +1,6 @@
 'use client';
 
-import { isValidElement, use, useCallback, useEffect, useState } from 'react';
+import { isValidElement, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -72,14 +72,12 @@ import {
   MergeWithAnotherButton,
   useCitizenMerges,
 } from '@/components/admin/citizen-merges';
-import { LoadingState } from '@/components/ui/states';
+import { EmptyState, LoadingState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { formatPhone } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
-
-/** One glyph per property branch, so a card's kind is readable before its text. */
 
 interface FactItem {
   icon: React.ComponentType<{ className?: string }>;
@@ -688,7 +686,7 @@ export default function CitizenProfilePage({
     {
       icon: Phone,
       label: en ? 'Phone' : 'الهاتف',
-      value: citizen.phone ? <PhoneLink phone={citizen.phone} /> : null,
+      value: citizen.phone ? <PhoneLink phone={citizen.phone} locale={locale} /> : null,
     },
     {
       icon: MessageCircle,
@@ -709,7 +707,7 @@ export default function CitizenProfilePage({
             icon: Phone,
             label: en ? 'Local contact phone' : 'هاتف جهة الاتصال',
             value: citizen.localContactPhone ? (
-              <PhoneLink phone={citizen.localContactPhone} />
+              <PhoneLink phone={citizen.localContactPhone} locale={locale} />
             ) : null,
           },
         ]
@@ -1565,15 +1563,18 @@ function LandlordOfSection({
   );
 }
 
-/** Tone per payment state, matching the fees screen's vocabulary. */
 /**
  * The bills' columns, one definition for the header and every row, so they
  * cannot drift apart: item · status · due · frequency · amount · actions.
- * Below `lg` a row stacks into two — item, amount — with the details and
- * the buttons under the item.
+ *
+ * From `lg` up the list is one grid and every row is a subgrid of it, so a
+ * column is as wide as its widest cell on any row — the actions column fits
+ * «تسجيل دفعة نقدية» beside «الوصل» instead of spilling over the amount, as a
+ * fixed 13rem did — and the header still lines up. Below `lg` a row stacks
+ * into two — item, amount — with the details and the buttons under the item.
  */
-const FEE_GRID =
-  'grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_7rem_9.5rem_5rem_9rem_13rem]';
+const FEE_LIST_GRID = 'lg:grid lg:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto_auto]';
+const FEE_ROW_GRID = 'grid-cols-[minmax(0,1fr)_auto] lg:col-span-full lg:grid-cols-subgrid';
 
 /** Bills shown at a time on a citizen's file — a household's years of them would otherwise run the page out. */
 const FEES_PAGE_SIZE = 10;
@@ -1624,6 +1625,7 @@ function FeesPanel({
   const labels = getLabels(locale);
   const outstanding = payments.filter((payment) => payment.paymentStatus !== 'PAID');
   const [page, setPage] = useState(0);
+  const listTop = useRef<HTMLUListElement>(null);
   // Back inside the list when a reload leaves fewer pages than the one open.
   const lastPage = Math.max(0, Math.ceil(payments.length / FEES_PAGE_SIZE) - 1);
   const shownPage = Math.min(page, lastPage);
@@ -1688,16 +1690,23 @@ function FeesPanel({
           ) : null}
 
           {payments.length === 0 ? (
-            <p className="rounded-lg border p-6 text-center text-muted-foreground">
-              {locale === 'en' ? 'No fees billed to this citizen yet.' : 'لم تُصدَر أي رسوم على هذا المواطن.'}
-            </p>
+            <EmptyState
+              compact
+              icon={Wallet}
+              title={locale === 'en' ? 'No fees billed yet' : 'لا رسوم بعد'}
+              description={
+                locale === 'en'
+                  ? 'Bills appear here once a fee is issued to this citizen.'
+                  : 'تظهر الفواتير هنا عند إصدار رسم على هذا المواطن.'
+              }
+            />
           ) : (
-            <ul className="divide-y rounded-lg border">
+            <ul ref={listTop} className={cn('divide-y rounded-lg border lg:gap-x-3', FEE_LIST_GRID)}>
               <li
                 aria-hidden
                 className={cn(
                   'hidden items-center gap-x-3 rounded-t-lg bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid',
-                  FEE_GRID,
+                  FEE_ROW_GRID,
                 )}
               >
                 <span>{locale === 'en' ? 'Item' : 'البند'}</span>
@@ -1725,7 +1734,7 @@ function FeesPanel({
                   */
                   <li
                     key={payment.id}
-                    className={cn('grid items-center gap-x-3 gap-y-2 p-4', FEE_GRID)}
+                    className={cn('grid items-center gap-x-3 gap-y-2 p-4', FEE_ROW_GRID)}
                   >
                     <div className="min-w-0 space-y-0.5">
                       <p className="truncate font-semibold">{payment.title}</p>
@@ -1815,6 +1824,8 @@ function FeesPanel({
             total={payments.length}
             onPageChange={setPage}
             locale={locale}
+            label={locale === 'en' ? 'Bill pages' : 'صفحات الفواتير'}
+            scrollTarget={listTop}
           />
 
           {outstanding.length > 1 ? (
@@ -1884,15 +1895,16 @@ function SubHeading({
   );
 }
 
-/** Click-to-call, kept LTR so the number is not mirrored in an RTL page. */
-/** Tap-to-call link — drawn as `WhatsAppPhoneLink` is, so the two numbers line up. */
-function PhoneLink({ phone }: { phone: string }) {
+/** Tap-to-call, kept LTR so the number is not mirrored — drawn as `WhatsAppPhoneLink` is, so the two line up. */
+function PhoneLink({ phone, locale }: { phone: string; locale: string }) {
+  const label = locale === 'en' ? 'Call' : 'اتصال';
   return (
     <a
       href={`tel:${phone}`}
       dir="ltr"
       className="inline-flex items-center gap-1.5 font-medium text-primary hover:underline"
-      title="اتصال"
+      title={label}
+      aria-label={`${label} ${formatPhone(phone)}`}
     >
       <Phone className="size-3.5 text-primary" aria-hidden />
       <span>{formatPhone(phone)}</span>

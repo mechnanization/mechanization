@@ -1,6 +1,6 @@
 'use client';
 
-import { buildingWidth, layoutFloorSpans, type UnitSpan } from '@mechanization/shared-schemas';
+import { buildingWidth, isStructuralUnitType, layoutFloorSpans, type UnitSpan } from '@mechanization/shared-schemas';
 import type { BuildingDetail, UnitWithOccupants } from '@/lib/api-client';
 import type { CSSProperties } from 'react';
 import { cn } from '@/lib/utils';
@@ -46,10 +46,13 @@ export function BuildingElevation({
   selected = null,
   onSelect,
   pickAny = false,
+  locale = 'ar',
 }: {
   building: BuildingDetail;
   highlight: ReadonlySet<string>;
   tone: PropertyTone;
+  /** The language of the drawing's spoken name (TXT-2). */
+  locale?: string;
   /** The lit unit whose details are open below the drawing — marked with a ring. */
   selected?: string | null;
   /** Makes the lit units pressable: the drawing doubles as the way to pick one. */
@@ -105,6 +108,7 @@ export function BuildingElevation({
         building={building}
         highlight={highlight}
         tone={tone}
+        locale={locale}
         selected={selected}
         onSelect={onSelect}
         pickAny={pickAny}
@@ -141,7 +145,11 @@ export function BuildingElevation({
         // drawn narrow and tall, one five across wide — never stretched to fill a phone.
         style={{ maxWidth: Math.min(640, 72 + columns * 120) }}
         role={onSelect ? 'group' : 'img'}
-        aria-label={`${building.floorsCount} floors, ${building.units.length} units`}
+        aria-label={
+          locale === 'en'
+            ? `${building.floorsCount} floors, ${building.units.length} units`
+            : `${building.floorsCount} طوابق، ${building.units.length} وحدات`
+        }
       >
         {topRoof && topExtent && floors[0]!.floor >= 0 ? (
           <div
@@ -160,11 +168,11 @@ export function BuildingElevation({
                   ? {
                       // A tiled gable: the triangle, ruled with its courses of tiles.
                       clipPath: 'polygon(0 100%, 50% 0, 100% 100%)',
-                      backgroundImage: 'repeating-linear-gradient(0deg, transparent 0 3px, rgb(0 0 0 / 0.18) 3px 4px)',
+                      backgroundImage: 'repeating-linear-gradient(0deg, transparent 0 3px, hsl(var(--foreground) / 0.18) 3px 4px)',
                     }
                   : {
                       // A hangar's arch, with its ribs.
-                      backgroundImage: 'repeating-linear-gradient(90deg, transparent 0 7px, rgb(127 127 127 / 0.5) 7px 8px)',
+                      backgroundImage: 'repeating-linear-gradient(90deg, transparent 0 7px, hsl(var(--muted-foreground) / 0.5) 7px 8px)',
                     }),
               }}
             />
@@ -239,7 +247,6 @@ export function BuildingElevation({
                       (lit || pickAny) && onSelect && 'cursor-pointer hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       unit.id === selected && 'ring-2 ring-foreground ring-offset-1 ring-offset-background',
                     );
-                    const style = undefined;
                     const face =
                       ghost || dense ? null : (
                         <>
@@ -341,12 +348,11 @@ export function BuildingElevation({
                             aria-pressed={unit.id === selected}
                             onClick={() => onSelect(unit.id)}
                             className={className}
-                            style={style}
                           >
                             {face}
                           </button>
                         ) : (
-                          <span title={unit.unitCode} className={className} style={style}>
+                          <span title={unit.unitCode} className={className}>
                             {face}
                           </span>
                         )}
@@ -561,11 +567,11 @@ export function unitKind(unitType: string | null | undefined): UnitKind {
     case 'EMPTY_FLOOR':
       return 'void';
     default:
-      return 'dwelling';
+      // A structural type added later is drawn as structure, not as a home (ICO-2).
+      return isStructuralUnitType(unitType as never) ? 'structure' : 'dwelling';
   }
 }
 
-/** Everyone else's units in the elevation: dark windows, awnings, hatching, columns. */
 /**
  * One unit on its own, drawn as what it is — the picture for a card that is a
  * single unit (a house, a shop, a garage) rather than a whole building.
@@ -816,10 +822,12 @@ function TentCamp({
   selected,
   onSelect,
   pickAny = false,
+  locale,
 }: {
   building: BuildingDetail;
   highlight: ReadonlySet<string>;
   tone: PropertyTone;
+  locale: string;
   selected: string | null;
   onSelect?: (unitId: string) => void;
   pickAny?: boolean;
@@ -830,7 +838,7 @@ function TentCamp({
       <div
         className="flex w-full max-w-[260px] flex-col"
         role={onSelect ? 'group' : 'img'}
-        aria-label={`${tents.length} tents`}
+        aria-label={locale === 'en' ? `${tents.length} tents` : `${tents.length} خيم`}
       >
         <div className="flex flex-wrap items-end justify-center gap-x-1.5 gap-y-1">
           {tents.map((tent) => {
@@ -877,15 +885,15 @@ function TentCamp({
 /** «متضررة من الحرب» — cracks run through every unit of the building. */
 const CRACKS: CSSProperties = {
   backgroundImage: [
-    'linear-gradient(115deg, transparent 45%, rgb(0 0 0 / 0.55) 46%, rgb(0 0 0 / 0.55) 47.5%, transparent 48.5%)',
-    'linear-gradient(62deg, transparent 58%, rgb(0 0 0 / 0.45) 59%, rgb(0 0 0 / 0.45) 60%, transparent 61%)',
-    'linear-gradient(160deg, transparent 20%, rgb(0 0 0 / 0.35) 21%, transparent 22.5%)',
+    'linear-gradient(115deg, transparent 45%, hsl(var(--foreground) / 0.55) 46%, hsl(var(--foreground) / 0.55) 47.5%, transparent 48.5%)',
+    'linear-gradient(62deg, transparent 58%, hsl(var(--foreground) / 0.45) 59%, hsl(var(--foreground) / 0.45) 60%, transparent 61%)',
+    'linear-gradient(160deg, transparent 20%, hsl(var(--foreground) / 0.35) 21%, transparent 22.5%)',
   ].join(', '),
 };
 
 /** «قائم ومهجور» — its windows boarded over. */
 const BOARDS: CSSProperties = {
-  backgroundImage: 'repeating-linear-gradient(-28deg, transparent 0 6px, rgb(127 127 127 / 0.5) 6px 8px)',
+  backgroundImage: 'repeating-linear-gradient(-28deg, transparent 0 6px, hsl(var(--muted-foreground) / 0.5) 6px 8px)',
 };
 
 /**
@@ -895,17 +903,17 @@ const BOARDS: CSSProperties = {
  * Each pair is its light and dark rendering.
  */
 const PANEL: Record<string, string> = {
-  APARTMENT: 'bg-[#e9dcc4] dark:bg-[#6b5e48]',
-  INDEPENDENT_HOUSE: 'bg-[#f1e4c9] dark:bg-[#71613f]',
-  SHOP: 'bg-[#e5e7eb] dark:bg-[#4b5563]',
-  CLINIC: 'bg-[#f8fafc] dark:bg-[#64748b]',
-  OFFICE: 'bg-[#cbd5e1] dark:bg-[#475569]',
-  WAREHOUSE: 'bg-[#a1a1aa] dark:bg-[#52525b]',
-  GARAGE: 'bg-[#e7dcc8] dark:bg-[#5f5340]',
+  APARTMENT: 'bg-illustration-wall',
+  INDEPENDENT_HOUSE: 'bg-illustration-wall-house',
+  SHOP: 'bg-illustration-shop',
+  CLINIC: 'bg-illustration-clinic',
+  OFFICE: 'bg-illustration-office',
+  WAREHOUSE: 'bg-illustration-warehouse',
+  GARAGE: 'bg-illustration-garage',
   PILOTIS: 'bg-transparent',
   EMPTY_FLOOR: 'bg-transparent',
 };
-const GLASS_PANEL = 'bg-[#94a3b8] dark:bg-[#334155]';
+const GLASS_PANEL = 'bg-illustration-frame';
 
 /** The panel a unit is drawn on: its type's, or what the structure makes of it. */
 function panelFor(unitType: string | null, kind: FaceKind): string {
@@ -918,11 +926,11 @@ function panelFor(unitType: string | null, kind: FaceKind): string {
 function Window({ className }: { className?: string }) {
   return (
     <span className={cn('flex flex-col', className)}>
-      <span className="relative flex-1 rounded-[1px] border border-white/90 bg-sky-300 dark:border-white/60 dark:bg-sky-400/70">
-        <span className="absolute inset-y-0 left-1/2 w-px bg-white/80" />
-        <span className="absolute inset-x-0 top-1/2 h-px bg-white/60" />
+      <span className="relative flex-1 rounded-[1px] border border-card/90 bg-illustration-window">
+        <span className="absolute inset-y-0 left-1/2 w-px bg-card/80" />
+        <span className="absolute inset-x-0 top-1/2 h-px bg-card/60" />
       </span>
-      <span className="-mx-px h-[2px] rounded-[1px] bg-stone-500/70" />
+      <span className="-mx-px h-[2px] rounded-[1px] bg-illustration-concrete/70" />
     </span>
   );
 }
@@ -950,10 +958,10 @@ function ColorFace({
     // «طابق أعمدة» — a concrete slab on full-height pillars, open between them.
     return (
       <span aria-hidden className="absolute inset-0 flex flex-col">
-        <span className="h-[22%] min-h-[3px] shrink-0 rounded-[1px] bg-stone-400 dark:bg-stone-500" />
+        <span className="h-[22%] min-h-[3px] shrink-0 rounded-[1px] bg-illustration-concrete" />
         <span className="flex flex-1 justify-between px-[6%]">
           {Array.from({ length: Math.min(7, columns + 1) }, (_, i) => (
-            <span key={i} className="h-full w-[9%] max-w-[8px] min-w-[2px] bg-stone-400 dark:bg-stone-500" />
+            <span key={i} className="h-full w-[9%] max-w-[8px] min-w-[2px] bg-illustration-concrete" />
           ))}
         </span>
       </span>
@@ -965,7 +973,7 @@ function ColorFace({
     return (
       <span aria-hidden className="absolute inset-[2px] grid gap-[2px]" style={{ gridTemplateColumns: `repeat(${panes}, minmax(0, 1fr))` }}>
         {Array.from({ length: panes }, (_, i) => (
-          <span key={i} className="rounded-[1px] bg-sky-300/90 dark:bg-sky-400/60" />
+          <span key={i} className="rounded-[1px] bg-illustration-window/90" />
         ))}
       </span>
     );
@@ -975,12 +983,12 @@ function ColorFace({
     return (
       <span aria-hidden className="absolute inset-0 flex flex-col items-center justify-end px-[8%] pt-[14%]">
         <span
-          className="w-full flex-1 rounded-t-[2px] border border-b-0 border-zinc-600 bg-zinc-300 dark:bg-zinc-400"
-          style={{ backgroundImage: 'repeating-linear-gradient(0deg, rgb(63 63 70 / 0.45) 0 1px, transparent 1px 4px)' }}
+          className="w-full flex-1 rounded-t-[2px] border border-b-0 border-illustration-metal-edge bg-illustration-metal"
+          style={{ backgroundImage: 'repeating-linear-gradient(0deg, hsl(var(--illustration-metal-edge) / 0.45) 0 1px, transparent 1px 4px)' }}
         />
         <span
           className="h-[4px] w-[110%] rounded-[1px]"
-          style={{ backgroundImage: 'repeating-linear-gradient(45deg, #facc15 0 4px, #18181b 4px 8px)' }}
+          style={{ backgroundImage: 'repeating-linear-gradient(45deg, hsl(var(--warning)) 0 4px, hsl(var(--foreground)) 4px 8px)' }}
         />
       </span>
     );
@@ -991,9 +999,9 @@ function ColorFace({
       // «كراج» — a wooden sectional door of wide panels.
       return (
         <span aria-hidden className="absolute inset-0 flex items-end justify-center px-[16%] pt-[20%]">
-          <span className="flex h-full w-full flex-col gap-[2px] rounded-t-[2px] border border-amber-950/40 bg-amber-700 p-[2px] dark:bg-amber-800">
+          <span className="flex h-full w-full flex-col gap-[2px] rounded-t-[2px] border border-foreground/40 bg-illustration-wood p-[2px]">
             {[0, 1, 2, 3].map((i) => (
-              <span key={i} className="flex-1 rounded-[1px] bg-amber-600 dark:bg-amber-700" />
+              <span key={i} className="flex-1 rounded-[1px] bg-illustration-wood-light" />
             ))}
           </span>
         </span>
@@ -1002,14 +1010,14 @@ function ColorFace({
       // «محل تجاري» — the fascia, a red-and-white awning, the display window, the door.
       return (
         <span aria-hidden className="absolute inset-0 flex flex-col">
-          <span className="h-[16%] min-h-[2px] shrink-0 bg-slate-700" />
+          <span className="h-[16%] min-h-[2px] shrink-0 bg-illustration-steel" />
           <span
             className="h-[22%] min-h-[3px] shrink-0 rounded-b-[3px]"
-            style={{ backgroundImage: 'repeating-linear-gradient(90deg, #dc2626 0 6px, #ffffff 6px 12px)' }}
+            style={{ backgroundImage: 'repeating-linear-gradient(90deg, hsl(var(--destructive)) 0 6px, hsl(var(--card)) 6px 12px)' }}
           />
           <span className="flex min-h-0 flex-1 gap-[3px] px-[3px] pt-[3px]">
-            <span className="flex-1 rounded-t-[2px] border border-slate-500/60 bg-sky-200 dark:bg-sky-300/70" />
-            <span className="w-[20%] max-w-[12px] rounded-t-[2px] bg-slate-700" />
+            <span className="flex-1 rounded-t-[2px] border border-illustration-steel/60 bg-illustration-window-pale" />
+            <span className="w-[20%] max-w-[12px] rounded-t-[2px] bg-illustration-steel" />
           </span>
         </span>
       );
@@ -1017,15 +1025,15 @@ function ColorFace({
       // «عيادة» — a green sign with a white cross, a frosted window, the door.
       return (
         <span aria-hidden className="absolute inset-0 flex flex-col">
-          <span className="flex h-[24%] min-h-[4px] shrink-0 items-center justify-center bg-emerald-600">
+          <span className="flex h-[24%] min-h-[4px] shrink-0 items-center justify-center bg-success">
             <span className="relative block size-[9px]">
-              <span className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 bg-white" />
-              <span className="absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 bg-white" />
+              <span className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 bg-success-foreground" />
+              <span className="absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 bg-success-foreground" />
             </span>
           </span>
           <span className="flex min-h-0 flex-1 gap-[3px] px-[3px] pt-[3px]">
-            <span className="flex-1 rounded-t-[2px] border border-slate-300 bg-sky-100 dark:bg-sky-200/70" />
-            <span className="w-[20%] max-w-[12px] rounded-t-[2px] bg-slate-500" />
+            <span className="flex-1 rounded-t-[2px] border border-illustration-frame bg-illustration-window-pale/70" />
+            <span className="w-[20%] max-w-[12px] rounded-t-[2px] bg-illustration-steel/80" />
           </span>
         </span>
       );
@@ -1034,14 +1042,14 @@ function ColorFace({
       const panes = Math.min(6, columns * 2);
       return (
         <span aria-hidden className="absolute inset-0 flex flex-col gap-[2px] p-[3px]">
-          <span className="mx-auto h-[14%] min-h-[2px] w-1/3 shrink-0 rounded-[1px] bg-slate-700" />
+          <span className="mx-auto h-[14%] min-h-[2px] w-1/3 shrink-0 rounded-[1px] bg-illustration-steel" />
           <span className="grid min-h-0 flex-1 gap-[2px]" style={{ gridTemplateColumns: `repeat(${panes}, minmax(0, 1fr))` }}>
             {Array.from({ length: panes }, (_, i) => (
               <span
                 key={i}
-                className="rounded-[1px] bg-sky-400/80 dark:bg-sky-500/60"
+                className="rounded-[1px] bg-illustration-window/80"
                 style={{
-                  backgroundImage: 'repeating-linear-gradient(0deg, transparent 0 2px, rgb(255 255 255 / 0.55) 2px 3px)',
+                  backgroundImage: 'repeating-linear-gradient(0deg, transparent 0 2px, hsl(var(--card) / 0.55) 2px 3px)',
                   backgroundSize: '100% 50%',
                   backgroundRepeat: 'no-repeat',
                 }}
@@ -1056,8 +1064,8 @@ function ColorFace({
       return (
         <span aria-hidden className="absolute inset-0 flex items-end justify-evenly px-[6%]">
           <Window className="mb-[28%] h-[38%] w-[22%] max-w-[16px]" />
-          <span className="relative h-[64%] w-[18%] max-w-[13px] rounded-t-[2px] bg-amber-800">
-            <span className="absolute end-[20%] top-1/2 size-[2px] rounded-full bg-amber-200" />
+          <span className="relative h-[64%] w-[18%] max-w-[13px] rounded-t-[2px] bg-illustration-wood">
+            <span className="absolute end-[20%] top-1/2 size-[2px] rounded-full bg-illustration-wood-light" />
           </span>
           <Window className="mb-[28%] h-[38%] w-[22%] max-w-[16px]" />
         </span>
@@ -1074,8 +1082,8 @@ function ColorFace({
           </span>
           {upstairs ? (
             <span
-              className="mx-[3%] h-[16%] min-h-[2px] max-h-[6px] border-t-2 border-slate-500/80"
-              style={{ backgroundImage: 'repeating-linear-gradient(90deg, rgb(100 116 139 / 0.7) 0 1px, transparent 1px 5px)' }}
+              className="mx-[3%] h-[16%] min-h-[2px] max-h-[6px] border-t-2 border-illustration-steel/80"
+              style={{ backgroundImage: 'repeating-linear-gradient(90deg, hsl(var(--illustration-steel) / 0.7) 0 1px, transparent 1px 5px)' }}
             />
           ) : null}
         </span>

@@ -14,6 +14,7 @@ export * from './tenant.schema';
 export * from './zone.schema';
 export * from './building.schema';
 export * from './unit-layout';
+export * from './cash-policy';
 export * from './unit-correction.schema';
 export * from './staff.schema';
 export * from './case.schema';

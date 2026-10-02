@@ -75,7 +75,8 @@ export class StaffService {
   /**
    * Brings a deleted account back onto the staff list. Still disabled: the
    * person signs in again only once someone re-enables them, a decision of its
-   * own. Restoring also gives back the use of the account's email.
+   * own. While deleted, the account keeps its email reserved — a new account
+   * cannot take it, so the restore path stays open.
    */
   async restore(input: { tenantSlug: string; id: string; actor: { id: string; role: string } }): Promise<void> {
     const target = await this.users.findById(input.id);
@@ -94,8 +95,8 @@ export class StaffService {
   }
 
   /** Every staff account that has not been deleted, deactivated ones included. */
-  list(): Promise<StaffSummary[]> {
-    return this.users.listStaff();
+  list(options: { includeDeletedEarners?: boolean } = {}): Promise<StaffSummary[]> {
+    return this.users.listStaff(options);
   }
 
   async create(input: {
@@ -156,7 +157,8 @@ export class StaffService {
    */
   async enrolTotp(staffId: string): Promise<{ secret: string; keyUri: string }> {
     const user = await this.users.findById(staffId);
-    if (!user || user.kind !== 'STAFF') {
+    // A deleted account gets no new second factor: restore it first, deliberately.
+    if (!user || user.kind !== 'STAFF' || (await this.users.isStaffHidden(staffId))) {
       throw new NotFoundError('Staff user', staffId);
     }
 
@@ -281,17 +283,17 @@ export class StaffService {
     }
 
     /*
-      An inspector still owed commission is not deleted: the deleted leave
-      every list, and with them the card and the payout link the debt is seen
-      and settled from. Paid out first, then deleted.
+      Nobody still owed commission is deleted, whatever their role: earnings
+      accrue to anyone who filed records (the roster lists every such account,
+      not only inspectors), and a role change must not open a way around this.
+      The deleted leave the payout screens' actions, so the debt is settled
+      first, then the account goes.
     */
-    if (target.role === 'FIELD_INSPECTOR') {
-      const { pendingBalance } = await this.getInspectorProfile(input.tenantSlug, input.id);
-      if (pendingBalance > 0) {
-        throw new ConflictError(
-        `لا يمكن حذف هذا المفتش: له عمولات مستحقة بقيمة ${pendingBalance.toFixed(2)}$ لم تُدفع بعد. سدّدها من «الأرباح والدفعات» ثم احذفه`,
-        );
-      }
+    const { pendingBalance } = await this.getInspectorProfile(input.tenantSlug, input.id);
+    if (pendingBalance > 0) {
+      throw new ConflictError(
+        `لا يمكن حذف هذا الحساب: له عمولات مستحقة بقيمة ${pendingBalance.toFixed(2)} $ لم تُدفع بعد. سدّدها من «الأرباح والدفعات» ثم احذفه`,
+      );
     }
 
     await this.users.hideStaff(input.id);
@@ -390,7 +392,7 @@ export class StaffService {
     redirectTo?: string;
   }): Promise<{ message: string }> {
     const user = await this.users.findById(input.staffId);
-    if (!user || !user.email) {
+    if (!user || !user.email || user.kind !== 'STAFF' || (await this.users.isStaffHidden(input.staffId))) {
       throw new NotFoundError('Staff user', input.staffId);
     }
     // One implementation, in IdentityService: the link is a signed token tied
@@ -641,6 +643,10 @@ export class StaffService {
   }): Promise<InspectorPayoutItem> {
     // Throws NotFoundError for anything that is not a staff account.
     const profile = await this.getInspectorProfile(input.tenantSlug, input.inspectorId);
+    // A deleted account was settled before it went (see `remove`); paying it now has no basis.
+    if (await this.users.isStaffHidden(input.inspectorId)) {
+      throw new ConflictError('هذا الحساب محذوف — استعده أولاً إن كان له مستحقات');
+    }
 
     const paidAt = input.payload.paidAt ? new Date(input.payload.paidAt) : new Date();
     if (Number.isNaN(paidAt.getTime())) {

@@ -29,6 +29,8 @@ function setup(
     {} as never,
     events as never,
   );
+  // Nothing owed unless a test says otherwise.
+  jest.spyOn(service, 'getInspectorProfile').mockResolvedValue({ pendingBalance: 0 } as never);
   return { service, users, revocation, events };
 }
 
@@ -87,6 +89,17 @@ describe('an inspector still owed commission', () => {
     jest.spyOn(service, 'getInspectorProfile').mockResolvedValue({ pendingBalance: 40 } as never);
     await expect(service.remove({ tenantSlug: 't', id: 'insp-1', actor: ADMIN })).rejects.toThrow('40.00');
     expect(users.hideStaff).not.toHaveBeenCalled();
+  });
+
+  it('is not deleted while owed commission, whatever the role — earnings follow the work, not the title', async () => {
+    // An admin who filed records is paid for them (the roster lists them), and
+    // an inspector re-roled first must not slip past the guard either.
+    for (const role of ['SUPER_ADMIN', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER']) {
+      const { service, users } = setup({ id: 'staff-9', kind: 'STAFF', role });
+      jest.spyOn(service, 'getInspectorProfile').mockResolvedValue({ pendingBalance: 12.5 } as never);
+      await expect(service.remove({ tenantSlug: 't', id: 'staff-9', actor: ADMIN })).rejects.toThrow('12.50');
+      expect(users.hideStaff).not.toHaveBeenCalled();
+    }
   });
 
   it('is deleted once nothing is owed', async () => {

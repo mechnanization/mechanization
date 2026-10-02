@@ -2790,6 +2790,17 @@ export class BuildingsService {
         data: { startCol: input.startCol, endCol: input.endCol },
       });
       changes.push({ before, after: updated });
+
+      /*
+        A resize is a change to the building's drawing, so it moves the
+        building's version like every other matrix write. Without this, an
+        editor or matrix opened before the resize passes `assertFresh` and
+        writes the old spans back — or draws a flat over the one just widened.
+      */
+      await this.db.building.update({
+        where: { id: before.buildingId },
+        data: { updatedAt: new Date() },
+      });
       return { updated, changes };
     });
 

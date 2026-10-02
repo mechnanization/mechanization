@@ -10,6 +10,7 @@ import {
   Menu,
   Monitor,
   Moon,
+  Search,
   ShieldCheck,
   Sun,
   User,
@@ -20,6 +21,7 @@ import { activeNavItem, localizedLabel } from '@/components/admin/nav';
 import { NotificationsBell } from '@/components/admin/notifications-bell';
 import { LanguageSwitcher } from '@/components/language-switcher';
 import { Button } from '@/components/ui/button';
+import { ActionTooltip } from '@/components/ui/tooltip';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -57,6 +59,7 @@ export function AdminHeader({
   tenantName,
   session,
   onOpenDrawer,
+  onOpenSearch,
 }: {
   tenant: string;
   locale: string;
@@ -64,6 +67,8 @@ export function AdminHeader({
   tenantName: string | undefined;
   session: Session | null;
   onOpenDrawer: () => void;
+  /** Opens the command palette — the record search a clerk reaches for most. */
+  onOpenSearch: () => void;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -169,6 +174,40 @@ export function AdminHeader({
       </nav>
 
       <div className="flex-1" />
+
+      {/*
+        Record search: citizens by name, phone or file number, properties by
+        cadastral number, and pages. A visible control, not only Ctrl/⌘+K — a
+        shortcut is no affordance at all on a phone, and a clerk who has never
+        been told it exists never finds it. Full launcher from md up; an icon
+        on a phone, where the bar has no room for a field.
+      */}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onOpenSearch}
+        className="hidden h-9 w-64 items-center justify-between text-muted-foreground hover:text-foreground md:flex"
+        aria-label={locale === 'en' ? 'Search the register' : 'بحث في السجل'}
+      >
+        <span className="flex items-center gap-2 text-xs">
+          <Search className="size-3.5" aria-hidden />
+          <span>{locale === 'en' ? 'Search…' : 'بحث في السجل…'}</span>
+        </span>
+        <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-xs font-medium text-muted-foreground">
+          <span className="text-xs">Ctrl</span>K
+        </kbd>
+      </Button>
+      <ActionTooltip label={locale === 'en' ? 'Search the register' : 'بحث في السجل'}>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onOpenSearch}
+          className="md:hidden"
+          aria-label={locale === 'en' ? 'Search the register' : 'بحث في السجل'}
+        >
+          <Search className="size-4" aria-hidden />
+        </Button>
+      </ActionTooltip>
 
       {/* Language Switcher */}
       <LanguageSwitcher variant="toggle" currentLocale={locale} />

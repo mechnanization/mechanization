@@ -15,7 +15,15 @@ import type {
   PaymentMethod,
   SystemSettingsInput,
 } from '@mechanization/shared-schemas';
-import { isOccupiedByOthers, isUnoccupied } from '@mechanization/shared-schemas';
+import {
+  BACKDATE_WINDOW_DAYS,
+  canOverrideCashRules,
+  daysBetween,
+  isOccupiedByOthers,
+  isUnoccupied,
+  municipalToday,
+  roundRate,
+} from '@mechanization/shared-schemas';
 import {
   billableUnits,
   isUnsurveyed,
@@ -25,7 +33,7 @@ import {
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { unitsUnderReview } from '../buildings/unit-status';
-import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { searchTokens } from '../../common/search-terms';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -2092,8 +2100,8 @@ export class FeesService {
       /**
        * Exposed because `paidAt` is not the whole answer.
        *
-       * `settle` stamps `paidAt` only when the invoice is *fully* covered
-       * (`paidAt: fullySettled ? new Date() : null`), so a part-payment — real
+       * The ledger stamps `paidAt` only when the invoice is *fully* covered
+       * (the date of the last money received), so a part-payment — real
        * money, taken at the counter — leaves it null. A transactions screen
        * with a blank date on every partial is worse than useless, so the row
        * carries its last-write time too and the UI falls back to it, labelled
@@ -2806,8 +2814,12 @@ export class FeesService {
     note?: string;
     /** `YYYY-MM-DD`, not in the future (the schema's rule). Omitted means now. */
     paidOn?: string;
-    /** Cash in two currencies — the credit is worked out from it, here. */
+    /** The notes handed over; the credit is worked out from them, here. */
     tendered?: { local: number; foreign: number; foreignCurrency: string; exchangeRate?: number };
+    /** Required when the rate differs from the municipality's, or the date is not today. */
+    adjustmentReason?: string;
+    /** The page's id for this press of the button — a retry returns the first receipt. */
+    clientRequestId?: string;
     actor: { id: string; role: string };
   }) {
     /**
@@ -2834,10 +2846,24 @@ export class FeesService {
       and to the cent otherwise. The ledger then refuses it, under its lock,
       if it is more than is owed.
     */
-    const tender = input.tendered ? toTender(input.tendered, invoice.currency) : null;
+    const settings = input.tendered ? await this.getSettings(false) : null;
+    const tender = input.tendered
+      ? toTender(
+          input.tendered,
+          invoice.currency,
+          officialRateFor(settings, invoice.currency, input.tendered.foreignCurrency),
+        )
+      : null;
     const received = tender
       ? creditOf(tender, invoice.currency)
       : (input.amount ?? Number(invoice.amount) - Number(invoice.paidAmount));
+
+    const adjustment = assertCashAdjustment({
+      tender,
+      paidOn: input.paidOn,
+      reason: input.adjustmentReason,
+      role: input.actor.role,
+    });
 
     const settled = await this.ledger.record({
       paymentId: input.paymentId,
@@ -2856,16 +2882,46 @@ export class FeesService {
       note: input.note,
       tendered: tender,
       occurredAt: occurredAtFor(input.paidOn),
+      adjustmentReason: adjustment.required ? (input.adjustmentReason ?? null) : null,
+      clientRequestId: input.clientRequestId ?? null,
     });
 
-    this.events.emit('payment.reviewed', {
-      tenantSlug: this.tenantContext.tenantSlug,
-      paymentId: input.paymentId,
-      citizenId: invoice.citizenId,
-      confirmed: true,
-      actorId: input.actor.id,
-      actorRole: input.actor.role,
-    });
+    // A retry answered from the first row was audited the first time.
+    if (!settled.replayed) {
+      this.events.emit('payment.reviewed', {
+        tenantSlug: this.tenantContext.tenantSlug,
+        paymentId: input.paymentId,
+        citizenId: invoice.citizenId,
+        confirmed: true,
+        actorId: input.actor.id,
+        actorRole: input.actor.role,
+        /*
+          What a Court of Audit reviewer asks of a cash entry: how much, on
+          which receipt, on what day, in which notes, at what rate against the
+          official one, and — when either departs from the ordinary — why.
+        */
+        movement: {
+          receiptNumber: settled.receiptNumber,
+          method: input.method,
+          amount: settled.received,
+          currency: invoice.currency,
+          occurredAt: settled.occurredAt,
+          ...(input.paidOn ? { paidOn: input.paidOn, backdatedDays: adjustment.backdatedDays } : {}),
+          ...(tender
+            ? {
+                tenderedLocal: tender.local,
+                tenderedForeign: tender.foreign,
+                tenderedForeignCurrency: tender.foreignCurrency,
+                exchangeRate: tender.exchangeRate,
+                officialExchangeRate: tender.officialExchangeRate,
+                rateOverridden: adjustment.rateOverridden,
+                changeGiven: settled.changeGiven,
+              }
+            : {}),
+          ...(adjustment.required ? { adjustmentReason: input.adjustmentReason } : {}),
+        },
+      });
+    }
 
     return {
       paymentStatus: settled.paymentStatus,
@@ -2874,6 +2930,11 @@ export class FeesService {
       remaining: settled.remaining,
       /** The citizen's handle on this movement, and what a reprint looks up. */
       receiptNumber: settled.receiptNumber,
+      /** The day the money moved — what the receipt prints, back-dated or not. */
+      occurredAt: settled.occurredAt,
+      changeGiven: settled.changeGiven,
+      exchangeRate: tender?.exchangeRate ?? null,
+      officialExchangeRate: tender?.officialExchangeRate ?? null,
     };
   }
 
@@ -2955,14 +3016,34 @@ export class FeesService {
 }
 
 /**
- * A two-currency cash tender, checked against the invoice it pays. The foreign
- * part must really be foreign: dollars handed against a dollar invoice are the
- * local part, and calling them foreign would apply a rate to a sum that needs
- * none. Exported for its spec.
+ * The municipality's own rate for this pair, from الإعدادات: ليرة per one unit
+ * of its configured second currency. Null when the bill is not in the base
+ * currency, the notes are in another currency, or no rate has been set —
+ * every one of which leaves no official figure to take the notes at.
+ */
+export function officialRateFor(
+  settings: { baseCurrency: string; secondaryCurrency: string | null; exchangeRate: number | null } | null,
+  invoiceCurrency: string,
+  foreignCurrency: string,
+): number | null {
+  if (!settings || !settings.exchangeRate || settings.exchangeRate <= 0) return null;
+  if (settings.baseCurrency !== invoiceCurrency || settings.secondaryCurrency !== foreignCurrency) return null;
+  return settings.exchangeRate;
+}
+
+/**
+ * A cash tender, checked against the invoice it pays. The foreign part must
+ * really be foreign: dollars handed against a dollar invoice are the local
+ * part, and calling them foreign would apply a rate to a sum that needs none.
+ *
+ * The rate is the municipality's own unless the request names another; it is
+ * kept to four places, and the credit is computed from the kept figure, so
+ * the stored row always reproduces its own amount. Exported for its spec.
  */
 export function toTender(
   input: { local: number; foreign: number; foreignCurrency: string; exchangeRate?: number },
   invoiceCurrency: string,
+  officialRate: number | null,
 ): Tender {
   const foreign = input.foreign > 0 ? input.foreign : null;
   if (foreign !== null && input.foreignCurrency === invoiceCurrency) {
@@ -2970,15 +3051,68 @@ export function toTender(
       foreignCurrency: input.foreignCurrency,
     });
   }
-  if (foreign !== null && !input.exchangeRate) {
-    throw new ValidationError('أدخل سعر الصرف', { exchangeRate: '' });
+  const rate = foreign !== null ? roundRate(input.exchangeRate ?? officialRate ?? 0) : null;
+  if (foreign !== null && !rate) {
+    throw new ValidationError('لا يوجد سعر صرف معتمد في الإعدادات — أدخل سعراً لهذه الدفعة', {
+      exchangeRate: '',
+    });
   }
   return {
     local: input.local,
     foreign,
     foreignCurrency: foreign !== null ? input.foreignCurrency : null,
-    exchangeRate: foreign !== null ? input.exchangeRate! : null,
+    exchangeRate: rate,
+    officialExchangeRate: foreign !== null ? officialRate : null,
   };
+}
+
+/**
+ * The two ways a cash entry departs from the ordinary, and who may make them.
+ *
+ * - A rate other than the municipality's own (or any rate where none is
+ *   set): a finance decision — SUPER_ADMIN or ACCOUNTANT — with a reason. A
+ *   collector takes the official rate.
+ * - A date before today: any settling role within `BACKDATE_WINDOW_DAYS`,
+ *   with a reason; further back is a correction for a finance role.
+ *
+ * Exported for its spec.
+ */
+export function assertCashAdjustment(input: {
+  tender: Tender | null;
+  paidOn: string | undefined;
+  reason: string | undefined;
+  role: string;
+  today?: string;
+}): { required: boolean; rateOverridden: boolean; backdatedDays: number } {
+  const today = input.today ?? municipalToday();
+  const tender = input.tender;
+  const rateOverridden =
+    !!tender &&
+    tender.foreign !== null &&
+    (tender.officialExchangeRate === null || tender.exchangeRate !== roundRate(tender.officialExchangeRate));
+  const backdatedDays = input.paidOn && input.paidOn < today ? daysBetween(input.paidOn, today) : 0;
+  const finance = canOverrideCashRules(input.role);
+
+  if (rateOverridden && !finance) {
+    throw new ForbiddenError(
+      tender?.officialExchangeRate
+        ? `سعر الصرف المعتمد هو ${tender.officialExchangeRate.toLocaleString('en-US')} — تعديله لدفعة واحدة يعود للمحاسب أو مدير النظام`
+        : 'لا يوجد سعر صرف معتمد في الإعدادات — اطلب من المحاسب أو مدير النظام تحديده',
+    );
+  }
+  if (backdatedDays > BACKDATE_WINDOW_DAYS && !finance) {
+    throw new ForbiddenError(
+      `لا يمكن تسجيل دفعة بتاريخ يسبق اليوم بأكثر من ${BACKDATE_WINDOW_DAYS} يوماً — هذا تصحيح يعود للمحاسب أو مدير النظام`,
+    );
+  }
+  const required = rateOverridden || backdatedDays > 0;
+  if (required && !input.reason?.trim()) {
+    throw new ValidationError(
+      rateOverridden ? 'اكتب سبب اعتماد سعر صرف غير السعر المعتمد' : 'اكتب سبب تسجيل الدفعة بتاريخ سابق',
+      { adjustmentReason: '' },
+    );
+  }
+  return { required, rateOverridden, backdatedDays };
 }
 
 /** What a tender is worth in the invoice's currency — whole ليرة, or cents. Exported for its spec. */

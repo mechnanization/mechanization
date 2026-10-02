@@ -56,21 +56,25 @@ export function LanguageSwitcher({
     const label = currentLocale === 'ar' ? 'Switch to English' : 'التبديل إلى العربية';
 
     /*
-      A globe and nothing else. The bar it sits in also carries the menu, the
-      breadcrumb, the bell and the account, and on a phone the word «English»
-      was the widest thing in it. What the button does is in its tooltip and
-      its accessible name.
+      A globe and the language it switches to, in two letters. The full word
+      «English» was the widest thing in the bar on a phone; a globe alone was
+      a guess for staff who do not know the convention. «EN» / «ع» names the
+      destination at a glance and still fits. The full sentence is the
+      tooltip and the accessible name.
     */
     return (
       <Button
         variant="ghost"
-        size="icon"
+        size="sm"
         onClick={() => handleLocaleChange(nextLang)}
-        className={cn('shrink-0', className)}
+        className={cn('shrink-0 gap-1 px-2', className)}
         title={label}
         aria-label={label}
       >
-        <Globe className="size-5" aria-hidden />
+        <Globe className="size-4" aria-hidden />
+        <span aria-hidden className="text-xs font-semibold">
+          {nextLang === 'en' ? 'EN' : 'ع'}
+        </span>
       </Button>
     );
   }

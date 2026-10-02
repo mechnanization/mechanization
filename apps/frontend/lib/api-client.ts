@@ -33,6 +33,7 @@ import type {
   PaymentStatus,
   RecordInspectorPayoutInput,
   SequenceKey,
+  SettlePayment,
   BuildingLifecycle,
   StructureType,
   SurveyStatus,
@@ -3744,11 +3745,23 @@ export interface StaffSummary {
   overpaidBalance?: number;
   createdAt: string;
   lastLoginAt: string | null;
+  /** Set only on a deleted account the earnings roster asked for. */
+  deletedAt?: string | null;
 }
 
-/** Every staff account with the history count that gates a permanent delete. */
-export function getStaff(tenant: string, token: string, signal?: AbortSignal) {
-  return apiFetch<{ items: StaffSummary[] }>(tenant, '/staff', { token, signal });
+/**
+ * Every staff account that has not been deleted. `includeDeletedEarners` adds
+ * the deleted accounts that earned or were paid commission — the earnings
+ * roster's totals are history and must not shrink when an account is hidden.
+ */
+export function getStaff(
+  tenant: string,
+  token: string,
+  signal?: AbortSignal,
+  options: { includeDeletedEarners?: boolean } = {},
+) {
+  const query = options.includeDeletedEarners ? '?include=deleted-earners' : '';
+  return apiFetch<{ items: StaffSummary[] }>(tenant, `/staff${query}`, { token, signal });
 }
 
 /**
@@ -4720,29 +4733,28 @@ export async function settlePayment(
   tenant: string,
   token: string,
   id: string,
-  input: {
-    method?: string;
-    amount?: number;
-    /** Required by the server when `method` is `WHISH_MONEY`. */
-    whishTransactionRef?: string;
-    /** Required by the server when `method` is `COLLECTOR`. */
-    collectedById?: string;
-    note?: string;
-    /**
-     * Cash in two currencies. The server works the credit out from it, so
-     * `amount` is left out when this is sent.
-     */
-    tendered?: { local: number; foreign: number; foreignCurrency: string; exchangeRate?: number };
-    /** `YYYY-MM-DD`, when the money was taken on another day than today. */
-    paidOn?: string;
-  } = {},
+  /**
+   * The shared schema's shape — method, amount or tender, the day, the reason
+   * for any departure from the official rate or today's date, and the retry
+   * key. Not re-declared here, so the page cannot drift from what the server
+   * validates.
+   */
+  input: Partial<SettlePayment> = {},
 ) {
   const result = await apiFetch<{
     paymentStatus: string;
     received: number;
     paidAmount: number;
     remaining: number;
+    /** The ledger's RCP-… number — what the receipt prints and a reprint looks up. */
     receiptNumber: string;
+    /** When the money moved: today's time, or midday of a back-dated day. */
+    occurredAt: string;
+    /** Handed back from a larger note, in the bill's currency. */
+    changeGiven: number;
+    /** The rate the foreign notes were taken at, and the municipality's own. */
+    exchangeRate: number | null;
+    officialExchangeRate: number | null;
   }>(
     tenant,
     `/fees/payments/${encodeURIComponent(id)}/settle`,

@@ -10,8 +10,14 @@ import { cn } from '@/lib/utils';
  * Chips size to their text, so «وحدة في المبنى» is twice the width of
  * «طوابق», the row wraps wherever the longest one happens to fall, and the
  * numbers land at a different height and edge on every line. Equal columns put
- * every number on one line and one baseline, so the eye reads across them as a
- * set.
+ * every number on one baseline, so the eye reads across them as a set.
+ *
+ * ## Phones
+ *
+ * Four money figures side by side do not fit 360px — they overlapped. Below
+ * `sm` the strip is two columns, and an odd last figure takes the full row.
+ * The dividers are the token border showing through a 1px gap, so they follow
+ * the grid wherever it wraps and need no physical left/right (RTL-1).
  *
  * ## When this and not `FactRow` / `SummaryList`
  *
@@ -25,8 +31,15 @@ export function StatStrip({ children, className }: { children: React.ReactNode; 
   if (items.length === 0) return null;
   return (
     <dl
-      className={cn('grid divide-x divide-border rounded-xl border bg-muted/20 rtl:divide-x-reverse', className)}
-      style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}
+      className={cn(
+        'grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border',
+        'sm:[grid-template-columns:repeat(var(--stat-columns),minmax(0,1fr))]',
+        items.length % 2 === 1 && 'max-sm:[&>*:last-child]:col-span-2',
+        items.length === 1 && 'grid-cols-1',
+        className,
+      )}
+      // A count known only at render time — the one value a class cannot spell (BAN-12).
+      style={{ '--stat-columns': items.length } as React.CSSProperties}
     >
       {items}
     </dl>
@@ -49,11 +62,16 @@ export function StatItem({
 }) {
   return (
     // The label first, as a <dl> wants it and a screen reader reads it; drawn under the number.
-    <div className="flex min-w-0 flex-col-reverse items-center justify-center px-2 py-2.5 text-center">
-      <dt className="mt-1.5 line-clamp-2 text-[11px] leading-tight text-muted-foreground">{label}</dt>
-      <dd className={cn('flex items-baseline gap-1 font-mono text-lg font-bold leading-none tabular-nums', className)}>
-        <bdi>{value}</bdi>
-        {unit ? <span className="font-sans text-xs font-medium text-muted-foreground">{unit}</span> : null}
+    <div className="flex min-w-0 flex-col-reverse items-center justify-center bg-card px-2 py-2.5 text-center">
+      <dt className="mt-1.5 line-clamp-2 text-xs leading-tight text-muted-foreground">{label}</dt>
+      <dd
+        className={cn(
+          'flex max-w-full items-baseline gap-1 text-lg font-bold leading-none tabular-nums',
+          className,
+        )}
+      >
+        <bdi className="min-w-0 truncate">{value}</bdi>
+        {unit ? <span className="text-xs font-medium text-muted-foreground">{unit}</span> : null}
       </dd>
     </div>
   );

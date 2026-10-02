@@ -6,7 +6,6 @@ import {
   getLabels,
   defaultUnitTypeFor,
   isStructuralUnitType,
-  isUnoccupied,
   type StructureType,
   type UnitStatus,
   type UnitType,
@@ -26,6 +25,7 @@ import {
 import { Sheet } from '@/components/ui/sheet';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { occupancyDot } from '@/lib/occupancy';
 import { floorLabel } from './parcel-pin-picker';
 
 export interface GridUnitDraft {
@@ -60,21 +60,6 @@ export interface GridUnitDraft {
    * has none, because nobody has been asked yet.
    */
   unitStatus?: UnitStatus | null;
-}
-
-/**
- * The dot an existing unit wears: green while somebody lives there, grey while
- * nobody does (شاغرة، قيد الإنجاز). A مسكن موسمي is neither — kept for an owner
- * who is away most of the year — so it gets a green ring rather than a dot.
- * Nothing at all for a unit not yet surveyed, or for structure: a dot there
- * would claim an answer nobody gave.
- */
-function occupancyDot(
-  status: UnitStatus | null | undefined,
-): 'occupied' | 'vacant' | 'seasonal' | null {
-  if (!status) return null;
-  if (status === 'SEASONAL') return 'seasonal';
-  return isUnoccupied(status) ? 'vacant' : 'occupied';
 }
 
 export const MIN_HORIZONTAL_BLOCKS = 1;
@@ -1210,13 +1195,6 @@ export function UnitGridPicker({
                       </span>
                     ) : null}
                   </span>
-                  {/*
-                    A slab where the building is finished; an open, dashed edge
-                    where it is still going up, since the next storey is
-                    expected there. Either way it sits in the gap above the
-                    cell and takes no pointer, so the empty cells over it can
-                    still be painted.
-                  */}
                   {(() => {
                     const dot = structural ? null : occupancyDot(unit.unitStatus);
                     if (!dot) return null;
@@ -1235,6 +1213,13 @@ export function UnitGridPicker({
                       />
                     );
                   })()}
+                  {/*
+                    A slab where the building is finished; an open, dashed edge
+                    where it is still going up, since the next storey is
+                    expected there. Either way it sits in the gap above the
+                    cell and takes no pointer, so the empty cells over it can
+                    still be painted.
+                  */}
                   {roofRuns.map((run) => (
                     <span
                       key={`roof-${run.from}`}
@@ -1242,7 +1227,7 @@ export function UnitGridPicker({
                       className={cn(
                         'pointer-events-none absolute -top-[5px]',
                         unfinished
-                          ? 'h-0 border-t-2 border-dashed border-amber-500'
+                          ? 'h-0 border-t-2 border-dashed border-warning'
                           : 'h-[3px] rounded-full bg-foreground/55',
                       )}
                       style={{
@@ -1283,7 +1268,7 @@ export function UnitGridPicker({
                     with the empty cells drawn as air, this is the line the
                     building visibly stands on.
                   */
-                  floor === 0 && 'border-b-2 border-dashed border-red-500 pb-1.5',
+                  floor === 0 && 'border-b-2 border-dashed border-foreground/50 pb-1.5',
                 )}
               >
                 {/*
@@ -1332,7 +1317,7 @@ export function UnitGridPicker({
                     /* Below the line, the ground: a basement row sits in earth.
                        No padding, which would knock its columns out of line
                        with the storeys above; the tint shows in the gaps. */
-                    floor < 0 && 'rounded-md bg-amber-900/10 dark:bg-amber-500/[0.07]',
+                    floor < 0 && 'rounded-md bg-illustration-concrete/15',
                   )}
                   style={{ gridTemplateColumns: `repeat(${colsCount}, minmax(2.25rem, 1fr))` }}
                 >
@@ -1346,7 +1331,7 @@ export function UnitGridPicker({
 
       {unfinished ? (
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span aria-hidden className="inline-block w-5 border-t-2 border-dashed border-amber-500" />
+          <span aria-hidden className="inline-block w-5 border-t-2 border-dashed border-warning" />
           {en
             ? 'Under construction — the top is left open; storeys and units can still be added above it.'
             : 'قيد الإنشاء — السقف مفتوح، ويمكن إضافة طوابق ووحدات فوقه.'}

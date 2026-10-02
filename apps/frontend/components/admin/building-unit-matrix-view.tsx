@@ -219,7 +219,7 @@ export function BuildingUnitMatrixView({
       }
       setError(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not load the building.'
             : 'تعذّر تحميل المبنى.',
@@ -410,7 +410,7 @@ export function BuildingUnitMatrixView({
         toast.success(message);
       } catch (caught) {
         logApiError(caught);
-        const message = caught instanceof ApiRequestError ? caught.payload.message : failure;
+        const message = caught instanceof ApiRequestError ? caught.message : failure;
         setActionError(message);
         toast.error(failure, { description: message });
       } finally {
@@ -444,7 +444,7 @@ export function BuildingUnitMatrixView({
         return;
       }
       const failure = en ? 'Could not add the unit.' : 'تعذّرت إضافة الوحدة.';
-      const message = caught instanceof ApiRequestError ? caught.payload.message : failure;
+      const message = caught instanceof ApiRequestError ? caught.message : failure;
       setActionError(message);
       toast.error(failure, { description: message });
     } finally {
@@ -514,7 +514,7 @@ export function BuildingUnitMatrixView({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not lift the vacancy.'
             : 'تعذّر إلغاء تأكيد الشغور.',
@@ -551,7 +551,7 @@ export function BuildingUnitMatrixView({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not end the occupancy.'
             : 'تعذّر إنهاء الإشغال.',
@@ -571,7 +571,7 @@ export function BuildingUnitMatrixView({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not link the owner.'
             : 'تعذّر الربط بالمالك.',
@@ -877,7 +877,8 @@ export function BuildingUnitMatrixView({
                     setAction(null);
                     setActionError(null);
                   }}
-                />
+                    locale={locale}
+                  />
               </div>
             </section>
             <div
@@ -1081,10 +1082,15 @@ export function BuildingUnitMatrixView({
                           {/*
                             The two grips. Beside the button rather than inside it,
                             so pressing one never also selects-or-deselects the
-                            tile. Shown on hover, and always on the selected tile —
-                            which is how a phone, with no hover, reaches them: tap
-                            the flat, then drag its edge. `touch-none` stops the
-                            strip's sideways scroll from taking the gesture.
+                            tile. Live only on the selected tile (and the one being
+                            dragged) — a phone taps the flat, then drags its edge.
+                            On every other tile they take no pointer at all: an
+                            invisible grip with `touch-none` on both edges of every
+                            tile turned a swipe that started near an edge into a
+                            resize instead of a scroll. A mouse still sees them on
+                            hover. `left`/`right` are physical on purpose: the
+                            matrix is drawn `dir="ltr"` (0001 on the left), RTL-1's
+                            stated exception. Wider on a finger (LAY-7).
                           */}
                           {draggable
                             ? (['start', 'end'] as const).map((edge) => (
@@ -1094,11 +1100,11 @@ export function BuildingUnitMatrixView({
                                   title={en ? 'Drag to resize' : 'اسحب لتعديل العرض'}
                                   onPointerDown={beginDrag(edge)}
                                   className={cn(
-                                    'absolute inset-y-1 z-10 flex w-3 cursor-ew-resize touch-none items-center justify-center transition-opacity',
+                                    'absolute inset-y-1 z-10 flex w-3 cursor-ew-resize touch-none items-center justify-center transition-opacity duration-150 ease-out coarse:w-6',
                                     edge === 'start' ? 'left-0' : 'right-0',
                                     selected || drag?.unit.id === unit.id
                                       ? 'opacity-100'
-                                      : 'opacity-0 group-hover:opacity-100',
+                                      : 'pointer-events-none opacity-0 coarse:hidden group-hover:pointer-events-auto group-hover:opacity-100',
                                   )}
                                 >
                                   <span className="h-8 w-1 rounded-full bg-primary/80 shadow" />
@@ -1165,7 +1171,6 @@ export function BuildingUnitMatrixView({
             onOpenChange={(open) => {
               if (!open) setPendingResize(null);
             }}
-            destructive={pendingResize ? spanSize(pendingResize.to) < spanSize(pendingResize.from) : false}
             title={pendingResize ? resizeTitle(pendingResize, en) : ''}
             description={
               pendingResize
@@ -1185,13 +1190,15 @@ export function BuildingUnitMatrixView({
                 logApiError(caught);
                 throw new Error(
                   caught instanceof ApiRequestError
-                    ? caught.payload.message
+                    ? caught.message
                     : en
                       ? 'Could not resize the unit.'
                       : 'تعذّر تعديل عرض الوحدة.',
                 );
               }
               await load();
+              // The panel's editor, if that is where the change came from, has done its job.
+              setAction(null);
               toast.success(en ? `Unit ${unit.unitCode} resized` : `تم تعديل عرض الوحدة ${unit.unitCode}`);
             }}
           />
@@ -1495,20 +1502,13 @@ export function BuildingUnitMatrixView({
                   buildingCols={buildingWidth(floors)}
                   onChange={(span) => setSpanDraft({ unitId: selectedUnit.id, ...span })}
                   onCancel={() => setAction(null)}
+                  // The same confirmation a drag asks for — one change, asked about one way (DES-5).
                   onSave={() =>
-                    void run(
-                      async () => {
-                        if (!token) throw new Error('unauthenticated');
-                        await resizeUnitSpan(tenant, token, selectedUnit.id, {
-                          startCol: activeDraft.startCol,
-                          endCol: activeDraft.endCol,
-                        });
-                        return en
-                          ? `Unit ${selectedUnit.unitCode} resized`
-                          : `تم تعديل عرض الوحدة ${selectedUnit.unitCode}`;
-                      },
-                      en ? 'Could not resize the unit.' : 'تعذّر تعديل عرض الوحدة.',
-                    )
+                    setPendingResize({
+                      unit: selectedUnit,
+                      from: { startCol: selectedSpan.block.startCol, endCol: selectedSpan.block.endCol },
+                      to: { startCol: activeDraft.startCol, endCol: activeDraft.endCol },
+                    })
                   }
                 />
               ) : null}

@@ -70,7 +70,8 @@ const CAN_WRITE = ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'];
  */
 const ACTION_TINT = {
   view: 'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary',
-  properties: 'bg-violet-500/10 text-violet-600 hover:bg-violet-500/20 hover:text-violet-600 dark:text-violet-400 dark:hover:text-violet-400',
+  // Navigation, like `view`: primary is the colour of going somewhere (COL-2), not a palette violet.
+  properties: 'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary',
   whatsapp:
     'bg-success/10 text-success hover:bg-success/20 hover:text-success',
   edit: 'bg-info/10 text-info hover:bg-info/20 hover:text-info',
@@ -705,7 +706,7 @@ export default function CitizensPage({
               <ActionTooltip label={locale === 'en' ? 'Properties & units' : 'العقارات والوحدات'}>
                 <Link
                   href={`${base}/citizens/${citizen.id}/properties`}
-                  aria-label={locale === 'en' ? 'Properties' : 'العقارات'}
+                  aria-label={locale === 'en' ? 'Properties & units' : 'العقارات والوحدات'}
                   className={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), ACTION_TINT.properties)}
                 >
                   <Building2 className="size-4" aria-hidden />

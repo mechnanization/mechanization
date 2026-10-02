@@ -10,7 +10,6 @@ import {
   Ban,
   Check,
   CheckCircle2,
-  ChevronDown,
   Copy,
   KeyRound,
   Loader2,
@@ -37,7 +36,10 @@ import type { DeletedStaffSummary, StaffSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate } from '@/lib/dates';
+import { formatForeign } from '@/lib/currency';
 import { CellTag } from '@/components/ui/cell-tag';
+import { CollapsibleSection } from '@/components/ui/collapsible-section';
+import { ErrorState, LoadingState } from '@/components/ui/states';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -204,7 +206,6 @@ export default function StaffPage({
     errorMessage: 'تعذّر تحميل الموظفين المحذوفين.',
   });
   const deletedStaff: DeletedStaffSummary[] = deletedQuery.data?.items ?? [];
-  const [showDeleted, setShowDeleted] = useState(false);
 
   const restore = useCallback(
     async (staff: DeletedStaffSummary) => {
@@ -360,7 +361,9 @@ export default function StaffPage({
   const columns = useMemo<ColumnDef<StaffSummary>[]>(
     () => [
       {
-        accessorKey: 'fullName',
+        // Name and email in one searchable value — the search box promises both.
+        id: 'fullName',
+        accessorFn: (row) => `${row.fullName} ${row.email}`,
         header: en ? 'Staff member' : 'الموظف',
         cell: ({ row }) => {
           const staff = row.original;
@@ -580,48 +583,50 @@ export default function StaffPage({
             ]}
           />
         ) : null}
-        <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-5">
-          <DataTable
-            columns={columns}
-            data={shown}
-            labels={tableLabels}
-            columnStorageKey="staff"
-            getRowId={(row) => row.id}
-            loading={query.loading}
-            error={query.error}
-            onRetry={query.refetch}
-          />
-        </div>
+        {/* The table draws its own frame; a card around it was a second one (BAN-4). */}
+        <DataTable
+          columns={columns}
+          data={shown}
+          labels={tableLabels}
+          columnStorageKey="staff"
+          getRowId={(row) => row.id}
+          loading={query.loading}
+          error={query.error}
+          onRetry={query.refetch}
+        />
         <p className="text-xs leading-relaxed text-muted-foreground">
           {en
-            ? 'Disabling blocks sign-in and can be undone. Deleting removes the account from this list for good; their details and everything they did stay on record.'
-            : 'التعطيل يمنع الدخول ويمكن التراجع عنه. الحذف يُخفي الحساب من هذه القائمة، وتبقى بياناته وكل ما قام به محفوظة في السجلات، ويمكن استعادته من «الموظفون المحذوفون».'}
+            ? 'Disabling blocks sign-in and can be undone. Deleting hides the account from this list and blocks sign-in; their details and everything they did stay on record, and it can be restored from «Deleted staff».'
+            : 'التعطيل يمنع الدخول ويمكن التراجع عنه. الحذف يُخفي الحساب من هذه القائمة ويمنع الدخول، وتبقى بياناته وكل ما قام به محفوظة في السجلات، ويمكن استعادته من «الموظفون المحذوفون».'}
         </p>
       </section>
 
-      {/* ── Deleted staff, restorable ───────────────────────────────── */}
-      {deletedStaff.length > 0 ? (
-        <section className="rounded-xl border bg-card shadow-sm">
-          <button
-            type="button"
-            onClick={() => setShowDeleted((open) => !open)}
-            aria-expanded={showDeleted}
-            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-start sm:px-5"
-          >
-            <span className="flex items-center gap-2 font-semibold">
-              <Trash2 className="size-4 text-muted-foreground" aria-hidden />
-              {en ? 'Deleted staff' : 'الموظفون المحذوفون'}
-              <span className="text-sm font-normal text-muted-foreground">({deletedStaff.length})</span>
-            </span>
-            <ChevronDown
-              className={cn('size-4 text-muted-foreground transition-transform', showDeleted && 'rotate-180')}
-              aria-hidden
+      {/*
+        ── Deleted staff, restorable ───────────────────────────────
+        Shown whenever there is something to say — accounts to restore, a read
+        still loading, or a read that failed — because a failed read here hides
+        the only way back for a deleted account (STA-1).
+      */}
+      {deletedStaff.length > 0 || deletedQuery.loading || deletedQuery.error ? (
+        <CollapsibleSection
+          title={en ? 'Deleted staff' : 'الموظفون المحذوفون'}
+          icon={Trash2}
+          summary={deletedStaff.length > 0 ? <span className="tabular-nums">({deletedStaff.length})</span> : undefined}
+          defaultOpen={false}
+        >
+          {deletedQuery.loading ? (
+            <LoadingState compact label={en ? 'Loading deleted staff…' : 'جارٍ تحميل الموظفين المحذوفين…'} />
+          ) : deletedQuery.error ? (
+            <ErrorState
+              compact
+              description={deletedQuery.error}
+              onRetry={() => void deletedQuery.refetch()}
+              retryLabel={en ? 'Try again' : 'إعادة المحاولة'}
             />
-          </button>
-          {showDeleted ? (
-            <ul className="divide-y border-t">
+          ) : (
+            <ul className="divide-y">
               {deletedStaff.map((staff) => (
-                <li key={staff.id} className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
+                <li key={staff.id} className="flex flex-wrap items-center gap-3 py-3">
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium">{staff.fullName}</p>
                     <p className="truncate text-xs text-muted-foreground">
@@ -633,12 +638,7 @@ export default function StaffPage({
                       {formatDate(staff.deletedAt)}
                     </p>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busyId === staff.id}
-                    onClick={() => void restore(staff)}
-                  >
+                  <Button variant="outline" size="sm" disabled={busyId === staff.id} onClick={() => void restore(staff)}>
                     {busyId === staff.id ? (
                       <Loader2 className="size-4 animate-spin" aria-hidden />
                     ) : (
@@ -649,8 +649,8 @@ export default function StaffPage({
                 </li>
               ))}
             </ul>
-          ) : null}
-        </section>
+          )}
+        </CollapsibleSection>
       ) : null}
 
       {/* ── Field inspectors ────────────────────────────────────────── */}
@@ -663,13 +663,13 @@ export default function StaffPage({
             </h2>
             <p className="text-xs text-muted-foreground">
               {en
-                ? 'What each inspector has registered, and what they are owed ($1 per property).'
-                : 'ما سجّله كل مفتش، وما يستحقه من عمولات (1$ لكل عقار).'}
+                ? 'What each inspector has registered, and what they are owed ($1 per billable unit).'
+                : 'ما سجّله كل مفتش، وما يستحقه من عمولات (1$ لكل وحدة محتسبة).'}
             </p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {inspectors.map((inspector) => (
-              <article key={inspector.id} className="flex flex-col gap-4 rounded-xl border bg-card p-4 shadow-sm">
+              <article key={inspector.id} className="flex flex-col gap-4 rounded-lg border bg-card p-4 shadow-sm">
                 <div className="flex items-center gap-3">
                   <span
                     aria-hidden
@@ -691,11 +691,14 @@ export default function StaffPage({
                 </div>
                 <StatStrip>
                   <StatItem value={inspector.registeredCitizensCount ?? 0} label={en ? 'Citizens' : 'مواطن'} />
-                  <StatItem value={inspector.registeredPropertiesCount ?? 0} label={en ? 'Properties' : 'عقار'} />
-                  <StatItem value={(inspector.totalEarnings ?? 0).toFixed(0)} unit="$" label={en ? 'Earned' : 'الأرباح'} />
                   <StatItem
-                    value={(inspector.pendingBalance ?? 0).toFixed(0)}
-                    unit="$"
+                    value={inspector.registeredPropertiesCount ?? 0}
+                    label={en ? 'Billable units' : 'الوحدات المحتسبة'}
+                  />
+                  {/* To the cent: the server refuses a delete over $0.40 owed, so the page must not show «0». */}
+                  <StatItem value={formatForeign(inspector.totalEarnings ?? 0, 'USD')} label={en ? 'Earned' : 'الأرباح'} />
+                  <StatItem
+                    value={formatForeign(inspector.pendingBalance ?? 0, 'USD')}
                     label={en ? 'Owed' : 'المتبقي'}
                     className={(inspector.pendingBalance ?? 0) > 0 ? 'text-warning' : undefined}
                   />
@@ -729,9 +732,10 @@ export default function StaffPage({
       />
 
       {/*
-        «حذف» hides the account: it leaves this list and can never sign in, and
-        its row, its details and everything it did stay on record. Confirmed by
-        typing the person's name, so the right account is the one removed.
+        «حذف» hides the account: it leaves this list and cannot sign in, and its
+        row, its details and everything it did stay on record; it can be
+        restored. Confirmed by typing the account's email — unique, where two
+        staff can share a name (DES-3).
       */}
       <ConfirmDialog
         open={pendingDelete !== null}
@@ -743,23 +747,24 @@ export default function StaffPage({
           pendingDelete ? (
             en ? (
               <>
-                <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> will be removed from
-                the staff list and will never be able to sign in again. Their details and everything they did stay on
-                record.
+                <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> will be hidden from
+                the staff list and cannot sign in. Their details and everything they did stay on record, and the
+                account can be restored from «Deleted staff» — it comes back disabled.
                 <span className="mt-2 block text-muted-foreground">To block sign-in for a while instead, use «Disable».</span>
               </>
             ) : (
               <>
-                سيُحذف <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> من قائمة
-                الموظفين ولن يستطيع الدخول مجدداً. تبقى بياناته وكل ما قام به محفوظة في السجلات.
+                سيُخفى <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> من قائمة
+                الموظفين ولن يستطيع الدخول. تبقى بياناته وكل ما قام به محفوظة في السجلات، ويمكن استعادته من
+                «الموظفون المحذوفون» — يعود معطّلاً.
                 <span className="mt-2 block text-muted-foreground">لمنع الدخول مؤقتاً فقط، استخدم «التعطيل».</span>
               </>
             )
           ) : null
         }
-        confirmLabel={en ? 'Delete' : 'حذف'}
-        requireText={pendingDelete?.fullName}
-        requireTextHint={en ? "Type the staff member's name to confirm" : 'اكتب اسم الموظف للتأكيد'}
+        confirmLabel={en ? 'Delete account' : 'احذف الحساب'}
+        requireText={pendingDelete?.email}
+        requireTextHint={en ? "Type the account's email to confirm" : 'اكتب البريد الإلكتروني للحساب للتأكيد'}
         onConfirm={async () => {
           if (pendingDelete) await removeStaff(pendingDelete);
         }}

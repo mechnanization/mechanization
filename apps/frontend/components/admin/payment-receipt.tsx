@@ -4,7 +4,7 @@ import * as React from 'react';
 import { Download, Loader2, MessageCircle, Printer, X } from 'lucide-react';
 import { ar } from '@mechanization/shared-schemas';
 import type { CitizenProfile, CitizenProfilePayment, CitizenProfileProperty } from '@/lib/api-client';
-import { formatLbp } from '@/lib/currency';
+import { formatForeign, formatLbp } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
@@ -20,9 +20,11 @@ import { downloadFile, renderReceiptPdf, shareFile } from '@/lib/receipt-pdf';
 const IMAGE_TEMPLATE_TENANT = 'albazourieh';
 
 /**
- * A receipt number that is stable for a given payment.
+ * The bill's own reference, for a reprint that has no ledger movement in hand.
+ * A payment just recorded prints the ledger's RCP-… number instead
+ * (`RecordedMovement.receiptNumber`) — the one a reprint and an audit look up.
  */
-function receiptNumber(payment: CitizenProfilePayment): string {
+function billReference(payment: CitizenProfilePayment): string {
   return payment.id.replace(/-/g, '').slice(0, 10).toUpperCase();
 }
 
@@ -81,7 +83,7 @@ export function PaymentReceipt({
   contactPhone,
   officeWhatsapp,
   receivedAmount,
-  tendered,
+  recorded,
   councilDecisionRef,
   locale = 'ar',
 }: {
@@ -98,13 +100,15 @@ export function PaymentReceipt({
   district?: string | null;
   contactPhone?: string | null;
   officeWhatsapp?: string | null;
+  /** For a reprint: the amount to print when it is not the whole bill. */
   receivedAmount?: number;
   /**
-   * The notes themselves, when cash came in two currencies — printed beside
-   * the ليرة total so the citizen's copy says «20$ + 200,000 ل.ل بسعر 89,500»
-   * and not only what that came to.
+   * The movement the server just recorded — its RCP number, its date (a
+   * back-dated payment prints its own day), the notes handed over, the rate
+   * against the official one, and the change. When present it is the receipt;
+   * nothing on it is reconstructed on the client.
    */
-  tendered?: Tender | null;
+  recorded?: RecordedMovement | null;
   /**
    * تاريخ ورقم قرار المجلس البلدي, if the council has issued one (§7 Q1).
    *
@@ -122,8 +126,11 @@ export function PaymentReceipt({
 
   if (!payment) return null;
 
-  const amount = receivedAmount ?? payment.amount;
-  const tenderLine = describeTender(tendered);
+  const amount = recorded?.received ?? receivedAmount ?? payment.amount;
+  const tenderLine = describeTender(recorded?.tender ?? null, recorded?.changeGiven ?? 0);
+  const number = recorded?.receiptNumber ?? billReference(payment);
+  // The day the money moved: the recorded one, else the bill's settlement day, else today.
+  const receivedOn = formatDate(recorded?.occurredAt ?? payment.paidAt ?? new Date());
   const properties = citizen.registrations.flatMap((r) => r.properties);
   const property = properties[0] ?? null;
 
@@ -152,7 +159,7 @@ export function PaymentReceipt({
 
   const message = [
     `بلدية ${municipalityName}`,
-    `وصل قبض رقم ${receiptNumber(payment)}`,
+    `وصل قبض رقم ${number}`,
     '',
     `المكلّف: ${citizen.fullName}`,
     citizen.referenceNumber ? `الرقم المرجعي: ${citizen.referenceNumber}` : null,
@@ -163,7 +170,7 @@ export function PaymentReceipt({
       ? `الرصيد المتبقي: ${formatLbp(payment.remaining)}`
       : 'تم تسديد كامل المبلغ. شكراً لكم.',
     '',
-    `التاريخ: ${formatDate(new Date())}`,
+    `التاريخ: ${receivedOn}`,
     contactPhone ? `للاستفسار: ${contactPhone}` : null,
     officeWhatsapp ? `واتساب البلدية: ${officeWhatsapp}` : null,
   ]
@@ -180,7 +187,7 @@ export function PaymentReceipt({
     setBusy(mode);
     setShareNote(null);
     try {
-      const file = await renderReceiptPdf(node, `وصل-${receiptNumber(payment)}.pdf`);
+      const file = await renderReceiptPdf(node, `وصل-${number}.pdf`);
 
       if (mode === 'download') {
         downloadFile(file);
@@ -228,6 +235,10 @@ export function PaymentReceipt({
                 citizen={citizen}
                 payment={payment}
                 amount={amount}
+                number={number}
+                receivedOn={receivedOn}
+                tenderLine={tenderLine}
+                tender={recorded?.tender ?? null}
                 property={property}
                 isCommercial={isCommercial}
                 isOwner={isOwner}
@@ -239,6 +250,8 @@ export function PaymentReceipt({
                 citizen={citizen}
                 payment={payment}
                 amount={amount}
+                number={number}
+                receivedOn={receivedOn}
                 tenderLine={tenderLine}
                 property={property}
                 isCommercial={isCommercial}
@@ -266,8 +279,8 @@ export function PaymentReceipt({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-muted-foreground font-mono">
               {locale === 'en'
-                ? `Receipt #${receiptNumber(payment)} • Date: ${formatDate(new Date())}`
-                : `رقم الوصل: ${receiptNumber(payment)} • التاريخ: ${formatDate(new Date())}`}
+                ? `Receipt #${number} • Date: ${receivedOn}`
+                : `رقم الوصل: ${number} • التاريخ: ${receivedOn}`}
             </span>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -317,6 +330,12 @@ interface FacsimileProps {
   citizen: CitizenProfile;
   payment: CitizenProfilePayment;
   amount: number;
+  /** The ledger's RCP number for a payment just recorded; the bill reference on a reprint. */
+  number: string;
+  /** The day the money was received, already formatted. */
+  receivedOn: string;
+  /** «20 $ + 200,000 ل.ل — بسعر 89,500 …», when cash came in two currencies. */
+  tenderLine?: string | null;
   property: CitizenProfileProperty | null;
   isCommercial: boolean;
   isOwner: boolean;
@@ -340,6 +359,8 @@ function DrawnFacsimile({
   district,
   councilDecisionRef,
   tenderLine,
+  number,
+  receivedOn,
 }: FacsimileProps & {
   isDisplaced: boolean;
   municipalityName: string;
@@ -347,8 +368,6 @@ function DrawnFacsimile({
   district?: string | null;
   /** §7 Q1 — see the note on the prop of the same name above. */
   councilDecisionRef?: string | null;
-  /** «20 $ + 200,000 ل.ل — بسعر 89,500», when cash came in two currencies. */
-  tenderLine?: string | null;
 }) {
   return (
     <div className="p-4">
@@ -370,7 +389,7 @@ function DrawnFacsimile({
             <div className="text-center pt-1 space-y-1.5">
               <div className="mx-auto inline-flex items-center gap-1.5 rounded-sm border border-black/60 px-2 py-0.5 text-xs font-bold tracking-wide text-black">
                 <span>رقم الوصل</span>
-                <span className="font-mono">{receiptNumber(payment)}</span>
+                <span className="font-mono">{number}</span>
               </div>
               <h2 className="text-xl sm:text-2xl font-black tracking-tight font-sans">
                 وصل بدل {payment.title || 'رسوم بلدية'}
@@ -500,19 +519,10 @@ function DrawnFacsimile({
             <div className="flex flex-wrap items-center gap-3">
               <DottedField
                 label="المبلغ رقماً"
-                value={
-                  <span className="font-mono text-base font-black">
-                    {formatLbp(amount)}
-                    {tenderLine ? <span className="ms-2 text-xs font-medium">({tenderLine})</span> : null}
-                  </span>
-                }
+                value={<span className="text-base font-black tabular-nums">{formatLbp(amount)}</span>}
                 flex="flex-[2]"
               />
-              <DottedField
-                label="تاريخ القبض"
-                value={formatDate(payment.paidAt || new Date())}
-                flex="flex-[1]"
-              />
+              <DottedField label="تاريخ القبض" value={receivedOn} flex="flex-[1]" />
             </div>
 
             <DottedField
@@ -520,6 +530,7 @@ function DrawnFacsimile({
               value={payment.title ? `عن: ${payment.title}` : 'بدل رسوم خدمات بلدية'}
               flex="w-full"
             />
+            {tenderLine ? <DottedField label="نقداً" value={tenderLine} flex="w-full" wrap /> : null}
             <DottedField
               label="ملاحظات / طريقة الدفع"
               value={`طريقة الدفع: ${(ar.paymentMethod as Record<string, string>)[payment.paymentMethod || 'CASH'] || payment.paymentMethod || 'نقداً'} ${payment.reviewNote ? `• ${payment.reviewNote}` : ''}`}
@@ -598,6 +609,12 @@ const IMAGE_FIELDS = {
   phone: { top: 69.44, right: 100 - 43.28, width: 12.03, height: 5 },
   whatsapp: { top: 69.44, right: 100 - 26.48, width: 6.09, height: 5 },
   landlord: { top: 69.44, right: 100 - 70.86, width: 10.31, height: 5 },
+  // Not fields printed on the booklet: the blank under «ايصال», and the open
+  // space below «ملاحظات». They carry what the paper never had a box for —
+  // the ledger's receipt number and date, and the notes, rate and change of a
+  // payment made in two currencies.
+  receipt: { top: 19.5, right: 100 - 46, width: 24, height: 4.5 },
+  notes: { top: 78, right: 100 - 79, width: 19, height: 8 },
 } as const satisfies Record<string, ImageField>;
 
 const IMAGE_CHECKBOXES = {
@@ -609,10 +626,23 @@ const IMAGE_CHECKBOXES = {
 } as const satisfies Record<string, ImageField>;
 
 /** Text sized and positioned to sit in one blank field of the scanned form. */
-function ImageOverlay({ field, children }: { field: ImageField; children: React.ReactNode }) {
+function ImageOverlay({
+  field,
+  wrap = false,
+  children,
+}: {
+  field: ImageField;
+  /** Lets a longer note break across lines inside its box instead of being clipped. */
+  wrap?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <div
-      className="absolute flex items-center justify-end overflow-hidden whitespace-nowrap text-[1.15cqw] font-bold text-black"
+      className={
+        wrap
+          ? 'absolute flex items-start justify-end overflow-hidden text-start text-[0.95cqw] font-bold leading-snug text-black'
+          : 'absolute flex items-center justify-end overflow-hidden whitespace-nowrap text-[1.15cqw] font-bold text-black'
+      }
       style={{
         top: `${field.top}%`,
         right: `${field.right}%`,
@@ -661,12 +691,16 @@ function ImageFacsimile({
   citizen,
   payment,
   amount,
+  number,
+  receivedOn,
+  tenderLine,
+  tender,
   property,
   isCommercial,
   isOwner,
   residentialUnits,
   shopUnits,
-}: FacsimileProps) {
+}: FacsimileProps & { tender: RecordedTender | null }) {
   const isTenant = property?.occupancyType === 'TENANT';
 
   return (
@@ -676,13 +710,28 @@ function ImageFacsimile({
           would only get in the way of that. */}
       <img src="/receipt-template.png" alt="" className="block w-full h-auto select-none" draggable={false} />
 
-      <ImageOverlay field={IMAGE_FIELDS.payerName}>{citizen.fullName}</ImageOverlay>
-      <ImageOverlay field={IMAGE_FIELDS.amountLbp}>
-        <span className="font-mono">{Math.round(amount).toLocaleString('en-US')}</span>
+      <ImageOverlay field={IMAGE_FIELDS.receipt}>
+        <span className="tabular-nums" dir="ltr">
+          {number} · {receivedOn}
+        </span>
       </ImageOverlay>
-      {payment.currency === 'USD' ? (
+      <ImageOverlay field={IMAGE_FIELDS.payerName}>{citizen.fullName}</ImageOverlay>
+      {/* The ليرة pill is the credit; the dollar pill, the dollars actually handed over. */}
+      <ImageOverlay field={IMAGE_FIELDS.amountLbp}>
+        <span className="tabular-nums">{Math.round(amount).toLocaleString('en-US')}</span>
+      </ImageOverlay>
+      {payment.currency === 'USD' || (tender && tender.foreignCurrency === 'USD') ? (
         <ImageOverlay field={IMAGE_FIELDS.amountUsd}>
-          <span className="font-mono">{Math.round(amount).toLocaleString('en-US')}</span>
+          <span className="tabular-nums">
+            {(payment.currency === 'USD' ? amount : (tender?.foreign ?? 0)).toLocaleString('en-US', {
+              maximumFractionDigits: 2,
+            })}
+          </span>
+        </ImageOverlay>
+      ) : null}
+      {tenderLine ? (
+        <ImageOverlay field={IMAGE_FIELDS.notes} wrap>
+          {tenderLine}
         </ImageOverlay>
       ) : null}
 
@@ -727,40 +776,63 @@ function DottedField({
   label,
   value,
   flex = 'flex-1',
+  wrap = false,
 }: {
   label: string;
   value?: React.ReactNode;
   flex?: string;
+  /** A line that must print whole — the tender and its rate — wraps instead of truncating. */
+  wrap?: boolean;
 }) {
   return (
     <div className={`flex items-baseline gap-1.5 ${flex} min-w-0`}>
       <span className="shrink-0 text-xs sm:text-sm font-bold whitespace-nowrap text-black">
         {label} :
       </span>
-      <div className="flex-1 border-b-2 border-dotted border-black/80 px-1.5 min-h-[22px] flex items-center font-semibold text-xs sm:text-sm truncate text-black">
+      <div
+        className={`flex-1 border-b-2 border-dotted border-black/80 px-1.5 min-h-[22px] flex items-center font-semibold text-xs sm:text-sm text-black ${wrap ? 'whitespace-normal break-words' : 'truncate'}`}
+      >
         {value || ''}
       </div>
     </div>
   );
 }
 
-/** Cash as it was handed over — the ليرة part and a foreign part at a rate. */
-export interface Tender {
+/** Cash as it was handed over — the ليرة part and a foreign part at the rate used. */
+export interface RecordedTender {
   local: number;
   foreign: number;
   foreignCurrency: string;
   exchangeRate: number;
+  /** The municipality's own rate at the time; printed when the one used differs. */
+  officialExchangeRate: number | null;
+}
+
+/** What the server recorded for one payment — everything the receipt prints about it. */
+export interface RecordedMovement {
+  receiptNumber: string;
+  occurredAt: string;
+  received: number;
+  remaining: number;
+  changeGiven: number;
+  tender: RecordedTender | null;
 }
 
 /**
- * «20 $ + 200,000 ل.ل — بسعر 89,500», or nothing when only ليرة changed hands
- * (the total already says that). Exported so the settle page shows the same
- * line it will print.
+ * «20 $ + 200,000 ل.ل — بسعر 89,500 — الباقي المُعاد 79,000 ل.ل», or nothing
+ * when only ليرة changed hands and none came back (the total already says
+ * that). A rate other than the official one says so on the citizen's copy.
  */
-export function describeTender(tendered: Tender | null | undefined): string | null {
-  if (!tendered || tendered.foreign <= 0) return null;
-  const symbol = tendered.foreignCurrency === 'USD' ? '$' : tendered.foreignCurrency;
-  const parts = [`${tendered.foreign.toLocaleString('en-US')} ${symbol}`];
-  if (tendered.local > 0) parts.push(formatLbp(tendered.local));
-  return `${parts.join(' + ')} — بسعر ${tendered.exchangeRate.toLocaleString('en-US')}`;
+export function describeTender(tendered: RecordedTender | null, changeGiven = 0): string | null {
+  const parts: string[] = [];
+  if (tendered && tendered.foreign > 0) {
+    const notes = [formatForeign(tendered.foreign, tendered.foreignCurrency)];
+    if (tendered.local > 0) notes.push(formatLbp(tendered.local));
+    parts.push(`${notes.join(' + ')} — بسعر ${tendered.exchangeRate.toLocaleString('en-US')}`);
+    if (tendered.officialExchangeRate && tendered.officialExchangeRate !== tendered.exchangeRate) {
+      parts.push(`(السعر المعتمد ${tendered.officialExchangeRate.toLocaleString('en-US')})`);
+    }
+  }
+  if (changeGiven > 0) parts.push(`الباقي المُعاد ${formatLbp(changeGiven)}`);
+  return parts.length ? parts.join(' — ') : null;
 }

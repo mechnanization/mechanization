@@ -137,6 +137,8 @@ describeIfDb('PaymentLedgerService', () => {
         title: 'رسم القيمة التأجيرية',
         amount: 100_000,
         dueDate: new Date('2026-01-31T00:00:00.000Z'),
+        // Issued at the start of the year, so a back-dated payment has room.
+        createdAt: new Date('2026-01-01T08:00:00.000Z'),
       },
       select: { id: true },
     });
@@ -214,7 +216,7 @@ describeIfDb('PaymentLedgerService', () => {
         amount: 100_000,
         method: 'CASH',
         recordedById: clerkId,
-        tendered: { local: 10_500, foreign: 1, foreignCurrency: 'USD', exchangeRate: 89_500 },
+        tendered: { local: 10_500, foreign: 1, foreignCurrency: 'USD', exchangeRate: 89_500, officialExchangeRate: 89_500 },
       });
       expect(result.paymentStatus).toBe('PAID');
 
@@ -251,11 +253,80 @@ describeIfDb('PaymentLedgerService', () => {
           amount: 100_000,
           method: 'CASH',
           recordedById: clerkId,
-          tendered: { local: 0, foreign: 1, foreignCurrency: 'USD', exchangeRate: null },
+          tendered: { local: 0, foreign: 1, foreignCurrency: 'USD', exchangeRate: null, officialExchangeRate: null },
         }),
       ).rejects.toThrow();
       const invoice = await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } });
       expect(Number(invoice.paidAmount)).toBe(0);
+    });
+
+    it('settles from a larger dollar note and records the change handed back', async () => {
+      // $2 at 89,500 is 179,000 against 100,000 owed: the bill is paid and
+      // 79,000 ل.ل go back. tender − change = credit, on the row itself.
+      const result = await ledger.record({
+        paymentId,
+        amount: 179_000,
+        method: 'CASH',
+        recordedById: clerkId,
+        tendered: { local: 0, foreign: 2, foreignCurrency: 'USD', exchangeRate: 89_500, officialExchangeRate: 89_500 },
+      });
+      expect(result).toMatchObject({ paymentStatus: 'PAID', received: 100_000, changeGiven: 79_000 });
+      const row = await db.paymentTransaction.findUniqueOrThrow({ where: { id: result.transactionId } });
+      expect(Number(row.amount)).toBe(100_000);
+      expect(Number(row.changeGiven)).toBe(79_000);
+    });
+
+    it('refuses change on ليرة alone — that is a typing mistake, not a large note', async () => {
+      await expect(
+        ledger.record({
+          paymentId,
+          amount: 150_000,
+          method: 'CASH',
+          recordedById: clerkId,
+          tendered: { local: 150_000, foreign: null, foreignCurrency: null, exchangeRate: null, officialExchangeRate: null },
+        }),
+      ).rejects.toBeInstanceOf(ConflictError);
+    });
+
+    it('answers a retry with the first receipt instead of taking the money twice', async () => {
+      const clientRequestId = randomUUID();
+      const first = await ledger.record({ paymentId, amount: 30_000, method: 'CASH', recordedById: clerkId, clientRequestId });
+      const again = await ledger.record({ paymentId, amount: 30_000, method: 'CASH', recordedById: clerkId, clientRequestId });
+      expect(again).toMatchObject({ receiptNumber: first.receiptNumber, replayed: true, paidAmount: 30_000 });
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(1);
+    });
+
+    it('refuses a payment dated before the bill was issued', async () => {
+      await expect(
+        ledger.record({
+          paymentId,
+          amount: 10_000,
+          method: 'CASH',
+          recordedById: clerkId,
+          occurredAt: new Date('2025-12-15T12:00:00.000Z'),
+        }),
+      ).rejects.toThrow(/قبل تاريخ إصدار الفاتورة/);
+    });
+
+    it('dates a settled bill by its last money, even when the final entry is back-dated', async () => {
+      // 60,000 on 20 Sep, then the remaining 40,000 entered as taken on 10 Sep:
+      // the bill was not settled before the 20th.
+      await ledger.record({ paymentId, amount: 60_000, method: 'CASH', recordedById: clerkId, occurredAt: new Date('2026-09-20T12:00:00.000Z') });
+      await ledger.record({ paymentId, amount: 40_000, method: 'CASH', recordedById: clerkId, occurredAt: new Date('2026-09-10T12:00:00.000Z') });
+      const invoice = await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } });
+      expect(invoice.paidAt?.toISOString()).toBe('2026-09-20T12:00:00.000Z');
+    });
+
+    it('returns the tender when the ledger is read back — the reprint and the cash-up', async () => {
+      await ledger.record({
+        paymentId,
+        amount: 100_000,
+        method: 'CASH',
+        recordedById: clerkId,
+        tendered: { local: 10_500, foreign: 1, foreignCurrency: 'USD', exchangeRate: 89_500, officialExchangeRate: 89_500 },
+      });
+      const [row] = await ledger.listForPayment(paymentId);
+      expect(row).toMatchObject({ tenderedLocal: 10_500, tenderedForeign: 1, exchangeRate: 89_500, officialExchangeRate: 89_500, changeGiven: 0 });
     });
 
     it('refuses more than the outstanding balance', async () => {

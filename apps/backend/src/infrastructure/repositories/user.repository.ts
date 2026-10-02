@@ -274,12 +274,13 @@ export class PrismaUserRepository implements UserRepository {
     });
   }
 
-  /** The staff accounts that have not been deleted. */
-  async listStaff(): Promise<StaffSummary[]> {
+  /** The staff accounts that have not been deleted — see the interface for the roster's option. */
+  async listStaff(options: { includeDeletedEarners?: boolean } = {}): Promise<StaffSummary[]> {
     const rows = await this.db.user.findMany({
       // A deleted account is gone from the list; its row and history stay.
-      where: { kind: 'STAFF', deletedAt: null },
+      where: options.includeDeletedEarners ? { kind: 'STAFF' } : { kind: 'STAFF', deletedAt: null },
       select: {
+        deletedAt: true,
         id: true,
         email: true,
         firstName: true,
@@ -354,7 +355,7 @@ export class PrismaUserRepository implements UserRepository {
       payoutSums.set(p.inspectorId, (payoutSums.get(p.inspectorId) ?? 0) + Number(p.amount));
     }
 
-    return rows.map((row) => {
+    const summaries = rows.map((row) => {
       const stats = inspectorStats.get(row.id);
       const regCitizens = stats ? stats.citizens.size : 0;
       const regProperties = stats ? stats.units.size : 0;
@@ -382,8 +383,13 @@ export class PrismaUserRepository implements UserRepository {
         overpaidBalance: overpaid,
         createdAt: row.createdAt.toISOString(),
         lastLoginAt: row.lastLoginAt?.toISOString() ?? null,
+        deletedAt: row.deletedAt?.toISOString() ?? null,
       };
     });
+    // A deleted account stays on the roster only for what it earned or was paid.
+    return summaries.filter(
+      (summary) => !summary.deletedAt || summary.totalEarnings > 0 || summary.paidBalance > 0,
+    );
   }
 
   async createStaff(input: {
@@ -486,17 +492,8 @@ export class PrismaUserRepository implements UserRepository {
     });
   }
 
-  /**
-   * «حذف موظف»: the account is hidden, not removed.
-   *
-   * The row has to stay — payments it recorded hold a RESTRICT foreign key to
-   * it, and the audit trail, the registrations it reviewed and the receipts it
-   * issued all name it, under its own name. So this marks it deleted, which
-   * takes it off the staff list, and deactivates it in the same write.
-   * `tokenVersion` is bumped so a session still open on it dies now.
-   */
+  /** Back on the staff list, still disabled: re-enabling is its own, separate decision. */
   async restoreStaff(id: string): Promise<void> {
-    // Back on the list, still disabled: re-enabling is its own, separate decision.
     await this.db.user.update({ where: { id }, data: { deletedAt: null } });
   }
 
@@ -520,6 +517,15 @@ export class PrismaUserRepository implements UserRepository {
     return Boolean(row?.deletedAt);
   }
 
+  /**
+   * «حذف موظف»: the account is hidden, not removed.
+   *
+   * The row has to stay — payments it recorded hold a RESTRICT foreign key to
+   * it, and the audit trail, the registrations it reviewed and the receipts it
+   * issued all name it, under its own name. So this marks it deleted, which
+   * takes it off the staff list, and deactivates it in the same write.
+   * `tokenVersion` is bumped so a session still open on it dies now.
+   */
   async hideStaff(id: string): Promise<void> {
     await this.db.user.update({
       where: { id },

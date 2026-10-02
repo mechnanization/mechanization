@@ -93,7 +93,13 @@ export interface UserRepository {
   disableTotp(userId: string): Promise<void>;
 
   /** Every staff account with the history count that gates a hard delete. */
-  listStaff(): Promise<StaffSummary[]>;
+  /**
+   * Every staff account that has not been deleted. With `includeDeletedEarners`,
+   * also the deleted ones that earned or were paid commission — the earnings
+   * roster's totals are the municipality's history and must not shrink when
+   * an account is hidden.
+   */
+  listStaff(options?: { includeDeletedEarners?: boolean }): Promise<StaffSummary[]>;
 
   createStaff(input: {
     tenantSlug: string;
@@ -163,4 +169,6 @@ export interface StaffSummary {
   overpaidBalance?: number;
   createdAt: string;
   lastLoginAt: string | null;
+  /** Set only on a deleted account returned for the earnings roster. */
+  deletedAt?: string | null;
 }

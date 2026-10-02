@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { PaymentMethod } from '@mechanization/shared-schemas';
+import { municipalToday, type PaymentMethod } from '@mechanization/shared-schemas';
 import type { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
@@ -23,6 +23,15 @@ export interface LedgerEntryInput {
    * is the record of the notes themselves.
    */
   tendered?: Tender | null;
+  /** Why the rate or the date departs from the ordinary (migration 0066). */
+  adjustmentReason?: string | null;
+  /**
+   * The page's id for this press of the button (migration 0066). A second
+   * `record` carrying the same id returns the first movement's totals instead
+   * of writing another — a retry after a lost response must not take the
+   * money twice.
+   */
+  clientRequestId?: string | null;
 }
 
 /** Cash as it was handed over: the invoice's own currency, and another at a rate. */
@@ -31,6 +40,8 @@ export interface Tender {
   foreign: number | null;
   foreignCurrency: string | null;
   exchangeRate: number | null;
+  /** The municipality's own rate at the time, when it has one — kept beside the rate used. */
+  officialExchangeRate: number | null;
 }
 
 /** What an invoice's balance looks like after a movement. */
@@ -41,6 +52,12 @@ export interface SettledTotals {
   paidAmount: number;
   remaining: number;
   paymentStatus: 'PAID' | 'UNPAID';
+  /** Handed back to the citizen from a larger note, in the invoice's currency. */
+  changeGiven: number;
+  /** When the money moved — what the receipt prints. */
+  occurredAt: string;
+  /** True when this answers a retry with the movement already recorded. */
+  replayed: boolean;
 }
 
 /**
@@ -107,19 +124,55 @@ export class PaymentLedgerService {
     return this.db.$transaction(async (tx) => {
       const invoice = await this.lock(tx, input.paymentId);
 
+      /*
+        Checked behind the lock, so two presses racing each other still meet
+        here one after the other and the second finds the first's row.
+      */
+      if (input.clientRequestId) {
+        const earlier = await this.replay(tx, invoice, input.clientRequestId);
+        if (earlier) return earlier;
+      }
+
       const outstanding = invoice.amount - invoice.paidAmount;
       if (invoice.paymentStatus === 'PAID' || outstanding <= 0) {
         throw new ConflictError('هذه الدفعة مسدّدة بالفعل');
       }
 
-      const tolerance = invoice.currency === 'USD' ? USD_TOLERANCE : LBP_TOLERANCE;
-      if (input.amount > outstanding + tolerance) {
-        throw new ConflictError(
-          `المبلغ المستلم (${input.amount.toLocaleString('en-US')}) أكبر من الرصيد المستحق (${outstanding.toLocaleString('en-US')})`,
+      // Money cannot have been taken against a bill before the bill existed.
+      if (input.occurredAt && municipalToday(input.occurredAt) < municipalToday(invoice.createdAt)) {
+        throw new ValidationError(
+          `تاريخ الدفع قبل تاريخ إصدار الفاتورة (${municipalToday(invoice.createdAt)})`,
+          { paidOn: municipalToday(input.occurredAt) },
         );
       }
 
-      return this.append(tx, invoice, input.amount, input);
+      const tolerance = toleranceFor(invoice.currency);
+      let credit = input.amount;
+      let changeGiven = 0;
+      /*
+        «الباقي»: a citizen pays a smaller bill with a larger dollar note and
+        gets the difference back. The credit is what was owed; the rest is
+        recorded as change, so tender − change = credit on the row. Only the
+        foreign notes can produce change — ليرة handed over beyond the balance
+        is a typing mistake, not a note too large to split.
+      */
+      if (input.tendered && input.amount > outstanding + tolerance) {
+        if (!input.tendered.foreign || input.tendered.local > outstanding + tolerance) {
+          throw new ConflictError(
+            `المبلغ بعملة الفاتورة (${input.tendered.local.toLocaleString('en-US')}) أكبر من الرصيد المستحق (${outstanding.toLocaleString('en-US')})`,
+          );
+        }
+        credit = outstanding;
+        changeGiven = roundTo(input.amount - outstanding, invoice.currency);
+      }
+
+      if (credit > outstanding + tolerance) {
+        throw new ConflictError(
+          `المبلغ المستلم (${credit.toLocaleString('en-US')}) أكبر من الرصيد المستحق (${outstanding.toLocaleString('en-US')})`,
+        );
+      }
+
+      return this.append(tx, invoice, credit, input, undefined, changeGiven);
     });
   }
 
@@ -210,6 +263,15 @@ export class PaymentLedgerService {
       reversed: row.reversedBy !== null,
       note: row.note,
       occurredAt: row.occurredAt.toISOString(),
+      // The notes as handed over (0064/0066) — what a reprinted وصل and the
+      // day's cash-up by currency read. All null on rows without a tender.
+      tenderedLocal: row.tenderedLocal == null ? null : Number(row.tenderedLocal),
+      tenderedForeign: row.tenderedForeign == null ? null : Number(row.tenderedForeign),
+      tenderedForeignCurrency: row.tenderedForeignCurrency,
+      exchangeRate: row.exchangeRate == null ? null : Number(row.exchangeRate),
+      officialExchangeRate: row.officialExchangeRate == null ? null : Number(row.officialExchangeRate),
+      changeGiven: row.changeGiven == null ? null : Number(row.changeGiven),
+      adjustmentReason: row.adjustmentReason,
     }));
   }
 
@@ -232,6 +294,7 @@ export class PaymentLedgerService {
     currency: string;
     paymentStatus: string;
     citizenId: string;
+    createdAt: Date;
   }> {
     const rows = await tx.$queryRaw<
       Array<{
@@ -241,10 +304,11 @@ export class PaymentLedgerService {
         currency: string;
         paymentStatus: string;
         citizenId: string;
+        createdAt: Date;
       }>
     >`
       SELECT "id", "amount"::text, "paidAmount"::text, "currency",
-             "paymentStatus"::text, "citizenId"
+             "paymentStatus"::text, "citizenId", "createdAt"
         FROM ${this.S}citizen_payments
        WHERE "id" = ${paymentId}::uuid
        FOR UPDATE
@@ -260,6 +324,39 @@ export class PaymentLedgerService {
       currency: row.currency,
       paymentStatus: row.paymentStatus,
       citizenId: row.citizenId,
+      createdAt: row.createdAt,
+    };
+  }
+
+  /**
+   * The totals of a movement already recorded under this retry key, or null.
+   * A key used for a different invoice is refused rather than answered: it can
+   * only mean a page reused an id, and replaying another bill's receipt would
+   * tell the clerk the wrong money was taken.
+   */
+  private async replay(
+    tx: Prisma.TransactionClient,
+    invoice: { id: string; amount: number; paidAmount: number; paymentStatus: string },
+    clientRequestId: string,
+  ): Promise<SettledTotals | null> {
+    const row = await tx.paymentTransaction.findUnique({
+      where: { clientRequestId },
+      select: { id: true, paymentId: true, receiptNumber: true, amount: true, changeGiven: true, occurredAt: true },
+    });
+    if (!row) return null;
+    if (row.paymentId !== invoice.id) {
+      throw new ConflictError('معرّف هذه العملية مستخدم لفاتورة أخرى — أعد تحميل الصفحة');
+    }
+    return {
+      receiptNumber: row.receiptNumber,
+      transactionId: row.id,
+      received: Number(row.amount),
+      paidAmount: invoice.paidAmount,
+      remaining: Math.max(invoice.amount - invoice.paidAmount, 0),
+      paymentStatus: invoice.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID',
+      changeGiven: row.changeGiven == null ? 0 : Number(row.changeGiven),
+      occurredAt: row.occurredAt.toISOString(),
+      replayed: true,
     };
   }
 
@@ -275,6 +372,7 @@ export class PaymentLedgerService {
     delta: number,
     input: LedgerEntryInput,
     reversalOfId?: string,
+    changeGiven = 0,
   ): Promise<SettledTotals> {
     /*
       The sequence names its schema too — see `tenant-schema-ref.ts`.
@@ -315,15 +413,33 @@ export class PaymentLedgerService {
               tenderedForeign: input.tendered.foreign,
               tenderedForeignCurrency: input.tendered.foreignCurrency,
               exchangeRate: input.tendered.exchangeRate,
+              officialExchangeRate: input.tendered.officialExchangeRate,
+              changeGiven,
             }
           : {}),
+        adjustmentReason: input.adjustmentReason ?? null,
+        clientRequestId: input.clientRequestId ?? null,
       },
-      select: { id: true },
+      select: { id: true, occurredAt: true },
     });
 
     const paidAmount = invoice.paidAmount + delta;
-    const tolerance = invoice.currency === 'USD' ? USD_TOLERANCE : LBP_TOLERANCE;
+    const tolerance = toleranceFor(invoice.currency);
     const fullySettled = paidAmount >= invoice.amount - tolerance;
+
+    /*
+      The day the bill was settled is the day the last of its money arrived —
+      not this entry's date when it is back-dated before an earlier instalment.
+      Reversed movements and the reversals themselves do not count.
+    */
+    const paidAt = fullySettled
+      ? ((
+          await tx.paymentTransaction.aggregate({
+            where: { paymentId: invoice.id, amount: { gt: 0 }, reversedBy: { is: null } },
+            _max: { occurredAt: true },
+          })
+        )._max.occurredAt ?? created.occurredAt)
+      : null;
 
     await tx.citizenPayment.update({
       where: { id: invoice.id },
@@ -341,8 +457,7 @@ export class PaymentLedgerService {
          * municipality is chasing.
          */
         paymentStatus: fullySettled ? 'PAID' : 'UNPAID',
-        // The day the money moved, which a back-dated entry says is not today.
-        paidAt: fullySettled ? (input.occurredAt ?? new Date()) : null,
+        paidAt,
         /**
          * Still written, because the ledger screens and the citizen portal
          * read them without joining. They now describe the *latest* movement
@@ -362,6 +477,19 @@ export class PaymentLedgerService {
       paidAmount,
       remaining: Math.max(invoice.amount - paidAmount, 0),
       paymentStatus: fullySettled ? 'PAID' : 'UNPAID',
+      changeGiven,
+      occurredAt: created.occurredAt.toISOString(),
+      replayed: false,
     };
   }
+}
+
+/** Half a pound for ليرة; a tenth of a cent for dollars and euros alike. */
+function toleranceFor(currency: string): number {
+  return currency === 'LBP' ? LBP_TOLERANCE : USD_TOLERANCE;
+}
+
+/** Whole ليرة for a ليرة bill, cents for any other currency. */
+function roundTo(value: number, currency: string): number {
+  return currency === 'LBP' ? Math.round(value) : Math.round(value * 100) / 100;
 }

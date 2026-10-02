@@ -260,6 +260,8 @@ export class FeesController {
       note: body.note,
       tendered: body.tendered,
       paidOn: body.paidOn,
+      adjustmentReason: body.adjustmentReason,
+      clientRequestId: body.clientRequestId,
       actor: { id: user.sub, role: user.role ?? '' },
     });
   }
