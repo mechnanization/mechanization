@@ -19,9 +19,10 @@ const config: Config = {
     },
     extend: {
       colors: {
-        // Building-drawing material (globals.css, --illustration-*): a decorative fill only.
+        // Building-drawing materials (globals.css, --illustration-*): decorative fills only.
         illustration: {
           'concrete': 'hsl(var(--illustration-concrete))',
+          'shade': 'hsl(var(--illustration-shade))',
         },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',

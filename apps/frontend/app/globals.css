@@ -131,14 +131,16 @@
     --viz-critical: #d03b3b;
 
     /**
-     * Building-drawing material — the basement wash in the unit grid picker.
-     * The elevation itself now draws in --foreground, --success and --info
-     * only; the other material fills went with its colour rendering.
+     * Building-drawing materials. Concrete is the basement wash in the unit
+     * grid picker; shade is the darkness laid over the elevation's basements
+     * and the ground they are dug into — near-black in both themes, so it
+     * darkens there too (--foreground would lighten them in dark mode).
      *
-     * A *material fill*, a decorative surface: no ratio is asked of it
-     * against --card. Change it and re-render both themes.
+     * *Material fills*, decorative surfaces: no ratio is asked of them
+     * against --card. Change one and re-render both themes.
      */
     --illustration-concrete: 24 5% 64%;
+    --illustration-shade: 30 10% 8%;
   }
 
   /**
@@ -224,6 +226,7 @@
 
     /* Building-drawing materials, dark: see the light block. */
     --illustration-concrete: 25 5% 45%;
+    --illustration-shade: 0 0% 0%;
   }
 }
 

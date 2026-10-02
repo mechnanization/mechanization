@@ -63,7 +63,12 @@ export function BuildingElevation({
     there, and the floors above it do not float.
   */
   const top = Math.max(...unitFloors, 0);
-  const bottom = Math.min(...unitFloors, 0);
+  /*
+    Downward, the declared basements count too: B1 and B2 are dug whether or
+    not a unit has been painted on them yet, and an empty one is drawn as an
+    outline in the ground rather than left out.
+  */
+  const bottom = Math.min(...unitFloors, -(building.basementsCount ?? 0), 0);
 
   const floors: Array<{ floor: number; blocks: Array<UnitSpan<UnitWithOccupants>>; width: number }> = [];
   for (let floor = top; floor >= bottom; floor -= 1) {
@@ -122,55 +127,11 @@ export function BuildingElevation({
     return occupied.length ? { from: Math.min(...occupied), to: Math.max(...occupied) } : null;
   })();
 
-  return (
-    /*
-      Left to right whatever the page language, as the census numbers a floor:
-      0001 at the left, then 0002…, and 0101, 0201 above it — the same way
-      the building matrix and the creation grid draw it. Without this an Arabic
-      page mirrored the building, putting each floor's first unit at the right.
-    */
-    // `px-5` holds the ground line and its lamps, which run past the building either side, inside the frame.
-    <div dir="ltr" className="flex h-full w-full items-center justify-center px-5">
-      <div
-        className="flex h-full w-full flex-col justify-center pt-3"
-        // As wide as its floors are, not as wide as the frame: a block two flats across is
-        // drawn narrow and tall, one five across wide — never stretched to fill a phone.
-        style={{ maxWidth: Math.min(640, 72 + columns * 120) }}
-        role={onSelect ? 'group' : 'img'}
-        aria-label={
-          locale === 'en'
-            ? `${building.floorsCount} floors, ${building.units.length} units`
-            : `${building.floorsCount} طوابق، ${building.units.length} وحدات`
-        }
-      >
-        {topRoof && topExtent && floors[0]!.floor >= 0 ? (
-          <div
-            aria-hidden
-            className="grid h-[16px] shrink-0"
-            style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
-          >
-            <span
-              className={cn(
-                'mx-[-5px]',
-                topRoof === 'pitched' ? 'bg-foreground/45' : 'rounded-t-[999px] bg-foreground/35',
-              )}
-              style={{
-                gridColumn: `${topExtent.from} / ${topExtent.to + 1}`,
-                ...(topRoof === 'pitched'
-                  ? {
-                      // A tiled gable: the triangle, ruled with its courses of tiles.
-                      clipPath: 'polygon(0 100%, 50% 0, 100% 100%)',
-                      backgroundImage: 'repeating-linear-gradient(0deg, transparent 0 3px, hsl(var(--foreground) / 0.18) 3px 4px)',
-                    }
-                  : {
-                      // A hangar's arch, with its ribs.
-                      backgroundImage: 'repeating-linear-gradient(90deg, transparent 0 7px, hsl(var(--muted-foreground) / 0.5) 7px 8px)',
-                    }),
-              }}
-            />
-          </div>
-        ) : null}
-        {floors.map(({ floor, blocks }, index) => {
+  /** One storey of the elevation; a basement is drawn by the same hand, inside the ground. */
+  function renderFloor(
+    { floor, blocks }: { floor: number; blocks: Array<UnitSpan<UnitWithOccupants>> },
+    index: number,
+  ) {
           /*
             The building is drawn from its units, not from its widest floor.
             A floor's wall exists only behind a unit: where a storey has no
@@ -190,8 +151,6 @@ export function BuildingElevation({
               : null;
           return (
             <div key={floor} className="contents">
-              {/* The street level: the pavement line, with the basements below it. */}
-              {floor === -1 ? <StreetLine /> : null}
               {/*
                 «سكني - تجاري»: the shops' fascia — a band between the street
                 floor and the homes over it, across the shops' own width.
@@ -209,7 +168,8 @@ export function BuildingElevation({
                 </div>
               ) : null}
               <div
-                className="grid"
+                // `relative`: a storey paints over the ground band its basement sits in.
+                className="relative grid"
                 style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, flex: '1 1 0', minHeight: dense ? 1 : 5, maxHeight: 44 }}
               >
                 {blocks.length === 0 ? (
@@ -251,6 +211,7 @@ export function BuildingElevation({
                             columns={span}
                             lit={lit}
                             tone={tone}
+                            underground={floor < 0}
                           />
                           {damaged ? <span aria-hidden className="pointer-events-none absolute inset-0" style={CRACKS} /> : null}
                           {derelict ? <span aria-hidden className="pointer-events-none absolute inset-0" style={BOARDS} /> : null}
@@ -258,6 +219,8 @@ export function BuildingElevation({
                       );
                     // Under a pitched or arched top the gable is the roof; the flat caps are for the slab.
                     const flatCaps = floor >= 0 && !ghost && kind !== 'structure' && !(index === 0 && topRoof);
+                    // Underground and walled: the basement's shading applies (B2 darker than B1).
+                    const shaded = floor < 0 && !ghost && kind !== 'structure';
                     return (
                       <div
                         key={unit.id}
@@ -270,7 +233,8 @@ export function BuildingElevation({
                             : kind === 'structure'
                               ? 'border-x-transparent border-t-foreground/50 bg-transparent'
                               : floor < 0
-                                ? 'border-foreground/15 bg-foreground/[0.12]'
+                                ? // Its own wall, solid over the earth around it; the depth shade is in `style`.
+                                  'border-foreground/30 bg-background'
                                 : 'border-foreground/25 bg-foreground/[0.06]',
                           // The outside wall is heavier than a partition.
                           !ghost && kind !== 'structure' && openStart && 'border-s-foreground/40 ps-[3px]',
@@ -280,7 +244,10 @@ export function BuildingElevation({
                           // A column floor's slab is its own top; its pillars stand on the ground.
                           !ghost && kind === 'structure' && 'border-t-0 p-0',
                         )}
-                        style={{ gridColumn: `${startCol} / ${endCol + 1}` }}
+                        style={{
+                          gridColumn: `${startCol} / ${endCol + 1}`,
+                          ...(shaded ? { backgroundImage: BASEMENT_WALL } : null),
+                        }}
                       >
                         {flatCaps
                           ? roofRuns.map((run) => (
@@ -357,6 +324,19 @@ export function BuildingElevation({
                             {face}
                           </span>
                         )}
+                        {/*
+                          The shade over a basement: darkest under the street
+                          slab, fading toward the floor, and deeper on every
+                          level down. After the unit, so a plain one dims; a lit
+                          one sits above it (z-[1]) and keeps its colour.
+                        */}
+                        {shaded ? (
+                          <span
+                            aria-hidden
+                            className="pointer-events-none absolute inset-0"
+                            style={{ backgroundImage: basementShade(floor) }}
+                          />
+                        ) : null}
                         {/* The way in: the stair door, on a street-floor unit — never in a gap. */}
                         {!ghost && !dense && doorColumn !== null && doorColumn >= startCol && doorColumn <= endCol ? (
                           <span
@@ -372,7 +352,80 @@ export function BuildingElevation({
               </div>
             </div>
           );
-        })}
+  }
+
+  return (
+    /*
+      Left to right whatever the page language, as the census numbers a floor:
+      0001 at the left, then 0002…, and 0101, 0201 above it — the same way
+      the building matrix and the creation grid draw it. Without this an Arabic
+      page mirrored the building, putting each floor's first unit at the right.
+    */
+    // `px-5` holds the ground line and its lamps, which run past the building either side, inside the frame.
+    <div dir="ltr" className="flex h-full w-full items-center justify-center px-5">
+      <div
+        className="flex h-full w-full flex-col justify-center pt-3"
+        // As wide as its floors are, not as wide as the frame: a block two flats across is
+        // drawn narrow and tall, one five across wide — never stretched to fill a phone.
+        style={{ maxWidth: Math.min(640, 72 + columns * 120) }}
+        role={onSelect ? 'group' : 'img'}
+        aria-label={
+          locale === 'en'
+            ? `${building.floorsCount} floors, ${building.units.length} units`
+            : `${building.floorsCount} طوابق، ${building.units.length} وحدات`
+        }
+      >
+        {topRoof && topExtent && floors[0]!.floor >= 0 ? (
+          <div
+            aria-hidden
+            className="grid h-[16px] shrink-0"
+            style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+          >
+            <span
+              className={cn(
+                'mx-[-5px]',
+                topRoof === 'pitched' ? 'bg-foreground/45' : 'rounded-t-[999px] bg-foreground/35',
+              )}
+              style={{
+                gridColumn: `${topExtent.from} / ${topExtent.to + 1}`,
+                ...(topRoof === 'pitched'
+                  ? {
+                      // A tiled gable: the triangle, ruled with its courses of tiles.
+                      clipPath: 'polygon(0 100%, 50% 0, 100% 100%)',
+                      backgroundImage: 'repeating-linear-gradient(0deg, transparent 0 3px, hsl(var(--foreground) / 0.18) 3px 4px)',
+                    }
+                  : {
+                      // A hangar's arch, with its ribs.
+                      backgroundImage: 'repeating-linear-gradient(90deg, transparent 0 7px, hsl(var(--muted-foreground) / 0.5) 7px 8px)',
+                    }),
+              }}
+            />
+          </div>
+        ) : null}
+        {floors.map((entry, index) => (entry.floor >= 0 ? renderFloor(entry, index) : null))}
+        {/*
+          Below grade: the street line, then the basements dug into the ground
+          — one band of earth behind every underground storey, running past
+          the building either side like the street does, with the footing
+          under the lowest one. Nothing below it stands on a pavement.
+        */}
+        {bottom < 0 ? (
+          <>
+            <StreetLine />
+            <div
+              className="relative flex flex-col pb-[6px]"
+              style={{ flex: `${-bottom} 1 0`, maxHeight: -bottom * 44 + 6 }}
+            >
+              {/* The shadow the street slab casts into the ground is the inset at its top. */}
+              <span
+                aria-hidden
+                className="absolute inset-y-0 inset-x-[-16px] rounded-b-[2px] shadow-[inset_0_7px_6px_-5px_hsl(var(--illustration-shade)/0.55)]"
+                style={SOIL}
+              />
+              {floors.map((entry, index) => (entry.floor < 0 ? renderFloor(entry, index) : null))}
+            </div>
+          </>
+        ) : null}
         {/* The ground it stands on, when it has no basement below. */}
         {bottom === 0 ? (
           <>
@@ -392,10 +445,7 @@ export function BuildingElevation({
               bushes={!ghost && !dense}
             />
           </>
-        ) : (
-          // Over basements the street is drawn above them; this is the flat ground they are dug into.
-          <Forecourt columns={columns} doorColumn={null} bushes={false} />
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -956,6 +1006,31 @@ function TentCamp({
   );
 }
 
+/** The earth the basements are dug into: a hatched band, the section-drawing convention for ground. */
+const SOIL: CSSProperties = {
+  backgroundColor: 'hsl(var(--foreground) / 0.06)',
+  backgroundImage: [
+    'repeating-linear-gradient(135deg, transparent 0 5px, hsl(var(--foreground) / 0.14) 5px 6px)',
+    // Darker the deeper it goes.
+    'linear-gradient(to bottom, hsl(var(--illustration-shade) / 0.04), hsl(var(--illustration-shade) / 0.3))',
+  ].join(', '),
+};
+
+/** How dark a basement is: B1 a little, each level below more, capped so B5 still reads. */
+function basementDepth(floor: number): number {
+  return Math.min(-floor - 1, 4);
+}
+
+/** A basement's wall fill: the plain wall's tint; the depth is in `basementShade` over it. */
+const BASEMENT_WALL = 'linear-gradient(hsl(var(--foreground) / 0.14), hsl(var(--foreground) / 0.14))';
+
+/** The shade laid over a basement: heavy under the slab above it, lighter at its floor. */
+function basementShade(floor: number): string {
+  const top = 0.3 + basementDepth(floor) * 0.1;
+  const bottom = 0.12 + basementDepth(floor) * 0.08;
+  return `linear-gradient(to bottom, hsl(var(--illustration-shade) / ${top}), hsl(var(--illustration-shade) / ${bottom}) 70%)`;
+}
+
 /** «متضررة من الحرب» — cracks run through every unit of the building. */
 const CRACKS: CSSProperties = {
   backgroundImage: [
@@ -1018,13 +1093,32 @@ function UnitFace({
   columns,
   lit,
   tone,
+  underground = false,
 }: {
   unitType: string | null;
   kind: FaceKind;
   columns: number;
   lit: boolean;
   tone: PropertyTone;
+  /** A basement (B1, B2…): below the street, so it has no street front of its own. */
+  underground?: boolean;
 }) {
+  /*
+    Underground, a home, a shop or an office has no windows on the street nor
+    an awning over it: only the narrow light-well slits high in the wall. A
+    garage or a store keeps its door — a ramp leads down to it — and a column
+    or empty floor is drawn as it is anywhere.
+  */
+  if (underground && (kind === 'dwelling' || kind === 'premises' || kind === 'glass')) {
+    const slits = Math.min(6, columns * 2);
+    return (
+      <span aria-hidden className="absolute inset-x-0 top-[12%] flex h-[16%] min-h-[2px] justify-evenly px-[6%]">
+        {Array.from({ length: slits }, (_, i) => (
+          <span key={i} className={cn('h-full w-[14%] max-w-[14px] rounded-[1px]', OPENING)} />
+        ))}
+      </span>
+    );
+  }
   if (kind === 'void') {
     // «طابق فارغ» — a floor with nothing on it: its outline only.
     return (
