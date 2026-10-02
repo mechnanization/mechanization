@@ -602,6 +602,7 @@ export class CitizensService {
         where: { id: citizenId, kind: 'CITIZEN' },
         select: {
           id: true,
+          referenceNumber: true,
           firstName: true,
           middleName: true,
           lastName: true,
@@ -672,7 +673,16 @@ export class CitizensService {
     return {
       id: citizen.id,
       registrationId: registration?.id ?? null,
+      /** The filing's own number — not the citizen's; see `citizenReferenceNumber`. */
       referenceNumber: registration?.referenceNumber ?? null,
+      /**
+       * The citizen's own الرقم المرجعي — what the file shows, what staff search
+       * by and what the citizen signs in with. Every registration is issued two
+       * numbers at once (citizen and filing, registration.service), so the two
+       * look alike and differ on every record; the edit form showed the filing's
+       * unlabelled, and it read as the wrong citizen's.
+       */
+      citizenReferenceNumber: citizen.referenceNumber ?? null,
       status: registration?.status ?? null,
       /** Sent back as `expectedVersion` on save — see `fileVersion`. */
       version,
@@ -727,8 +737,12 @@ export class CitizensService {
         phone: citizen.phone,
         whatsapp: citizen.whatsapp,
         // The stored pair is what it is; the form re-derives its own checkbox
-        // from whether the two numbers currently match.
-        whatsappSameAsPhone: citizen.whatsapp === citizen.phone,
+        // from whether the two numbers currently match. No WhatsApp on file
+        // reads as "same as the phone" — the schemas' own default — not as a
+        // second number the officer must now produce: a record filed with its
+        // phone «غير مؤكَّد» has neither, and filling the phone in later would
+        // otherwise open an empty, required WhatsApp field nobody ever asked for.
+        whatsappSameAsPhone: citizen.whatsapp == null || citizen.whatsapp === citizen.phone,
         maritalStatus: citizen.maritalStatus,
         totalRegisteredMembers: citizen.totalRegisteredMembers,
         actualHouseholdMembers: citizen.actualHouseholdMembers,

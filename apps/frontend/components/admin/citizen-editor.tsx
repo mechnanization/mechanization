@@ -613,6 +613,17 @@ function fromCaseDraft(item: CaseSummary): PropertyDraft {
  * render an empty box and then fail the save as «required» on a field that was
  * never blank.
  */
+/**
+ * A stored section with its unset columns left out rather than carried as
+ * `null` — what `toDraft` already does for each card. A controlled input reads
+ * `null` as no value and the save would send it straight back: WhatsApp left
+ * `null` on a record filed as «واتساب على الرقم نفسه» failed the save the moment
+ * the box was unticked, on a field nobody had typed in.
+ */
+function withoutNulls<T extends Record<string, unknown>>(section: T): T {
+  return Object.fromEntries(Object.entries(section).filter(([, value]) => value !== null)) as T;
+}
+
 export function toFormValues(form: CitizenFormData): CitizenFormValues {
   return {
     residence: form.residence ?? 'RESIDENT',
@@ -641,7 +652,7 @@ export function toFormValues(form: CitizenFormData): CitizenFormValues {
     */
     unverified: unverifiedFromArray(form.flags ?? []),
     personal: {
-      ...form.personal,
+      ...withoutNulls(form.personal),
       /**
        * `isLebanese` is nullable in the database — a citizen created
        * before the column existed, or by an import that skipped it —
@@ -654,7 +665,7 @@ export function toFormValues(form: CitizenFormData): CitizenFormValues {
       isLebanese: form.personal.isLebanese !== false,
     },
     contact: {
-      ...form.contact,
+      ...withoutNulls(form.contact),
       // Every text input reads its value as a string; a numeric value
       // would render as an empty box and then fail validation as
       // "required" on a field that was never blank.
@@ -852,7 +863,8 @@ export function CitizenEditor({
   const [canMerge, setCanMerge] = useState(false);
   const [config, setConfig] = useState<PublicTenantConfig | null>(null);
   const [initial, setInitial] = useState<CitizenFormValues | null>(null);
-  const [reference, setReference] = useState<string | null>(null);
+  /** The citizen's own reference, and the filing's beside it — two different numbers. */
+  const [reference, setReference] = useState<{ citizen: string | null; filing: string | null } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   /**
@@ -1103,7 +1115,7 @@ export function CitizenEditor({
           return;
         }
 
-        setReference(form.referenceNumber);
+        setReference({ citizen: form.citizenReferenceNumber ?? null, filing: form.referenceNumber });
         fileVersionRef.current = form.version ?? null;
         setLastStaffEdit(form.lastStaffEdit ?? null);
         setInitial(toFormValues(form));
@@ -1895,12 +1907,32 @@ export function CitizenEditor({
           </div>
         </div>
 
-        {/* Plain text, not an outlined chip — a reference is a value, and a
-            border around a value reads as a control. */}
-        {reference ? (
-          <span className="font-mono text-sm font-semibold text-primary">
-            <bdi dir="ltr">{reference}</bdi>
-          </span>
+        {/*
+          Plain text, not an outlined chip — a reference is a value, and a
+          border around a value reads as a control. The citizen's own number
+          leads, labelled, as on the file; the filing's number is a second,
+          smaller line, because the two are issued together, look alike, and
+          the unlabelled filing number read as another citizen's.
+        */}
+        {reference && (reference.citizen || reference.filing) ? (
+          <div className="flex flex-col items-end gap-0.5 text-end">
+            {reference.citizen ? (
+              <span className="text-sm">
+                <span className="text-muted-foreground">{locale === 'en' ? 'Reference ' : 'الرقم المرجعي '}</span>
+                <bdi dir="ltr" className="font-mono font-semibold text-primary">
+                  {reference.citizen}
+                </bdi>
+              </span>
+            ) : null}
+            {reference.filing && reference.filing !== reference.citizen ? (
+              <span className="text-xs text-muted-foreground">
+                {locale === 'en' ? 'Filing ' : 'رقم الطلب '}
+                <bdi dir="ltr" className="font-mono">
+                  {reference.filing}
+                </bdi>
+              </span>
+            ) : null}
+          </div>
         ) : null}
       </div>
 

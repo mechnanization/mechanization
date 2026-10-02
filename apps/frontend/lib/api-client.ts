@@ -2994,7 +2994,10 @@ export function listCitizens(
 export interface CitizenFormData {
   id: string;
   registrationId: string | null;
+  /** The filing's own number (رقم الطلب) — not the citizen's. */
   referenceNumber: string | null;
+  /** The citizen's الرقم المرجعي, as the citizen file shows it. */
+  citizenReferenceNumber?: string | null;
   status: string | null;
   /** نوع الملف the record was filed as. */
   residence?: CitizenResidence;
