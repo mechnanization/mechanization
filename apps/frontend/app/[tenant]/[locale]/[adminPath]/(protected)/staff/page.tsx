@@ -5,22 +5,19 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
+  ArchiveRestore,
   BadgeDollarSign,
   Ban,
   Check,
   CheckCircle2,
-  Clock,
   Copy,
-  Home,
   KeyRound,
   Loader2,
-  Mail,
   Pencil,
   RotateCcw,
+  ShieldCheck,
   Trash2,
-  TrendingUp,
   UserPlus,
-  Users,
   UsersRound,
 } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
@@ -28,19 +25,22 @@ import {
   ApiRequestError,
   createStaff,
   deleteStaff,
+  getDeletedStaff,
   getStaff,
+  restoreStaff,
   logApiError,
   setStaffActive,
   updateStaff,
 } from '@/lib/api-client';
-import type { StaffSummary } from '@/lib/api-client';
+import type { DeletedStaffSummary, StaffSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate } from '@/lib/dates';
-import { Badge } from '@/components/ui/badge';
+import { formatForeign } from '@/lib/currency';
 import { CellTag } from '@/components/ui/cell-tag';
+import { CollapsibleSection } from '@/components/ui/collapsible-section';
+import { ErrorState, LoadingState } from '@/components/ui/states';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
@@ -52,6 +52,9 @@ import {
 } from '@/components/ui/dialog';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
+import { ChipGroup } from '@/components/ui/segmented-control';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
+import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { StaffForm, type StaffFormValues } from '@/components/admin/staff-form';
@@ -168,7 +171,7 @@ export default function StaffPage({
     errorMessage: 'تعذّر تحميل الموظفين.',
   });
 
-  const items = query.data?.items ?? [];
+  const items = useMemo(() => query.data?.items ?? [], [query.data]);
   /*
     The banner above the page and the state inside the table say different
     things, and used to say the same one twice.
@@ -186,6 +189,44 @@ export default function StaffPage({
   const load = useCallback(
     () => queryClient.invalidateQueries({ queryKey: ['staff', tenant] }),
     [queryClient, tenant],
+  );
+
+  /*
+    «الموظفون المحذوفون» — deleted accounts, kept with their history and
+    restorable. Read beside the list and refreshed with it, folded shut below
+    the directory: rarely wanted, but the only way back for an account (and
+    for its email) once it has been deleted.
+  */
+  const deletedQuery = useStaffQuery({
+    queryKey: ['staff', tenant, 'deleted'],
+    queryFn: (accessToken, signal) => getDeletedStaff(tenant, accessToken, signal),
+    tenant,
+    base,
+    token,
+    errorMessage: 'تعذّر تحميل الموظفين المحذوفين.',
+  });
+  const deletedStaff: DeletedStaffSummary[] = deletedQuery.data?.items ?? [];
+
+  const restore = useCallback(
+    async (staff: DeletedStaffSummary) => {
+      if (!token) return;
+      setBusyId(staff.id);
+      try {
+        await restoreStaff(tenant, token, staff.id);
+        await load();
+        toast.success('تمت استعادة الحساب', {
+          description: `${staff.fullName} — عاد إلى القائمة معطّلاً؛ فعّله ليتمكّن من الدخول.`,
+        });
+      } catch (caught) {
+        logApiError(caught);
+        const message = caught instanceof ApiRequestError ? caught.message : 'تعذّر استعادة الحساب.';
+        setActionError(message);
+        toast.error('تعذّر استعادة الحساب', { description: message });
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [tenant, token, load, toast],
   );
 
   const [createdTotp, setCreatedTotp] = useState<{
@@ -278,7 +319,9 @@ export default function StaffPage({
       try {
         await deleteStaff(tenant, token, staff.id);
         await load();
-        toast.success('تم حذف الحساب', { description: staff.fullName });
+        toast.success('تم حذف الموظف', {
+          description: `${staff.fullName} — أُزيل من القائمة، وبقي سجلّه محفوظاً. يمكن استعادته من «الموظفون المحذوفون».`,
+        });
       } catch (caught) {
         logApiError(caught);
         const message =
@@ -295,118 +338,125 @@ export default function StaffPage({
   );
 
   const labels = getLabels(locale);
+  const en = locale === 'en';
+  const roleLabel = useCallback(
+    (role: string) => labels.staffRole?.[role as never] ?? role,
+    [labels],
+  );
+
+  /** Which role the list is narrowed to; «all» is everyone. */
+  const [roleFilter, setRoleFilter] = useState<string>('all');
+  const roles = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const staff of items) counts.set(staff.role, (counts.get(staff.role) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [items]);
+  const shown = useMemo(
+    () => (roleFilter === 'all' ? items : items.filter((staff) => staff.role === roleFilter)),
+    [items, roleFilter],
+  );
+  const activeCount = items.filter((staff) => staff.isActive).length;
+  const inspectors = items.filter((staff) => staff.role === 'FIELD_INSPECTOR');
 
   const columns = useMemo<ColumnDef<StaffSummary>[]>(
     () => [
       {
-        accessorKey: 'fullName',
-        header: locale === 'en' ? 'Name' : 'الاسم',
-        cell: ({ row }) => (
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{row.original.fullName}</span>
-            {row.original.id === selfId ? (
-              <CellTag tone="muted">{locale === 'en' ? 'You' : 'أنت'}</CellTag>
-            ) : null}
-          </div>
-        ),
-      },
-      {
-        accessorKey: 'email',
-        header: locale === 'en' ? 'Email' : 'البريد الإلكتروني',
-        cell: ({ row }) => (
-          <a
-            href={`mailto:${row.original.email}`}
-            dir="ltr"
-            className="inline-flex items-center gap-1.5 text-primary hover:underline"
-          >
-            <Mail className="size-3.5 shrink-0" aria-hidden />
-            {row.original.email}
-          </a>
-        ),
-      },
-      {
-        accessorKey: 'role',
-        header: locale === 'en' ? 'Role' : 'الصلاحية',
-        cell: ({ row }) => (
-          <CellTag tone={row.original.role === 'SUPER_ADMIN' ? 'primary' : 'neutral'}>
-            {labels.staffRole?.[row.original.role as never] ?? row.original.role}
-          </CellTag>
-        ),
-      },
-      {
-        accessorKey: 'isActive',
-        header: locale === 'en' ? 'Status' : 'الحالة',
-        cell: ({ row }) =>
-          row.original.isActive ? (
-            <CellTag tone="success">
-              <CheckCircle2 className="size-3.5" aria-hidden />
-              {locale === 'en' ? 'Active' : 'فعّال'}
-            </CellTag>
-          ) : (
-            <CellTag tone="muted">
-              <Ban className="size-3.5" aria-hidden />
-              {locale === 'en' ? 'Disabled' : 'معطّل'}
-            </CellTag>
-          ),
-      },
-      {
-        id: 'fieldStats',
-        header: locale === 'en' ? 'Field Registrations' : 'المسح الميداني والعقارات',
+        // Name and email in one searchable value — the search box promises both.
+        id: 'fullName',
+        accessorFn: (row) => `${row.fullName} ${row.email}`,
+        header: en ? 'Staff member' : 'الموظف',
         cell: ({ row }) => {
           const staff = row.original;
-          if (staff.role !== 'FIELD_INSPECTOR') {
-            return <span className="text-muted-foreground text-xs">—</span>;
-          }
-          const citizens = staff.registeredCitizensCount ?? 0;
-          const properties = staff.registeredPropertiesCount ?? 0;
-          const earnings = staff.totalEarnings ?? 0;
-
           return (
-            <div className="flex flex-col gap-1 text-xs">
-              <div className="flex items-center gap-1.5 font-semibold">
-                <span className="text-success">
-                  {citizens} {locale === 'en' ? 'citizens' : 'مواطن'}
-                </span>
-                <span className="text-muted-foreground">•</span>
-                <span className="text-info">
-                  {properties} {locale === 'en' ? 'properties' : 'عقار'}
-                </span>
-              </div>
-              <div className="text-xs text-muted-foreground font-medium">
-                <bdi dir="ltr">${earnings.toFixed(2)} USD</bdi>
+            <div className="flex min-w-0 items-center gap-3">
+              <span
+                aria-hidden
+                className={cn(
+                  'flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-bold',
+                  staff.isActive ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {initials(staff)}
+              </span>
+              <div className="min-w-0">
+                <p className="flex items-center gap-2 truncate font-medium">
+                  <span className="truncate">{staff.fullName}</span>
+                  {staff.id === selfId ? <CellTag tone="muted">{en ? 'You' : 'أنت'}</CellTag> : null}
+                </p>
+                <a
+                  href={`mailto:${staff.email}`}
+                  dir="ltr"
+                  className="block truncate text-xs text-muted-foreground hover:text-primary hover:underline"
+                >
+                  {staff.email}
+                </a>
               </div>
             </div>
           );
         },
       },
       {
+        accessorKey: 'role',
+        header: en ? 'Role' : 'الصلاحية',
+        cell: ({ row }) => (
+          <CellTag tone={row.original.role === 'SUPER_ADMIN' ? 'primary' : 'neutral'}>
+            {roleLabel(row.original.role)}
+          </CellTag>
+        ),
+      },
+      {
+        accessorKey: 'isActive',
+        header: en ? 'Status' : 'الحالة',
+        cell: ({ row }) => (
+          <div className="flex items-center gap-1.5">
+            {row.original.isActive ? (
+              <CellTag tone="success">
+                <CheckCircle2 className="size-3.5" aria-hidden />
+                {en ? 'Active' : 'فعّال'}
+              </CellTag>
+            ) : (
+              <CellTag tone="muted">
+                <Ban className="size-3.5" aria-hidden />
+                {en ? 'Disabled' : 'معطّل'}
+              </CellTag>
+            )}
+            {row.original.hasConfirmedTotp ? (
+              <ActionTooltip label={en ? 'Two-factor sign-in set up' : 'التحقق بخطوتين مفعّل'}>
+                <span className="text-muted-foreground">
+                  <ShieldCheck className="size-4" aria-label={en ? '2FA on' : 'تحقق ثنائي'} />
+                </span>
+              </ActionTooltip>
+            ) : null}
+          </div>
+        ),
+      },
+      {
         accessorKey: 'lastLoginAt',
-        header: locale === 'en' ? 'Last Login' : 'آخر دخول',
+        header: en ? 'Last login' : 'آخر دخول',
         cell: ({ row }) =>
-          row.original.lastLoginAt
-            ? formatDate(row.original.lastLoginAt)
-            : '—',
+          row.original.lastLoginAt ? (
+            <span className="tabular-nums">{formatDate(row.original.lastLoginAt)}</span>
+          ) : (
+            <span className="text-xs text-muted-foreground">{en ? 'Never' : 'لم يدخل بعد'}</span>
+          ),
       },
       {
         id: 'actions',
-        header: locale === 'en' ? 'Actions' : 'إجراء',
+        header: en ? 'Actions' : 'إجراءات',
         enableSorting: false,
         meta: { mobile: 'actions' },
         cell: ({ row }) => {
           const staff = row.original;
           const isSelf = staff.id === selfId;
           const busy = busyId === staff.id;
-          const deletable = staff.historyCount === 0 && !isSelf;
-
           return (
             <div className="flex items-center gap-1.5">
               {staff.role === 'FIELD_INSPECTOR' ? (
-                <ActionTooltip label={locale === 'en' ? 'Performance & Earnings Dashboard' : 'لوحة الأداء والعمولات ($1/عقار)'}>
+                <ActionTooltip label={en ? 'Performance & earnings' : 'الأداء والعمولات'}>
                   <Button
                     variant="outline"
                     size="icon-sm"
-                    className="border-success/30 text-success bg-success/5 hover:bg-success/15"
-                    aria-label={locale === 'en' ? 'Performance & Earnings' : 'لوحة الأداء والعمولات'}
+                    aria-label={en ? 'Performance & earnings' : 'الأداء والعمولات'}
                     onClick={() => router.push(`${base}/inspector/profile/${staff.id}`)}
                   >
                     <BadgeDollarSign className="size-4" aria-hidden />
@@ -414,11 +464,11 @@ export default function StaffPage({
                 </ActionTooltip>
               ) : null}
 
-              <ActionTooltip label={locale === 'en' ? 'Edit' : 'تعديل'}>
+              <ActionTooltip label={en ? 'Edit' : 'تعديل'}>
                 <Button
-                  variant="secondary"
+                  variant="outline"
                   size="icon-sm"
-                  aria-label={locale === 'en' ? 'Edit' : 'تعديل'}
+                  aria-label={en ? 'Edit' : 'تعديل'}
                   disabled={busy}
                   onClick={() => {
                     setEditing(staff);
@@ -434,18 +484,18 @@ export default function StaffPage({
                 <ActionTooltip
                   label={
                     staff.isActive
-                      ? (locale === 'en' ? 'Disable Account' : 'إلغاء التفعيل')
-                      : (locale === 'en' ? 'Re-activate Account' : 'إعادة التفعيل')
+                      ? en
+                        ? 'Disable — blocks sign-in, reversible'
+                        : 'تعطيل — يمنع الدخول ويمكن التراجع'
+                      : en
+                        ? 'Re-activate'
+                        : 'إعادة التفعيل'
                   }
                 >
                   <Button
                     variant="outline"
                     size="icon-sm"
-                    aria-label={
-                      staff.isActive
-                        ? (locale === 'en' ? 'Disable' : 'إلغاء التفعيل')
-                        : (locale === 'en' ? 'Re-activate' : 'إعادة التفعيل')
-                    }
+                    aria-label={staff.isActive ? (en ? 'Disable' : 'تعطيل') : en ? 'Re-activate' : 'إعادة التفعيل'}
                     disabled={busy}
                     onClick={() => void toggleActive(staff)}
                   >
@@ -460,12 +510,12 @@ export default function StaffPage({
                 </ActionTooltip>
               ) : null}
 
-              {deletable ? (
-                <ActionTooltip label={locale === 'en' ? 'Delete permanently' : 'حذف نهائي — لا سجل نشاطات لهذا الحساب'}>
+              {!isSelf ? (
+                <ActionTooltip label={en ? 'Delete' : 'حذف'}>
                   <Button
                     variant="outline"
                     size="icon-sm"
-                    aria-label={locale === 'en' ? 'Delete permanently' : 'حذف نهائي'}
+                    aria-label={en ? 'Delete' : 'حذف'}
                     className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                     disabled={busy}
                     onClick={() => setPendingDelete(staff)}
@@ -479,7 +529,7 @@ export default function StaffPage({
         },
       },
     ],
-    [selfId, busyId, toggleActive, locale, labels, base, router],
+    [selfId, busyId, toggleActive, en, roleLabel, base, router],
   );
 
   if (!token) return null;
@@ -490,12 +540,8 @@ export default function StaffPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={UsersRound}
-        title={locale === 'en' ? 'Staff Members' : 'الموظفون'}
-        subtitle={
-          locale === 'en'
-            ? 'Manage municipal staff accounts and roles'
-            : 'إنشاء حسابات موظفي البلدية وتعديل صلاحياتها'
-        }
+        title={en ? 'Staff' : 'الموظفون'}
+        subtitle={en ? 'Municipal staff accounts and what each may do' : 'حسابات موظفي البلدية وصلاحياتهم'}
         actions={
           <Button
             onClick={() => {
@@ -505,167 +551,172 @@ export default function StaffPage({
             }}
           >
             <UserPlus className="size-4" aria-hidden />
-            {locale === 'en' ? 'Add Staff Member' : 'إضافة موظف'}
+            {en ? 'Add staff member' : 'إضافة موظف'}
           </Button>
         }
       />
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive">
           {error}
         </p>
       ) : null}
 
-      {/* Field Inspectors Individual Performance Overview */}
-      {(() => {
-        const inspectors = items.filter((s) => s.role === 'FIELD_INSPECTOR');
-        if (inspectors.length === 0) return null;
+      {/* ── At a glance ─────────────────────────────────────────────── */}
+      <StatStrip>
+        <StatItem value={items.length} label={en ? 'Staff' : 'الموظفون'} />
+        <StatItem value={activeCount} label={en ? 'Active' : 'فعّالون'} className="text-success" />
+        <StatItem value={items.length - activeCount} label={en ? 'Disabled' : 'معطّلون'} />
+        <StatItem value={inspectors.length} label={en ? 'Field inspectors' : 'مفتشون ميدانيون'} />
+      </StatStrip>
 
-        return (
-          <Card className="border-border/70 overflow-hidden">
-            <CardHeader className="border-b pb-4 bg-muted/20">
-              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-2 text-base font-bold">
-                    <BadgeDollarSign className="size-5 text-primary" />
-                    {locale === 'en'
-                      ? 'Field Inspectors Performance & Commissions ($1/Property)'
-                      : 'أداء المفتشين الميدانيين وإحصاءات المسح والعمولات (1$ لكل عقار)'}
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {locale === 'en'
-                      ? 'Individual counts of registered citizens and properties per inspector'
-                      : 'عدد المواطنين والعقارات المسجلة لكل مفتش ميداني على حدة مع تفاصيل العمولات المستحقة'}
-                  </p>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-4 sm:p-6">
-              <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-                {inspectors.map((insp) => {
-                  const citizens = insp.registeredCitizensCount ?? 0;
-                  const properties = insp.registeredPropertiesCount ?? 0;
-                  const earnings = insp.totalEarnings ?? 0;
-                  const pending = insp.pendingBalance ?? 0;
-
-                  return (
-                    <div
-                      key={insp.id}
-                      className="flex flex-col justify-between rounded-xl border bg-card p-4 hover:shadow-sm transition-shadow space-y-3"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary font-bold">
-                            {insp.firstName.charAt(0)}
-                          </div>
-                          <div>
-                            <h3 className="font-bold text-sm">{insp.fullName}</h3>
-                            <p className="text-xs text-muted-foreground" dir="ltr">
-                              {insp.email}
-                            </p>
-                          </div>
-                        </div>
-                        {insp.isActive ? (
-                          <Badge variant="outline" className="text-xs border-success/30 text-success bg-success/10">
-                            {locale === 'en' ? 'Active' : 'فعّال'}
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-xs text-destructive">
-                            {locale === 'en' ? 'Disabled' : 'معطّل'}
-                          </Badge>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 pt-1 border-t text-xs">
-                        <div className="flex flex-col bg-muted/30 p-2 rounded-lg">
-                          <span className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Users className="size-3 text-success" />
-                            {locale === 'en' ? 'Citizens' : 'المواطنون'}
-                          </span>
-                          <span className="font-bold text-sm text-success mt-0.5">
-                            {citizens} {locale === 'en' ? 'cit.' : 'مواطن'}
-                          </span>
-                        </div>
-
-                        <div className="flex flex-col bg-muted/30 p-2 rounded-lg">
-                          <span className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Home className="size-3 text-info" />
-                            {locale === 'en' ? 'Properties' : 'العقارات'}
-                          </span>
-                          <span className="font-bold text-sm text-info mt-0.5">
-                            {properties} {locale === 'en' ? 'prop.' : 'عقار'}
-                          </span>
-                        </div>
-
-                        <div className="flex flex-col bg-muted/30 p-2 rounded-lg">
-                          <span className="text-xs text-muted-foreground flex items-center gap-1">
-                            <TrendingUp className="size-3 text-purple-600" />
-                            {locale === 'en' ? 'Earnings' : 'الأرباح'}
-                          </span>
-                          <span className="font-bold text-xs mt-0.5" dir="ltr">
-                            ${earnings.toFixed(2)}
-                          </span>
-                        </div>
-
-                        <div className="flex flex-col bg-muted/30 p-2 rounded-lg">
-                          <span className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Clock className="size-3 text-warning" />
-                            {locale === 'en' ? 'Pending' : 'المتبقي'}
-                          </span>
-                          <span className="font-bold text-xs text-warning mt-0.5" dir="ltr">
-                            ${pending.toFixed(2)}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="pt-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full text-xs gap-1.5 border-primary/20 hover:bg-primary/5 text-primary"
-                          onClick={() => router.push(`${base}/inspector/profile/${insp.id}`)}
-                        >
-                          <BadgeDollarSign className="size-3.5" />
-                          {locale === 'en' ? 'View Dashboard & Payouts' : 'عرض لوحة الأرباح والدفعات'}
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })()}
-
-      <Card className="overflow-hidden">
-        <CardHeader className="border-b">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <UsersRound className="size-5" aria-hidden />
-            {locale === 'en' ? 'Staff Directory' : 'حسابات الموظفين'}
-          </CardTitle>
-          <p className="text-xs text-muted-foreground">
-            {locale === 'en'
-              ? 'Disabling prevents login while preserving historical action logs. Permanent delete is only allowed for accounts with no prior actions.'
-              : 'إلغاء التفعيل يمنع الدخول ويُبقي سجل نشاطات الموظف كما هو. الحذف النهائي متاح فقط لحساب لم يقم بأي إجراء.'}
-          </p>
-        </CardHeader>
-        <CardContent className="p-6">
-          <DataTable
-            columns={columns}
-            data={items}
-            labels={tableLabels}
-            columnStorageKey="staff"
-            getRowId={(row) => row.id}
-            loading={query.loading}
-            error={query.error}
-            onRetry={query.refetch}
+      {/* ── The directory ───────────────────────────────────────────── */}
+      <section className="space-y-3">
+        {roles.length > 1 ? (
+          <ChipGroup
+            aria-label={en ? 'Role' : 'الصلاحية'}
+            value={roleFilter}
+            onChange={setRoleFilter}
+            options={[
+              { value: 'all', label: `${en ? 'All' : 'الكل'} (${items.length})` },
+              ...roles.map(([role, count]) => ({ value: role, label: `${roleLabel(role)} (${count})` })),
+            ]}
           />
-        </CardContent>
-      </Card>
+        ) : null}
+        {/* The table draws its own frame; a card around it was a second one (BAN-4). */}
+        <DataTable
+          columns={columns}
+          data={shown}
+          labels={tableLabels}
+          columnStorageKey="staff"
+          getRowId={(row) => row.id}
+          loading={query.loading}
+          error={query.error}
+          onRetry={query.refetch}
+        />
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {en
+            ? 'Disabling blocks sign-in and can be undone. Deleting hides the account from this list and blocks sign-in; their details and everything they did stay on record, and it can be restored from «Deleted staff».'
+            : 'التعطيل يمنع الدخول ويمكن التراجع عنه. الحذف يُخفي الحساب من هذه القائمة ويمنع الدخول، وتبقى بياناته وكل ما قام به محفوظة في السجلات، ويمكن استعادته من «الموظفون المحذوفون».'}
+        </p>
+      </section>
+
+      {/*
+        ── Deleted staff, restorable ───────────────────────────────
+        Shown whenever there is something to say — accounts to restore, a read
+        still loading, or a read that failed — because a failed read here hides
+        the only way back for a deleted account (STA-1).
+      */}
+      {deletedStaff.length > 0 || deletedQuery.loading || deletedQuery.error ? (
+        <CollapsibleSection
+          title={en ? 'Deleted staff' : 'الموظفون المحذوفون'}
+          icon={Trash2}
+          summary={deletedStaff.length > 0 ? <span className="tabular-nums">({deletedStaff.length})</span> : undefined}
+          defaultOpen={false}
+        >
+          {deletedQuery.loading ? (
+            <LoadingState compact label={en ? 'Loading deleted staff…' : 'جارٍ تحميل الموظفين المحذوفين…'} />
+          ) : deletedQuery.error ? (
+            <ErrorState
+              compact
+              description={deletedQuery.error}
+              onRetry={() => void deletedQuery.refetch()}
+              retryLabel={en ? 'Try again' : 'إعادة المحاولة'}
+            />
+          ) : (
+            <ul className="divide-y">
+              {deletedStaff.map((staff) => (
+                <li key={staff.id} className="flex flex-wrap items-center gap-3 py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">{staff.fullName}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      <bdi dir="ltr">{staff.email}</bdi>
+                      {' · '}
+                      {roleLabel(staff.role)}
+                      {' · '}
+                      {en ? 'deleted ' : 'حُذف '}
+                      {formatDate(staff.deletedAt)}
+                    </p>
+                  </div>
+                  <Button variant="outline" size="sm" disabled={busyId === staff.id} onClick={() => void restore(staff)}>
+                    {busyId === staff.id ? (
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                    ) : (
+                      <ArchiveRestore className="size-4" aria-hidden />
+                    )}
+                    {en ? 'Restore' : 'استعادة'}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CollapsibleSection>
+      ) : null}
+
+      {/* ── Field inspectors ────────────────────────────────────────── */}
+      {inspectors.length > 0 ? (
+        <section className="space-y-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <BadgeDollarSign className="size-5 text-primary" aria-hidden />
+              {en ? 'Field inspectors' : 'المفتشون الميدانيون'}
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {en
+                ? 'What each inspector has registered, and what they are owed ($1 per billable unit).'
+                : 'ما سجّله كل مفتش، وما يستحقه من عمولات (1$ لكل وحدة محتسبة).'}
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {inspectors.map((inspector) => (
+              <article key={inspector.id} className="flex flex-col gap-4 rounded-lg border bg-card p-4 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <span
+                    aria-hidden
+                    className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 font-bold text-primary"
+                  >
+                    {initials(inspector)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-semibold">{inspector.fullName}</p>
+                    <p dir="ltr" className="truncate text-xs text-muted-foreground">
+                      {inspector.email}
+                    </p>
+                  </div>
+                  {inspector.isActive ? (
+                    <CellTag tone="success">{en ? 'Active' : 'فعّال'}</CellTag>
+                  ) : (
+                    <CellTag tone="muted">{en ? 'Disabled' : 'معطّل'}</CellTag>
+                  )}
+                </div>
+                <StatStrip>
+                  <StatItem value={inspector.registeredCitizensCount ?? 0} label={en ? 'Citizens' : 'مواطن'} />
+                  <StatItem
+                    value={inspector.registeredPropertiesCount ?? 0}
+                    label={en ? 'Billable units' : 'الوحدات المحتسبة'}
+                  />
+                  {/* To the cent: the server refuses a delete over $0.40 owed, so the page must not show «0». */}
+                  <StatItem value={formatForeign(inspector.totalEarnings ?? 0, 'USD')} label={en ? 'Earned' : 'الأرباح'} />
+                  <StatItem
+                    value={formatForeign(inspector.pendingBalance ?? 0, 'USD')}
+                    label={en ? 'Owed' : 'المتبقي'}
+                    className={(inspector.pendingBalance ?? 0) > 0 ? 'text-warning' : undefined}
+                  />
+                </StatStrip>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-auto w-full"
+                  onClick={() => router.push(`${base}/inspector/profile/${inspector.id}`)}
+                >
+                  <BadgeDollarSign className="size-4" aria-hidden />
+                  {en ? 'Earnings & payouts' : 'الأرباح والدفعات'}
+                </Button>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <StaffForm
         open={formOpen}
@@ -680,36 +731,40 @@ export default function StaffPage({
         locale={locale}
       />
 
+      {/*
+        «حذف» hides the account: it leaves this list and cannot sign in, and its
+        row, its details and everything it did stay on record; it can be
+        restored. Confirmed by typing the account's email — unique, where two
+        staff can share a name (DES-3).
+      */}
       <ConfirmDialog
         open={pendingDelete !== null}
         onOpenChange={(open) => {
           if (!open) setPendingDelete(null);
         }}
-        title={locale === 'en' ? 'Permanently Delete Account' : 'حذف الحساب نهائياً'}
+        title={en ? 'Delete staff member' : 'حذف الموظف'}
         description={
           pendingDelete ? (
-            locale === 'en' ? (
+            en ? (
               <>
-                Account for <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> will be deleted and will no longer be able to log in. Their activity remains in the audit log.
-                <span className="mt-2 block text-muted-foreground">
-                  If the goal is to temporarily revoke access, &quot;Disable&quot; is sufficient and reversible.
-                </span>
+                <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> will be hidden from
+                the staff list and cannot sign in. Their details and everything they did stay on record, and the
+                account can be restored from «Deleted staff» — it comes back disabled.
+                <span className="mt-2 block text-muted-foreground">To block sign-in for a while instead, use «Disable».</span>
               </>
             ) : (
               <>
-                سيُحذف حساب{' '}
-                <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> ولن
-                يستطيع تسجيل الدخول. سجل نشاطه في «سجل النشاطات» يبقى كما هو.
-                <span className="mt-2 block text-muted-foreground">
-                  إن كان الهدف منع الدخول مؤقتاً، «التعطيل» يكفي ويمكن التراجع عنه.
-                </span>
+                سيُخفى <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> من قائمة
+                الموظفين ولن يستطيع الدخول. تبقى بياناته وكل ما قام به محفوظة في السجلات، ويمكن استعادته من
+                «الموظفون المحذوفون» — يعود معطّلاً.
+                <span className="mt-2 block text-muted-foreground">لمنع الدخول مؤقتاً فقط، استخدم «التعطيل».</span>
               </>
             )
           ) : null
         }
-        confirmLabel={locale === 'en' ? 'Delete Permanently' : 'حذف نهائي'}
+        confirmLabel={en ? 'Delete account' : 'احذف الحساب'}
         requireText={pendingDelete?.email}
-        requireTextHint={locale === 'en' ? 'Type the account email address to confirm' : 'اكتب البريد الإلكتروني للحساب للتأكيد'}
+        requireTextHint={en ? "Type the account's email to confirm" : 'اكتب البريد الإلكتروني للحساب للتأكيد'}
         onConfirm={async () => {
           if (pendingDelete) await removeStaff(pendingDelete);
         }}
@@ -808,4 +863,9 @@ export default function StaffPage({
       </Dialog>
     </div>
   );
+}
+
+/** Two letters for a staff member's avatar: their first and last initials. */
+function initials(staff: StaffSummary): string {
+  return `${staff.firstName.trim().charAt(0)}${staff.lastName.trim().charAt(0)}`.toUpperCase();
 }

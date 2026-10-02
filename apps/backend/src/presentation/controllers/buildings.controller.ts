@@ -9,6 +9,7 @@ import {
   endVacancySchema,
   linkOccupancyOwnerSchema,
   logVisitSchema,
+  resizeUnitSpanSchema,
   saveBuildingMatrixSchema,
   unitBlueprintSchema,
   updateBuildingSchema,
@@ -24,6 +25,7 @@ import {
   type EndVacancyInput,
   type LinkOccupancyOwnerInput,
   type LogVisitInput,
+  type ResizeUnitSpanInput,
   type SaveBuildingMatrixInput,
   type UnitBlueprint,
   type UpdateBuildingInput,
@@ -264,6 +266,21 @@ export class BuildingsController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.buildings.updateUnit(unitId, body, this.actor(user));
+  }
+
+  /**
+   * «تعديل عرض الوحدة» — moves a unit's edges on the matrix. Its own route
+   * rather than `startCol`/`endCol` on the PATCH above: a resize also pins the
+   * floor's unpositioned neighbours, and refuses drawing over one.
+   */
+  @Roles(...WRITE_ROLES)
+  @Patch('units/:unitId/span')
+  async resizeUnitSpan(
+    @Param('unitId') unitId: string,
+    @Body(new ZodValidationPipe(resizeUnitSpanSchema)) body: ResizeUnitSpanInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.buildings.resizeUnitSpan(unitId, body, this.actor(user));
   }
 
   /**

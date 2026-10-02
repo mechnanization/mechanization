@@ -1,0 +1,24 @@
+-- 0065_staff_deleted_at
+--
+-- «حذف موظف» hides a staff account; it does not remove it.
+--
+-- == What it is for ======================================================
+--
+-- A staff member's id is on the records they produced — the registrations
+-- they reviewed, the payments they recorded (held by a RESTRICT key), the
+-- receipts they issued, the audit trail. Removing the row would orphan those
+-- or be refused outright, and erasing the person's details would leave a
+-- trail nobody can read back to a name. So a super admin's delete now sets
+-- this column instead: the account leaves the staff list, can never sign in
+-- (it is deactivated in the same write), and everything it is and did stays
+-- on the record, under its own name.
+--
+-- NULL is every account that has not been deleted, which is every row today.
+--
+-- == Safety ==============================================================
+--
+-- Additive only: one nullable column, no existing row touched, so the
+-- previous build keeps working against this schema and a rollback is a
+-- redeploy.
+
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "deletedAt" TIMESTAMP(3);

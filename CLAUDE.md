@@ -36,6 +36,10 @@ are the ones that matter most.
 7. **Verify, then report.** Exit code 0 proves nothing. Reconnect and count.
    Say what failed or was skipped alongside what worked.
 
+8. **UI follows [docs/ui-ux-standards.md](docs/ui-ux-standards.md).** Tokens
+   only, shared primitives only, both locales complete, copy that matches
+   behaviour. Read it before writing or reviewing any frontend change.
+
 ## Repo shape
 
 - pnpm monorepo: `apps/backend` (NestJS), `apps/frontend` (Next.js),

@@ -21,6 +21,7 @@ import { activeNavItem, localizedLabel } from '@/components/admin/nav';
 import { NotificationsBell } from '@/components/admin/notifications-bell';
 import { LanguageSwitcher } from '@/components/language-switcher';
 import { Button } from '@/components/ui/button';
+import { ActionTooltip } from '@/components/ui/tooltip';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,6 +67,7 @@ export function AdminHeader({
   tenantName: string | undefined;
   session: Session | null;
   onOpenDrawer: () => void;
+  /** Opens the command palette — the record search a clerk reaches for most. */
   onOpenSearch: () => void;
 }) {
   const pathname = usePathname();
@@ -136,7 +138,11 @@ export function AdminHeader({
       {/* Breadcrumb. The municipality's own name is the root rather than a
           generic "الرئيسية": with one portal per tenant, the thing a clerk
           needs confirmed at a glance is *which* municipality's records are on
-          screen — the answer to "am I about to edit the wrong town". */}
+          screen — the answer to "am I about to edit the wrong town".
+
+          On a phone only the last crumb shows, so the separators hide with the
+          crumbs they sit between — left visible, they drew «> >» in front of
+          «التفاصيل» with nothing between them. */}
       <nav aria-label={locale === 'en' ? 'Breadcrumb' : 'مسار التنقل'} className="flex min-w-0 items-center gap-1.5 text-sm">
         <Link
           href={`${base}/dashboard`}
@@ -146,7 +152,7 @@ export function AdminHeader({
         </Link>
         {active ? (
           <>
-            <ChevronLeft className="size-4 shrink-0 text-muted-foreground/60 rtl:rotate-180" aria-hidden />
+            <ChevronLeft className="hidden size-4 shrink-0 text-muted-foreground/60 rtl:rotate-180 sm:block" aria-hidden />
             <Link
               href={`${base}${active.path}`}
               className={
@@ -161,7 +167,7 @@ export function AdminHeader({
         ) : null}
         {onDetailRoute ? (
           <>
-            <ChevronLeft className="size-4 shrink-0 text-muted-foreground/60 rtl:rotate-180" aria-hidden />
+            <ChevronLeft className="hidden size-4 shrink-0 text-muted-foreground/60 rtl:rotate-180 sm:block" aria-hidden />
             <span className="truncate font-medium text-foreground">{leafLabel}</span>
           </>
         ) : null}
@@ -169,29 +175,42 @@ export function AdminHeader({
 
       <div className="flex-1" />
 
-      {/* Global search launcher: Cmd/Ctrl+K or click.
-          Search covers citizens by name/phone/file-number, properties by
-          cadastral number, and navigation items. */}
+      {/*
+        Record search: citizens by name, phone or file number, properties by
+        cadastral number, and pages. A visible control, not only Ctrl/⌘+K — a
+        shortcut is no affordance at all on a phone, and a clerk who has never
+        been told it exists never finds it. Full launcher from md up; an icon
+        on a phone, where the bar has no room for a field.
+      */}
       <Button
         variant="outline"
         size="sm"
         onClick={onOpenSearch}
         className="hidden h-9 w-64 items-center justify-between text-muted-foreground hover:text-foreground md:flex"
-        aria-label={locale === 'en' ? 'Global search' : 'بحث عام في السجل'}
+        aria-label={locale === 'en' ? 'Search the register' : 'بحث في السجل'}
       >
         <span className="flex items-center gap-2 text-xs">
-          <Search className="size-3.5" />
+          <Search className="size-3.5" aria-hidden />
           <span>{locale === 'en' ? 'Search…' : 'بحث في السجل…'}</span>
         </span>
         <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-xs font-medium text-muted-foreground">
           <span className="text-xs">Ctrl</span>K
         </kbd>
       </Button>
+      <ActionTooltip label={locale === 'en' ? 'Search the register' : 'بحث في السجل'}>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onOpenSearch}
+          className="md:hidden"
+          aria-label={locale === 'en' ? 'Search the register' : 'بحث في السجل'}
+        >
+          <Search className="size-4" aria-hidden />
+        </Button>
+      </ActionTooltip>
 
       {/* Language Switcher */}
-      <div className="px-1">
-        <LanguageSwitcher variant="toggle" currentLocale={locale} />
-      </div>
+      <LanguageSwitcher variant="toggle" currentLocale={locale} />
 
       {/* Sits before the account menu rather than after it: this is work
           arriving, and the account menu is the one control on this bar

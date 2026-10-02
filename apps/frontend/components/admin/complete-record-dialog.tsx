@@ -165,7 +165,10 @@ function writeAt(values: CitizenFormValues, path: string, raw: string): CitizenF
   const value = raw.trim() === '' ? undefined : raw;
 
   if (section === 'personal' || section === 'contact') {
-    return { ...values, [section]: { ...values[section], [rest[0] ?? '']: value } };
+    // An answered WhatsApp is its own number: «same as the phone» would replace it on save.
+    const sameAsPhone =
+      path === 'contact.whatsapp' && value !== undefined ? { whatsappSameAsPhone: false } : {};
+    return { ...values, [section]: { ...values[section], [rest[0] ?? '']: value, ...sameAsPhone } };
   }
 
   if (section !== 'properties') return values;

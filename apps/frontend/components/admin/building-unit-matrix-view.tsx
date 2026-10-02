@@ -1,17 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
+  ArrowLeftToLine,
+  ArrowRightToLine,
   Building2,
+  ChevronLeft,
   ChevronRight,
   ClipboardList,
   DoorClosed,
   Footprints,
   Loader2,
   Grid2X2,
+  MoveHorizontal,
   Pencil,
   Plus,
   ShieldAlert,
@@ -19,8 +23,12 @@ import {
   UserPlus,
 } from 'lucide-react';
 import {
+  buildingWidth,
   getLabels,
+  isStructuralUnitType,
   defaultUnitTypeFor,
+  MAX_UNIT_COLUMN,
+  spanLimits,
   isOccupiableLifecycle,
   type DamageLevel,
   type UpsertUnitInput,
@@ -42,6 +50,7 @@ import {
   logApiError,
   recordDamage,
   recordOccupancy,
+  resizeUnitSpan,
   updateUnit,
   type BuildingDetail,
   type DamageAssessmentRow,
@@ -52,6 +61,7 @@ import {
 import { clearSession, loadSession } from '@/lib/session';
 import { formatDate } from '@/lib/dates';
 import { BackLink } from '@/components/ui/back-link';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -66,6 +76,7 @@ import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
+import { BuildingElevation } from '@/components/admin/property-illustrations';
 import { ActivityTrail } from '@/components/admin/activity-trail';
 import { UnitCorrectionDeleteButton } from '@/components/admin/unit-correction-delete-dialog';
 import { AUDIT_ENTITY } from '@/lib/audit-labels';
@@ -102,7 +113,7 @@ const DAMAGED_LEVELS: readonly DamageLevel[] = [
   'TOTAL_COLLAPSE',
 ];
 
-type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | 'vacancy' | null;
+type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | 'vacancy' | 'resize' | null;
 
 /**
  * One colour per confirmed-unit *status*, not identity — the inverse of the
@@ -208,7 +219,7 @@ export function BuildingUnitMatrixView({
       }
       setError(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not load the building.'
             : 'تعذّر تحميل المبنى.',
@@ -235,6 +246,139 @@ export function BuildingUnitMatrixView({
     () => building?.units.find((unit) => unit.id === selectedUnitId) ?? null,
     [building, selectedUnitId],
   );
+
+  /*
+    «تعديل عرض الوحدة» — the span being drawn, before it is saved.
+
+    Held here rather than in the panel because the matrix above draws it: the
+    officer sees the block grow into the gap as they press, against the real
+    neighbours, before anything is written. Only read while the resize action
+    is open on that unit, so closing the panel or picking another unit is
+    enough to discard it.
+  */
+  const [spanDraft, setSpanDraft] = useState<{ unitId: string; startCol: number; endCol: number } | null>(
+    null,
+  );
+  const activeDraft =
+    action === 'resize' && spanDraft && spanDraft.unitId === selectedUnitId ? spanDraft : null;
+
+  /** The selected unit as the matrix draws it, and how far each edge may go. */
+  const selectedSpan = useMemo(() => {
+    if (!selectedUnit) return null;
+    for (const { blocks } of floors) {
+      const block = blocks.find((candidate) => candidate.unit === selectedUnit);
+      if (block) return { block, limits: spanLimits(blocks, selectedUnit, MAX_UNIT_COLUMN)! };
+    }
+    return null;
+  }, [floors, selectedUnit]);
+
+  /*
+    One column grid for the whole building, as the creation wizard paints it,
+    so a setback floor shows its empty columns instead of stretching across
+    them. Widened while a draft reaches past it, so the preview is never
+    clipped.
+  */
+  const baseWidth = buildingWidth(floors);
+
+  /*
+    Dragging an edge — «اسحب حافة الوحدة».
+
+    The edge follows the pointer column by column and stops at the nearest
+    neighbour, as the buttons in the panel do. Nothing is written on release:
+    the officer is asked first (`pendingResize`), because a drag that ends a
+    column off is easy to make with a thumb and the matrix is what every
+    census figure is read from. Cancelling puts the block back.
+
+    Held to the building's own width while dragging. Letting the grid grow under
+    the pointer would shrink every column as the edge moved, so the column the
+    pointer was over would keep sliding away from it; growing past the widest
+    floor stays in the panel's buttons.
+  */
+  type Span = { startCol: number; endCol: number };
+  const [drag, setDrag] = useState<{
+    unit: UnitWithOccupants;
+    edge: 'start' | 'end';
+    original: Span;
+    limits: { minStart: number; maxEnd: number };
+    row: HTMLElement;
+    span: Span;
+  } | null>(null);
+  const [pendingResize, setPendingResize] = useState<{
+    unit: UnitWithOccupants;
+    from: Span;
+    to: Span;
+  } | null>(null);
+  /** The drag as last rendered — read on pointer-up, outside any state updater. */
+  const dragRef = useRef(drag);
+  dragRef.current = drag;
+
+  useEffect(() => {
+    if (!drag) return;
+    const columnAt = (clientX: number) => {
+      const box = drag.row.getBoundingClientRect();
+      const gap = parseFloat(getComputedStyle(drag.row).columnGap) || 0;
+      const cell = (box.width + gap) / baseWidth;
+      return Math.min(baseWidth, Math.max(1, Math.floor((clientX - box.left + gap / 2) / cell) + 1));
+    };
+    const onMove = (event: PointerEvent) => {
+      const col = columnAt(event.clientX);
+      setDrag((current) => {
+        if (!current) return current;
+        const span =
+          current.edge === 'start'
+            ? {
+                startCol: Math.min(current.original.endCol, Math.max(current.limits.minStart, col)),
+                endCol: current.original.endCol,
+              }
+            : {
+                startCol: current.original.startCol,
+                endCol: Math.max(current.original.startCol, Math.min(current.limits.maxEnd, baseWidth, col)),
+              };
+        return span.startCol === current.span.startCol && span.endCol === current.span.endCol
+          ? current
+          : { ...current, span };
+      });
+    };
+    const onUp = () => {
+      // Read from the ref, then two plain updates: a state updater must stay pure,
+      // and scheduling the confirmation from inside one is what React warns about.
+      const current = dragRef.current;
+      if (
+        current &&
+        (current.span.startCol !== current.original.startCol || current.span.endCol !== current.original.endCol)
+      ) {
+        setPendingResize({ unit: current.unit, from: current.original, to: current.span });
+      }
+      setDrag(null);
+    };
+    const onCancel = () => setDrag(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDrag(null);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKey);
+    };
+    // Re-bound only when a drag starts or ends, not on every column it crosses.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(drag), baseWidth]);
+
+  /** What the matrix draws in place of a unit's stored span, and what it had. */
+  const preview: (Span & { unitId: string; original: Span }) | null = drag
+    ? { unitId: drag.unit.id, ...drag.span, original: drag.original }
+    : pendingResize
+      ? { unitId: pendingResize.unit.id, ...pendingResize.to, original: pendingResize.from }
+      : activeDraft && selectedSpan
+        ? { ...activeDraft, original: selectedSpan.block }
+        : null;
+
+  const gridWidth = Math.max(baseWidth, preview?.endCol ?? 1);
 
   /*
     Why «تأكيد الشغور» cannot be pressed here — a مستأجر or شاغل بتسامح living
@@ -266,7 +410,7 @@ export function BuildingUnitMatrixView({
         toast.success(message);
       } catch (caught) {
         logApiError(caught);
-        const message = caught instanceof ApiRequestError ? caught.payload.message : failure;
+        const message = caught instanceof ApiRequestError ? caught.message : failure;
         setActionError(message);
         toast.error(failure, { description: message });
       } finally {
@@ -300,7 +444,7 @@ export function BuildingUnitMatrixView({
         return;
       }
       const failure = en ? 'Could not add the unit.' : 'تعذّرت إضافة الوحدة.';
-      const message = caught instanceof ApiRequestError ? caught.payload.message : failure;
+      const message = caught instanceof ApiRequestError ? caught.message : failure;
       setActionError(message);
       toast.error(failure, { description: message });
     } finally {
@@ -370,7 +514,7 @@ export function BuildingUnitMatrixView({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not lift the vacancy.'
             : 'تعذّر إلغاء تأكيد الشغور.',
@@ -407,7 +551,7 @@ export function BuildingUnitMatrixView({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not end the occupancy.'
             : 'تعذّر إنهاء الإشغال.',
@@ -427,7 +571,7 @@ export function BuildingUnitMatrixView({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not link the owner.'
             : 'تعذّر الربط بالمالك.',
@@ -711,6 +855,32 @@ export function BuildingUnitMatrixView({
               ) : null}
             </div>
           ) : (
+            <>
+            {/*
+              The building as it stands — the drawing «عقارات المواطن» shows —
+              above the matrix it is drawn from. Any unit in it can be pressed,
+              and picks that unit below; the picked one is the one lit.
+            */}
+            <section className="rounded-xl border bg-muted/40 p-3">
+              <p className="mb-1 text-xs font-medium text-muted-foreground">
+                {en ? 'The building — press a unit to open it' : 'شكل المبنى — اضغط على وحدة لفتحها'}
+              </p>
+              <div className="h-56 sm:h-72 lg:h-80">
+                <BuildingElevation
+                  building={building}
+                  highlight={selectedUnitId ? new Set([selectedUnitId]) : new Set<string>()}
+                  tone="occupant"
+                  selected={selectedUnitId}
+                  pickAny
+                  onSelect={(unitId) => {
+                    setSelectedUnitId(unitId === selectedUnitId ? null : unitId);
+                    setAction(null);
+                    setActionError(null);
+                  }}
+                    locale={locale}
+                  />
+              </div>
+            </section>
             <div
               dir="ltr"
               className="flex items-stretch gap-2 rounded-xl border border-border/80 bg-muted/10 p-2 sm:gap-3 sm:p-3"
@@ -781,24 +951,56 @@ export function BuildingUnitMatrixView({
               */}
               <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain pb-1 [scrollbar-width:thin]">
                 <div className="flex flex-col gap-1.5 sm:gap-2">
-                  {floors.map(({ floor, blocks, width }) => (
+                  {floors.map(({ floor, blocks }) => (
                     <div
                       key={floor}
-                      className={cn(MATRIX_ROW_HEIGHT, 'grid gap-1.5 sm:gap-2')}
+                      data-matrix-row
+                      className={cn(MATRIX_ROW_HEIGHT, 'grid gap-1.5 sm:gap-2', drag && 'cursor-ew-resize select-none')}
                       style={{
                         // 2.75rem = 44px, the smallest block an officer can hit
                         // reliably while holding a tablet in one hand.
-                        gridTemplateColumns: `repeat(${width}, minmax(2.75rem, 1fr))`,
+                        gridTemplateColumns: `repeat(${gridWidth}, minmax(2.75rem, 1fr))`,
                       }}
                     >
                       {blocks.map(({ unit, startCol, endCol }) => {
                         const badge = cellBadge(unit, labels, en);
                         const selected = unit.id === selectedUnitId;
+                        const drafting = preview !== null && preview.unitId === unit.id;
+                        const from = drafting ? preview.startCol : startCol;
+                        const to = drafting ? preview.endCol : endCol;
+                        const delta = drafting ? to - from - (preview.original.endCol - preview.original.startCol) : 0;
+                        const draggable = canWrite && !busy && !pendingResize;
+                        const beginDrag = (edge: 'start' | 'end') => (event: ReactPointerEvent<HTMLSpanElement>) => {
+                          if (!draggable || event.button !== 0) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          const row = event.currentTarget.closest('[data-matrix-row]');
+                          const limits = spanLimits(blocks, unit, MAX_UNIT_COLUMN);
+                          if (!(row instanceof HTMLElement) || !limits) return;
+                          setSelectedUnitId(unit.id);
+                          setAction(null);
+                          setActionError(null);
+                          setDrag({ unit, edge, original: { startCol, endCol }, limits, row, span: { startCol, endCol } });
+                        };
                         return (
+                          <Fragment key={unit.id}>
+                          {/* Columns this change gives back — shown where they will be empty. */}
+                          {drafting
+                            ? columnsBetween(preview.original, { startCol: from, endCol: to }).map((col) => (
+                                <span
+                                  key={`freed-${col}`}
+                                  aria-hidden
+                                  style={{ gridColumn: `${col} / ${col + 1}`, gridRow: 1 }}
+                                  className="pointer-events-none rounded-md border-2 border-dashed border-destructive/60 bg-destructive/5 motion-safe:animate-pulse"
+                                />
+                              ))
+                            : null}
+                          <div
+                            className="group relative h-full min-w-0"
+                            style={{ gridColumn: `${from} / ${to + 1}`, gridRow: 1 }}
+                          >
                           <button
-                            key={unit.id}
                             type="button"
-                            style={{ gridColumn: `${startCol} / ${endCol + 1}` }}
                             onClick={() => {
                               setSelectedUnitId(selected ? null : unit.id);
                               setAction(null);
@@ -820,9 +1022,11 @@ export function BuildingUnitMatrixView({
                               inset for the same reason.
                             */
                             className={cn(
-                              'flex h-full flex-col items-center justify-center gap-0.5 rounded-md px-1 py-1.5 text-center ring-1 ring-inset transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                              'flex h-full w-full flex-col items-center justify-center gap-0.5 rounded-md px-1 py-1.5 text-center ring-1 ring-inset transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                               STATUS_BLOCK_CLASSES[badge.variant],
                               selected && 'ring-2 ring-primary',
+                              drafting && 'outline-dashed outline-2 -outline-offset-4 outline-primary',
+                              drag?.unit.id === unit.id && 'cursor-ew-resize',
                             )}
                           >
                             <span className="font-mono text-xs font-bold">{unit.unitCode}</span>
@@ -848,6 +1052,67 @@ export function BuildingUnitMatrixView({
                               </span>
                             ) : null}
                           </button>
+
+                          {/* Columns this change takes in, pulsing over the block. */}
+                          {drafting
+                            ? columnsBetween({ startCol: from, endCol: to }, preview.original).map((col) => (
+                                <span
+                                  key={`gained-${col}`}
+                                  aria-hidden
+                                  style={{
+                                    left: `${((col - from) / (to - from + 1)) * 100}%`,
+                                    width: `${100 / (to - from + 1)}%`,
+                                  }}
+                                  className="pointer-events-none absolute inset-y-0 rounded-md bg-primary/20 ring-2 ring-inset ring-primary motion-safe:animate-pulse"
+                                />
+                              ))
+                            : null}
+                          {drafting && delta !== 0 ? (
+                            <span
+                              aria-hidden
+                              className={cn(
+                                'pointer-events-none absolute -top-1 left-1/2 -translate-x-1/2 rounded-full px-1.5 text-[10px] font-bold tabular-nums shadow',
+                                delta > 0 ? 'bg-primary text-primary-foreground' : 'bg-destructive text-destructive-foreground',
+                              )}
+                            >
+                              {delta > 0 ? `+${delta}` : delta}
+                            </span>
+                          ) : null}
+
+                          {/*
+                            The two grips. Beside the button rather than inside it,
+                            so pressing one never also selects-or-deselects the
+                            tile. Live only on the selected tile (and the one being
+                            dragged) — a phone taps the flat, then drags its edge.
+                            On every other tile they take no pointer at all: an
+                            invisible grip with `touch-none` on both edges of every
+                            tile turned a swipe that started near an edge into a
+                            resize instead of a scroll. A mouse still sees them on
+                            hover. `left`/`right` are physical on purpose: the
+                            matrix is drawn `dir="ltr"` (0001 on the left), RTL-1's
+                            stated exception. Wider on a finger (LAY-7).
+                          */}
+                          {draggable
+                            ? (['start', 'end'] as const).map((edge) => (
+                                <span
+                                  key={edge}
+                                  aria-hidden
+                                  title={en ? 'Drag to resize' : 'اسحب لتعديل العرض'}
+                                  onPointerDown={beginDrag(edge)}
+                                  className={cn(
+                                    'absolute inset-y-1 z-10 flex w-3 cursor-ew-resize touch-none items-center justify-center transition-opacity duration-150 ease-out coarse:w-6',
+                                    edge === 'start' ? 'left-0' : 'right-0',
+                                    selected || drag?.unit.id === unit.id
+                                      ? 'opacity-100'
+                                      : 'pointer-events-none opacity-0 coarse:hidden group-hover:pointer-events-auto group-hover:opacity-100',
+                                  )}
+                                >
+                                  <span className="h-8 w-1 rounded-full bg-primary/80 shadow" />
+                                </span>
+                              ))
+                            : null}
+                          </div>
+                          </Fragment>
                         );
                       })}
                     </div>
@@ -896,9 +1161,47 @@ export function BuildingUnitMatrixView({
                 </div>
               ) : null}
             </div>
+            </>
           )}
 
           {building.units.length > 0 ? <UnitStateLegend locale={locale} /> : null}
+
+          <ConfirmDialog
+            open={pendingResize !== null}
+            onOpenChange={(open) => {
+              if (!open) setPendingResize(null);
+            }}
+            title={pendingResize ? resizeTitle(pendingResize, en) : ''}
+            description={
+              pendingResize
+                ? en
+                  ? `From columns ${pendingResize.from.startCol}–${pendingResize.from.endCol} to ${pendingResize.to.startCol}–${pendingResize.to.endCol}. Only its place on the matrix changes — its code, occupants and bills stay as they are.`
+                  : `من الأعمدة ${pendingResize.from.startCol}–${pendingResize.from.endCol} إلى ${pendingResize.to.startCol}–${pendingResize.to.endCol}. يتغيّر موقعها على المصفوفة فقط — رمزها وشاغلوها ورسومها تبقى كما هي.`
+                : undefined
+            }
+            confirmLabel={en ? 'Yes, save' : 'نعم، احفظ'}
+            cancelLabel={en ? 'Cancel' : 'إلغاء'}
+            onConfirm={async () => {
+              if (!pendingResize || !token) return;
+              const { unit, to } = pendingResize;
+              try {
+                await resizeUnitSpan(tenant, token, unit.id, to);
+              } catch (caught) {
+                logApiError(caught);
+                throw new Error(
+                  caught instanceof ApiRequestError
+                    ? caught.message
+                    : en
+                      ? 'Could not resize the unit.'
+                      : 'تعذّر تعديل عرض الوحدة.',
+                );
+              }
+              await load();
+              // The panel's editor, if that is where the change came from, has done its job.
+              setAction(null);
+              toast.success(en ? `Unit ${unit.unitCode} resized` : `تم تعديل عرض الوحدة ${unit.unitCode}`);
+            }}
+          />
 
           {/* ── Add-unit inline flow, open for at most one floor ─────── */}
           {addingFloor !== null ? (
@@ -1045,79 +1348,111 @@ export function BuildingUnitMatrixView({
               {canWrite ? (
                 <div className="space-y-2">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    <Button
-                      size="sm"
-                      className="w-full"
-                      variant={action === 'occupant' ? 'default' : 'outline'}
-                      disabled={busy}
-                      onClick={() => {
-                        setActionError(null);
-                        setAction(action === 'occupant' ? null : 'occupant');
-                      }}
-                    >
-                      <UserPlus className="size-4" aria-hidden />
-                      {en ? 'Add a person to this unit' : 'إضافة شخص إلى الوحدة'}
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="w-full"
-                      variant={action === 'visit' ? 'default' : 'outline'}
-                      disabled={busy}
-                      onClick={() => {
-                        setActionError(null);
-                        setAction(action === 'visit' ? null : 'visit');
-                      }}
-                    >
-                      <Footprints className="size-4" aria-hidden />
-                      {en ? 'Log a visit' : 'تسجيل زيارة'}
-                    </Button>
                     {/*
-                      Hidden once a confirmation is standing: the panel above
-                      carries it and the control that lifts it, and a greyed-out
-                      «تأكيد الشغور» beside it would read as unavailable rather
-                      than already done.
+                      The survey — people, visits, vacancy, damage, cases — is about a unit
+                      somebody could live or work in. A «طابق أعمدة» or «طابق فارغ» is
+                      structure: nothing to visit or declare empty, and no occupancy the
+                      server would accept (`assertOccupiableUnit`). So only the edits stay.
                     */}
-                    {activeVacancy(selectedUnit) ? null : (
-                      <Button
-                        size="sm"
-                        className="w-full"
-                        variant={action === 'vacancy' ? 'default' : 'outline'}
-                        disabled={busy || vacancyBlocked !== null}
-                        title={vacancyBlocked ?? undefined}
-                        onClick={() => {
-                          setActionError(null);
-                          setAction(action === 'vacancy' ? null : 'vacancy');
-                        }}
-                      >
-                        <DoorClosed className="size-4" aria-hidden />
-                        {en ? 'Confirm vacant' : 'تأكيد الشغور'}
-                      </Button>
-                    )}
+                    {!isStructuralUnitType(selectedUnit.unitType) ? (
+                      <>
+                        <Button
+                          size="sm"
+                          className="w-full"
+                          variant={action === 'occupant' ? 'default' : 'outline'}
+                          disabled={busy}
+                          onClick={() => {
+                            setActionError(null);
+                            setAction(action === 'occupant' ? null : 'occupant');
+                          }}
+                        >
+                          <UserPlus className="size-4" aria-hidden />
+                          {en ? 'Add a person to this unit' : 'إضافة شخص إلى الوحدة'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="w-full"
+                          variant={action === 'visit' ? 'default' : 'outline'}
+                          disabled={busy}
+                          onClick={() => {
+                            setActionError(null);
+                            setAction(action === 'visit' ? null : 'visit');
+                          }}
+                        >
+                          <Footprints className="size-4" aria-hidden />
+                          {en ? 'Log a visit' : 'تسجيل زيارة'}
+                        </Button>
+                        {/*
+                          Hidden once a confirmation is standing: the panel above
+                          carries it and the control that lifts it, and a greyed-out
+                          «تأكيد الشغور» beside it would read as unavailable rather
+                          than already done.
+                        */}
+                        {activeVacancy(selectedUnit) ? null : (
+                          <Button
+                            size="sm"
+                            className="w-full"
+                            variant={action === 'vacancy' ? 'default' : 'outline'}
+                            disabled={busy || vacancyBlocked !== null}
+                            title={vacancyBlocked ?? undefined}
+                            onClick={() => {
+                              setActionError(null);
+                              setAction(action === 'vacancy' ? null : 'vacancy');
+                            }}
+                          >
+                            <DoorClosed className="size-4" aria-hidden />
+                            {en ? 'Confirm vacant' : 'تأكيد الشغور'}
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          className="w-full"
+                          variant={action === 'damage' ? 'default' : 'outline'}
+                          disabled={busy}
+                          onClick={() => {
+                            setActionError(null);
+                            setAction(action === 'damage' ? null : 'damage');
+                          }}
+                        >
+                          <ShieldAlert className="size-4" aria-hidden />
+                          {en ? 'Assess this unit' : 'كشف ضرر على الوحدة'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="w-full"
+                          variant={action === 'case' ? 'default' : 'outline'}
+                          disabled={busy}
+                          onClick={() => {
+                            setActionError(null);
+                            setAction(action === 'case' ? null : 'case');
+                          }}
+                        >
+                          <ClipboardList className="size-4" aria-hidden />
+                          {en ? 'Open a follow-up case' : 'فتح حالة متابعة'}
+                        </Button>
+                      </>
+                    ) : null}
                     <Button
                       size="sm"
                       className="w-full"
-                      variant={action === 'damage' ? 'default' : 'outline'}
-                      disabled={busy}
+                      variant={action === 'resize' ? 'default' : 'outline'}
+                      disabled={busy || !selectedSpan}
                       onClick={() => {
                         setActionError(null);
-                        setAction(action === 'damage' ? null : 'damage');
+                        if (action === 'resize' || !selectedSpan) {
+                          setAction(null);
+                          return;
+                        }
+                        setSpanDraft({
+                          unitId: selectedUnit.id,
+                          startCol: selectedSpan.block.startCol,
+                          endCol: selectedSpan.block.endCol,
+                        });
+                        setAction('resize');
                       }}
                     >
-                      <ShieldAlert className="size-4" aria-hidden />
-                      {en ? 'Assess this unit' : 'كشف ضرر على الوحدة'}
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="w-full"
-                      variant={action === 'case' ? 'default' : 'outline'}
-                      disabled={busy}
-                      onClick={() => {
-                        setActionError(null);
-                        setAction(action === 'case' ? null : 'case');
-                      }}
-                    >
-                      <ClipboardList className="size-4" aria-hidden />
-                      {en ? 'Open a follow-up case' : 'فتح حالة متابعة'}
+                      <MoveHorizontal className="size-4" aria-hidden />
+                      {en ? 'Adjust width' : 'تعديل عرض الوحدة'}
                     </Button>
                   </div>
                   {/*
@@ -1155,6 +1490,27 @@ export function BuildingUnitMatrixView({
                     </Button>
                   ) : null}
                 </div>
+              ) : null}
+
+              {activeDraft && selectedSpan ? (
+                <SpanEditor
+                  en={en}
+                  busy={busy}
+                  draft={activeDraft}
+                  saved={selectedSpan.block}
+                  limits={selectedSpan.limits}
+                  buildingCols={buildingWidth(floors)}
+                  onChange={(span) => setSpanDraft({ unitId: selectedUnit.id, ...span })}
+                  onCancel={() => setAction(null)}
+                  // The same confirmation a drag asks for — one change, asked about one way (DES-5).
+                  onSave={() =>
+                    setPendingResize({
+                      unit: selectedUnit,
+                      from: { startCol: selectedSpan.block.startCol, endCol: selectedSpan.block.endCol },
+                      to: { startCol: activeDraft.startCol, endCol: activeDraft.endCol },
+                    })
+                  }
+                />
               ) : null}
 
               {action === 'occupant' && token ? (
@@ -1478,4 +1834,165 @@ export function BuildingUnitMatrixView({
       ) : null}
     </div>
   );
+}
+
+/**
+ * «تعديل عرض الوحدة» — moves the selected unit's two edges, one column at a
+ * time or straight to the nearest neighbour.
+ *
+ * Laid out left to right whatever the locale, as the matrix above it is
+ * (`dir="ltr"`): «◀» moves an edge towards the left of the screen in Arabic
+ * too, which is the only reading that survives an officer looking from the
+ * buttons to the grid and back. Each edge stops at the nearest block on its
+ * side, so a gap — at the start of a row, in its middle, beside a setback — is
+ * filled exactly and never drawn over; the server refuses the same overlap.
+ */
+function SpanEditor({
+  en,
+  busy,
+  draft,
+  saved,
+  limits,
+  buildingCols,
+  onChange,
+  onCancel,
+  onSave,
+}: {
+  en: boolean;
+  busy: boolean;
+  draft: { startCol: number; endCol: number };
+  saved: { startCol: number; endCol: number };
+  limits: { minStart: number; maxEnd: number };
+  /** The building's widest floor — where «fill right» stops when nothing is to the right. */
+  buildingCols: number;
+  onChange: (span: { startCol: number; endCol: number }) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  const { startCol, endCol } = draft;
+  const changed = startCol !== saved.startCol || endCol !== saved.endCol;
+  const columns = endCol - startCol + 1;
+  /*
+    «Fill right» with no neighbour on that side runs to the building's own last
+    column, not the grid's hard limit: a gap at the end of a row is the columns
+    the floors below have and this one does not.
+  */
+  const fillEnd = limits.maxEnd === MAX_UNIT_COLUMN ? Math.max(buildingCols, endCol) : limits.maxEnd;
+
+  const edge = (
+    label: string,
+    controls: Array<{ icon: typeof ChevronLeft; title: string; disabled: boolean; next: { startCol: number; endCol: number } }>,
+  ) => (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <div dir="ltr" className="flex items-center gap-1">
+        {controls.map(({ icon: Icon, title, disabled, next }) => (
+          <Button
+            key={title}
+            type="button"
+            size="sm"
+            variant="outline"
+            className="size-9 p-0"
+            title={title}
+            aria-label={title}
+            disabled={busy || disabled}
+            onClick={() => onChange(next)}
+          >
+            <Icon className="size-4" aria-hidden />
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        {en
+          ? `Columns ${startCol}–${endCol} (${columns} wide). Each edge stops at the next unit on its side, so a gap can be filled but nothing is covered.`
+          : `الأعمدة ${startCol}–${endCol} (${columns} ${columns === 1 ? 'عمود' : 'أعمدة'}). كل حافة تتوقف عند الوحدة المجاورة، فيُملأ الفراغ دون تغطية أي وحدة.`}
+      </p>
+
+      {edge(en ? 'Left edge' : 'الحافة اليسرى', [
+        {
+          icon: ArrowLeftToLine,
+          title: en ? 'Extend left to the next unit' : 'توسيع لليسار حتى الوحدة المجاورة',
+          disabled: startCol <= limits.minStart,
+          next: { startCol: limits.minStart, endCol },
+        },
+        {
+          icon: ChevronLeft,
+          title: en ? 'Extend left by one column' : 'توسيع لليسار عموداً واحداً',
+          disabled: startCol <= limits.minStart,
+          next: { startCol: startCol - 1, endCol },
+        },
+        {
+          icon: ChevronRight,
+          title: en ? 'Shrink from the left' : 'تقليص من اليسار',
+          disabled: startCol >= endCol,
+          next: { startCol: startCol + 1, endCol },
+        },
+      ])}
+
+      {edge(en ? 'Right edge' : 'الحافة اليمنى', [
+        {
+          icon: ChevronLeft,
+          title: en ? 'Shrink from the right' : 'تقليص من اليمين',
+          disabled: endCol <= startCol,
+          next: { startCol, endCol: endCol - 1 },
+        },
+        {
+          icon: ChevronRight,
+          title: en ? 'Extend right by one column' : 'توسيع لليمين عموداً واحداً',
+          disabled: endCol >= limits.maxEnd,
+          next: { startCol, endCol: endCol + 1 },
+        },
+        {
+          icon: ArrowRightToLine,
+          title: en ? 'Extend right to the next unit' : 'توسيع لليمين حتى الوحدة المجاورة',
+          disabled: endCol >= fillEnd,
+          next: { startCol, endCol: fillEnd },
+        },
+      ])}
+
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onCancel}>
+          {en ? 'Cancel' : 'إلغاء'}
+        </Button>
+        <Button type="button" size="sm" disabled={busy || !changed} onClick={onSave}>
+          {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+          {en ? 'Save width' : 'حفظ العرض'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** How many columns a span covers. */
+function spanSize(span: { startCol: number; endCol: number }): number {
+  return span.endCol - span.startCol + 1;
+}
+
+/** «توسيع / تقليص / نقل الوحدة …؟» — named for what the drag did. */
+function resizeTitle(
+  change: { unit: { unitCode: string }; from: { startCol: number; endCol: number }; to: { startCol: number; endCol: number } },
+  en: boolean,
+): string {
+  const code = change.unit.unitCode;
+  const grew = spanSize(change.to) - spanSize(change.from);
+  if (grew > 0) return en ? `Extend unit ${code}?` : `توسيع الوحدة ${code}؟`;
+  if (grew < 0) return en ? `Shrink unit ${code}?` : `تقليص الوحدة ${code}؟`;
+  return en ? `Move unit ${code}?` : `نقل الوحدة ${code}؟`;
+}
+
+/** The columns `a` covers that `b` does not, left to right. */
+function columnsBetween(
+  a: { startCol: number; endCol: number },
+  b: { startCol: number; endCol: number },
+): number[] {
+  const out: number[] = [];
+  for (let col = a.startCol; col <= a.endCol; col += 1) {
+    if (col < b.startCol || col > b.endCol) out.push(col);
+  }
+  return out;
 }

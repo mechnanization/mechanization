@@ -451,10 +451,7 @@ export default function MyFilePage({
             />
             {/*
               إجمالي المسجلين في القيد earns a row only where it differs from
-              the household actually in the house. Beside it used to sit a
-              *second* copy of عدد الأبناء المتزوجين under a longer label, so a
-              split household read the same figure twice and was invited to
-              take them for two different counts.
+              the household actually in the house.
             */}
             {summary?.totalRegisteredMembers != null &&
             summary?.actualHouseholdMembers != null &&
@@ -465,15 +462,6 @@ export default function MyFilePage({
                 value={String(summary.totalRegisteredMembers)}
               />
             ) : null}
-            <Detail
-              icon={Users}
-              label={
-                locale === 'en' ? 'Married Children (Independent)' : 'الأبناء المتزوجون المستقلون'
-              }
-              value={
-                summary?.marriedChildrenCount != null ? String(summary.marriedChildrenCount) : null
-              }
-            />
             <Detail
               icon={FileDigit}
               label={locale === 'en' ? 'Civil Record Number' : 'رقم السجل'}

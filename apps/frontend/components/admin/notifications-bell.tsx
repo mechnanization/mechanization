@@ -2,20 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import {
-  ArrowRight,
-  Bell,
-  Check,
-  CheckCheck,
-  CheckCircle2,
-  Clock,
-  CreditCard,
-  Inbox,
-  Sparkles,
-} from 'lucide-react';
+import { Bell, Check, CheckCheck, ChevronLeft } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,7 +20,6 @@ import {
 } from '@/lib/api-client';
 import { formatLbp, formatLbpCompact } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
-import { cn } from '@/lib/utils';
 
 const POLL_INTERVAL_MS = 60_000;
 const REVIEW_ROLES = ['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT'];
@@ -124,25 +112,40 @@ export function NotificationsBell({
   if (!canReview) return null;
 
   const count = items.length;
+  const en = locale === 'en';
 
+  /*
+    Simple on purpose: who, how much, for what, and a tick to clear it. The
+    avatar letter, the method chip, the transaction reference and the clock
+    each took a line or a box of their own, so six payments filled a phone; the
+    reference is still one tap away on the queue.
+
+    Every Arabic string here was rewritten: a save in the wrong encoding
+    (commit 01d3836) had replaced them all with U+FFFD replacement marks,
+    which is what the popover showed in their place until this rewrite.
+  */
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
           size="icon"
-          className="relative shrink-0 rounded-full hover:bg-muted/80 transition-colors"
+          className="relative shrink-0"
           aria-label={
             count > 0
-              ? (locale === 'en' ? `Notifications, ${count} unread payments pending confirmation` : `��������ʡ ${count} ���� ��� ������ ������� �������`)
-              : (locale === 'en' ? 'Notifications, all clear' : '��������ʡ �� ����')
+              ? en
+                ? `Notifications, ${count} payments pending confirmation`
+                : `الإشعارات، ${count} دفعة بانتظار التأكيد`
+              : en
+                ? 'Notifications, all clear'
+                : 'الإشعارات، لا جديد'
           }
         >
-          <Bell className={cn('size-5', count > 0 && 'text-foreground animate-none')} />
+          <Bell className="size-5" />
           {count > 0 ? (
             <span
               aria-hidden
-              className="absolute -end-0.5 -top-0.5 flex size-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-xs font-bold tabular-nums text-destructive-foreground shadow-xs ring-2 ring-background"
+              className="absolute -end-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold tabular-nums text-destructive-foreground ring-2 ring-background"
             >
               {count > 9 ? '9+' : count}
             </span>
@@ -153,150 +156,110 @@ export function NotificationsBell({
       <DropdownMenuContent
         align="end"
         sideOffset={8}
-        className="w-[24rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-border/80 bg-popover p-0 shadow-xl backdrop-blur-sm overflow-hidden"
+        className="w-[22rem] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl p-0"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between gap-3 border-b border-border/60 bg-muted/35 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Sparkles className="size-3.5" />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm font-semibold text-foreground">
-                {locale === 'en' ? 'Pending Confirmations' : '������� �������'}
-              </span>
-              {count > 0 ? (
-                <Badge
-                  variant="secondary"
-                  className="h-5 px-1.5 text-xs font-bold rounded-full bg-destructive/10 text-destructive border-0 tabular-nums"
-                >
-                  {count}
-                </Badge>
-              ) : null}
-            </div>
-          </div>
-
+        {/* ── Header ─────────────────────────────────────────────── */}
+        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+          <p className="text-sm font-semibold">
+            {en ? 'Pending confirmation' : 'بانتظار التأكيد'}
+            {count > 0 ? <span className="ms-1.5 tabular-nums text-muted-foreground">({count})</span> : null}
+          </p>
           {count > 0 ? (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
               onClick={(e) => void handleMarkAllAsSeen(e)}
-              title={locale === 'en' ? 'Mark all as seen' : '����� ���� ������'}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-background/80 px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-2xs hover:bg-background hover:text-foreground hover:border-border transition-all cursor-pointer"
             >
-              <CheckCheck className="size-3.5 text-primary" />
-              <span>{locale === 'en' ? 'Mark all seen' : '����� ���� ������'}</span>
-            </button>
+              <CheckCheck className="size-3.5" aria-hidden />
+              {en ? 'Mark all as seen' : 'تعليم الكل كمقروء'}
+            </Button>
           ) : null}
         </div>
 
-        {/* Body */}
+        {/* ── Body ───────────────────────────────────────────────── */}
         {count === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2.5 px-6 py-10 text-center">
-            <div className="flex size-12 items-center justify-center rounded-full bg-success/10 text-success">
-              <CheckCircle2 className="size-6" />
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-semibold text-foreground">
-                {locale === 'en' ? 'All caught up!' : '�� ���� ������� �����'}
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed max-w-[17rem]">
-                {locale === 'en'
-                  ? 'All citizen declarations have been processed or marked as seen.'
-                  : '��� ������ �� ���� ���� ������� ������ ������� �����.'}
-              </p>
-            </div>
+          <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
+            <CheckCheck className="size-6 text-muted-foreground" aria-hidden />
+            <p className="text-sm font-medium">{en ? 'Nothing pending review' : 'لا شيء بانتظار المراجعة'}</p>
+            <p className="text-xs text-muted-foreground">
+              {en ? 'Every payment citizens declared has been handled.' : 'كل ما أعلنه المواطنون تمّت معالجته.'}
+            </p>
           </div>
         ) : (
-          <div className="max-h-[min(65vh,24rem)] overflow-y-auto divide-y divide-border/40">
-            {items.slice(0, MAX_LISTED).map((payment) => {
-              const citizenInitial = payment.citizenName?.trim()?.[0]?.toUpperCase() ?? '�';
-              return (
-                <DropdownMenuItem
-                  key={payment.id}
-                  onSelect={openQueue}
-                  className="group relative flex items-start gap-3 p-3.5 transition-colors hover:bg-muted/50 cursor-pointer focus:bg-muted/60"
-                >
-                  {/* Avatar / Icon */}
-                  <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary border border-primary/20 text-xs font-bold shadow-2xs">
-                    {citizenInitial}
+          <div className="max-h-[min(60vh,22rem)] divide-y overflow-y-auto">
+            {items.slice(0, MAX_LISTED).map((payment) => (
+              <DropdownMenuItem
+                key={payment.id}
+                onSelect={openQueue}
+                className="flex cursor-pointer items-center gap-3 rounded-none px-4 py-3"
+              >
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="truncate text-sm font-semibold">{payment.citizenName}</span>
+                    <span
+                      title={formatLbp(payment.amount, locale)}
+                      className="shrink-0 text-sm font-semibold tabular-nums"
+                    >
+                      {formatLbpCompact(payment.amount, locale)}
+                    </span>
                   </div>
-
-                  {/* Details */}
-                  <div className="min-w-0 flex-1 space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
-                        {payment.citizenName}
-                      </span>
-                      <span
-                        title={formatLbp(payment.amount, locale)}
-                        className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs font-bold tabular-nums text-foreground border border-border/50"
-                      >
-                        {formatLbpCompact(payment.amount, locale)}
-                      </span>
-                    </div>
-
-                    <p className="truncate text-xs font-medium text-muted-foreground/90">
-                      {payment.title}
+                  <p className="truncate text-xs text-muted-foreground">
+                    {[
+                      payment.title,
+                      payment.paymentMethod
+                        ? (labels.paymentMethod?.[payment.paymentMethod as never] ?? payment.paymentMethod)
+                        : null,
+                      formatDate(payment.dueDate),
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </p>
+                  {/* The transfer's own number — what a reviewer checks against the Whish statement. */}
+                  {payment.whishTransactionRef ? (
+                    <p className="truncate text-xs text-muted-foreground">
+                      {en ? 'Ref ' : 'رقم العملية '}
+                      <bdi dir="ltr" className="font-mono">
+                        {payment.whishTransactionRef}
+                      </bdi>
                     </p>
-
-                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                      {payment.paymentMethod ? (
-                        <span className="inline-flex items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 font-medium text-foreground/80">
-                          <CreditCard className="size-3 shrink-0 text-muted-foreground" />
-                          <span>
-                            {labels.paymentMethod?.[payment.paymentMethod as never] ?? payment.paymentMethod}
-                          </span>
-                          {payment.whishTransactionRef ? (
-                            <span className="font-mono text-xs text-muted-foreground">
-                              � {payment.whishTransactionRef}
-                            </span>
-                          ) : null}
-                        </span>
-                      ) : null}
-
-                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                        <Clock className="size-3 shrink-0" />
-                        <span>{formatDate(payment.dueDate)}</span>
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Mark as seen action */}
-                  <button
-                    type="button"
-                    onClick={(e) => void handleMarkAsSeen(e, payment.id)}
-                    title={locale === 'en' ? 'Mark as seen' : '����� ������'}
-                    className="shrink-0 mt-0.5 flex size-7 items-center justify-center rounded-full border border-border/60 bg-background/80 text-muted-foreground shadow-2xs hover:bg-success hover:text-success-foreground hover:border-success transition-all cursor-pointer group-hover:border-border"
-                  >
-                    <Check className="size-3.5" />
-                    <span className="sr-only">{locale === 'en' ? 'Mark as seen' : '����� ������'}</span>
-                  </button>
-                </DropdownMenuItem>
-              );
-            })}
+                  ) : null}
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 shrink-0 rounded-full text-muted-foreground hover:text-success"
+                  onClick={(e) => void handleMarkAsSeen(e, payment.id)}
+                  title={en ? 'Mark as seen' : 'تعليم كمقروء'}
+                  aria-label={en ? 'Mark as seen' : 'تعليم كمقروء'}
+                >
+                  <Check className="size-4" aria-hidden />
+                </Button>
+              </DropdownMenuItem>
+            ))}
           </div>
         )}
 
-        {/* Footer */}
+        {/* ── Footer ─────────────────────────────────────────────── */}
         {count > 0 ? (
-          <div className="border-t border-border/60 bg-muted/20 p-2">
-            <button
-              type="button"
-              onClick={openQueue}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-background/60 hover:bg-background py-2 text-xs font-semibold text-primary transition-all border border-border/40 hover:border-border shadow-2xs cursor-pointer"
-            >
-              <Inbox className="size-3.5" />
-              <span>
-                {count > MAX_LISTED
-                  ? (locale === 'en' ? `View all pending (${count})` : `��� ���� ��������� (${count})`)
-                  : (locale === 'en' ? 'Open verification list' : '��� ����� �������')}
-              </span>
-              <ArrowRight className="size-3.5 rtl:rotate-180 text-muted-foreground" />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={openQueue}
+            className="flex w-full items-center justify-center gap-1.5 border-t px-4 py-2.5 text-xs font-semibold text-primary transition-colors hover:bg-muted/50"
+          >
+            {count > MAX_LISTED
+              ? en
+                ? `View all (${count})`
+                : `عرض الكل (${count})`
+              : en
+                ? 'Open the confirmation list'
+                : 'فتح قائمة التأكيد'}
+            <ChevronLeft className="size-3.5 ltr:rotate-180" aria-hidden />
+          </button>
         ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
-

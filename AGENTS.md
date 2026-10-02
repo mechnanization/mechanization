@@ -4,7 +4,8 @@ This file binds every AI coding agent — Claude Code, Cursor, Copilot, anything
 else — working in this repository. `CLAUDE.md` imports it.
 
 Most of it is about the database, because that is where this codebase can do
-harm that cannot be undone by editing a file.
+harm that cannot be undone by editing a file. Interface work has its own binding
+rules: §9 and [docs/ui-ux-standards.md](docs/ui-ux-standards.md).
 
 ## What is at stake
 
@@ -241,3 +242,28 @@ provider keys in production. No provider was ever implemented; the send function
 throws unconditionally. The check enforced a boot failure, not a working login
 path. A control that cannot fail for the right reason is worse than none — it
 looks like coverage. → §6
+
+---
+
+## 9. The interface
+
+Every change to `apps/frontend`, and every review of one, follows
+[`docs/ui-ux-standards.md`](docs/ui-ux-standards.md). It is binding in the same
+way this file is. Cite its rule IDs in reviews. The short version:
+
+- **Tokens only.** No hex, `rgb()` or Tailwind palette classes in components.
+  A missing colour becomes a validated token in `globals.css`, with light and
+  dark values.
+- **Shared primitives only.** `PageHeader`, `DataTable`, `ui/states`, `Field`,
+  `ConfirmDialog`, `Money`, `lib/dates`, `getLabels`. A page never hand-rolls a
+  pager, a stat tile, a loading line or an error banner, and never adds a
+  second copy of a helper.
+- **Both locales are complete**, including `aria-label`, `title`, toasts and
+  units. Use logical properties (`ms/me/ps/pe/start/end`) only.
+- **Copy matches behaviour.** A reversible delete never says "for good". Money
+  screens show what the server recorded, guard against double submission, and
+  never let a client-typed figure (a rate, a total) become the record unchecked.
+- **Motion conveys state**, at 150–250 ms with ease-out, respecting reduced
+  motion. Every drag has a keyboard path.
+- `DESIGN.md` and `PRODUCT.md` are out of date. Where they disagree with
+  `globals.css`, `components/ui` or the standards file, those win.

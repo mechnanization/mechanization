@@ -1,5 +1,12 @@
 # Design Language: The Modern Civic Ledger (السجل البلدي الحديث)
 
+> **Out of date. Do not build from this file.** The palette, fonts and table
+> style below are not what the app uses. The source of truth is
+> `apps/frontend/app/globals.css` (measured tokens: warm cream and near-black
+> neutrals, IBM Plex Sans Arabic and Noto Kufi Arabic), then
+> `apps/frontend/components/ui`, then
+> [docs/ui-ux-standards.md](docs/ui-ux-standards.md), which is binding.
+
 An institutional, high-craft design system tailored for municipal governance, fiscal ledgers, property registers, and spatial cadastral exploration.
 
 ---

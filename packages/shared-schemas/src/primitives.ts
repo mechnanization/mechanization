@@ -61,7 +61,8 @@ export const lebanesePhone = z
  * year, and wrong in the direction of refusing a real person's real number.
  */
 export const internationalPhone = z
-  .string({ required_error: 'رقم الهاتف مطلوب' })
+  // Both messages Arabic: a wrong type reached the screen as Zod's English default.
+  .string({ required_error: 'رقم الهاتف مطلوب', invalid_type_error: 'رقم الهاتف غير صالح' })
   .trim()
   .transform((v) => normalizeDigits(v).replace(/[\s\-().]/g, ''))
   .superRefine((v, ctx) => {

@@ -20,6 +20,7 @@ import type { StaffSummary } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -86,9 +87,15 @@ export function InspectorEarningsRoster({
     corrects the earnings shown there — and React Query serves this list from
     cache when an administrator arrives from that page.
   */
+  /*
+    With the deleted accounts that earned or were paid: the roster's totals are
+    the municipality's payout history, and hiding an account must not shrink
+    «إجمالي المدفوع» after the fact. Keyed under ['staff', tenant] so every
+    invalidation of the staff list (a payout, a delete, a restore) reaches it.
+  */
   const { data, loading, fetching, error, refetch } = useStaffQuery<{ items: StaffSummary[] }>({
-    queryKey: ['staff', tenant],
-    queryFn: (tok, signal) => getStaff(tenant, tok, signal),
+    queryKey: ['staff', tenant, 'with-deleted-earners'],
+    queryFn: (tok, signal) => getStaff(tenant, tok, signal, { includeDeletedEarners: true }),
     tenant,
     base,
     token,
@@ -390,6 +397,7 @@ function InspectorCard({
             >
               {inspector.fullName}
             </Link>
+            {inspector.deletedAt ? <Badge variant="soft-muted">{isAr ? 'محذوف' : 'Deleted'}</Badge> : null}
           </div>
 
           {/* Two equal columns: the same width whatever each label says, full width on a phone. */}
@@ -398,6 +406,8 @@ function InspectorCard({
               size="sm"
               className="gap-1.5 bg-success text-success-foreground hover:bg-success/90"
               onClick={onPay}
+              // A deleted account was paid up before it went; the server refuses a payout to it.
+              disabled={Boolean(inspector.deletedAt)}
             >
               <HandCoins className="size-4" aria-hidden />
               {isAr ? 'تسجيل دفعة' : 'Pay'}

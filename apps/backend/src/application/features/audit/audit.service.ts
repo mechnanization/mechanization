@@ -356,6 +356,13 @@ export class AuditService {
     confirmed: boolean;
     actorId: string | null;
     actorRole: string;
+    /**
+     * The movement itself, when one was recorded at the counter: receipt,
+     * amount, day, notes, rate against the official one, change, and the
+     * reason for any departure. The ledger row holds the same facts; the trail
+     * is where a reviewer reads who decided them.
+     */
+    movement?: Record<string, unknown>;
   }): Promise<void> {
     await this.record({
       actorId: payload.actorId ?? 'WHISH',
@@ -367,6 +374,7 @@ export class AuditService {
       after: {
         citizenId: payload.citizenId,
         confirmed: payload.confirmed,
+        ...(payload.movement ?? {}),
       },
     });
   }

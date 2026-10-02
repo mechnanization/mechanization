@@ -27,6 +27,7 @@ import {
   isOccupiableLifecycle,
   isStructuralUnitType,
   isUnoccupied,
+  layoutFloorSpans,
   OCCUPANCY_ROLE,
   SURVEY_STATUS,
   UNIT_STATUS,
@@ -490,34 +491,15 @@ export interface LaidOutUnit<T = UnitWithOccupants> {
 }
 
 /**
- * Reconstructs the floor plan a unit was painted on. Units carrying a stored
- * `startCol`/`endCol` (painted through the creation wizard's grid) keep their
- * exact span; a unit with neither (the blueprint generator, a hand-added
- * single unit) is laid out as one column, appended after the highest
- * positioned column, in `sequence` order — an honest default rather than a
- * guess at a layout that was never drawn.
+ * Reconstructs the floor plan a unit was painted on, unpositioned units
+ * appended in `sequence` order — see `layoutFloorSpans`. That lives in
+ * shared-schemas because the server, resizing a neighbour, pins an
+ * unpositioned unit exactly where this draws it.
  */
 export function layoutFloor<T extends { startCol?: number | null; endCol?: number | null }>(
   units: T[],
 ): { blocks: Array<LaidOutUnit<T>>; width: number } {
-  const positioned = units.filter((u) => u.startCol != null && u.endCol != null);
-  const unpositioned = units.filter((u) => u.startCol == null || u.endCol == null);
-
-  const blocks: Array<LaidOutUnit<T>> = positioned.map((unit) => ({
-    unit,
-    startCol: unit.startCol as number,
-    endCol: unit.endCol as number,
-  }));
-
-  let nextCol = blocks.reduce((max, b) => Math.max(max, b.endCol), 0) + 1;
-  for (const unit of unpositioned) {
-    blocks.push({ unit, startCol: nextCol, endCol: nextCol });
-    nextCol += 1;
-  }
-
-  blocks.sort((a, b) => a.startCol - b.startCol);
-  const width = blocks.reduce((max, b) => Math.max(max, b.endCol), 1);
-  return { blocks, width };
+  return layoutFloorSpans(units);
 }
 
 /** What a structure is, in the badges every census surface shows it with. */

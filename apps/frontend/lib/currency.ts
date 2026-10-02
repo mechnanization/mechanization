@@ -56,3 +56,50 @@ export function formatLbpCompact(amount: number, locale: string = 'ar'): string 
 
   return locale === 'en' ? `${scaled(amount / BILLION)}B LBP` : `${scaled(amount / BILLION)} مليار ل.ل`;
 }
+
+/**
+ * Dollars and euros, the one way the portal writes them: two decimals when
+ * there are cents, the symbol after the figure, Latin digits. There were three
+ * spellings of this before (`$x.toFixed(2)`, `x USD`, a locale guess); this is
+ * the one the cash page, the staff roster and the receipt now share.
+ */
+export function formatForeign(amount: number, currency: string = 'USD'): string {
+  const formatted = amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  const symbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : currency;
+  return `${formatted} ${symbol}`;
+}
+
+/** Money in whichever currency a bill is in — ليرة through `formatLbp`, the rest through `formatForeign`. */
+export function formatMoney(amount: number, currency: string, locale: string = 'ar'): string {
+  return currency === 'LBP' ? formatLbp(amount, locale) : formatForeign(amount, currency);
+}
+
+const ARABIC_INDIC = /[٠-٩۰-۹]/g;
+
+/** «١٢٣» and «۱۲۳» → «123»: a clerk's keyboard may type either. */
+export function toLatinDigits(raw: string): string {
+  return raw.replace(ARABIC_INDIC, (digit) => {
+    const code = digit.charCodeAt(0);
+    return String(code >= 0x06f0 ? code - 0x06f0 : code - 0x0660);
+  });
+}
+
+/** A typed amount as a number: separators ignored, Arabic digits accepted, anything else 0. */
+export function parseAmount(raw: string): number {
+  const value = Number(toLatinDigits(raw).replace(/[,،٬\s]/g, '').replace('٫', '.'));
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * What a clerk types, as it should read: «100000» → «100,000», as they type.
+ * Digits only for ليرة, which has no fractions to pay in; up to two decimals
+ * for dollars. Anything else typed is dropped rather than shown and refused.
+ */
+export function formatTypedAmount(raw: string, decimals: 0 | 2 | 4): string {
+  const cleaned = toLatinDigits(raw).replace('٫', '.').replace(/[^\d.]/g, '');
+  const [whole = '', ...rest] = cleaned.split('.');
+  const integer = whole.replace(/^0+(?=\d)/, '');
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  if (decimals === 0 || rest.length === 0) return grouped;
+  return `${grouped || '0'}.${rest.join('').slice(0, decimals)}`;
+}

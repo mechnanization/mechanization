@@ -69,10 +69,16 @@ function useTableLabels(): DataTableLabels {
       // «١٢ عملية» rather than a bare total.
       searchAriaLabel: tPayments('searchAria'),
       searchPlaceholder: tPayments('searchPlaceholder'),
-      searchApplied: tPayments('searchApplied'),
+      /*
+        `.raw`, not a call, for the three with placeholders: `DataTable` fills
+        {term}, {count}, {current} and {total} itself (`fillTemplate`), so it
+        needs the template. Calling `t()` asked next-intl to fill them now,
+        with nothing to fill them from — a FORMATTING_ERROR on every render.
+      */
+      searchApplied: tPayments.raw('searchApplied') as string,
       empty: tPayments('empty'),
       loadError: tPayments('loadError'),
-      totalRows: tPayments('totalRows'),
+      totalRows: tPayments.raw('totalRows') as string,
 
       clearSearch: t('clearSearch'),
       // Not translated: it is the name of a key on the keyboard.
@@ -81,7 +87,7 @@ function useTableLabels(): DataTableLabels {
       retry: t('retry'),
       previous: t('previous'),
       next: t('next'),
-      pageOf: t('pageOf'),
+      pageOf: t.raw('pageOf') as string,
       rowsPerPage: t('rowsPerPage'),
       sortAscending: t('sortAsc'),
       sortDescending: t('sortDesc'),
