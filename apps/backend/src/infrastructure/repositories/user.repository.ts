@@ -5,6 +5,7 @@ import { ConflictError } from '../../domain/errors/domain-error';
 import {
   CitizenChoice,
   CitizenIdentityInput,
+  DeletedStaffSummary,
   StaffSummary,
   UserRepository,
 } from '../../domain/interfaces/user-repository.interface';
@@ -273,10 +274,11 @@ export class PrismaUserRepository implements UserRepository {
     });
   }
 
-  /** Staff rows plus the audit/review counts a permanent delete depends on. */
+  /** The staff accounts that have not been deleted. */
   async listStaff(): Promise<StaffSummary[]> {
     const rows = await this.db.user.findMany({
-      where: { kind: 'STAFF' },
+      // A deleted account is gone from the list; its row and history stay.
+      where: { kind: 'STAFF', deletedAt: null },
       select: {
         id: true,
         email: true,
@@ -287,35 +289,9 @@ export class PrismaUserRepository implements UserRepository {
         createdAt: true,
         lastLoginAt: true,
         totpConfirmedAt: true,
-        // Counted in the same query rather than per row: the alternative is
-        // a history lookup per staff member, and this list is rendered in
-        // full on every visit to the page. Every relation `countStaffHistory`
-        // checks at delete time belongs here too — undercounting here would
-        // show a delete button the actual delete then refuses.
-        _count: {
-          select: {
-            reviewedRegistrations: true,
-            reviewedPayments: true,
-            collectedPayments: true,
-            collectedTransactions: true,
-            recordedTransactions: true,
-            issuedFeeNotices: true,
-          },
-        },
       },
       orderBy: { createdAt: 'asc' },
     });
-
-    // Audit entries carry `actorId` as a plain column with no relation to
-    // join against, so they are counted in one grouped pass.
-    const auditCounts = await this.db.auditLogEntry.groupBy({
-      by: ['actorId'],
-      where: { actorId: { in: rows.map((row) => row.id) } },
-      _count: { _all: true },
-    });
-    const auditByActor = new Map(
-      auditCounts.map((entry) => [entry.actorId, entry._count._all]),
-    );
 
     const staffIds = rows.map((r) => r.id);
 
@@ -398,14 +374,6 @@ export class PrismaUserRepository implements UserRepository {
         role: row.role as StaffRole,
         isActive: row.isActive,
         hasConfirmedTotp: Boolean(row.totpConfirmedAt),
-        historyCount:
-          row._count.reviewedRegistrations +
-          row._count.reviewedPayments +
-          row._count.collectedPayments +
-          row._count.collectedTransactions +
-          row._count.recordedTransactions +
-          row._count.issuedFeeNotices +
-          (auditByActor.get(row.id) ?? 0),
         registeredCitizensCount: regCitizens,
         registeredPropertiesCount: regProperties,
         totalEarnings,
@@ -519,48 +487,44 @@ export class PrismaUserRepository implements UserRepository {
   }
 
   /**
-   * Erases the row. Callers must establish there is no history first — this
-   * does not check, and the FK from reviewed registrations would block it.
+   * «حذف موظف»: the account is hidden, not removed.
+   *
+   * The row has to stay — payments it recorded hold a RESTRICT foreign key to
+   * it, and the audit trail, the registrations it reviewed and the receipts it
+   * issued all name it, under its own name. So this marks it deleted, which
+   * takes it off the staff list, and deactivates it in the same write.
+   * `tokenVersion` is bumped so a session still open on it dies now.
    */
-  async hardDeleteStaff(id: string): Promise<void> {
-    await this.db.user.delete({ where: { id } });
+  async restoreStaff(id: string): Promise<void> {
+    // Back on the list, still disabled: re-enabling is its own, separate decision.
+    await this.db.user.update({ where: { id }, data: { deletedAt: null } });
   }
 
-  /**
-   * Every row anywhere in the schema that still names this account. Zero is
-   * what makes it safe to erase outright.
-   */
-  async countStaffHistory(id: string): Promise<number> {
-    const [
-      reviewed,
-      audited,
-      recorded,
-      collectedTransactions,
-      reviewedPayments,
-      collectedPayments,
-      issuedFeeNotices,
-    ] = await Promise.all([
-      this.db.registration.count({ where: { reviewedById: id } }),
-      this.db.auditLogEntry.count({ where: { actorId: id } }),
-      // Ledger rows are history in the strongest sense the system has: money
-      // this person recorded or held. The foreign keys are RESTRICT, so
-      // counting them here is what turns an unerasable account into a
-      // sentence about deactivating it instead of a raw constraint violation.
-      this.db.paymentTransaction.count({ where: { recordedById: id } }),
-      this.db.paymentTransaction.count({ where: { collectedById: id } }),
-      this.db.citizenPayment.count({ where: { reviewedById: id } }),
-      this.db.citizenPayment.count({ where: { collectedById: id } }),
-      this.db.feeNotice.count({ where: { issuedById: id } }),
-    ]);
-    return (
-      reviewed +
-      audited +
-      recorded +
-      collectedTransactions +
-      reviewedPayments +
-      collectedPayments +
-      issuedFeeNotices
-    );
+  async listDeletedStaff(): Promise<DeletedStaffSummary[]> {
+    const rows = await this.db.user.findMany({
+      where: { kind: 'STAFF', deletedAt: { not: null } },
+      select: { id: true, email: true, firstName: true, lastName: true, role: true, deletedAt: true },
+      orderBy: { deletedAt: 'desc' },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      email: row.email ?? '',
+      fullName: `${row.firstName} ${row.lastName}`,
+      role: row.role as StaffRole,
+      deletedAt: row.deletedAt!.toISOString(),
+    }));
+  }
+
+  async isStaffHidden(id: string): Promise<boolean> {
+    const row = await this.db.user.findUnique({ where: { id }, select: { deletedAt: true } });
+    return Boolean(row?.deletedAt);
+  }
+
+  async hideStaff(id: string): Promise<void> {
+    await this.db.user.update({
+      where: { id },
+      data: { deletedAt: new Date(), isActive: false, tokenVersion: { increment: 1 } },
+    });
   }
 
   /** Prisma error codes stop here — no layer above this one sees them. */

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import {
   getLabels,
+  isStructuralUnitType,
   defaultUnitTypeFor,
   type CitizenResidence,
   type DamageLevel,
@@ -60,6 +61,7 @@ import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
+import { BuildingElevation } from '@/components/admin/property-illustrations';
 import { UnitCorrectionDeleteButton, useStaffRole } from '@/components/admin/unit-correction-delete-dialog';
 import {
   type EndOccupancyAnswer,
@@ -630,6 +632,30 @@ export function BuildingUnitMatrixDrawer({
             </div>
           ) : (
             <div className="space-y-2">
+              {/*
+                The building as it stands, above the floor lists it is drawn
+                from — the same drawing «عقارات المواطن» and the matrix page show.
+                Any unit in it can be pressed and opens that unit below.
+              */}
+              <section className="rounded-lg border bg-muted/40 p-3">
+                <p className="mb-1 text-xs font-medium text-muted-foreground">
+                  {en ? 'The building — press a unit to open it' : 'شكل المبنى — اضغط على وحدة لفتحها'}
+                </p>
+                <div className="h-52 sm:h-60 lg:h-72">
+                  <BuildingElevation
+                    building={building}
+                    highlight={selectedUnitId ? new Set([selectedUnitId]) : new Set<string>()}
+                    tone="occupant"
+                    selected={selectedUnitId}
+                    pickAny
+                    onSelect={(unitId) => {
+                      setSelectedUnitId(unitId === selectedUnitId ? null : unitId);
+                      setAction(null);
+                      setActionError(null);
+                    }}
+                  />
+                </div>
+              </section>
               {floors.map(({ floor, units }) => (
                 <div key={floor} className="rounded-lg border">
                   <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b bg-muted/30 px-3 py-1.5">
@@ -950,85 +976,95 @@ export function BuildingUnitMatrixDrawer({
 
               {canWrite ? (
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant={action === 'occupant' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'occupant' ? null : 'occupant');
-                    }}
-                  >
-                    <UserPlus className="size-4" aria-hidden />
-                    {en ? 'Add a person to this unit' : 'إضافة شخص إلى الوحدة'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={action === 'visit' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'visit' ? null : 'visit');
-                    }}
-                  >
-                    <Footprints className="size-4" aria-hidden />
-                    {en ? 'Log a visit' : 'تسجيل زيارة'}
-                  </Button>
                   {/*
-                    A flat cannot be empty and lived in at the same time.
-
-                    This was enabled over live occupancies and wrote «شاغرة»
-                    straight across them — leaving a unit that says nobody is
-                    there beside the rows naming who is, and quietly dropping
-                    the owner's occupancy fee, because `isUnoccupied` exempts a
-                    vacant flat. The server refuses that outright now, and a
-                    seasonal home as well; the button says why rather than
-                    letting an officer discover it from an error.
-
-                    Hidden entirely once a confirmation is standing: the panel
-                    above carries the vacancy and the control that lifts it, and
-                    a greyed-out «تأكيد الشغور» beside it would read as the
-                    action being unavailable rather than already done.
+                    The survey — people, visits, vacancy, damage, cases — is about a unit
+                    somebody could live or work in. A «طابق أعمدة» or «طابق فارغ» is
+                    structure: nothing to visit or declare empty, and no occupancy the
+                    server would accept (`assertOccupiableUnit`). So only the edits stay.
                   */}
-                  {activeVacancy(selectedUnit) ? null : (
-                    <Button
-                      size="sm"
-                      variant={action === 'vacancy' ? 'default' : 'outline'}
-                      disabled={busy || vacancyBlocked !== null}
-                      title={vacancyBlocked ?? undefined}
-                      onClick={() => {
-                        setActionError(null);
-                        setAction(action === 'vacancy' ? null : 'vacancy');
-                      }}
-                    >
-                      <DoorClosed className="size-4" aria-hidden />
-                      {en ? 'Confirm vacant' : 'تأكيد الشغور'}
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant={action === 'damage' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'damage' ? null : 'damage');
-                    }}
-                  >
-                    <ShieldAlert className="size-4" aria-hidden />
-                    {en ? 'Assess this unit' : 'كشف ضرر على الوحدة'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={action === 'case' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setAction(action === 'case' ? null : 'case');
-                    }}
-                  >
-                    <ClipboardList className="size-4" aria-hidden />
-                    {en ? 'Open a follow-up case' : 'فتح حالة متابعة'}
-                  </Button>
+                  {!isStructuralUnitType(selectedUnit.unitType) ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant={action === 'occupant' ? 'default' : 'outline'}
+                        disabled={busy}
+                        onClick={() => {
+                          setActionError(null);
+                          setAction(action === 'occupant' ? null : 'occupant');
+                        }}
+                      >
+                        <UserPlus className="size-4" aria-hidden />
+                        {en ? 'Add a person to this unit' : 'إضافة شخص إلى الوحدة'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={action === 'visit' ? 'default' : 'outline'}
+                        disabled={busy}
+                        onClick={() => {
+                          setActionError(null);
+                          setAction(action === 'visit' ? null : 'visit');
+                        }}
+                      >
+                        <Footprints className="size-4" aria-hidden />
+                        {en ? 'Log a visit' : 'تسجيل زيارة'}
+                      </Button>
+                      {/*
+                        A flat cannot be empty and lived in at the same time.
+
+                        This was enabled over live occupancies and wrote «شاغرة»
+                        straight across them — leaving a unit that says nobody is
+                        there beside the rows naming who is, and quietly dropping
+                        the owner's occupancy fee, because `isUnoccupied` exempts a
+                        vacant flat. The server refuses that outright now, and a
+                        seasonal home as well; the button says why rather than
+                        letting an officer discover it from an error.
+
+                        Hidden entirely once a confirmation is standing: the panel
+                        above carries the vacancy and the control that lifts it, and
+                        a greyed-out «تأكيد الشغور» beside it would read as the
+                        action being unavailable rather than already done.
+                      */}
+                      {activeVacancy(selectedUnit) ? null : (
+                        <Button
+                          size="sm"
+                          variant={action === 'vacancy' ? 'default' : 'outline'}
+                          disabled={busy || vacancyBlocked !== null}
+                          title={vacancyBlocked ?? undefined}
+                          onClick={() => {
+                            setActionError(null);
+                            setAction(action === 'vacancy' ? null : 'vacancy');
+                          }}
+                        >
+                          <DoorClosed className="size-4" aria-hidden />
+                          {en ? 'Confirm vacant' : 'تأكيد الشغور'}
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant={action === 'damage' ? 'default' : 'outline'}
+                        disabled={busy}
+                        onClick={() => {
+                          setActionError(null);
+                          setAction(action === 'damage' ? null : 'damage');
+                        }}
+                      >
+                        <ShieldAlert className="size-4" aria-hidden />
+                        {en ? 'Assess this unit' : 'كشف ضرر على الوحدة'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={action === 'case' ? 'default' : 'outline'}
+                        disabled={busy}
+                        onClick={() => {
+                          setActionError(null);
+                          setAction(action === 'case' ? null : 'case');
+                        }}
+                      >
+                        <ClipboardList className="size-4" aria-hidden />
+                        {en ? 'Open a follow-up case' : 'فتح حالة متابعة'}
+                      </Button>
+                    </>
+                  ) : null}
 
                   {/*
                     Offered only for a flat nothing has been recorded against.

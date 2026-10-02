@@ -573,8 +573,68 @@ export const settlePaymentSchema = z
      * from counter cash — which is the distinction COLLECTOR was added to draw.
      */
     collectedById: uuid.optional(),
+    /**
+     * The day the money was taken, when it was not today — a payment written
+     * up the morning after, or a collector's round entered at the end of the
+     * week. Never in the future: a payment that has not happened is not one.
+     * Omitted means now.
+     */
+    paidOn: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ الدفع غير صالح')
+      // A day that exists: «2026-02-30» parses — as 2 March — so it must also come back unchanged.
+      .refine((day) => { const parsed = new Date(`${day}T00:00:00Z`); return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day; }, 'تاريخ الدفع غير صالح')
+      // A day of slack: Lebanon is UTC+3, so from midnight to 3am its today is the server's tomorrow.
+      .refine((day) => day <= new Date(Date.now() + 86_400_000).toISOString().slice(0, 10), 'تاريخ الدفع في المستقبل')
+      .refine((day) => day >= '2000-01-01', 'تاريخ الدفع قديم جداً')
+      .optional(),
+    /**
+     * Cash handed over in more than the invoice's currency — «20$ و200,000
+     * ليرة» — and the rate the dollars were taken at.
+     *
+     * When present the server works the credit out from it (`local` +
+     * `foreign` × `exchangeRate`) and `amount` must be left out: two figures
+     * for one payment is one too many to trust. Cash only — a Whish transfer
+     * or a collector's round arrives as one sum in one currency.
+     */
+    tendered: z
+      .object({
+        local: z.coerce.number().min(0, 'المبلغ لا يمكن أن يكون سالباً').max(1_000_000_000_000).default(0),
+        foreign: z.coerce.number().min(0, 'المبلغ لا يمكن أن يكون سالباً').max(1_000_000_000).default(0),
+        // Never ليرة: the rate is ليرة per one foreign unit, and ليرة as the
+        // «foreign» part of a dollar bill would store a rate that rounds to 0.
+        foreignCurrency: z.enum(['USD', 'EUR']).default('USD'),
+        exchangeRate: z.coerce
+          .number({ invalid_type_error: 'سعر الصرف يجب أن يكون رقماً' })
+          .positive('سعر الصرف يجب أن يكون أكبر من صفر')
+          .max(1_000_000_000)
+          .optional(),
+      })
+      .superRefine((tender, ctx) => {
+        if (tender.local <= 0 && tender.foreign <= 0) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['local'], message: 'أدخل المبلغ المستلم' });
+        }
+        if (tender.foreign > 0 && !tender.exchangeRate) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['exchangeRate'], message: 'أدخل سعر الصرف' });
+        }
+      })
+      .optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.tendered && data.method !== 'CASH') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['tendered'],
+        message: 'الدفع بعملتين متاح للدفع النقدي فقط',
+      });
+    }
+    if (data.tendered && data.amount !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['amount'],
+        message: 'يُحتسب المبلغ من العملتين — لا تُرسله مرتين',
+      });
+    }
     if (data.method === 'WHISH_MONEY' && !data.whishTransactionRef) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

@@ -168,6 +168,11 @@ model User {
   /// this.
   tokenVersion Int @default(0)
 
+  /// «حذف موظف»: when a super admin deleted this staff account. The row and its
+  /// history stay — the account is only hidden from the staff list and kept from
+  /// signing in. NULL for every account that has not been deleted. Migration 0065.
+  deletedAt DateTime?
+
   /// The TOTP step a code was last accepted at, making each code single-use.
   ///
   /// `otplib` runs with `window: 1`, so the same six digits verify for about
@@ -1969,6 +1974,16 @@ model PaymentTransaction {
   amount   Decimal       @db.Decimal(14, 2)
   currency String        @default("LBP")
   method   PaymentMethod
+
+  /// What was handed over, when a cash payment was not simply `amount` in the
+  /// invoice's currency — «20$ و200,000 ليرة». `amount` stays the credit:
+  /// tenderedLocal + tenderedForeign × exchangeRate, worked out by the server.
+  /// All NULL on every other row. See migration 0064.
+  tenderedLocal           Decimal? @db.Decimal(14, 2)
+  tenderedForeign         Decimal? @db.Decimal(14, 2)
+  tenderedForeignCurrency String?
+  /// Local currency per one unit of the foreign one, as taken at the counter.
+  exchangeRate            Decimal? @db.Decimal(18, 4)
 
   /// Printed on the receipt. Drawn from a Postgres sequence, so two clerks
   /// settling in the same moment cannot be handed the same number.

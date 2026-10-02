@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { Languages } from 'lucide-react';
+import { Globe, Languages } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -53,19 +53,24 @@ export function LanguageSwitcher({
 
   if (variant === 'toggle') {
     const nextLang = currentLocale === 'ar' ? 'en' : 'ar';
-    const label = currentLocale === 'ar' ? 'English' : 'عربي';
+    const label = currentLocale === 'ar' ? 'Switch to English' : 'التبديل إلى العربية';
 
+    /*
+      A globe and nothing else. The bar it sits in also carries the menu, the
+      breadcrumb, the bell and the account, and on a phone the word «English»
+      was the widest thing in it. What the button does is in its tooltip and
+      its accessible name.
+    */
     return (
       <Button
         variant="ghost"
-        size="sm"
+        size="icon"
         onClick={() => handleLocaleChange(nextLang)}
-        className={cn('gap-1.5 font-medium', className)}
-        title={currentLocale === 'ar' ? 'Switch to English' : 'التبديل إلى العربية'}
-        aria-label={currentLocale === 'ar' ? 'Switch to English' : 'التبديل إلى العربية'}
+        className={cn('shrink-0', className)}
+        title={label}
+        aria-label={label}
       >
-        <Languages className="size-4 shrink-0" aria-hidden />
-        <span>{label}</span>
+        <Globe className="size-5" aria-hidden />
       </Button>
     );
   }

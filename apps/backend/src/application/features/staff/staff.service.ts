@@ -10,6 +10,7 @@ import {
   TotpService,
 } from '../../../domain/interfaces/otp-repository.interface';
 import {
+  DeletedStaffSummary,
   StaffSummary,
   UserRepository,
 } from '../../../domain/interfaces/user-repository.interface';
@@ -42,13 +43,13 @@ import {
  * Two rules here are the whole point of the feature, and neither belongs in a
  * controller:
  *
- *  1. Deactivation is the ordinary "delete". A staff row is referenced by
- *     every audit entry they wrote and every registration they reviewed, so
- *     erasing it would strip the name off a decision the municipality may
- *     later have to answer for.
- *  2. A permanent delete is offered only for an account with no such history —
- *     a mistyped invitation, a colleague who never signed in — where there is
- *     nothing to orphan.
+ *  1. Nothing erases a staff row. It is referenced by every audit entry they
+ *     wrote and every registration they reviewed, so erasing it would strip
+ *     the name off a decision the municipality may later have to answer for.
+ *     A super admin's "delete" hides the account: off the list, signed out,
+ *     never able to sign in — and restorable.
+ *  2. An inspector still owed commission is not deleted until paid out: the
+ *     card and payout link the debt is settled from leave with the account.
  */
 @Injectable()
 export class StaffService {
@@ -66,10 +67,33 @@ export class StaffService {
     return this.tenantContext.prisma;
   }
 
+  /** The accounts a super admin has deleted — the list a restore is made from. */
+  listDeleted(): Promise<DeletedStaffSummary[]> {
+    return this.users.listDeletedStaff();
+  }
+
   /**
-   * Every staff account, each with the history count that decides whether a
-   * permanent delete may be offered.
+   * Brings a deleted account back onto the staff list. Still disabled: the
+   * person signs in again only once someone re-enables them, a decision of its
+   * own. Restoring also gives back the use of the account's email.
    */
+  async restore(input: { tenantSlug: string; id: string; actor: { id: string; role: string } }): Promise<void> {
+    const target = await this.users.findById(input.id);
+    if (!target || target.kind !== 'STAFF' || !(await this.users.isStaffHidden(input.id))) {
+      throw new NotFoundError('Deleted staff user', input.id);
+    }
+    await this.users.restoreStaff(input.id);
+    this.events.emit('staff.changed', {
+      action: 'STAFF_RESTORED',
+      tenantSlug: input.tenantSlug,
+      staffId: input.id,
+      role: target.role ?? undefined,
+      actorId: input.actor.id,
+      actorRole: input.actor.role,
+    });
+  }
+
+  /** Every staff account that has not been deleted, deactivated ones included. */
   list(): Promise<StaffSummary[]> {
     return this.users.listStaff();
   }
@@ -157,7 +181,7 @@ export class StaffService {
     actor: { id: string; role: string };
   }): Promise<void> {
     const target = await this.users.findById(input.id);
-    if (!target || target.kind !== 'STAFF') {
+    if (!target || target.kind !== 'STAFF' || (await this.users.isStaffHidden(input.id))) {
       throw new NotFoundError('Staff user', input.id);
     }
 
@@ -208,7 +232,7 @@ export class StaffService {
     actor: { id: string; role: string };
   }): Promise<void> {
     const target = await this.users.findById(input.id);
-    if (!target || target.kind !== 'STAFF') {
+    if (!target || target.kind !== 'STAFF' || (await this.users.isStaffHidden(input.id))) {
       throw new NotFoundError('Staff user', input.id);
     }
 
@@ -233,10 +257,14 @@ export class StaffService {
   }
 
   /**
-   * Erases the row. Refused the moment the account has done anything, which
-   * is checked here rather than trusted from the client: the list endpoint
-   * reports a history count so the button can be hidden, but hiding a button
-   * is not what stops the request.
+   * «حذف موظف», for a super admin: hides the account, never removes it.
+   *
+   * A staff member's id is on what they did — registrations reviewed, payments
+   * recorded (held by a RESTRICT key), receipts issued, the audit trail — so the
+   * row stays, with its name and details, and those records keep reading back
+   * to the person. The account leaves the staff list and can never sign in
+   * again (`hideStaff`), and any open session ends now. Nobody deletes their
+   * own account.
    */
   async remove(input: {
     tenantSlug: string;
@@ -244,7 +272,7 @@ export class StaffService {
     actor: { id: string; role: string };
   }): Promise<void> {
     const target = await this.users.findById(input.id);
-    if (!target || target.kind !== 'STAFF') {
+    if (!target || target.kind !== 'STAFF' || (await this.users.isStaffHidden(input.id))) {
       throw new NotFoundError('Staff user', input.id);
     }
 
@@ -252,20 +280,29 @@ export class StaffService {
       throw new ForbiddenError('لا يمكنك حذف حسابك الخاص');
     }
 
-    const history = await this.users.countStaffHistory(input.id);
-    if (history > 0) {
-      throw new ConflictError(
-        'لا يمكن حذف هذا الحساب نهائياً لأن له سجل نشاطات — يمكنك إلغاء تفعيله بدلاً من ذلك',
-      );
+    /*
+      An inspector still owed commission is not deleted: the deleted leave
+      every list, and with them the card and the payout link the debt is seen
+      and settled from. Paid out first, then deleted.
+    */
+    if (target.role === 'FIELD_INSPECTOR') {
+      const { pendingBalance } = await this.getInspectorProfile(input.tenantSlug, input.id);
+      if (pendingBalance > 0) {
+        throw new ConflictError(
+        `لا يمكن حذف هذا المفتش: له عمولات مستحقة بقيمة ${pendingBalance.toFixed(2)}$ لم تُدفع بعد. سدّدها من «الأرباح والدفعات» ثم احذفه`,
+        );
+      }
     }
 
-    await this.users.hardDeleteStaff(input.id);
-
+    await this.users.hideStaff(input.id);
+    // As on deactivation: the cached session goes now, not at its TTL.
+    await this.revocation.forget(input.id);
 
     this.events.emit('staff.changed', {
       action: 'STAFF_DELETED',
       tenantSlug: input.tenantSlug,
       staffId: input.id,
+      role: target.role ?? undefined,
       actorId: input.actor.id,
       actorRole: input.actor.role,
     });

@@ -81,6 +81,7 @@ export function PaymentReceipt({
   contactPhone,
   officeWhatsapp,
   receivedAmount,
+  tendered,
   councilDecisionRef,
   locale = 'ar',
 }: {
@@ -99,6 +100,12 @@ export function PaymentReceipt({
   officeWhatsapp?: string | null;
   receivedAmount?: number;
   /**
+   * The notes themselves, when cash came in two currencies — printed beside
+   * the ليرة total so the citizen's copy says «20$ + 200,000 ل.ل بسعر 89,500»
+   * and not only what that came to.
+   */
+  tendered?: Tender | null;
+  /**
    * تاريخ ورقم قرار المجلس البلدي, if the council has issued one (§7 Q1).
    *
    * Optional, and the footer says something either way: with a decision it
@@ -116,6 +123,7 @@ export function PaymentReceipt({
   if (!payment) return null;
 
   const amount = receivedAmount ?? payment.amount;
+  const tenderLine = describeTender(tendered);
   const properties = citizen.registrations.flatMap((r) => r.properties);
   const property = properties[0] ?? null;
 
@@ -150,6 +158,7 @@ export function PaymentReceipt({
     citizen.referenceNumber ? `الرقم المرجعي: ${citizen.referenceNumber}` : null,
     `البند: ${payment.title}`,
     `المبلغ المقبوض: ${formatLbp(amount)}`,
+    tenderLine ? `نقداً: ${tenderLine}` : null,
     payment.remaining > 0
       ? `الرصيد المتبقي: ${formatLbp(payment.remaining)}`
       : 'تم تسديد كامل المبلغ. شكراً لكم.',
@@ -230,6 +239,7 @@ export function PaymentReceipt({
                 citizen={citizen}
                 payment={payment}
                 amount={amount}
+                tenderLine={tenderLine}
                 property={property}
                 isCommercial={isCommercial}
                 isOwner={isOwner}
@@ -329,6 +339,7 @@ function DrawnFacsimile({
   governorate,
   district,
   councilDecisionRef,
+  tenderLine,
 }: FacsimileProps & {
   isDisplaced: boolean;
   municipalityName: string;
@@ -336,6 +347,8 @@ function DrawnFacsimile({
   district?: string | null;
   /** §7 Q1 — see the note on the prop of the same name above. */
   councilDecisionRef?: string | null;
+  /** «20 $ + 200,000 ل.ل — بسعر 89,500», when cash came in two currencies. */
+  tenderLine?: string | null;
 }) {
   return (
     <div className="p-4">
@@ -487,7 +500,12 @@ function DrawnFacsimile({
             <div className="flex flex-wrap items-center gap-3">
               <DottedField
                 label="المبلغ رقماً"
-                value={<span className="font-mono text-base font-black">{formatLbp(amount)}</span>}
+                value={
+                  <span className="font-mono text-base font-black">
+                    {formatLbp(amount)}
+                    {tenderLine ? <span className="ms-2 text-xs font-medium">({tenderLine})</span> : null}
+                  </span>
+                }
                 flex="flex-[2]"
               />
               <DottedField
@@ -724,4 +742,25 @@ function DottedField({
       </div>
     </div>
   );
+}
+
+/** Cash as it was handed over — the ليرة part and a foreign part at a rate. */
+export interface Tender {
+  local: number;
+  foreign: number;
+  foreignCurrency: string;
+  exchangeRate: number;
+}
+
+/**
+ * «20 $ + 200,000 ل.ل — بسعر 89,500», or nothing when only ليرة changed hands
+ * (the total already says that). Exported so the settle page shows the same
+ * line it will print.
+ */
+export function describeTender(tendered: Tender | null | undefined): string | null {
+  if (!tendered || tendered.foreign <= 0) return null;
+  const symbol = tendered.foreignCurrency === 'USD' ? '$' : tendered.foreignCurrency;
+  const parts = [`${tendered.foreign.toLocaleString('en-US')} ${symbol}`];
+  if (tendered.local > 0) parts.push(formatLbp(tendered.local));
+  return `${parts.join(' + ')} — بسعر ${tendered.exchangeRate.toLocaleString('en-US')}`;
 }

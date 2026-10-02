@@ -17,6 +17,20 @@ export interface LedgerEntryInput {
   note?: string | null;
   /** Defaults to now. Set when recording a collector's round after the fact. */
   occurredAt?: Date;
+  /**
+   * What was handed over, when cash came in more than the invoice's currency
+   * (migration 0064). `amount` is already the credit worked out from it; this
+   * is the record of the notes themselves.
+   */
+  tendered?: Tender | null;
+}
+
+/** Cash as it was handed over: the invoice's own currency, and another at a rate. */
+export interface Tender {
+  local: number;
+  foreign: number | null;
+  foreignCurrency: string | null;
+  exchangeRate: number | null;
 }
 
 /** What an invoice's balance looks like after a movement. */
@@ -295,6 +309,14 @@ export class PaymentLedgerService {
         ...(reversalOfId ? { reversalOfId } : {}),
         note: input.note ?? null,
         ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
+        ...(input.tendered
+          ? {
+              tenderedLocal: input.tendered.local,
+              tenderedForeign: input.tendered.foreign,
+              tenderedForeignCurrency: input.tendered.foreignCurrency,
+              exchangeRate: input.tendered.exchangeRate,
+            }
+          : {}),
       },
       select: { id: true },
     });
@@ -319,7 +341,8 @@ export class PaymentLedgerService {
          * municipality is chasing.
          */
         paymentStatus: fullySettled ? 'PAID' : 'UNPAID',
-        paidAt: fullySettled ? new Date() : null,
+        // The day the money moved, which a back-dated entry says is not today.
+        paidAt: fullySettled ? (input.occurredAt ?? new Date()) : null,
         /**
          * Still written, because the ledger screens and the citizen portal
          * read them without joining. They now describe the *latest* movement

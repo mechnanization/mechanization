@@ -206,6 +206,58 @@ describeIfDb('PaymentLedgerService', () => {
       expect(history[1]).toMatchObject({ method: 'CASH', externalRef: null });
     });
 
+    it('keeps the notes handed over beside the credit — «$1 و10,500 ليرة»', async () => {
+      // 10,500 + 1 × 89,500 = 100,000: the invoice is settled, and the record
+      // still says a dollar changed hands, at what rate.
+      const result = await ledger.record({
+        paymentId,
+        amount: 100_000,
+        method: 'CASH',
+        recordedById: clerkId,
+        tendered: { local: 10_500, foreign: 1, foreignCurrency: 'USD', exchangeRate: 89_500 },
+      });
+      expect(result.paymentStatus).toBe('PAID');
+
+      const row = await db.paymentTransaction.findUniqueOrThrow({ where: { id: result.transactionId } });
+      expect(Number(row.amount)).toBe(100_000);
+      expect(Number(row.tenderedLocal)).toBe(10_500);
+      expect(Number(row.tenderedForeign)).toBe(1);
+      expect(row.tenderedForeignCurrency).toBe('USD');
+      expect(Number(row.exchangeRate)).toBe(89_500);
+    });
+
+    it('marks a back-dated full payment paid on its own day, not today', async () => {
+      const day = new Date('2026-09-28T12:00:00.000Z');
+      const result = await ledger.record({
+        paymentId,
+        amount: 100_000,
+        method: 'CASH',
+        recordedById: clerkId,
+        occurredAt: day,
+      });
+      expect(result.paymentStatus).toBe('PAID');
+
+      const invoice = await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } });
+      expect(invoice.paidAt?.toISOString()).toBe(day.toISOString());
+      const row = await db.paymentTransaction.findUniqueOrThrow({ where: { id: result.transactionId } });
+      expect(row.occurredAt.toISOString()).toBe(day.toISOString());
+    });
+
+    it('refuses a foreign amount with no rate, at the database', async () => {
+      // The CHECK from 0064: a tender that cannot be read back is not stored.
+      await expect(
+        ledger.record({
+          paymentId,
+          amount: 100_000,
+          method: 'CASH',
+          recordedById: clerkId,
+          tendered: { local: 0, foreign: 1, foreignCurrency: 'USD', exchangeRate: null },
+        }),
+      ).rejects.toThrow();
+      const invoice = await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } });
+      expect(Number(invoice.paidAmount)).toBe(0);
+    });
+
     it('refuses more than the outstanding balance', async () => {
       await cash(90_000);
       await expect(cash(20_000)).rejects.toBeInstanceOf(ConflictError);

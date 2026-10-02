@@ -28,10 +28,27 @@ import type { StaffRole } from '../../domain/entities/user.entity';
 export class StaffController {
   constructor(private readonly staff: StaffService) {}
 
-  /** Every staff account, including deactivated ones. */
+  /** Every staff account, including deactivated ones — not deleted ones. */
   @Get()
   async list() {
     return { items: await this.staff.list() };
+  }
+
+  /** The accounts a super admin has deleted, to restore one from. */
+  @Get('deleted')
+  async listDeleted() {
+    return { items: await this.staff.listDeleted() };
+  }
+
+  /** Brings a deleted account back onto the list, still disabled. */
+  @Post(':id/restore')
+  async restore(
+    @Param('tenantSlug') tenantSlug: string,
+    @Param('id') id: string,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    await this.staff.restore({ tenantSlug, id, actor: { id: user.sub, role: user.role ?? '' } });
+    return { restored: true };
   }
 
   @Post()
@@ -94,7 +111,7 @@ export class StaffController {
     return { isActive: body.isActive };
   }
 
-  /** Permanent, and refused for any account that has already acted. */
+  /** Hides the account — off the list and signed out, its row and history kept. */
   @Delete(':id')
   async remove(
     @Param('tenantSlug') tenantSlug: string,

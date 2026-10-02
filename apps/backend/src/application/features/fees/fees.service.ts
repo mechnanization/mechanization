@@ -25,11 +25,11 @@ import {
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { unitsUnderReview } from '../buildings/unit-status';
-import { ConflictError, NotFoundError } from '../../common/exceptions';
+import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { searchTokens } from '../../common/search-terms';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
-import { PaymentLedgerService } from './payment-ledger.service';
+import { PaymentLedgerService, type Tender } from './payment-ledger.service';
 
 /** Property categories that live on `PropertyEntry.propertyType`. */
 const PROPERTY_TYPE_CATEGORIES = new Set(['BUILDING', 'HOUSE', 'LAND', 'TENT']);
@@ -2804,6 +2804,10 @@ export class FeesService {
     /** Required by the schema when `method` is COLLECTOR; ignored otherwise. */
     collectedById?: string;
     note?: string;
+    /** `YYYY-MM-DD`, not in the future (the schema's rule). Omitted means now. */
+    paidOn?: string;
+    /** Cash in two currencies — the credit is worked out from it, here. */
+    tendered?: { local: number; foreign: number; foreignCurrency: string; exchangeRate?: number };
     actor: { id: string; role: string };
   }) {
     /**
@@ -2818,12 +2822,22 @@ export class FeesService {
      */
     const invoice = await this.db.citizenPayment.findUnique({
       where: { id: input.paymentId },
-      select: { amount: true, paidAmount: true, citizenId: true },
+      select: { amount: true, paidAmount: true, citizenId: true, currency: true },
     });
     if (!invoice) throw new NotFoundError('Payment', input.paymentId);
 
-    const received =
-      input.amount ?? Number(invoice.amount) - Number(invoice.paidAmount);
+    /*
+      «20$ و200,000 ليرة» — the credit is what the notes are worth in the
+      invoice's currency, computed here and never taken from the client, which
+      could send a total that disagrees with its own parts. Rounded to the
+      whole unit for a ليرة invoice, where there are no fractions to pay in,
+      and to the cent otherwise. The ledger then refuses it, under its lock,
+      if it is more than is owed.
+    */
+    const tender = input.tendered ? toTender(input.tendered, invoice.currency) : null;
+    const received = tender
+      ? creditOf(tender, invoice.currency)
+      : (input.amount ?? Number(invoice.amount) - Number(invoice.paidAmount));
 
     const settled = await this.ledger.record({
       paymentId: input.paymentId,
@@ -2840,6 +2854,8 @@ export class FeesService {
       collectedById: input.method === 'COLLECTOR' ? (input.collectedById ?? null) : null,
       recordedById: input.actor.id,
       note: input.note,
+      tendered: tender,
+      occurredAt: occurredAtFor(input.paidOn),
     });
 
     this.events.emit('payment.reviewed', {
@@ -2936,4 +2952,52 @@ export class FeesService {
     await this.cache.set(key, result, 30);
     return result;
   }
+}
+
+/**
+ * A two-currency cash tender, checked against the invoice it pays. The foreign
+ * part must really be foreign: dollars handed against a dollar invoice are the
+ * local part, and calling them foreign would apply a rate to a sum that needs
+ * none. Exported for its spec.
+ */
+export function toTender(
+  input: { local: number; foreign: number; foreignCurrency: string; exchangeRate?: number },
+  invoiceCurrency: string,
+): Tender {
+  const foreign = input.foreign > 0 ? input.foreign : null;
+  if (foreign !== null && input.foreignCurrency === invoiceCurrency) {
+    throw new ValidationError(`الفاتورة بعملة ${invoiceCurrency} — أدخل المبلغ في خانة العملة نفسها`, {
+      foreignCurrency: input.foreignCurrency,
+    });
+  }
+  if (foreign !== null && !input.exchangeRate) {
+    throw new ValidationError('أدخل سعر الصرف', { exchangeRate: '' });
+  }
+  return {
+    local: input.local,
+    foreign,
+    foreignCurrency: foreign !== null ? input.foreignCurrency : null,
+    exchangeRate: foreign !== null ? input.exchangeRate! : null,
+  };
+}
+
+/** What a tender is worth in the invoice's currency — whole ليرة, or cents. Exported for its spec. */
+export function creditOf(tender: Tender, invoiceCurrency: string): number {
+  const raw = tender.local + (tender.foreign ?? 0) * (tender.exchangeRate ?? 0);
+  return invoiceCurrency === 'LBP' ? Math.round(raw) : Math.round(raw * 100) / 100;
+}
+
+/**
+ * When a payment taken on `paidOn` happened: midday of that day, so a
+ * back-dated entry lands on its own date in every time zone the
+ * municipality's reports are read in. Omitted means now — the page leaves it
+ * out for a payment taken today, so its real time is kept.
+ *
+ * Not compared with the server's own «today»: that is UTC, a day behind
+ * Lebanon between midnight and 3am, and a clerk recording yesterday's cash in
+ * that window would have had it silently moved to now. Exported for its spec.
+ */
+export function occurredAtFor(paidOn: string | undefined): Date | undefined {
+  if (!paidOn) return undefined;
+  return new Date(`${paidOn}T12:00:00.000Z`);
 }

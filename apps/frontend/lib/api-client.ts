@@ -639,8 +639,6 @@ export interface DashboardAnalytics {
   populationTotal: number;
   /** إجمالي المسجلين في سجلات النفوس — sum of totalRegisteredMembers (gross). */
   grossRegisteredTotal: number;
-  /** إجمالي الأبناء المتزوجين المؤسسين لأسر — sum(total - actual). */
-  marriedOffspringTotal: number;
   /**
    * Households with no declared actual household size. They contribute
    * nothing to `populationTotal`, so it is understated by at least this many
@@ -1971,6 +1969,26 @@ export async function updateUnit(
 }
 
 /**
+ * «تعديل عرض الوحدة» — a unit's new edges on its floor's grid. The server
+ * refuses drawing over a neighbour and pins the floor's unpositioned units
+ * where the matrix drew them.
+ */
+export async function resizeUnitSpan(
+  tenant: string,
+  token: string,
+  unitId: string,
+  span: { startCol: number; endCol: number },
+) {
+  const result = await apiFetch<UnitRow>(
+    tenant,
+    `/buildings/units/${encodeURIComponent(unitId)}/span`,
+    { token, method: 'PATCH', body: JSON.stringify(span) },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
  * Removes a flat the matrix says exists and the street does not — a blueprint
  * that overshot a floor, or a محل counted twice.
  *
@@ -2761,7 +2779,6 @@ export interface CitizenProfile {
   civilRecordNumber: string | null;
   totalRegisteredMembers: number | null;
   actualHouseholdMembers: number | null;
-  marriedChildrenCount: number | null;
   maritalStatus: string | null;
   bloodType: string | null;
   referenceNumber: string | null;
@@ -2830,7 +2847,6 @@ export interface MyCitizenSummary {
   bloodType: string | null;
   totalRegisteredMembers: number | null;
   actualHouseholdMembers: number | null;
-  marriedChildrenCount: number | null;
   identityDocType: string | null;
   /**
    * Tail only — `•••567`. The full number is never sent to this route; see the
@@ -3718,8 +3734,6 @@ export interface StaffSummary {
   role: string;
   isActive: boolean;
   hasConfirmedTotp?: boolean;
-  /** Audit entries + reviewed registrations. A permanent delete needs zero. */
-  historyCount: number;
   /** Performance & commission metrics for field inspectors */
   registeredCitizensCount?: number;
   registeredPropertiesCount?: number;
@@ -3793,6 +3807,28 @@ export function deleteStaff(tenant: string, token: string, id: string) {
   return apiFetch<{ deleted: boolean }>(tenant, `/staff/${encodeURIComponent(id)}`, {
     token,
     method: 'DELETE',
+  });
+}
+
+/** A staff account a super admin has deleted. */
+export interface DeletedStaffSummary {
+  id: string;
+  email: string;
+  fullName: string;
+  role: string;
+  deletedAt: string;
+}
+
+/** The deleted staff accounts, most recent first — what a restore is made from. */
+export function getDeletedStaff(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<{ items: DeletedStaffSummary[] }>(tenant, '/staff/deleted', { token, signal });
+}
+
+/** Brings a deleted account back onto the staff list, still disabled. */
+export function restoreStaff(tenant: string, token: string, id: string) {
+  return apiFetch<{ restored: boolean }>(tenant, `/staff/${encodeURIComponent(id)}/restore`, {
+    token,
+    method: 'POST',
   });
 }
 
@@ -4692,9 +4728,22 @@ export async function settlePayment(
     /** Required by the server when `method` is `COLLECTOR`. */
     collectedById?: string;
     note?: string;
+    /**
+     * Cash in two currencies. The server works the credit out from it, so
+     * `amount` is left out when this is sent.
+     */
+    tendered?: { local: number; foreign: number; foreignCurrency: string; exchangeRate?: number };
+    /** `YYYY-MM-DD`, when the money was taken on another day than today. */
+    paidOn?: string;
   } = {},
 ) {
-  const result = await apiFetch<{ paymentStatus: string }>(
+  const result = await apiFetch<{
+    paymentStatus: string;
+    received: number;
+    paidAmount: number;
+    remaining: number;
+    receiptNumber: string;
+  }>(
     tenant,
     `/fees/payments/${encodeURIComponent(id)}/settle`,
     // The `CASH` default is kept ahead of the spread so an omitted method

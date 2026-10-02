@@ -13,7 +13,10 @@ import {
   isStructuralUnitType,
   isUnoccupied,
   feeBearerClass,
+  layoutFloorSpans,
+  MAX_UNIT_COLUMN,
   OCCUPANCY_LIFTS_SURVEY_STATUS,
+  spanOverlap,
   SURVEYED_STATUS,
   unitStatusForRole,
   type ConfirmVacancyInput,
@@ -22,6 +25,7 @@ import {
   type StructureType,
   type UnitBlueprint,
   type LogVisitInput,
+  type ResizeUnitSpanInput,
   type SaveBuildingMatrixInput,
   type UpdateBuildingInput,
   type UpdateUnitInput,
@@ -2707,6 +2711,104 @@ export class BuildingsService {
         const settled = await this.db.unit.findUnique({ where: { id: unitId } });
         if (settled) return toUnitRow(settled);
       }
+    }
+
+    return toUnitRow(updated);
+  }
+
+  // ─────────────────────────  «تعديل عرض الوحدة»  ─────────────────────────
+
+  /**
+   * Moves a unit's two edges on its floor's grid — the matrix's resize.
+   *
+   * Geometry only: the code, the floor and the sequence stay, so nothing that
+   * names the unit changes. What it may not do is draw over a neighbour, and
+   * that is checked against the floor as the matrix *draws* it
+   * (`layoutFloorSpans`), not only against the spans stored on rows. A unit
+   * with no stored span is drawn after the positioned ones; once its neighbour
+   * holds a stored span it would be redrawn somewhere else. So every
+   * unpositioned unit on the floor is pinned where it was drawn, in the same
+   * transaction, and the flat the officer did not touch stays where they saw
+   * it.
+   *
+   * Under the building's row lock, as `saveMatrix` is: two officers widening
+   * the two flats either side of one gap would each pass the check alone.
+   */
+  async resizeUnitSpan(
+    unitId: string,
+    input: ResizeUnitSpanInput,
+    actor: { id: string; role: string },
+  ): Promise<UnitRow> {
+    const target = await this.db.unit.findUnique({
+      where: { id: unitId },
+      select: { id: true, buildingId: true },
+    });
+    if (!target) throw new NotFoundError('الوحدة غير موجودة');
+
+    const { updated, changes } = await runInTenantTransaction(this.tenantContext, async () => {
+      const S = tenantSchemaRef(this.tenantContext.schemaName);
+      await this.db.$queryRaw`SELECT "id" FROM ${S}"buildings" WHERE "id" = ${target.buildingId}::uuid FOR UPDATE`;
+
+      // Re-read under the lock: the unit may have moved floor since.
+      const before = await this.db.unit.findUnique({ where: { id: unitId } });
+      if (!before) throw new NotFoundError('الوحدة غير موجودة');
+
+      const floorUnits = await this.db.unit.findMany({
+        where: { buildingId: before.buildingId, floor: before.floor },
+        orderBy: { sequence: 'asc' },
+      });
+      const { blocks } = layoutFloorSpans(floorUnits);
+      const self = floorUnits.find((unit) => unit.id === unitId)!;
+
+      const clash = spanOverlap(blocks, self, input);
+      if (clash) {
+        throw new ConflictError(
+          `لا يمكن توسيع الوحدة ${before.unitCode} فوق الوحدة ${clash.unit.unitCode} — الأعمدة ${input.startCol}–${input.endCol} ليست فارغة`,
+          { unitCode: before.unitCode, blockedBy: clash.unit.unitCode },
+        );
+      }
+
+      const pins = blocks.filter(
+        (block) =>
+          block.unit.id !== unitId &&
+          (block.unit.startCol == null || block.unit.endCol == null) &&
+          // Drawn past the grid's last column, it has no column to be pinned to;
+          // it stays unpositioned rather than stored where no schema allows.
+          block.endCol <= MAX_UNIT_COLUMN,
+      );
+      const changes: Array<{ before: typeof before; after: typeof before }> = [];
+      for (const pin of pins) {
+        const after = await this.db.unit.update({
+          where: { id: pin.unit.id },
+          data: { startCol: pin.startCol, endCol: pin.endCol },
+        });
+        changes.push({ before: pin.unit, after });
+      }
+
+      const updated = await this.db.unit.update({
+        where: { id: unitId },
+        data: { startCol: input.startCol, endCol: input.endCol },
+      });
+      changes.push({ before, after: updated });
+      return { updated, changes };
+    });
+
+    for (const change of changes) {
+      const diff = changedUnitFields(change.before, change.after);
+      if (Object.keys(diff.after).length === 0) continue;
+      this.record({
+        action: 'UNIT_UPDATED',
+        buildingId: change.before.buildingId,
+        before: { ...diff.before, unitCode: change.before.unitCode },
+        after: {
+          ...diff.after,
+          unitCode: change.after.unitCode,
+          changedFields: Object.keys(diff.after),
+          // A neighbour pinned in place, not resized — said so in its trail.
+          ...(change.after.id !== unitId ? { pinnedBy: updated.unitCode } : {}),
+        },
+        actor,
+      });
     }
 
     return toUnitRow(updated);

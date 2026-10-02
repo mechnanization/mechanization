@@ -168,7 +168,6 @@ export function AdminShell({
           tenantName={tenantName}
           session={session}
           onOpenDrawer={() => setDrawerOpen(true)}
-          onOpenSearch={() => setPaletteOpen(true)}
         />
         {/* `min-w-0` on both this and the flex column above it: without it a
             wide table's intrinsic width wins the flex negotiation and pushes
