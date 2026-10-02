@@ -666,6 +666,15 @@ export function toFormValues(form: CitizenFormData): CitizenFormValues {
     },
     contact: {
       ...withoutNulls(form.contact),
+      /*
+        A WhatsApp number left «غير مؤكَّد» is a second number still to be
+        found, so its field must be open — the server's «no WhatsApp on file
+        means same as the phone» would otherwise hide the very field the flag
+        is about, and a typed answer would be replaced by the phone on save.
+      */
+      ...((form.flags ?? []).some((flag) => flag.path === 'contact.whatsapp')
+        ? { whatsappSameAsPhone: false }
+        : {}),
       // Every text input reads its value as a string; a numeric value
       // would render as an empty box and then fail validation as
       // "required" on a field that was never blank.
