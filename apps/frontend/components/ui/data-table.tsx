@@ -269,6 +269,19 @@ export interface DataTableProps<TData, TValue = unknown> {
   sorting?: SortingState;
   onSortingChange?: OnChangeFn<SortingState>;
   pageSizeOptions?: readonly number[];
+  /**
+   * False for a short, bounded list that is always shown whole — the people
+   * recorded on one unit. Every row renders and the pager footer is not drawn:
+   * «عدد الصفوف» over two rows is a control with nothing to control.
+   */
+  paginated?: boolean;
+  /**
+   * `table-layout: fixed`: every column without a `meta.headerClassName`
+   * width gets an equal share. For a short table of mixed facts, where the
+   * browser's content-sized columns put a wide gap after the name and crowd
+   * the rest.
+   */
+  fixedLayout?: boolean;
 
   loading?: boolean;
   error?: string | null;
@@ -451,6 +464,8 @@ export function DataTable<TData, TValue = unknown>({
   sorting: controlledSorting,
   onSortingChange,
   pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
+  paginated = true,
+  fixedLayout = false,
   loading = false,
   error = null,
   onRetry,
@@ -658,7 +673,7 @@ export function DataTable<TData, TValue = unknown>({
     // table unsortable and unpaged at the same time.
     getFilteredRowModel: manualFiltering ? undefined : getFilteredRowModel(),
     getSortedRowModel: manualSorting ? undefined : getSortedRowModel(),
-    getPaginationRowModel: manualPagination ? undefined : getPaginationRowModel(),
+    getPaginationRowModel: manualPagination || !paginated ? undefined : getPaginationRowModel(),
     getExpandedRowModel: renderSubRow ? getExpandedRowModel() : undefined,
   });
 
@@ -976,7 +991,7 @@ export function DataTable<TData, TValue = unknown>({
 
         {/* The scroll container for horizontal overflow — lets all 10 records show full height without vertical scrolling. */}
         <div className="hidden overflow-x-auto sm:block">
-          <Table>
+          <Table className={fixedLayout ? 'table-fixed' : undefined}>
             <TableHeader className="sticky top-0 z-10 bg-muted/95 shadow-[inset_0_-1px_0_hsl(var(--border))] backdrop-blur supports-[backdrop-filter]:bg-muted/80">
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id} className="hover:bg-transparent">
@@ -1084,6 +1099,7 @@ export function DataTable<TData, TValue = unknown>({
 
       {/* Pagination + page-size footer, inside the card and ruled off from the
           rows above it. */}
+      {paginated ? (
       <div className="flex flex-wrap items-center justify-between gap-3 border-t p-3">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span>{labels.rowsPerPage}</span>
@@ -1157,6 +1173,7 @@ export function DataTable<TData, TValue = unknown>({
           </Button>
         </div>
       </div>
+      ) : null}
     </div>
   );
 }

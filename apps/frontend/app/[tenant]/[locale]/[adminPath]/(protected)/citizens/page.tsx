@@ -51,6 +51,7 @@ import { Money } from '@/components/ui/money';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { ACTION_TINT } from '@/lib/action-tint';
 import { formatDate } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
@@ -58,29 +59,6 @@ import { getLabels } from '@mechanization/shared-schemas';
 
 /** Roles allowed to write. Mirrors the server; the server is the enforcement. */
 const CAN_WRITE = ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'];
-
-/**
- * The row actions: borderless, each on a soft wash of its own colour.
- *
- * Outlined, five icon buttons read as five identical boxes and the eye had to
- * find the icon inside each one to tell «تعديل» from «حذف». A hue per job does
- * that before the icon is read — the file in the primary colour, WhatsApp in
- * its green, editing in blue, disabling in amber, deleting in red — and without
- * the outline the row stops looking like a toolbar.
- */
-const ACTION_TINT = {
-  view: 'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary',
-  // Navigation, like `view`: primary is the colour of going somewhere (COL-2), not a palette violet.
-  properties: 'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary',
-  whatsapp:
-    'bg-success/10 text-success hover:bg-success/20 hover:text-success',
-  edit: 'bg-info/10 text-info hover:bg-info/20 hover:text-info',
-  disable:
-    'bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning',
-  enable:
-    'bg-success/10 text-success hover:bg-success/20 hover:text-success',
-  remove: 'bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive',
-} as const;
 
 function getTableLabels(locale: string): DataTableLabels {
   if (locale === 'en') {

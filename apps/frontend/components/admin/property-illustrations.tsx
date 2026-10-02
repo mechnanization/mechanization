@@ -21,15 +21,6 @@ const TONE_TEXT: Record<PropertyTone, string> = {
   owner: 'text-success',
   occupant: 'text-info',
 };
-/**
- * How a lit unit — the citizen's own, or the one picked — stands out: an
- * outline and a glow in the role's colour, over its own colours, so what the
- * unit is stays visible while it is marked.
- */
-const TONE_FILL: Record<PropertyTone, string> = {
-  owner: 'z-[1] ring-2 ring-success shadow-[0_0_12px] shadow-success/70',
-  occupant: 'z-[1] ring-2 ring-info shadow-[0_0_12px] shadow-info/70',
-};
 
 /**
  * The building as the census records it: every unit in its column, the
@@ -138,7 +129,8 @@ export function BuildingElevation({
       the building matrix and the creation grid draw it. Without this an Arabic
       page mirrored the building, putting each floor's first unit at the right.
     */
-    <div dir="ltr" className="flex h-full w-full items-center justify-center">
+    // `px-5` holds the ground line and its lamps, which run past the building either side, inside the frame.
+    <div dir="ltr" className="flex h-full w-full items-center justify-center px-5">
       <div
         className="flex h-full w-full flex-col justify-center pt-3"
         // As wide as its floors are, not as wide as the frame: a block two flats across is
@@ -188,11 +180,11 @@ export function BuildingElevation({
           */
           const occupied = occupiedColumns(blocks);
           const above = index > 0 ? occupiedColumns(floors[index - 1]!.blocks) : new Set<number>();
-          // Not over a column floor (open ground) or a shopfront (it has its own door).
+          // Not over a shopfront (it has its own door); through a column floor it is the stair's post.
           const doorColumn =
             floor === 0
               ? doorColumnOf(
-                  blocks.filter((block) => !['structure', 'premises'].includes(unitKind(block.unit.unitType))),
+                  blocks.filter((block) => unitKind(block.unit.unitType) !== 'premises'),
                   columns,
                 )
               : null;
@@ -239,18 +231,27 @@ export function BuildingElevation({
                     // A roof over every stretch of this unit with nothing standing on it.
                     const roofRuns = runsWhere(startCol, endCol, (col) => !above.has(col));
                     const className = cn(
-                      'relative h-full w-full overflow-hidden rounded-[2px] transition-all',
+                      // `block`: a unit that cannot be pressed is a <span>, which ignores h-full/w-full
+                      // while inline — it collapsed to nothing, taking its panel and its face with it.
+                      'relative block h-full w-full overflow-hidden rounded-[2px] transition-colors',
                       ghost
                         ? cn('border border-dashed bg-transparent', lifecycle === 'DEMOLISHED' ? 'border-destructive/50' : 'border-foreground/40')
-                        : panelFor(unit.unitType, faceKind),
-                      lit && TONE_FILL[tone],
+                        : panelFor(faceKind, lit, tone),
+                      lit && 'z-[1]',
                       (lit || pickAny) && onSelect && 'cursor-pointer hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                      unit.id === selected && 'ring-2 ring-foreground ring-offset-1 ring-offset-background',
+                      // The picked unit: the selection colour (COL-2), not the role's.
+                      unit.id === selected && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
                     );
                     const face =
                       ghost || dense ? null : (
                         <>
-                          <ColorFace unitType={unit.unitType} kind={faceKind} columns={span} upstairs={floor > 0} />
+                          <UnitFace
+                            unitType={unit.unitType}
+                            kind={faceKind}
+                            columns={span}
+                            lit={lit}
+                            tone={tone}
+                          />
                           {damaged ? <span aria-hidden className="pointer-events-none absolute inset-0" style={CRACKS} /> : null}
                           {derelict ? <span aria-hidden className="pointer-events-none absolute inset-0" style={BOARDS} /> : null}
                         </>
@@ -360,7 +361,7 @@ export function BuildingElevation({
                         {!ghost && !dense && doorColumn !== null && doorColumn >= startCol && doorColumn <= endCol ? (
                           <span
                             aria-hidden
-                            className="pointer-events-none absolute bottom-0 h-[70%] w-[7px] -translate-x-1/2 rounded-t-[2px] border border-b-0 border-foreground/50 bg-foreground/40"
+                            className="pointer-events-none absolute bottom-0 h-[60%] w-[6px] -translate-x-1/2 rounded-t-[2px] bg-foreground/45"
                             style={{ insetInlineStart: `${((doorColumn - startCol + 0.5) / span) * 100}%` }}
                           />
                         ) : null}
@@ -372,11 +373,84 @@ export function BuildingElevation({
             </div>
           );
         })}
-        {/* The street it stands on, and the pavement, when it has no basement below. */}
+        {/* The ground it stands on, when it has no basement below. */}
         {bottom === 0 ? (
           <>
             <StreetLine />
-            <div className="mx-[-14px] h-[4px] rounded-b bg-foreground/15" />
+            <Forecourt
+              columns={columns}
+              doorColumn={
+                ghost || dense
+                  ? null
+                  : doorColumnOf(
+                      (floors.find((entry) => entry.floor === 0)?.blocks ?? []).filter(
+                        (block) => unitKind(block.unit.unitType) !== 'premises',
+                      ),
+                      columns,
+                    )
+              }
+              bushes={!ghost && !dense}
+            />
+          </>
+        ) : (
+          // Over basements the street is drawn above them; this is the flat ground they are dug into.
+          <Forecourt columns={columns} doorColumn={null} bushes={false} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The ground line the building stands on, a street lamp at either end of it. */
+function StreetLine() {
+  return (
+    <div className="relative mx-[-16px] h-[4px] shrink-0 rounded-[1px] bg-foreground/50">
+      <StreetLamp className="absolute bottom-full start-[-2px]" />
+      <StreetLamp className="absolute bottom-full end-[-2px]" />
+    </div>
+  );
+}
+
+/**
+ * The flat ground in front of the building, under its ground line: paving
+ * with its joints, the path from the stair door, low bushes at the foot of
+ * the façade, and the kerb at the front edge. Runs 16px past the building
+ * either side, like the ground line; the inner box is the building's own
+ * width, so the path sits under the door's column. Physical `left`/`right`
+ * are deliberate: it is drawn inside the elevation's `dir="ltr"` (RTL-1).
+ */
+function Forecourt({
+  columns,
+  doorColumn,
+  bushes,
+}: {
+  columns: number;
+  doorColumn: number | null;
+  bushes: boolean;
+}) {
+  return (
+    <div aria-hidden className="relative mx-[-16px] h-[16px] shrink-0">
+      <span
+        className="absolute inset-x-0 top-0 h-[13px] bg-foreground/[0.12]"
+        style={{
+          backgroundImage:
+            'repeating-linear-gradient(90deg, transparent 0 13px, hsl(var(--foreground) / 0.12) 13px 14px)',
+        }}
+      />
+      {/* The kerb, and the edge of the road beyond it. */}
+      <span className="absolute inset-x-0 top-[13px] h-[2px] bg-foreground/40" />
+      <span className="absolute inset-x-[-4px] bottom-0 h-px bg-foreground/20" />
+      <div className="absolute inset-y-0 inset-x-[16px]">
+        {doorColumn !== null ? (
+          <span
+            className="absolute top-0 h-[13px] w-[14px] -translate-x-1/2 bg-foreground/25"
+            style={{ left: `${((doorColumn - 0.5) / columns) * 100}%` }}
+          />
+        ) : null}
+        {bushes ? (
+          <>
+            <Bush className="absolute -top-[7px] left-[4px]" />
+            <Bush className="absolute -top-[7px] right-[4px]" />
           </>
         ) : null}
       </div>
@@ -384,22 +458,22 @@ export function BuildingElevation({
   );
 }
 
-/** The street the building stands on, a tree at either end of it. */
-function StreetLine() {
+/** A low bush at the foot of the wall: two rounded clumps. */
+function Bush({ className }: { className?: string }) {
   return (
-    <div className="relative mx-[-14px] h-[2px] rounded bg-foreground/55">
-      <Tree className="absolute bottom-full start-[-6px]" />
-      <Tree className="absolute bottom-full end-[-6px]" />
-    </div>
+    <span className={cn('flex items-end', className)}>
+      <span className="h-[7px] w-[9px] rounded-t-full bg-foreground/30" />
+      <span className="-ms-[3px] h-[5px] w-[7px] rounded-t-full bg-foreground/25" />
+    </span>
   );
 }
 
-/** A street tree beside the building — scale, and the sense of a pavement. */
-function Tree({ className }: { className?: string }) {
+/** A street lamp: a round lamp on its pole. */
+function StreetLamp({ className }: { className?: string }) {
   return (
     <span aria-hidden className={cn('flex flex-col items-center', className)}>
-      <span className="size-[16px] rounded-full bg-foreground/20" />
-      <span className="-mt-[2px] h-[10px] w-[3px] rounded-b bg-foreground/30" />
+      <span className="size-[13px] rounded-full bg-foreground/40" />
+      <span className="h-[12px] w-[2px] bg-foreground/40" />
     </span>
   );
 }
@@ -897,195 +971,207 @@ const BOARDS: CSSProperties = {
 };
 
 /**
- * A unit's front panel, by its type — the wall colour behind its face. Real
- * materials rather than greys: stone for a flat, cream for a house, a shop's
- * pale fascia, a clinic's white, an office's grey-blue, a warehouse's metal.
- * Each pair is its light and dark rendering.
+ * The drawing's two inks, the same ones `HouseArt` and the single-unit arts
+ * draw with: a building is grey, the citizen's own units are filled in their
+ * role's colour, and every opening (window, door, shop glass) is a dark cut
+ * through whichever of the two it sits on. Tokens only (COL-7): `foreground`
+ * at an alpha for the plain units, `success`/`info` for the lit ones.
  */
-const PANEL: Record<string, string> = {
-  APARTMENT: 'bg-illustration-wall',
-  INDEPENDENT_HOUSE: 'bg-illustration-wall-house',
-  SHOP: 'bg-illustration-shop',
-  CLINIC: 'bg-illustration-clinic',
-  OFFICE: 'bg-illustration-office',
-  WAREHOUSE: 'bg-illustration-warehouse',
-  GARAGE: 'bg-illustration-garage',
-  PILOTIS: 'bg-transparent',
-  EMPTY_FLOOR: 'bg-transparent',
+const PLAIN_PANEL = 'bg-foreground/[0.22]';
+const TONE_PANEL: Record<PropertyTone, string> = {
+  owner: 'bg-success',
+  occupant: 'bg-info',
 };
-const GLASS_PANEL = 'bg-illustration-frame';
+const TONE_BORDER: Record<PropertyTone, string> = {
+  owner: 'border-success',
+  occupant: 'border-info',
+};
+/** An opening in a wall — reads on grey and on a lit unit alike. */
+const OPENING = 'bg-background/75';
+/** Frames, rails, slats and signs drawn over an opening or a panel. */
+const TRIM = 'bg-foreground/35';
 
-/** The panel a unit is drawn on: its type's, or what the structure makes of it. */
-function panelFor(unitType: string | null, kind: FaceKind): string {
-  if (kind === 'glass') return GLASS_PANEL;
-  if (kind === 'storage' && unitType !== 'GARAGE') return PANEL.WAREHOUSE!;
-  return PANEL[unitType ?? 'APARTMENT'] ?? PANEL.APARTMENT!;
+/**
+ * The panel a unit is drawn on: grey, its role's colour when lit, nothing for
+ * structure — with a hairline rim, so each unit reads as its own bay of the
+ * façade rather than as a stripe of the floor.
+ */
+function panelFor(kind: FaceKind, lit: boolean, tone: PropertyTone): string {
+  if (kind === 'structure' || kind === 'void') return 'bg-transparent';
+  return cn('border', lit ? cn(TONE_PANEL[tone], TONE_BORDER[tone]) : cn(PLAIN_PANEL, 'border-foreground/35'));
 }
 
-/** A window: white frame, sky glass, a cross bar, a sill under it. */
+/** A window: a small dark pane. */
 function Window({ className }: { className?: string }) {
-  return (
-    <span className={cn('flex flex-col', className)}>
-      <span className="relative flex-1 rounded-[1px] border border-card/90 bg-illustration-window">
-        <span className="absolute inset-y-0 left-1/2 w-px bg-card/80" />
-        <span className="absolute inset-x-0 top-1/2 h-px bg-card/60" />
-      </span>
-      <span className="-mx-px h-[2px] rounded-[1px] bg-illustration-concrete/70" />
-    </span>
-  );
+  return <span className={cn('rounded-[1px]', OPENING, className)} />;
 }
 
 /**
- * The front of a unit, in colour, by its own type: so a clinic is not a shop
- * nor a garage a warehouse, and each reads as what it is on the street.
+ * The front of a unit by its own type, in the drawing's two inks — so a shop
+ * reads as a shop, an office as an office and a column floor as columns, on
+ * the matrix as on the single-unit pictures (ICO-3). Drawn inside the
+ * elevation's `dir="ltr"`, so the physical `left-1/2` here is deliberate.
  */
-function ColorFace({
+function UnitFace({
   unitType,
   kind,
   columns,
-  upstairs,
+  lit,
+  tone,
 }: {
   unitType: string | null;
   kind: FaceKind;
   columns: number;
-  upstairs: boolean;
+  lit: boolean;
+  tone: PropertyTone;
 }) {
   if (kind === 'void') {
     // «طابق فارغ» — a floor with nothing on it: its outline only.
-    return <span aria-hidden className="absolute inset-0 rounded-[2px] border border-dashed border-foreground/40" />;
+    return (
+      <span
+        aria-hidden
+        className={cn(
+          'absolute inset-0 rounded-[2px] border border-dashed',
+          lit ? TONE_BORDER[tone] : 'border-foreground/40',
+        )}
+      />
+    );
   }
   if (kind === 'structure') {
-    // «طابق أعمدة» — a concrete slab on full-height pillars, open between them.
+    // «طابق أعمدة» — open ground under the floor above: a colonnade of slender columns.
+    const ink = lit ? TONE_PANEL[tone] : 'bg-foreground/35';
     return (
-      <span aria-hidden className="absolute inset-0 flex flex-col">
-        <span className="h-[22%] min-h-[3px] shrink-0 rounded-[1px] bg-illustration-concrete" />
-        <span className="flex flex-1 justify-between px-[6%]">
-          {Array.from({ length: Math.min(7, columns + 1) }, (_, i) => (
-            <span key={i} className="h-full w-[9%] max-w-[8px] min-w-[2px] bg-illustration-concrete" />
-          ))}
-        </span>
+      <span aria-hidden className="absolute inset-x-0 bottom-0 top-[6%] flex justify-between px-[2%]">
+        {Array.from({ length: Math.min(36, columns * 8 + 1) }, (_, i) => (
+          <span key={i} className={cn('h-full w-[2px] rounded-t-[1px]', ink)} />
+        ))}
       </span>
     );
   }
   if (kind === 'glass') {
-    // A centre's curtain wall: sky panes edge to edge.
+    // A commercial centre's curtain wall: dark panes edge to edge.
     const panes = Math.min(10, columns * 3);
     return (
-      <span aria-hidden className="absolute inset-[2px] grid gap-[2px]" style={{ gridTemplateColumns: `repeat(${panes}, minmax(0, 1fr))` }}>
+      <span
+        aria-hidden
+        className="absolute inset-[3px] grid gap-[2px]"
+        style={{ gridTemplateColumns: `repeat(${panes}, minmax(0, 1fr))` }}
+      >
         {Array.from({ length: panes }, (_, i) => (
-          <span key={i} className="rounded-[1px] bg-illustration-window/90" />
+          <span key={i} className={cn('rounded-[1px]', OPENING)} />
         ))}
       </span>
     );
   }
   if (kind === 'storage' && unitType !== 'GARAGE') {
-    // «مستودع» — a metal roller door, the yellow-and-black loading dock under it.
+    // «مستودع» — a roller door of horizontal slats, the loading sill under it.
     return (
-      <span aria-hidden className="absolute inset-0 flex flex-col items-center justify-end px-[8%] pt-[14%]">
-        <span
-          className="w-full flex-1 rounded-t-[2px] border border-b-0 border-illustration-metal-edge bg-illustration-metal"
-          style={{ backgroundImage: 'repeating-linear-gradient(0deg, hsl(var(--illustration-metal-edge) / 0.45) 0 1px, transparent 1px 4px)' }}
-        />
-        <span
-          className="h-[4px] w-[110%] rounded-[1px]"
-          style={{ backgroundImage: 'repeating-linear-gradient(45deg, hsl(var(--warning)) 0 4px, hsl(var(--foreground)) 4px 8px)' }}
-        />
+      <span aria-hidden className="absolute inset-0 flex flex-col items-center justify-end px-[10%] pt-[16%]">
+        <span className={cn('flex w-full flex-1 flex-col justify-evenly rounded-t-[2px] px-[2px]', OPENING)}>
+          {[0, 1, 2, 3, 4].map((i) => (
+            <span key={i} className={cn('h-px w-full', TRIM)} />
+          ))}
+        </span>
+        <span className={cn('h-[3px] w-[112%] rounded-[1px]', TRIM)} />
       </span>
     );
   }
 
   switch (unitType) {
     case 'GARAGE':
-      // «كراج» — a wooden sectional door of wide panels.
+      // «كراج» — a sectional door: a strip of small lights over wide panels.
       return (
-        <span aria-hidden className="absolute inset-0 flex items-end justify-center px-[16%] pt-[20%]">
-          <span className="flex h-full w-full flex-col gap-[2px] rounded-t-[2px] border border-foreground/40 bg-illustration-wood p-[2px]">
-            {[0, 1, 2, 3].map((i) => (
-              <span key={i} className="flex-1 rounded-[1px] bg-illustration-wood-light" />
-            ))}
+        <span aria-hidden className="absolute inset-0 flex items-end justify-center px-[14%] pt-[18%]">
+          <span className={cn('flex h-full w-full flex-col gap-[2px] rounded-t-[2px] p-[2px]', OPENING)}>
+            <span className="flex flex-1 gap-[2px]">
+              {[0, 1, 2, 3].map((i) => (
+                <span key={i} className={cn('flex-1 rounded-[1px]', TRIM)} />
+              ))}
+            </span>
+            <span className={cn('flex-1 rounded-[1px]', TRIM)} />
+            <span className={cn('flex-1 rounded-[1px]', TRIM)} />
           </span>
         </span>
       );
     case 'SHOP':
-      // «محل تجاري» — the fascia, a red-and-white awning, the display window, the door.
+    case 'CLINIC': {
+      /*
+        «محل تجاري» — the sign board, a scalloped awning in alternating
+        stripes, the display window and the shop door. «عيادة» is the same
+        front with a cross on its sign and no awning, as `ShopArt` draws it.
+      */
+      const clinic = unitType === 'CLINIC';
+      const stripes = Math.min(12, columns * 4);
+      const signInk = lit ? 'bg-foreground' : TRIM;
       return (
         <span aria-hidden className="absolute inset-0 flex flex-col">
-          <span className="h-[16%] min-h-[2px] shrink-0 bg-illustration-steel" />
-          <span
-            className="h-[22%] min-h-[3px] shrink-0 rounded-b-[3px]"
-            style={{ backgroundImage: 'repeating-linear-gradient(90deg, hsl(var(--destructive)) 0 6px, hsl(var(--card)) 6px 12px)' }}
-          />
-          <span className="flex min-h-0 flex-1 gap-[3px] px-[3px] pt-[3px]">
-            <span className="flex-1 rounded-t-[2px] border border-illustration-steel/60 bg-illustration-window-pale" />
-            <span className="w-[20%] max-w-[12px] rounded-t-[2px] bg-illustration-steel" />
+          <span className={cn('flex h-[18%] min-h-[3px] shrink-0 items-center justify-center', OPENING)}>
+            {clinic ? (
+              <span className="relative block size-[8px]">
+                <span className={cn('absolute inset-x-0 top-1/2 h-[2px] -translate-y-1/2', signInk)} />
+                <span className={cn('absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2', signInk)} />
+              </span>
+            ) : (
+              <span className={cn('h-[2px] w-1/3 rounded-full', TRIM)} />
+            )}
           </span>
-        </span>
-      );
-    case 'CLINIC':
-      // «عيادة» — a green sign with a white cross, a frosted window, the door.
-      return (
-        <span aria-hidden className="absolute inset-0 flex flex-col">
-          <span className="flex h-[24%] min-h-[4px] shrink-0 items-center justify-center bg-success">
-            <span className="relative block size-[9px]">
-              <span className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 bg-success-foreground" />
-              <span className="absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 bg-success-foreground" />
+          {clinic ? null : (
+            <span className="flex h-[18%] min-h-[3px] shrink-0">
+              {Array.from({ length: stripes }, (_, i) => (
+                <span
+                  key={i}
+                  className={cn('flex-1 rounded-b-full', i % 2 === 0 ? 'bg-foreground/45' : 'bg-foreground/15')}
+                />
+              ))}
+            </span>
+          )}
+          <span className="flex min-h-0 flex-1 gap-[3px] px-[4px] pt-[3px]">
+            <span className={cn('relative flex-1 rounded-t-[2px]', OPENING)}>
+              <span className={cn('absolute inset-x-0 bottom-[30%] h-px', TRIM)} />
+            </span>
+            <span className={cn('relative w-[18%] max-w-[12px] rounded-t-[2px]', OPENING)}>
+              <span className={cn('absolute end-[22%] top-1/2 size-[2px] rounded-full', TRIM)} />
             </span>
           </span>
-          <span className="flex min-h-0 flex-1 gap-[3px] px-[3px] pt-[3px]">
-            <span className="flex-1 rounded-t-[2px] border border-illustration-frame bg-illustration-window-pale/70" />
-            <span className="w-[20%] max-w-[12px] rounded-t-[2px] bg-illustration-steel/80" />
-          </span>
         </span>
       );
+    }
     case 'OFFICE': {
-      // «مكتب» — a nameplate over glass, its blinds half down.
-      const panes = Math.min(6, columns * 2);
+      // «مكتب» — a nameplate over a band of glazing: a grid of panes, two rows.
+      const panes = Math.min(6, columns * 3);
       return (
         <span aria-hidden className="absolute inset-0 flex flex-col gap-[2px] p-[3px]">
-          <span className="mx-auto h-[14%] min-h-[2px] w-1/3 shrink-0 rounded-[1px] bg-illustration-steel" />
-          <span className="grid min-h-0 flex-1 gap-[2px]" style={{ gridTemplateColumns: `repeat(${panes}, minmax(0, 1fr))` }}>
-            {Array.from({ length: panes }, (_, i) => (
-              <span
-                key={i}
-                className="rounded-[1px] bg-illustration-window/80"
-                style={{
-                  backgroundImage: 'repeating-linear-gradient(0deg, transparent 0 2px, hsl(var(--card) / 0.55) 2px 3px)',
-                  backgroundSize: '100% 50%',
-                  backgroundRepeat: 'no-repeat',
-                }}
-              />
+          <span className={cn('mx-auto h-[12%] min-h-[2px] w-1/3 shrink-0 rounded-[1px]', OPENING)} />
+          <span
+            className="grid min-h-0 flex-1 grid-rows-2 gap-[2px]"
+            style={{ gridTemplateColumns: `repeat(${panes}, minmax(0, 1fr))` }}
+          >
+            {Array.from({ length: panes * 2 }, (_, i) => (
+              <span key={i} className={cn('rounded-[1px]', OPENING)} />
             ))}
           </span>
         </span>
       );
     }
     case 'INDEPENDENT_HOUSE':
-      // «منزل مستقل» — a window either side of its wooden front door.
+      // «منزل مستقل» — a window either side of its front door, the door's handle.
       return (
         <span aria-hidden className="absolute inset-0 flex items-end justify-evenly px-[6%]">
           <Window className="mb-[28%] h-[38%] w-[22%] max-w-[16px]" />
-          <span className="relative h-[64%] w-[18%] max-w-[13px] rounded-t-[2px] bg-illustration-wood">
-            <span className="absolute end-[20%] top-1/2 size-[2px] rounded-full bg-illustration-wood-light" />
+          <span className={cn('relative h-[64%] w-[18%] max-w-[13px] rounded-t-[2px]', OPENING)}>
+            <span className={cn('absolute end-[20%] top-1/2 size-[2px] rounded-full', TRIM)} />
           </span>
           <Window className="mb-[28%] h-[38%] w-[22%] max-w-[16px]" />
         </span>
       );
     default: {
-      // «شقة» — framed windows; a balcony with its rail above the street.
+      // «شقة» — two small windows a column, evenly spaced.
       const windows = Math.min(8, columns * 2);
       return (
-        <span aria-hidden className="absolute inset-0 flex flex-col">
-          <span className="flex flex-1 items-center justify-evenly px-[4%]">
-            {Array.from({ length: windows }, (_, i) => (
-              <Window key={i} className="h-[56%] w-[18%] max-w-[16px]" />
-            ))}
-          </span>
-          {upstairs ? (
-            <span
-              className="mx-[3%] h-[16%] min-h-[2px] max-h-[6px] border-t-2 border-illustration-steel/80"
-              style={{ backgroundImage: 'repeating-linear-gradient(90deg, hsl(var(--illustration-steel) / 0.7) 0 1px, transparent 1px 5px)' }}
-            />
-          ) : null}
+        <span aria-hidden className="absolute inset-0 flex items-center justify-evenly px-[4%]">
+          {Array.from({ length: windows }, (_, i) => (
+            <Window key={i} className="h-[42%] w-[9%] min-w-[4px] max-w-[8px]" />
+          ))}
         </span>
       );
     }

@@ -2,8 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   AlertTriangle,
+  Building2,
   CalendarClock,
   CalendarDays,
   DoorClosed,
@@ -64,7 +67,9 @@ import {
   type UnitVisitRow,
   type UnitWithOccupants,
 } from '@/lib/api-client';
+import { ACTION_TINT } from '@/lib/action-tint';
 import { formatDate, monthNames } from '@/lib/dates';
+import { formatPhone } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -82,7 +87,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { CellTag } from '@/components/ui/cell-tag';
 import { Checkbox } from '@/components/ui/checkbox';
+import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { Field, FieldFlagProvider } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -94,6 +101,7 @@ import {
 } from '@/components/ui/select';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
+import { ActionTooltip } from '@/components/ui/tooltip';
 import {
   AfterTenancyQuestion,
   afterTenancyComplete,
@@ -2302,130 +2310,279 @@ export function OccupantList({
 
   const shown = unit.occupants.filter((occupant) => occupant.endReason !== 'RECORDED_IN_ERROR');
   const hidden = unit.occupants.length - shown.length;
+  const tableLabels = useOccupantTableLabels();
+
+  /*
+    Columns only some flats need are left out where no row would fill them:
+    a tenant-only flat has no أسهم to show, and a flat with no current tenant
+    has nobody to be linked to an owner. A column of dashes is noise (UX-3).
+  */
+  const showShares = shown.some((occupant) => occupant.shares);
+  const showOwnerLink = shown.some(
+    (occupant) =>
+      occupant.toDate === null && occupant.ownerLink && occupant.ownerLink.state !== 'NO_CARD',
+  );
+  const showActions = canWrite && shown.some((occupant) => occupant.toDate === null);
+
+  const columns = useMemo<ColumnDef<UnitOccupant>[]>(() => {
+    const nameOf = (occupant: UnitOccupant) => occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم');
+    const list: ColumnDef<UnitOccupant>[] = [
+      {
+        id: 'name',
+        header: en ? 'Name' : 'الاسم',
+        meta: { mobile: 'primary' },
+        cell: ({ row }) => {
+          const occupant = row.original;
+          const current = occupant.toDate === null;
+          const nameClass = cn(
+            'inline-flex min-w-0 items-center gap-1.5 text-sm',
+            current ? 'font-medium' : 'text-muted-foreground',
+          );
+          const body = (
+            <>
+              <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="truncate" title={nameOf(occupant)}>
+                {nameOf(occupant)}
+              </span>
+            </>
+          );
+          return citizenHref ? (
+            <Link
+              href={citizenHref(occupant.citizenId)}
+              className={cn(nameClass, 'underline-offset-2 hover:underline')}
+            >
+              {body}
+            </Link>
+          ) : (
+            <span className={nameClass}>{body}</span>
+          );
+        },
+      },
+      {
+        id: 'role',
+        header: en ? 'Capacity' : 'الصفة',
+        cell: ({ row }) => <CellTag>{labels.occupancyRole[row.original.role]}</CellTag>,
+      },
+      /*
+        The number, beside the name, for owner and occupant alike: the officer
+        at the door is the person who needs to call whoever is recorded here,
+        and opening each file to find it was the detour.
+      */
+      {
+        id: 'phone',
+        header: en ? 'Phone' : 'الهاتف',
+        cell: ({ row }) =>
+          row.original.citizenPhone ? (
+            <a
+              href={`tel:${row.original.citizenPhone}`}
+              dir="ltr"
+              className="whitespace-nowrap text-xs tabular-nums text-primary underline-offset-2 hover:underline"
+            >
+              {formatPhone(row.original.citizenPhone)}
+            </a>
+          ) : (
+            <CellTag tone="muted">—</CellTag>
+          ),
+      },
+    ];
+
+    if (showShares) {
+      list.push({
+        id: 'shares',
+        header: en ? 'Shares' : 'الأسهم',
+        cell: ({ row }) =>
+          row.original.shares ? (
+            <CellTag className="tabular-nums">
+              {en ? `${row.original.shares}/2400` : `${row.original.shares}/2400 سهم`}
+            </CellTag>
+          ) : (
+            <CellTag tone="muted">—</CellTag>
+          ),
+      });
+    }
+
+    list.push(
+      {
+        id: 'period',
+        header: en ? 'Period' : 'المدّة',
+        cell: ({ row }) => (
+          <CellTag tone="muted" className="tabular-nums">
+            {row.original.toDate
+              ? `${formatDate(row.original.fromDate)} — ${formatDate(row.original.toDate)}`
+              : `${en ? 'Since' : 'منذ'} ${formatDate(row.original.fromDate)}`}
+          </CellTag>
+        ),
+      },
+      {
+        id: 'status',
+        header: en ? 'Status' : 'الحالة',
+        cell: ({ row }) => {
+          const occupant = row.original;
+          if (occupant.toDate !== null) {
+            return (
+              <CellTag tone="muted">
+                {en ? 'Former' : 'سابق'}
+                {occupant.endReason ? ` · ${labels.occupancyEndReason[occupant.endReason]}` : null}
+              </CellTag>
+            );
+          }
+          /*
+            No card on their file claims this flat — so billing, which reads
+            the file, has nothing to charge for it. Only said of a current
+            spell: a former one released on the way out is missing nothing.
+          */
+          if (occupant.backedByFile === false) {
+            return (
+              <CellTag
+                tone="warning"
+                title={
+                  en
+                    ? 'This citizen has no registration, so nothing on their file claims this unit and it cannot be billed. Register them to link it.'
+                    : 'لا يوجد ملف لهذا المواطن، فلا شيء يربطه بالوحدة ولن تُحتسب الرسوم. سجّله ليُربط العقار.'
+                }
+              >
+                <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+                {en ? 'No file yet' : 'لا ملف له بعد'}
+              </CellTag>
+            );
+          }
+          return <CellTag tone="success">{en ? 'Current' : 'حالي'}</CellTag>;
+        },
+      },
+    );
+
+    if (showOwnerLink) {
+      list.push({
+        id: 'owner',
+        header: en ? 'Rents from' : 'المؤجِّر',
+        cell: ({ row }) =>
+          row.original.toDate === null && row.original.ownerLink ? (
+            <OwnerLinkCell link={row.original.ownerLink} en={en} />
+          ) : (
+            <CellTag tone="muted">—</CellTag>
+          ),
+      });
+    }
+
+    if (citizenHref || showActions) {
+      list.push({
+        id: 'actions',
+        // Blank header: DataTable pins it to the card footer on a phone.
+        header: '',
+        meta: { align: 'end', mobile: 'actions', headerClassName: 'w-36' },
+        cell: ({ row }) => {
+          const occupant = row.original;
+          const name = nameOf(occupant);
+          const canEnd = showActions && occupant.toDate === null;
+          /*
+            The same two doors, in the same dress, as the citizens register's
+            row (UX-1): the file, and the properties and units on it.
+          */
+          return (
+            <div className="flex items-center justify-end gap-1.5">
+              {citizenHref ? (
+                <>
+                  <ActionTooltip label={en ? 'View details & invoices' : 'عرض التفاصيل والفواتير'}>
+                    <Link
+                      href={citizenHref(occupant.citizenId)}
+                      aria-label={en ? `View ${name}'s details` : `عرض تفاصيل ${name}`}
+                      className={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), ACTION_TINT.view)}
+                    >
+                      <UserRound className="size-4" aria-hidden />
+                    </Link>
+                  </ActionTooltip>
+                  <ActionTooltip label={en ? 'Properties & units' : 'العقارات والوحدات'}>
+                    <Link
+                      href={`${citizenHref(occupant.citizenId)}/properties`}
+                      aria-label={en ? `${name}'s properties & units` : `عقارات ووحدات ${name}`}
+                      className={cn(
+                        buttonVariants({ variant: 'ghost', size: 'icon-sm' }),
+                        ACTION_TINT.properties,
+                      )}
+                    >
+                      <Building2 className="size-4" aria-hidden />
+                    </Link>
+                  </ActionTooltip>
+                </>
+              ) : null}
+              {canEnd ? occupantMenu(occupant, name) : null}
+            </div>
+          );
+        },
+      });
+    }
+
+    return list;
+    // `occupantMenu` reads `owners`, which is derived from `unit` on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [en, labels, citizenHref, showShares, showOwnerLink, showActions, busy, onLinkOwner, unit]);
+
+  /**
+   * ⋮ — the writes on one current spell: link to an owner, end it. A render
+   * function, not a component: declared in here it would remount every render.
+   */
+  function occupantMenu(occupant: UnitOccupant, name: string) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            disabled={busy}
+            aria-label={en ? `Actions for ${name}` : `إجراءات ${name}`}
+            className="text-muted-foreground"
+          >
+            <EllipsisVertical className="size-4" aria-hidden />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {/*
+            Offered to a tenant whose card names no registered owner,
+            whenever the flat has an owner recorded. An owner recorded
+            after the tenant is linked only once the officer confirms
+            it in the dialog.
+          */}
+          {onLinkOwner &&
+          occupant.role !== 'OWNER' &&
+          occupant.ownerLink &&
+          (occupant.ownerLink.state === 'UNLINKED' || occupant.ownerLink.state === 'NO_CARD') &&
+          ownersFor(occupant).length > 0 ? (
+            <DropdownMenuItem className="min-h-10" onSelect={() => setLinking(occupant)}>
+              {en ? 'Link to the owner…' : 'ربط بالمالك…'}
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem
+            className="min-h-10 text-destructive focus:text-destructive"
+            onSelect={() => setEnding(occupant)}
+          >
+            {endActionLabel(occupant.role, en)}…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
 
   if (unit.occupants.length === 0) return null;
 
   return (
     <>
       {shown.length > 0 ? (
-        <ul className="space-y-1.5">
-          {shown.map((occupant) => {
-            const current = occupant.toDate === null;
-            /*
-              No card on their file claims this flat — so billing, which reads
-              the file, has nothing to charge for it. Only said of a current
-              spell: a former one released on the way out is missing nothing.
-            */
-            const unbacked = current && occupant.backedByFile === false;
-            const name = occupant.citizenName ?? (en ? 'Unnamed' : 'بلا اسم');
-            const nameClass = cn(current ? 'font-medium' : 'font-normal line-through');
-
-            return (
-              <li
-                key={occupant.id}
-                className={cn(
-                  'flex flex-wrap items-center gap-2 rounded-md px-2.5 py-1.5 text-xs',
-                  current ? 'bg-background' : 'bg-muted/40 text-muted-foreground',
-                )}
-              >
-                <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                {citizenHref ? (
-                  <Link
-                    href={citizenHref(occupant.citizenId)}
-                    className={cn('underline-offset-2 hover:underline', nameClass)}
-                  >
-                    {name}
-                  </Link>
-                ) : (
-                  <span className={nameClass}>{name}</span>
-                )}
-                <Badge variant="soft-muted">{labels.occupancyRole[occupant.role]}</Badge>
-                {!current ? <Badge variant="outline">{en ? 'Former' : 'سابق'}</Badge> : null}
-                {!current && occupant.endReason ? (
-                  <span className="text-xs">{labels.occupancyEndReason[occupant.endReason]}</span>
-                ) : null}
-                {occupant.shares ? (
-                  <span className="text-muted-foreground">
-                    {en ? `${occupant.shares}/2400 shares` : `${occupant.shares}/٢٤٠٠ سهم`}
-                  </span>
-                ) : null}
-                {/*
-                  The number, beside the name, for owner and occupant alike: the
-                  officer at the door is the person who needs to call whoever is
-                  recorded here, and opening each file to find it was the detour.
-                */}
-                {occupant.citizenPhone ? (
-                  <a
-                    href={`tel:${occupant.citizenPhone}`}
-                    dir="ltr"
-                    className="font-mono text-primary underline-offset-2 hover:underline"
-                  >
-                    {occupant.citizenPhone}
-                  </a>
-                ) : null}
-                <span className="text-muted-foreground">
-                  {occupant.toDate
-                    ? `${formatDate(occupant.fromDate)} — ${formatDate(occupant.toDate)}`
-                    : `${en ? 'since' : 'منذ'} ${formatDate(occupant.fromDate)}`}
-                </span>
-                {unbacked ? (
-                  <span
-                    className="inline-flex items-center gap-1 text-xs text-warning"
-                    title={
-                      en
-                        ? 'This citizen has no registration, so nothing on their file claims this unit and it cannot be billed. Register them to link it.'
-                        : 'لا يوجد ملف لهذا المواطن، فلا شيء يربطه بالوحدة ولن تُحتسب الرسوم. سجّله ليُربط العقار.'
-                    }
-                  >
-                    <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
-                    {en ? 'No file yet' : 'لا ملف له بعد'}
-                  </span>
-                ) : null}
-                {canWrite && current ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        aria-label={en ? `Actions for ${name}` : `إجراءات ${name}`}
-                        className="ms-auto flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-                      >
-                        <EllipsisVertical className="size-4" aria-hidden />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      {/*
-                        Offered to a tenant whose card names no registered owner,
-                        whenever the flat has an owner recorded. An owner recorded
-                        after the tenant is linked only once the officer confirms
-                        it in the dialog.
-                      */}
-                      {onLinkOwner &&
-                      occupant.role !== 'OWNER' &&
-                      occupant.ownerLink &&
-                      (occupant.ownerLink.state === 'UNLINKED' || occupant.ownerLink.state === 'NO_CARD') &&
-                      ownersFor(occupant).length > 0 ? (
-                        <DropdownMenuItem className="min-h-10" onSelect={() => setLinking(occupant)}>
-                          {en ? 'Link to the owner…' : 'ربط بالمالك…'}
-                        </DropdownMenuItem>
-                      ) : null}
-                      <DropdownMenuItem
-                        className="min-h-10 text-destructive focus:text-destructive"
-                        onSelect={() => setEnding(occupant)}
-                      >
-                        {endActionLabel(occupant.role, en)}…
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : null}
-                {/* After the menu, so it wraps onto its own line and the ⋮ stays beside the name. */}
-                {current && occupant.ownerLink ? (
-                  <OwnerLinkLine link={occupant.ownerLink} owners={owners} en={en} />
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
+        <section className="space-y-2" aria-labelledby={`occupants-${unit.id}`}>
+          <h3 id={`occupants-${unit.id}`} className="text-sm font-semibold">
+            {en ? 'Registered in this unit' : 'المسجَّلون في الوحدة'}
+            <span className="ms-1.5 font-normal tabular-nums text-muted-foreground">({shown.length})</span>
+          </h3>
+          <DataTable
+            columns={columns}
+            data={shown}
+            labels={tableLabels}
+            getRowId={(occupant) => occupant.id}
+            searchable={false}
+            sortable={false}
+            paginated={false}
+            fixedLayout
+          />
+        </section>
       ) : null}
 
       {hidden > 0 ? (
@@ -2486,54 +2643,63 @@ export function OccupantList({
 }
 
 /**
- * Who a current tenant holds the flat from, as their own card says — beside
- * their name on the unit, so an owner and a tenant recorded on the same flat
- * are visibly connected, or visibly not.
+ * Who a current tenant holds the flat from, as their own card says — in its
+ * own column, so an owner and a tenant recorded on the same flat are visibly
+ * connected, or visibly not. Co-owners need no mention: they are rows of the
+ * same table.
  */
-function OwnerLinkLine({
-  link,
-  owners,
-  en,
-}: {
-  link: OccupantOwnerLink;
-  owners: UnitOccupant[];
-  en: boolean;
-}) {
-  if (link.state === 'NO_CARD') return null;
+function OwnerLinkCell({ link, en }: { link: OccupantOwnerLink; en: boolean }) {
+  if (link.state === 'NO_CARD') return <CellTag tone="muted">—</CellTag>;
 
-  if (link.state === 'LINKED') {
-    const others = owners.filter((owner) => owner.citizenId !== link.ownerId);
-    // The flat's only owner is listed right above — naming them again says nothing.
-    if (others.length === 0) return null;
-    return (
-      <span className="basis-full text-xs text-muted-foreground">
-        {en ? 'Owner: ' : 'المالك: '}
-        <span className="font-medium text-foreground">{link.ownerName}</span>
-        {others.length > 0
-          ? en
-            ? ` — co-owners: ${others.map((owner) => owner.citizenName).join(', ')}`
-            : ` — شركاؤه: ${others.map((owner) => owner.citizenName).join('، ')}`
-          : null}
-      </span>
-    );
-  }
+  if (link.state === 'LINKED') return <CellTag>{link.ownerName}</CellTag>;
 
   if (link.state === 'LINKED_ELSEWHERE') {
     return (
-      <span className="inline-flex basis-full items-center gap-1 text-xs text-warning">
+      <CellTag tone="warning" className="whitespace-normal">
         <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
         {en
           ? `Linked to ${link.ownerName}, who is not recorded as an owner of this unit`
           : `مربوط بـ${link.ownerName}، وهو غير مسجَّل مالكاً لهذه الوحدة`}
-      </span>
+      </CellTag>
     );
   }
 
   return (
-    <span className="basis-full text-xs text-muted-foreground">
+    <CellTag tone="muted" className="whitespace-normal">
       {en ? 'Not linked to an owner' : 'غير مربوط بمالك'}
       {link.typedName ? (en ? ` (named: ${link.typedName})` : ` (ذكر: ${link.typedName})`) : null}
-    </span>
+    </CellTag>
+  );
+}
+
+/**
+ * The occupant table's labels, from `messages.table` (§17: not another copy
+ * of `getTableLabels`). Search and paging are off on this table, so only the
+ * empty, error and sort strings are ever read; the rest are filled so the
+ * type holds.
+ */
+function useOccupantTableLabels(): DataTableLabels {
+  const t = useTranslations('table');
+  return useMemo(
+    () => ({
+      searchAriaLabel: t('search'),
+      searchPlaceholder: t('search'),
+      clearSearch: t('clearSearch'),
+      searchHint: 'Enter',
+      empty: t('empty'),
+      emptySearch: t('emptySearch'),
+      loadError: t('loadError'),
+      retry: t('retry'),
+      previous: t('previous'),
+      next: t('next'),
+      pageOf: t.raw('pageOf') as string,
+      rowsPerPage: t('rowsPerPage'),
+      totalRows: t.raw('totalRows') as string,
+      sortAscending: t('sortAsc'),
+      sortDescending: t('sortDesc'),
+      sortNone: t('sortNone'),
+    }),
+    [t],
   );
 }
 
