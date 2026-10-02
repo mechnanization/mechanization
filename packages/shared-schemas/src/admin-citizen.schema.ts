@@ -143,6 +143,25 @@ export type AdminUpdateCitizen = z.infer<typeof adminUpdateCitizenSchema>;
 const rawSection = z.record(z.unknown());
 
 /**
+ * A personal or contact section with its `null` values read as absent.
+ *
+ * The edit form is filled from the stored record, and a column nobody ever
+ * filled comes back as `null` — WhatsApp on a record whose «واتساب على الرقم
+ * نفسه» was ticked, a local contact never given. Sent back unchanged, that
+ * `null` reached `z.string().optional()`, which takes a string or nothing, and
+ * the save failed on «Expected string, received null» against a field the
+ * officer had not touched.
+ *
+ * `null` already means "nothing entered" to every pass here (`isAbsent`), and an
+ * absent field is stored as NULL (`citizenColumnsForEdit`), so reading it as
+ * absent changes no stored value. Top level only, and only these two sections:
+ * a property card's `landlordCitizenId: null` is an answer, not a blank.
+ */
+const personSection = rawSection.transform((section) =>
+  Object.fromEntries(Object.entries(section).filter(([, value]) => value !== null)),
+);
+
+/**
  * A card's fields, minus everything its نوع العقار does not have.
  *
  * The strict branch schemas already do this — `z.object` drops keys it does
@@ -751,8 +770,8 @@ const submissionEnvelope = {
    * every client that predates the field, keeps meaning what it meant.
    */
   residence: citizenResidenceSchema.default('RESIDENT'),
-  personal: rawSection,
-  contact: rawSection,
+  personal: personSection,
+  contact: personSection,
   flags: fieldFlagsSchema,
   /**
    * «سبب عام لنقص البيانات» — one reason for the whole visit.
