@@ -93,7 +93,13 @@ export interface UserRepository {
   disableTotp(userId: string): Promise<void>;
 
   /** Every staff account with the history count that gates a hard delete. */
-  listStaff(): Promise<StaffSummary[]>;
+  /**
+   * Every staff account that has not been deleted. With `includeDeletedEarners`,
+   * also the deleted ones that earned or were paid commission — the earnings
+   * roster's totals are the municipality's history and must not shrink when
+   * an account is hidden.
+   */
+  listStaff(options?: { includeDeletedEarners?: boolean }): Promise<StaffSummary[]>;
 
   createStaff(input: {
     tenantSlug: string;
@@ -118,15 +124,26 @@ export interface UserRepository {
   /** Soft delete — the row stays so its audit trail keeps a name attached. */
   setStaffActive(id: string, isActive: boolean): Promise<void>;
 
-  /** Erases the row outright. Only legitimate for an account that never acted. */
-  hardDeleteStaff(id: string): Promise<void>;
-
   /**
-   * Whether this account has done anything the record still depends on: an
-   * audit entry, or a registration it reviewed. Both would be orphaned by a
-   * hard delete, which is why one is only offered when this is false.
+   * «حذف موظف»: hides the account — off the staff list, never signing in —
+   * and keeps the row, its details and its history. See `StaffService.remove`.
    */
-  countStaffHistory(id: string): Promise<number>;
+  hideStaff(id: string): Promise<void>;
+  /** Whether a super admin has deleted (hidden) this staff account. */
+  isStaffHidden(id: string): Promise<boolean>;
+  /** Brings a deleted account back onto the list — still disabled until re-enabled. */
+  restoreStaff(id: string): Promise<void>;
+  /** The accounts a super admin has deleted, most recent first. */
+  listDeletedStaff(): Promise<DeletedStaffSummary[]>;
+}
+
+/** A deleted staff account, as the «الموظفون المحذوفون» list shows it. */
+export interface DeletedStaffSummary {
+  id: string;
+  email: string;
+  fullName: string;
+  role: StaffRole;
+  deletedAt: string;
 }
 
 export interface StaffSummary {
@@ -138,8 +155,6 @@ export interface StaffSummary {
   role: StaffRole;
   isActive: boolean;
   hasConfirmedTotp?: boolean;
-  /** Drives whether the UI may offer a permanent delete. */
-  historyCount: number;
   /** Performance & commission metrics for field inspectors */
   registeredCitizensCount?: number;
   registeredPropertiesCount?: number;
@@ -154,4 +169,6 @@ export interface StaffSummary {
   overpaidBalance?: number;
   createdAt: string;
   lastLoginAt: string | null;
+  /** Set only on a deleted account returned for the earnings roster. */
+  deletedAt?: string | null;
 }

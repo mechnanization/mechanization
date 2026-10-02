@@ -573,14 +573,12 @@ export function ContactStep({
               sat under the field reading 0 on every record.
 
               Kept mirrored rather than dropped because the column is still
-              written, read by `reporting.service`'s `marriedOffspringTotal` and
-              shown on the citizen's file. Leaving it unset would let the schema
-              default it to `actualHouseholdMembers` on a create — the same value
-              — but would strand an *edit* of an older record at whatever gross
-              total it was filed with, so correcting the resident count from 5 to
-              3 would silently report two married children who were never
-              entered. Writing both keeps the derived figure at 0, which is what
-              «دون المتزوجين» now means for every record this form touches.
+              written and read (`grossRegisteredTotal` on the dashboard). Leaving
+              it unset would let the schema default it to `actualHouseholdMembers`
+              on a create — the same value — but would strand an *edit* of an
+              older record at whatever gross total it was filed with. The
+              married-children figure derived from the two was removed on
+              2026-10-02; writing both keeps them equal.
             */
             onChange={(e) =>
               set({

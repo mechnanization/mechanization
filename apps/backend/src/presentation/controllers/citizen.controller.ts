@@ -182,7 +182,6 @@ export class CitizenController {
       bloodType: citizen.bloodType,
       totalRegisteredMembers: citizen.totalRegisteredMembers,
       actualHouseholdMembers: citizen.actualHouseholdMembers,
-      marriedChildrenCount: citizen.marriedChildrenCount,
       identityDocType: citizen.identityDocType,
 
       /**

@@ -110,6 +110,7 @@ export function auditActionLabel(action: string, locale: string): string {
     STAFF_DEACTIVATED: ['إلغاء تفعيل موظف', 'Deactivate staff'],
     STAFF_REACTIVATED: ['إعادة تفعيل موظف', 'Reactivate staff'],
     STAFF_DELETED: ['حذف حساب موظف', 'Delete staff'],
+    STAFF_RESTORED: ['استعادة حساب موظف محذوف', 'Restore deleted staff'],
     TOTP_ENROLLED: ['تسجيل تحقق ثنائي', '2FA enrollment'],
     TOTP_CONFIRMED: ['تأكيد التحقق الثنائي', '2FA confirmed'],
     DATA_REPAIR: ['إصلاح بيانات', 'Data repair'],

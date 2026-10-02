@@ -44,12 +44,6 @@ export interface DashboardAnalytics {
    */
   grossRegisteredTotal: number;
   /**
-   * إجمالي الأبناء المتزوجين المؤسسين لأسر — sum(totalRegisteredMembers -
-   * actualHouseholdMembers): how much of the gross registry total is married
-   * children who no longer live in the household they're still filed under.
-   */
-  marriedOffspringTotal: number;
-  /**
    * Households whose actual household size was never recorded. Reported
    * rather than hidden: they contribute nothing to `populationTotal`, so the
    * figure is understated by at least this many people, and a dashboard that
@@ -496,7 +490,6 @@ export interface CitizenProfile {
   civilRecordNumber: string | null;
   totalRegisteredMembers: number | null;
   actualHouseholdMembers: number | null;
-  marriedChildrenCount: number | null;
   maritalStatus: string | null;
   bloodType: string | null;
   referenceNumber: string | null;
@@ -701,14 +694,6 @@ export class ReportingService {
           (SELECT COALESCE(sum("totalRegisteredMembers"), 0)::int FROM ${this.S}users
             WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND ${this.S}users.id NOT IN (SELECT "absorbedId" FROM ${this.S}citizen_merges WHERE "undoneAt" IS NULL))
             AS "grossRegisteredTotal",
-          (SELECT COALESCE(sum("totalRegisteredMembers" - "actualHouseholdMembers"), 0)::int
-             FROM ${this.S}users
-            WHERE kind = 'CITIZEN'
-              AND residence = 'RESIDENT'
-              AND ${this.S}users.id NOT IN (SELECT "absorbedId" FROM ${this.S}citizen_merges WHERE "undoneAt" IS NULL)
-              AND "totalRegisteredMembers" IS NOT NULL
-              AND "actualHouseholdMembers" IS NOT NULL)
-            AS "marriedOffspringTotal",
           (SELECT count(*)::int FROM ${this.S}users
             WHERE kind = 'CITIZEN' AND residence = 'RESIDENT' AND ${this.S}users.id NOT IN (SELECT "absorbedId" FROM ${this.S}citizen_merges WHERE "undoneAt" IS NULL) AND "actualHouseholdMembers" IS NULL)
             AS "householdsWithoutSize",
@@ -1186,10 +1171,6 @@ export class ReportingService {
       civilRecordNumber: citizen.civilRecordNumber,
       totalRegisteredMembers: citizen.totalRegisteredMembers,
       actualHouseholdMembers: citizen.actualHouseholdMembers,
-      marriedChildrenCount:
-        citizen.totalRegisteredMembers != null && citizen.actualHouseholdMembers != null
-          ? citizen.totalRegisteredMembers - citizen.actualHouseholdMembers
-          : null,
       maritalStatus: citizen.maritalStatus,
       bloodType: citizen.bloodType,
       referenceNumber: citizen.referenceNumber,

@@ -103,6 +103,7 @@ import {
   UnitGridPicker,
   type GridUnitDraft,
 } from './unit-grid-picker';
+import { effectiveUnitStatus } from './building-unit-forms';
 
 const LOOKUP_DEBOUNCE_MS = 350;
 
@@ -287,6 +288,7 @@ function gridFromUnits(
         existingId: unit.id,
         unitCode: unit.unitCode,
         undeletableReason: undeletableReason(unit, en),
+        unitStatus: effectiveUnitStatus(unit),
       });
       columns = Math.max(columns, endCol);
       if (floor < 0) basements = Math.max(basements, -floor);
@@ -2882,6 +2884,7 @@ export function BuildingEditor({
                 // Not `setGridUnits` — a house gaining a second block is a
                 // question before it is a change. See `requestUnits`.
                 onUnitsChange={requestUnits}
+                unfinished={lifecycleStatus === 'PERMITTED' || lifecycleStatus === 'UNDER_CONSTRUCTION'}
               />
 
               {/*

@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { Languages } from 'lucide-react';
+import { Globe, Languages } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -53,19 +53,28 @@ export function LanguageSwitcher({
 
   if (variant === 'toggle') {
     const nextLang = currentLocale === 'ar' ? 'en' : 'ar';
-    const label = currentLocale === 'ar' ? 'English' : 'عربي';
+    const label = currentLocale === 'ar' ? 'Switch to English' : 'التبديل إلى العربية';
 
+    /*
+      A globe and the language it switches to, in two letters. The full word
+      «English» was the widest thing in the bar on a phone; a globe alone was
+      a guess for staff who do not know the convention. «EN» / «ع» names the
+      destination at a glance and still fits. The full sentence is the
+      tooltip and the accessible name.
+    */
     return (
       <Button
         variant="ghost"
         size="sm"
         onClick={() => handleLocaleChange(nextLang)}
-        className={cn('gap-1.5 font-medium', className)}
-        title={currentLocale === 'ar' ? 'Switch to English' : 'التبديل إلى العربية'}
-        aria-label={currentLocale === 'ar' ? 'Switch to English' : 'التبديل إلى العربية'}
+        className={cn('shrink-0 gap-1 px-2', className)}
+        title={label}
+        aria-label={label}
       >
-        <Languages className="size-4 shrink-0" aria-hidden />
-        <span>{label}</span>
+        <Globe className="size-4" aria-hidden />
+        <span aria-hidden className="text-xs font-semibold">
+          {nextLang === 'en' ? 'EN' : 'ع'}
+        </span>
       </Button>
     );
   }

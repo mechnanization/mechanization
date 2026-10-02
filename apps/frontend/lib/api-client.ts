@@ -33,6 +33,7 @@ import type {
   PaymentStatus,
   RecordInspectorPayoutInput,
   SequenceKey,
+  SettlePayment,
   BuildingLifecycle,
   StructureType,
   SurveyStatus,
@@ -639,8 +640,6 @@ export interface DashboardAnalytics {
   populationTotal: number;
   /** إجمالي المسجلين في سجلات النفوس — sum of totalRegisteredMembers (gross). */
   grossRegisteredTotal: number;
-  /** إجمالي الأبناء المتزوجين المؤسسين لأسر — sum(total - actual). */
-  marriedOffspringTotal: number;
   /**
    * Households with no declared actual household size. They contribute
    * nothing to `populationTotal`, so it is understated by at least this many
@@ -1971,6 +1970,26 @@ export async function updateUnit(
 }
 
 /**
+ * «تعديل عرض الوحدة» — a unit's new edges on its floor's grid. The server
+ * refuses drawing over a neighbour and pins the floor's unpositioned units
+ * where the matrix drew them.
+ */
+export async function resizeUnitSpan(
+  tenant: string,
+  token: string,
+  unitId: string,
+  span: { startCol: number; endCol: number },
+) {
+  const result = await apiFetch<UnitRow>(
+    tenant,
+    `/buildings/units/${encodeURIComponent(unitId)}/span`,
+    { token, method: 'PATCH', body: JSON.stringify(span) },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
  * Removes a flat the matrix says exists and the street does not — a blueprint
  * that overshot a floor, or a محل counted twice.
  *
@@ -2761,7 +2780,6 @@ export interface CitizenProfile {
   civilRecordNumber: string | null;
   totalRegisteredMembers: number | null;
   actualHouseholdMembers: number | null;
-  marriedChildrenCount: number | null;
   maritalStatus: string | null;
   bloodType: string | null;
   referenceNumber: string | null;
@@ -2830,7 +2848,6 @@ export interface MyCitizenSummary {
   bloodType: string | null;
   totalRegisteredMembers: number | null;
   actualHouseholdMembers: number | null;
-  marriedChildrenCount: number | null;
   identityDocType: string | null;
   /**
    * Tail only — `•••567`. The full number is never sent to this route; see the
@@ -3718,8 +3735,6 @@ export interface StaffSummary {
   role: string;
   isActive: boolean;
   hasConfirmedTotp?: boolean;
-  /** Audit entries + reviewed registrations. A permanent delete needs zero. */
-  historyCount: number;
   /** Performance & commission metrics for field inspectors */
   registeredCitizensCount?: number;
   registeredPropertiesCount?: number;
@@ -3730,11 +3745,23 @@ export interface StaffSummary {
   overpaidBalance?: number;
   createdAt: string;
   lastLoginAt: string | null;
+  /** Set only on a deleted account the earnings roster asked for. */
+  deletedAt?: string | null;
 }
 
-/** Every staff account with the history count that gates a permanent delete. */
-export function getStaff(tenant: string, token: string, signal?: AbortSignal) {
-  return apiFetch<{ items: StaffSummary[] }>(tenant, '/staff', { token, signal });
+/**
+ * Every staff account that has not been deleted. `includeDeletedEarners` adds
+ * the deleted accounts that earned or were paid commission — the earnings
+ * roster's totals are history and must not shrink when an account is hidden.
+ */
+export function getStaff(
+  tenant: string,
+  token: string,
+  signal?: AbortSignal,
+  options: { includeDeletedEarners?: boolean } = {},
+) {
+  const query = options.includeDeletedEarners ? '?include=deleted-earners' : '';
+  return apiFetch<{ items: StaffSummary[] }>(tenant, `/staff${query}`, { token, signal });
 }
 
 /**
@@ -3793,6 +3820,28 @@ export function deleteStaff(tenant: string, token: string, id: string) {
   return apiFetch<{ deleted: boolean }>(tenant, `/staff/${encodeURIComponent(id)}`, {
     token,
     method: 'DELETE',
+  });
+}
+
+/** A staff account a super admin has deleted. */
+export interface DeletedStaffSummary {
+  id: string;
+  email: string;
+  fullName: string;
+  role: string;
+  deletedAt: string;
+}
+
+/** The deleted staff accounts, most recent first — what a restore is made from. */
+export function getDeletedStaff(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<{ items: DeletedStaffSummary[] }>(tenant, '/staff/deleted', { token, signal });
+}
+
+/** Brings a deleted account back onto the staff list, still disabled. */
+export function restoreStaff(tenant: string, token: string, id: string) {
+  return apiFetch<{ restored: boolean }>(tenant, `/staff/${encodeURIComponent(id)}/restore`, {
+    token,
+    method: 'POST',
   });
 }
 
@@ -4684,17 +4733,29 @@ export async function settlePayment(
   tenant: string,
   token: string,
   id: string,
-  input: {
-    method?: string;
-    amount?: number;
-    /** Required by the server when `method` is `WHISH_MONEY`. */
-    whishTransactionRef?: string;
-    /** Required by the server when `method` is `COLLECTOR`. */
-    collectedById?: string;
-    note?: string;
-  } = {},
+  /**
+   * The shared schema's shape — method, amount or tender, the day, the reason
+   * for any departure from the official rate or today's date, and the retry
+   * key. Not re-declared here, so the page cannot drift from what the server
+   * validates.
+   */
+  input: Partial<SettlePayment> = {},
 ) {
-  const result = await apiFetch<{ paymentStatus: string }>(
+  const result = await apiFetch<{
+    paymentStatus: string;
+    received: number;
+    paidAmount: number;
+    remaining: number;
+    /** The ledger's RCP-… number — what the receipt prints and a reprint looks up. */
+    receiptNumber: string;
+    /** When the money moved: today's time, or midday of a back-dated day. */
+    occurredAt: string;
+    /** Handed back from a larger note, in the bill's currency. */
+    changeGiven: number;
+    /** The rate the foreign notes were taken at, and the municipality's own. */
+    exchangeRate: number | null;
+    officialExchangeRate: number | null;
+  }>(
     tenant,
     `/fees/payments/${encodeURIComponent(id)}/settle`,
     // The `CASH` default is kept ahead of the spread so an omitted method

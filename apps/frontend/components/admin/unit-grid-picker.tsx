@@ -7,6 +7,7 @@ import {
   defaultUnitTypeFor,
   isStructuralUnitType,
   type StructureType,
+  type UnitStatus,
   type UnitType,
 } from '@mechanization/shared-schemas';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
@@ -24,6 +25,7 @@ import {
 import { Sheet } from '@/components/ui/sheet';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { occupancyDot } from '@/lib/occupancy';
 import { floorLabel } from './parcel-pin-picker';
 
 export interface GridUnitDraft {
@@ -51,6 +53,13 @@ export interface GridUnitDraft {
    * grid already holds, and the reason is shown rather than the delete button.
    */
   undeletableReason?: string;
+  /**
+   * What the census says about who is in it — the recorded status, or the
+   * owner's declaration where nothing is recorded (`effectiveUnitStatus`).
+   * Drives the dot in the corner of an existing unit; a freshly painted block
+   * has none, because nobody has been asked yet.
+   */
+  unitStatus?: UnitStatus | null;
 }
 
 export const MIN_HORIZONTAL_BLOCKS = 1;
@@ -191,8 +200,15 @@ export function UnitGridPicker({
   onGridSizeChange,
   units,
   onUnitsChange,
+  unfinished = false,
 }: {
   locale: string;
+  /**
+   * The structure is still going up — «رخصة بناء صادرة» or «قيد الإنشاء».
+   * Its top is drawn open rather than roofed: more storeys are expected, and a
+   * finished roof line would say the drawing is complete when it is not.
+   */
+  unfinished?: boolean;
   structureType: StructureType;
   /**
    * Raised when painting a second unit turns a «منزل مستقل» into a building.
@@ -1045,18 +1061,39 @@ export function UnitGridPicker({
                       event.preventDefault();
                       startSelection(floor, thisCol);
                     }}
+                    aria-label={
+                      en
+                        ? `Empty — ${floorLabel(floor, en)}, column ${thisCol}`
+                        : `فارغ — ${floorLabel(floor, en)}، العمود ${thisCol}`
+                    }
                     className={cn(
                       // A fixed height, not `aspect-square`: `1fr` columns on a
                       // wide screen made square cells hundreds of pixels tall, so
                       // three floors overflowed their box. 44px is the tablet
                       // touch-target floor, and the same strip the ledger's
                       // read-only matrix draws (`MATRIX_ROW_HEIGHT`).
-                      'relative h-11 sm:h-12 touch-none select-none rounded-[4px] border text-[9px] font-semibold leading-none transition-colors',
+                      'group relative flex h-11 sm:h-12 touch-none select-none items-center justify-center rounded-[4px] border text-[9px] font-semibold leading-none transition-colors',
+                      /*
+                        Air, not a missing flat. A solid box here made a
+                        setback floor read as six storeys with a hole in each,
+                        so the building's real outline disappeared into the
+                        grid. A faint dashed outline keeps every cell visible
+                        and paintable — a half-built storey, or a flat not yet
+                        recorded, is drawn by dragging across these — while the
+                        painted units are what reads as the building.
+                      */
                       isPendingCell
                         ? 'border-primary bg-primary/15'
-                        : 'border-border/70 bg-background hover:bg-muted/60 cursor-pointer',
+                        : 'border-dashed border-border/40 bg-transparent hover:border-primary/60 hover:bg-primary/5 cursor-pointer',
                     )}
-                  />,
+                  >
+                    {isPendingCell ? null : (
+                      <Plus
+                        aria-hidden
+                        className="size-3 text-primary opacity-0 transition-opacity group-hover:opacity-70"
+                      />
+                    )}
+                  </button>,
                 );
                 col += 1;
                 continue;
@@ -1082,6 +1119,23 @@ export function UnitGridPicker({
                 ever knock on.
               */
               const structural = isStructuralUnitType(unit.unitType);
+
+              /*
+                The roof — every stretch of this unit with nothing painted on
+                the floor above it. Per column rather than per unit, so a
+                setback shows: a ground floor wider than the storeys over it is
+                roofed only where it sticks out. Above ground only; the top of a
+                basement is the ground.
+              */
+              const roofRuns: Array<{ from: number; to: number }> = [];
+              if (floor >= 0) {
+                for (let c = start; c <= end; c += 1) {
+                  if (unitAt(floor + 1, c)) continue;
+                  const last = roofRuns[roofRuns.length - 1];
+                  if (last && last.to === c - 1) last.to = c;
+                  else roofRuns.push({ from: c, to: c });
+                }
+              }
 
               cells.push(
                 <button
@@ -1141,6 +1195,47 @@ export function UnitGridPicker({
                       </span>
                     ) : null}
                   </span>
+                  {(() => {
+                    const dot = structural ? null : occupancyDot(unit.unitStatus);
+                    if (!dot) return null;
+                    const text = unit.unitStatus ? labels.unitStatus[unit.unitStatus] : '';
+                    return (
+                      <span
+                        role="img"
+                        aria-label={text}
+                        title={text}
+                        className={cn(
+                          'pointer-events-none absolute end-1 top-1 size-2 rounded-full ring-1 ring-background',
+                          dot === 'occupied' && 'bg-success',
+                          dot === 'vacant' && 'bg-muted-foreground/60',
+                          dot === 'seasonal' && 'border-2 border-success bg-transparent',
+                        )}
+                      />
+                    );
+                  })()}
+                  {/*
+                    A slab where the building is finished; an open, dashed edge
+                    where it is still going up, since the next storey is
+                    expected there. Either way it sits in the gap above the
+                    cell and takes no pointer, so the empty cells over it can
+                    still be painted.
+                  */}
+                  {roofRuns.map((run) => (
+                    <span
+                      key={`roof-${run.from}`}
+                      aria-hidden
+                      className={cn(
+                        'pointer-events-none absolute -top-[5px]',
+                        unfinished
+                          ? 'h-0 border-t-2 border-dashed border-warning'
+                          : 'h-[3px] rounded-full bg-foreground/55',
+                      )}
+                      style={{
+                        left: `${((run.from - start) / span) * 100}%`,
+                        width: `${((run.to - run.from + 1) / span) * 100}%`,
+                      }}
+                    />
+                  ))}
                 </button>,
               );
               col = end + 1;
@@ -1168,9 +1263,12 @@ export function UnitGridPicker({
                     theme-scoped: it sits on `bg-muted/10` either way, and the
                     500 weight carries against both.
                   */
-                  floor === 0 &&
-                    safeBasementsCount > 0 &&
-                    'border-b-2 border-dashed border-red-500 pb-1.5',
+                  /*
+                    Drawn on every building now, not only one with a basement:
+                    with the empty cells drawn as air, this is the line the
+                    building visibly stands on.
+                  */
+                  floor === 0 && 'border-b-2 border-dashed border-foreground/50 pb-1.5',
                 )}
               >
                 {/*
@@ -1214,7 +1312,13 @@ export function UnitGridPicker({
                   cells cannot be caught by one thumb.
                 */}
                 <div
-                  className="grid flex-1 gap-1.5"
+                  className={cn(
+                    'grid flex-1 gap-1.5',
+                    /* Below the line, the ground: a basement row sits in earth.
+                       No padding, which would knock its columns out of line
+                       with the storeys above; the tint shows in the gaps. */
+                    floor < 0 && 'rounded-md bg-illustration-concrete/15',
+                  )}
                   style={{ gridTemplateColumns: `repeat(${colsCount}, minmax(2.25rem, 1fr))` }}
                 >
                   {cells}
@@ -1224,6 +1328,15 @@ export function UnitGridPicker({
           })}
         </div>
       </div>
+
+      {unfinished ? (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span aria-hidden className="inline-block w-5 border-t-2 border-dashed border-warning" />
+          {en
+            ? 'Under construction — the top is left open; storeys and units can still be added above it.'
+            : 'قيد الإنشاء — السقف مفتوح، ويمكن إضافة طوابق ووحدات فوقه.'}
+        </p>
+      ) : null}
 
       {/* ── Compact Surveyed Units Tally ── */}
       {units.length > 0 ? (
