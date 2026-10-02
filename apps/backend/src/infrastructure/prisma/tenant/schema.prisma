@@ -168,6 +168,11 @@ model User {
   /// this.
   tokenVersion Int @default(0)
 
+  /// «حذف موظف»: when a super admin deleted this staff account. The row and its
+  /// history stay — the account is only hidden from the staff list and kept from
+  /// signing in. NULL for every account that has not been deleted. Migration 0065.
+  deletedAt DateTime?
+
   /// The TOTP step a code was last accepted at, making each code single-use.
   ///
   /// `otplib` runs with `window: 1`, so the same six digits verify for about
@@ -1969,6 +1974,29 @@ model PaymentTransaction {
   amount   Decimal       @db.Decimal(14, 2)
   currency String        @default("LBP")
   method   PaymentMethod
+
+  /// What was handed over at the counter — «20$ و200,000 ليرة». Written on
+  /// every cash payment taken through the cash page, so the day's cash-up can
+  /// count notes by currency; NULL on Whish, collector and older rows.
+  /// `amount` stays the credit: tenderedLocal + tenderedForeign × exchangeRate
+  /// − changeGiven, worked out by the server. The foreign trio is all NULL or
+  /// all set (CHECK, migration 0064).
+  tenderedLocal           Decimal? @db.Decimal(14, 2)
+  tenderedForeign         Decimal? @db.Decimal(14, 2)
+  tenderedForeignCurrency String?
+  /// Local currency per one unit of the foreign one, as used for this payment.
+  exchangeRate            Decimal? @db.Decimal(18, 4)
+  /// The municipality's own rate (الإعدادات) when this payment was taken, kept
+  /// beside `exchangeRate` so an override shows on the row. Migration 0066.
+  officialExchangeRate    Decimal? @db.Decimal(18, 6)
+  /// Handed back to the citizen, in the invoice's currency. Migration 0066.
+  changeGiven             Decimal? @db.Decimal(14, 2)
+  /// Why the rate differed from the official one, or why the payment is dated
+  /// before the day it was entered. Required by the server for either.
+  adjustmentReason        String?
+  /// One id per press of «سجّل الدفعة», so a retry finds the first row instead
+  /// of recording the money twice. Migration 0066.
+  clientRequestId         String?  @unique @db.Uuid
 
   /// Printed on the receipt. Drawn from a Postgres sequence, so two clerks
   /// settling in the same moment cannot be handed the same number.
