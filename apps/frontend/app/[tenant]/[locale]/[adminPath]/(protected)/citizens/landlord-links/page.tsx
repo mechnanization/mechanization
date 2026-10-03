@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useMemo, useState } from 'react';
+import { use, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -14,7 +14,11 @@ import {
   type LandlordProposal,
   type LandlordProposalCandidate,
 } from '@/lib/api-client';
-import { Consequences, useLandlordResolutions } from '@/components/admin/landlord-proposal-card';
+import {
+  Consequences,
+  landlordAnswerRolesNote,
+  useLandlordResolutions,
+} from '@/components/admin/landlord-proposal-card';
 import { MatchLightLabel as Light } from '@/components/admin/match-light';
 import {
   bestCandidate,
@@ -25,6 +29,7 @@ import {
   phoneLinkable,
 } from '@/lib/landlord-status';
 import { formatPhone } from '@/lib/phone';
+import { hasRole, LANDLORD_LINK_ANSWER_ROLES } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
@@ -36,6 +41,7 @@ import { CellTag } from '@/components/ui/cell-tag';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
+import { ActionTooltip } from '@/components/ui/tooltip';
 
 /**
  * Why «ربط» is not offered on a row, or null when it is. The row links only on
@@ -88,6 +94,9 @@ const SUMMARY_ROLES = new Set(['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINIST
  * offered only where there is nothing to choose (one person, found by the
  * number). Choosing between people wants room the row does not have, so that
  * stays on «فحص».
+ *
+ * Every staff role opens the queue; only `LANDLORD_LINK_ANSWER_ROLES` answer
+ * it. The others get «فحص» alone — a read of the claim — and no «ربط».
  */
 export default function LandlordLinksPage({
   params,
@@ -98,6 +107,9 @@ export default function LandlordLinksPage({
   const base = `/${tenant}/${locale}/${adminPath}`;
   const en = locale === 'en';
   const { token, user } = useStaffSession(tenant, base);
+  // Every staff role reads the queue; only these answer it (`POST …/confirm`).
+  // The rest see «فحص» and no «ربط» — a button the server can only refuse.
+  const canAnswer = hasRole(LANDLORD_LINK_ANSWER_ROLES, user?.role);
 
   // In the URL (`?page=` / `?limit=`), so a reload or Back from a citizen's
   // file returns to the same page of the queue.
@@ -113,29 +125,45 @@ export default function LandlordLinksPage({
     says who and what. The toast carries the undo; the row leaves the queue on
     the refetch.
   */
-  const link = async () => {
-    if (!linking || !token) return;
+  /*
+    One request per confirmation (STA-4). `ConfirmDialog` guards with `busy`
+    state, so a second tap in the same frame still calls this. It gets the
+    request already in flight rather than an early return: an early return
+    reads to the dialog as success and closes it, and a refusal of the first
+    request would then land in a dialog nobody can see.
+  */
+  const linkInFlight = useRef<Promise<void> | null>(null);
+  const link = (): Promise<void> => {
+    if (linkInFlight.current) return linkInFlight.current;
+    if (!linking || !token) return Promise.resolve();
     const { proposal, candidate } = linking;
-    try {
-      await confirmLandlordLink(tenant, token, proposal.propertyEntryId, candidate.id);
-    } catch (caught) {
-      throw new Error(
-        caught instanceof ApiRequestError
-          ? caught.payload.message
-          : en
-            ? 'The owner was not linked. Check the connection and try again.'
-            : 'لم يتم ربط المالك. تحقّق من الاتصال وحاول مرة أخرى.',
-      );
-    }
-    resolve({
-      kind: 'linked',
-      propertyEntryId: proposal.propertyEntryId,
-      ownerName: candidate.name,
-      candidateIds: [candidate.id],
+    const run = async () => {
+      try {
+        await confirmLandlordLink(tenant, token, proposal.propertyEntryId, candidate.id);
+      } catch (caught) {
+        throw new Error(
+          caught instanceof ApiRequestError
+            ? caught.payload.message
+            : en
+              ? 'The owner was not linked. Check the connection and try again.'
+              : 'لم يتم ربط المالك. تحقّق من الاتصال وحاول مرة أخرى.',
+        );
+      }
+      resolve({
+        kind: 'linked',
+        propertyEntryId: proposal.propertyEntryId,
+        ownerName: candidate.name,
+        candidateIds: [candidate.id],
+      });
+      void queryClient.invalidateQueries({ queryKey: ['landlord-links'] });
+      void queryClient.invalidateQueries({ queryKey: ['landlord-links-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['landlord-link', tenant, proposal.propertyEntryId] });
+    };
+    const pending = run().finally(() => {
+      linkInFlight.current = null;
     });
-    void queryClient.invalidateQueries({ queryKey: ['landlord-links'] });
-    void queryClient.invalidateQueries({ queryKey: ['landlord-links-summary'] });
-    void queryClient.invalidateQueries({ queryKey: ['landlord-link', tenant, proposal.propertyEntryId] });
+    linkInFlight.current = pending;
+    return pending;
   };
 
   const query = useStaffQuery({
@@ -322,6 +350,7 @@ export default function LandlordLinksPage({
           const candidate = phoneLinkable(proposal);
           const refusal = quickLinkRefusal(proposal, en);
           const refusalId = `link-refusal-${proposal.propertyEntryId}`;
+          const linkLabel = en ? 'Link' : 'ربط';
           return (
             <div className="flex items-center justify-end gap-2">
               <Link
@@ -332,30 +361,59 @@ export default function LandlordLinksPage({
                 <Search className="size-3.5" aria-hidden />
                 {en ? 'Check' : 'فحص'}
               </Link>
-              <Button
-                type="button"
-                size="sm"
-                className="h-8 gap-1.5 text-xs"
-                disabled={Boolean(refusal) || !candidate || !token}
-                title={refusal ?? undefined}
-                aria-describedby={refusal ? refusalId : undefined}
-                aria-label={candidate ? (en ? `Link ${candidate.name} as owner` : `ربط ${candidate.name} مالكاً`) : undefined}
-                onClick={() => candidate && setLinking({ proposal, candidate })}
-              >
-                <Link2 className="size-3.5" aria-hidden />
-                {en ? 'Link' : 'ربط'}
-              </Button>
-              {refusal ? (
-                <span id={refusalId} className="sr-only">
-                  {refusal}
-                </span>
-              ) : null}
+              {!canAnswer ? null : refusal ? (
+                /*
+                  Closed, with the reason one hover or one Tab away (PRIM-19).
+                  A disabled button takes no focus and shows no tooltip, so the
+                  focusable wrapper carries the name, the state and the reason;
+                  the button inside is only the picture of it.
+                */
+                <>
+                  <ActionTooltip label={refusal}>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      aria-disabled="true"
+                      aria-label={linkLabel}
+                      aria-describedby={refusalId}
+                      className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <Button
+                        type="button"
+                        size="sm"
+                        aria-hidden
+                        tabIndex={-1}
+                        disabled
+                        className="pointer-events-none h-8 gap-1.5 text-xs"
+                      >
+                        <Link2 className="size-3.5" aria-hidden />
+                        {linkLabel}
+                      </Button>
+                    </span>
+                  </ActionTooltip>
+                  <span id={refusalId} className="sr-only">
+                    {refusal}
+                  </span>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs"
+                  disabled={!candidate || !token}
+                  aria-label={candidate ? (en ? `Link ${candidate.name} as owner` : `ربط ${candidate.name} مالكاً`) : undefined}
+                  onClick={() => candidate && setLinking({ proposal, candidate })}
+                >
+                  <Link2 className="size-3.5" aria-hidden />
+                  {linkLabel}
+                </Button>
+              )}
             </div>
           );
         },
       },
     ],
-    [en, base, locale, occupancyLabels, token],
+    [en, base, locale, occupancyLabels, token, canAnswer],
   );
 
   return (
@@ -458,6 +516,10 @@ export default function LandlordLinksPage({
               <span className="text-sm font-normal tabular-nums text-muted-foreground">({total})</span>
             ) : null}
           </CardTitle>
+          {/* Said once, so a reviewer reads a row with no «ربط» as their role, not a fault. */}
+          {user && !canAnswer ? (
+            <p className="mt-1 text-xs text-muted-foreground">{landlordAnswerRolesNote(locale)}</p>
+          ) : null}
         </CardHeader>
         <CardContent className="p-0">
           {/* One frame: the card's (BAN-4). */}
@@ -503,6 +565,7 @@ export default function LandlordLinksPage({
         }
         confirmLabel={en ? 'Link' : 'ربط'}
         cancelLabel={en ? 'Cancel' : 'إلغاء'}
+        busyLabel={en ? 'Working…' : 'جارٍ التنفيذ…'}
         onConfirm={link}
       >
         {linking ? (

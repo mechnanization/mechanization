@@ -2171,6 +2171,7 @@ export function CitizenEditor({
         }
         confirmLabel={locale === 'en' ? 'Save anyway' : 'متابعة بدون ربط'}
         cancelLabel={locale === 'en' ? 'Go back and link' : 'رجوع والربط'}
+        busyLabel={locale === 'en' ? 'Working…' : 'جارٍ التنفيذ…'}
         onConfirm={async () => {
           const held = pendingSave;
           setPendingSave(null);
@@ -2206,6 +2207,7 @@ export function CitizenEditor({
         }
         confirmLabel={locale === 'en' ? 'Save and replace' : 'احفظ واستبدل'}
         cancelLabel={locale === 'en' ? 'Back, without saving' : 'رجوع دون حفظ'}
+        busyLabel={locale === 'en' ? 'Working…' : 'جارٍ التنفيذ…'}
         onConfirm={async () => {
           const held = staleSave;
           setStaleSave(null);

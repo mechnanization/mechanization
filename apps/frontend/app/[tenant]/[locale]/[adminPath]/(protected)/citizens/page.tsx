@@ -968,6 +968,7 @@ export default function CitizensPage({
         }
         confirmLabel={locale === 'en' ? 'Delete Permanently' : 'حذف نهائي'}
         cancelLabel={locale === 'en' ? 'Cancel' : 'إلغاء'}
+        busyLabel={locale === 'en' ? 'Working…' : 'جارٍ التنفيذ…'}
         requireText={pendingDelete?.fullName}
         requireTextHint={
           locale === 'en'

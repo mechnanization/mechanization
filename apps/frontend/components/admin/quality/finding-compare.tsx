@@ -852,6 +852,7 @@ function CitizenCompare({
         }
         confirmLabel={en ? 'Save' : 'موافق — احفظ'}
         cancelLabel={en ? 'Cancel' : 'إلغاء'}
+        busyLabel={en ? 'Working…' : 'جارٍ التنفيذ…'}
         onConfirm={save}
       />
     </CompareShell>

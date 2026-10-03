@@ -3,178 +3,35 @@
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import type { ColumnDef } from '@tanstack/react-table';
-import {
-  CalendarClock,
-  CheckCircle2,
-  ClipboardList,
-  Filter,
-  Grid3x3,
-  Link2,
-  Pencil,
-  Plus,
-  RotateCcw,
-  TrendingUp,
-  Trash2,
-  UserPlus,
-  X,
-} from 'lucide-react';
-import { getLabels, type CaseStatus, type CaseType } from '@mechanization/shared-schemas';
+import { ClipboardList, Filter, Plus, TrendingUp, X } from 'lucide-react';
 import {
   ApiRequestError,
   deleteCase,
   getCases,
   getZoneParcelIndex,
   logApiError,
-  recordOccupancy,
   updateCase,
 } from '@/lib/api-client';
-import { caseResidents, type CaseSummary } from '@/lib/api-client';
+import type { CaseSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
-import { formatDate } from '@/lib/dates';
-import { CellTag } from '@/components/ui/cell-tag';
+import { useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DatePicker } from '@/components/ui/date-picker';
 import { FilterInput, FilterSelect } from '@/components/ui/filter-controls';
-import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
-import { ActionTooltip } from '@/components/ui/tooltip';
-import {
-  LinkCaseCitizenDialog,
-  type CaseLinkPerson,
-  type CaseLinkSubmission,
-} from '@/components/admin/link-case-citizen-dialog';
-import { cn } from '@/lib/utils';
 import { BuildingUnitMatrixDrawer } from '@/components/admin/building-unit-matrix-drawer';
-
-function getTableLabels(locale: string): DataTableLabels {
-  if (locale === 'en') {
-    return {
-      searchAriaLabel: 'Search cases',
-      searchPlaceholder: 'Search by property number, neighborhood, or notes…',
-      clearSearch: 'Clear search',
-      searchHint: 'Enter',
-      searchApplied: 'Search: "{term}"',
-      empty: 'No cases logged yet.',
-      emptySearch: 'No results match your search.',
-      loadError: 'Failed to load cases.',
-      retry: 'Retry',
-      previous: 'Previous',
-      next: 'Next',
-      pageOf: 'Page {current} of {total}',
-      rowsPerPage: 'Rows per page',
-      totalRows: '{count} cases',
-      sortAscending: 'Sort ascending',
-      sortDescending: 'Sort descending',
-      sortNone: 'Clear sorting',
-      columns: 'Columns',
-      columnsHint: 'Visible columns',
-      resetColumns: 'Reset to default',
-    };
-  }
-  return {
-    searchAriaLabel: 'بحث في الحالات',
-    searchPlaceholder: 'ابحث برقم العقار أو الحي أو الملاحظات…',
-    clearSearch: 'مسح البحث',
-    searchHint: 'Enter',
-    searchApplied: 'بحث: «{term}»',
-    empty: 'لا توجد حالات مسجّلة بعد.',
-    emptySearch: 'لا نتائج مطابقة لبحثك.',
-    loadError: 'تعذّر تحميل الحالات.',
-    retry: 'إعادة المحاولة',
-    previous: 'السابق',
-    next: 'التالي',
-    pageOf: 'صفحة {current} من {total}',
-    rowsPerPage: 'عدد الصفوف',
-    totalRows: '{count} حالة',
-    sortAscending: 'ترتيب تصاعدي',
-    sortDescending: 'ترتيب تنازلي',
-    sortNone: 'إلغاء الترتيب',
-    columns: 'الأعمدة',
-    columnsHint: 'الأعمدة الظاهرة',
-    resetColumns: 'استعادة الافتراضي',
-  };
-}
-
-/**
- * The four tabs, as groups of `CaseType` rather than one type each.
- *
- * The tab an officer wants is not "cases of type X", it is "cases I do the same
- * thing about". A locked door and a flat somebody thinks is empty are both
- * *go back and knock*; a refusal and an ownership dispute both need a person
- * with authority rather than another visit. Grouping them is what makes the
- * tabs a work queue instead of a second copy of the enum.
- *
- * `null` on the first tab is "no filter", not "no type" — every case is in it.
- */
-const CASE_TABS: ReadonlyArray<{
-  id: string;
-  ar: string;
-  en: string;
-  types: readonly CaseType[] | null;
-}> = [
-  { id: 'all', ar: 'الكل', en: 'All', types: null },
-  {
-    id: 'revisit',
-    ar: 'إعادة زيارة',
-    en: 'Revisit',
-    types: ['UNIT_UNREACHABLE', 'VACANT_UNCONFIRMED'],
-  },
-  {
-    id: 'disputes',
-    ar: 'رفض ونزاعات',
-    en: 'Refusals & disputes',
-    types: ['ACCESS_REFUSED', 'OWNERSHIP_DISPUTE'],
-  },
-  { id: 'notes', ar: 'ملاحظات', en: 'Notes', types: ['GENERAL_NOTE'] },
-];
-
-/**
- * The queue, the census filters and an open matrix, all in the query string so
- * a reload — or a dispatch list sent to a colleague — comes back the same.
- *
- * Every value is structural: a sector, building or unit id, a parcel number, a
- * building code, a date. The table's own search box takes notes and
- * neighbourhoods, so it is kept in tab storage instead (`useTabSearch`).
- * `matrix` / `matrixUnit` reopen a drawer that only reads on open; the unit
- * actions inside it are its own state and never come back from a URL.
- */
-const CASE_FILTERS = {
-  tab: param.oneOf(
-    CASE_TABS.map((entry) => entry.id),
-    'all',
-  ),
-  zone: param.id(),
-  parcel: param.string(),
-  building: param.string(),
-  from: param.date(),
-  to: param.date(),
-  matrix: param.id(),
-  matrixUnit: param.id(),
-};
-
-/** How long a typed parcel number or building code waits before it is written to the URL. */
-const TYPED_FILTER_DELAY_MS = 300;
-
-/**
- * The next state a quick tap moves a case to — `OPEN → SCHEDULED → RESOLVED`,
- * and from `RESOLVED` back to `OPEN`.
- *
- * A cycle rather than three buttons, because it is one control in a table row
- * and the order is the order a case actually travels: somebody agrees to a
- * revisit before the revisit happens. Reopening from the end is the correction
- * path — a case closed in error, or a household that moved out again.
- */
-function nextStatus(status: CaseStatus): CaseStatus {
-  if (status === 'OPEN') return 'SCHEDULED';
-  if (status === 'SCHEDULED') return 'RESOLVED';
-  return 'OPEN';
-}
+import { CASE_FILTERS, CASE_TABS, TYPED_FILTER_DELAY_MS } from '@/components/admin/cases/case-queues';
+import { nextStatus } from '@/components/admin/cases/case-status';
+import { getCaseTableLabels } from '@/components/admin/cases/case-table-labels';
+import { useCaseColumns } from '@/components/admin/cases/use-case-columns';
+import { useCaseLinking } from '@/components/admin/cases/use-case-linking';
+import { CaseLinkDialog, CaseUnlinkDialog } from '@/components/admin/cases/case-link-dialogs';
+import { CaseQueueTabs } from '@/components/admin/cases/case-queue-tabs';
 
 /**
  * حالات — field visits that could not become a citizen registration.
@@ -183,8 +40,8 @@ function nextStatus(status: CaseStatus): CaseStatus {
  * staff could observe about the property gets kept instead of lost before the
  * next visit. Not a citizen record on its own, but `resolvedCitizenId` bridges
  * to one once someone does register the resident — see `LinkCaseCitizenDialog`
- * and the "Register Citizen" action below, which are the two ways that link
- * gets made.
+ * and the "Register Citizen" action in `useCaseColumns`, which are the two ways
+ * that link gets made.
  *
  * Logging and editing happen on their own pages (`cases/new`, `cases/[id]/edit`)
  * rather than in a dialog here — see `CaseEditor` for why.
@@ -215,9 +72,6 @@ export default function CasesPage({
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<CaseSummary | null>(null);
-  const [linking, setLinking] = useState<CaseSummary | null>(null);
-  const [linkSubmitting, setLinkSubmitting] = useState(false);
-  const [linkError, setLinkError] = useState<string | null>(null);
 
   // ── Tabs and census filters (P3-T7) ────────────────────────────────
   const [filters, setFilters] = useUrlState(CASE_FILTERS);
@@ -290,7 +144,7 @@ export default function CasesPage({
     tenant,
     base,
     token,
-    errorMessage: 'تعذّر تحميل الحالات.',
+    errorMessage: locale === 'en' ? 'Failed to load cases.' : 'تعذّر تحميل الحالات.',
   });
 
   const allItems = useMemo(() => query.data?.cases ?? [], [query.data]);
@@ -400,6 +254,9 @@ export default function CasesPage({
     [queryClient, tenant],
   );
 
+  const linkage = useCaseLinking({ tenant, token, locale, load });
+  const { openLink } = linkage;
+
   /**
    * One tap moves a case one step: `OPEN → SCHEDULED → RESOLVED`, and back to
    * `OPEN` from the end.
@@ -432,9 +289,16 @@ export default function CasesPage({
         );
       } catch (caught) {
         logApiError(caught);
-        const message = caught instanceof ApiRequestError ? caught.message : 'تعذّر تحديث الحالة.';
+        const message =
+          caught instanceof ApiRequestError
+            ? caught.message
+            : locale === 'en'
+              ? 'Could not update the case.'
+              : 'تعذّر تحديث الحالة.';
         setActionError(message);
-        toast.error('تعذّر تحديث الحالة', { description: message });
+        toast.error(locale === 'en' ? 'Could not update the case' : 'تعذّر تحديث الحالة', {
+          description: message,
+        });
       } finally {
         setBusyId(null);
       }
@@ -444,124 +308,28 @@ export default function CasesPage({
 
   const removeCase = useCallback(
     async (item: CaseSummary) => {
-      if (!token) throw new Error('انتهت الجلسة.');
+      if (!token) throw new Error(locale === 'en' ? 'Your session has ended.' : 'انتهت الجلسة.');
       setBusyId(item.id);
       try {
         await deleteCase(tenant, token, item.id);
         await load();
-        toast.success('تم حذف الحالة');
+        toast.success(locale === 'en' ? 'Case deleted' : 'تم حذف الحالة');
       } catch (caught) {
         logApiError(caught);
-        const message = caught instanceof ApiRequestError ? caught.message : 'تعذّر حذف الحالة.';
+        const message =
+          caught instanceof ApiRequestError
+            ? caught.message
+            : locale === 'en'
+              ? 'Could not delete the case.'
+              : 'تعذّر حذف الحالة.';
         setActionError(message);
         throw new Error(message);
       } finally {
         setBusyId(null);
       }
     },
-    [tenant, token, load, toast],
+    [tenant, token, load, toast, locale],
   );
-
-  /*
-    «ربط»: whoever is not on the case's unit yet is recorded on it in the
-    capacity chosen — owners first, so a tenant can be linked to an owner
-    recorded in the same step (the server refuses an owner recorded after
-    the tenant) — and then the case is resolved by the one marked as its own.
-    Each occupancy is its own request; if one is refused, the ones before it
-    stand, and the error says which were recorded and which was not.
-  */
-  const linkCitizen = useCallback(
-    async (submission: CaseLinkSubmission) => {
-      if (!token || !linking) return;
-      const en = locale === 'en';
-      setLinkSubmitting(true);
-      setLinkError(null);
-      const recorded: string[] = [];
-      const toRecord = linking.unitId
-        ? [
-            ...submission.people.filter((person) => !person.onUnit && person.role === 'OWNER'),
-            ...submission.people.filter((person) => !person.onUnit && person.role !== 'OWNER'),
-          ]
-        : [];
-      let current: CaseLinkPerson | null = null;
-      try {
-        for (const person of toRecord) {
-          current = person;
-          await recordOccupancy(tenant, token, {
-            unitId: linking.unitId!,
-            citizenId: person.citizenId,
-            role: person.role,
-            ...(person.role === 'OWNER' && submission.ownerUnitStatus
-              ? { unitStatus: submission.ownerUnitStatus }
-              : {}),
-            ...(person.role !== 'OWNER' && person.landlordCitizenId
-              ? { landlordCitizenId: person.landlordCitizenId }
-              : {}),
-          });
-          recorded.push(person.name);
-        }
-        current = null;
-        await updateCase(tenant, token, linking.id, { resolvedCitizenId: submission.primaryId });
-        await load();
-        const primary = submission.people.find((person) => person.citizenId === submission.primaryId);
-        toast.success(en ? 'Case linked and resolved' : 'تم ربط الحالة ووضعها محلولة', {
-          description:
-            recorded.length > 0
-              ? en
-                ? `${primary?.name ?? ''} — recorded on the unit: ${recorded.join(', ')}`
-                : `${primary?.name ?? ''} — سُجِّل على الوحدة: ${recorded.join('، ')}`
-              : primary?.name,
-        });
-        setLinking(null);
-      } catch (caught) {
-        logApiError(caught);
-        const reason = caught instanceof ApiRequestError ? caught.message : en ? 'The request failed.' : 'تعذّر الطلب.';
-        const failed: CaseLinkPerson | null = current;
-        setLinkError(
-          failed
-            ? [
-                recorded.length > 0
-                  ? en
-                    ? `Recorded on the unit: ${recorded.join(', ')}.`
-                    : `سُجِّل على الوحدة: ${recorded.join('، ')}.`
-                  : null,
-                en
-                  ? `Could not record ${failed.name}: ${reason} The case was not linked.`
-                  : `تعذّر تسجيل ${failed.name}: ${reason} لم تُربط الحالة.`,
-              ]
-                .filter(Boolean)
-                .join(' ')
-            : en
-              ? `Could not link the case: ${reason}`
-              : `تعذّر ربط الحالة: ${reason}`,
-        );
-        // What was recorded stands; the list shows it.
-        if (recorded.length > 0) void load();
-      } finally {
-        setLinkSubmitting(false);
-      }
-    },
-    [tenant, token, linking, load, toast, locale],
-  );
-
-  const unlinkCitizen = useCallback(async () => {
-    if (!token || !linking) return;
-    setLinkSubmitting(true);
-    setLinkError(null);
-    try {
-      await updateCase(tenant, token, linking.id, { resolvedCitizenId: null });
-      await load();
-      toast.success(locale === 'en' ? 'Link removed' : 'أُزيل الربط');
-      setLinking(null);
-    } catch (caught) {
-      logApiError(caught);
-      setLinkError(caught instanceof ApiRequestError ? caught.message : 'تعذّر إلغاء الربط.');
-    } finally {
-      setLinkSubmitting(false);
-    }
-  }, [tenant, token, linking, load, toast, locale]);
-
-  const labels = getLabels(locale);
 
   const clearFilters = () => {
     setZoneId('');
@@ -571,265 +339,21 @@ export default function CasesPage({
     setOpenedTo('');
   };
 
-  const columns = useMemo<ColumnDef<CaseSummary>[]>(
-    () => [
-      {
-        accessorKey: 'notes',
-        header: locale === 'en' ? 'What happened' : 'ماذا حصل',
-        cell: ({ row }) => (
-          <span className="block max-w-xs truncate" title={row.original.notes}>
-            {row.original.notes}
-          </span>
-        ),
-      },
-      {
-        // The property's identifier — the census code and the flat when the
-        // case is pinned to them, else the number the officer wrote at the door.
-        accessorKey: 'propertyNumber',
-        header: locale === 'en' ? 'Property ID' : 'رقم العقار',
-        cell: ({ row }) => {
-          const item = row.original;
-          const id = item.buildingCode
-            ? item.unitCode
-              ? `${item.buildingCode} · ${item.unitCode}`
-              : item.buildingCode
-            : item.propertyNumber;
-          return id ? (
-            <CellTag className="font-mono" dir="ltr" title={item.neighborhood ?? undefined}>
-              {id}
-            </CellTag>
-          ) : (
-            <CellTag tone="muted">—</CellTag>
-          );
-        },
-      },
-      {
-        accessorKey: 'status',
-        header: locale === 'en' ? 'Status' : 'الحالة',
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <div className="space-y-1">
-              {item.status === 'RESOLVED' ? (
-                <CellTag tone="success">
-                  <CheckCircle2 className="size-3.5" aria-hidden />
-                  {labels.caseStatus.RESOLVED}
-                </CellTag>
-              ) : item.status === 'SCHEDULED' ? (
-                <CellTag tone="warning">
-                  <CalendarClock className="size-3.5" aria-hidden />
-                  {labels.caseStatus.SCHEDULED}
-                </CellTag>
-              ) : (
-                <CellTag>{labels.caseStatus.OPEN}</CellTag>
-              )}
-              {/* The date is what «مجدولة» means; a status without it is a
-                  promise nobody can plan around. */}
-              {item.scheduledRevisitAt ? (
-                <p className="text-xs text-muted-foreground">
-                  {locale === 'en' ? 'Revisit ' : 'العودة '}
-                  {formatDate(item.scheduledRevisitAt)}
-                </p>
-              ) : null}
-              {item.resolvedCitizenName ? (
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push(`${base}/citizens/${item.resolvedCitizenId}`)
-                  }
-                  className="flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
-                >
-                  <Link2 className="size-3 shrink-0" aria-hidden />
-                  {item.resolvedCitizenName}
-                </button>
-              ) : null}
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: 'createdByName',
-        header: locale === 'en' ? 'Logged By' : 'سجّلها',
-        cell: ({ row }) => row.original.createdByName ?? <span className="text-muted-foreground text-xs">—</span>,
-      },
-      {
-        accessorKey: 'createdAt',
-        header: locale === 'en' ? 'Date' : 'التاريخ',
-        cell: ({ row }) => formatDate(row.original.createdAt),
-      },
-      {
-        id: 'actions',
-        header: locale === 'en' ? 'Actions' : 'إجراء',
-        enableSorting: false,
-        meta: { mobile: 'actions' },
-        cell: ({ row }) => {
-          const item = row.original;
-          const busy = busyId === item.id;
-          const residents = caseResidents(item);
-          const occupied = residents.length > 0;
-          const who = residents
-            .map((person) => `${person.name} (${labels.occupancyType[person.role as never] ?? person.role})`)
-            .join(locale === 'en' ? ', ' : '، ');
-          const registerBlocked =
-            locale === 'en'
-              ? `Someone already lives on this unit, registered: ${who} — link the case to them instead.`
-              : `الوحدة مسكونة ومسجَّلة: ${who} — اربط الحالة به بدلاً من تسجيل مواطن جديد.`;
-
-          if (!canWrite) return null;
-
-          return (
-            <div className="flex items-center gap-1.5">
-              {item.status === 'OPEN' ? (
-                occupied ? (
-                  /*
-                    The flat is already owned, rented or lent to a registered
-                    citizen: registering somebody new from the case would file a
-                    second household on it. Closed, and the tooltip says who is
-                    there and what to do instead. A focusable wrapper, because a
-                    disabled button shows no tooltip and takes no focus.
-                  */
-                  <ActionTooltip label={registerBlocked}>
-                    <span tabIndex={0} aria-label={registerBlocked} className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                      <Button
-                        variant="outline"
-                        size="icon-sm"
-                        aria-hidden
-                        tabIndex={-1}
-                        disabled
-                        className="pointer-events-none"
-                      >
-                        <UserPlus className="size-4" aria-hidden />
-                      </Button>
-                    </span>
-                  </ActionTooltip>
-                ) : (
-                <ActionTooltip label={locale === 'en' ? 'Register Citizen' : 'تسجيل المواطن'}>
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    className="border-primary/40 text-primary hover:bg-primary/5"
-                    aria-label={locale === 'en' ? 'Register Citizen' : 'تسجيل المواطن'}
-                    disabled={busy}
-                    onClick={() => router.push(`${base}/citizens/new?fromCaseId=${item.id}`)}
-                  >
-                    <UserPlus className="size-4" aria-hidden />
-                  </Button>
-                </ActionTooltip>
-                )
-              ) : null}
-
-              <ActionTooltip
-                label={
-                  occupied
-                    ? locale === 'en'
-                      ? `Link to a citizen — on this unit: ${who}`
-                      : `ربط بمواطن — على الوحدة: ${who}`
-                    : locale === 'en'
-                      ? 'Link to Citizen'
-                      : 'ربط بمواطن'
-                }
-              >
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  aria-label={locale === 'en' ? 'Link to Citizen' : 'ربط بمواطن'}
-                  disabled={busy}
-                  onClick={() => {
-                    setLinkError(null);
-                    setLinking(item);
-                  }}
-                >
-                  <Link2 className="size-4" aria-hidden />
-                </Button>
-              </ActionTooltip>
-
-              {/* One tap, one step along OPEN → SCHEDULED → RESOLVED. The
-                  label names where it goes, never where it is. */}
-              <ActionTooltip
-                label={
-                  item.status === 'OPEN'
-                    ? locale === 'en'
-                      ? 'Schedule a revisit'
-                      : 'جدولة زيارة'
-                    : item.status === 'SCHEDULED'
-                      ? locale === 'en'
-                        ? 'Mark resolved'
-                        : 'وضع علامة مُعالجة'
-                      : locale === 'en'
-                        ? 'Reopen'
-                        : 'إعادة فتح'
-                }
-              >
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  aria-label={locale === 'en' ? 'Advance status' : 'تقديم حالة المعاملة'}
-                  disabled={busy}
-                  onClick={() => void advanceStatus(item)}
-                >
-                  {item.status === 'OPEN' ? (
-                    <CalendarClock className="size-4" aria-hidden />
-                  ) : item.status === 'SCHEDULED' ? (
-                    <CheckCircle2 className="size-4" aria-hidden />
-                  ) : (
-                    <RotateCcw className="size-4" aria-hidden />
-                  )}
-                </Button>
-              </ActionTooltip>
-
-              {/* A case pinned to a censused structure opens its matrix — the
-                  fastest route from "somebody should go back" to the flat. */}
-              {item.buildingId ? (
-                <ActionTooltip label={locale === 'en' ? 'Open the unit matrix' : 'فتح مصفوفة الوحدات'}>
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    aria-label={locale === 'en' ? 'Open the unit matrix' : 'فتح مصفوفة الوحدات'}
-                    disabled={busy}
-                    onClick={() => setMatrix({ buildingId: item.buildingId!, unitId: item.unitId })}
-                  >
-                    <Grid3x3 className="size-4" aria-hidden />
-                  </Button>
-                </ActionTooltip>
-              ) : null}
-
-              <ActionTooltip label={locale === 'en' ? 'Edit' : 'تعديل'}>
-                <Button
-                  variant="secondary"
-                  size="icon-sm"
-                  aria-label={locale === 'en' ? 'Edit' : 'تعديل'}
-                  disabled={busy}
-                  onClick={() => router.push(`${base}/cases/${item.id}/edit`)}
-                >
-                  <Pencil className="size-4" aria-hidden />
-                </Button>
-              </ActionTooltip>
-
-              {canDelete ? (
-                <ActionTooltip label={locale === 'en' ? 'Delete' : 'حذف'}>
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    aria-label={locale === 'en' ? 'Delete' : 'حذف'}
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    disabled={busy}
-                    onClick={() => setPendingDelete(item)}
-                  >
-                    <Trash2 className="size-4" aria-hidden />
-                  </Button>
-                </ActionTooltip>
-              ) : null}
-            </div>
-          );
-        },
-      },
-    ],
-    [busyId, canWrite, canDelete, locale, labels, advanceStatus, router, base, setMatrix],
-  );
+  const columns = useCaseColumns({
+    locale,
+    base,
+    busyId,
+    canWrite,
+    canDelete,
+    advanceStatus,
+    openLink,
+    setMatrix,
+    setPendingDelete,
+  });
 
   if (!token) return null;
 
-  const tableLabels = getTableLabels(locale);
+  const tableLabels = getCaseTableLabels(locale);
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -890,7 +414,8 @@ export default function CasesPage({
               <TrendingUp className="size-4 shrink-0 text-primary" aria-hidden />
               <span>
                 <span className="text-sm font-semibold tabular-nums text-foreground">
-                  {Math.round((conversion.linkedCount / conversion.resolvedCount) * 100)}٪
+                  {Math.round((conversion.linkedCount / conversion.resolvedCount) * 100)}
+                  {locale === 'en' ? '%' : '٪'}
                 </span>{' '}
                 {locale === 'en'
                   ? `conversion — ${conversion.linkedCount} of ${conversion.resolvedCount} resolved cases led to a registered citizen`
@@ -900,47 +425,7 @@ export default function CasesPage({
           ) : null}
         </CardHeader>
 
-        {/*
-          The queues, as tabs over the one table under them. Each groups the
-          case types an officer does the same thing about — knock again,
-          escalate, or just read — and its count rides on it, so an empty
-          queue shows before it is opened.
-        */}
-        <div
-          role="tablist"
-          aria-label={locale === 'en' ? 'Case queues' : 'قوائم الحالات'}
-          className="flex gap-1 overflow-x-auto border-b px-2 sm:px-4"
-        >
-          {CASE_TABS.map((entry) => {
-            const active = entry.id === tab;
-            return (
-              <button
-                key={entry.id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setTab(entry.id)}
-                className={cn(
-                  'relative flex min-h-11 shrink-0 items-center gap-2 rounded-t-md px-3 text-sm font-medium transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
-                  'after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors after:duration-150',
-                  active
-                    ? 'text-primary after:bg-primary'
-                    : 'text-muted-foreground after:bg-transparent hover:bg-accent/50 hover:text-foreground',
-                )}
-              >
-                {locale === 'en' ? entry.en : entry.ar}
-                <span
-                  className={cn(
-                    'min-w-6 rounded-full px-1.5 text-center text-xs font-semibold tabular-nums',
-                    active ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground',
-                  )}
-                >
-                  {tabCounts[entry.id] ?? 0}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        <CaseQueueTabs locale={locale} tab={tab} counts={tabCounts} onSelect={setTab} />
 
         <CardContent className="p-0">
           {/* One frame: the card's (BAN-4). */}
@@ -1037,10 +522,14 @@ export default function CasesPage({
             : 'ستُحذف هذه الحالة نهائياً. هذا لا يؤثر على أي سجل مواطن.'
         }
         confirmLabel={locale === 'en' ? 'Delete' : 'حذف'}
+        cancelLabel={locale === 'en' ? 'Cancel' : 'إلغاء'}
+        busyLabel={locale === 'en' ? 'Working…' : 'جارٍ التنفيذ…'}
         onConfirm={async () => {
           if (pendingDelete) await removeCase(pendingDelete);
         }}
       />
+
+      <CaseUnlinkDialog linkage={linkage} locale={locale} onOpenUnit={setMatrix} />
 
       {token ? (
         <BuildingUnitMatrixDrawer
@@ -1063,28 +552,7 @@ export default function CasesPage({
         />
       ) : null}
 
-      {token ? (
-        <LinkCaseCitizenDialog
-          open={linking !== null}
-          onOpenChange={(open) => {
-            if (!open) setLinking(null);
-          }}
-          tenant={tenant}
-          token={token}
-          currentCitizenName={linking?.resolvedCitizenName}
-          submitting={linkSubmitting}
-          error={linkError}
-          onSubmit={(submission) => void linkCitizen(submission)}
-          unitLabel={
-            linking?.unitId && linking.buildingCode
-              ? `${linking.buildingCode} · ${linking.unitCode ?? ''}`
-              : null
-          }
-          onUnlink={() => void unlinkCitizen()}
-          suggested={linking?.unitOccupants ?? []}
-          locale={locale}
-        />
-      ) : null}
+      {token ? <CaseLinkDialog linkage={linkage} tenant={tenant} token={token} locale={locale} /> : null}
     </div>
   );
 }

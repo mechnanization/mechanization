@@ -1091,6 +1091,7 @@ export function BuildingUnitMatrixView({
             }
             confirmLabel={en ? 'Yes, save' : 'نعم، احفظ'}
             cancelLabel={en ? 'Cancel' : 'إلغاء'}
+            busyLabel={en ? 'Working…' : 'جارٍ التنفيذ…'}
             onConfirm={async () => {
               if (!pendingResize || !token) return;
               const { unit, to } = pendingResize;

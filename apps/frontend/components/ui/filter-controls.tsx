@@ -83,6 +83,18 @@ export function FilterSelect<T extends string = string>({
  * A typed filter — a parcel number, a building code — with a clear button
  * once something is in it. Codes and numbers read left to right whatever the
  * page direction, so it takes `dir`.
+ *
+ * ## The ✕ and the room kept for it (RTL-1)
+ *
+ * Logical sides resolve against the element's own direction: the input's
+ * `pe-7` against the input's, the button's `end-1.5` against its parent's. With
+ * `dir` on the input alone, an Arabic page put the room on the right of a
+ * `dir="ltr"` box and the ✕ on its left — on top of the typed code. So the
+ * wrapper takes the same `dir`, and the two `end`s are one side.
+ *
+ * `auto` cannot be shared that way: the input resolves it from what is typed,
+ * a `<div>` from its own text, which it has none of. Its room is kept on both
+ * sides instead, so the ✕ never covers text whichever way the value reads.
  */
 export function FilterInput({
   label,
@@ -103,8 +115,9 @@ export function FilterInput({
   dir?: 'ltr' | 'rtl' | 'auto';
   className?: string;
 }) {
+  const auto = dir === 'auto';
   return (
-    <div className={cn('relative w-full sm:w-32', className)}>
+    <div dir={auto ? undefined : dir} className={cn('relative w-full sm:w-32', className)}>
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -114,7 +127,9 @@ export function FilterInput({
         placeholder={placeholder}
         className={cn(
           'h-9 w-full rounded-md border bg-background px-3 text-start text-xs ring-offset-background transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring',
-          value ? 'border-primary/60 bg-primary/5 pe-7 font-medium text-primary' : 'border-input hover:bg-accent/50',
+          value
+            ? cn('border-primary/60 bg-primary/5 font-medium text-primary', auto ? 'px-7' : 'pe-7')
+            : 'border-input hover:bg-accent/50',
         )}
       />
       {value ? (

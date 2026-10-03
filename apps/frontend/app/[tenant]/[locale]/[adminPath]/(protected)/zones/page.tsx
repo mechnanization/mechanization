@@ -506,6 +506,7 @@ export default function ZonesPage({
         }
         confirmLabel={locale === 'en' ? 'Delete Zone' : 'حذف القطاع'}
         cancelLabel={locale === 'en' ? 'Cancel' : 'إلغاء'}
+        busyLabel={locale === 'en' ? 'Working…' : 'جارٍ التنفيذ…'}
         onConfirm={async () => {
           if (pendingDelete) await handleDelete(pendingDelete);
         }}

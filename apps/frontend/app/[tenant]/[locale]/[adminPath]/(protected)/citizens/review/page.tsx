@@ -3,10 +3,11 @@
 import { use, useMemo } from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
-import { ClipboardCheck, FileQuestion, UserRound, Users } from 'lucide-react';
+import { ClipboardCheck, FileQuestion, FileText, UserRound, Users } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import { getReviewQueue, type ReviewQueueItem } from '@/lib/api-client';
 import { formatPhone } from '@/lib/phone';
+import { CITIZEN_RECORD_EDIT_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
@@ -29,7 +30,10 @@ import { PageHeader } from '@/components/ui/page-header';
  * queue's payload does not.
  *
  * Every staff role reaches it, as they reach the register (`nav.ts`); the
- * server's `@Roles` on `review-queue` are the register's.
+ * server's `@Roles` on `review-queue` are the register's. «فحص الملف» is
+ * narrower — it reads the record's form, which AUDITOR and ACCOUNTANT are
+ * refused (`CITIZEN_RECORD_EDIT_ROLES`, CODE-4) — so those roles get the
+ * citizen's file to read instead of a button that can only fail.
  */
 export default function ReviewQueuePage({
   params,
@@ -40,7 +44,16 @@ export default function ReviewQueuePage({
   const en = locale === 'en';
   const base = `/${tenant}/${locale}/${adminPath}`;
   const labels = getLabels(locale);
-  const { token } = useStaffSession(tenant, base);
+  const { token, user } = useStaffSession(tenant, base);
+  /*
+    `user` is null on the first paint, before the session is read. Taken as a
+    reviewer until then, so the header and the subtitle do not flip from
+    «الملف» to «فحص الملف» on every load for the roles this page is for. The
+    first fetch waits for the token, which arrives with the role; only a
+    cached page shown on a return visit can paint an auditor's rows with
+    «فحص الملف» for that frame, and its page says the role cannot review.
+  */
+  const canReview = user ? hasRole(CITIZEN_RECORD_EDIT_ROLES, user.role) : true;
 
   // The page in the URL and the search in tab storage — a search here is a
   // citizen's name or number, which never goes in a URL (`tab-search.ts`).
@@ -162,21 +175,32 @@ export default function ReviewQueuePage({
       },
       {
         id: 'review',
-        header: en ? 'Review file' : 'فحص الملف',
+        header: canReview ? (en ? 'Review file' : 'فحص الملف') : en ? 'File' : 'الملف',
         meta: { align: 'end', mobile: 'actions' },
-        cell: ({ row }) => (
-          <Link
-            href={`${base}/citizens/review/${row.original.id}`}
-            aria-label={en ? `Review ${row.original.fullName}'s file` : `فحص ملف ${row.original.fullName}`}
-            className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 gap-1.5 text-xs')}
-          >
-            <ClipboardCheck className="size-3.5" aria-hidden />
-            {en ? 'Review file' : 'فحص الملف'}
-          </Link>
-        ),
+        cell: ({ row }) =>
+          canReview ? (
+            <Link
+              href={`${base}/citizens/review/${row.original.id}`}
+              aria-label={en ? `Review ${row.original.fullName}'s file` : `فحص ملف ${row.original.fullName}`}
+              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 gap-1.5 text-xs')}
+            >
+              <ClipboardCheck className="size-3.5" aria-hidden />
+              {en ? 'Review file' : 'فحص الملف'}
+            </Link>
+          ) : (
+            // Read-only: the citizen's file, which every staff role may open.
+            <Link
+              href={`${base}/citizens/${row.original.id}`}
+              aria-label={en ? `Open ${row.original.fullName}'s file` : `فتح ملف ${row.original.fullName}`}
+              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 gap-1.5 text-xs')}
+            >
+              <FileText className="size-3.5" aria-hidden />
+              {en ? 'Open file' : 'فتح الملف'}
+            </Link>
+          ),
       },
     ],
-    [en, base, labels],
+    [en, base, labels, canReview],
   );
 
   return (
@@ -186,8 +210,8 @@ export default function ReviewQueuePage({
         title={en ? 'Requires review' : 'يتطلب مراجعة'}
         subtitle={
           en
-            ? 'Records filed with fields the officer could not establish, oldest first. Review a file to complete it.'
-            : 'سجلات حُفظت بحقول لم يتمكّن الموظف من التثبّت منها، الأقدم أولاً. افحص الملف لاستكماله.'
+            ? `Records filed with fields the officer could not establish, oldest first.${canReview ? ' Review a file to complete it.' : ''}`
+            : `سجلات حُفظت بحقول لم يتمكّن الموظف من التثبّت منها، الأقدم أولاً.${canReview ? ' افحص الملف لاستكماله.' : ''}`
         }
         actions={
           <Link href={`${base}/citizens`} className={buttonVariants({ variant: 'outline' })}>

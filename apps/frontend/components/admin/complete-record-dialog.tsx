@@ -258,9 +258,18 @@ export function useRecordCompletion({
   locale = 'ar',
   onSaved,
 }: {
-  /** Load only while shown — a closed dialog fetches nothing. */
+  /**
+   * Load only while shown — a closed dialog fetches nothing.
+   *
+   * Also hold it false while the caller is still reading its session. Enabled
+   * with a null `token` is read as a session that has lapsed and said so
+   * («انتهت صلاحية الجلسة»), and `useStaffSession` hands back null on the
+   * first paint, before its effect has read storage — a page that enabled
+   * this from the start showed that error for a frame on every load.
+   */
   enabled: boolean;
   tenant: string;
+  /** Null while `enabled` means signed out — see `enabled`. */
   token: string | null;
   citizenId: string;
   locale?: string;
@@ -745,6 +754,9 @@ export type RecordCompletion = ReturnType<typeof useRecordCompletion>;
 /**
  * Rows of open questions — all of them in the dialog, one section's on the
  * «فحص الملف» page (the citizen's own, or one property's).
+ *
+ * `variant="row"` renders bare `<dt>`/`<dd>` groups, so it goes only inside a
+ * `SummaryList`.
  */
 export function OpenQuestionList({
   state,
@@ -766,36 +778,39 @@ export function OpenQuestionList({
   locale?: string;
 }) {
   const { answers, reasons, fieldErrors, setAnswer, setReason } = state;
-  return (
-    // As rows of a read-back they take its rules between them; as blocks, space.
-    <div className={variant === 'row' ? 'divide-y divide-border/60' : 'space-y-3'}>
-      {items.map((item) => (
-        <OpenQuestion
-          key={item.path}
-          item={item}
-          locale={locale}
-          /*
-            `has`, not `?? ''`. An UNVERIFIED row opens showing the value the
-            record holds, and a clerk who selects it and deletes it must see an
-            empty box — with a falsy check the box refilled itself from
-            `item.current` on the keystroke that emptied it, which reads as an
-            input refusing to be edited. Once the row is touched the map owns
-            it, empty string included.
-          */
-          answer={answers.has(item.path) ? (answers.get(item.path) ?? '') : item.current}
-          touched={answers.has(item.path)}
-          reason={reasons.get(item.path) ?? item.reason}
-          error={fieldErrors[item.path]}
-          onAnswer={(value) => setAnswer(item.path, value)}
-          onReason={(value) => setReason(item.path, value)}
-          editHref={`${base}/citizens/${citizenId}/edit`}
-          variant={variant}
-          label={labelFor?.(item)}
-          reasonEdited={reasons.has(item.path)}
-        />
-      ))}
-    </div>
-  );
+  const rows = items.map((item) => (
+    <OpenQuestion
+      key={item.path}
+      item={item}
+      locale={locale}
+      /*
+        `has`, not `?? ''`. An UNVERIFIED row opens showing the value the
+        record holds, and a clerk who selects it and deletes it must see an
+        empty box — with a falsy check the box refilled itself from
+        `item.current` on the keystroke that emptied it, which reads as an
+        input refusing to be edited. Once the row is touched the map owns
+        it, empty string included.
+      */
+      answer={answers.has(item.path) ? (answers.get(item.path) ?? '') : item.current}
+      touched={answers.has(item.path)}
+      reason={reasons.get(item.path) ?? item.reason}
+      error={fieldErrors[item.path]}
+      onAnswer={(value) => setAnswer(item.path, value)}
+      onReason={(value) => setReason(item.path, value)}
+      editHref={`${base}/citizens/${citizenId}/edit`}
+      variant={variant}
+      label={labelFor?.(item)}
+      reasonEdited={reasons.has(item.path)}
+    />
+  ));
+  /*
+    As rows of a read-back they are its rows: each a `<div>` holding one
+    `<dt>`/`<dd>` pair, handed straight to the `SummaryList` `<dl>` they sit in,
+    which draws the rules between them. A wrapper here would put a `<div>` of
+    groups inside the `<dl>`, which only takes groups — and a `row` rendered
+    anywhere but inside a `<dl>` is a stray `<dt>`. As blocks, space.
+  */
+  return variant === 'row' ? <>{rows}</> : <div className="space-y-3">{rows}</div>;
 }
 
 /**

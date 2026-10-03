@@ -1,6 +1,6 @@
 'use client';
 
-import { use } from 'react';
+import { use, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import { Building2, FileText, Link2, UserRound } from 'lucide-react';
@@ -10,9 +10,10 @@ import {
   LandlordProposalResolved,
   useLandlordResolutions,
 } from '@/components/admin/landlord-proposal-card';
-import { ApiRequestError, getLandlordLink } from '@/lib/api-client';
+import { ApiRequestError, getLandlordLink, type LandlordProposal } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
 import { landlordLinkStatus, landlordLinkStatusView } from '@/lib/landlord-status';
+import { hasRole, LANDLORD_LINK_ANSWER_ROLES } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { cn } from '@/lib/utils';
@@ -52,7 +53,8 @@ import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
  * The claim is read with the queue's own query (`GET landlord-links/:id`), so
  * this page and the row it was opened from cannot disagree. A claim that is no
  * longer open — linked or answered elsewhere since — says so, rather than
- * showing an error.
+ * showing an error. One answered *on this page* is not that case: it keeps the
+ * answer and its «تراجع» on screen whatever a later read returns.
  */
 export default function LandlordLinkPage({
   params,
@@ -64,7 +66,10 @@ export default function LandlordLinkPage({
   const base = `/${tenant}/${locale}/${adminPath}`;
   const labels = getLabels(locale);
   const queryClient = useQueryClient();
-  const { token } = useStaffSession(tenant, base);
+  const { token, user } = useStaffSession(tenant, base);
+  // Every staff role may read the claim; only these answer it. The card keeps
+  // the comparison for the others and names who answers in place of the buttons.
+  const canAnswer = hasRole(LANDLORD_LINK_ANSWER_ROLES, user?.role);
 
   const query = useStaffQuery({
     queryKey: ['landlord-link', tenant, propertyEntryId],
@@ -82,10 +87,22 @@ export default function LandlordLinkPage({
     token,
     errorMessage: en ? 'Could not load this link.' : 'تعذّر تحميل هذا الرابط.',
   });
-  const proposal = query.data ?? null;
-
   const { resolved, resolve, undo, undoing } = useLandlordResolutions({ tenant, token: token ?? '', locale });
   const resolution = resolved[propertyEntryId];
+
+  /*
+    The claim as it stood when this page answered it. Once linked or
+    dismissed the claim is closed, so the next read — a window-focus refetch,
+    say — comes back 404 and `query.data` turns null. Without this the «تم
+    الربط» panel and its «تراجع» would be replaced by «لم يعد مفتوحاً» moments
+    after the officer answered, taking the undo with them. It stands in only
+    while the answer is on screen; an undo re-reads the claim before it clears
+    the answer (`useLandlordResolutions`), so the card returns with fresh data.
+  */
+  const [answered, setAnswered] = useState<LandlordProposal | null>(null);
+  const proposal = query.data ?? (resolution ? answered : null);
+  // Answered here: what the page shows is the answer, whatever a re-read says.
+  const settled = Boolean(resolution && proposal);
   const queue = `${base}/citizens/landlord-links`;
 
   const reference = proposal ? (proposal.buildingCode ?? proposal.propertyNumber) : null;
@@ -174,9 +191,10 @@ export default function LandlordLinkPage({
         }
       />
 
-      {query.error ? (
+      {/* An answer given here outranks every read after it — error, 404 or otherwise. */}
+      {!settled && query.error ? (
         <ErrorState title={query.error} onRetry={query.refetch} retryLabel={en ? 'Try again' : 'إعادة المحاولة'} />
-      ) : query.loading || (!query.data && query.data !== null) ? (
+      ) : !settled && (query.loading || (!query.data && query.data !== null)) ? (
         // The page's own shape, so nothing jumps when the claim arrives.
         <div className="grid gap-6 lg:grid-cols-12 lg:items-start" aria-busy="true">
           <div className="space-y-4 lg:col-span-4">
@@ -305,7 +323,9 @@ export default function LandlordLinkPage({
                 token={token ?? ''}
                 proposal={proposal}
                 citizenHref={(id) => `${base}/citizens/${id}`}
+                canAnswer={canAnswer}
                 onResolved={(next) => {
+                  setAnswered(proposal);
                   resolve(next);
                   // The queue and its count no longer hold this claim.
                   void queryClient.invalidateQueries({ queryKey: ['landlord-links'] });

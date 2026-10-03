@@ -203,6 +203,12 @@ export class LandlordLinkService {
     scope: {
       /** One claim — «فحص الرابط». */
       entryId?: string;
+      /**
+       * Keep the claim even when it is already linked. Only `confirm` asks, so
+       * that a repeated confirm of the person the card is linked to reaches its
+       * no-op through the same match the queue offered them by.
+       */
+      includeLinked?: boolean;
       registrationId?: string;
       /** Claims naming this citizen — by one of these numbers, or by their name. */
       naming?: { citizenId: string; phones: readonly string[] };
@@ -210,6 +216,7 @@ export class LandlordLinkService {
     page?: { limit: number; offset: number },
   ): Promise<MatchPair[]> {
     const S = tenantSchemaRef(this.tenantContext.schemaName);
+    const unlinkedOnly = scope.includeLinked ? Prisma.empty : Prisma.sql`AND pe."landlordCitizenId" IS NULL`;
     const narrow = scope.entryId
       ? Prisma.sql`AND pe.id = ${scope.entryId}::uuid`
       : scope.registrationId
@@ -221,6 +228,7 @@ export class LandlordLinkService {
               SELECT key FROM citizen_names WHERE citizen_id = ${scope.naming.citizenId}::uuid
             )
             OR (
+              -- A pre-filter only: which of these buildings' cards they are actually offered on is decided below.
               pe."landlordPhone" IS NULL
               AND (
                 pe."buildingId" IN (
@@ -230,12 +238,11 @@ export class LandlordLinkService {
                   WHERE orr."citizenId" = ${scope.naming.citizenId}::uuid
                     AND o."occupancyType" = 'OWNER' AND o."endedAt" IS NULL
                 )
-                OR EXISTS (
-                  SELECT 1
-                  FROM ${S}building_units bu
-                  JOIN ${S}unit_occupancies uo ON uo."unitId" = bu."unitId"
-                  WHERE bu."propertyEntryId" = pe.id AND bu."endedAt" IS NULL
-                    AND uo."citizenId" = ${scope.naming.citizenId}::uuid
+                OR pe."buildingId" IN (
+                  SELECT un."buildingId"
+                  FROM ${S}unit_occupancies uo
+                  JOIN ${S}units un ON un.id = uo."unitId"
+                  WHERE uo."citizenId" = ${scope.naming.citizenId}::uuid
                     AND uo.role = 'OWNER' AND uo."toDate" IS NULL
                 )
               )
@@ -272,10 +279,25 @@ export class LandlordLinkService {
       owner recorded on the flat itself in the buildings register, or a
       citizen who filed an ownership card on the same building — the second
       only when the flat has no recorded owner of its own. Only for a card
-      with no number, and whose name (if any) found nobody: where the occupant
-      gave a number, or a name that is somebody's, that is the evidence, and a
-      building's other owners would bury it. Never preselected and never
-      linked from the queue's row, for the same reason as the name.
+      with no number, and whose name (if any) found nobody it could still
+      offer: where the occupant gave a number, or a name that is somebody's,
+      that is the evidence, and a building's other owners would bury it. A
+      namesake «لا أحد منهم» rejected, or the filer's own name, is not that
+      evidence any more, so it no longer hides the property's owner — it used
+      to, and the card dropped out of the queue for good. Never preselected
+      and never linked from the queue's row, for the same reason as the name.
+
+      **Which ownership cards on the building count.** «The same building» is
+      not «the same flat»: in a block where every owner filed the flat they
+      own, offering all of them to the tenant of 0301 asked the clerk to pick
+      somebody, and the pick added 0301 to that person's card and bill. So an
+      ownership card is offered only when it names one of the flats the
+      tenant's card claims (`claim_units`, `planTarget`'s own rule), or names
+      no flat at all and its holder is recorded as owner of no other flat in
+      the structure — a whole-building owner, or one the census has not
+      reached. A card naming no flat whose holder *is* recorded on other flats
+      is about those flats: that is how a row-less card claims (see
+      `census-claim.ts`), and offering it here would be the same wrong bill.
     */
     return this.db.$queryRaw<MatchPair[]>`
       WITH citizen_names AS (
@@ -298,18 +320,40 @@ export class LandlordLinkService {
                pe."landlordLinkDismissedAt" AS dismissed_at,
                pe."landlordLinkDismissedIds" AS dismissed_ids,
                r."citizenId" AS filer_id,
-               pe."buildingId" AS building_id
+               pe."buildingId" AS building_id,
+               pe."propertyType" AS property_type
         FROM ${S}property_entries pe
         JOIN ${S}registrations r ON r.id = pe."registrationId"
-        WHERE pe."landlordCitizenId" IS NULL
-          AND (
+        WHERE (
             pe."landlordPhone" IS NOT NULL
             OR nullif(btrim(pe."landlordName"), '') IS NOT NULL
             OR pe."buildingId" IS NOT NULL
           )
           AND pe."occupancyType" <> 'OWNER'
           AND pe."endedAt" IS NULL
+          ${unlinkedOnly}
           ${narrow}
+      ),
+      -- The flats a link on each card would claim: the rule planTarget applies, in SQL.
+      claim_units AS (
+        -- The census units its current rows name, in the building it names.
+        SELECT c.id, bu."unitId" AS unit_id
+        FROM open_claims c
+        JOIN ${S}building_units bu ON bu."propertyEntryId" = c.id AND bu."endedAt" IS NULL
+        JOIN ${S}units un ON un.id = bu."unitId" AND un."buildingId" = c.building_id
+        UNION
+        -- A منزل naming none, on a structure with exactly one unit: that unit.
+        SELECT c.id, un.id
+        FROM open_claims c
+        JOIN ${S}units un ON un."buildingId" = c.building_id
+        WHERE c.property_type = 'HOUSE'
+          AND (SELECT count(*) FROM ${S}units au WHERE au."buildingId" = c.building_id) = 1
+          AND NOT EXISTS (
+            SELECT 1
+            FROM ${S}building_units bu
+            JOIN ${S}units nu ON nu.id = bu."unitId" AND nu."buildingId" = c.building_id
+            WHERE bu."propertyEntryId" = c.id AND bu."endedAt" IS NULL
+          )
       ),
       matched AS (
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
@@ -327,18 +371,17 @@ export class LandlordLinkService {
         FROM open_claims c
         JOIN citizen_names n ON n.key = c.name_key
         UNION
-        -- The owner recorded on the very flat the card names.
+        -- The owner recorded on the very flat the card claims.
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
                u.id, u."createdAt", 'PROPERTY' AS how
         FROM open_claims c
-        JOIN ${S}building_units bu ON bu."propertyEntryId" = c.id AND bu."endedAt" IS NULL
+        JOIN claim_units cu ON cu.id = c.id
         JOIN ${S}unit_occupancies uo
-          ON uo."unitId" = bu."unitId" AND uo.role = 'OWNER' AND uo."toDate" IS NULL
+          ON uo."unitId" = cu.unit_id AND uo.role = 'OWNER' AND uo."toDate" IS NULL
         JOIN ${S}users u ON u.id = uo."citizenId" AND u.kind = 'CITIZEN' AND u."isActive"
         WHERE c.phone IS NULL
-          AND NOT EXISTS (SELECT 1 FROM citizen_names n WHERE n.key = c.name_key)
         UNION
-        -- A citizen who filed the same building as theirs.
+        -- A citizen whose ownership card on the same building is about this flat, or the whole structure.
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
                u.id, u."createdAt", 'PROPERTY' AS how
         FROM open_claims c
@@ -347,17 +390,44 @@ export class LandlordLinkService {
         JOIN ${S}registrations orr ON orr.id = o."registrationId"
         JOIN ${S}users u ON u.id = orr."citizenId" AND u.kind = 'CITIZEN' AND u."isActive"
         WHERE c.phone IS NULL AND c.building_id IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM citizen_names n WHERE n.key = c.name_key)
           -- The flat's own recorded owner, where there is one, is the answer; the building's others are noise.
           AND NOT EXISTS (
             SELECT 1
-            FROM ${S}building_units bu
+            FROM claim_units cu
             JOIN ${S}unit_occupancies uo
-              ON uo."unitId" = bu."unitId" AND uo.role = 'OWNER' AND uo."toDate" IS NULL
-            WHERE bu."propertyEntryId" = c.id AND bu."endedAt" IS NULL AND uo."citizenId" <> c.filer_id
+              ON uo."unitId" = cu.unit_id AND uo.role = 'OWNER' AND uo."toDate" IS NULL
+            WHERE cu.id = c.id AND uo."citizenId" <> c.filer_id
+          )
+          AND (
+            -- The card names one of the flats this card claims…
+            EXISTS (
+              SELECT 1
+              FROM ${S}building_units obu
+              JOIN claim_units cu ON cu.id = c.id AND cu.unit_id = obu."unitId"
+              WHERE obu."propertyEntryId" = o.id AND obu."endedAt" IS NULL
+            )
+            -- …or names no flat, and its holder is recorded as owner of no other flat here.
+            OR (
+              NOT EXISTS (
+                SELECT 1
+                FROM ${S}building_units obu
+                WHERE obu."propertyEntryId" = o.id AND obu."endedAt" IS NULL AND obu."unitId" IS NOT NULL
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM ${S}unit_occupancies ouo
+                JOIN ${S}units oun ON oun.id = ouo."unitId"
+                WHERE ouo."citizenId" = orr."citizenId"
+                  AND ouo.role = 'OWNER' AND ouo."toDate" IS NULL
+                  AND oun."buildingId" = c.building_id
+                  AND NOT EXISTS (
+                    SELECT 1 FROM claim_units cu WHERE cu.id = c.id AND cu.unit_id = ouo."unitId"
+                  )
+              )
+            )
           )
       ),
-      offered AS (
+      screened AS (
         SELECT id, created_at, citizen_id, how
         FROM matched
         WHERE citizen_id <> filer_id
@@ -367,11 +437,19 @@ export class LandlordLinkService {
             AND cardinality(dismissed_ids) = 0
             AND citizen_created_at <= dismissed_at
           )
+      ),
+      offered AS (
+        -- By the property only where the name found nobody it can still offer.
+        SELECT s.id, s.created_at, s.citizen_id, s.how
+        FROM screened s
+        WHERE s.how <> 'PROPERTY'
+           OR NOT EXISTS (SELECT 1 FROM screened n WHERE n.id = s.id AND n.how = 'NAME')
       )
       SELECT id AS "entryId",
              array_agg(DISTINCT citizen_id) AS "citizenIds",
              coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE how = 'PHONE'), '{}') AS "phoneCitizenIds",
              coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE how = 'NAME'), '{}') AS "nameCitizenIds",
+             coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE how = 'PROPERTY'), '{}') AS "propertyCitizenIds",
              count(*) OVER()::int AS total
       FROM offered
       GROUP BY id, created_at
@@ -927,35 +1005,19 @@ export class LandlordLinkService {
 
   /**
    * Whether this citizen is on the register as the owner of the property a
-   * card names: recorded as owner of one of its flats, or the filer of an
-   * ownership card on its building. The same two sources `matchPairs` offers
-   * by, so `confirm` accepts exactly who the queue showed.
+   * card names, as the queue decides it: recorded as owner of one of the
+   * flats it claims, or the filer of an ownership card on its building that
+   * is about one of those flats or the whole structure — and not somebody
+   * «لا أحد منهم» rejected on this card.
+   *
+   * Asked of `matchPairs` itself rather than restated: this used to be a
+   * second, wider copy of the rule (any ownership card on the building), so
+   * `confirm` accepted owners of other flats the queue was supposed to keep
+   * out, and put the tenant's flat on their bill.
    */
-  private async ownsClaimedProperty(
-    entry: { id: string; buildingId: string | null },
-    citizenId: string,
-  ): Promise<boolean> {
-    const [onUnit, onBuilding] = await Promise.all([
-      this.db.unitOccupancy.count({
-        where: {
-          citizenId,
-          role: 'OWNER' as never,
-          toDate: null,
-          unit: { buildingUnits: { some: { propertyEntryId: entry.id, endedAt: null } } },
-        },
-      }),
-      entry.buildingId
-        ? this.db.propertyEntry.count({
-            where: {
-              buildingId: entry.buildingId,
-              occupancyType: 'OWNER' as never,
-              endedAt: null,
-              registration: { citizenId },
-            },
-          })
-        : Promise.resolve(0),
-    ]);
-    return onUnit + onBuilding > 0;
+  private async ownsClaimedProperty(entry: { id: string }, citizenId: string): Promise<boolean> {
+    const pairs = await this.matchPairs({ entryId: entry.id, includeLinked: true });
+    return pairs.some((pair) => pair.propertyCitizenIds.includes(citizenId));
   }
 
   /**
@@ -2824,6 +2886,8 @@ interface MatchPair {
   phoneCitizenIds: string[];
   /** Whose name the card names (and not their number). The rest were found by the property. */
   nameCitizenIds: string[];
+  /** Who was found by the property — what `confirm` checks a «PROPERTY» link against. */
+  propertyCitizenIds: string[];
   total: number;
 }
 
