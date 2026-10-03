@@ -61,13 +61,16 @@ interface UnitRow {
  * One property card as a read-back, top to bottom (`SummaryList`: the one
  * record this screen is about — PRIM-7):
  *
- *  1. **Identifiers**: the census building code and the card's رقم العقار.
- *  2. **The filled details**, from the form's own list (`askableFields`,
- *     plus the building name a linked card carries), each read through its
- *     control. Values are text — no chips in a read-back.
- *     Beside them, the property drawn with this citizen's unit lit; under
- *     them, for a linked card, the building's census summary
- *     (`BuildingCensusSummary`, the unit matrix's own rows).
+ *  1. **Two titled groups, side by side**, so where each fact comes from is
+ *     never in doubt:
+ *     - «بيانات العقار» — what the card says: its رقم العقار, then the filled
+ *       details from the form's own list (`askableFields`, plus the building
+ *       name a linked card carries), each read through its control;
+ *     - «المبنى في المسح» — what the census says (`BuildingCensusSummary`, the
+ *       unit matrix's own rows), led by رمز المبنى; its رقم العقار only when it
+ *       differs from the card's, so the number is not said twice.
+ *     Values are text — no chips in a read-back.
+ *  2. **The drawing** beside them, this citizen's unit lit.
  *  3. **The open fields, answered in place**: a tinted block per field, with
  *     the officer's reason and the box. An open field is not also listed
  *     above, so nothing on the page is said twice.
@@ -166,61 +169,83 @@ function PropertyDetails({
   /*
     The picture: the same one the citizen's properties page draws (`PropertyScene`),
     with this citizen's census units lit — the flats on this card that the
-    census links. A card linked to no building is drawn as its type.
+    census links. A card with no flat lines (a house) on a building of exactly
+    one unit is that unit, and it is lit too. A card linked to no building is
+    drawn as its type.
   */
+  const censusUnits = census?.building?.units ?? [];
   const lit = new Set((census?.units ?? []).map((unit) => unit.unitId).filter((id): id is string => Boolean(id)));
-  const litCodes = (census?.building?.units ?? []).filter((unit) => lit.has(unit.id)).map((unit) => unit.unitCode);
+  if (lit.size === 0 && units.length === 0 && censusUnits.length === 1) lit.add(censusUnits[0]!.id);
+  const litCodes = censusUnits.filter((unit) => lit.has(unit.id)).map((unit) => unit.unitCode);
   const soleType =
     (units.length === 1 ? units[0]!.unitType : null) ??
-    (census?.building?.units.filter((unit) => lit.has(unit.id)).length === 1
-      ? census.building.units.find((unit) => lit.has(unit.id))!.unitType
+    (censusUnits.filter((unit) => lit.has(unit.id)).length === 1
+      ? censusUnits.find((unit) => lit.has(unit.id))!.unitType
       : null) ??
-    (census?.building?.units.length === 1 ? census.building.units[0]!.unitType : null);
+    (censusUnits.length === 1 ? censusUnits[0]!.unitType : null);
+  const numberOpen = open.has(`${prefix}propertyNumber`);
+
+  /** A titled group of facts — what the card says, or what the census says. */
+  const group = (title: string, body: React.ReactNode) => (
+    <section className="min-w-0 space-y-1">
+      <h4 className="text-xs font-semibold text-muted-foreground">{title}</h4>
+      {body}
+    </section>
+  );
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="min-w-0 lg:col-span-2">
-          <SummaryList>
-            <SummaryRow
-              label={en ? 'Building code' : 'رمز المبنى'}
-              className={census?.buildingCode ? 'font-mono' : 'font-normal text-muted-foreground'}
-            >
-              {census?.buildingCode ?? (en ? 'Not linked to the census' : 'غير مربوط بالمسح')}
-            </SummaryRow>
-            {open.has(`${prefix}propertyNumber`) ? null : (
-              <SummaryRow
-                label={labels.citizenField.propertyNumber}
-                className={propertyNumber ? 'font-mono' : 'font-normal text-muted-foreground'}
-              >
-                {propertyNumber ?? '—'}
-              </SummaryRow>
-            )}
-                {filled.map((field) => {
-              const value = displayValue(values, field.path, locale) ?? '';
-              const kind = controlFor(field.path).kind;
-              return (
+    <div className="space-y-5">
+      <div className="grid gap-6 lg:grid-cols-12">
+        {/* The record: the card's own facts, then the building as the census holds it. */}
+        <div className="grid min-w-0 gap-6 lg:col-span-8 xl:grid-cols-2">
+          {group(
+            en ? 'Property details' : 'بيانات العقار',
+            <SummaryList>
+              {numberOpen ? null : (
                 <SummaryRow
-                  key={field.path}
-                  label={leafLabel(field.path)}
-                  className={kind === 'number' || kind === 'phone' ? 'tabular-nums' : undefined}
+                  label={labels.citizenField.propertyNumber}
+                  className={propertyNumber ? 'font-mono' : 'font-normal text-muted-foreground'}
                 >
-                  {kind === 'phone' ? formatPhone(value) : value}
+                  {propertyNumber ?? '—'}
                 </SummaryRow>
-              );
-            })}
-          </SummaryList>
-          {census?.building ? (
-            <div className="mt-5 space-y-1">
-              <h4 className="text-sm font-semibold">{en ? 'The building in the census' : 'المبنى في المسح'}</h4>
-              <BuildingCensusSummary building={census.building} locale={locale} />
-            </div>
-          ) : null}
+              )}
+              {filled.map((field) => {
+                const value = displayValue(values, field.path, locale) ?? '';
+                const kind = controlFor(field.path).kind;
+                return (
+                  <SummaryRow
+                    key={field.path}
+                    label={leafLabel(field.path)}
+                    className={kind === 'number' || kind === 'phone' ? 'tabular-nums' : undefined}
+                  >
+                    {kind === 'phone' ? formatPhone(value) : value}
+                  </SummaryRow>
+                );
+              })}
+            </SummaryList>,
+          )}
+          {group(
+            en ? 'The building in the census' : 'المبنى في المسح',
+            census?.building ? (
+              <BuildingCensusSummary
+                building={census.building}
+                code={census.buildingCode}
+                // The card has just said رقم العقار; the census repeats it only when it differs.
+                omitParcel={!numberOpen && census.building.parcelNumber === propertyNumber}
+                locale={locale}
+              />
+            ) : (
+              <p className="py-2.5 text-sm text-muted-foreground">
+                {en ? 'Not linked to a census building.' : 'غير مربوط بمبنى في المسح.'}
+              </p>
+            ),
+          )}
         </div>
-        {/* Where it is: the building drawn, this citizen's unit lit (ICO-2: the list beside it is the record). */}
-        <figure className="space-y-2">
-          <div className="relative h-64 overflow-hidden rounded-lg border bg-muted/40">
-            <div className="absolute inset-x-6 bottom-6 top-8 overflow-hidden">
+
+        {/* Where it is: the building drawn, this citizen's unit lit (ICO-2: the facts beside it are the record). */}
+        <figure className="space-y-2 lg:col-span-4">
+          <div className="relative h-56 overflow-hidden rounded-lg border bg-muted/40">
+            <div className="absolute inset-x-6 bottom-5 top-7 overflow-hidden">
               <PropertyScene
                 propertyType={card?.propertyType}
                 building={census?.building as ElevationBuilding | null | undefined}

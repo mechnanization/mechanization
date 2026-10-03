@@ -40,9 +40,15 @@ export interface BuildingCensusFacts {
 export function BuildingCensusSummary({
   building,
   damageLevel,
+  code,
+  omitParcel = false,
   locale = 'ar',
 }: {
   building: BuildingCensusFacts;
+  /** رمز المبنى as the first row — for a screen whose header does not already carry it. */
+  code?: string | null;
+  /** Leaves out رقم العقار when the screen has just said it (the card's own, the same number). */
+  omitParcel?: boolean;
   /** The current damage level, where the caller has read it. */
   damageLevel?: string | null;
   locale?: string;
@@ -54,6 +60,12 @@ export function BuildingCensusSummary({
 
   return (
     <SummaryList>
+      {code ? (
+        <SummaryRow label={en ? 'Building code' : 'رمز المبنى'} className="font-mono">
+          {code}
+        </SummaryRow>
+      ) : null}
+
       <SummaryRow label={en ? 'Structure Type' : 'نوع المنشأة'}>
         {label(labels.structureType, building.structureType)}
       </SummaryRow>
@@ -105,9 +117,11 @@ export function BuildingCensusSummary({
         </SummaryRow>
       ) : null}
 
-      <SummaryRow label={en ? 'Parcel Number' : 'رقم العقار'} className="font-mono">
-        {building.parcelNumber}
-      </SummaryRow>
+      {omitParcel ? null : (
+        <SummaryRow label={en ? 'Parcel Number' : 'رقم العقار'} className="font-mono">
+          {building.parcelNumber}
+        </SummaryRow>
+      )}
 
       {building.sharedParcelNumbers?.length ? (
         <SummaryRow label={en ? 'Shared parcels' : 'عقارات مشتركة'} className="font-mono">
