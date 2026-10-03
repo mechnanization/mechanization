@@ -31,6 +31,7 @@ import { SkeletonText } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { PropertyScene, type ElevationBuilding } from '@/components/admin/property-illustrations';
+import { BuildingCensusSummary } from '@/components/admin/building-census-summary';
 import { controlFor } from '@/lib/citizen-field-controls';
 import { formatDate } from '@/lib/dates';
 import { flagFieldLabel } from '@/lib/field-flags';
@@ -60,11 +61,13 @@ interface UnitRow {
  * One property card as a read-back, top to bottom (`SummaryList`: the one
  * record this screen is about — PRIM-7):
  *
- *  1. **Identifiers**: the census building code, رقم العقار, the census
- *     parcel when it differs from the card's own number, the unit count.
+ *  1. **Identifiers**: the census building code and the card's رقم العقار.
  *  2. **The filled details**, from the form's own list (`askableFields`,
  *     plus the building name a linked card carries), each read through its
  *     control. Values are text — no chips in a read-back.
+ *     Beside them, the property drawn with this citizen's unit lit; under
+ *     them, for a linked card, the building's census summary
+ *     (`BuildingCensusSummary`, the unit matrix's own rows).
  *  3. **The open fields, answered in place**: a tinted block per field, with
  *     the officer's reason and the box. An open field is not also listed
  *     above, so nothing on the page is said twice.
@@ -119,7 +122,6 @@ function PropertyDetails({
   const blank = detailFields.filter((field) => !open.has(field.path) && !displayValue(values, field.path, locale));
 
   const propertyNumber = displayValue(values, `${prefix}propertyNumber`, locale);
-  const parcel = census?.parcelNumber ?? null;
   const units = card?.units ?? [];
   const unitCodeAt = (unitIndex: number) =>
     census?.units.find((entry) => entry.id === units[unitIndex]?.id)?.unitCode ?? null;
@@ -195,12 +197,7 @@ function PropertyDetails({
                 {propertyNumber ?? '—'}
               </SummaryRow>
             )}
-            {parcel && parcel !== propertyNumber ? (
-              <SummaryRow label={en ? 'Property no. in the census' : 'رقم العقار في المسح'} className="font-mono">
-                {parcel}
-              </SummaryRow>
-            ) : null}
-            {filled.map((field) => {
+                {filled.map((field) => {
               const value = displayValue(values, field.path, locale) ?? '';
               const kind = controlFor(field.path).kind;
               return (
@@ -214,6 +211,12 @@ function PropertyDetails({
               );
             })}
           </SummaryList>
+          {census?.building ? (
+            <div className="mt-5 space-y-1">
+              <h4 className="text-sm font-semibold">{en ? 'The building in the census' : 'المبنى في المسح'}</h4>
+              <BuildingCensusSummary building={census.building} locale={locale} />
+            </div>
+          ) : null}
         </div>
         {/* Where it is: the building drawn, this citizen's unit lit (ICO-2: the list beside it is the record). */}
         <figure className="space-y-2">

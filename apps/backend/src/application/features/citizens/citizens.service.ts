@@ -771,6 +771,14 @@ export class CitizensService {
                       lifecycleStatus: true,
                       floorsCount: true,
                       basementsCount: true,
+                      // The census summary beside it, as the unit matrix shows it.
+                      postedNumber: true,
+                      sharedParcelNumbers: true,
+                      isPartitioned: true,
+                      partitionNumbers: true,
+                      latitude: true,
+                      unitsTotal: true,
+                      unitsSurveyed: true,
                       units: {
                         orderBy: [{ floor: 'asc' }, { sequence: 'asc' }],
                         select: {
@@ -810,6 +818,28 @@ export class CitizensService {
       this.fileVersion(citizen.id),
       this.lastStaffEdit(citizen.id),
     ]);
+
+    /*
+      The sector each linked building stands in — resolved from the parcel at
+      read time, as the building read does (D13), in one query for the whole
+      record rather than one per card.
+    */
+    const parcels = [
+      ...new Set(
+        (registration?.properties ?? [])
+          .map((property) => property.building?.parcelNumber)
+          .filter((parcel): parcel is string => Boolean(parcel)),
+      ),
+    ];
+    const zones = parcels.length
+      ? await withConnectionRetry(() =>
+          this.db.zone.findMany({
+            where: { parcelNumbers: { hasSome: parcels } },
+            select: { code: true, name: true, parcelNumbers: true },
+          }),
+        )
+      : [];
+    const zoneOf = (parcel: string) => zones.find((zone) => zone.parcelNumbers.includes(parcel)) ?? null;
 
     return {
       id: citizen.id,
@@ -883,6 +913,17 @@ export class CitizensService {
               floorsCount: property.building.floorsCount,
               basementsCount: property.building.basementsCount,
               units: property.building.units,
+              parcelNumber: property.building.parcelNumber,
+              postedNumber: property.building.postedNumber,
+              sharedParcelNumbers: property.building.sharedParcelNumbers,
+              isPartitioned: property.building.isPartitioned,
+              partitionNumbers: property.building.partitionNumbers,
+              /** Whether it is placed on the map — the coordinates themselves are not needed here. */
+              located: property.building.latitude != null,
+              unitsTotal: property.building.unitsTotal,
+              unitsSurveyed: property.building.unitsSurveyed,
+              zoneCode: zoneOf(property.building.parcelNumber)?.code ?? null,
+              zoneName: zoneOf(property.building.parcelNumber)?.name ?? null,
             }
           : null,
       })),

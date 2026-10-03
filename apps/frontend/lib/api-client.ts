@@ -3064,12 +3064,25 @@ export interface CitizenFormData {
     parcelNumber: string | null;
     /** `unitId` is the census unit the flat is — what the drawing lights. */
     units: Array<{ id: string; unitCode: string | null; unitId: string | null }>;
-    /** The linked building's shape, for the elevation drawing — no occupants. */
+    /**
+     * The linked building's shape, for the elevation drawing, and its census
+     * summary (`BuildingCensusSummary`) — no occupants.
+     */
     building: {
       structureType: string;
       lifecycleStatus: string;
       floorsCount: number;
       basementsCount: number;
+      parcelNumber: string;
+      postedNumber: string | null;
+      sharedParcelNumbers: string[];
+      isPartitioned: boolean | null;
+      partitionNumbers: string[];
+      located: boolean;
+      unitsTotal: number;
+      unitsSurveyed: number;
+      zoneCode: string | null;
+      zoneName: string | null;
       units: Array<{
         id: string;
         floor: number;
