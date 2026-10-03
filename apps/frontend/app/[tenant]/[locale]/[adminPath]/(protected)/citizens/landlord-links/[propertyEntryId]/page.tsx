@@ -21,21 +21,33 @@ import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
-import { SkeletonText } from '@/components/ui/skeleton';
+import { Skeleton, SkeletonText } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 
 /**
- * «فحص الرابط» — one owner claim from «روابط المالكين», on a page of its own:
+ * «فحص الرابط» — one owner claim from «روابط المالكين», on a page of its own.
  *
- *  1. **The owner**, first: the claim as the tenant made it, the registered
- *     people it could be — each with their name, father's and mother's names,
- *     phone and reference — how each name compares, what a link would do, and
- *     the decision itself. That is `LandlordProposalCard`, the same card the
- *     queue used to stack, so the decision is made exactly as before: choosing
- *     and confirming are two steps, nothing links itself.
- *  2. **The property and the occupant** under it — a tenant or a free
- *     occupant (شاغل بتسامح): what the claim is about.
+ * ## Layout
+ *
+ * The header says whose claim it is — the occupant, their filing reference,
+ * the property and the day it was filed — with where it stands and the way to
+ * the occupant's file.
+ *
+ * Under it, two columns on a reviewer's screen, one on a phone:
+ *
+ *  - **What is known**, at the start and pinned while the decision scrolls:
+ *    the occupant (tenant or free occupant, شاغل بتسامح) and the property the
+ *    claim is about. Facts only, read top to bottom (`SummaryList`).
+ *  - **The decision**, the wide column: what the occupant said about the owner
+ *    set apart as the thing to compare against, the registered people it could
+ *    be — side by side when there are several — each with how their name and
+ *    number compare, what a link would do, and the two answers. That is
+ *    `LandlordProposalCard` in its `panel` layout, so the decision is made by
+ *    the same code as everywhere else: choosing and confirming are two steps,
+ *    nothing links itself.
+ *
+ * On a phone the facts come first and are short; the decision follows.
  *
  * The claim is read with the queue's own query (`GET landlord-links/:id`), so
  * this page and the row it was opened from cannot disagree. A claim that is no
@@ -76,35 +88,51 @@ export default function LandlordLinkPage({
   const resolution = resolved[propertyEntryId];
   const queue = `${base}/citizens/landlord-links`;
 
-  const typed =
-    proposal?.landlordName?.trim() ||
-    (proposal?.landlordPhone ? (en ? 'No name given' : 'بلا اسم') : en ? 'Does not know the owner' : 'لا يعرف المالك');
   const reference = proposal ? (proposal.buildingCode ?? proposal.propertyNumber) : null;
   const view = proposal ? landlordLinkStatusView(landlordLinkStatus(proposal), locale) : null;
+  const occupant = proposal?.filedBy ?? null;
+  const fileHref = occupant ? `${base}/citizens/${occupant.citizenId}` : null;
   const dash = <span className="font-normal text-muted-foreground">—</span>;
+  const units = proposal?.units.map((unit) => unit.unitCode).filter(Boolean) ?? [];
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <BackLink fallbackHref={queue} label={en ? 'Back to owner links' : 'العودة إلى روابط المالكين'} />
 
       {/*
-        The owner as the tenant named them is the heading — the person this
-        page is about — with «فحص الرابط» and the property's reference under it.
-        Where the claim stands sits beside the way to the tenant's file.
+        Whose claim this is, by the identifiers a clerk is asked for: the
+        occupant's name as the title, then their filing reference, the
+        property, and the day it was filed. Where it stands sits beside the
+        way to the occupant's file.
       */}
       <PageHeader
         icon={Link2}
-        title={proposal ? typed : en ? 'Check link' : 'فحص الرابط'}
+        title={occupant?.name ?? (en ? 'Check link' : 'فحص الرابط')}
         subtitle={
           proposal ? (
             <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span>{en ? 'Check link' : 'فحص الرابط'}</span>
+              <span>{en ? 'Owner link check' : 'فحص رابط المالك'}</span>
+              {occupant ? (
+                <>
+                  <span aria-hidden>·</span>
+                  <bdi dir="ltr" className="font-mono">
+                    {occupant.referenceNumber}
+                  </bdi>
+                </>
+              ) : null}
               {reference ? (
                 <>
                   <span aria-hidden>·</span>
-                  <bdi className="font-mono">{reference}</bdi>
+                  <bdi dir="ltr" className="font-mono">
+                    {reference}
+                  </bdi>
                 </>
               ) : null}
+              <span aria-hidden>·</span>
+              <span className="tabular-nums">
+                {en ? 'Filed ' : 'قُدِّم '}
+                {formatDate(proposal.filedAt)}
+              </span>
             </span>
           ) : undefined
         }
@@ -132,9 +160,9 @@ export default function LandlordLinkPage({
                   </Badge>
                 ) : null}
               </span>
-              {proposal.filedBy ? (
+              {fileHref ? (
                 <Link
-                  href={`${base}/citizens/${proposal.filedBy.citizenId}`}
+                  href={fileHref}
                   className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 basis-40 sm:flex-none sm:basis-auto')}
                 >
                   <FileText className="size-4" aria-hidden />
@@ -148,12 +176,30 @@ export default function LandlordLinkPage({
 
       {query.error ? (
         <ErrorState title={query.error} onRetry={query.refetch} retryLabel={en ? 'Try again' : 'إعادة المحاولة'} />
-      ) : query.loading || !query.data && query.data !== null ? (
-        <Card>
-          <CardContent className="p-4">
-            <SkeletonText lines={6} />
-          </CardContent>
-        </Card>
+      ) : query.loading || (!query.data && query.data !== null) ? (
+        // The page's own shape, so nothing jumps when the claim arrives.
+        <div className="grid gap-6 lg:grid-cols-12 lg:items-start" aria-busy="true">
+          <div className="space-y-4 lg:col-span-4">
+            {[0, 1].map((index) => (
+              <Card key={index}>
+                <CardContent className="space-y-3 p-4">
+                  <Skeleton className="h-5 w-1/3" />
+                  <SkeletonText lines={4} />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <Card className="lg:col-span-8">
+            <CardContent className="space-y-4 p-4">
+              <Skeleton className="h-5 w-1/4" />
+              <Skeleton className="h-16 w-full" />
+              <div className="grid gap-2 md:grid-cols-2">
+                <Skeleton className="h-20" />
+                <Skeleton className="h-20" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       ) : !proposal ? (
         <EmptyState
           icon={Link2}
@@ -170,15 +216,78 @@ export default function LandlordLinkPage({
           }
         />
       ) : (
-        <>
-          {/* 1 — The owner: who the tenant named, who that could be, and the decision. */}
-          <section className="space-y-3" aria-labelledby="link-owner">
-            <h2 id="link-owner" className="flex items-center gap-2 text-base font-semibold">
-              <UserRound className="size-5 text-primary" aria-hidden />
-              {en ? 'The owner' : 'المالك'}
-            </h2>
+        <div className="grid gap-6 lg:grid-cols-12 lg:items-start">
+          {/* What is known — pinned beside the decision on a wide screen. */}
+          <div className="space-y-4 lg:sticky lg:top-20 lg:col-span-4">
+            <Card>
+              <CardHeader className="border-b px-4 py-3.5">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                  <UserRound className="size-5 text-primary" aria-hidden />
+                  <h2>{en ? 'The occupant' : 'الساكن'}</h2>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 py-2">
+                <SummaryList>
+                  <SummaryRow label={en ? 'Name' : 'الاسم'}>
+                    {occupant && fileHref ? (
+                      <Link href={fileHref} className="text-primary underline-offset-2 hover:underline">
+                        {occupant.name}
+                      </Link>
+                    ) : (
+                      dash
+                    )}
+                  </SummaryRow>
+                  <SummaryRow label={en ? 'Filing reference' : 'رقم الطلب'} className="font-mono">
+                    {occupant?.referenceNumber ?? dash}
+                  </SummaryRow>
+                  <SummaryRow label={en ? 'Standing' : 'صفة الإشغال'}>
+                    {(labels.occupancyType as Record<string, string>)[proposal.occupancyType] ?? proposal.occupancyType}
+                  </SummaryRow>
+                  <SummaryRow label={en ? 'Filed on' : 'تاريخ التسجيل'} className="tabular-nums">
+                    {formatDate(proposal.filedAt)}
+                  </SummaryRow>
+                </SummaryList>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="border-b px-4 py-3.5">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                  <Building2 className="size-5 text-primary" aria-hidden />
+                  <h2>{en ? 'The property' : 'العقار'}</h2>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 py-2">
+                <SummaryList>
+                  <SummaryRow label={en ? 'Property type' : 'نوع العقار'}>
+                    {(labels.propertyType as Record<string, string>)[proposal.propertyType] ?? proposal.propertyType}
+                  </SummaryRow>
+                  <SummaryRow label={labels.citizenField.propertyNumber} className="font-mono">
+                    {proposal.propertyNumber ?? dash}
+                  </SummaryRow>
+                  {proposal.buildingCode ? (
+                    <SummaryRow label={en ? 'Building code' : 'رمز المبنى'} className="font-mono">
+                      {proposal.buildingCode}
+                    </SummaryRow>
+                  ) : null}
+                  {proposal.buildingName ? (
+                    <SummaryRow label={en ? 'Building name' : 'اسم المبنى'}>{proposal.buildingName}</SummaryRow>
+                  ) : null}
+                  <SummaryRow
+                    label={en ? 'Units a link would cover' : 'الوحدات التي يشملها الربط'}
+                    className="font-mono"
+                  >
+                    {units.length > 0 ? units.join(en ? ', ' : '، ') : dash}
+                  </SummaryRow>
+                </SummaryList>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* The decision. */}
+          <section className="space-y-3 lg:col-span-8" aria-label={en ? 'The decision' : 'القرار'}>
             {resolution ? (
-              <div className="space-y-3">
+              <>
                 <LandlordProposalResolved
                   resolution={resolution}
                   onUndo={() => void undo(resolution)}
@@ -188,7 +297,7 @@ export default function LandlordLinkPage({
                 <Link href={queue} className={buttonVariants({ variant: 'outline' })}>
                   {en ? 'Next link' : 'الرابط التالي'}
                 </Link>
-              </div>
+              </>
             ) : (
               <LandlordProposalCard
                 tenant={tenant}
@@ -202,64 +311,11 @@ export default function LandlordLinkPage({
                   void queryClient.invalidateQueries({ queryKey: ['landlord-links-summary'] });
                 }}
                 locale={locale}
+                variant="panel"
               />
             )}
           </section>
-
-          {/* 2 — What the claim is about: the property, and the occupant (tenant or free occupant) who made it. */}
-          <Card>
-            <CardHeader className="border-b px-4 py-3.5">
-              <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                <Building2 className="size-5 text-primary" aria-hidden />
-                <h2>{en ? 'The property and the occupant' : 'العقار والساكن'}</h2>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4">
-              <SummaryList>
-                <SummaryRow label={en ? 'Occupant' : 'الساكن'}>
-                  {proposal.filedBy ? (
-                    <Link
-                      href={`${base}/citizens/${proposal.filedBy.citizenId}`}
-                      className="text-primary underline-offset-2 hover:underline"
-                    >
-                      {proposal.filedBy.name}
-                    </Link>
-                  ) : (
-                    dash
-                  )}
-                </SummaryRow>
-                <SummaryRow label={en ? 'Filing reference' : 'رقم الطلب'} className="font-mono">
-                  {proposal.filedBy?.referenceNumber ?? dash}
-                </SummaryRow>
-                <SummaryRow label={en ? 'Standing' : 'صفة الإشغال'}>
-                  {(labels.occupancyType as Record<string, string>)[proposal.occupancyType] ?? proposal.occupancyType}
-                </SummaryRow>
-                <SummaryRow label={en ? 'Property type' : 'نوع العقار'}>
-                  {(labels.propertyType as Record<string, string>)[proposal.propertyType] ?? proposal.propertyType}
-                </SummaryRow>
-                <SummaryRow label={labels.citizenField.propertyNumber} className="font-mono">
-                  {proposal.propertyNumber ?? dash}
-                </SummaryRow>
-                {proposal.buildingCode ? (
-                  <SummaryRow label={en ? 'Building code' : 'رمز المبنى'} className="font-mono">
-                    {proposal.buildingCode}
-                  </SummaryRow>
-                ) : null}
-                {proposal.buildingName ? (
-                  <SummaryRow label={en ? 'Building name' : 'اسم المبنى'}>{proposal.buildingName}</SummaryRow>
-                ) : null}
-                <SummaryRow label={en ? 'Units a link would cover' : 'الوحدات التي يشملها الربط'} className="font-mono">
-                  {proposal.units.length > 0
-                    ? proposal.units.map((unit) => unit.unitCode ?? '—').join(en ? ', ' : '، ')
-                    : dash}
-                </SummaryRow>
-                <SummaryRow label={en ? 'Filed on' : 'تاريخ التسجيل'} className="tabular-nums">
-                  {formatDate(proposal.filedAt)}
-                </SummaryRow>
-              </SummaryList>
-            </CardContent>
-          </Card>
-        </>
+        </div>
       )}
     </div>
   );

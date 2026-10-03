@@ -70,6 +70,7 @@ export function LandlordProposalCard({
   citizenHref,
   onResolved,
   locale = 'ar',
+  variant = 'card',
 }: {
   tenant: string;
   token: string;
@@ -77,7 +78,17 @@ export function LandlordProposalCard({
   citizenHref: (citizenId: string) => string;
   onResolved: (resolution: LandlordResolution) => void;
   locale?: string;
+  /**
+   * `card` — one claim in a list, saying whose and where in its own header.
+   * `panel` — the decision on «فحص الرابط», where the page already says who
+   * filed it and what the property is: no header of its own, the occupant's
+   * words set apart as what each person is compared against, and the people
+   * side by side when there are several, so six owners of one building do not
+   * make a page six screens long.
+   */
+  variant?: 'card' | 'panel';
 }) {
+  const panel = variant === 'panel';
   const en = locale === 'en';
   const toast = useToast();
   const titleId = useId();
@@ -189,9 +200,25 @@ export function LandlordProposalCard({
   return (
     <article
       aria-labelledby={titleId}
-      className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm"
+      className={cn(
+        'overflow-hidden border bg-card text-card-foreground shadow-sm',
+        panel ? 'rounded-lg' : 'rounded-xl',
+      )}
     >
-      {/* ── Who filed it, and where ─────────────────────────────────── */}
+      {panel ? (
+        <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b px-4 py-3.5 sm:px-5">
+          <h2 id={titleId} className="flex items-center gap-2 text-base font-semibold">
+            <UserRound className="size-5 text-primary" aria-hidden />
+            {en ? 'Who is the owner?' : 'من هو المالك؟'}
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            {en
+              ? 'Compare what the occupant said with each registered person, then choose.'
+              : 'قارن ما ذكره الساكن بكل شخص مسجَّل، ثم اختر.'}
+          </p>
+        </header>
+      ) : (
+      /* ── Who filed it, and where ─────────────────────────────────── */
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b bg-muted/30 px-4 py-3">
         <Badge variant="soft-muted" className="shrink-0">
           {proposal.occupancyType === 'FREE_OCCUPANT'
@@ -247,12 +274,19 @@ export function LandlordProposalCard({
           {formatDate(proposal.filedAt)}
         </span>
       </header>
+      )}
 
-      <div className="space-y-4 px-4 py-4">
+      <div className={cn('space-y-4 px-4 py-4', panel && 'sm:px-5')}>
         {/* ── The claim, as one sentence ──────────────────────────────── */}
-        <div className="space-y-1">
+        <div className={cn('space-y-1', panel && 'rounded-lg bg-muted/50 p-3')}>
           <p className="text-xs font-medium text-muted-foreground">
-            {en ? 'Named as the owner' : 'ذكر أن المالك هو'}
+            {panel
+              ? en
+                ? 'What the occupant said'
+                : 'ما ذكره الساكن عن المالك'
+              : en
+                ? 'Named as the owner'
+                : 'ذكر أن المالك هو'}
           </p>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <p
@@ -272,7 +306,7 @@ export function LandlordProposalCard({
                 {formatPhone(proposal.landlordPhone)}
               </span>
             ) : (
-              <span className="text-sm text-muted-foreground">
+              <span className={cn('text-sm', panel ? 'text-warning' : 'text-muted-foreground')}>
                 {en ? 'no number given' : 'لم يُذكر رقم'}
               </span>
             )}
@@ -304,7 +338,11 @@ export function LandlordProposalCard({
                   : 'هل هذا هو المالك؟'}
           </legend>
 
-          <div role="radiogroup" aria-label={en ? 'Registered citizens' : 'المواطنون المسجَّلون'} className="space-y-2">
+          <div
+            role="radiogroup"
+            aria-label={en ? 'Registered citizens' : 'المواطنون المسجَّلون'}
+            className={cn(panel && proposal.candidates.length > 1 ? 'grid gap-2 md:grid-cols-2' : 'space-y-2')}
+          >
             {proposal.candidates.map((candidate) => (
               <CandidateRow
                 key={candidate.id}
@@ -316,6 +354,8 @@ export function LandlordProposalCard({
                 group={`owner-${proposal.propertyEntryId}`}
                 href={citizenHref(candidate.id)}
                 locale={locale}
+                // Said once in the question when it is true of everyone, not on every row.
+                sayFoundByProperty={!foundByProperty || proposal.candidates.some((other) => other.matchedBy !== 'PROPERTY')}
               />
             ))}
           </div>
@@ -396,6 +436,7 @@ function CandidateRow({
   group,
   href,
   locale,
+  sayFoundByProperty = true,
 }: {
   candidate: LandlordProposalCandidate;
   match: NameMatch;
@@ -406,6 +447,8 @@ function CandidateRow({
   group: string;
   href: string;
   locale: string;
+  /** Off when every person on the claim was found by the property — the question says so once. */
+  sayFoundByProperty?: boolean;
 }) {
   const en = locale === 'en';
   const inputId = useId();
@@ -454,11 +497,16 @@ function CandidateRow({
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-sm font-semibold">{candidate.name}</span>
             <MatchBadge match={match} locale={locale} />
-            {candidate.matchedBy === 'NAME' ? (
+            {candidate.matchedBy === 'PHONE' ? (
+              <Badge variant="soft-success" className="gap-1">
+                <Phone className="size-3" aria-hidden />
+                {en ? 'Number matches' : 'الرقم مطابق'}
+              </Badge>
+            ) : candidate.matchedBy === 'NAME' ? (
               <Badge variant="soft-warning">
                 {en ? 'Matched by name only — check the number' : 'مطابقة بالاسم فقط — تحقَّق من الرقم'}
               </Badge>
-            ) : candidate.matchedBy === 'PROPERTY' ? (
+            ) : candidate.matchedBy === 'PROPERTY' && sayFoundByProperty ? (
               <Badge variant="soft-warning">
                 {en ? 'Registered owner of this property' : 'مالك مسجَّل لهذا العقار'}
               </Badge>
