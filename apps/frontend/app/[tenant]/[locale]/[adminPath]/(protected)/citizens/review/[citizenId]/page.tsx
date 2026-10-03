@@ -161,7 +161,7 @@ function PropertyDetails({
   ];
 
   return (
-    <div className="max-w-3xl space-y-4">
+    <div className="space-y-4">
       <SummaryList>
         <SummaryRow
           label={en ? 'Building code' : 'رمز المبنى'}
@@ -383,9 +383,9 @@ export default function ReviewFilePage({
                 )}
               </CardTitle>
             </CardHeader>
-            {/* One column at reading width: the facts, then the open fields answered in place. */}
+            {/* One column, full width: the facts, then the open fields answered in place. */}
             <CardContent className="p-4">
-              <div className="max-w-3xl space-y-4">
+              <div className="space-y-4">
               <SummaryList>
                 <SummaryRow label={en ? 'Full name' : 'الاسم الكامل'}>{fullName}</SummaryRow>
                 <SummaryRow label={en ? "Mother's name" : 'اسم الأم وشهرتها'}>
