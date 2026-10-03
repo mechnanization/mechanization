@@ -6,6 +6,7 @@ import {
   cadastreFlags,
   FIELD_FLAG_KINDS,
   flaggedPaths,
+  formatUnitCode,
   IMPORT_COLUMNS,
   internationalPhone,
   POSSIBLE_DUPLICATE_FLAG_PATH,
@@ -755,7 +756,13 @@ export class CitizensService {
                 where: { endedAt: null },
                 orderBy: { createdAt: 'asc' },
                 include: {
-                  units: { where: { endedAt: null }, orderBy: { createdAt: 'asc' } },
+                  units: {
+                    where: { endedAt: null },
+                    orderBy: { createdAt: 'asc' },
+                    // The census unit each flat is, for its code — see `propertyRefs`.
+                    include: { unit: { select: { floor: true, sequence: true } } },
+                  },
+                  building: { select: { code: true, parcelNumber: true } },
                   landlordCitizen: {
                     select: {
                       id: true,
@@ -821,6 +828,25 @@ export class CitizensService {
         no note at all.
       */
       notes: registration?.notes ?? null,
+      /**
+       * Each card's place in the census, read-only: the building's code and
+       * parcel, and each flat's unit code («0101»). What a reviewer reads a
+       * property by, and what is painted on the wall.
+       *
+       * Beside `properties` rather than inside them, because the cards are the
+       * form's own values and travel back on save; these are facts the census
+       * owns and the form never writes. Codes only — no other occupant of the
+       * building reaches this response.
+       */
+      propertyRefs: (registration?.properties ?? []).map((property) => ({
+        propertyId: property.id,
+        buildingCode: property.building?.code ?? null,
+        parcelNumber: property.building?.parcelNumber ?? null,
+        units: property.units.map((unit) => ({
+          id: unit.id,
+          unitCode: unit.unit ? formatUnitCode(unit.unit.floor, unit.unit.sequence) : null,
+        })),
+      })),
       residence: citizen.residence,
       personal: {
         firstName: citizen.firstName,

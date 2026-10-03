@@ -278,7 +278,7 @@ export function useRecordCompletion({
    */
   const [record, setRecord] = useState<Pick<
     CitizenFormData,
-    'citizenReferenceNumber' | 'lastStaffEdit' | 'status'
+    'citizenReferenceNumber' | 'lastStaffEdit' | 'status' | 'propertyRefs'
   > | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -339,6 +339,7 @@ export function useRecordCompletion({
           citizenReferenceNumber: form.citizenReferenceNumber ?? null,
           lastStaffEdit: form.lastStaffEdit ?? null,
           status: form.status,
+          propertyRefs: form.propertyRefs ?? [],
         });
       } catch (caught) {
         if (cancelled) return;

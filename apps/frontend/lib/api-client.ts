@@ -3054,6 +3054,16 @@ export interface CitizenFormData {
   flags: FieldFlag[];
   /** «ملاحظات» on the most recent registration, or null for none. */
   notes: string | null;
+  /**
+   * Each card's place in the census, read-only: the building's code and
+   * parcel, and each flat's unit code. Never sent back — the census owns it.
+   */
+  propertyRefs?: Array<{
+    propertyId: string;
+    buildingCode: string | null;
+    parcelNumber: string | null;
+    units: Array<{ id: string; unitCode: string | null }>;
+  }>;
   /** The file as it stands now — sent back as `expectedVersion` on save. */
   version?: string;
   /** The last member of staff who changed this file, and whether it was the viewer. */
