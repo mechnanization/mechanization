@@ -28,6 +28,16 @@ export interface Case {
   buildingCode: string | null;
   unitId: string | null;
   unitCode: string | null;
+  /**
+   * Who the census records on that unit now — owner, tenant or free occupant,
+   * each a registered citizen. Empty when the case is not pinned to a unit, or
+   * the unit has nobody on it yet. It is what decides whether «تسجيل المواطن»
+   * still makes sense from the case: a flat somebody is already registered on
+   * is answered by linking the case to them, not by registering someone new.
+   */
+  /** The unit's recorded status — whether a recorded owner lives in it (`OWNER_OCCUPIED`) or lets it. */
+  unitStatus: string | null;
+  unitOccupants: Array<{ citizenId: string; name: string; role: 'OWNER' | 'TENANT' | 'FREE_OCCUPANT' }>;
   /** The damage reading that prompted this case, if one did. A reference, not
    *  ownership — resolving the case says nothing about the damage (D6). */
   damageAssessmentId: string | null;

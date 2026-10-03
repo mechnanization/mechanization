@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { Link2, Loader2, Search, Unlink, UserRound } from 'lucide-react';
-import type { CitizenListItem } from '@/lib/api-client';
+import type { CaseUnitOccupant, CitizenListItem } from '@/lib/api-client';
+import { getLabels } from '@mechanization/shared-schemas';
 import { listCitizens, logApiError } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import {
@@ -35,6 +36,7 @@ export function LinkCaseCitizenDialog({
   error,
   onLink,
   onUnlink,
+  suggested = [],
   locale = 'ar',
 }: {
   open: boolean;
@@ -45,10 +47,16 @@ export function LinkCaseCitizenDialog({
   currentCitizenName?: string | null;
   submitting: boolean;
   error: string | null;
-  onLink: (citizen: CitizenListItem) => void;
+  onLink: (citizen: Pick<CitizenListItem, 'id' | 'fullName'>) => void;
   onUnlink: () => void;
+  /**
+   * The people the census records on the case's unit — almost always who the
+   * case is about, so they are offered before any search.
+   */
+  suggested?: CaseUnitOccupant[];
   locale?: string;
 }) {
+  const roles = getLabels(locale).occupancyType as Record<string, string>;
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<CitizenListItem[]>([]);
   const [searching, setSearching] = useState(false);
@@ -125,6 +133,32 @@ export function LinkCaseCitizenDialog({
           <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
             {error}
           </p>
+        ) : null}
+
+        {suggested.length > 0 && !currentCitizenName ? (
+          <section className="space-y-1.5" aria-label={locale === 'en' ? 'On this unit' : 'على هذه الوحدة'}>
+            <p className="text-xs font-medium text-muted-foreground">
+              {locale === 'en' ? 'Registered on this unit' : 'مسجَّلون على هذه الوحدة'}
+            </p>
+            {suggested.map((person) => (
+              <button
+                key={person.citizenId}
+                type="button"
+                disabled={submitting}
+                onClick={() => onLink({ id: person.citizenId, fullName: person.name })}
+                className="flex w-full items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 p-2.5 text-start transition-colors duration-150 ease-out hover:bg-primary/10 disabled:opacity-50"
+              >
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <UserRound className="size-4" aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{person.name}</span>
+                  <span className="block text-xs text-muted-foreground">{roles[person.role] ?? person.role}</span>
+                </span>
+                <Link2 className="size-4 shrink-0 text-primary" aria-hidden />
+              </button>
+            ))}
+          </section>
         ) : null}
 
         <div className="relative">

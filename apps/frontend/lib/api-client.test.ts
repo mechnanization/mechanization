@@ -226,3 +226,23 @@ describe('apiFetch — when the exchange must not be attempted', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * «تسجيل المواطن» on a case closes only when somebody who lives on the flat is
+ * already registered — not when its owner merely is. A flat recorded «مؤجرة»
+ * with only its owner on file is the case asking for the missing tenant.
+ */
+describe('caseResidents', () => {
+  it('counts tenants, free occupants, and an owner who lives there — not an owner who lets it', async () => {
+    const { caseResidents } = await import('./api-client');
+    const owner = { citizenId: 'o', name: 'علي خليفة', role: 'OWNER' as const };
+    const tenant = { citizenId: 't', name: 'زينب فرحات', role: 'TENANT' as const };
+    const lent = { citizenId: 'f', name: 'نور شعيتو', role: 'FREE_OCCUPANT' as const };
+
+    expect(caseResidents({ unitStatus: 'RENTED', unitOccupants: [owner] })).toEqual([]);
+    expect(caseResidents({ unitStatus: 'RENTED', unitOccupants: [owner, tenant] })).toEqual([tenant]);
+    expect(caseResidents({ unitStatus: 'FREE_OCCUPIED', unitOccupants: [owner, lent] })).toEqual([lent]);
+    expect(caseResidents({ unitStatus: 'OWNER_OCCUPIED', unitOccupants: [owner] })).toEqual([owner]);
+    expect(caseResidents({ unitStatus: null, unitOccupants: undefined })).toEqual([]);
+  });
+});

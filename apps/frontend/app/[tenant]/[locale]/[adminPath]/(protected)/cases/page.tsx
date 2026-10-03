@@ -28,7 +28,7 @@ import {
   logApiError,
   updateCase,
 } from '@/lib/api-client';
-import type { CaseSummary } from '@/lib/api-client';
+import { caseResidents, type CaseSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate } from '@/lib/dates';
@@ -200,7 +200,7 @@ export default function CasesPage({
   const [openedFrom, setOpenedFrom] = useState('');
   const [openedTo, setOpenedTo] = useState('');
   /** Which building's matrix is open from a case row, if any. */
-  const [matrixId, setMatrixId] = useState<string | null>(null);
+  const [matrix, setMatrix] = useState<{ buildingId: string; unitId: string | null } | null>(null);
 
   const canWrite = role !== 'AUDITOR' && role !== 'ACCOUNTANT';
   const canDelete = role === 'SUPER_ADMIN';
@@ -384,7 +384,7 @@ export default function CasesPage({
   );
 
   const linkCitizen = useCallback(
-    async (citizen: CitizenListItem) => {
+    async (citizen: Pick<CitizenListItem, 'id' | 'fullName'>) => {
       if (!token || !linking) return;
       setLinkSubmitting(true);
       setLinkError(null);
@@ -436,30 +436,25 @@ export default function CasesPage({
         ),
       },
       {
+        // The property's identifier — the census code and the flat when the
+        // case is pinned to them, else the number the officer wrote at the door.
         accessorKey: 'propertyNumber',
-        header: locale === 'en' ? 'Property' : 'العقار',
+        header: locale === 'en' ? 'Property ID' : 'رقم العقار',
         cell: ({ row }) => {
           const item = row.original;
-          const parts = [
-            item.propertyNumber ? (locale === 'en' ? `#${item.propertyNumber}` : `رقم ${item.propertyNumber}`) : null,
-            item.neighborhood,
-          ].filter(Boolean);
-          return parts.length > 0 ? (
-            <span dir="auto">{parts.join(' — ')}</span>
+          const id = item.buildingCode
+            ? item.unitCode
+              ? `${item.buildingCode} · ${item.unitCode}`
+              : item.buildingCode
+            : item.propertyNumber;
+          return id ? (
+            <CellTag className="font-mono" dir="ltr" title={item.neighborhood ?? undefined}>
+              {id}
+            </CellTag>
           ) : (
-            <span className="text-muted-foreground text-xs">—</span>
+            <CellTag tone="muted">—</CellTag>
           );
         },
-      },
-      {
-        accessorKey: 'propertyType',
-        header: locale === 'en' ? 'Type' : 'النوع',
-        cell: ({ row }) =>
-          row.original.propertyType ? (
-            labels.propertyType[row.original.propertyType as never] ?? row.original.propertyType
-          ) : (
-            <span className="text-muted-foreground text-xs">—</span>
-          ),
       },
       {
         accessorKey: 'status',
@@ -523,12 +518,44 @@ export default function CasesPage({
         cell: ({ row }) => {
           const item = row.original;
           const busy = busyId === item.id;
+          const residents = caseResidents(item);
+          const occupied = residents.length > 0;
+          const who = residents
+            .map((person) => `${person.name} (${labels.occupancyType[person.role as never] ?? person.role})`)
+            .join(locale === 'en' ? ', ' : '، ');
+          const registerBlocked =
+            locale === 'en'
+              ? `Someone already lives on this unit, registered: ${who} — link the case to them instead.`
+              : `الوحدة مسكونة ومسجَّلة: ${who} — اربط الحالة به بدلاً من تسجيل مواطن جديد.`;
 
           if (!canWrite) return null;
 
           return (
             <div className="flex items-center gap-1.5">
               {item.status === 'OPEN' ? (
+                occupied ? (
+                  /*
+                    The flat is already owned, rented or lent to a registered
+                    citizen: registering somebody new from the case would file a
+                    second household on it. Closed, and the tooltip says who is
+                    there and what to do instead. A focusable wrapper, because a
+                    disabled button shows no tooltip and takes no focus.
+                  */
+                  <ActionTooltip label={registerBlocked}>
+                    <span tabIndex={0} aria-label={registerBlocked} className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      <Button
+                        variant="outline"
+                        size="icon-sm"
+                        aria-hidden
+                        tabIndex={-1}
+                        disabled
+                        className="pointer-events-none"
+                      >
+                        <UserPlus className="size-4" aria-hidden />
+                      </Button>
+                    </span>
+                  </ActionTooltip>
+                ) : (
                 <ActionTooltip label={locale === 'en' ? 'Register Citizen' : 'تسجيل المواطن'}>
                   <Button
                     variant="outline"
@@ -541,9 +568,20 @@ export default function CasesPage({
                     <UserPlus className="size-4" aria-hidden />
                   </Button>
                 </ActionTooltip>
+                )
               ) : null}
 
-              <ActionTooltip label={locale === 'en' ? 'Link to Citizen' : 'ربط بمواطن'}>
+              <ActionTooltip
+                label={
+                  occupied
+                    ? locale === 'en'
+                      ? `Link to a citizen — on this unit: ${who}`
+                      : `ربط بمواطن — على الوحدة: ${who}`
+                    : locale === 'en'
+                      ? 'Link to Citizen'
+                      : 'ربط بمواطن'
+                }
+              >
                 <Button
                   variant="outline"
                   size="icon-sm"
@@ -601,7 +639,7 @@ export default function CasesPage({
                     size="icon-sm"
                     aria-label={locale === 'en' ? 'Open the unit matrix' : 'فتح مصفوفة الوحدات'}
                     disabled={busy}
-                    onClick={() => setMatrixId(item.buildingId)}
+                    onClick={() => setMatrix({ buildingId: item.buildingId!, unitId: item.unitId })}
                   >
                     <Grid3x3 className="size-4" aria-hidden />
                   </Button>
@@ -864,11 +902,13 @@ export default function CasesPage({
 
       {token ? (
         <BuildingUnitMatrixDrawer
-          open={matrixId !== null}
-          onClose={() => setMatrixId(null)}
+          open={matrix !== null}
+          onClose={() => setMatrix(null)}
           tenant={tenant}
           token={token}
-          buildingId={matrixId}
+          buildingId={matrix?.buildingId ?? null}
+          // Opened from a case on a flat: the drawer opens on that flat.
+          focusUnitId={matrix?.unitId ?? null}
           canWrite={canWrite}
           // A visit or an occupancy logged from here can auto-resolve the very
           // case the drawer was opened from, so the list is re-read on close.
@@ -896,6 +936,7 @@ export default function CasesPage({
           error={linkError}
           onLink={(citizen) => void linkCitizen(citizen)}
           onUnlink={() => void unlinkCitizen()}
+          suggested={linking?.unitOccupants ?? []}
           locale={locale}
         />
       ) : null}

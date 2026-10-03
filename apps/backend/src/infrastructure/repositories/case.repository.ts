@@ -24,7 +24,11 @@ type CaseRow = {
   buildingId: string | null;
   building: { code: string } | null;
   unitId: string | null;
-  unit: { unitCode: string } | null;
+  unit: {
+    unitCode: string;
+    unitStatus: string | null;
+    occupancies: Array<{ citizenId: string; role: string; citizen: { firstName: string; lastName: string } }>;
+  } | null;
   damageAssessmentId: string | null;
   scheduledRevisitAt: Date | null;
   resolvedCitizenId: string | null;
@@ -54,6 +58,12 @@ function toDomain(row: CaseRow): Case {
     buildingCode: row.building?.code ?? null,
     unitId: row.unitId,
     unitCode: row.unit?.unitCode ?? null,
+    unitStatus: row.unit?.unitStatus ?? null,
+    unitOccupants: (row.unit?.occupancies ?? []).map((occupancy) => ({
+      citizenId: occupancy.citizenId,
+      name: `${occupancy.citizen.firstName} ${occupancy.citizen.lastName}`,
+      role: occupancy.role as Case['unitOccupants'][number]['role'],
+    })),
     damageAssessmentId: row.damageAssessmentId,
     scheduledRevisitAt: row.scheduledRevisitAt,
     resolvedCitizenId: row.resolvedCitizenId,
@@ -75,7 +85,18 @@ const includeRelations = {
   // nothing else about the structure, and joining the full building onto every
   // case would carry a unit matrix into a table that never draws one.
   building: { select: { code: true } },
-  unit: { select: { unitCode: true } },
+  unit: {
+    select: {
+      unitCode: true,
+      unitStatus: true,
+      // Who is on the flat now — a handful of rows at most, read for the case's actions.
+      occupancies: {
+        where: { toDate: null },
+        select: { citizenId: true, role: true, citizen: { select: { firstName: true, lastName: true } } },
+        orderBy: { fromDate: 'asc' },
+      },
+    },
+  },
 } as const;
 
 @Injectable()

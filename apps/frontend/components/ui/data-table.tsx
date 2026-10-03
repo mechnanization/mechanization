@@ -282,6 +282,12 @@ export interface DataTableProps<TData, TValue = unknown> {
    * the rest.
    */
   fixedLayout?: boolean;
+  /**
+   * `cards` — the phone's card layout at every width. For a table placed in a
+   * narrow column on a wide screen (a side panel), where the breakpoint says
+   * «table» but there is room for one card, not five columns.
+   */
+  layout?: 'responsive' | 'cards';
 
   loading?: boolean;
   error?: string | null;
@@ -466,6 +472,7 @@ export function DataTable<TData, TValue = unknown>({
   pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
   paginated = true,
   fixedLayout = false,
+  layout = 'responsive',
   loading = false,
   error = null,
   onRetry,
@@ -980,7 +987,7 @@ export function DataTable<TData, TValue = unknown>({
             name. Each row becomes a card instead: the heading is what the row
             is about, the rest are label/value pairs, and the action buttons
             are pinned to a footer where a thumb can reach them. */}
-        <div className="sm:hidden">
+        <div className={layout === 'cards' ? undefined : 'sm:hidden'}>
           <MobileCards
             rows={rows}
             loading={loading && rows.length === 0}
@@ -990,7 +997,7 @@ export function DataTable<TData, TValue = unknown>({
         </div>
 
         {/* The scroll container for horizontal overflow — lets all 10 records show full height without vertical scrolling. */}
-        <div className="hidden overflow-x-auto sm:block">
+        <div className={cn('hidden overflow-x-auto', layout === 'responsive' && 'sm:block')}>
           <Table className={fixedLayout ? 'table-fixed' : undefined}>
             <TableHeader className="sticky top-0 z-10 bg-muted/95 shadow-[inset_0_-1px_0_hsl(var(--border))] backdrop-blur supports-[backdrop-filter]:bg-muted/80">
               {table.getHeaderGroups().map((headerGroup) => (

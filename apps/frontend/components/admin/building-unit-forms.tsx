@@ -2275,11 +2275,14 @@ export function OccupantList({
   onLinkOwner,
   session,
   onOwnershipEnded,
+  compact = false,
 }: {
   unit: UnitWithOccupants;
   locale: string;
   canWrite: boolean;
   busy: boolean;
+  /** One card per person at every width — for a narrow side panel. */
+  compact?: boolean;
   /** Where a name links to; plain text when absent. */
   citizenHref?: (citizenId: string) => string;
   onEnd: (occupant: UnitOccupant, input: EndOccupancyAnswer) => Promise<void>;
@@ -2581,6 +2584,7 @@ export function OccupantList({
             sortable={false}
             paginated={false}
             fixedLayout
+            layout={compact ? 'cards' : 'responsive'}
           />
         </section>
       ) : null}

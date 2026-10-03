@@ -878,6 +878,15 @@ export interface CaseSummary {
   buildingCode: string | null;
   unitId: string | null;
   unitCode: string | null;
+  /**
+   * Who the census records on that unit now. Optional on the wire for an
+   * older server. Non-empty means the flat is already somebody's — owned,
+   * rented or lent — so the case is answered by linking it to them, and
+   * «تسجيل المواطن» from the case is closed.
+   */
+  unitOccupants?: CaseUnitOccupant[];
+  /** The unit's recorded status — `OWNER_OCCUPIED` when its recorded owner lives in it. */
+  unitStatus?: string | null;
   /** The damage reading that prompted this case, if one did. A reference, not
    *  ownership — resolving the case says nothing about the damage (D6). */
   damageAssessmentId: string | null;
@@ -891,6 +900,28 @@ export interface CaseSummary {
   createdByName: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Who on a case's unit actually lives there, registered: a tenant, a free
+ * occupant, or an owner on a flat recorded «يشغلها المالك». Non-empty means
+ * the household the case was waiting for is on file, so «تسجيل المواطن» from
+ * the case is closed and the case is answered by linking it to them.
+ *
+ * An owner alone on a flat recorded «مؤجرة» is not that: the owner lets it,
+ * and the tenant the case is asking for is exactly who is missing.
+ */
+export function caseResidents(item: Pick<CaseSummary, 'unitOccupants' | 'unitStatus'>): CaseUnitOccupant[] {
+  return (item.unitOccupants ?? []).filter(
+    (person) => person.role !== 'OWNER' || item.unitStatus === 'OWNER_OCCUPIED',
+  );
+}
+
+/** A registered citizen the census records on a case's unit. */
+export interface CaseUnitOccupant {
+  citizenId: string;
+  name: string;
+  role: 'OWNER' | 'TENANT' | 'FREE_OCCUPANT';
 }
 
 export interface CaseWriteInput {
