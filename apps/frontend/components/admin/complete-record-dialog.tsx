@@ -159,6 +159,26 @@ function readAt(values: CitizenFormValues, path: string): string {
   return value === null || value === undefined ? '' : String(value);
 }
 
+/**
+ * One field of the record as text to read: a code as its label (via the
+ * field's own control, so «OWNER» reads «مالك»), a list joined, a card's
+ * units counted. Null when the record holds nothing there.
+ */
+export function displayValue(values: CitizenFormValues, path: string, locale: string): string | null {
+  const parts = path.split('.');
+  if (parts[0] === 'properties' && parts.length === 3 && parts[2] === 'units') {
+    const count = values.properties[Number(parts[1])]?.units?.length ?? 0;
+    return count > 0 ? String(count) : null;
+  }
+  const raw = readAt(values, path).trim();
+  if (!raw) return null;
+  const control = controlFor(path);
+  if (control.kind === 'select') {
+    return control.options(locale).find((option) => option.value === raw)?.label ?? raw;
+  }
+  return raw;
+}
+
 function writeAt(values: CitizenFormValues, path: string, raw: string): CitizenFormValues {
   const [section, ...rest] = path.split('.');
   /*
@@ -258,7 +278,7 @@ export function useRecordCompletion({
    */
   const [record, setRecord] = useState<Pick<
     CitizenFormData,
-    'citizenReferenceNumber' | 'lastStaffEdit' | 'registrationId' | 'status'
+    'citizenReferenceNumber' | 'lastStaffEdit' | 'status'
   > | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -318,7 +338,6 @@ export function useRecordCompletion({
         setRecord({
           citizenReferenceNumber: form.citizenReferenceNumber ?? null,
           lastStaffEdit: form.lastStaffEdit ?? null,
-          registrationId: form.registrationId,
           status: form.status,
         });
       } catch (caught) {

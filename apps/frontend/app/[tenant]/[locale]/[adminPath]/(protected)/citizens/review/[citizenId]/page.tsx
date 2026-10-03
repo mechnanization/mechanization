@@ -4,18 +4,19 @@ import { use, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { Building2, Check, ClipboardCheck, FileText, Loader2, Paperclip, UserRound } from 'lucide-react';
+import { Building2, Check, ClipboardCheck, FileText, Loader2, UserRound } from 'lucide-react';
 import { getLabels, type CitizenResidence } from '@mechanization/shared-schemas';
+import { askableFields, type CitizenFormValues } from '@/components/admin/citizen-form';
 import {
   OpenQuestionList,
   RecordCompletionEmpty,
   RecordCompletionNotices,
   RecordCompletionSummary,
+  displayValue,
   saveLabel,
   useRecordCompletion,
   type OpenItem,
 } from '@/components/admin/complete-record-dialog';
-import { DocumentList } from '@/components/admin/document-list';
 import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -25,10 +26,10 @@ import { PageHeader } from '@/components/ui/page-header';
 import { SkeletonText } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
-import { listRegistrationDocuments } from '@/lib/api-client';
+import { controlFor } from '@/lib/citizen-field-controls';
 import { formatDate } from '@/lib/dates';
+import { flagFieldLabel } from '@/lib/field-flags';
 import { formatPhone } from '@/lib/phone';
-import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 
 /** A form value as display text, or null when it holds nothing. */
@@ -40,18 +41,76 @@ function text(value: unknown): string | null {
 const OPEN_SECTIONS_LIMIT = 2;
 
 /**
+ * Everything the form asks about one property card, as label and value — the
+ * form's own list (`askableFields`), so the facts shown here are the facts
+ * the card holds, whatever kind of property it is. The units of a مبنى are
+ * counted; they are edited on the unit grid, not here.
+ */
+function PropertyFacts({
+  values,
+  index,
+  open,
+  locale,
+}: {
+  values: CitizenFormValues;
+  index: number;
+  /** The paths still open on this card — marked, not shown as blanks. */
+  open: Set<string>;
+  locale: string;
+}) {
+  const en = locale === 'en';
+  const fieldLabels = getLabels(locale).citizenField as Record<string, string>;
+  const fields = askableFields(values).filter(
+    (field) => field.path.startsWith(`properties.${index}.`) && field.path.split('.').length === 3,
+  );
+  /*
+    A card linked to a censused building is not asked its name — the census
+    holds it — but the card still carries it, and it is how a reviewer
+    recognises the building. Shown whenever it is there.
+  */
+  const buildingPath = `properties.${index}.buildingName`;
+  if (!fields.some((field) => field.path === buildingPath) && displayValue(values, buildingPath, locale)) {
+    fields.unshift({ path: buildingPath, field: 'buildingName', section: 'properties', propertyIndex: index });
+  }
+
+  return (
+    <SummaryList>
+      {fields.map((field) => {
+        const value = displayValue(values, field.path, locale);
+        const kind = controlFor(field.path).kind;
+        return (
+          <SummaryRow key={field.path} label={fieldLabels[field.field] ?? flagFieldLabel(field.path, locale)}>
+            {open.has(field.path) ? (
+              <Badge variant="soft-warning">{en ? 'Unconfirmed' : 'غير مؤكَّد'}</Badge>
+            ) : value === null ? (
+              <span className="text-muted-foreground">—</span>
+            ) : kind === 'phone' ? (
+              <span dir="ltr" className="tabular-nums">{formatPhone(value)}</span>
+            ) : kind === 'number' ? (
+              <span className="tabular-nums">{value}</span>
+            ) : field.field === 'propertyNumber' ? (
+              <span dir="ltr" className="font-mono">{value}</span>
+            ) : (
+              <span dir="auto">{value}</span>
+            )}
+          </SummaryRow>
+        );
+      })}
+    </SummaryList>
+  );
+}
+
+/**
  * «فحص الملف» — one record from «يتطلب مراجعة», laid out in the order a
  * reviewer reads a file:
  *
  *  1. **The citizen**, always first: who this is and how to reach them, with
  *     any open personal or contact field highlighted in the same card.
- *  2. **One section per property that has an open field**, holding that
- *     property's own facts, its own attachments and only its open fields.
- *     Collapsible, so a file with gaps on four properties does not arrive as
- *     one long form; up to `OPEN_SECTIONS_LIMIT` arrive open.
- *  3. **The record's other attachments** — identity and the like — opened
- *     through the audited signed-URL route, so the answer can be checked
- *     against the paper.
+ *  2. **One section per property that has an open field**: everything the
+ *     form holds about that property, the open fields marked in it, and the
+ *     boxes to answer them. Collapsible, so a file with gaps on four
+ *     properties does not arrive as one long form; up to
+ *     `OPEN_SECTIONS_LIMIT` arrive open.
  *
  * A record with nothing left to answer is not a dead end: it says why, and
  * «إغلاق المراجعة» saves it as it is (`closesReview`).
@@ -90,18 +149,6 @@ export default function ReviewFilePage({
   });
   const { values, record, items, saving, loadError } = state;
 
-  const registrationId = record?.registrationId ?? null;
-  const documentsQuery = useStaffQuery({
-    queryKey: ['documents', tenant, registrationId],
-    queryFn: (accessToken, signal) => listRegistrationDocuments(tenant, accessToken, registrationId!, signal),
-    tenant,
-    base,
-    // Read once the record says which registration it is.
-    token: registrationId ? token : null,
-    errorMessage: en ? 'Could not load the attachments.' : 'تعذّر تحميل المرفقات.',
-  });
-  const documents = documentsQuery.data?.items ?? [];
-
   /*
     The questions, by what they are about. A path names its section:
     `personal.*` and `contact.*` are the citizen's own (with the record-level
@@ -134,16 +181,7 @@ export default function ReviewFilePage({
   const residence = values?.residence as CitizenResidence | undefined;
   const dash = <span className="text-muted-foreground">—</span>;
 
-  // Attachments that belong to a property section are shown there; the rest here.
-  const sectionCardIds = new Set(
-    propertySections.map(([index]) => values?.properties[index]?.id).filter(Boolean) as string[],
-  );
-  const recordDocuments = documents.filter(
-    (document) => !document.propertyEntryId || !sectionCardIds.has(document.propertyEntryId),
-  );
-
-  const openCount = (count: number) =>
-    en ? `${count} open` : `${count} مفتوح`;
+  const openCount = (count: number) => (en ? `${count} open` : `${count} مفتوح`);
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -239,7 +277,7 @@ export default function ReviewFilePage({
             </CardContent>
           </Card>
 
-          {/* 2 — One section per property with an open field: its facts, its papers, its gaps. */}
+          {/* 2 — One section per property with an open field: all it holds, and its gaps. */}
           {propertySections.length > 0 ? (
             <section className="space-y-3" aria-labelledby="review-properties">
               <h2 id="review-properties" className="flex items-center gap-2 text-base font-semibold">
@@ -253,14 +291,7 @@ export default function ReviewFilePage({
                 const card = values.properties[index];
                 const type = card?.propertyType ? labels.propertyType[card.propertyType] : null;
                 const role = card?.occupancyType ? labels.occupancyType[card.occupancyType] : null;
-                const cardDocuments = documents.filter(
-                  (document) => card?.id && document.propertyEntryId === card.id,
-                );
-                const title = [
-                  en ? `Property ${index + 1}` : `العقار ${index + 1}`,
-                  type,
-                  role,
-                ]
+                const title = [en ? `Property ${index + 1}` : `العقار ${index + 1}`, type, role]
                   .filter(Boolean)
                   .join(' · ');
                 return (
@@ -277,41 +308,12 @@ export default function ReviewFilePage({
                     defaultOpen={propertySections.length <= OPEN_SECTIONS_LIMIT || position === 0}
                   >
                     <div className="grid gap-6 lg:grid-cols-2">
-                      <div className="space-y-4">
-                        <SummaryList>
-                          <SummaryRow label={labels.citizenField.propertyNumber}>
-                            {text(card?.propertyNumber) ? (
-                              <span dir="ltr" className="font-mono">{card!.propertyNumber}</span>
-                            ) : (
-                              dash
-                            )}
-                          </SummaryRow>
-                          {text(card?.buildingName) ? (
-                            <SummaryRow label={labels.citizenField.buildingName}>{card!.buildingName}</SummaryRow>
-                          ) : null}
-                          {text(card?.neighborhood) ? (
-                            <SummaryRow label={labels.citizenField.neighborhood}>{card!.neighborhood}</SummaryRow>
-                          ) : null}
-                          {card?.occupancyType && card.occupancyType !== 'OWNER' && text(card.landlordName) ? (
-                            <SummaryRow label={labels.citizenField.landlordName}>{card.landlordName}</SummaryRow>
-                          ) : null}
-                        </SummaryList>
-                        {cardDocuments.length > 0 ? (
-                          <div className="space-y-2">
-                            <h4 className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                              <Paperclip className="size-3.5" aria-hidden />
-                              {en ? 'Attachments for this property' : 'مرفقات هذا العقار'}
-                            </h4>
-                            <DocumentList
-                              documents={cardDocuments}
-                              tenant={tenant}
-                              base={base}
-                              token={token}
-                              locale={locale}
-                            />
-                          </div>
-                        ) : null}
-                      </div>
+                      <PropertyFacts
+                        values={values}
+                        index={index}
+                        open={new Set(sectionItems.map((item) => item.path))}
+                        locale={locale}
+                      />
                       <OpenQuestionList
                         state={state}
                         items={sectionItems}
@@ -334,45 +336,6 @@ export default function ReviewFilePage({
               </CardContent>
             </Card>
           ) : null}
-
-          {/* 3 — The record's other papers, to check an answer against. */}
-          <Card>
-            <CardHeader className="border-b px-4 py-3.5">
-              <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                <Paperclip className="size-5 text-primary" aria-hidden />
-                <h2>{en ? 'Attachments' : 'المرفقات'}</h2>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4">
-              {documentsQuery.error ? (
-                <ErrorState
-                  compact
-                  title={documentsQuery.error}
-                  onRetry={documentsQuery.refetch}
-                  retryLabel={en ? 'Try again' : 'إعادة المحاولة'}
-                />
-              ) : documentsQuery.loading ? (
-                <SkeletonText lines={2} />
-              ) : (
-                <DocumentList
-                  documents={recordDocuments}
-                  tenant={tenant}
-                  base={base}
-                  token={token}
-                  locale={locale}
-                  emptyLabel={
-                    documents.length > 0
-                      ? en
-                        ? 'Every attachment on this record is listed with its property above.'
-                        : 'كل مرفقات هذا السجل معروضة مع عقارها أعلاه.'
-                      : en
-                        ? 'No attachments were filed with this record.'
-                        : 'لم تُرفق مستندات بهذا السجل.'
-                  }
-                />
-              )}
-            </CardContent>
-          </Card>
 
           {/* The save, kept in reach however long the file is. */}
           {state.canSave || state.saveError || state.blockedElsewhere.length > 0 ? (

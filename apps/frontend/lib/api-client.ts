@@ -3758,23 +3758,6 @@ export function deleteCitizen(tenant: string, token: string, citizenId: string) 
   );
 }
 
-/**
- * One registration's attachments: ids, types and sizes only — storage paths
- * stay on the server; each is opened through `getDocumentViewUrl`.
- */
-export function listRegistrationDocuments(
-  tenant: string,
-  token: string,
-  registrationId: string,
-  signal?: AbortSignal,
-) {
-  return apiFetch<{ items: CitizenProfileDocument[] }>(
-    tenant,
-    `/documents/registration/${encodeURIComponent(registrationId)}`,
-    { token, signal },
-  );
-}
-
 /** Opens the signed URL in a new tab; the backend records who viewed what. */
 export function getDocumentViewUrl(tenant: string, token: string, documentId: string) {
   return apiFetch<{ url: string; expiresInSeconds: number }>(
