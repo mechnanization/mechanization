@@ -216,9 +216,10 @@ export default function LandlordLinkPage({
           }
         />
       ) : (
-        <div className="grid gap-6 lg:grid-cols-12 lg:items-start">
-          {/* What is known — pinned beside the decision on a wide screen. */}
-          <div className="space-y-4 lg:sticky lg:top-20 lg:col-span-4">
+        // One height for both columns: whichever is taller, the other stretches to it.
+        <div className="grid gap-6 lg:grid-cols-12">
+          {/* What is known. */}
+          <div className="flex flex-col gap-4 lg:col-span-4">
             <Card>
               <CardHeader className="border-b px-4 py-3.5">
                 <CardTitle className="flex items-center gap-2 text-base font-semibold">
@@ -250,7 +251,7 @@ export default function LandlordLinkPage({
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="flex-1">
               <CardHeader className="border-b px-4 py-3.5">
                 <CardTitle className="flex items-center gap-2 text-base font-semibold">
                   <Building2 className="size-5 text-primary" aria-hidden />
@@ -285,7 +286,7 @@ export default function LandlordLinkPage({
           </div>
 
           {/* The decision. */}
-          <section className="space-y-3 lg:col-span-8" aria-label={en ? 'The decision' : 'القرار'}>
+          <section className="flex flex-col gap-3 lg:col-span-8" aria-label={en ? 'The decision' : 'القرار'}>
             {resolution ? (
               <>
                 <LandlordProposalResolved

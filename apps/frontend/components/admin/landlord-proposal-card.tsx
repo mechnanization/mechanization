@@ -28,6 +28,8 @@ import {
   type LinkOutcome,
 } from '@/lib/api-client';
 import { compareNames, type NameMatch } from '@/lib/landlord-display';
+import { nameLight, phoneLight } from '@/lib/landlord-status';
+import { MatchLightLabel } from '@/components/admin/match-light';
 import { formatPhone } from '@/lib/phone';
 import { formatDate } from '@/lib/dates';
 import { Badge } from '@/components/ui/badge';
@@ -202,7 +204,8 @@ export function LandlordProposalCard({
       aria-labelledby={titleId}
       className={cn(
         'overflow-hidden border bg-card text-card-foreground shadow-sm',
-        panel ? 'rounded-lg' : 'rounded-xl',
+        // In the panel it fills the column beside it, the answers held to the bottom edge.
+        panel ? 'flex h-full flex-col rounded-lg' : 'rounded-xl',
       )}
     >
       {panel ? (
@@ -276,9 +279,12 @@ export function LandlordProposalCard({
       </header>
       )}
 
-      <div className={cn('space-y-4 px-4 py-4', panel && 'sm:px-5')}>
-        {/* ── The claim, as one sentence ──────────────────────────────── */}
-        <div className={cn('space-y-1', panel && 'rounded-lg bg-muted/50 p-3')}>
+      <div className={cn('space-y-4 px-4 py-4', panel && 'flex-1 sm:px-5')}>
+        {panel ? (
+          <ClaimFacts proposal={proposal} locale={locale} />
+        ) : (
+        /* ── The claim, as one sentence ──────────────────────────────── */
+        <div className="space-y-1">
           <p className="text-xs font-medium text-muted-foreground">
             {panel
               ? en
@@ -306,12 +312,13 @@ export function LandlordProposalCard({
                 {formatPhone(proposal.landlordPhone)}
               </span>
             ) : (
-              <span className={cn('text-sm', panel ? 'text-warning' : 'text-muted-foreground')}>
+              <span className="text-sm text-muted-foreground">
                 {en ? 'no number given' : 'لم يُذكر رقم'}
               </span>
             )}
           </div>
         </div>
+        )}
 
         {proposal.blocked ? (
           <BlockNotice
@@ -343,7 +350,20 @@ export function LandlordProposalCard({
             aria-label={en ? 'Registered citizens' : 'المواطنون المسجَّلون'}
             className={cn(panel && proposal.candidates.length > 1 ? 'grid gap-2 md:grid-cols-2' : 'space-y-2')}
           >
-            {proposal.candidates.map((candidate) => (
+            {proposal.candidates.map((candidate) =>
+              panel ? (
+                <CandidateCompare
+                  key={candidate.id}
+                  proposal={proposal}
+                  candidate={candidate}
+                  selectable={!proposal.blocked && !candidate.blocked}
+                  selected={selectedId === candidate.id}
+                  onSelect={() => setSelectedId(candidate.id)}
+                  group={`owner-${proposal.propertyEntryId}`}
+                  href={citizenHref(candidate.id)}
+                  locale={locale}
+                />
+              ) : (
               <CandidateRow
                 key={candidate.id}
                 candidate={candidate}
@@ -357,7 +377,8 @@ export function LandlordProposalCard({
                 // Said once in the question when it is true of everyone, not on every row.
                 sayFoundByProperty={!foundByProperty || proposal.candidates.some((other) => other.matchedBy !== 'PROPERTY')}
               />
-            ))}
+              ),
+            )}
           </div>
         </fieldset>
 
@@ -367,6 +388,12 @@ export function LandlordProposalCard({
             units={units}
             locale={locale}
           />
+        ) : panel && !proposal.blocked ? (
+          <p className="rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground">
+            {en
+              ? 'Choose a person to see what linking them will put on their file.'
+              : 'اختر شخصاً لترى ما سيُضاف إلى ملفه عند الربط.'}
+          </p>
         ) : null}
       </div>
 
@@ -426,6 +453,154 @@ export function LandlordProposalCard({
  */
 const PRESSABLE =
   'transition-[transform,background-color,color] duration-150 ease-out active:scale-[0.97] motion-reduce:transform-none motion-reduce:transition-colors';
+
+/**
+ * The occupant's words in the panel: the name and the number they gave, each
+ * under its own label, set apart as what every person below is compared
+ * against. A missing answer says so in the warning tone — it is the one thing
+ * on the panel that is not there.
+ */
+function ClaimFacts({ proposal, locale }: { proposal: LandlordProposal; locale: string }) {
+  const en = locale === 'en';
+  const missing = <span className="font-normal text-warning">{en ? 'Not given' : 'لم يُذكر'}</span>;
+  return (
+    <section className="rounded-lg bg-muted/50 p-3 sm:p-4" aria-label={en ? 'What the occupant said' : 'ما ذكره الساكن'}>
+      <p className="text-xs font-medium text-muted-foreground">
+        {en ? 'What the occupant said about the owner' : 'ما ذكره الساكن عن المالك'}
+      </p>
+      <dl className="mt-2 grid gap-3 sm:grid-cols-2">
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">{en ? 'Name' : 'الاسم'}</dt>
+          <dd className="truncate text-base font-semibold" title={proposal.landlordName ?? undefined}>
+            {proposal.landlordName?.trim() || missing}
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">{en ? 'Phone' : 'الهاتف'}</dt>
+          <dd className="text-base font-semibold tabular-nums">
+            {proposal.landlordPhone ? <bdi dir="ltr">{formatPhone(proposal.landlordPhone)}</bdi> : missing}
+          </dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+/**
+ * One registered person in the panel, laid out as the comparison it is: their
+ * name and number against what the occupant said, each with its light, then
+ * the father's and mother's names that tell namesakes apart. The whole tile
+ * selects; the file opens beside it in a new tab.
+ */
+function CandidateCompare({
+  proposal,
+  candidate,
+  selectable,
+  selected,
+  onSelect,
+  group,
+  href,
+  locale,
+}: {
+  proposal: LandlordProposal;
+  candidate: LandlordProposalCandidate;
+  selectable: boolean;
+  selected: boolean;
+  onSelect: () => void;
+  group: string;
+  href: string;
+  locale: string;
+}) {
+  const en = locale === 'en';
+  const inputId = useId();
+  const dash = <span className="text-muted-foreground">—</span>;
+
+  return (
+    <div
+      className={cn(
+        'relative rounded-lg border transition-colors duration-150 ease-out',
+        selectable ? 'hover:border-primary/50 hover:bg-muted/30' : 'bg-muted/20',
+        selected && 'border-primary bg-primary/5 ring-1 ring-primary hover:bg-primary/5',
+      )}
+    >
+      <label htmlFor={inputId} className={cn('block space-y-3 p-4', selectable ? 'cursor-pointer' : 'cursor-default')}>
+        <span className="flex items-start gap-3 pe-16">
+          {selectable ? (
+            <input
+              id={inputId}
+              type="radio"
+              name={group}
+              checked={selected}
+              onChange={onSelect}
+              className="mt-1 size-4 shrink-0 accent-[hsl(var(--primary))]"
+            />
+          ) : (
+            <UserRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-base font-semibold" title={candidate.name}>
+              {candidate.name}
+            </span>
+            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+              {candidate.referenceNumber ? (
+                <bdi dir="ltr" className="font-mono">
+                  {candidate.referenceNumber}
+                </bdi>
+              ) : null}
+              {candidate.registeredAt ? (
+                <span className="tabular-nums">
+                  {en ? 'Registered ' : 'سُجِّل '}
+                  {formatDate(candidate.registeredAt)}
+                </span>
+              ) : null}
+              {candidate.residence === 'NON_RESIDENT_OWNER' ? (
+                <Badge variant="soft-info">{en ? 'Lives elsewhere' : 'غير مقيم'}</Badge>
+              ) : null}
+            </span>
+          </span>
+        </span>
+
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2 border-t pt-3 text-sm">
+          <dt className="text-xs text-muted-foreground">{en ? 'Name' : 'الاسم'}</dt>
+          {/* The name is the tile's title; this row says how it compares. */}
+          <dd>
+            <MatchLightLabel light={nameLight(proposal, candidate, locale)} />
+          </dd>
+          <dt className="text-xs text-muted-foreground">{en ? 'Phone' : 'الهاتف'}</dt>
+          {/* The number, then its light right after it — as the name's is. */}
+          <dd className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="tabular-nums">
+              {candidate.phone ? <bdi dir="ltr">{formatPhone(candidate.phone)}</bdi> : dash}
+            </span>
+            <MatchLightLabel light={phoneLight(proposal, candidate, locale)} />
+          </dd>
+          <dt className="text-xs text-muted-foreground">{en ? 'Father' : 'الأب'}</dt>
+          <dd className="truncate">{candidate.fatherName ?? dash}</dd>
+          <dt className="text-xs text-muted-foreground">{en ? 'Mother' : 'الأم'}</dt>
+          <dd className="truncate">{candidate.motherName ?? dash}</dd>
+        </dl>
+
+        {candidate.blocked ? (
+          <span className="flex items-start gap-1.5 text-xs text-warning">
+            <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+            {candidate.blocked.message}
+          </span>
+        ) : null}
+      </label>
+
+      {/* Outside the label so opening the file does not select the person. */}
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="absolute end-2 top-2 inline-flex h-9 items-center gap-1 rounded-md px-2 text-xs font-medium text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {en ? 'File' : 'الملف'}
+        <ArrowUpLeft className="size-3.5 ltr:rotate-90" aria-hidden />
+      </a>
+    </div>
+  );
+}
 
 function CandidateRow({
   candidate,

@@ -15,6 +15,7 @@ import {
   type LandlordProposalCandidate,
 } from '@/lib/api-client';
 import { Consequences, useLandlordResolutions } from '@/components/admin/landlord-proposal-card';
+import { MatchLightLabel as Light } from '@/components/admin/match-light';
 import {
   bestCandidate,
   filedBeforeOwner,
@@ -22,7 +23,6 @@ import {
   nameLight,
   phoneLight,
   phoneLinkable,
-  type MatchLight,
 } from '@/lib/landlord-status';
 import { formatPhone } from '@/lib/phone';
 import { useStaffQuery } from '@/lib/use-staff-query';
@@ -35,38 +35,6 @@ import { CellTag } from '@/components/ui/cell-tag';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
-
-/**
- * One match light: a dot in the light's colour and its word beside it —
- * never the colour alone (COL-3).
- */
-function Light({ light }: { light: MatchLight }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-sm">
-      <span
-        aria-hidden
-        className={cn(
-          'size-2 shrink-0 rounded-full',
-          light.tone === 'success' && 'bg-success',
-          light.tone === 'warning' && 'bg-warning',
-          light.tone === 'destructive' && 'bg-destructive',
-          light.tone === 'muted' && 'bg-muted-foreground/50',
-        )}
-      />
-      <span
-        className={cn(
-          'font-medium',
-          light.tone === 'success' && 'text-success',
-          light.tone === 'warning' && 'text-warning',
-          light.tone === 'destructive' && 'text-destructive',
-          light.tone === 'muted' && 'text-muted-foreground',
-        )}
-      >
-        {light.label}
-      </span>
-    </span>
-  );
-}
 
 /**
  * Why «ربط» is not offered on a row, or null when it is. The row links only on
