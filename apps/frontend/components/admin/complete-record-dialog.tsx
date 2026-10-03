@@ -490,6 +490,15 @@ export function useRecordCompletion({
   const remaining = items.filter((item) => item.kind === 'UNESTABLISHED').length - willClear;
 
   /**
+   * Whether this question still holds the record in the queue, as of this
+   * sitting — the same rule as `remaining`: an `UNESTABLISHED` gap with no
+   * answer typed. An `UNVERIFIED` one is not counted (the server re-derives
+   * it), nor is one already answered here.
+   */
+  const stillOpen = (item: OpenItem): boolean =>
+    item.kind === 'UNESTABLISHED' && !(item.answerable && (answers.get(item.path) ?? '').trim() !== '');
+
+  /**
    * Complaints from the last refused save that name no row on this screen.
    *
    * These are the ones the clerk cannot act on here at any price, so the dialog
@@ -717,6 +726,7 @@ export function useRecordCompletion({
     items,
     willClear,
     remaining,
+    stillOpen,
     blockedElsewhere,
     prunedCount,
     setAnswer,

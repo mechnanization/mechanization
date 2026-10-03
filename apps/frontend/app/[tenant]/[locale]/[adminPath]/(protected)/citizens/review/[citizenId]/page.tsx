@@ -8,6 +8,8 @@ import {
   Building,
   Building2,
   Check,
+  CircleAlert,
+  CircleCheck,
   ClipboardCheck,
   DoorOpen,
   FileText,
@@ -67,6 +69,38 @@ function text(value: unknown): string | null {
 
 
 type PropertyRef = NonNullable<CitizenFormData['propertyRefs']>[number];
+
+/**
+ * «محلول» / «غير محلول» — whether the questions here still hold the record in
+ * the queue, as of what has been typed in this sitting (`stillOpen`, the
+ * rule the save summary counts by). «محلول» says the save will close it; it
+ * never claims the record is closed before it is saved. A word and an icon,
+ * not colour alone (COL-3).
+ */
+function SolvedBadge({ open, locale, size = 'sm' }: { open: number; locale: string; size?: 'sm' | 'lg' }) {
+  const en = locale === 'en';
+  const solved = open === 0;
+  const Icon = solved ? CircleCheck : CircleAlert;
+  return (
+    <Badge
+      variant={solved ? 'soft-success' : 'soft-warning'}
+      className={cn('gap-1.5 tabular-nums', size === 'lg' && 'h-9 px-3 text-sm')}
+    >
+      <Icon className={size === 'lg' ? 'size-4' : 'size-3'} aria-hidden />
+      {solved
+        ? size === 'lg'
+          ? en
+            ? 'Solved — save to close'
+            : 'محلول — احفظ لإغلاقه'
+          : en
+            ? 'Solved'
+            : 'محلول'
+        : en
+          ? `Unsolved · ${open} open`
+          : `غير محلول · ${open} مفتوح`}
+    </Badge>
+  );
+}
 
 /**
  * One property under review, as the citizen's properties page shows it
@@ -240,11 +274,7 @@ function ReviewPropertyCard({
           {roleText}
         </Badge>
       }
-      badgesEnd={
-        <Badge variant="soft-warning" className="tabular-nums backdrop-blur">
-          {en ? `${items.length} open` : `${items.length} مفتوح`}
-        </Badge>
-      }
+      badgesEnd={<SolvedBadge open={items.filter(state.stillOpen).length} locale={locale} />}
       icon={TypeIcon}
       tone={tone}
       title={title}
@@ -476,23 +506,51 @@ export default function ReviewFilePage({
   const residence = values?.residence as CitizenResidence | undefined;
   const dash = <span className="text-muted-foreground">—</span>;
 
-  const openCount = (count: number) => (en ? `${count} open` : `${count} مفتوح`);
-
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <BackLink
         fallbackHref={`${base}/citizens/review`}
         label={en ? 'Back to the review queue' : 'العودة إلى قائمة المراجعة'}
       />
+      {/*
+        Who first: the page is about one person, so their name is the heading
+        and «فحص الملف» with their الرقم المرجعي sits under it. The record's
+        status stands beside the way to the full file — on a phone, the two
+        share a row under the title while they fit, and the button wraps to a
+        full-width line of its own when the status grows («محلول — احفظ لإغلاقه»).
+        Announced as it changes (A11Y-5): it flips while the clerk types.
+      */}
       <PageHeader
         icon={ClipboardCheck}
-        title={en ? 'Review file' : 'فحص الملف'}
-        subtitle={values ? fullName : undefined}
+        title={values ? fullName : en ? 'Review file' : 'فحص الملف'}
+        subtitle={
+          values ? (
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span>{en ? 'Review file' : 'فحص الملف'}</span>
+              {record?.citizenReferenceNumber ? (
+                <>
+                  <span aria-hidden>·</span>
+                  <bdi className="font-mono">{record.citizenReferenceNumber}</bdi>
+                </>
+              ) : null}
+            </span>
+          ) : undefined
+        }
         actions={
-          <Link href={`${base}/citizens/${citizenId}`} className={buttonVariants({ variant: 'outline' })}>
-            <FileText className="size-4" aria-hidden />
-            {en ? 'Open the full file' : 'فتح الملف الكامل'}
-          </Link>
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
+            {values ? (
+              <span role="status" aria-live="polite" className="shrink-0">
+                <SolvedBadge open={state.remaining} locale={locale} size="lg" />
+              </span>
+            ) : null}
+            <Link
+              href={`${base}/citizens/${citizenId}`}
+              className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 basis-40 sm:flex-none sm:basis-auto')}
+            >
+              <FileText className="size-4" aria-hidden />
+              {en ? 'Open the full file' : 'فتح الملف الكامل'}
+            </Link>
+          </div>
         }
       />
 
@@ -517,9 +575,7 @@ export default function ReviewFilePage({
                 <UserRound className="size-5 text-primary" aria-hidden />
                 <h2>{en ? 'Personal information' : 'البيانات الشخصية'}</h2>
                 {personalItems.length > 0 ? (
-                  <Badge variant="soft-warning" className="tabular-nums">
-                    {openCount(personalItems.length)}
-                  </Badge>
+                  <SolvedBadge open={personalItems.filter(state.stillOpen).length} locale={locale} />
                 ) : (
                   <Badge variant="soft-success">{en ? 'Complete' : 'مكتملة'}</Badge>
                 )}
