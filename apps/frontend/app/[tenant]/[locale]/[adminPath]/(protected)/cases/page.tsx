@@ -8,6 +8,7 @@ import {
   CalendarClock,
   CheckCircle2,
   ClipboardList,
+  Filter,
   Grid3x3,
   Link2,
   Pencil,
@@ -37,6 +38,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DatePicker } from '@/components/ui/date-picker';
+import { FilterInput, FilterSelect } from '@/components/ui/filter-controls';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
@@ -424,6 +426,14 @@ export default function CasesPage({
 
   const labels = getLabels(locale);
 
+  const clearFilters = () => {
+    setZoneId('');
+    setParcelNumber('');
+    setBuildingCode('');
+    setOpenedFrom('');
+    setOpenedTo('');
+  };
+
   const columns = useMemo<ColumnDef<CaseSummary>[]>(
     () => [
       {
@@ -704,155 +714,6 @@ export default function CasesPage({
         }
       />
 
-      {/*
-        Tabs as a work queue, not a copy of the enum.
-
-        Each one groups the case types an officer does the same thing about —
-        knock again, escalate to a person with authority, or just read. The
-        count rides on the tab so an empty queue is visible before it is opened.
-      */}
-      <div
-        role="tablist"
-        aria-label={locale === 'en' ? 'Case queues' : 'قوائم الحالات'}
-        className="flex flex-wrap gap-1.5 border-b pb-2"
-      >
-        {CASE_TABS.map((entry) => {
-          const active = entry.id === tab;
-          return (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setTab(entry.id)}
-              className={cn(
-                // `min-h-9 coarse:min-h-touch`, matching `SegmentedControl`:
-                // padding alone left these at 30px, and this row is tapped on
-                // a phone in the field. Kept as a `tablist` rather than folded
-                // into the segmented control because the queues are tabs over
-                // one table, and the counts ride in the label.
-                'flex min-h-9 coarse:min-h-touch items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
-                active ? 'border-primary bg-primary/10 text-primary' : 'hover:bg-accent',
-              )}
-            >
-              {locale === 'en' ? entry.en : entry.ar}
-              <span
-                className={cn(
-                  'rounded-full px-1.5 text-xs font-bold',
-                  active ? 'bg-primary/20' : 'bg-muted text-muted-foreground',
-                )}
-              >
-                {tabCounts[entry.id] ?? 0}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Zone, parcel and building — the three ways a dispatch list is cut. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <select
-          value={zoneId}
-          onChange={(event) => setZoneId(event.target.value)}
-          aria-label={locale === 'en' ? 'Filter by sector' : 'تصفية حسب القطاع'}
-          className={cn(
-            'h-9 rounded-md border border-input bg-background px-3 text-xs ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring',
-            zoneId && 'border-primary text-primary',
-          )}
-        >
-          <option value="">{locale === 'en' ? 'All sectors' : 'كل القطاعات'}</option>
-          {zones.map((zone) => (
-            <option key={zone.id} value={zone.id}>
-              {zone.name}
-            </option>
-          ))}
-        </select>
-
-        <input
-          value={parcelNumber}
-          onChange={(event) => setParcelNumber(event.target.value)}
-          dir="ltr"
-          inputMode="numeric"
-          aria-label={locale === 'en' ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
-          placeholder={locale === 'en' ? 'Parcel #' : 'رقم العقار'}
-          className="h-9 w-28 rounded-md border border-input bg-background px-3 text-start text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-
-        <input
-          value={buildingCode}
-          onChange={(event) => setBuildingCode(event.target.value)}
-          dir="ltr"
-          aria-label={locale === 'en' ? 'Filter by building code' : 'تصفية حسب رمز المبنى'}
-          placeholder={locale === 'en' ? 'Building code' : 'رمز المبنى'}
-          className="h-9 w-36 rounded-md border border-input bg-background px-3 text-start text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-
-        {/* «من» / «إلى» on the day the case was opened. */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-muted-foreground">{locale === 'en' ? 'Opened' : 'فُتحت'}</span>
-          <DatePicker
-            id="cases-from"
-            value={openedFrom}
-            onChange={setOpenedFrom}
-            max={openedTo || undefined}
-            placeholder={locale === 'en' ? 'From' : 'من'}
-            locale={locale === 'en' ? 'en' : 'ar'}
-          />
-          <DatePicker
-            id="cases-to"
-            value={openedTo}
-            onChange={setOpenedTo}
-            placeholder={locale === 'en' ? 'To' : 'إلى'}
-            locale={locale === 'en' ? 'en' : 'ar'}
-          />
-        </div>
-
-        {activeFilters > 0 ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setZoneId('');
-              setParcelNumber('');
-              setBuildingCode('');
-              setOpenedFrom('');
-              setOpenedTo('');
-            }}
-          >
-            <X className="size-4" aria-hidden />
-            {locale === 'en' ? `Clear ${activeFilters} filter(s)` : `مسح ${activeFilters} فلتر`}
-          </Button>
-        ) : null}
-
-        <span className="ms-auto text-xs text-muted-foreground">
-          {locale === 'en'
-            ? `${items.length} of ${allItems.length} cases`
-            : `${items.length} من ${allItems.length} حالة`}
-        </span>
-      </div>
-
-      {conversion.resolvedCount > 0 ? (
-        <div className="flex items-center gap-2.5 rounded-lg border border-border/70 bg-muted/20 px-3.5 py-2.5 text-sm">
-          <TrendingUp className="size-4 shrink-0 text-primary" aria-hidden />
-          <span>
-            {locale === 'en' ? (
-              <>
-                <strong>{conversion.linkedCount}</strong> of <strong>{conversion.resolvedCount}</strong> resolved
-                cases led to a registered citizen (
-                {Math.round((conversion.linkedCount / conversion.resolvedCount) * 100)}%
-                conversion).
-              </>
-            ) : (
-              <>
-                <strong>{conversion.linkedCount}</strong> من <strong>{conversion.resolvedCount}</strong> حالة محلولة
-                انتهت بتسجيل مواطن (نسبة التحويل{' '}
-                {Math.round((conversion.linkedCount / conversion.resolvedCount) * 100)}٪).
-              </>
-            )}
-          </span>
-        </div>
-      ) : null}
-
       {error ? (
         <p
           role="alert"
@@ -862,15 +723,92 @@ export default function CasesPage({
         </p>
       ) : null}
 
+      {/*
+        One frame for the work: what the list is, how much of it turned into a
+        registration, the queues, the filters and the rows — the order a
+        dispatcher reads it in. The queues and the filters used to float above
+        the card as a strip of chips and a row of bare inputs, each drawn its own
+        way; now they sit in the frame they act on.
+      */}
       <Card className="overflow-hidden">
-        <CardHeader className="border-b">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <ClipboardList className="size-5" aria-hidden />
-            {locale === 'en' ? 'Logged Cases' : 'الحالات المسجّلة'}
+        <CardHeader className="flex flex-col gap-2 space-y-0 border-b px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <CardTitle className="flex items-center gap-2 text-base font-semibold">
+            <ClipboardList className="size-5 text-primary" aria-hidden />
+            {locale === 'en' ? 'Logged cases' : 'الحالات المسجّلة'}
+            {/* Shown / all, so a narrowed list never reads as the whole register. */}
+            <span className="text-sm font-normal tabular-nums text-muted-foreground">
+              {items.length === allItems.length
+                ? `(${allItems.length})`
+                : locale === 'en'
+                  ? `(${items.length} of ${allItems.length})`
+                  : `(${items.length} من ${allItems.length})`}
+            </span>
           </CardTitle>
+          {/*
+            How many resolved cases ended in a registration — context for the
+            work, stated as one figure and its sentence, not a banner.
+          */}
+          {conversion.resolvedCount > 0 ? (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <TrendingUp className="size-4 shrink-0 text-primary" aria-hidden />
+              <span>
+                <span className="text-sm font-semibold tabular-nums text-foreground">
+                  {Math.round((conversion.linkedCount / conversion.resolvedCount) * 100)}٪
+                </span>{' '}
+                {locale === 'en'
+                  ? `conversion — ${conversion.linkedCount} of ${conversion.resolvedCount} resolved cases led to a registered citizen`
+                  : `نسبة التحويل — ${conversion.linkedCount} من ${conversion.resolvedCount} حالة محلولة انتهت بتسجيل مواطن`}
+              </span>
+            </p>
+          ) : null}
         </CardHeader>
-        <CardContent className="p-6">
+
+        {/*
+          The queues, as tabs over the one table under them. Each groups the
+          case types an officer does the same thing about — knock again,
+          escalate, or just read — and its count rides on it, so an empty
+          queue shows before it is opened.
+        */}
+        <div
+          role="tablist"
+          aria-label={locale === 'en' ? 'Case queues' : 'قوائم الحالات'}
+          className="flex gap-1 overflow-x-auto border-b px-2 sm:px-4"
+        >
+          {CASE_TABS.map((entry) => {
+            const active = entry.id === tab;
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setTab(entry.id)}
+                className={cn(
+                  'relative flex min-h-11 shrink-0 items-center gap-2 rounded-t-md px-3 text-sm font-medium transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                  'after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors after:duration-150',
+                  active
+                    ? 'text-primary after:bg-primary'
+                    : 'text-muted-foreground after:bg-transparent hover:bg-accent/50 hover:text-foreground',
+                )}
+              >
+                {locale === 'en' ? entry.en : entry.ar}
+                <span
+                  className={cn(
+                    'min-w-6 rounded-full px-1.5 text-center text-xs font-semibold tabular-nums',
+                    active ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground',
+                  )}
+                >
+                  {tabCounts[entry.id] ?? 0}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <CardContent className="p-0">
+          {/* One frame: the card's (BAN-4). */}
           <DataTable
+            className="rounded-none border-0 shadow-none"
             columns={columns}
             data={items}
             labels={tableLabels}
@@ -879,6 +817,69 @@ export default function CasesPage({
             loading={query.loading}
             error={query.error}
             onRetry={query.refetch}
+            activeFiltersCount={activeFilters}
+            onClearFilters={clearFilters}
+            filterBar={
+              // Sector, parcel and building — the three ways a dispatch list is cut — and the day it was opened.
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:flex-wrap md:items-center">
+                <span className="hidden items-center gap-1.5 pe-1 text-xs font-medium text-muted-foreground xl:flex">
+                  <Filter className="size-3.5" aria-hidden />
+                  {locale === 'en' ? 'Filter:' : 'تصفية:'}
+                </span>
+                <FilterSelect
+                  label={locale === 'en' ? 'Sector' : 'القطاع'}
+                  value={zoneId}
+                  onChange={setZoneId}
+                  options={zones.map((zone) => ({ value: zone.id, label: zone.name }))}
+                  allLabel={locale === 'en' ? 'All sectors' : 'كل القطاعات'}
+                />
+                <FilterInput
+                  label={locale === 'en' ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
+                  value={parcelNumber}
+                  onChange={setParcelNumber}
+                  placeholder={locale === 'en' ? 'Parcel #' : 'رقم العقار'}
+                  clearLabel={locale === 'en' ? 'Clear parcel number' : 'مسح رقم العقار'}
+                  inputMode="numeric"
+                  dir="ltr"
+                />
+                <FilterInput
+                  label={locale === 'en' ? 'Filter by building code' : 'تصفية حسب رمز المبنى'}
+                  value={buildingCode}
+                  onChange={setBuildingCode}
+                  placeholder={locale === 'en' ? 'Building code' : 'رمز المبنى'}
+                  clearLabel={locale === 'en' ? 'Clear building code' : 'مسح رمز المبنى'}
+                  dir="ltr"
+                  className="sm:w-36"
+                />
+                {/* «من» / «إلى» on the day the case was opened. */}
+                <div className="flex items-center gap-1.5 sm:col-span-2 md:col-span-1">
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {locale === 'en' ? 'Opened' : 'فُتحت'}
+                  </span>
+                  <DatePicker
+                    id="cases-from"
+                    value={openedFrom}
+                    onChange={setOpenedFrom}
+                    max={openedTo || undefined}
+                    placeholder={locale === 'en' ? 'From' : 'من'}
+                    locale={locale === 'en' ? 'en' : 'ar'}
+                  />
+                  <DatePicker
+                    id="cases-to"
+                    value={openedTo}
+                    onChange={setOpenedTo}
+                    placeholder={locale === 'en' ? 'To' : 'إلى'}
+                    locale={locale === 'en' ? 'en' : 'ar'}
+                  />
+                </div>
+                {activeFilters > 0 ? (
+                  <Button variant="ghost" size="sm" onClick={clearFilters} className="h-9 gap-1.5 text-xs md:ms-auto">
+                    <X className="size-3.5" aria-hidden />
+                    {locale === 'en' ? `Clear ${activeFilters} filter(s)` : `مسح ${activeFilters} فلتر`}
+                  </Button>
+                ) : null}
+              </div>
+            }
           />
         </CardContent>
       </Card>
