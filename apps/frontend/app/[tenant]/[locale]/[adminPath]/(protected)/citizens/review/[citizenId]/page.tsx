@@ -176,7 +176,6 @@ function PropertyDetails({
       ? census.building.units.find((unit) => lit.has(unit.id))!.unitType
       : null) ??
     (census?.building?.units.length === 1 ? census.building.units[0]!.unitType : null);
-  const sharesNumber = Number(card?.shares);
 
   return (
     <div className="space-y-4">
@@ -224,8 +223,6 @@ function PropertyDetails({
             <div className="absolute inset-x-6 bottom-6 top-8 overflow-hidden">
               <PropertyScene
                 propertyType={card?.propertyType}
-                landType={card?.landType}
-                shares={Number.isFinite(sharesNumber) && sharesNumber > 0 ? sharesNumber : null}
                 building={census?.building as ElevationBuilding | null | undefined}
                 highlight={lit}
                 tone={card?.occupancyType === 'OWNER' ? 'owner' : 'occupant'}
@@ -235,7 +232,7 @@ function PropertyDetails({
             </div>
           </div>
           <figcaption className="text-xs text-muted-foreground">
-            {census?.building && census.building.units.length > 1
+            {census?.building
               ? litCodes.length > 0
                 ? en
                   ? `Lit: this citizen's unit ${litCodes.join(', ')}`
@@ -244,8 +241,8 @@ function PropertyDetails({
                   ? 'No unit in this building is linked to this card yet.'
                   : 'لا وحدة في هذا المبنى مربوطة بهذه البطاقة بعد.'
               : en
-                ? 'Drawn by its type — this card is not linked to a building of several units.'
-                : 'مرسوم بحسب نوعه — هذه البطاقة غير مربوطة بمبنى متعدد الوحدات.'}
+                ? 'Drawn by its type — this card is not linked to a census building.'
+                : 'مرسوم بحسب نوعه — هذه البطاقة غير مربوطة بمبنى في المسح.'}
           </figcaption>
         </figure>
       </div>

@@ -426,8 +426,6 @@ function PropertyBlock({
   const scene = (
     <PropertyScene
       propertyType={property.propertyType}
-      landType={property.landType}
-      shares={shares}
       building={building}
       highlight={highlight}
       tone={tone}
