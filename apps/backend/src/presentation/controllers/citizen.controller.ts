@@ -339,6 +339,25 @@ export class CitizenController {
   }
 
   /**
+   * «فحص الرابط» — one open claim, as the queue row it was opened from: the
+   * same roles as the queue, which it is a view of. 404 when the claim is no
+   * longer open (linked, dismissed, ended, or naming nobody registered).
+   *
+   * Declared after the static `landlord-links/*` reads so neither is read as
+   * an id; a non-UUID is answered as not found rather than a database error.
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Get('landlord-links/:propertyEntryId')
+  async landlordLink(@Param('propertyEntryId') propertyEntryId: string) {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const proposal = uuid.test(propertyEntryId)
+      ? await this.landlordLinkService.proposal(propertyEntryId)
+      : null;
+    if (!proposal) throw new NotFoundError('LandlordLink', propertyEntryId);
+    return proposal;
+  }
+
+  /**
    * What ending this tenancy would touch — which flats, whether anybody else
    * still lives in each, who owns them — so «إنهاء الإيجار» asks the right
    * questions before anything is pressed.

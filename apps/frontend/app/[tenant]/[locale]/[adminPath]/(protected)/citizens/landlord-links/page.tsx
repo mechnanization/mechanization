@@ -1,22 +1,21 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { ChevronLeft, ChevronRight, HelpCircle, Link2, RefreshCw, Wallet } from 'lucide-react';
-import { getLandlordLinks, getLandlordLinkSummary, type Session } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
+import { use, useMemo, useState } from 'react';
+import Link from 'next/link';
+import type { ColumnDef } from '@tanstack/react-table';
+import { HelpCircle, Link2, RefreshCw, UserRound, Wallet } from 'lucide-react';
+import { getLandlordLinks, getLandlordLinkSummary, type LandlordProposal } from '@/lib/api-client';
+import { landlordLinkStatus, landlordLinkStatusView } from '@/lib/landlord-status';
+import { formatPhone } from '@/lib/phone';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { Button } from '@/components/ui/button';
-import { PageHeader } from '@/components/ui/page-header';
+import { useStaffSession } from '@/lib/use-staff-session';
+import { useTableLabels } from '@/lib/use-table-labels';
 import { cn } from '@/lib/utils';
-import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
-import {
-  LandlordProposalCard,
-  LandlordProposalResolved,
-  useLandlordResolutions,
-} from '@/components/admin/landlord-proposal-card';
-
-const PAGE_SIZE = 20;
+import { Button, buttonVariants } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CellTag } from '@/components/ui/cell-tag';
+import { DataTable } from '@/components/ui/data-table';
+import { PageHeader } from '@/components/ui/page-header';
 
 /** The roles `GET landlord-links/summary` answers — asking as anyone else is a 403. */
 const SUMMARY_ROLES = new Set(['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER']);
@@ -36,10 +35,11 @@ const SUMMARY_ROLES = new Set(['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINIST
  *
  * ## Layout
  *
- * One column, capped at a reading width. Each card is one question and is read
- * top to bottom; stretched across a wide monitor the claim and the people it
- * could be ended up a screen's width apart, which is the comparison this page
- * exists to make easy.
+ * A table, as «يتطلب مراجعة» is (UX-1): who the owner is said to be, the
+ * property, where the claim stands, the number — and «فحص الرابط» to the claim's
+ * own page, where the question is answered. The question itself (which of these
+ * people is the owner) wants room the row does not have, so it is not asked in
+ * the row.
  */
 export default function LandlordLinksPage({
   params,
@@ -47,33 +47,21 @@ export default function LandlordLinksPage({
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
 }) {
   const { tenant, locale, adminPath } = use(params);
-  const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
   const en = locale === 'en';
+  const { token, user } = useStaffSession(tenant, base);
 
-  const [session, setSession] = useState<Session | null>(null);
-  const [offset, setOffset] = useState(0);
-
-  useEffect(() => {
-    const existing = loadSession(tenant);
-    if (!existing || existing.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setSession(existing);
-  }, [tenant, base, router]);
-
-  const token = session?.accessToken ?? null;
-  const { resolved, resolve, undo, undoing, clear } = useLandlordResolutions({
-    tenant,
-    token: token ?? '',
-    locale,
-  });
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
 
   const query = useStaffQuery({
-    queryKey: ['landlord-links', tenant, offset],
+    queryKey: ['landlord-links', tenant, pagination.pageIndex, pagination.pageSize],
     queryFn: (accessToken, signal) =>
-      getLandlordLinks(tenant, accessToken, { limit: PAGE_SIZE, offset }, signal),
+      getLandlordLinks(
+        tenant,
+        accessToken,
+        { limit: pagination.pageSize, offset: pagination.pageIndex * pagination.pageSize },
+        signal,
+      ),
     tenant,
     base,
     token,
@@ -81,7 +69,7 @@ export default function LandlordLinksPage({
     errorMessage: en ? 'Failed to load owner links.' : 'تعذّر تحميل روابط المالكين.',
   });
 
-  const canSeeSummary = Boolean(session?.user.role && SUMMARY_ROLES.has(session.user.role));
+  const canSeeSummary = Boolean(user?.role && SUMMARY_ROLES.has(user.role));
   const summary = useStaffQuery({
     queryKey: ['landlord-links-summary', tenant],
     queryFn: (accessToken) => getLandlordLinkSummary(tenant, accessToken),
@@ -91,26 +79,115 @@ export default function LandlordLinksPage({
     errorMessage: en ? 'Failed to load the summary.' : 'تعذّر تحميل الملخّص.',
   });
 
-  const proposals = query.data?.items ?? [];
+  const items = query.data?.items ?? [];
   const total = query.data?.total ?? 0;
-  const pending = proposals.filter((proposal) => !resolved[proposal.propertyEntryId]).length;
 
-  /*
-    A refresh re-reads the queue, so the settled placeholders go: the claims
-    they stood for are no longer in it. Stepping back a page when the current
-    one has emptied keeps the reader from landing on «nothing here» at page 3.
-  */
-  const refresh = () => {
-    clear();
-    if (offset > 0 && offset >= total - Object.keys(resolved).length) {
-      setOffset(Math.max(0, offset - PAGE_SIZE));
-    }
-    query.refetch();
-    if (canSeeSummary) summary.refetch();
-  };
+  const tableLabels = useTableLabels(
+    en
+      ? {
+          empty: 'Nothing waiting',
+          emptyHint:
+            'No tenant card names a number that belongs to a registered citizen. New matches appear here as owners are registered.',
+        }
+      : {
+          empty: 'لا شيء بانتظار القرار',
+          emptyHint:
+            'لا توجد بطاقة مستأجر تذكر رقماً يعود لمواطن مسجَّل. تظهر المطابقات الجديدة هنا كلما سُجِّل مالك.',
+        },
+  );
 
-  const from = total === 0 ? 0 : offset + 1;
-  const to = Math.min(offset + PAGE_SIZE, total);
+  const columns = useMemo<ColumnDef<LandlordProposal>[]>(
+    () => [
+      {
+        id: 'landlord',
+        header: en ? 'Owner / landlord' : 'المالك / المؤجر',
+        meta: { mobile: 'primary' },
+        cell: ({ row }) => {
+          const proposal = row.original;
+          const typed = proposal.landlordName?.trim() || (en ? 'No name given' : 'بلا اسم');
+          return (
+            <div className="min-w-0">
+              <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="truncate" title={typed}>
+                  {typed}
+                </span>
+              </p>
+              {/* Who named them — the claim is the tenant's word, so the tenant is part of it. */}
+              {proposal.filedBy ? (
+                <p className="truncate ps-5 text-xs text-muted-foreground" title={proposal.filedBy.name}>
+                  {en ? `Named by ${proposal.filedBy.name}` : `ذكره ${proposal.filedBy.name}`}
+                </p>
+              ) : null}
+            </div>
+          );
+        },
+      },
+      {
+        id: 'reference',
+        header: en ? 'Reference no.' : 'الرقم المرجعي',
+        cell: ({ row }) => {
+          const reference = row.original.buildingCode ?? row.original.propertyNumber;
+          return reference ? (
+            <CellTag className="font-mono" dir="ltr" title={row.original.buildingName ?? undefined}>
+              {reference}
+            </CellTag>
+          ) : (
+            <CellTag tone="muted">—</CellTag>
+          );
+        },
+      },
+      {
+        id: 'status',
+        header: en ? 'Status' : 'الحالة',
+        cell: ({ row }) => {
+          const view = landlordLinkStatusView(landlordLinkStatus(row.original), locale);
+          const Icon = view.icon;
+          return (
+            <CellTag tone={view.tone} title={row.original.blocked?.message}>
+              <Icon className="size-3.5 shrink-0" aria-hidden />
+              {view.label}
+            </CellTag>
+          );
+        },
+      },
+      {
+        id: 'phone',
+        header: en ? 'Phone' : 'الهاتف',
+        cell: ({ row }) =>
+          row.original.landlordPhone ? (
+            <a
+              href={`tel:${row.original.landlordPhone}`}
+              dir="ltr"
+              className="whitespace-nowrap text-xs tabular-nums text-primary underline-offset-2 hover:underline"
+            >
+              {formatPhone(row.original.landlordPhone)}
+            </a>
+          ) : (
+            <CellTag tone="muted">—</CellTag>
+          ),
+      },
+      {
+        id: 'inspect',
+        header: en ? 'Check link' : 'فحص الرابط',
+        meta: { align: 'end', mobile: 'actions' },
+        cell: ({ row }) => {
+          const typed = row.original.landlordName?.trim() || (en ? 'this owner' : 'هذا المالك');
+          return (
+            <Link
+              href={`${base}/citizens/landlord-links/${row.original.propertyEntryId}`}
+              aria-label={en ? `Check the link to ${typed}` : `فحص رابط ${typed}`}
+              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 gap-1.5 text-xs')}
+            >
+              <Link2 className="size-3.5" aria-hidden />
+              {en ? 'Check link' : 'فحص الرابط'}
+            </Link>
+          );
+        },
+      },
+    ],
+    [en, base, locale],
+  );
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -119,183 +196,113 @@ export default function LandlordLinksPage({
         title={en ? 'Owner links' : 'روابط المالكين'}
         subtitle={
           en
-            ? 'Tenants named an owner whose number belongs to a registered citizen. Say who the owner is, and the property goes onto their file and bill.'
-            : 'مستأجرون ذكروا رقم مالك يعود لمواطن مسجَّل. حدِّد من هو المالك ليُضاف العقار إلى ملفه ويدخل في فواتيره.'
+            ? 'Tenants named an owner who is a registered citizen. Check each link and say who the owner is, and the property goes onto their file and bill.'
+            : 'مستأجرون ذكروا مالكاً هو مواطن مسجَّل. افحص كل رابط وحدِّد من هو المالك ليُضاف العقار إلى ملفه ويدخل في فواتيره.'
         }
         actions={
-          <>
-            {!query.loading && total > 0 ? (
-              <span className="rounded-md bg-primary/10 px-2.5 py-1 text-sm font-semibold text-primary tabular-nums">
-                {en ? `${total} waiting` : `${total} بانتظار القرار`}
-              </span>
-            ) : null}
-            <Button
-              variant="outline"
-              onClick={refresh}
-              disabled={query.fetching}
-              className="h-10"
-            >
-              <RefreshCw
-                className={cn('size-4', query.fetching && 'animate-spin motion-reduce:animate-none')}
-                aria-hidden
-              />
-              {en ? 'Refresh' : 'تحديث'}
-            </Button>
-          </>
+          <Button variant="outline" onClick={() => query.refetch()} disabled={query.fetching} className="h-10">
+            <RefreshCw
+              className={cn('size-4', query.fetching && 'animate-spin motion-reduce:animate-none')}
+              aria-hidden
+            />
+            {en ? 'Refresh' : 'تحديث'}
+          </Button>
         }
       />
 
-      <div className="w-full space-y-4">
-        <details className="group rounded-lg border bg-card px-4 py-3 text-sm">
-          <summary className="flex cursor-pointer list-none items-center gap-2 font-medium [&::-webkit-details-marker]:hidden">
-            <HelpCircle className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-            {en ? 'How does the register find these?' : 'كيف يعرف النظام بهذه الروابط؟'}
+      <details className="group rounded-lg border bg-card px-4 py-3 text-sm">
+        <summary className="flex cursor-pointer list-none items-center gap-2 font-medium [&::-webkit-details-marker]:hidden">
+          <HelpCircle className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          {en ? 'How does the register find these?' : 'كيف يعرف النظام بهذه الروابط؟'}
+        </summary>
+        <ol className="mt-3 list-decimal space-y-1.5 ps-5 leading-relaxed text-muted-foreground">
+          <li>
+            {en
+              ? 'Every tenant card records the owner’s name and phone as the tenant gave them.'
+              : 'كل بطاقة مستأجر تحفظ اسم المالك ورقم هاتفه كما ذكرهما المستأجر.'}
+          </li>
+          <li>
+            {en
+              ? 'Whenever an owner is registered — before or after the tenant — the register compares that phone with the citizen’s phone and WhatsApp, and the name with the citizen’s name. Nothing is linked automatically.'
+              : 'عند تسجيل أي مالك — قبل المستأجر أو بعده — يقارن النظام ذلك الرقم برقم المواطن وواتسابه، والاسم باسمه. لا يُربط شيء تلقائياً.'}
+          </li>
+          <li>
+            {en
+              ? 'You choose the owner. The property is added to their file and bill, and the owner field on the tenant’s card locks to their registered name.'
+              : 'أنت تختار المالك. يُضاف العقار إلى ملفه وفواتيره، وتُقفل خانة المالك في بطاقة المستأجر على اسمه المسجَّل.'}
+          </li>
+          <li>
+            {en
+              ? 'A link can be undone from either file. Undoing removes exactly what the link added, and keeps anything somebody has edited since.'
+              : 'يمكن إلغاء الربط من ملف المستأجر أو المالك. الإلغاء يزيل ما أضافه الربط فقط، ويُبقي ما عدّله أحد بعده.'}
+          </li>
+        </ol>
+      </details>
+
+      {/*
+        What the register knows and does not bill — context for the work, one
+        line, not a banner competing with the queue for the top of the page.
+      */}
+      {summary.data && summary.data.units > 0 ? (
+        <details className="rounded-lg border bg-card px-4 py-3 text-sm">
+          <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 [&::-webkit-details-marker]:hidden">
+            <Wallet className="size-4 shrink-0 text-warning" aria-hidden />
+            <span>
+              {en ? (
+                <>
+                  <span className="font-semibold tabular-nums">{summary.data.units}</span> owned unit(s) across{' '}
+                  <span className="font-semibold tabular-nums">{summary.data.owners}</span> owner(s) are on no bill
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold tabular-nums">{summary.data.units}</span> وحدة مملوكة لدى{' '}
+                  <span className="font-semibold tabular-nums">{summary.data.owners}</span> مالك لا تدخل في أي فاتورة
+                </>
+              )}
+            </span>
+            <span className="text-xs font-medium text-primary">{en ? 'Why?' : 'لماذا؟'}</span>
           </summary>
-          <ol className="mt-3 list-decimal space-y-1.5 ps-5 leading-relaxed text-muted-foreground">
-            <li>
-              {en
-                ? 'Every tenant card records the owner’s name and phone as the tenant gave them.'
-                : 'كل بطاقة مستأجر تحفظ اسم المالك ورقم هاتفه كما ذكرهما المستأجر.'}
-            </li>
-            <li>
-              {en
-                ? 'Whenever an owner is registered — before or after the tenant — the register compares that phone with the citizen’s phone and WhatsApp. Nothing is linked automatically.'
-                : 'عند تسجيل أي مالك — قبل المستأجر أو بعده — يقارن النظام ذلك الرقم برقم المواطن وواتسابه. لا يُربط شيء تلقائياً.'}
-            </li>
-            <li>
-              {en
-                ? 'You choose the owner. The property is added to their file and bill, and the owner field on the tenant’s card locks to their registered name.'
-                : 'أنت تختار المالك. يُضاف العقار إلى ملفه وفواتيره، وتُقفل خانة المالك في بطاقة المستأجر على اسمه المسجَّل.'}
-            </li>
-            <li>
-              {en
-                ? 'A link can be undone from either file. Undoing removes exactly what the link added, and keeps anything somebody has edited since.'
-                : 'يمكن إلغاء الربط من ملف المستأجر أو المالك. الإلغاء يزيل ما أضافه الربط فقط، ويُبقي ما عدّله أحد بعده.'}
-            </li>
-          </ol>
+          <p className="mt-2 leading-relaxed text-muted-foreground">
+            {en
+              ? 'Their owner is recorded on the unit in the buildings register but has no ownership card for that building on their own file, and owner-borne fees are charged from those cards. Linking the tenants’ cards below adds them.'
+              : 'مالكوها مسجَّلون على الوحدة في سجل المباني لكن لا بطاقة «مالك» لذلك المبنى في ملفاتهم، والرسوم التي يتحمّلها المالك تُحتسب من تلك البطاقات. ربط بطاقات المستأجرين أدناه يضيفها.'}
+          </p>
         </details>
+      ) : null}
 
-        {/*
-          What the register knows and does not bill — context for the work, one
-          line, not a banner competing with the queue for the top of the page.
-        */}
-        {summary.data && summary.data.units > 0 ? (
-          <details className="rounded-lg border bg-card px-4 py-3 text-sm">
-            <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 [&::-webkit-details-marker]:hidden">
-              <Wallet className="size-4 shrink-0 text-warning" aria-hidden />
-              <span>
-                {en ? (
-                  <>
-                    <span className="font-semibold tabular-nums">{summary.data.units}</span> owned
-                    unit(s) across{' '}
-                    <span className="font-semibold tabular-nums">{summary.data.owners}</span> owner(s)
-                    are on no bill
-                  </>
-                ) : (
-                  <>
-                    <span className="font-semibold tabular-nums">{summary.data.units}</span> وحدة
-                    مملوكة لدى{' '}
-                    <span className="font-semibold tabular-nums">{summary.data.owners}</span> مالك لا
-                    تدخل في أي فاتورة
-                  </>
-                )}
-              </span>
-              <span className="text-xs font-medium text-primary">{en ? 'Why?' : 'لماذا؟'}</span>
-            </summary>
-            <p className="mt-2 leading-relaxed text-muted-foreground">
-              {en
-                ? 'Their owner is recorded on the unit in the buildings register but has no ownership card for that building on their own file, and owner-borne fees are charged from those cards. Linking the tenants’ cards below adds them.'
-                : 'مالكوها مسجَّلون على الوحدة في سجل المباني لكن لا بطاقة «مالك» لذلك المبنى في ملفاتهم، والرسوم التي يتحمّلها المالك تُحتسب من تلك البطاقات. ربط بطاقات المستأجرين أدناه يضيفها.'}
-            </p>
-          </details>
-        ) : null}
-
-        {query.loading ? (
-          <LoadingState label={en ? 'Loading owner links…' : 'جارٍ تحميل روابط المالكين…'} fullHeight />
-        ) : query.error ? (
-          <ErrorState description={query.error} onRetry={() => query.refetch()} />
-        ) : proposals.length === 0 ? (
-          <EmptyState
-            title={en ? 'Nothing waiting' : 'لا شيء بانتظار القرار'}
-            description={
-              en
-                ? 'No tenant card names a number that belongs to a registered citizen. New matches appear here as owners are registered.'
-                : 'لا توجد بطاقة مستأجر تذكر رقماً يعود لمواطن مسجَّل. تظهر المطابقات الجديدة هنا كلما سُجِّل مالك.'
-            }
-          />
-        ) : (
-          <>
-            <p className="sr-only" aria-live="polite">
-              {en ? `${pending} on this page still need an answer.` : `${pending} في هذه الصفحة بانتظار الإجابة.`}
-            </p>
-            <ul className="space-y-4">
-              {proposals.map((proposal) => {
-                const resolution = resolved[proposal.propertyEntryId];
-                return (
-                  <li key={proposal.propertyEntryId}>
-                    {resolution ? (
-                      <LandlordProposalResolved
-                        resolution={resolution}
-                        onUndo={() => void undo(resolution)}
-                        undoing={undoing === proposal.propertyEntryId}
-                        locale={locale}
-                      />
-                    ) : (
-                      <LandlordProposalCard
-                        tenant={tenant}
-                        token={token ?? ''}
-                        proposal={proposal}
-                        citizenHref={(id) => `${base}/citizens/${id}`}
-                        onResolved={resolve}
-                        locale={locale}
-                      />
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-
-            {total > PAGE_SIZE ? (
-              <nav
-                aria-label={en ? 'Pages' : 'الصفحات'}
-                className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"
-              >
-                <p className="text-sm text-muted-foreground tabular-nums">
-                  {/* The range isolated LTR, or the bidi algorithm reads «1–20» as «20–1». */}
-                  <bdi dir="ltr">{`${from}–${to}`}</bdi>
-                  {en ? ` of ${total}` : ` من ${total}`}
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="h-10"
-                    disabled={offset === 0 || query.fetching}
-                    onClick={() => {
-                      clear();
-                      setOffset(Math.max(0, offset - PAGE_SIZE));
-                    }}
-                  >
-                    <ChevronRight className="size-4 ltr:rotate-180" aria-hidden />
-                    {en ? 'Previous' : 'السابق'}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="h-10"
-                    disabled={offset + PAGE_SIZE >= total || query.fetching}
-                    onClick={() => {
-                      clear();
-                      setOffset(offset + PAGE_SIZE);
-                    }}
-                  >
-                    {en ? 'Next' : 'التالي'}
-                    <ChevronLeft className="size-4 ltr:rotate-180" aria-hidden />
-                  </Button>
-                </div>
-              </nav>
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b px-4 py-3.5 sm:px-6">
+          <CardTitle className="flex items-center gap-2 text-base font-semibold">
+            <Link2 className="size-5 text-primary" aria-hidden />
+            {en ? 'Waiting for a decision' : 'بانتظار القرار'}
+            {query.data ? (
+              <span className="text-sm font-normal tabular-nums text-muted-foreground">({total})</span>
             ) : null}
-          </>
-        )}
-      </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {/* One frame: the card's (BAN-4). */}
+          <DataTable
+            className="rounded-none border-0 shadow-none"
+            columns={columns}
+            data={items}
+            labels={tableLabels}
+            getRowId={(row) => row.propertyEntryId}
+            loading={query.loading}
+            error={query.error}
+            onRetry={query.refetch}
+            emptyIcon={<Link2 className="size-10 text-muted-foreground/60" />}
+            manualPagination
+            manualFiltering
+            sortable={false}
+            searchable={false}
+            pageCount={Math.max(Math.ceil(total / pagination.pageSize), 1)}
+            totalRowCount={total}
+            pagination={pagination}
+            onPaginationChange={setPagination}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }

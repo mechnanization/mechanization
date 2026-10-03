@@ -128,6 +128,17 @@ export class LandlordLinkService {
   }
 
   /**
+   * One open claim, as the queue shows it — the same match and the same
+   * hydration, so «فحص الرابط» and the row it was opened from cannot disagree.
+   * Null when the claim is no longer open: linked, dismissed, ended, or naming
+   * nobody registered.
+   */
+  async proposal(propertyEntryId: string): Promise<LandlordProposal | null> {
+    const [proposal] = await this.hydrate(await this.matchPairs({ entryId: propertyEntryId }));
+    return proposal ?? null;
+  }
+
+  /**
    * Claims filed *by* one registration that already name a registered citizen —
    * asked right after the save, while the officer is still with the tenant.
    */
@@ -190,6 +201,8 @@ export class LandlordLinkService {
    */
   private async matchPairs(
     scope: {
+      /** One claim — «فحص الرابط». */
+      entryId?: string;
       registrationId?: string;
       /** Claims naming this citizen — by one of these numbers, or by their name. */
       naming?: { citizenId: string; phones: readonly string[] };
@@ -197,7 +210,9 @@ export class LandlordLinkService {
     page?: { limit: number; offset: number },
   ): Promise<MatchPair[]> {
     const S = tenantSchemaRef(this.tenantContext.schemaName);
-    const narrow = scope.registrationId
+    const narrow = scope.entryId
+      ? Prisma.sql`AND pe.id = ${scope.entryId}::uuid`
+      : scope.registrationId
       ? Prisma.sql`AND pe."registrationId" = ${scope.registrationId}::uuid`
       : scope.naming
         ? Prisma.sql`AND (

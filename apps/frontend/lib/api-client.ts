@@ -3651,6 +3651,20 @@ export function getLandlordLinks(
   );
 }
 
+/** One open claim — «فحص الرابط». 404 when it is no longer open. */
+export function getLandlordLink(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  signal?: AbortSignal,
+) {
+  return apiFetch<LandlordProposal>(
+    tenant,
+    `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}`,
+    { token, signal },
+  );
+}
+
 /** How much ownership the register knows about and does not bill. */
 export function getLandlordLinkSummary(tenant: string, token: string) {
   return apiFetch<{ units: number; owners: number }>(
