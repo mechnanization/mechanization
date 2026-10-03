@@ -34,7 +34,8 @@ import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
  *     the decision itself. That is `LandlordProposalCard`, the same card the
  *     queue used to stack, so the decision is made exactly as before: choosing
  *     and confirming are two steps, nothing links itself.
- *  2. **The property and the tenant** under it: what the claim is about.
+ *  2. **The property and the occupant** under it — a tenant or a free
+ *     occupant (شاغل بتسامح): what the claim is about.
  *
  * The claim is read with the queue's own query (`GET landlord-links/:id`), so
  * this page and the row it was opened from cannot disagree. A claim that is no
@@ -135,7 +136,7 @@ export default function LandlordLinkPage({
                   className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 basis-40 sm:flex-none sm:basis-auto')}
                 >
                   <FileText className="size-4" aria-hidden />
-                  {en ? 'Tenant’s file' : 'ملف المستأجر'}
+                  {en ? 'Occupant’s file' : 'ملف الساكن'}
                 </Link>
               ) : null}
             </div>
@@ -157,8 +158,8 @@ export default function LandlordLinkPage({
           title={en ? 'This link is no longer open' : 'هذا الرابط لم يعد مفتوحاً'}
           description={
             en
-              ? 'It was linked or answered since, or the tenancy has ended. The queue lists what is still waiting.'
-              : 'رُبط أو أُجيب عنه منذ ذلك الحين، أو انتهى الإيجار. القائمة تعرض ما زال بانتظار القرار.'
+              ? 'It was linked or answered since, or the occupancy has ended. The queue lists what is still waiting.'
+              : 'رُبط أو أُجيب عنه منذ ذلك الحين، أو انتهى الإشغال. القائمة تعرض ما زال بانتظار القرار.'
           }
           action={
             <Link href={queue} className={buttonVariants({ variant: 'outline' })}>
@@ -203,17 +204,17 @@ export default function LandlordLinkPage({
             )}
           </section>
 
-          {/* 2 — What the claim is about: the property, and the tenant who made it. */}
+          {/* 2 — What the claim is about: the property, and the occupant (tenant or free occupant) who made it. */}
           <Card>
             <CardHeader className="border-b px-4 py-3.5">
               <CardTitle className="flex items-center gap-2 text-base font-semibold">
                 <Building2 className="size-5 text-primary" aria-hidden />
-                <h2>{en ? 'The property and the tenant' : 'العقار والمستأجر'}</h2>
+                <h2>{en ? 'The property and the occupant' : 'العقار والساكن'}</h2>
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4">
               <SummaryList>
-                <SummaryRow label={en ? 'Tenant' : 'المستأجر'}>
+                <SummaryRow label={en ? 'Occupant' : 'الساكن'}>
                   {proposal.filedBy ? (
                     <Link
                       href={`${base}/citizens/${proposal.filedBy.citizenId}`}

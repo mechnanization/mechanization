@@ -3,9 +3,17 @@
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
-import { HelpCircle, Link2, RefreshCw, UserRound, Wallet } from 'lucide-react';
+import { CircleSlash, HelpCircle, Link2, RefreshCw, UserRound, Wallet } from 'lucide-react';
+import { getLabels } from '@mechanization/shared-schemas';
 import { getLandlordLinks, getLandlordLinkSummary, type LandlordProposal } from '@/lib/api-client';
-import { landlordLinkStatus, landlordLinkStatusView } from '@/lib/landlord-status';
+import {
+  bestCandidate,
+  filedBeforeOwner,
+  landlordLinkStatus,
+  nameLight,
+  phoneLight,
+  type MatchLight,
+} from '@/lib/landlord-status';
 import { formatPhone } from '@/lib/phone';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
@@ -16,6 +24,39 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CellTag } from '@/components/ui/cell-tag';
 import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
+
+/**
+ * One match light: a dot in the light's colour and its word beside it —
+ * never the colour alone (COL-3).
+ */
+function Light({ label, light }: { label: string; light: MatchLight }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span
+        aria-hidden
+        className={cn(
+          'size-2 shrink-0 rounded-full',
+          light.tone === 'success' && 'bg-success',
+          light.tone === 'warning' && 'bg-warning',
+          light.tone === 'destructive' && 'bg-destructive',
+          light.tone === 'muted' && 'bg-muted-foreground/50',
+        )}
+      />
+      <span
+        className={cn(
+          'font-medium',
+          light.tone === 'success' && 'text-success',
+          light.tone === 'warning' && 'text-warning',
+          light.tone === 'destructive' && 'text-destructive',
+          light.tone === 'muted' && 'text-muted-foreground',
+        )}
+      >
+        {light.label}
+      </span>
+    </span>
+  );
+}
 
 /** The roles `GET landlord-links/summary` answers — asking as anyone else is a 403. */
 const SUMMARY_ROLES = new Set(['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER']);
@@ -35,9 +76,11 @@ const SUMMARY_ROLES = new Set(['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINIST
  *
  * ## Layout
  *
- * A table, as «يتطلب مراجعة» is (UX-1): who the owner is said to be, the
- * property, where the claim stands, the number — and «فحص الرابط» to the claim's
- * own page, where the question is answered. The question itself (which of these
+ * A table, as «يتطلب مراجعة» is (UX-1): the occupant (tenant or free
+ * occupant), who they said the owner is and on what number, the property,
+ * the registered person it most likely is with a light for the name and one
+ * for the phone — and «فحص الرابط» to the claim's own page, where the
+ * question is answered. The question itself (which of these
  * people is the owner) wants room the row does not have, so it is not asked in
  * the row.
  */
@@ -79,6 +122,7 @@ export default function LandlordLinksPage({
     errorMessage: en ? 'Failed to load the summary.' : 'تعذّر تحميل الملخّص.',
   });
 
+  const occupancyLabels = getLabels(locale).occupancyType as Record<string, string>;
   const items = query.data?.items ?? [];
   const total = query.data?.total ?? 0;
 
@@ -87,36 +131,85 @@ export default function LandlordLinksPage({
       ? {
           empty: 'Nothing waiting',
           emptyHint:
-            'No tenant card names a number that belongs to a registered citizen. New matches appear here as owners are registered.',
+            'No occupant’s card names an owner who is a registered citizen. New matches appear here as owners are registered.',
         }
       : {
           empty: 'لا شيء بانتظار القرار',
           emptyHint:
-            'لا توجد بطاقة مستأجر تذكر رقماً يعود لمواطن مسجَّل. تظهر المطابقات الجديدة هنا كلما سُجِّل مالك.',
+            'لا توجد بطاقة ساكن تذكر مالكاً هو مواطن مسجَّل. تظهر المطابقات الجديدة هنا كلما سُجِّل مالك.',
         },
   );
 
   const columns = useMemo<ColumnDef<LandlordProposal>[]>(
     () => [
       {
-        id: 'landlord',
-        header: en ? 'Owner / landlord' : 'المالك / المؤجر',
+        id: 'occupant',
+        header: en ? 'Occupant' : 'الساكن',
         meta: { mobile: 'primary' },
         cell: ({ row }) => {
           const proposal = row.original;
-          const typed = proposal.landlordName?.trim() || (en ? 'No name given' : 'بلا اسم');
+          const name = proposal.filedBy?.name ?? (en ? 'Unknown' : 'غير معروف');
+          const standing = occupancyLabels[proposal.occupancyType] ?? proposal.occupancyType;
           return (
             <div className="min-w-0">
               <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
                 <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="truncate" title={typed}>
-                  {typed}
+                <span className="truncate" title={name}>
+                  {name}
                 </span>
               </p>
-              {/* Who named them — the claim is the tenant's word, so the tenant is part of it. */}
-              {proposal.filedBy ? (
-                <p className="truncate ps-5 text-xs text-muted-foreground" title={proposal.filedBy.name}>
-                  {en ? `Named by ${proposal.filedBy.name}` : `ذكره ${proposal.filedBy.name}`}
+              {/* Tenant or free occupant — the queue is every resident who is not the owner. */}
+              <p className="truncate ps-5 text-xs text-muted-foreground">{standing}</p>
+            </div>
+          );
+        },
+      },
+      {
+        id: 'claim',
+        header: en ? 'Said the owner is' : 'ذكر أن المالك',
+        cell: ({ row }) => {
+          const proposal = row.original;
+          const typed = proposal.landlordName?.trim();
+          return (
+            <div className="min-w-0 space-y-0.5">
+              <p className={cn('truncate text-sm', typed ? 'font-medium' : 'text-muted-foreground')} title={typed}>
+                {typed || (en ? 'No name given' : 'لم يذكر اسماً')}
+              </p>
+              {proposal.landlordPhone ? (
+                <p dir="ltr" className="text-xs tabular-nums text-muted-foreground rtl:text-end">
+                  {formatPhone(proposal.landlordPhone)}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">{en ? 'No phone given' : 'لم يذكر رقماً'}</p>
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        id: 'property',
+        header: en ? 'Property no.' : 'رقم العقار',
+        cell: ({ row }) => {
+          const proposal = row.original;
+          const reference = proposal.buildingCode ?? proposal.propertyNumber;
+          const blocked = landlordLinkStatus(proposal) === 'BLOCKED';
+          return (
+            <div className="min-w-0 space-y-0.5">
+              {reference ? (
+                <CellTag className="font-mono" dir="ltr" title={proposal.buildingName ?? undefined}>
+                  {reference}
+                </CellTag>
+              ) : (
+                <CellTag tone="muted">—</CellTag>
+              )}
+              {/* A link that cannot be made yet stays visible without a status column of its own. */}
+              {blocked ? (
+                <p
+                  className="flex items-center gap-1 text-xs text-warning"
+                  title={proposal.blocked?.message ?? proposal.candidates.find((c) => c.blocked)?.blocked?.message}
+                >
+                  <CircleSlash className="size-3 shrink-0" aria-hidden />
+                  {en ? 'Cannot link yet' : 'لا يمكن الربط بعد'}
                 </p>
               ) : null}
             </div>
@@ -124,48 +217,38 @@ export default function LandlordLinksPage({
         },
       },
       {
-        id: 'reference',
-        header: en ? 'Reference no.' : 'الرقم المرجعي',
+        id: 'match',
+        header: en ? 'Registered owner · match' : 'المالك المسجَّل والتطابق',
         cell: ({ row }) => {
-          const reference = row.original.buildingCode ?? row.original.propertyNumber;
-          return reference ? (
-            <CellTag className="font-mono" dir="ltr" title={row.original.buildingName ?? undefined}>
-              {reference}
-            </CellTag>
-          ) : (
-            <CellTag tone="muted">—</CellTag>
-          );
-        },
-      },
-      {
-        id: 'status',
-        header: en ? 'Status' : 'الحالة',
-        cell: ({ row }) => {
-          const view = landlordLinkStatusView(landlordLinkStatus(row.original), locale);
-          const Icon = view.icon;
+          const proposal = row.original;
+          const candidate = bestCandidate(proposal);
+          if (!candidate) return <CellTag tone="muted">—</CellTag>;
+          const others = proposal.candidates.length - 1;
           return (
-            <CellTag tone={view.tone} title={row.original.blocked?.message}>
-              <Icon className="size-3.5 shrink-0" aria-hidden />
-              {view.label}
-            </CellTag>
+            <div className="min-w-0 space-y-1">
+              <p className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-sm font-medium">
+                <span className="truncate" title={candidate.name}>
+                  {candidate.name}
+                </span>
+                {others > 0 ? (
+                  <span className="text-xs font-normal text-muted-foreground tabular-nums">
+                    {en ? `+${others} more` : `+${others} آخر`}
+                  </span>
+                ) : null}
+              </p>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <Light label={en ? 'Name' : 'الاسم'} light={nameLight(proposal, candidate, locale)} />
+                <Light label={en ? 'Phone' : 'الهاتف'} light={phoneLight(proposal, candidate, locale)} />
+              </div>
+              {/* The case this queue is for: the occupant came first, the owner registered since. */}
+              {filedBeforeOwner(proposal, candidate) ? (
+                <p className="text-xs text-muted-foreground">
+                  {en ? 'Occupant registered before the owner' : 'سُجِّل الساكن قبل المالك'}
+                </p>
+              ) : null}
+            </div>
           );
         },
-      },
-      {
-        id: 'phone',
-        header: en ? 'Phone' : 'الهاتف',
-        cell: ({ row }) =>
-          row.original.landlordPhone ? (
-            <a
-              href={`tel:${row.original.landlordPhone}`}
-              dir="ltr"
-              className="whitespace-nowrap text-xs tabular-nums text-primary underline-offset-2 hover:underline"
-            >
-              {formatPhone(row.original.landlordPhone)}
-            </a>
-          ) : (
-            <CellTag tone="muted">—</CellTag>
-          ),
       },
       {
         id: 'inspect',
@@ -186,7 +269,7 @@ export default function LandlordLinksPage({
         },
       },
     ],
-    [en, base, locale],
+    [en, base, locale, occupancyLabels],
   );
 
   return (
@@ -196,8 +279,8 @@ export default function LandlordLinksPage({
         title={en ? 'Owner links' : 'روابط المالكين'}
         subtitle={
           en
-            ? 'Tenants named an owner who is a registered citizen. Check each link and say who the owner is, and the property goes onto their file and bill.'
-            : 'مستأجرون ذكروا مالكاً هو مواطن مسجَّل. افحص كل رابط وحدِّد من هو المالك ليُضاف العقار إلى ملفه ويدخل في فواتيره.'
+            ? 'Tenants and free occupants named an owner who is now a registered citizen — usually because they were registered before the owner. Check each link and say who the owner is, and the property goes onto their file and bill.'
+            : 'مستأجرون وشاغلون بتسامح ذكروا مالكاً أصبح مواطناً مسجَّلاً — غالباً لأنهم سُجِّلوا قبله. افحص كل رابط وحدِّد من هو المالك ليُضاف العقار إلى ملفه ويدخل في فواتيره.'
         }
         actions={
           <Button variant="outline" onClick={() => query.refetch()} disabled={query.fetching} className="h-10">
@@ -218,23 +301,23 @@ export default function LandlordLinksPage({
         <ol className="mt-3 list-decimal space-y-1.5 ps-5 leading-relaxed text-muted-foreground">
           <li>
             {en
-              ? 'Every tenant card records the owner’s name and phone as the tenant gave them.'
-              : 'كل بطاقة مستأجر تحفظ اسم المالك ورقم هاتفه كما ذكرهما المستأجر.'}
+              ? 'Every tenant or free occupant’s card records the owner’s name and phone as the occupant gave them — even when the owner is not registered yet.'
+              : 'كل بطاقة مستأجر أو شاغل بتسامح تحفظ اسم المالك ورقم هاتفه كما ذكرهما الساكن — حتى لو لم يكن المالك مسجَّلاً بعد.'}
           </li>
           <li>
             {en
-              ? 'Whenever an owner is registered — before or after the tenant — the register compares that phone with the citizen’s phone and WhatsApp, and the name with the citizen’s name. Nothing is linked automatically.'
-              : 'عند تسجيل أي مالك — قبل المستأجر أو بعده — يقارن النظام ذلك الرقم برقم المواطن وواتسابه، والاسم باسمه. لا يُربط شيء تلقائياً.'}
+              ? 'When the owner is registered later, the register compares that phone with the citizen’s phone and WhatsApp, and the name with the citizen’s name — the lights in the table. Nothing is linked automatically.'
+              : 'عندما يُسجَّل المالك لاحقاً، يقارن النظام ذلك الرقم برقم المواطن وواتسابه، والاسم باسمه — وهي الأضواء في الجدول. لا يُربط شيء تلقائياً.'}
           </li>
           <li>
             {en
-              ? 'You choose the owner. The property is added to their file and bill, and the owner field on the tenant’s card locks to their registered name.'
-              : 'أنت تختار المالك. يُضاف العقار إلى ملفه وفواتيره، وتُقفل خانة المالك في بطاقة المستأجر على اسمه المسجَّل.'}
+              ? 'You choose the owner. The property is added to their file and bill, and the owner field on the occupant’s card locks to their registered name.'
+              : 'أنت تختار المالك. يُضاف العقار إلى ملفه وفواتيره، وتُقفل خانة المالك في بطاقة الساكن على اسمه المسجَّل.'}
           </li>
           <li>
             {en
               ? 'A link can be undone from either file. Undoing removes exactly what the link added, and keeps anything somebody has edited since.'
-              : 'يمكن إلغاء الربط من ملف المستأجر أو المالك. الإلغاء يزيل ما أضافه الربط فقط، ويُبقي ما عدّله أحد بعده.'}
+              : 'يمكن إلغاء الربط من ملف الساكن أو المالك. الإلغاء يزيل ما أضافه الربط فقط، ويُبقي ما عدّله أحد بعده.'}
           </li>
         </ol>
       </details>
