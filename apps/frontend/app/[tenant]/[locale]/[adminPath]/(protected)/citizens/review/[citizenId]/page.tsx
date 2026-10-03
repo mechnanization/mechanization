@@ -82,9 +82,9 @@ type PropertyRef = NonNullable<CitizenFormData['propertyRefs']>[number];
  * An open field is answered in its own row, where its value would be: the
  * label, «غير مؤكَّد» and the officer's reason at the start, the box at the
  * end (`OpenQuestion` `row`) — said once, not as a row and then again as a
- * block. Panels take only their own height (`keepSpace={false}`); the card
- * opens on the tab that holds the open field, and turns to the one a refused
- * save points at.
+ * block. Every panel keeps the tallest one's height, so switching tab never
+ * changes the card's size; the card opens on the tab that holds the open
+ * field, and turns to the one a refused save points at.
  */
 function ReviewPropertyCard({
   values,
@@ -185,9 +185,9 @@ function ReviewPropertyCard({
   const tabOf = (path: string) => (path.split('.').length === 5 ? 'units' : 'property');
   const [tab, setTab] = useState(unitItems.length > 0 && cardItems.length === 0 ? 'units' : 'property');
   /*
-    Closed panels are not laid out (`keepSpace={false}`), so a refused answer
-    in one would be out of sight: the card turns to the tab holding the first
-    field the save refused, where the focus is about to land.
+    A closed panel is invisible, so a refused answer in one would be out of
+    sight: the card turns to the tab holding the first field the save
+    refused, where the focus is about to land.
   */
   const firstRefused = items.find((item) => item.path in state.fieldErrors)?.path ?? null;
   useEffect(() => {
@@ -277,7 +277,7 @@ function ReviewPropertyCard({
     >
       <CardPanels>
         {units.length > 0 ? (
-          <CardPanel active={tab === 'units'} keepSpace={false}>
+          <CardPanel active={tab === 'units'}>
             {units.map((unit, unitIndex) => {
               const UnitIcon = (unit.unitType && UNIT_ICON[unit.unitType]) || Building;
               const code = unitCodeAt(unitIndex);
@@ -312,7 +312,7 @@ function ReviewPropertyCard({
           </CardPanel>
         ) : null}
 
-        <CardPanel active={tab === 'property'} keepSpace={false}>
+        <CardPanel active={tab === 'property'}>
           <SummaryRow label={en ? 'Property type' : 'نوع العقار'}>{typeText ?? '—'}</SummaryRow>
           <SummaryRow label={en ? 'Standing' : 'صفة الإشغال'}>{roleText ?? '—'}</SummaryRow>
           {numberOpen ? (
@@ -348,7 +348,7 @@ function ReviewPropertyCard({
         </CardPanel>
 
         {census?.building ? (
-          <CardPanel active={tab === 'building'} keepSpace={false}>
+          <CardPanel active={tab === 'building'}>
             <BuildingCensusSummary building={census.building} code={census.buildingCode} bare locale={locale} />
           </CardPanel>
         ) : null}

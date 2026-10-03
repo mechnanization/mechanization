@@ -187,21 +187,7 @@ export function CardPanels({ children }: { children: ReactNode }) {
  * panel and switching section never moves the page. The section switch is a
  * radio group (SegmentedControl), so these are plain regions, not tab panels.
  */
-export function CardPanel({
-  active,
-  keepSpace = true,
-  children,
-}: {
-  active: boolean;
-  /**
-   * False: a closed panel is not laid out at all, so the block is only as tall
-   * as the open one. For a card that is read one section at a time and is not
-   * part of a page that must not move (`فحص الملف`).
-   */
-  keepSpace?: boolean;
-  children: ReactNode;
-}) {
-  if (!active && !keepSpace) return null;
+export function CardPanel({ active, children }: { active: boolean; children: ReactNode }) {
   return (
     <div aria-hidden={!active} className={cn('rounded-lg border px-3 [grid-area:1/1]', !active && 'invisible')}>
       <SummaryList>{children}</SummaryList>
