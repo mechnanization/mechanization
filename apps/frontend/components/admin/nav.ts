@@ -4,6 +4,7 @@ import {
   Building2,
   ClipboardCheck,
   ClipboardList,
+  FileQuestion,
   FileWarning,
   KeyRound,
   LayoutDashboard,
@@ -82,9 +83,10 @@ export interface NavGroup {
 }
 
 /**
- * An unlabelled landing pair, then five groups in the order a clerk's day runs:
- * the register, the money raised against it, the land those records describe,
- * the checking of all three, and the portal's own administration.
+ * An unlabelled landing pair, then six groups in the order a clerk's day runs:
+ * the register, the collection work still open on it, the money raised
+ * against it, the land those records describe, the checking of all of it, and
+ * the portal's own administration.
  *
  * A flat list of ten was past scannable — «القطاعات» and «الموظفون» read as
  * equally likely neighbours of «المواطنون» when they belong to different jobs
@@ -186,18 +188,47 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'],
         keywords: ['تسجيل', 'مواطن', 'جديد', 'إضافة', 'أسرة', 'نموذج', 'register', 'new', 'add'],
       },
+    ],
+  },
+  /*
+    «استكمال البيانات» — the worklists the data collection leaves behind: a
+    record saved with fields still to confirm, an owner a tenant named who is
+    not yet linked, a visit that found nobody home. Each is a queue that drains
+    toward zero once the survey is done, which is why they are no longer in
+    «السجل»: that group is the register people use every day, and a clerk or an
+    accountant who is past the survey folds this one away (the sidebar
+    remembers it) instead of scrolling past three quiet queues.
+
+    Folded, not removed: the queues keep filling after the survey, only more
+    slowly — ending an ownership sends its tenants back to «روابط المالكين»,
+    a registration saved with gaps lands in «يتطلب مراجعة», and a locked gate
+    opens a case.
+  */
+  {
+    label: 'استكمال البيانات',
+    labelEn: 'Data completion',
+    items: [
+      /*
+        The register narrowed to records saved with fields still to confirm —
+        the same page as «المواطنون» at an address of its own, so every role
+        that reads the register reads this slice of it.
+      */
+      {
+        path: '/citizens/review',
+        label: 'يتطلب مراجعة',
+        labelEn: 'Requires review',
+        icon: FileQuestion,
+        roles: EVERY_STAFF_ROLE,
+        keywords: ['مراجعة', 'ناقص', 'استكمال', 'حقول', 'غير مؤكد', 'review', 'incomplete', 'missing'],
+      },
       /*
         Owner claims waiting to be recognised as one of the register's own
-        citizens.
+        citizens: what it resolves is an *identity* — is the person this
+        tenant named the same person as this record.
 
-        Beside «المواطنون» rather than under the census, because what it
-        resolves is an *identity* — is the person this tenant named the same
-        person as this record — and the census tables are downstream of the
-        answer rather than the subject of it.
-
-        Every staff role, matching «المواطنون» directly above: the queue is a
-        view of the register and reading it discloses nothing the registry does
-        not. Acting on a row is narrower and enforced by the server — AUDITOR,
+        Every staff role, matching «المواطنون»: the queue is a view of the
+        register and reading it discloses nothing the registry does not.
+        Acting on a row is narrower and enforced by the server — AUDITOR,
         COLLECTOR and ACCOUNTANT see the work and do not answer it.
       */
       {
@@ -218,9 +249,8 @@ export const NAV_GROUPS: NavGroup[] = [
           'tenant',
         ],
       },
-      // A visit that didn't produce a citizen — nobody home, gate locked —
-      // sits next to the registry it feeds rather than under land/map, since
-      // what it records is "who to go back to", not a parcel's own facts.
+      // A visit that didn't produce a citizen — nobody home, gate locked: what
+      // it records is "who to go back to", not a parcel's own facts.
       {
         path: '/cases',
         label: 'الحالات',
