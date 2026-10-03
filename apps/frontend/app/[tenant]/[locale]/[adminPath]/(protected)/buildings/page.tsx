@@ -46,13 +46,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { FilterInput, FilterSelect } from '@/components/ui/filter-controls';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { useToast } from '@/components/ui/toast';
@@ -1013,33 +1007,15 @@ export default function BuildingsPage({
                     allLabel={en ? 'Any condition' : 'كل مستويات الضرر'}
                   />
 
-                  {/* Parcel input with clear button */}
-                  <div className="relative w-full sm:w-32">
-                    <input
-                      value={parcelInput}
-                      onChange={(event) => setParcelInput(event.target.value)}
-                      dir="ltr"
-                      inputMode="numeric"
-                      aria-label={en ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
-                      placeholder={en ? 'Parcel #' : 'رقم العقار'}
-                      className={cn(
-                        'h-9 w-full rounded-md border bg-background px-3 text-start text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring transition-colors',
-                        parcelInput
-                          ? 'border-primary/60 bg-primary/5 text-primary font-medium pe-7'
-                          : 'border-input hover:bg-accent/50',
-                      )}
-                    />
-                    {parcelInput ? (
-                      <button
-                        type="button"
-                        onClick={() => setParcelInput('')}
-                        aria-label={en ? 'Clear parcel number' : 'مسح رقم العقار'}
-                        className="absolute end-1.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        <X className="size-3" />
-                      </button>
-                    ) : null}
-                  </div>
+                  <FilterInput
+                    label={en ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
+                    value={parcelInput}
+                    onChange={setParcelInput}
+                    placeholder={en ? 'Parcel #' : 'رقم العقار'}
+                    clearLabel={en ? 'Clear parcel number' : 'مسح رقم العقار'}
+                    inputMode="numeric"
+                    dir="ltr"
+                  />
 
                   {/* Without entrance toggle */}
                   <button
@@ -1123,72 +1099,6 @@ export default function BuildingsPage({
         }}
       />
     </div>
-  );
-}
-
-/**
- * One filter select, with its own «الكل» option carrying the empty value.
- * Generic over the option values so an enum filter stays its enum.
- */
-function FilterSelect<T extends string>({
-  label,
-  value,
-  onChange,
-  options,
-  allLabel,
-}: {
-  label: string;
-  value: T | '';
-  onChange: (value: T | '') => void;
-  options: Array<{ value: T; label: string }>;
-  allLabel: string;
-}) {
-  /*
-    Radix refuses an empty-string `SelectItem` value, because that is how it
-    spells "nothing selected". So «الكل» carries a sentinel and is translated at
-    the boundary — the filter state stays an empty string, which is what the
-    query builder already treats as absent.
-  */
-  const ALL = '__all__';
-  /*
-    Nothing to choose between.
-
-    The options are now the values the census holds, so an empty list is a real
-    statement: no building has been assessed yet, nobody has recorded a
-    lifecycle other than the default. A select that opens onto «كل الأنواع» and
-    nothing else is a control that cannot change the answer, and offering it
-    invites the reader to look for a filter that is not there. It is also the
-    state while the list is still loading, which is the same thing from the
-    reader's side — there is nothing to pick yet.
-  */
-  const empty = options.length === 0;
-  return (
-    <Select
-      value={value || ALL}
-      // Radix hands back a plain string; it can only be one of `options`.
-      onValueChange={(next) => onChange(next === ALL ? '' : (next as T))}
-      disabled={empty}
-    >
-      <SelectTrigger
-        aria-label={label}
-        className={cn(
-          'h-9 w-full sm:w-auto min-w-[130px] flex-1 sm:flex-initial gap-2 text-xs transition-colors',
-          value
-            ? 'border-primary/60 bg-primary/5 text-primary font-medium'
-            : 'border-input bg-background hover:bg-accent/50',
-        )}
-      >
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={ALL}>{allLabel}</SelectItem>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   );
 }
 

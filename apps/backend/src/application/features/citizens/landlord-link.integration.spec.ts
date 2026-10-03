@@ -204,11 +204,12 @@ describeIfDb('LandlordLinkService', () => {
    * the flat on the matrix exactly as a real filing leaves them.
    */
   const tenantFiling = async (input: {
-    landlordPhone: string;
+    /** Null — the occupant did not know it. */
+    landlordPhone: string | null;
     parcelNumber: string;
     buildingId: string | null;
     unitIds: string[];
-    landlordName?: string;
+    landlordName?: string | null;
     occupancyType?: 'TENANT' | 'FREE_OCCUPANT';
   }) => {
     const tenantPhone = freshPhone();
@@ -220,7 +221,7 @@ describeIfDb('LandlordLinkService', () => {
         properties: {
           create: {
             occupancyType: input.occupancyType ?? 'TENANT',
-            landlordName: input.landlordName ?? 'ibrahim hashem nasrallah',
+            landlordName: input.landlordName === undefined ? 'ibrahim hashem nasrallah' : input.landlordName,
             landlordPhone: input.landlordPhone,
             propertyType: 'BUILDING',
             neighborhood: 'الحي الشرقي',
@@ -938,6 +939,66 @@ describeIfDb('LandlordLinkService', () => {
       orderBy: { createdAt: 'desc' },
     });
     expect(audit?.after).toMatchObject({ matchedBy: 'NAME' });
+  });
+
+  // ─────────────────────────────  By the property  ─────────────────────────────
+
+  it('offers the property’s registered owner when the occupant knew neither name nor number, and links on it', async () => {
+    const { units, building } = await surveyedBlock('LNK-PROP');
+    const owner = await ownerWithFile(freshPhone().stored);
+    await db.propertyEntry.create({
+      data: {
+        registrationId: owner.registrationId,
+        occupancyType: 'OWNER',
+        propertyType: 'BUILDING',
+        neighborhood: 'الحي الشرقي',
+        propertyNumber: 'LNK-PROP',
+        buildingId: building.id,
+        units: { create: [{ unitType: 'APARTMENT', floor: '0', unitArea: 95, unitId: units[1]!.id }] },
+      },
+    });
+
+    // A free occupant in a relative's flat: no name, no number.
+    const { entryId } = await tenantFiling({
+      landlordPhone: null,
+      landlordName: null,
+      occupancyType: 'FREE_OCCUPANT',
+      parcelNumber: 'LNK-PROP',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+    });
+    // A tenant who gave a number that is nobody's: the number is the evidence, not the building.
+    const withNumber = await tenantFiling({
+      landlordPhone: freshPhone().stored,
+      landlordName: null,
+      parcelNumber: 'LNK-PROP',
+      buildingId: building.id,
+      unitIds: [units[2]!.id],
+    });
+
+    const queue = (await within(() => links.proposals({ limit: 500, offset: 0 }))).items;
+    expect(
+      queue.find((item) => item.propertyEntryId === entryId)?.candidates.map((candidate) => [candidate.id, candidate.matchedBy]),
+    ).toEqual([[owner.id, 'PROPERTY']]);
+    expect(queue.find((item) => item.propertyEntryId === withNumber.entryId)).toBeUndefined();
+
+    // The owner's side finds it too, with nothing typed to go on.
+    expect((await within(() => links.claimsNaming(owner.id))).map((item) => item.propertyEntryId)).toContain(entryId);
+
+    // Somebody who owns nothing here may not be asserted as the owner.
+    const stranger = await ownerWithFile(freshPhone().stored);
+    await expect(
+      within(() => links.confirm({ propertyEntryId: entryId, citizenId: stranger.id, actor: actor() })),
+    ).rejects.toThrow();
+
+    const result = await within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() }));
+    expect(result.linked).toBe(true);
+    await settleAudit();
+    const audit = await db.auditLogEntry.findFirst({
+      where: { action: 'LANDLORD_LINKED', entityId: owner.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(audit?.after).toMatchObject({ matchedBy: 'PROPERTY' });
   });
 
   // ─────────────────────────────  «هل هو مسجَّل مسبقاً؟»  ─────────────────────────────

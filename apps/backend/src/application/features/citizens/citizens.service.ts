@@ -6,6 +6,7 @@ import {
   cadastreFlags,
   FIELD_FLAG_KINDS,
   flaggedPaths,
+  formatUnitCode,
   IMPORT_COLUMNS,
   internationalPhone,
   POSSIBLE_DUPLICATE_FLAG_PATH,
@@ -231,6 +232,41 @@ interface CitizenListAggregate {
   allOutstanding: number;
   allOverdue: number;
   allInArrears: number;
+}
+
+/**
+ * One row of «يتطلب مراجعة»: who the record is, how to reach them, and how
+ * much is still open on it — nothing else. The queue is worked by people who
+ * finish records, not by people who collect money, so it carries no fee
+ * figures and no identity-document number: what a screen does not show, its
+ * payload does not send.
+ */
+export interface ReviewQueueItem {
+  id: string;
+  fullName: string;
+  /** Null on records filed before migration 0044 — «لم يُسأل», not a difference. */
+  motherName: string | null;
+  referenceNumber: string | null;
+  phone: string | null;
+  /** The latest registration's status: always `REQUIRES_REVIEW` in this list. */
+  status: string;
+  /** How many «غير مؤكَّد» fields that registration carries. */
+  openFieldCount: number;
+  /** When it was filed — the queue is worked oldest first. */
+  submittedAt: string;
+}
+
+interface ReviewQueueRow {
+  id: string;
+  firstName: string | null;
+  middleName: string | null;
+  lastName: string | null;
+  motherName: string | null;
+  referenceNumber: string | null;
+  phone: string | null;
+  status: string;
+  openFieldCount: number;
+  submittedAt: Date;
 }
 
 /**
@@ -531,6 +567,83 @@ export class CitizensService {
   }
 
   /**
+   * «يتطلب مراجعة» — citizens whose latest registration was filed with fields
+   * left «غير مؤكَّد», oldest first.
+   *
+   * Its own query rather than `list` with a status filter: `list` computes six
+   * fee subqueries per row and four over the whole register for the cards
+   * above the table, none of which this queue shows, and it sends the identity
+   * document number with every row. Narrowed in the WHERE, so a citizen who is
+   * not in the queue never leaves the database.
+   *
+   * Matched against the *latest* registration, as `list` is: a citizen who
+   * came back with a complete second filing is not still queued for the first.
+   * The search is `list`'s, token for token, so a name found in one is found in
+   * the other.
+   */
+  async reviewQueue(
+    filter: { search?: string; limit?: number; offset?: number } = {},
+  ): Promise<{ items: ReviewQueueItem[]; total: number }> {
+    const limit = Math.min(Math.max(filter.limit ?? 25, 1), MAX_LIST_ROWS);
+    const offset = Math.max(filter.offset ?? 0, 0);
+    const tokens = searchTokens(filter.search);
+    const searchFilter = tokens.length
+      ? Prisma.join(
+          tokens.map((token) => Prisma.sql`AND u."searchText" LIKE ${likePattern(token)}`),
+          ' ',
+        )
+      : Prisma.empty;
+
+    // `jsonb_typeof` guards the count as `list` does: the column defaults to an
+    // array, but a hand-run fix or a restored backup need not hold one.
+    const queued = Prisma.sql`
+      FROM ${this.S}users u
+      JOIN LATERAL (
+        SELECT r.status::text AS status, r."submittedAt",
+               CASE WHEN jsonb_typeof(r."flaggedFields") = 'array'
+                    THEN jsonb_array_length(r."flaggedFields") ELSE 0 END AS "openFieldCount"
+          FROM ${this.S}registrations r
+         WHERE r."citizenId" = u.id
+         ORDER BY r."submittedAt" DESC
+         LIMIT 1
+      ) latest ON true
+      WHERE u.kind = 'CITIZEN'
+        AND latest.status = 'REQUIRES_REVIEW'
+        ${searchFilter}
+    `;
+
+    // One snapshot for the page and its count, for the reason `list` gives.
+    const [rows, [count]] = await withConnectionRetry(() =>
+      this.db.$transaction([
+        this.db.$queryRaw<ReviewQueueRow[]>`
+          SELECT u.id, u."firstName", u."middleName", u."lastName", u."motherName",
+                 u."referenceNumber", u.phone,
+                 latest.status, latest."openFieldCount"::int AS "openFieldCount",
+                 latest."submittedAt"
+          ${queued}
+          ORDER BY latest."submittedAt" ASC, u.id
+          LIMIT ${limit} OFFSET ${offset}
+        `,
+        this.db.$queryRaw<{ total: number }[]>`SELECT count(*)::int AS total ${queued}`,
+      ]),
+    );
+
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        fullName: [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' '),
+        motherName: row.motherName,
+        referenceNumber: row.referenceNumber,
+        phone: row.phone,
+        status: row.status,
+        openFieldCount: row.openFieldCount,
+        submittedAt: row.submittedAt.toISOString(),
+      })),
+      total: count?.total ?? 0,
+    };
+  }
+
+  /**
    * The citizen's record shaped back into the form that edits it.
    *
    * Returns exactly the three sections `adminUpdateCitizenSchema` expects, so
@@ -643,7 +756,43 @@ export class CitizensService {
                 where: { endedAt: null },
                 orderBy: { createdAt: 'asc' },
                 include: {
-                  units: { where: { endedAt: null }, orderBy: { createdAt: 'asc' } },
+                  units: {
+                    where: { endedAt: null },
+                    orderBy: { createdAt: 'asc' },
+                    // The census unit each flat is, for its code — see `propertyRefs`.
+                    include: { unit: { select: { floor: true, sequence: true } } },
+                  },
+                  building: {
+                    select: {
+                      code: true,
+                      parcelNumber: true,
+                      // What the elevation drawing reads — its shape, never its occupants.
+                      structureType: true,
+                      lifecycleStatus: true,
+                      floorsCount: true,
+                      basementsCount: true,
+                      // The census summary beside it, as the unit matrix shows it.
+                      postedNumber: true,
+                      sharedParcelNumbers: true,
+                      isPartitioned: true,
+                      partitionNumbers: true,
+                      latitude: true,
+                      unitsTotal: true,
+                      unitsSurveyed: true,
+                      units: {
+                        orderBy: [{ floor: 'asc' }, { sequence: 'asc' }],
+                        select: {
+                          id: true,
+                          floor: true,
+                          sequence: true,
+                          unitType: true,
+                          unitCode: true,
+                          startCol: true,
+                          endCol: true,
+                        },
+                      },
+                    },
+                  },
                   landlordCitizen: {
                     select: {
                       id: true,
@@ -669,6 +818,28 @@ export class CitizensService {
       this.fileVersion(citizen.id),
       this.lastStaffEdit(citizen.id),
     ]);
+
+    /*
+      The sector each linked building stands in — resolved from the parcel at
+      read time, as the building read does (D13), in one query for the whole
+      record rather than one per card.
+    */
+    const parcels = [
+      ...new Set(
+        (registration?.properties ?? [])
+          .map((property) => property.building?.parcelNumber)
+          .filter((parcel): parcel is string => Boolean(parcel)),
+      ),
+    ];
+    const zones = parcels.length
+      ? await withConnectionRetry(() =>
+          this.db.zone.findMany({
+            where: { parcelNumbers: { hasSome: parcels } },
+            select: { code: true, name: true, parcelNumbers: true },
+          }),
+        )
+      : [];
+    const zoneOf = (parcel: string) => zones.find((zone) => zone.parcelNumbers.includes(parcel)) ?? null;
 
     return {
       id: citizen.id,
@@ -709,6 +880,53 @@ export class CitizensService {
         no note at all.
       */
       notes: registration?.notes ?? null,
+      /**
+       * Each card's place in the census, read-only: the building's code and
+       * parcel, each flat's unit code («0101») and census unit, and the
+       * building's shape for the elevation drawing. What a reviewer reads a
+       * property by, and where in the building it is.
+       *
+       * Beside `properties` rather than inside them, because the cards are the
+       * form's own values and travel back on save; these are facts the census
+       * owns and the form never writes. Codes and shape only — no other
+       * occupant of the building reaches this response.
+       */
+      propertyRefs: (registration?.properties ?? []).map((property) => ({
+        propertyId: property.id,
+        buildingCode: property.building?.code ?? null,
+        parcelNumber: property.building?.parcelNumber ?? null,
+        units: property.units.map((unit) => ({
+          id: unit.id,
+          unitCode: unit.unit ? formatUnitCode(unit.unit.floor, unit.unit.sequence) : null,
+          /** The census unit this flat is — what the drawing lights. */
+          unitId: unit.unitId,
+        })),
+        /**
+         * The building drawn: its shape and every unit's place in it, so the
+         * reviewer sees where this citizen's unit is. Shape only — not one
+         * occupant of the building is in it.
+         */
+        building: property.building
+          ? {
+              structureType: property.building.structureType,
+              lifecycleStatus: property.building.lifecycleStatus,
+              floorsCount: property.building.floorsCount,
+              basementsCount: property.building.basementsCount,
+              units: property.building.units,
+              parcelNumber: property.building.parcelNumber,
+              postedNumber: property.building.postedNumber,
+              sharedParcelNumbers: property.building.sharedParcelNumbers,
+              isPartitioned: property.building.isPartitioned,
+              partitionNumbers: property.building.partitionNumbers,
+              /** Whether it is placed on the map — the coordinates themselves are not needed here. */
+              located: property.building.latitude != null,
+              unitsTotal: property.building.unitsTotal,
+              unitsSurveyed: property.building.unitsSurveyed,
+              zoneCode: zoneOf(property.building.parcelNumber)?.code ?? null,
+              zoneName: zoneOf(property.building.parcelNumber)?.name ?? null,
+            }
+          : null,
+      })),
       residence: citizen.residence,
       personal: {
         firstName: citizen.firstName,

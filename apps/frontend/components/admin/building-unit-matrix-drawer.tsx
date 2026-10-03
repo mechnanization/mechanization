@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
@@ -8,10 +8,12 @@ import {
   DoorClosed,
   Footprints,
   Loader2,
+  MousePointerClick,
   Pencil,
   ShieldAlert,
   Trash2,
   UserPlus,
+  X,
 } from 'lucide-react';
 import {
   getLabels,
@@ -135,6 +137,7 @@ export function BuildingUnitMatrixDrawer({
   onEditBuilding,
   registerHref,
   citizenHref,
+  focusUnitId = null,
   locale = 'ar',
 }: {
   open: boolean;
@@ -175,6 +178,11 @@ export function BuildingUnitMatrixDrawer({
    * name, leave the matrix, and search the citizens page for it.
    */
   citizenHref?: (citizenId: string) => string;
+  /**
+   * The flat to open on — the one a case is about, when the drawer is opened
+   * from that case. Selected once the building has loaded, and scrolled to.
+   */
+  focusUnitId?: string | null;
   locale?: string;
 }) {
   const en = locale === 'en';
@@ -239,6 +247,31 @@ export function BuildingUnitMatrixDrawer({
     }
     void load();
   }, [open, buildingId, load]);
+
+  const unitPanelRef = useRef<HTMLElement | null>(null);
+  const focusedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open) {
+      focusedFor.current = null;
+      return;
+    }
+    if (!building || !focusUnitId || focusedFor.current === focusUnitId) return;
+    if (!building.units.some((unit) => unit.id === focusUnitId)) return;
+    focusedFor.current = focusUnitId;
+    setSelectedUnitId(focusUnitId);
+    // On a narrow drawer the unit's panel is what the next effect scrolls to; on a wide one, the cell.
+    if (!window.matchMedia('(min-width: 1024px)').matches) return;
+    window.setTimeout(() => {
+      document.getElementById(`matrix-unit-${focusUnitId}`)?.scrollIntoView({ block: 'center' });
+    }, 60);
+  }, [open, building, focusUnitId]);
+  useEffect(() => {
+    if (!selectedUnitId) return;
+    // Side by side on a wide drawer; stacked below the floors on a narrow one, where the panel would be off screen.
+    if (window.matchMedia('(min-width: 1024px)').matches) return;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    unitPanelRef.current?.scrollIntoView({ block: 'start', behavior: reduced ? 'auto' : 'smooth' });
+  }, [selectedUnitId]);
 
   /** Floors top-down, so the matrix stands the way the building does, with a
    *  row for every basement the register declares even when it is still empty. */
@@ -543,7 +576,8 @@ export function BuildingUnitMatrixDrawer({
     <Sheet
       open={open}
       onClose={onClose}
-      className="max-w-3xl"
+      // Wide enough on a reviewer's screen for the floors and the chosen unit side by side.
+      className="max-w-3xl lg:max-w-6xl"
       title={building ? building.code : en ? 'Building' : 'المبنى'}
       description={
         building
@@ -607,6 +641,15 @@ export function BuildingUnitMatrixDrawer({
             </div>
           ) : null}
 
+          {/*
+            Two columns on a wide drawer: the building — its drawing and its
+            floors — and the chosen unit beside it, held in view while the
+            floors scroll, so picking a flat never sends its details below
+            the last floor. One column on a narrow screen, the unit after the
+            floors, scrolled to when picked.
+          */}
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-start">
+          <div className="min-w-0 space-y-3">
           {/* ── The matrix ────────────────────────────────────────── */}
           {/* Keyed on the units rather than on `floors`, which now also carries
               a row for each declared-but-empty basement — a building with no
@@ -856,6 +899,7 @@ export function BuildingUnitMatrixDrawer({
                       return (
                         <li key={unit.id}>
                           <button
+                            id={`matrix-unit-${unit.id}`}
                             type="button"
                             onClick={() => {
                               setSelectedUnitId(selected ? null : unit.id);
@@ -864,10 +908,10 @@ export function BuildingUnitMatrixDrawer({
                             }}
                             aria-pressed={selected}
                             className={cn(
-                              'w-full rounded-md border p-2.5 text-start transition-colors',
+                              'w-full rounded-md border bg-card p-2.5 text-start transition-colors duration-150 ease-out',
                               selected
                                 ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                                : 'hover:bg-accent/50',
+                                : 'hover:border-primary/40 hover:bg-accent/40',
                             )}
                           >
                             <div className="flex items-center justify-between gap-2">
@@ -920,26 +964,51 @@ export function BuildingUnitMatrixDrawer({
           )}
 
           {building.units.length > 0 ? <UnitStateLegend locale={locale} /> : null}
+          </div>
 
+          {/*
+            The chosen unit. Pinned beside the floors on a wide drawer, with
+            its own scroll when its forms run longer than the screen.
+          */}
+          <aside
+            ref={unitPanelRef}
+            className="min-w-0 scroll-mt-4 space-y-3 lg:sticky lg:top-0 lg:max-h-[calc(100dvh-9rem)] lg:overflow-y-auto"
+            aria-label={en ? 'The chosen unit' : 'الوحدة المختارة'}
+          >
           {/* ── The selected unit, and what can be done with it ─ */}
           {selectedUnit ? (
-            <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/[0.03] p-3">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <p className="text-sm font-semibold">
-                  <span dir="ltr" className="font-mono">
+            <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
+              <header className="flex items-start gap-3 border-b bg-muted/30 px-4 py-3">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <h3 className="truncate font-mono text-lg font-bold" dir="ltr" title={`${building.code}-${selectedUnit.unitCode}`}>
                     {building.code}-{selectedUnit.unitCode}
-                  </span>
-                  <span className="ms-2 text-xs font-normal text-muted-foreground">
-                    {floorLabel(selectedUnit.floor, en)} · {labels.unitType[selectedUnit.unitType]}
-                  </span>
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {labels.surveyStatus[selectedUnit.surveyStatus]}
-                </p>
-              </div>
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {floorLabel(selectedUnit.floor, en)} · {labels.unitType[selectedUnit.unitType]} ·{' '}
+                    {labels.surveyStatus[selectedUnit.surveyStatus]}
+                  </p>
+                  <Badge variant={cellBadge(selectedUnit, labels, en).variant} className="max-w-full truncate">
+                    {cellBadge(selectedUnit, labels, en).short}
+                  </Badge>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={en ? 'Close this unit' : 'إغلاق الوحدة'}
+                  onClick={() => {
+                    setSelectedUnitId(null);
+                    setAction(null);
+                    setActionError(null);
+                  }}
+                >
+                  <X className="size-4" aria-hidden />
+                </Button>
+              </header>
+              <div className="space-y-4 p-4">
 
               <OccupantList
                 unit={selectedUnit}
+                compact
                 locale={locale}
                 canWrite={canWrite}
                 busy={busy}
@@ -1249,6 +1318,19 @@ export function BuildingUnitMatrixDrawer({
                   {actionError}
                 </p>
               ) : null}
+              </div>
+            </section>
+          ) : action === 'damage' && canWrite ? null : building.units.length > 0 ? (
+            <div className="rounded-lg border bg-muted/30 p-4">
+              <p className="flex items-center gap-2 text-sm font-semibold">
+                <MousePointerClick className="size-4 text-primary" aria-hidden />
+                {en ? 'Choose a unit' : 'اختر وحدة'}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {en
+                  ? 'Press a unit in the drawing or in the floors to see who is in it and what can be recorded for it.'
+                  : 'اضغط على وحدة في الشكل أو في قائمة الطوابق لترى من فيها وما يمكن تسجيله لها.'}
+              </p>
             </div>
           ) : null}
 
@@ -1282,6 +1364,9 @@ export function BuildingUnitMatrixDrawer({
               ) : null}
             </div>
           ) : null}
+
+          </aside>
+          </div>
 
           {/* ── The damage history panel (P4-T2) ──────────────────── */}
           {damage && damage.history.length > 0 ? (

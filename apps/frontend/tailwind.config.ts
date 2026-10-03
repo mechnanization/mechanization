@@ -21,22 +21,8 @@ const config: Config = {
       colors: {
         // Building-drawing materials (globals.css, --illustration-*): decorative fills only.
         illustration: {
-          'wall': 'hsl(var(--illustration-wall))',
-          'wall-house': 'hsl(var(--illustration-wall-house))',
-          'shop': 'hsl(var(--illustration-shop))',
-          'clinic': 'hsl(var(--illustration-clinic))',
-          'office': 'hsl(var(--illustration-office))',
-          'warehouse': 'hsl(var(--illustration-warehouse))',
-          'garage': 'hsl(var(--illustration-garage))',
-          'frame': 'hsl(var(--illustration-frame))',
-          'window': 'hsl(var(--illustration-window))',
-          'window-pale': 'hsl(var(--illustration-window-pale))',
           'concrete': 'hsl(var(--illustration-concrete))',
-          'steel': 'hsl(var(--illustration-steel))',
-          'metal': 'hsl(var(--illustration-metal))',
-          'metal-edge': 'hsl(var(--illustration-metal-edge))',
-          'wood': 'hsl(var(--illustration-wood))',
-          'wood-light': 'hsl(var(--illustration-wood-light))',
+          'shade': 'hsl(var(--illustration-shade))',
         },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
