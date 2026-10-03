@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useId, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpLeft,
   Building2,
@@ -15,6 +16,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react';
+import { getLabels } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   confirmLandlordLink,
@@ -32,6 +34,7 @@ import { nameLight, phoneLight } from '@/lib/landlord-status';
 import { MatchLightLabel } from '@/components/admin/match-light';
 import { formatPhone } from '@/lib/phone';
 import { formatDate } from '@/lib/dates';
+import { LANDLORD_LINK_ANSWER_ROLES } from '@/lib/staff-roles';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
@@ -73,6 +76,7 @@ export function LandlordProposalCard({
   onResolved,
   locale = 'ar',
   variant = 'card',
+  canAnswer = true,
 }: {
   tenant: string;
   token: string;
@@ -80,6 +84,13 @@ export function LandlordProposalCard({
   citizenHref: (citizenId: string) => string;
   onResolved: (resolution: LandlordResolution) => void;
   locale?: string;
+  /**
+   * Whether the signed-in role may answer — `LANDLORD_LINK_ANSWER_ROLES`.
+   * Off, the comparison stays (it is what a reviewer came to read) and the two
+   * answers give way to a line naming who gives them, rather than buttons the
+   * server can only refuse. The server stays the enforcement.
+   */
+  canAnswer?: boolean;
   /**
    * `card` — one claim in a list, saying whose and where in its own header.
    * `panel` — the decision on «فحص الرابط», where the page already says who
@@ -144,12 +155,16 @@ export function LandlordProposalCard({
 
   const [selectedId, setSelectedId] = useState<string | null>(preselected);
   const [busy, setBusy] = useState<'link' | 'dismiss' | null>(null);
+  // `busy` disables the buttons on the next render; a second tap inside the
+  // same frame still sees the old value. The ref closes that gap (STA-4).
+  const inFlight = useRef(false);
 
   const selected = proposal.candidates.find((candidate) => candidate.id === selectedId) ?? null;
   const shared = proposal.candidates.length > 1;
 
   const link = async () => {
-    if (!selected || busy) return;
+    if (!selected || inFlight.current) return;
+    inFlight.current = true;
     setBusy('link');
     try {
       await confirmLandlordLink(tenant, token, proposal.propertyEntryId, selected.id);
@@ -170,12 +185,14 @@ export function LandlordProposalCard({
               : 'تحقّق من الاتصال وحاول مرة أخرى.',
       });
     } finally {
+      inFlight.current = false;
       setBusy(null);
     }
   };
 
   const dismiss = async () => {
-    if (busy) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy('dismiss');
     const candidateIds = proposal.candidates.map((candidate) => candidate.id);
     try {
@@ -192,6 +209,7 @@ export function LandlordProposalCard({
         description: caught instanceof ApiRequestError ? caught.payload.message : undefined,
       });
     } finally {
+      inFlight.current = false;
       setBusy(null);
     }
   };
@@ -398,6 +416,7 @@ export function LandlordProposalCard({
       </div>
 
       {/* ── The two answers ─────────────────────────────────────────── */}
+      {canAnswer ? (
       <footer className="flex flex-col-reverse gap-2 border-t bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <Button
           variant="ghost"
@@ -442,8 +461,33 @@ export function LandlordProposalCard({
           </Button>
         )}
       </footer>
+      ) : (
+        <footer className="border-t bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+          {landlordAnswerRolesNote(locale)}
+        </footer>
+      )}
     </article>
   );
+}
+
+/**
+ * The line a role that may not answer an owner link sees where the answers
+ * would be: that the page is for reading, and who answers. Built from
+ * `LANDLORD_LINK_ANSWER_ROLES` and the municipality's own role names, so it
+ * cannot drift from the list that hides the buttons.
+ */
+export function landlordAnswerRolesNote(locale: string): string {
+  const en = locale === 'en';
+  const roleNames = getLabels(locale).staffRole as Record<string, string>;
+  const names = LANDLORD_LINK_ANSWER_ROLES.map((role) => roleNames[role] ?? role);
+  const list = en
+    ? names.length > 1
+      ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`
+      : names.join('')
+    : names.join(' أو ');
+  return en
+    ? `View only. Owner links are answered by a ${list}.`
+    : `للاطّلاع فقط. يجيب عن روابط المالكين: ${list}.`;
 }
 
 /**
@@ -892,12 +936,19 @@ export function useLandlordResolutions({
 }) {
   const en = locale === 'en';
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [resolved, setResolved] = useState<Record<string, LandlordResolution>>({});
   const [undoing, setUndoing] = useState<string | null>(null);
+  // The undo is offered twice — the toast and the placeholder — and both can be
+  // pressed before `undoing` re-renders either. One request per claim (STA-4).
+  const undoInFlight = useRef(new Set<string>());
 
   const undo = useCallback(
     async (resolution: LandlordResolution) => {
-      setUndoing(resolution.propertyEntryId);
+      const id = resolution.propertyEntryId;
+      if (undoInFlight.current.has(id)) return;
+      undoInFlight.current.add(id);
+      setUndoing(id);
       try {
         if (resolution.kind === 'linked') {
           const result = await unlinkLandlord(tenant, token, resolution.propertyEntryId);
@@ -911,21 +962,32 @@ export function useLandlordResolutions({
         } else {
           await restoreLandlordLink(tenant, token, resolution.propertyEntryId, resolution.candidateIds);
         }
+        /*
+          The claim is open again. «فحص الرابط» re-reads it *before* the answer
+          is cleared, so its card comes back with the claim as it now stands
+          rather than the closed read from before (resolves at once where no
+          screen is reading it). Then the queue and its count: without these
+          the row an undo just reopened stays missing until a manual refresh.
+        */
+        await queryClient.invalidateQueries({ queryKey: ['landlord-link', tenant, id] });
         setResolved((current) => {
           const next = { ...current };
-          delete next[resolution.propertyEntryId];
+          delete next[id];
           return next;
         });
+        void queryClient.invalidateQueries({ queryKey: ['landlord-links', tenant] });
+        void queryClient.invalidateQueries({ queryKey: ['landlord-links-summary', tenant] });
       } catch (caught) {
         logApiError(caught);
         toast.error(en ? 'Could not undo it.' : 'تعذّر التراجع.', {
           description: caught instanceof ApiRequestError ? caught.payload.message : undefined,
         });
       } finally {
-        setUndoing(null);
+        undoInFlight.current.delete(id);
+        setUndoing((current) => (current === id ? null : current));
       }
     },
-    [tenant, token, toast, en],
+    [tenant, token, toast, en, queryClient],
   );
 
   const resolve = useCallback(

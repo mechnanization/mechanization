@@ -10,7 +10,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.repository';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
-import { ConflictError } from '../../../domain/errors/domain-error';
+import { ConflictError, ValidationError } from '../../../domain/errors/domain-error';
 import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CensusSyncService } from '../buildings/census-sync.service';
@@ -943,20 +943,38 @@ describeIfDb('LandlordLinkService', () => {
 
   // ─────────────────────────────  By the property  ─────────────────────────────
 
-  it('offers the property’s registered owner when the occupant knew neither name nor number, and links on it', async () => {
-    const { units, building } = await surveyedBlock('LNK-PROP');
-    const owner = await ownerWithFile(freshPhone().stored);
-    await db.propertyEntry.create({
+  /** An ownership card on the building, naming these flats — none for a whole-building card. */
+  const ownershipCard = (
+    owner: { registrationId: string },
+    building: { id: string },
+    parcelNumber: string,
+    unitIds: readonly string[],
+  ) =>
+    db.propertyEntry.create({
       data: {
         registrationId: owner.registrationId,
         occupancyType: 'OWNER',
         propertyType: 'BUILDING',
         neighborhood: 'الحي الشرقي',
-        propertyNumber: 'LNK-PROP',
+        propertyNumber: parcelNumber,
         buildingId: building.id,
-        units: { create: [{ unitType: 'APARTMENT', floor: '0', unitArea: 95, unitId: units[1]!.id }] },
+        units: {
+          create: unitIds.map((unitId) => ({ unitType: 'APARTMENT' as const, floor: '0', unitArea: 95, unitId })),
+        },
       },
     });
+
+  /** Who the queue offers on one card, and how it found each — `[]` when the card is not on it. */
+  const offeredOn = async (entryId: string) =>
+    ((await within(() => links.proposal(entryId)))?.candidates ?? [])
+      .map((candidate) => [candidate.id, candidate.matchedBy])
+      .sort();
+
+  it('offers the property’s registered owner when the occupant knew neither name nor number, and links on it', async () => {
+    const { units, building } = await surveyedBlock('LNK-PROP');
+    const owner = await ownerWithFile(freshPhone().stored);
+    // Their ownership card names the occupant's own flat.
+    await ownershipCard(owner, building, 'LNK-PROP', [units[0]!.id]);
 
     // A free occupant in a relative's flat: no name, no number.
     const { entryId } = await tenantFiling({
@@ -999,6 +1017,139 @@ describeIfDb('LandlordLinkService', () => {
       orderBy: { createdAt: 'desc' },
     });
     expect(audit?.after).toMatchObject({ matchedBy: 'PROPERTY' });
+  });
+
+  it('does not offer the owners of other flats to the tenant of a flat nobody is recorded as owning', async () => {
+    /*
+      Issue #80: a block where each owner filed their own flat. Every owner on
+      the building used to be offered to the tenant of the un-owned flat, and
+      confirming one added that flat to their card and their bill.
+    */
+    const { units, building } = await surveyedBlock('LNK-PROP-MULTI');
+    const ownerOf0 = await ownerWithFile(freshPhone().stored);
+    await ownershipCard(ownerOf0, building, 'LNK-PROP-MULTI', [units[0]!.id]);
+    const ownerOf1 = await ownerWithFile(freshPhone().stored);
+    await ownershipCard(ownerOf1, building, 'LNK-PROP-MULTI', [units[1]!.id]);
+    /*
+      A card naming no flat, from somebody the census records as the owner of
+      flat 1: a row-less card claims the flats its holder holds, so it is about
+      flat 1, not the whole building.
+    */
+    const coOwnerOf1 = await ownerWithFile(freshPhone().stored);
+    await ownershipCard(coOwnerOf1, building, 'LNK-PROP-MULTI', []);
+    await db.unitOccupancy.create({ data: { unitId: units[1]!.id, citizenId: coOwnerOf1.id, role: 'OWNER' } });
+
+    const inFlat2 = await tenantFiling({
+      landlordPhone: null,
+      landlordName: null,
+      parcelNumber: 'LNK-PROP-MULTI',
+      buildingId: building.id,
+      unitIds: [units[2]!.id],
+    });
+    const inFlat0 = await tenantFiling({
+      landlordPhone: null,
+      landlordName: null,
+      parcelNumber: 'LNK-PROP-MULTI',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+    });
+
+    expect(await offeredOn(inFlat2.entryId)).toEqual([]);
+    expect(await offeredOn(inFlat0.entryId)).toEqual([[ownerOf0.id, 'PROPERTY']]);
+    for (const owner of [ownerOf0, ownerOf1, coOwnerOf1]) {
+      expect(
+        (await within(() => links.claimsNaming(owner.id))).map((item) => item.propertyEntryId),
+      ).not.toContain(inFlat2.entryId);
+    }
+
+    // And `confirm` accepts exactly what the queue offers: nobody, on flat 2.
+    for (const owner of [ownerOf0, ownerOf1, coOwnerOf1]) {
+      await expect(
+        within(() => links.confirm({ propertyEntryId: inFlat2.entryId, citizenId: owner.id, actor: actor() })),
+      ).rejects.toBeInstanceOf(ValidationError);
+    }
+    expect(await db.unitOccupancy.count({ where: { unitId: units[2]!.id, role: 'OWNER' } })).toBe(0);
+    expect(
+      await db.buildingUnit.count({
+        where: { unitId: units[2]!.id, propertyEntry: { occupancyType: 'OWNER' } },
+      }),
+    ).toBe(0);
+  });
+
+  it('offers a whole-building owner — an ownership card naming no flat — and links on it', async () => {
+    const { units, building } = await surveyedBlock('LNK-PROP-WHOLE');
+    const owner = await ownerWithFile(freshPhone().stored);
+    const card = await ownershipCard(owner, building, 'LNK-PROP-WHOLE', []);
+    const { entryId } = await tenantFiling({
+      landlordPhone: null,
+      landlordName: null,
+      parcelNumber: 'LNK-PROP-WHOLE',
+      buildingId: building.id,
+      unitIds: [units[1]!.id],
+    });
+
+    expect(await offeredOn(entryId)).toEqual([[owner.id, 'PROPERTY']]);
+
+    const result = await within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() }));
+    expect(result).toMatchObject({ linked: true, outcome: 'ALREADY_ON_FILE', ownerCardCreated: false });
+    expect((await ownerSpells(owner.id)).map((spell) => spell.unitId)).toEqual([units[1]!.id]);
+    expect((await ownerCards(owner.id)).map((row) => row.id)).toEqual([card.id]);
+  });
+
+  it('offers the flat’s owner again once the namesake the card named is rejected', async () => {
+    /*
+      A name that is somebody's is the evidence, so it hides the property match
+      — until «لا أحد منهم» rejects that somebody. It used to hide it for good,
+      and the card left the queue with the flat's real owner never offered.
+    */
+    const { units, building } = await surveyedBlock('LNK-PROP-NAMESAKE');
+    const namesakeId = await citizen('رامز', freshPhone().stored, { middleName: 'فؤاد', lastName: 'شمعون' });
+    await db.registration.create({
+      data: { citizenId: namesakeId, referenceNumber: `REF-${randomUUID().slice(0, 10)}` },
+    });
+    const owner = await ownerWithFile(freshPhone().stored);
+    await ownershipCard(owner, building, 'LNK-PROP-NAMESAKE', [units[0]!.id]);
+    const { entryId } = await tenantFiling({
+      landlordPhone: null,
+      landlordName: 'رامز شمعون',
+      parcelNumber: 'LNK-PROP-NAMESAKE',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+    });
+
+    expect(await offeredOn(entryId)).toEqual([[namesakeId, 'NAME']]);
+    // While the name stands, the property is not the evidence: `confirm` agrees.
+    await expect(
+      within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() })),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    await within(() => links.dismiss({ propertyEntryId: entryId, candidateIds: [namesakeId], actor: actor() }));
+    expect(await offeredOn(entryId)).toEqual([[owner.id, 'PROPERTY']]);
+    expect((await within(() => links.claimsNaming(owner.id))).map((item) => item.propertyEntryId)).toContain(
+      entryId,
+    );
+
+    const result = await within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() }));
+    expect(result.linked).toBe(true);
+  });
+
+  it('does not let a card that names its own filer hide the flat’s owner', async () => {
+    // The occupant typed their own name where the landlord's goes — evidence of nobody.
+    const { units, building } = await surveyedBlock('LNK-PROP-SELF');
+    const owner = await ownerWithFile(freshPhone().stored);
+    await ownershipCard(owner, building, 'LNK-PROP-SELF', [units[0]!.id]);
+    const { entryId, tenantId } = await tenantFiling({
+      landlordPhone: null,
+      landlordName: 'قيصرون نصرالله',
+      parcelNumber: 'LNK-PROP-SELF',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+    });
+    await db.user.update({ where: { id: tenantId }, data: { firstName: 'قيصرون' } });
+
+    expect(await offeredOn(entryId)).toEqual([[owner.id, 'PROPERTY']]);
+    const result = await within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() }));
+    expect(result.linked).toBe(true);
   });
 
   // ─────────────────────────────  «هل هو مسجَّل مسبقاً؟»  ─────────────────────────────

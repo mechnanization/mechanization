@@ -1094,6 +1094,7 @@ export default function BuildingsPage({
         }
         confirmLabel={en ? 'Delete' : 'حذف'}
         cancelLabel={en ? 'Cancel' : 'إلغاء'}
+        busyLabel={en ? 'Working…' : 'جارٍ التنفيذ…'}
         onConfirm={async () => {
           if (pendingDelete) await removeBuilding(pendingDelete);
         }}

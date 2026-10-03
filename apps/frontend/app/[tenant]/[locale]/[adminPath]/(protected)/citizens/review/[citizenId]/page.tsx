@@ -17,6 +17,7 @@ import {
   House,
   KeyRound,
   Loader2,
+  ShieldX,
   UserRound,
 } from 'lucide-react';
 import { getLabels, type CitizenResidence } from '@mechanization/shared-schemas';
@@ -38,7 +39,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { SkeletonText } from '@/components/ui/skeleton';
-import { ErrorState } from '@/components/ui/states';
+import { EmptyState, ErrorState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { StatItem } from '@/components/ui/stat-strip';
 import { cn } from '@/lib/utils';
@@ -60,6 +61,7 @@ import { controlFor } from '@/lib/citizen-field-controls';
 import { formatDate } from '@/lib/dates';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { formatPhone } from '@/lib/phone';
+import { CITIZEN_RECORD_EDIT_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffSession } from '@/lib/use-staff-session';
 import type { CitizenFormData } from '@/lib/api-client';
 
@@ -453,6 +455,11 @@ function readRaw(values: CitizenFormValues, path: string): string | null {
  * same as the «استكمال البيانات الناقصة» dialog on the citizen's file. The
  * save validates with the server's own schema first, marks the rows it
  * refuses and focuses the first (FRM-2).
+ *
+ * The queue is open to every staff role, but the record's form is not
+ * (`CITIZEN_RECORD_EDIT_ROLES`, CODE-4): an auditor or an accountant who
+ * reaches this page by its URL is told so and pointed at the file they can
+ * read, rather than shown a load failure whose retry can only fail again.
  */
 export default function ReviewFilePage({
   params,
@@ -465,10 +472,17 @@ export default function ReviewFilePage({
   const labels = getLabels(locale);
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { token } = useStaffSession(tenant, base);
+  const { token, user } = useStaffSession(tenant, base);
+  /** Null until the session has been read — both arrive in the same effect. */
+  const permitted = user ? hasRole(CITIZEN_RECORD_EDIT_ROLES, user.role) : null;
 
   const state = useRecordCompletion({
-    enabled: true,
+    /*
+      Not before the session is read: until then `token` is null, which the
+      hook takes for a lapsed session (`enabled`). A missing session never
+      gets here — `useStaffSession` sends it to the login page.
+    */
+    enabled: Boolean(token) && permitted === true,
     tenant,
     token,
     citizenId,
@@ -582,18 +596,41 @@ export default function ReviewFilePage({
                 <SolvedBadge open={state.remaining} locale={locale} size="lg" />
               </span>
             ) : null}
-            <Link
-              href={`${base}/citizens/${citizenId}`}
-              className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 basis-40 sm:flex-none sm:basis-auto')}
-            >
-              <FileText className="size-4" aria-hidden />
-              {en ? 'Open the full file' : 'فتح الملف الكامل'}
-            </Link>
+            {/* A role that cannot review has the same link as the way out of the state below. */}
+            {permitted === false ? null : (
+              <Link
+                href={`${base}/citizens/${citizenId}`}
+                className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 basis-40 sm:flex-none sm:basis-auto')}
+              >
+                <FileText className="size-4" aria-hidden />
+                {en ? 'Open the full file' : 'فتح الملف الكامل'}
+              </Link>
+            )}
           </div>
         }
       />
 
-      {loadError ? (
+      {permitted === false ? (
+        <Card>
+          <CardContent className="p-4">
+            <EmptyState
+              icon={ShieldX}
+              title={en ? 'Your role cannot review files' : 'فحص الملفات غير متاح لدورك'}
+              description={
+                en
+                  ? "Reviewing a file completes the citizen's record, which your role is not permitted to change. You can still read the full file."
+                  : 'فحص الملف يستكمل سجل المواطن، ودورك لا يملك صلاحية تعديله. يمكنك قراءة الملف كاملاً.'
+              }
+              action={
+                <Link href={`${base}/citizens/${citizenId}`} className={buttonVariants({ variant: 'outline' })}>
+                  <FileText className="size-4" aria-hidden />
+                  {en ? 'Open the full file' : 'فتح الملف الكامل'}
+                </Link>
+              }
+            />
+          </CardContent>
+        </Card>
+      ) : loadError ? (
         <ErrorState
           title={loadError}
           onRetry={state.reload}
