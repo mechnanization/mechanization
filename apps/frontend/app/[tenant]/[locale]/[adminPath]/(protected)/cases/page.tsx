@@ -20,13 +20,13 @@ import {
   X,
 } from 'lucide-react';
 import { getLabels, type CaseStatus, type CaseType } from '@mechanization/shared-schemas';
-import type { CitizenListItem } from '@/lib/api-client';
 import {
   ApiRequestError,
   deleteCase,
   getCases,
   getZoneParcelIndex,
   logApiError,
+  recordOccupancy,
   updateCase,
 } from '@/lib/api-client';
 import { caseResidents, type CaseSummary } from '@/lib/api-client';
@@ -43,7 +43,11 @@ import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
-import { LinkCaseCitizenDialog } from '@/components/admin/link-case-citizen-dialog';
+import {
+  LinkCaseCitizenDialog,
+  type CaseLinkPerson,
+  type CaseLinkSubmission,
+} from '@/components/admin/link-case-citizen-dialog';
 import { cn } from '@/lib/utils';
 import { BuildingUnitMatrixDrawer } from '@/components/admin/building-unit-matrix-drawer';
 
@@ -385,21 +389,81 @@ export default function CasesPage({
     [tenant, token, load, toast],
   );
 
+  /*
+    «ربط»: whoever is not on the case's unit yet is recorded on it in the
+    capacity chosen — owners first, so a tenant can be linked to an owner
+    recorded in the same step (the server refuses an owner recorded after
+    the tenant) — and then the case is resolved by the one marked as its own.
+    Each occupancy is its own request; if one is refused, the ones before it
+    stand, and the error says which were recorded and which was not.
+  */
   const linkCitizen = useCallback(
-    async (citizen: Pick<CitizenListItem, 'id' | 'fullName'>) => {
+    async (submission: CaseLinkSubmission) => {
       if (!token || !linking) return;
+      const en = locale === 'en';
       setLinkSubmitting(true);
       setLinkError(null);
+      const recorded: string[] = [];
+      const toRecord = linking.unitId
+        ? [
+            ...submission.people.filter((person) => !person.onUnit && person.role === 'OWNER'),
+            ...submission.people.filter((person) => !person.onUnit && person.role !== 'OWNER'),
+          ]
+        : [];
+      let current: CaseLinkPerson | null = null;
       try {
-        await updateCase(tenant, token, linking.id, { resolvedCitizenId: citizen.id });
+        for (const person of toRecord) {
+          current = person;
+          await recordOccupancy(tenant, token, {
+            unitId: linking.unitId!,
+            citizenId: person.citizenId,
+            role: person.role,
+            ...(person.role === 'OWNER' && submission.ownerUnitStatus
+              ? { unitStatus: submission.ownerUnitStatus }
+              : {}),
+            ...(person.role !== 'OWNER' && person.landlordCitizenId
+              ? { landlordCitizenId: person.landlordCitizenId }
+              : {}),
+          });
+          recorded.push(person.name);
+        }
+        current = null;
+        await updateCase(tenant, token, linking.id, { resolvedCitizenId: submission.primaryId });
         await load();
-        toast.success(locale === 'en' ? 'Case linked and resolved' : 'تم ربط الحالة ووضعها محلولة', {
-          description: citizen.fullName,
+        const primary = submission.people.find((person) => person.citizenId === submission.primaryId);
+        toast.success(en ? 'Case linked and resolved' : 'تم ربط الحالة ووضعها محلولة', {
+          description:
+            recorded.length > 0
+              ? en
+                ? `${primary?.name ?? ''} — recorded on the unit: ${recorded.join(', ')}`
+                : `${primary?.name ?? ''} — سُجِّل على الوحدة: ${recorded.join('، ')}`
+              : primary?.name,
         });
         setLinking(null);
       } catch (caught) {
         logApiError(caught);
-        setLinkError(caught instanceof ApiRequestError ? caught.message : 'تعذّر ربط الحالة.');
+        const reason = caught instanceof ApiRequestError ? caught.message : en ? 'The request failed.' : 'تعذّر الطلب.';
+        const failed: CaseLinkPerson | null = current;
+        setLinkError(
+          failed
+            ? [
+                recorded.length > 0
+                  ? en
+                    ? `Recorded on the unit: ${recorded.join(', ')}.`
+                    : `سُجِّل على الوحدة: ${recorded.join('، ')}.`
+                  : null,
+                en
+                  ? `Could not record ${failed.name}: ${reason} The case was not linked.`
+                  : `تعذّر تسجيل ${failed.name}: ${reason} لم تُربط الحالة.`,
+              ]
+                .filter(Boolean)
+                .join(' ')
+            : en
+              ? `Could not link the case: ${reason}`
+              : `تعذّر ربط الحالة: ${reason}`,
+        );
+        // What was recorded stands; the list shows it.
+        if (recorded.length > 0) void load();
       } finally {
         setLinkSubmitting(false);
       }
@@ -935,7 +999,12 @@ export default function CasesPage({
           currentCitizenName={linking?.resolvedCitizenName}
           submitting={linkSubmitting}
           error={linkError}
-          onLink={(citizen) => void linkCitizen(citizen)}
+          onSubmit={(submission) => void linkCitizen(submission)}
+          unitLabel={
+            linking?.unitId && linking.buildingCode
+              ? `${linking.buildingCode} · ${linking.unitCode ?? ''}`
+              : null
+          }
           onUnlink={() => void unlinkCitizen()}
           suggested={linking?.unitOccupants ?? []}
           locale={locale}
