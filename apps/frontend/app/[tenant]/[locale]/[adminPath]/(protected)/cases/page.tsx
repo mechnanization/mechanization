@@ -31,6 +31,7 @@ import {
 import type { CaseSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatDate } from '@/lib/dates';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
@@ -104,13 +105,11 @@ function getTableLabels(locale: string): DataTableLabels {
  * tabs a work queue instead of a second copy of the enum.
  *
  * `null` on the first tab is "no filter", not "no type" — every case is in it.
+ *
+ * `as const` so the ids are a union, and this list is also the one `?tab=` is
+ * checked against — a tab added here is a tab the URL accepts.
  */
-const CASE_TABS: ReadonlyArray<{
-  id: string;
-  ar: string;
-  en: string;
-  types: readonly CaseType[] | null;
-}> = [
+const CASE_TABS = [
   { id: 'all', ar: 'الكل', en: 'All', types: null },
   {
     id: 'revisit',
@@ -125,7 +124,45 @@ const CASE_TABS: ReadonlyArray<{
     types: ['ACCESS_REFUSED', 'OWNERSHIP_DISPUTE'],
   },
   { id: 'notes', ar: 'ملاحظات', en: 'Notes', types: ['GENERAL_NOTE'] },
-];
+] as const satisfies ReadonlyArray<{
+  id: string;
+  ar: string;
+  en: string;
+  types: readonly CaseType[] | null;
+}>;
+
+type CaseTabId = (typeof CASE_TABS)[number]['id'];
+
+/** A tab's case types, widened from the literal tuples above so `includes` takes any `CaseType`. */
+function typesOf(id: CaseTabId): readonly CaseType[] | null {
+  return CASE_TABS.find((entry) => entry.id === id)?.types ?? null;
+}
+
+/**
+ * The queue, the census filters and an open matrix, all in the query string so
+ * a reload — or a dispatch list sent to a colleague — comes back the same.
+ *
+ * Every value is structural: a sector or building id, a parcel number, a
+ * building code, a date. The table's own search box takes notes and
+ * neighbourhoods, so it is kept in tab storage instead (`useTabSearch`).
+ * `matrix` reopens a drawer that only reads on open; the unit actions inside it
+ * are its own state and never come back from a URL.
+ */
+const CASE_FILTERS = {
+  tab: param.oneOf(
+    CASE_TABS.map((entry) => entry.id),
+    'all',
+  ),
+  zone: param.id(),
+  parcel: param.string(),
+  building: param.string(),
+  from: param.date(),
+  to: param.date(),
+  matrix: param.id(),
+};
+
+/** How long a typed parcel number or building code waits before it is written to the URL. */
+const TYPED_FILTER_DELAY_MS = 300;
 
 /**
  * The next state a quick tap moves a case to — `OPEN → SCHEDULED → RESOLVED`,
@@ -186,10 +223,8 @@ export default function CasesPage({
   const [linkError, setLinkError] = useState<string | null>(null);
 
   // ── Tabs and census filters (P3-T7) ────────────────────────────────
-  const [tab, setTab] = useState('all');
-  const [zoneId, setZoneId] = useState('');
-  const [parcelNumber, setParcelNumber] = useState('');
-  const [buildingCode, setBuildingCode] = useState('');
+  const [filters, setFilters] = useUrlState(CASE_FILTERS);
+  const { tab, zone: zoneId } = filters;
   /**
    * When the case was opened — «ماذا ورد هذا الأسبوع».
    *
@@ -197,10 +232,40 @@ export default function CasesPage({
    * types, so it would silently drop every other row from a range that asked
    * an innocent question. `YYYY-MM-DD`, both ends inclusive.
    */
-  const [openedFrom, setOpenedFrom] = useState('');
-  const [openedTo, setOpenedTo] = useState('');
-  /** Which building's matrix is open from a case row, if any. */
-  const [matrixId, setMatrixId] = useState<string | null>(null);
+  const { from: openedFrom, to: openedTo } = filters;
+  /** Which building's matrix is open from a case row, if any (`?matrix=`). */
+  const matrixId = filters.matrix || null;
+
+  /*
+    The two typed boxes filter on every keystroke, as they always have, from
+    local state; the URL catches up once typing pauses. Writing the URL per
+    keystroke would also work, but an input bound to `useSearchParams` can lag
+    a write behind and drop a character typed quickly.
+  */
+  const [parcelNumber, setParcelNumber] = useState(filters.parcel);
+  const [buildingCode, setBuildingCode] = useState(filters.building);
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setFilters({ parcel: parcelNumber, building: buildingCode }),
+      TYPED_FILTER_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [parcelNumber, buildingCode, setFilters]);
+
+  /*
+    The table's page and search.
+
+    Every filter above narrows the rows, and a narrower list starts again from
+    its first page — `{ clear: ['page'] }` on each write. The table used to get
+    that for free from TanStack resetting on new data; with the page owned by
+    the URL that reset is off, so a reload of `?page=3` stays on page three.
+  */
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
+  const [search, setSearch] = useTabSearch(tenant, 'cases');
+  const narrow = useCallback(
+    (patch: Parameters<typeof setFilters>[0]) => setFilters(patch, { clear: ['page'] }),
+    [setFilters],
+  );
 
   const canWrite = role !== 'AUDITOR' && role !== 'ACCOUNTANT';
   const canDelete = role === 'SUPER_ADMIN';
@@ -257,7 +322,7 @@ export default function CasesPage({
    * claim in the same words.
    */
   const items = useMemo(() => {
-    const types = CASE_TABS.find((entry) => entry.id === tab)?.types ?? null;
+    const types = typesOf(tab);
     const parcel = parcelNumber.trim();
     const code = buildingCode.trim().toLowerCase();
     /*
@@ -291,8 +356,9 @@ export default function CasesPage({
   const tabCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const entry of CASE_TABS) {
-      counts[entry.id] = entry.types
-        ? allItems.filter((item) => entry.types!.includes(item.caseType)).length
+      const types = typesOf(entry.id);
+      counts[entry.id] = types
+        ? allItems.filter((item) => types.includes(item.caseType)).length
         : allItems.length;
     }
     return counts;
@@ -601,7 +667,7 @@ export default function CasesPage({
                     size="icon-sm"
                     aria-label={locale === 'en' ? 'Open the unit matrix' : 'فتح مصفوفة الوحدات'}
                     disabled={busy}
-                    onClick={() => setMatrixId(item.buildingId)}
+                    onClick={() => setFilters({ matrix: item.buildingId ?? '' })}
                   >
                     <Grid3x3 className="size-4" aria-hidden />
                   </Button>
@@ -639,7 +705,7 @@ export default function CasesPage({
         },
       },
     ],
-    [busyId, canWrite, canDelete, locale, labels, advanceStatus, router, base],
+    [busyId, canWrite, canDelete, locale, labels, advanceStatus, router, base, setFilters],
   );
 
   if (!token) return null;
@@ -686,7 +752,7 @@ export default function CasesPage({
               type="button"
               role="tab"
               aria-selected={active}
-              onClick={() => setTab(entry.id)}
+              onClick={() => narrow({ tab: entry.id })}
               className={cn(
                 // `min-h-9 coarse:min-h-touch`, matching `SegmentedControl`:
                 // padding alone left these at 30px, and this row is tapped on
@@ -715,7 +781,7 @@ export default function CasesPage({
       <div className="flex flex-wrap items-center gap-2">
         <select
           value={zoneId}
-          onChange={(event) => setZoneId(event.target.value)}
+          onChange={(event) => narrow({ zone: event.target.value })}
           aria-label={locale === 'en' ? 'Filter by sector' : 'تصفية حسب القطاع'}
           className={cn(
             'h-9 rounded-md border border-input bg-background px-3 text-xs ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring',
@@ -732,7 +798,10 @@ export default function CasesPage({
 
         <input
           value={parcelNumber}
-          onChange={(event) => setParcelNumber(event.target.value)}
+          onChange={(event) => {
+            setParcelNumber(event.target.value);
+            narrow({});
+          }}
           dir="ltr"
           inputMode="numeric"
           aria-label={locale === 'en' ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
@@ -742,7 +811,10 @@ export default function CasesPage({
 
         <input
           value={buildingCode}
-          onChange={(event) => setBuildingCode(event.target.value)}
+          onChange={(event) => {
+            setBuildingCode(event.target.value);
+            narrow({});
+          }}
           dir="ltr"
           aria-label={locale === 'en' ? 'Filter by building code' : 'تصفية حسب رمز المبنى'}
           placeholder={locale === 'en' ? 'Building code' : 'رمز المبنى'}
@@ -755,7 +827,7 @@ export default function CasesPage({
           <DatePicker
             id="cases-from"
             value={openedFrom}
-            onChange={setOpenedFrom}
+            onChange={(value) => narrow({ from: value })}
             max={openedTo || undefined}
             placeholder={locale === 'en' ? 'From' : 'من'}
             locale={locale === 'en' ? 'en' : 'ar'}
@@ -763,7 +835,7 @@ export default function CasesPage({
           <DatePicker
             id="cases-to"
             value={openedTo}
-            onChange={setOpenedTo}
+            onChange={(value) => narrow({ to: value })}
             placeholder={locale === 'en' ? 'To' : 'إلى'}
             locale={locale === 'en' ? 'en' : 'ar'}
           />
@@ -774,11 +846,11 @@ export default function CasesPage({
             variant="ghost"
             size="sm"
             onClick={() => {
-              setZoneId('');
+              // The queue tab and the table's search are not filters here, and
+              // were never cleared by this button.
               setParcelNumber('');
               setBuildingCode('');
-              setOpenedFrom('');
-              setOpenedTo('');
+              narrow({ zone: '', parcel: '', building: '', from: '', to: '' });
             }}
           >
             <X className="size-4" aria-hidden />
@@ -841,6 +913,10 @@ export default function CasesPage({
             loading={query.loading}
             error={query.error}
             onRetry={query.refetch}
+            searchValue={search}
+            onSearchChange={setSearch}
+            pagination={pagination}
+            onPaginationChange={setPagination}
           />
         </CardContent>
       </Card>
@@ -865,7 +941,7 @@ export default function CasesPage({
       {token ? (
         <BuildingUnitMatrixDrawer
           open={matrixId !== null}
-          onClose={() => setMatrixId(null)}
+          onClose={() => setFilters({ matrix: '' })}
           tenant={tenant}
           token={token}
           buildingId={matrixId}
@@ -873,10 +949,8 @@ export default function CasesPage({
           // A visit or an occupancy logged from here can auto-resolve the very
           // case the drawer was opened from, so the list is re-read on close.
           onChanged={() => void load()}
-          registerHref={(buildingId, unitId, residence, name) =>
-            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}${
-              name ? `&name=${encodeURIComponent(name)}` : ''
-            }`
+          registerHref={(buildingId, unitId, residence) =>
+            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}`
           }
           citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
           locale={locale}

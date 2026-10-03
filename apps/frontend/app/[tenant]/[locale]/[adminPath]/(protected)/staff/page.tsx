@@ -20,7 +20,7 @@ import {
   UserPlus,
   UsersRound,
 } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, STAFF_ROLE } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   createStaff,
@@ -35,6 +35,7 @@ import {
 import type { DeletedStaffSummary, StaffSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatDate } from '@/lib/dates';
 import { formatForeign } from '@/lib/currency';
 import { CellTag } from '@/components/ui/cell-tag';
@@ -108,6 +109,12 @@ function getTableLabels(locale: string): DataTableLabels {
   };
 }
 
+/** The role chips: «all», or one of the roles the server knows. */
+const ROLE_FILTERS = ['all', ...STAFF_ROLE] as const;
+
+/** `?role=` — which role the directory is narrowed to. Module scope: `useUrlState` memoises on it. */
+const FILTERS = { role: param.oneOf(ROLE_FILTERS, 'all') };
+
 /**
  * Staff account administration — SUPER_ADMIN only.
  *
@@ -157,8 +164,8 @@ export default function StaffPage({
     Unparameterised: the whole staff list, filtered and paged in the browser.
 
     That is right here and nowhere else on the portal — a municipality has a
-    dozen accounts, not a register of thousands — so the search box below is
-    TanStack's own and never reaches the API. It still benefits from the cache:
+    dozen accounts, not a register of thousands — so the search box below
+    filters in TanStack and never reaches the API. It still benefits from the cache:
     coming back to this screen shows the accounts immediately and re-reads
     behind them.
   */
@@ -344,13 +351,29 @@ export default function StaffPage({
     [labels],
   );
 
-  /** Which role the list is narrowed to; «all» is everyone. */
-  const [roleFilter, setRoleFilter] = useState<string>('all');
+  /*
+    The directory's view survives a reload: the role chip and the page in the
+    URL, the search — a name or an email — in this tab's storage, never the URL
+    (`tab-search.ts`).
+  */
+  const [filters, setFilters] = useUrlState(FILTERS);
+  const [search, setSearch] = useTabSearch(tenant, 'staff');
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
+
   const roles = useMemo(() => {
     const counts = new Map<string, number>();
     for (const staff of items) counts.set(staff.role, (counts.get(staff.role) ?? 0) + 1);
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   }, [items]);
+  /**
+   * Which role the list is narrowed to; «all» is everyone.
+   *
+   * A role nobody holds — a stale link, or the last such account deleted —
+   * reads as «all» once the accounts are in, rather than an empty table under
+   * a chip row with nothing selected.
+   */
+  const roleFilter =
+    filters.role !== 'all' && roles.some(([role]) => role === filters.role) ? filters.role : 'all';
   const shown = useMemo(
     () => (roleFilter === 'all' ? items : items.filter((staff) => staff.role === roleFilter)),
     [items, roleFilter],
@@ -576,7 +599,10 @@ export default function StaffPage({
           <ChipGroup
             aria-label={en ? 'Role' : 'الصلاحية'}
             value={roleFilter}
-            onChange={setRoleFilter}
+            // Back to page one in the same write, as the table did when its rows changed.
+            onChange={(role) =>
+              setFilters({ role: role as (typeof ROLE_FILTERS)[number] }, { clear: ['page'] })
+            }
             options={[
               { value: 'all', label: `${en ? 'All' : 'الكل'} (${items.length})` },
               ...roles.map(([role, count]) => ({ value: role, label: `${roleLabel(role)} (${count})` })),
@@ -593,6 +619,10 @@ export default function StaffPage({
           loading={query.loading}
           error={query.error}
           onRetry={query.refetch}
+          pagination={pagination}
+          onPaginationChange={setPagination}
+          searchValue={search}
+          onSearchChange={setSearch}
         />
         <p className="text-xs leading-relaxed text-muted-foreground">
           {en

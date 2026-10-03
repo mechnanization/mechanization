@@ -42,6 +42,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import type { CitizenListItem } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { useTabSearch, useUrlPagination } from '@/lib/use-url-state';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -166,10 +167,15 @@ export default function CitizensPage({
    * paginated *those* in the browser. A municipality with more than 200
    * registered citizens was shown a page counter that described a slice, with
    * no way to reach the rest.
+   *
+   * Both survive a reload, by different routes. The page is in the URL
+   * (`?page=` / `?limit=`), so the back button from a citizen's file returns
+   * to the same page. The search is a name, a national ID or a phone number,
+   * so it is kept in this tab's storage and never in the URL (`tab-search.ts`).
    */
-  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
   /** The committed term — set when the clerk presses Enter, not as they type. */
-  const [appliedSearch, setAppliedSearch] = useState('');
+  const [appliedSearch, setAppliedSearch] = useTabSearch(tenant, 'citizens');
   /**
    * Whether the table is narrowed to records still needing to be finished.
    *

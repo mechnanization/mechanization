@@ -13,6 +13,7 @@ import {
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useUrlState } from '@/lib/use-url-state';
 import { formatLbp } from '@/lib/currency';
 import { BillReviewDialog, CorrectionBillCard } from '@/components/admin/correction-bills';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,19 @@ import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
 const PAGE_SIZE = 20;
+
+const SHOW_VALUES = ['open', 'all'] as const;
+type Show = (typeof SHOW_VALUES)[number];
+
+/**
+ * Which bills and which page, in the query string so a reload keeps the
+ * accountant's place. The review dialog is not: it records a decision, and a
+ * reload or a shared link must never reopen a form that writes.
+ */
+const CORRECTIONS_URL_STATE = {
+  status: param.oneOf(SHOW_VALUES, 'open'),
+  page: param.page(),
+};
 
 /**
  * «فواتير تأثّرت بتصحيحات» — open bills whose basis a correction changed.
@@ -46,8 +60,7 @@ export default function CorrectionBillsPage({
 
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | undefined>();
-  const [show, setShow] = useState<'open' | 'all'>('open');
-  const [page, setPage] = useState(0);
+  const [{ status: show, page }, setUrlState] = useUrlState(CORRECTIONS_URL_STATE);
   const [reviewing, setReviewing] = useState<CorrectionAffectedBill | null>(null);
   const [saving, setSaving] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
@@ -82,6 +95,15 @@ export default function CorrectionBillsPage({
   });
   const data = listQuery.data;
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
+
+  /*
+    A page past the end — a reloaded `?page=` after decisions emptied it, or a
+    hand-edited one — goes to the last page rather than showing the empty
+    state, which would say no bill is waiting.
+  */
+  useEffect(() => {
+    if (data && page > 0 && page >= pages) setUrlState({ page: pages - 1 });
+  }, [data, page, pages, setUrlState]);
 
   const saveReview = async (note: string) => {
     if (!reviewing || !token) return;
@@ -134,10 +156,7 @@ export default function CorrectionBillsPage({
           aria-label={en ? 'Which bills' : 'أي الفواتير'}
           fullWidth={false}
           value={show}
-          onChange={(value) => {
-            setShow(value as 'open' | 'all');
-            setPage(0);
-          }}
+          onChange={(value) => setUrlState({ status: value as Show }, { clear: ['page'] })}
           options={[
             { value: 'open', label: en ? 'Awaiting a decision' : 'بانتظار قرار' },
             { value: 'all', label: en ? 'Including reviewed' : 'مع ما رُوجع' },
@@ -206,13 +225,13 @@ export default function CorrectionBillsPage({
           </ul>
           {pages > 1 ? (
             <nav className="flex items-center justify-between gap-2" aria-label={en ? 'Pages' : 'الصفحات'}>
-              <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+              <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setUrlState((current) => ({ page: current.page - 1 }))}>
                 {en ? 'Previous' : 'السابق'}
               </Button>
               <span className="text-sm text-muted-foreground">
                 {en ? `Page ${page + 1} of ${pages}` : `صفحة ${page + 1} من ${pages}`}
               </span>
-              <Button variant="outline" size="sm" disabled={page + 1 >= pages} onClick={() => setPage((p) => p + 1)}>
+              <Button variant="outline" size="sm" disabled={page + 1 >= pages} onClick={() => setUrlState((current) => ({ page: current.page + 1 }))}>
                 {en ? 'Next' : 'التالي'}
               </Button>
             </nav>

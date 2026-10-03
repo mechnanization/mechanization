@@ -161,8 +161,6 @@ export function BuildingUnitMatrixDrawer({
     buildingId: string,
     unitId: string,
     residence: CitizenResidence,
-    /** Whatever the officer typed into the occupant search — seeds the name or the phone. */
-    name: string,
   ) => string;
   /**
    * Where an occupant's name goes — their own record.
@@ -1121,8 +1119,7 @@ export function BuildingUnitMatrixDrawer({
                   locale={locale}
                   newFileHref={
                     registerHref
-                      ? (residence, name) =>
-                          registerHref(building.id, selectedUnit.id, residence, name)
+                      ? (residence) => registerHref(building.id, selectedUnit.id, residence)
                       : undefined
                   }
                   vacancy={activeVacancy(selectedUnit)}

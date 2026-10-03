@@ -65,6 +65,7 @@ import {
   type UnitWithOccupants,
 } from '@/lib/api-client';
 import { formatDate, monthNames } from '@/lib/dates';
+import { stashLinkSeed } from '@/lib/tab-search';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -823,13 +824,15 @@ export function AddPersonForm({
   busy: boolean;
   locale: string;
   /**
-   * The registration form, pointed at this unit, with نوع الملف preset and the
-   * officer's search term carried across as the name or phone to start from.
+   * The registration form, pointed at this unit, with نوع الملف preset. The
+   * officer's search term goes across too, as the name or phone to start from —
+   * stashed in tab storage on the click (`stashLinkSeed`), never in the URL,
+   * because it is a person's name or number.
    *
    * Absent where the caller cannot build an admin URL; the search still works
    * and the no-match line says to register the person first.
    */
-  newFileHref?: (residence: CitizenResidence, name: string) => string;
+  newFileHref?: (residence: CitizenResidence) => string;
   /**
    * The «تأكيد الشغور» standing on this unit, when there is one.
    *
@@ -1158,14 +1161,16 @@ export function AddPersonForm({
               </p>
               <div className="flex flex-wrap gap-2">
                 <Link
-                  href={newFileHref('RESIDENT', term.trim())}
+                  href={newFileHref('RESIDENT')}
+                  onClick={() => stashLinkSeed(tenant, newFileHref('RESIDENT'), term)}
                   className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
                 >
                   <UsersRound className="size-4" aria-hidden />
                   {labels.citizenResidence.RESIDENT}
                 </Link>
                 <Link
-                  href={newFileHref('NON_RESIDENT_OWNER', term.trim())}
+                  href={newFileHref('NON_RESIDENT_OWNER')}
+                  onClick={() => stashLinkSeed(tenant, newFileHref('NON_RESIDENT_OWNER'), term)}
                   className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
                 >
                   <MapPin className="size-4" aria-hidden />

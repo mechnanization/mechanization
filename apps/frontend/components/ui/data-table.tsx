@@ -641,6 +641,17 @@ export function DataTable<TData, TValue = unknown>({
     manualPagination,
     manualSorting,
     manualFiltering,
+    /*
+      Off when the caller owns the page.
+
+      TanStack's default returns a browser-paginated table to page one whenever
+      its data changes — including the first load. With the page held in the
+      URL (`useUrlPagination`), that is a reload of `?page=3` landing on page
+      one the moment the rows arrive. A search still restarts from page one —
+      `commitSearch` does that explicitly — and a page the data no longer
+      reaches is clamped below instead.
+    */
+    autoResetPageIndex: controlledPagination ? false : undefined,
     // `-1` means "unknown page count"; TanStack then trusts `pageCount` only
     // when the caller supplies one, and leaves next/previous enabled otherwise.
     pageCount: manualPagination ? (pageCount ?? -1) : undefined,
@@ -678,6 +689,22 @@ export function DataTable<TData, TValue = unknown>({
     totalRowCount ?? (manualFiltering ? data.length : table.getFilteredRowModel().rows.length);
   const resolvedPageCount = table.getPageCount();
   const currentPage = pagination.pageIndex + 1;
+
+  /*
+    A page past the end — `?page=9` reloaded after rows were deleted, or a link
+    to a list that has since shrunk — moves to the last page that exists rather
+    than showing an empty table under a pager reading «9 من 3». Only once rows
+    are in: while loading, after a failed read, or before a host has its session
+    token, the count is a fallback of zero, and clamping on it would throw away
+    the page the reader reloaded on.
+  */
+  React.useEffect(() => {
+    if (loading || error || resolvedTotal <= 0 || resolvedPageCount <= 0) return;
+    if (pagination.pageIndex <= resolvedPageCount - 1) return;
+    const last = { ...pagination, pageIndex: resolvedPageCount - 1 };
+    if (onPaginationChange) onPaginationChange(last);
+    else setInternalPagination(last);
+  }, [loading, error, resolvedTotal, resolvedPageCount, pagination, onPaginationChange]);
   const hasSearchTerm = committedSearch.trim().length > 0;
   /**
    * The box holds a term the table has not been filtered by yet.

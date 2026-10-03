@@ -156,11 +156,20 @@ export function BuildingUnitMatrixView({
   locale,
   adminPath,
   buildingId,
+  selectedUnitId: selectedUnitIdProp,
+  onSelectUnit,
 }: {
   tenant: string;
   locale: string;
   adminPath: string;
   buildingId: string;
+  /**
+   * The selected unit, when the embedding owns it — the matrix page keeps it
+   * in `?unit=`. Both or neither: without `onSelectUnit` the selection is
+   * local state, so an embedding that passes nothing is never tied to the URL.
+   */
+  selectedUnitId?: string | null;
+  onSelectUnit?: (unitId: string | null) => void;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -194,7 +203,14 @@ export function BuildingUnitMatrixView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
+  const [localSelectedUnitId, setLocalSelectedUnitId] = useState<string | null>(null);
+  const requestedUnitId = onSelectUnit ? (selectedUnitIdProp ?? null) : localSelectedUnitId;
+  const setSelectedUnitId = onSelectUnit ?? setLocalSelectedUnitId;
+  /*
+    Local, always — even where the selection is in the URL. `action` opens a
+    form that writes (occupy, vacate, damage, resize…), and a reload or a
+    shared link must never reopen one of those.
+  */
   const [action, setAction] = useState<ActionKind>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -243,9 +259,15 @@ export function BuildingUnitMatrixView({
   );
 
   const selectedUnit = useMemo(
-    () => building?.units.find((unit) => unit.id === selectedUnitId) ?? null,
-    [building, selectedUnitId],
+    () => building?.units.find((unit) => unit.id === requestedUnitId) ?? null,
+    [building, requestedUnitId],
   );
+  /*
+    The selection as the screen uses it: an id that names no unit of this
+    building — a `?unit=` from a link to a unit since deleted, or from another
+    building — is no selection at all, rather than a lit-up nothing.
+  */
+  const selectedUnitId = selectedUnit?.id ?? null;
 
   /*
     «تعديل عرض الوحدة» — the span being drawn, before it is saved.
@@ -1519,10 +1541,8 @@ export function BuildingUnitMatrixView({
                   token={token}
                   busy={busy}
                   locale={locale}
-                  newFileHref={(residence, name) =>
-                    `${base}/citizens/new?buildingId=${encodeURIComponent(building.id)}&unitId=${encodeURIComponent(selectedUnit.id)}&residence=${residence}${
-                      name ? `&name=${encodeURIComponent(name)}` : ''
-                    }`
+                  newFileHref={(residence) =>
+                    `${base}/citizens/new?buildingId=${encodeURIComponent(building.id)}&unitId=${encodeURIComponent(selectedUnit.id)}&residence=${residence}`
                   }
                   vacancy={activeVacancy(selectedUnit)}
                   owners={unitOwners(selectedUnit)}

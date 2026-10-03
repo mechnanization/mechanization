@@ -16,6 +16,7 @@ import { flagFieldLabel } from '@/lib/field-flags';
 import { CompleteRecordDialog } from '@/components/admin/complete-record-dialog';
 import { formatDateTime, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useUrlState } from '@/lib/use-url-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FactCell, FactRow } from '@/components/ui/facts';
@@ -27,6 +28,20 @@ import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
 const ANY = 'ANY';
+
+/** The queue's tabs, in display order — also what `?tab=` may name. */
+const REVIEW_TABS = ['TO_REVIEW', 'RETURNED', 'APPROVED'] as const satisfies readonly ReviewTab[];
+
+/**
+ * The queue's filters, in the URL so a reload keeps them. The officer is a
+ * staff row id, never a name. Which card has its «إعادة إلى الموظف» form or
+ * «استكمال» dialog open is not here: both write.
+ */
+const FILTERS = {
+  tab: param.oneOf(REVIEW_TABS, 'TO_REVIEW'),
+  officer: param.id(),
+  flagged: param.flag(),
+};
 
 const STATE_BADGE: Record<ReviewQueueItem['state'], { variant: 'soft-warning' | 'soft-info' | 'soft-success' | 'soft-muted'; ar: string; en: string }> = {
   NEW: { variant: 'soft-info', ar: 'جديد', en: 'New' },
@@ -63,9 +78,8 @@ export function ReviewQueue({
   const quality = qualityLabels(locale);
   const toast = useToast();
 
-  const [tab, setTab] = useState<ReviewTab>('TO_REVIEW');
-  const [officerId, setOfficerId] = useState('');
-  const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const [filters, setFilters] = useUrlState(FILTERS);
+  const { tab, officer: officerId, flagged: flaggedOnly } = filters;
   const [busy, setBusy] = useState<string | null>(null);
   const [returning, setReturning] = useState<string | null>(null);
   /** The row whose «استكمال البيانات الناقصة» dialog is open, or none. */
@@ -83,15 +97,18 @@ export function ReviewQueue({
   });
 
   const counts = query.data?.counts;
-  const tabs: Array<{ key: ReviewTab; label: string; count: number | undefined }> = [
-    {
-      key: 'TO_REVIEW',
-      label: en ? 'To review' : 'للمراجعة',
-      count: counts ? counts.NEW + counts.CORRECTED + counts.CHANGED : undefined,
-    },
-    { key: 'RETURNED', label: en ? 'With officers' : 'عند الموظفين', count: counts?.RETURNED },
-    { key: 'APPROVED', label: en ? 'Approved' : 'معتمدة', count: counts?.APPROVED },
-  ];
+  // Keyed by tab so a tab added to `REVIEW_TABS` without a label fails to compile.
+  const tabLabel: Record<ReviewTab, string> = {
+    TO_REVIEW: en ? 'To review' : 'للمراجعة',
+    RETURNED: en ? 'With officers' : 'عند الموظفين',
+    APPROVED: en ? 'Approved' : 'معتمدة',
+  };
+  const tabCount: Record<ReviewTab, number | undefined> = {
+    TO_REVIEW: counts ? counts.NEW + counts.CORRECTED + counts.CHANGED : undefined,
+    RETURNED: counts?.RETURNED,
+    APPROVED: counts?.APPROVED,
+  };
+  const tabs = REVIEW_TABS.map((key) => ({ key, label: tabLabel[key], count: tabCount[key] }));
 
   const act = async (registrationId: string, run: () => Promise<unknown>, done: string) => {
     if (!token) return;
@@ -124,7 +141,7 @@ export function ReviewQueue({
               key={option.key}
               role="tab"
               aria-selected={tab === option.key}
-              onClick={() => setTab(option.key)}
+              onClick={() => setFilters({ tab: option.key })}
               className={cn(
                 'flex min-h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors',
                 tab === option.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent',
@@ -144,7 +161,7 @@ export function ReviewQueue({
           <Label htmlFor="review-officer" className="text-xs text-muted-foreground">
             {en ? 'Filed by' : 'الموظف الذي سجَّل'}
           </Label>
-          <Select value={officerId || ANY} onValueChange={(value) => setOfficerId(value === ANY ? '' : value)}>
+          <Select value={officerId || ANY} onValueChange={(value) => setFilters({ officer: value === ANY ? '' : value })}>
             <SelectTrigger id="review-officer" className="h-9">
               <SelectValue />
             </SelectTrigger>
@@ -164,7 +181,7 @@ export function ReviewQueue({
           size="sm"
           className="h-9 gap-1.5"
           aria-pressed={flaggedOnly}
-          onClick={() => setFlaggedOnly((current) => !current)}
+          onClick={() => setFilters((current) => ({ flagged: !current.flagged }))}
         >
           <FileQuestion className="size-4" aria-hidden />
           {en ? 'Unverified fields only' : 'ما فيه حقول غير مؤكَّدة'}

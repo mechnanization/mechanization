@@ -17,7 +17,7 @@ import {
   UserPlus,
   Wallet,
 } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, PAYMENT_STATUS } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   chargeCitizen,
@@ -39,6 +39,7 @@ import type {
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatLbp } from '@/lib/currency';
 import { describeAssessment } from '@/lib/fee-assessment';
 import { formatDate } from '@/lib/dates';
@@ -121,6 +122,17 @@ function getTableLabels(locale: string): DataTableLabels {
  */
 const STATUS_TAB_ORDER = ['UNPAID', 'OVERDUE', 'PENDING_REVIEW', 'PAID'] as const;
 
+/** «الكل» (`''`, no filter) plus every status the column can hold. */
+const STATUS_FILTER_VALUES = ['', ...PAYMENT_STATUS] as const;
+type StatusFilter = (typeof STATUS_FILTER_VALUES)[number];
+
+/**
+ * The status tab, in the query string so a reload or a shared link reopens
+ * the ledger on it. Validated against the enum rather than the tabs on screen:
+ * which tabs appear is only known once `filterOptionsQuery` answers.
+ */
+const FEES_URL_STATE = { status: param.oneOf(STATUS_FILTER_VALUES, '') };
+
 /**
  * The tab row: «الكل» plus one tab per status the ledger actually holds.
  *
@@ -160,11 +172,18 @@ export default function FeesPage({
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | undefined>();
 
-  // Table Data State
-  const [statusFilter, setStatusFilter] = useState<string>('');
-  const [feeTitleFilter, setFeeTitleFilter] = useState<string>('');
-  const [appliedSearch, setAppliedSearch] = useState('');
-  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
+  // Table Data State — survives a reload: status and page in the URL, the two
+  // free-text values in this tab's storage.
+  const [{ status: statusFilter }, setUrlState] = useUrlState(FEES_URL_STATE);
+  /*
+    «نوع الرسم» is not a catalogue key: it is whatever title staff typed when
+    issuing a fee or charging one citizen directly (`listDistinctTitles` reads
+    both), so it can hold a name — and the server matches it against
+    `searchText` as well. Kept out of the URL with the search box for that.
+  */
+  const [feeTitleFilter, setFeeTitleFilter] = useTabSearch(tenant, 'fees-title');
+  const [appliedSearch, setAppliedSearch] = useTabSearch(tenant, 'fees');
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
 
   // Dialogs State
   const [issueOpen, setIssueOpen] = useState(false);
@@ -828,12 +847,9 @@ export default function FeesPage({
                 size="sm"
                 fullWidth={false}
                 options={statusFilters.map((tab) => ({ value: tab.id, label: tab.label }))}
-                onChange={(next) => {
-                  setStatusFilter(next);
-                  setPagination((previous) =>
-                    previous.pageIndex === 0 ? previous : { ...previous, pageIndex: 0 },
-                  );
-                }}
+                onChange={(next) =>
+                  setUrlState({ status: next as StatusFilter }, { clear: ['page'] })
+                }
               />
             </div>
           </div>

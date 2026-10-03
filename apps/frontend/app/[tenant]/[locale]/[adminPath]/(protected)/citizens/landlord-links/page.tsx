@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, HelpCircle, Link2, RefreshCw, Wallet } from 
 import { getLandlordLinks, getLandlordLinkSummary, type Session } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useUrlState } from '@/lib/use-url-state';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { cn } from '@/lib/utils';
@@ -17,6 +18,13 @@ import {
 } from '@/components/admin/landlord-proposal-card';
 
 const PAGE_SIZE = 20;
+
+/**
+ * `?page=` — so a reload, or the back button from a citizen's file opened from
+ * a card, returns to the same page of the queue. 1-based in the URL; the
+ * offset sent to the API is `page * PAGE_SIZE`.
+ */
+const PAGER = { page: param.page() };
 
 /** The roles `GET landlord-links/summary` answers — asking as anyone else is a 403. */
 const SUMMARY_ROLES = new Set(['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER']);
@@ -52,7 +60,8 @@ export default function LandlordLinksPage({
   const en = locale === 'en';
 
   const [session, setSession] = useState<Session | null>(null);
-  const [offset, setOffset] = useState(0);
+  const [{ page }, setPager] = useUrlState(PAGER);
+  const offset = page * PAGE_SIZE;
 
   useEffect(() => {
     const existing = loadSession(tenant);
@@ -96,14 +105,26 @@ export default function LandlordLinksPage({
   const pending = proposals.filter((proposal) => !resolved[proposal.propertyEntryId]).length;
 
   /*
+    A page the queue no longer reaches — `?page=4` reloaded after the claims on
+    it were answered — moves to the last page that exists, rather than showing
+    «لا شيء بانتظار القرار» while earlier pages still hold work. Only on a
+    settled read: mid-fetch, `total` may still describe the previous page.
+  */
+  const loaded = Boolean(query.data) && !query.fetching;
+  useEffect(() => {
+    if (!loaded || offset === 0 || offset < total) return;
+    setPager({ page: Math.max(0, Math.ceil(total / PAGE_SIZE) - 1) });
+  }, [loaded, offset, total, setPager]);
+
+  /*
     A refresh re-reads the queue, so the settled placeholders go: the claims
     they stood for are no longer in it. Stepping back a page when the current
     one has emptied keeps the reader from landing on «nothing here» at page 3.
   */
   const refresh = () => {
     clear();
-    if (offset > 0 && offset >= total - Object.keys(resolved).length) {
-      setOffset(Math.max(0, offset - PAGE_SIZE));
+    if (page > 0 && offset >= total - Object.keys(resolved).length) {
+      setPager({ page: page - 1 });
     }
     query.refetch();
     if (canSeeSummary) summary.refetch();
@@ -272,7 +293,7 @@ export default function LandlordLinksPage({
                     disabled={offset === 0 || query.fetching}
                     onClick={() => {
                       clear();
-                      setOffset(Math.max(0, offset - PAGE_SIZE));
+                      setPager({ page: Math.max(0, page - 1) });
                     }}
                   >
                     <ChevronRight className="size-4 ltr:rotate-180" aria-hidden />
@@ -284,7 +305,7 @@ export default function LandlordLinksPage({
                     disabled={offset + PAGE_SIZE >= total || query.fetching}
                     onClick={() => {
                       clear();
-                      setOffset(offset + PAGE_SIZE);
+                      setPager({ page: page + 1 });
                     }}
                   >
                     {en ? 'Next' : 'التالي'}

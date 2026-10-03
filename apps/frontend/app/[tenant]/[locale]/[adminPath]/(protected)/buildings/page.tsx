@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import type { ColumnDef, PaginationState } from '@tanstack/react-table';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   Building2,
   ClipboardCheck,
@@ -20,11 +20,12 @@ import {
   X,
 } from 'lucide-react';
 import {
+  BUILDING_LIFECYCLE,
+  DAMAGE_LEVEL,
   getLabels,
-  type BuildingLifecycle,
+  STRUCTURE_TYPE,
+  SURVEY_STATUS,
   type DamageLevel,
-  type StructureType,
-  type SurveyStatus,
 } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
@@ -37,6 +38,7 @@ import {
   type ZoneSummary,
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
+import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
@@ -78,6 +80,27 @@ import { cn } from '@/lib/utils';
  */
 
 const PAGE_SIZE = 25;
+
+/**
+ * The ledger's filters, in the query string so a reload, the back button from
+ * a building's matrix and a link passed to a colleague all land on the same
+ * slice. Every value is a sector id, an enum or a parcel number — nothing that
+ * names a person. The free-text search is not here: it can hold a name, so it
+ * lives in tab storage (`useTabSearch`).
+ *
+ * The four enum lists are the type system's, used only to reject a stale or
+ * hand-edited value; what the selects *offer* is still read off the census
+ * (`getBuildingFilterOptions`).
+ */
+const FILTERS = {
+  zone: param.id(),
+  parcel: param.string(),
+  structure: param.oneOf(STRUCTURE_TYPE, ''),
+  lifecycle: param.oneOf(BUILDING_LIFECYCLE, ''),
+  survey: param.oneOf(SURVEY_STATUS, ''),
+  damage: param.oneOf(DAMAGE_LEVEL, ''),
+  noEntrance: param.flag(),
+};
 
 /**
  * How many rows one export will page through before it stops.
@@ -189,26 +212,27 @@ export default function BuildingsPage({
   const canDelete = role === 'SUPER_ADMIN';
 
   // ── Filters ───────────────────────────────────────────────────────
-  const [search, setSearch] = useState('');
-  const [zoneId, setZoneId] = useState('');
-  const [parcelNumber, setParcelNumber] = useState('');
-  const [parcelInput, setParcelInput] = useState('');
-  const [structureType, setStructureType] = useState('');
-  const [lifecycleStatus, setLifecycleStatus] = useState('');
-  const [surveyStatus, setSurveyStatus] = useState('');
-  const [damageLevel, setDamageLevel] = useState('');
-  /**
-   * «بلا مدخل مُثبت», as a filter rather than a select.
-   *
-   * Only one direction of it is worth offering. "Structures that *do* have a
-   * pin" is not a question anybody asks; "the ones that do not" is a morning's
-   * dispatch list, so this is a toggle the tile turns on.
-   */
-  const [withoutEntrance, setWithoutEntrance] = useState(false);
-  const [pagination, setPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: PAGE_SIZE,
-  });
+  const [search, setSearch] = useTabSearch(tenant, 'buildings');
+  const [filters, setFilters] = useUrlState(FILTERS);
+  const {
+    zone: zoneId,
+    parcel: parcelNumber,
+    structure: structureType,
+    lifecycle: lifecycleStatus,
+    survey: surveyStatus,
+    damage: damageLevel,
+    /*
+      «بلا مدخل مُثبت», as a filter rather than a select.
+
+      Only one direction of it is worth offering. "Structures that *do* have a
+      pin" is not a question anybody asks; "the ones that do not" is a
+      morning's dispatch list, so this is a toggle the tile turns on.
+    */
+    noEntrance: withoutEntrance,
+  } = filters;
+  /** What is typed in the parcel box; `parcelNumber` (the URL) is what was committed. */
+  const [parcelInput, setParcelInput] = useState(parcelNumber);
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: PAGE_SIZE });
 
   const activeFilters =
     [
@@ -223,49 +247,50 @@ export default function BuildingsPage({
     ].filter(Boolean).length;
 
   /**
+   * Any filter change is a different question, so it starts at page one —
+   * `?page=` is dropped in the same write as the new filter.
+   *
+   * Without this, narrowing a 300-row census to four unsafe buildings while on
+   * page five shows an empty table and a pager that says there is nothing —
+   * which reads as "no results" rather than "you are past the end". The search
+   * box needs no call here: `DataTable` resets the page itself on a search.
+   */
+  const setFilter = useCallback(
+    (patch: Parameters<typeof setFilters>[0]) => setFilters(patch, { clear: ['page'] }),
+    [setFilters],
+  );
+
+  /**
    * The parcel box is debounced; every other filter is not.
    *
    * A select fires once per decision, so it queries once. A text field fires
    * per keystroke, and «1042» typed at speed is four queries of which three are
    * about parcels 1, 10 and 104 — each a real answer to a question nobody
    * asked, and on a field connection each one delays the one that matters.
+   * So only the settled value reaches the URL — one write, not one per digit.
    */
   useEffect(() => {
     const next = parcelInput.trim();
     if (next === parcelNumber) return;
-    const timer = setTimeout(() => {
-      setParcelNumber(next);
-      setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-    }, 350);
+    const timer = setTimeout(() => setFilter({ parcel: next }), 350);
     return () => clearTimeout(timer);
-  }, [parcelInput, parcelNumber]);
+  }, [parcelInput, parcelNumber, setFilter]);
 
-  /**
-   * Any filter change is a different question, so it starts at page one.
-   *
-   * Without this, narrowing a 300-row census to four unsafe buildings while on
-   * page five shows an empty table and a pager that says there is nothing —
-   * which reads as "no results" rather than "you are past the end".
-   */
-  const setFilter = useCallback((apply: () => void) => {
-    apply();
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, []);
-
-  const clearFilters = () =>
-    setFilter(() => {
-      setSearch('');
-      setZoneId('');
-      setParcelInput('');
-      setParcelNumber('');
-      setStructureType('');
-      setSurveyStatus('');
-      setDamageLevel('');
-      setWithoutEntrance(false);
-      // `lifecycleStatus` is deliberately absent here, as it was before —
-      // clearing it is not part of what «مسح الفلاتر» has ever meant on this
-      // page. Left alone rather than quietly changed alongside a new filter.
+  const clearFilters = () => {
+    setSearch('');
+    setParcelInput('');
+    setFilter({
+      zone: '',
+      parcel: '',
+      structure: '',
+      survey: '',
+      damage: '',
+      noEntrance: false,
+      // `lifecycle` is deliberately absent here, as it was before — clearing
+      // it is not part of what «مسح الفلاتر» has ever meant on this page. Left
+      // alone rather than quietly changed alongside a new filter.
     });
+  };
 
   // ── Data ──────────────────────────────────────────────────────────
   /*
@@ -339,10 +364,10 @@ export default function BuildingsPage({
           search: search || undefined,
           zoneId: zoneId || undefined,
           parcelNumber: parcelNumber || undefined,
-          structureType: (structureType as StructureType) || undefined,
-          lifecycleStatus: (lifecycleStatus as BuildingLifecycle) || undefined,
-          surveyStatus: (surveyStatus as SurveyStatus) || undefined,
-          damageLevel: (damageLevel as DamageLevel) || undefined,
+          structureType: structureType || undefined,
+          lifecycleStatus: lifecycleStatus || undefined,
+          surveyStatus: surveyStatus || undefined,
+          damageLevel: damageLevel || undefined,
           // `false` is the whole point of the filter, so it cannot be `||`-ed
           // away like the string selects above.
           hasEntrance: withoutEntrance ? false : undefined,
@@ -416,10 +441,10 @@ export default function BuildingsPage({
         search: search || undefined,
         zoneId: zoneId || undefined,
         parcelNumber: parcelNumber || undefined,
-        structureType: (structureType as StructureType) || undefined,
-        lifecycleStatus: (lifecycleStatus as BuildingLifecycle) || undefined,
-        surveyStatus: (surveyStatus as SurveyStatus) || undefined,
-        damageLevel: (damageLevel as DamageLevel) || undefined,
+        structureType: structureType || undefined,
+        lifecycleStatus: lifecycleStatus || undefined,
+        surveyStatus: surveyStatus || undefined,
+        damageLevel: damageLevel || undefined,
         // The export follows the filters exactly — see the note above; a CSV
         // that quietly ignored one of them is how two people read the same
         // screen and disagree about what it said.
@@ -925,7 +950,7 @@ export default function BuildingsPage({
             manualFiltering
             sortable={false}
             searchValue={search}
-            onSearchChange={(value) => setFilter(() => setSearch(value))}
+            onSearchChange={setSearch}
             pageCount={Math.max(Math.ceil(total / pagination.pageSize), 1)}
             totalRowCount={total}
             pagination={pagination}
@@ -943,14 +968,14 @@ export default function BuildingsPage({
                   <FilterSelect
                     label={en ? 'Sector' : 'القطاع'}
                     value={zoneId}
-                    onChange={(value) => setFilter(() => setZoneId(value))}
+                    onChange={(value) => setFilter({ zone: value })}
                     options={zones.map((zone) => ({ value: zone.id, label: zone.name }))}
                     allLabel={en ? 'All sectors' : 'كل القطاعات'}
                   />
                   <FilterSelect
                     label={en ? 'Structure' : 'المنشأة'}
                     value={structureType}
-                    onChange={(value) => setFilter(() => setStructureType(value))}
+                    onChange={(value) => setFilter({ structure: value })}
                     options={(filterOptions?.structureTypes ?? []).map((value) => ({
                       value,
                       label: labels.structureType[value],
@@ -960,7 +985,7 @@ export default function BuildingsPage({
                   <FilterSelect
                     label={en ? 'Construction' : 'الحالة الإنشائية'}
                     value={lifecycleStatus}
-                    onChange={(value) => setFilter(() => setLifecycleStatus(value))}
+                    onChange={(value) => setFilter({ lifecycle: value })}
                     options={(filterOptions?.lifecycleStatuses ?? []).map((value) => ({
                       value,
                       label: labels.buildingLifecycle[value],
@@ -970,7 +995,7 @@ export default function BuildingsPage({
                   <FilterSelect
                     label={en ? 'Survey' : 'المسح'}
                     value={surveyStatus}
-                    onChange={(value) => setFilter(() => setSurveyStatus(value))}
+                    onChange={(value) => setFilter({ survey: value })}
                     options={(filterOptions?.surveyStatuses ?? []).map((value) => ({
                       value,
                       label: labels.surveyStatus[value],
@@ -980,7 +1005,7 @@ export default function BuildingsPage({
                   <FilterSelect
                     label={en ? 'Condition' : 'الضرر'}
                     value={damageLevel}
-                    onChange={(value) => setFilter(() => setDamageLevel(value))}
+                    onChange={(value) => setFilter({ damage: value })}
                     options={(filterOptions?.damageLevels ?? []).map((value) => ({
                       value,
                       label: labels.damageLevel[value],
@@ -1019,7 +1044,9 @@ export default function BuildingsPage({
                   {/* Without entrance toggle */}
                   <button
                     type="button"
-                    onClick={() => setFilter(() => setWithoutEntrance((on) => !on))}
+                    // Toggled off the live URL, not the render's value, which
+                    // can trail a quick second click by one write.
+                    onClick={() => setFilter((current) => ({ noEntrance: !current.noEntrance }))}
                     aria-pressed={withoutEntrance}
                     className={cn(
                       'flex h-9 w-full sm:w-auto items-center justify-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors',
@@ -1099,8 +1126,11 @@ export default function BuildingsPage({
   );
 }
 
-/** One filter select, with its own «الكل» option carrying the empty value. */
-function FilterSelect({
+/**
+ * One filter select, with its own «الكل» option carrying the empty value.
+ * Generic over the option values so an enum filter stays its enum.
+ */
+function FilterSelect<T extends string>({
   label,
   value,
   onChange,
@@ -1108,9 +1138,9 @@ function FilterSelect({
   allLabel,
 }: {
   label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: Array<{ value: string; label: string }>;
+  value: T | '';
+  onChange: (value: T | '') => void;
+  options: Array<{ value: T; label: string }>;
   allLabel: string;
 }) {
   /*
@@ -1135,7 +1165,8 @@ function FilterSelect({
   return (
     <Select
       value={value || ALL}
-      onValueChange={(next) => onChange(next === ALL ? '' : next)}
+      // Radix hands back a plain string; it can only be one of `options`.
+      onValueChange={(next) => onChange(next === ALL ? '' : (next as T))}
       disabled={empty}
     >
       <SelectTrigger

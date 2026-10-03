@@ -1,6 +1,7 @@
 'use client';
 
 import type { Session } from './api-client';
+import { clearTabSearches } from './tab-search';
 export type { Session };
 
 /**
@@ -78,7 +79,10 @@ export function loadSession(tenant: string): Session | null {
   }
 }
 
-/** Signs out of this tenant by clearing both stores. */
+/**
+ * Signs out of this tenant by clearing both stores — and the lists' saved
+ * search terms, which are a previous clerk's searches for citizens.
+ */
 export function clearSession(tenant: string): void {
   try {
     sessionStorage.removeItem(key(tenant));
@@ -86,4 +90,5 @@ export function clearSession(tenant: string): void {
   } catch {
     /* nothing to clean up */
   }
+  clearTabSearches(tenant);
 }

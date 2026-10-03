@@ -77,6 +77,7 @@ import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { formatPhone } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
+import { param, useUrlState } from '@/lib/use-url-state';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
 
 interface FactItem {
@@ -1580,6 +1581,13 @@ const FEE_ROW_GRID = 'grid-cols-[minmax(0,1fr)_auto] lg:col-span-full lg:grid-co
 const FEES_PAGE_SIZE = 10;
 
 /**
+ * The open bill page, in the URL as `?feesPage=` (1-based) so a reload — or
+ * coming back from settling a bill on its own page — lands on the same bills.
+ * Its own key: `page` would collide with whatever list linked here.
+ */
+const FEES_URL = { feesPage: param.page() };
+
+/**
  * The citizen's ledger — totals, then every invoice, each settleable on its own.
  *
  * "Clear them one by one" is the point of the list below. A citizen three
@@ -1624,9 +1632,10 @@ function FeesPanel({
 
   const labels = getLabels(locale);
   const outstanding = payments.filter((payment) => payment.paymentStatus !== 'PAID');
-  const [page, setPage] = useState(0);
+  const [{ feesPage: page }, setFeesUrl] = useUrlState(FEES_URL);
+  const setPage = useCallback((next: number) => setFeesUrl({ feesPage: next }), [setFeesUrl]);
   const listTop = useRef<HTMLUListElement>(null);
-  // Back inside the list when a reload leaves fewer pages than the one open.
+  // Back inside the list when a reload (or a stale link) leaves fewer pages than the one open.
   const lastPage = Math.max(0, Math.ceil(payments.length / FEES_PAGE_SIZE) - 1);
   const shownPage = Math.min(page, lastPage);
   const pagePayments = payments.slice(shownPage * FEES_PAGE_SIZE, (shownPage + 1) * FEES_PAGE_SIZE);

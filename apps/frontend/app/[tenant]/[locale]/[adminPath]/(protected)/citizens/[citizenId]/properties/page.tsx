@@ -34,6 +34,7 @@ import {
 } from '@/lib/api-client';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useUrlState } from '@/lib/use-url-state';
 import { formatDate, formatMonthList } from '@/lib/dates';
 import { mapHref } from '@/lib/map-link';
 import { occupancyDot } from '@/lib/occupancy';
@@ -60,7 +61,11 @@ import {
 import { cn } from '@/lib/utils';
 
 type Labels = ReturnType<typeof getLabels>;
-type Filter = 'all' | 'owned' | 'occupied' | 'ended';
+const FILTERS = ['all', 'owned', 'occupied', 'ended'] as const;
+type Filter = (typeof FILTERS)[number];
+
+/** Which cards are shown, as `?filter=` — a reload or a link to «المنتهية» keeps it. */
+const URL_STATE = { filter: param.oneOf(FILTERS, 'all') };
 
 /** A label from one of the enum maps, or the raw value where the map has none. */
 function labelOf(map: Record<string, string>, key: string | null | undefined): string | null {
@@ -121,7 +126,7 @@ export default function CitizenPropertiesPage({
   const queryClient = useQueryClient();
 
   const { token, user } = useStaffSession(tenant, base);
-  const [filter, setFilter] = useState<Filter>('all');
+  const [{ filter: chosen }, setUrl] = useUrlState(URL_STATE);
   // The roles that edit a citizen's file — the same three the file itself offers these actions to.
   const auth = token && user ? { token, canEdit: EDIT_ROLES.includes(user.role) } : null;
 
@@ -177,6 +182,12 @@ export default function CitizenPropertiesPage({
     ended: properties.length - current.length,
   };
   const unitsHeld = current.reduce((total, property) => total + unitsOf(property), 0);
+  /*
+    A filter with nothing under it is not offered below, so one arriving from
+    the URL — a stale link, or the last card of its kind just ended — reads as
+    «الكل» rather than an empty page with no option selected to leave it.
+  */
+  const filter: Filter = chosen !== 'all' && counts[chosen] === 0 ? 'all' : chosen;
 
   const shown = properties.filter((property) => {
     if (filter === 'owned') return !property.endedAt && property.occupancyType === 'OWNER';
@@ -246,7 +257,7 @@ export default function CitizenPropertiesPage({
                   size="sm"
                   aria-label={en ? 'Show' : 'عرض'}
                   value={filter}
-                  onChange={(next) => setFilter(next as Filter)}
+                  onChange={(next) => setUrl({ filter: next as Filter })}
                   options={(
                     [
                       ['all', en ? 'All' : 'الكل'],
