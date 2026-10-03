@@ -742,9 +742,14 @@ export function OpenQuestionList({
   base,
   citizenId,
   locale = 'ar',
+  variant = 'card',
+  labelFor,
 }: {
   state: RecordCompletion;
   items: OpenItem[];
+  variant?: 'card' | 'inline';
+  /** A shorter name for a row inside its own section; `item.label` otherwise. */
+  labelFor?: (item: OpenItem) => string;
   /** The admin path prefix, for the links out to the full form. */
   base: string;
   citizenId: string;
@@ -773,6 +778,9 @@ export function OpenQuestionList({
           onAnswer={(value) => setAnswer(item.path, value)}
           onReason={(value) => setReason(item.path, value)}
           editHref={`${base}/citizens/${citizenId}/edit`}
+          variant={variant}
+          label={labelFor?.(item)}
+          reasonEdited={reasons.has(item.path)}
         />
       ))}
     </div>
@@ -1082,9 +1090,23 @@ function OpenQuestion({
   onAnswer,
   onReason,
   editHref,
+  variant = 'card',
+  label,
+  reasonEdited = false,
 }: {
   item: OpenItem;
   locale: string;
+  /**
+   * `card` — a bordered card, as the dialog lists them. `inline` — a tinted
+   * block in a record's read-back («فحص الملف»), sitting with the facts it
+   * belongs to: no border, the status said in text, and the reason edit
+   * behind a disclosure so it does not compete with the answer box.
+   */
+  variant?: 'card' | 'inline';
+  /** Overrides `item.label` — «المساحة» inside its property's own section. */
+  label?: string;
+  /** Whether the reason was amended in this sitting — opens its disclosure. */
+  reasonEdited?: boolean;
   answer: string;
   /** Whether this sitting has typed in this row at all. */
   touched: boolean;
@@ -1098,23 +1120,54 @@ function OpenQuestion({
   const en = locale === 'en';
   const unverified = item.kind === 'UNVERIFIED';
   const inputId = `complete-${item.path.replace(/\./g, '-')}`;
+  const inline = variant === 'inline';
+
+  const reasonBox = (
+    <Input
+      id={`${inputId}-reason`}
+      dir="auto"
+      value={reason}
+      onChange={(event) => onReason(event.target.value)}
+      /* Greyed once an answer is typed, because the two are
+         alternatives: a value clears the flag, and a reason only
+         matters while the gap stays a gap. */
+      disabled={touched && answer.trim() !== ''}
+      className="h-8 text-xs disabled:opacity-50"
+    />
+  );
 
   return (
     <div
       className={cn(
-        'space-y-2 rounded-lg border p-3',
-        error
-          ? 'border-destructive/50 bg-destructive/5'
-          : unverified
-            ? 'border-warning/40 bg-warning/5'
-            : 'border-border/80 bg-card',
+        'space-y-2 rounded-lg p-3',
+        inline
+          ? error
+            ? 'bg-destructive/5'
+            : 'bg-warning/5'
+          : error
+            ? 'border border-destructive/50 bg-destructive/5'
+            : unverified
+              ? 'border border-warning/40 bg-warning/5'
+              : 'border border-border/80 bg-card',
       )}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <Label htmlFor={inputId} className="text-xs font-semibold">
-          {item.label}
+        <Label htmlFor={inputId} className={inline ? 'text-sm font-semibold' : 'text-xs font-semibold'}>
+          {label ?? item.label}
         </Label>
-        {unverified ? (
+        {inline ? (
+          // Said in text, not a chip (COL-3: a word, with its colour).
+          <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-warning">
+            {unverified ? <ShieldQuestion className="size-3.5 shrink-0" aria-hidden /> : null}
+            {unverified
+              ? en
+                ? 'Needs verification'
+                : 'بانتظار التحقق'
+              : en
+                ? 'Unconfirmed'
+                : 'غير مؤكَّد'}
+          </span>
+        ) : unverified ? (
           <Badge variant="soft-warning" className="shrink-0 gap-1">
             <ShieldQuestion className="size-3 shrink-0" aria-hidden />
             {en ? 'Needs verification' : 'بانتظار التحقق'}
@@ -1194,25 +1247,29 @@ function OpenQuestion({
               «still missing» checkbox: leaving the field empty already says
               that.
             */
-            <div className="space-y-1">
-              <Label
-                htmlFor={`${inputId}-reason`}
-                className="text-xs font-medium text-muted-foreground"
-              >
-                {en ? 'Or update why it is still missing' : 'أو حدّث سبب بقائها ناقصة'}
-              </Label>
-              <Input
-                id={`${inputId}-reason`}
-                dir="auto"
-                value={reason}
-                onChange={(event) => onReason(event.target.value)}
-                /* Greyed once an answer is typed, because the two are
-                   alternatives: a value clears the flag, and a reason only
-                   matters while the gap stays a gap. */
-                disabled={touched && answer.trim() !== ''}
-                className="h-8 text-xs disabled:opacity-50"
-              />
-            </div>
+            inline ? (
+              /*
+                Behind a disclosure: the answer is the task, an amended reason
+                the exception. Open when the reason was edited, or refused — a
+                complaint about it must never sit folded away.
+              */
+              <details open={reasonEdited || Boolean(error) || undefined}>
+                <summary className="cursor-pointer list-none text-xs font-medium text-primary underline-offset-4 hover:underline [&::-webkit-details-marker]:hidden">
+                  {en ? 'Still missing? Update the reason' : 'ما زالت ناقصة؟ حدّث السبب'}
+                </summary>
+                <div className="mt-2">{reasonBox}</div>
+              </details>
+            ) : (
+              <div className="space-y-1">
+                <Label
+                  htmlFor={`${inputId}-reason`}
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  {en ? 'Or update why it is still missing' : 'أو حدّث سبب بقائها ناقصة'}
+                </Label>
+                {reasonBox}
+              </div>
+            )
           )}
         </>
       )}

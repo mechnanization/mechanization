@@ -17,6 +17,7 @@ import {
   saveLabel,
   useRecordCompletion,
   type OpenItem,
+  type RecordCompletion,
 } from '@/components/admin/complete-record-dialog';
 import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +26,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CellTag } from '@/components/ui/cell-tag';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
 import { DataTable } from '@/components/ui/data-table';
-import { FactCell, FactRow } from '@/components/ui/facts';
 import { PageHeader } from '@/components/ui/page-header';
 import { SkeletonText } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/ui/states';
@@ -56,42 +56,54 @@ interface UnitRow {
 }
 
 /**
- * Everything one property card holds, laid out to be read rather than
- * scanned for dashes:
+ * One property card as a read-back, top to bottom (`SummaryList`: the one
+ * record this screen is about — PRIM-7):
  *
- *  - **Identifiers first**, as codes: the census building code, رقم العقار,
- *    and the census parcel when it differs from (or fills in for) the card's
- *    own number — the first thing a reviewer checks an answer against.
- *  - **The details**, from the form's own list (`askableFields`, plus the
- *    building name a linked card carries), each read through its control.
- *    Filled ones as facts in two columns; open ones marked «غير مؤكَّد» in
- *    place; the ones simply left blank folded into one line, so a card with
- *    six empty optional fields is not six rows of «—».
- *  - **The flats** of a مبنى, one row each with its unit code.
+ *  1. **Identifiers**: the census building code, رقم العقار, the census
+ *     parcel when it differs from the card's own number, the unit count.
+ *  2. **The filled details**, from the form's own list (`askableFields`,
+ *     plus the building name a linked card carries), each read through its
+ *     control. Values are text — no chips in a read-back.
+ *  3. **The open fields, answered in place**: a tinted block per field, with
+ *     the officer's reason and the box. An open field is not also listed
+ *     above, so nothing on the page is said twice.
+ *  4. **The fields simply left blank**, named once in one line rather than a
+ *     row of «—» each.
+ *  5. **A مبنى's flats**, one row each with its unit code; an open flat
+ *     field is marked in its cell (`CellTag`, PRIM-8) and answered below.
  */
 function PropertyDetails({
   values,
   index,
-  open,
+  items,
   census,
+  state,
+  base,
+  citizenId,
   locale,
 }: {
   values: CitizenFormValues;
   index: number;
-  /** The paths still open on this card — marked, never shown as blanks. */
-  open: Set<string>;
+  /** This card's open questions. */
+  items: OpenItem[];
   /** This card's census codes, from `propertyRefs`. */
   census: PropertyRef | undefined;
+  state: RecordCompletion;
+  base: string;
+  citizenId: string;
   locale: string;
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
   const fieldLabels = labels.citizenField as Record<string, string>;
-  const card = values.properties[index];
   const tableLabels = useTableLabels();
+  const card = values.properties[index];
   const prefix = `properties.${index}.`;
-  const labelOf = (path: string, field: string) => fieldLabels[field] ?? flagFieldLabel(path, locale);
-  const unconfirmed = <Badge variant="soft-warning">{en ? 'Unconfirmed' : 'غير مؤكَّد'}</Badge>;
+  const open = new Set(items.map((item) => item.path));
+  const leafLabel = (path: string) => {
+    const leaf = path.split('.').at(-1) ?? '';
+    return fieldLabels[leaf] ?? flagFieldLabel(path, locale);
+  };
 
   // The form's list for this card, the census-held building name first when there is one.
   const fields = askableFields(values).filter(
@@ -100,44 +112,32 @@ function PropertyDetails({
   if (!fields.some((field) => field.field === 'buildingName') && displayValue(values, `${prefix}buildingName`, locale)) {
     fields.unshift({ path: `${prefix}buildingName`, field: 'buildingName', section: 'properties', propertyIndex: index });
   }
-
-  // Identifiers are shown above; the units have their own table below.
+  // رقم العقار is an identifier, and the units have their own table.
   const detailFields = fields.filter((field) => !['propertyNumber', 'units'].includes(field.field));
-  const filled = detailFields.filter((field) => open.has(field.path) || displayValue(values, field.path, locale));
+  const filled = detailFields.filter((field) => !open.has(field.path) && displayValue(values, field.path, locale));
   const blank = detailFields.filter((field) => !open.has(field.path) && !displayValue(values, field.path, locale));
 
-  const fact = (path: string, field: string) => {
-    const value = displayValue(values, path, locale);
-    const kind = controlFor(path).kind;
-    return (
-      <FactCell
-        key={path}
-        label={labelOf(path, field)}
-        className={kind === 'number' || kind === 'phone' ? 'tabular-nums' : undefined}
-        value={open.has(path) ? unconfirmed : kind === 'phone' && value ? formatPhone(value) : value}
-      />
-    );
-  };
-  const half = Math.ceil(filled.length / 2);
-
   const propertyNumber = displayValue(values, `${prefix}propertyNumber`, locale);
-  const numberOpen = open.has(`${prefix}propertyNumber`);
   const parcel = census?.parcelNumber ?? null;
-  const showParcel = Boolean(parcel) && parcel !== propertyNumber;
-
   const units = card?.units ?? [];
+  const unitCodeAt = (unitIndex: number) =>
+    census?.units.find((entry) => entry.id === units[unitIndex]?.id)?.unitCode ?? null;
+
+  const cardItems = items.filter((item) => item.path.split('.').length === 3);
+  const unitItems = items.filter((item) => item.path.split('.').length === 5);
+
   const unitRows: UnitRow[] = units.map((unit, unitIndex) => ({
     id: unit.id ?? `${index}-${unitIndex}`,
     index: unitIndex,
-    code: census?.units.find((entry) => entry.id === unit.id)?.unitCode ?? null,
+    code: unitCodeAt(unitIndex),
   }));
   const unitCell = (row: UnitRow, field: string) => {
     const path = `${prefix}units.${row.index}.${field}`;
-    if (open.has(path)) return unconfirmed;
+    if (open.has(path)) return <CellTag tone="warning">{en ? 'Unconfirmed' : 'غير مؤكَّد'}</CellTag>;
     const value = displayValue(values, path, locale);
-    if (!value) return <span className="text-muted-foreground">—</span>;
-    if (field === 'unitArea') return <span className="tabular-nums">{en ? `${value} m²` : `${value} م²`}</span>;
-    return <bdi>{value}</bdi>;
+    if (!value) return <CellTag tone="muted">—</CellTag>;
+    if (field === 'unitArea') return <CellTag className="tabular-nums">{en ? `${value} m²` : `${value} م²`}</CellTag>;
+    return <CellTag>{value}</CellTag>;
   };
   const unitColumns: ColumnDef<UnitRow>[] = [
     {
@@ -161,68 +161,63 @@ function PropertyDetails({
   ];
 
   return (
-    <div className="space-y-5">
-      {/* Identifiers — what the property is known by, as codes. */}
-      <dl className="flex flex-wrap gap-x-8 gap-y-3 rounded-lg bg-muted/40 px-4 py-3">
-        <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">{en ? 'Building code' : 'رمز المبنى'}</dt>
-          <dd className="mt-0.5 text-sm font-semibold">
-            {census?.buildingCode ? (
-              <bdi className="font-mono">{census.buildingCode}</bdi>
-            ) : (
-              <span className="font-normal text-muted-foreground">
-                {en ? 'Not linked to the census' : 'غير مربوط بالمسح'}
-              </span>
-            )}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">{labels.citizenField.propertyNumber}</dt>
-          <dd className="mt-0.5 text-sm font-semibold">
-            {numberOpen ? (
-              unconfirmed
-            ) : propertyNumber ? (
-              <bdi className="font-mono">{propertyNumber}</bdi>
-            ) : (
-              <span className="font-normal text-muted-foreground">—</span>
-            )}
-          </dd>
-        </div>
-        {showParcel ? (
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">
-              {en ? 'Property no. in the census' : 'رقم العقار في المسح'}
-            </dt>
-            <dd className="mt-0.5 text-sm font-semibold">
-              <bdi className="font-mono">{parcel}</bdi>
-            </dd>
-          </div>
+    <div className="max-w-3xl space-y-4">
+      <SummaryList>
+        <SummaryRow
+          label={en ? 'Building code' : 'رمز المبنى'}
+          className={census?.buildingCode ? 'font-mono' : 'font-normal text-muted-foreground'}
+        >
+          {census?.buildingCode ?? (en ? 'Not linked to the census' : 'غير مربوط بالمسح')}
+        </SummaryRow>
+        {open.has(`${prefix}propertyNumber`) ? null : (
+          <SummaryRow
+            label={labels.citizenField.propertyNumber}
+            className={propertyNumber ? 'font-mono' : 'font-normal text-muted-foreground'}
+          >
+            {propertyNumber ?? '—'}
+          </SummaryRow>
+        )}
+        {parcel && parcel !== propertyNumber ? (
+          <SummaryRow label={en ? 'Property no. in the census' : 'رقم العقار في المسح'} className="font-mono">
+            {parcel}
+          </SummaryRow>
         ) : null}
-        {units.length > 0 ? (
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">{labels.citizenField.units}</dt>
-            <dd className="mt-0.5 text-sm font-semibold tabular-nums">{units.length}</dd>
-          </div>
-        ) : null}
-      </dl>
+        {filled.map((field) => {
+          const value = displayValue(values, field.path, locale) ?? '';
+          const kind = controlFor(field.path).kind;
+          return (
+            <SummaryRow
+              key={field.path}
+              label={leafLabel(field.path)}
+              className={kind === 'number' || kind === 'phone' ? 'tabular-nums' : undefined}
+            >
+              {kind === 'phone' ? formatPhone(value) : value}
+            </SummaryRow>
+          );
+        })}
+      </SummaryList>
 
-      {/* The details: filled and open as facts, the blank ones named once. */}
-      {filled.length > 0 ? (
-        <div className="grid gap-x-8 sm:grid-cols-2">
-          <FactRow>{filled.slice(0, half).map((field) => fact(field.path, field.field))}</FactRow>
-          <FactRow>{filled.slice(half).map((field) => fact(field.path, field.field))}</FactRow>
-        </div>
+      {cardItems.length > 0 ? (
+        <OpenQuestionList
+          state={state}
+          items={cardItems}
+          base={base}
+          citizenId={citizenId}
+          locale={locale}
+          variant="inline"
+          labelFor={(item) => leafLabel(item.path)}
+        />
       ) : null}
+
       {blank.length > 0 ? (
         <p className="text-xs text-muted-foreground">
-          {en ? 'Not filled in: ' : 'لم تُعبّأ: '}
-          {blank.map((field) => labelOf(field.path, field.field)).join(en ? ', ' : '، ')}
+          {en ? 'Left blank: ' : 'تُركت فارغة: '}
+          {blank.map((field) => leafLabel(field.path)).join(en ? ', ' : '، ')}
         </p>
       ) : null}
 
-      {/* The flats of a مبنى, each with its census code. */}
       {unitRows.length > 0 ? (
-        <div className="space-y-2">
+        <div className="space-y-3 pt-2">
           <h4 className="text-sm font-semibold">
             {labels.citizenField.units}
             <span className="ms-1.5 font-normal tabular-nums text-muted-foreground">({unitRows.length})</span>
@@ -236,6 +231,22 @@ function PropertyDetails({
             sortable={false}
             paginated={false}
           />
+          {unitItems.length > 0 ? (
+            <OpenQuestionList
+              state={state}
+              items={unitItems}
+              base={base}
+              citizenId={citizenId}
+              locale={locale}
+              variant="inline"
+              labelFor={(item) => {
+                const unitIndex = Number(item.path.split('.')[3]);
+                const code = unitCodeAt(unitIndex);
+                const unit = code ?? (en ? `unit ${unitIndex + 1}` : `الوحدة ${unitIndex + 1}`);
+                return `${leafLabel(item.path)} — ${unit}`;
+              }}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -372,15 +383,16 @@ export default function ReviewFilePage({
                 )}
               </CardTitle>
             </CardHeader>
-            {/* Two columns only when there are fields to complete beside the facts. */}
-            <CardContent className={personalItems.length > 0 ? 'grid gap-6 p-4 lg:grid-cols-2' : 'p-4'}>
+            {/* One column at reading width: the facts, then the open fields answered in place. */}
+            <CardContent className="p-4">
+              <div className="max-w-3xl space-y-4">
               <SummaryList>
                 <SummaryRow label={en ? 'Full name' : 'الاسم الكامل'}>{fullName}</SummaryRow>
                 <SummaryRow label={en ? "Mother's name" : 'اسم الأم وشهرتها'}>
                   {text(personal.motherName) ?? dash}
                 </SummaryRow>
                 <SummaryRow label={en ? 'Reference no.' : 'الرقم المرجعي'} className="font-mono">
-                  {record?.citizenReferenceNumber ? <span dir="ltr">{record.citizenReferenceNumber}</span> : dash}
+                  {record?.citizenReferenceNumber ?? dash}
                 </SummaryRow>
                 <SummaryRow label={en ? 'Phone' : 'الهاتف'}>
                   {phone ? (
@@ -403,19 +415,16 @@ export default function ReviewFilePage({
               </SummaryList>
 
               {personalItems.length > 0 ? (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-semibold text-warning">
-                    {en ? 'Fields to complete' : 'حقول تحتاج استكمالاً'}
-                  </h3>
-                  <OpenQuestionList
-                    state={state}
-                    items={personalItems}
-                    base={base}
-                    citizenId={citizenId}
-                    locale={locale}
-                  />
-                </div>
+                <OpenQuestionList
+                  state={state}
+                  items={personalItems}
+                  base={base}
+                  citizenId={citizenId}
+                  locale={locale}
+                  variant="inline"
+                />
               ) : null}
+              </div>
             </CardContent>
           </Card>
 
@@ -449,29 +458,16 @@ export default function ReviewFilePage({
                     }
                     defaultOpen={propertySections.length <= OPEN_SECTIONS_LIMIT || position === 0}
                   >
-                    <div className="grid gap-6 lg:grid-cols-5">
-                      <div className="min-w-0 lg:col-span-3">
-                        <PropertyDetails
-                          values={values}
-                          index={index}
-                          open={new Set(sectionItems.map((item) => item.path))}
-                          census={record?.propertyRefs?.find((entry) => entry.propertyId === card?.id)}
-                          locale={locale}
-                        />
-                      </div>
-                      <div className="min-w-0 space-y-2 lg:col-span-2">
-                        <h4 className="text-sm font-semibold text-warning">
-                          {en ? 'Fields to complete' : 'حقول تحتاج استكمالاً'}
-                        </h4>
-                        <OpenQuestionList
-                          state={state}
-                          items={sectionItems}
-                          base={base}
-                          citizenId={citizenId}
-                          locale={locale}
-                        />
-                      </div>
-                    </div>
+                    <PropertyDetails
+                      values={values}
+                      index={index}
+                      items={sectionItems}
+                      census={record?.propertyRefs?.find((entry) => entry.propertyId === card?.id)}
+                      state={state}
+                      base={base}
+                      citizenId={citizenId}
+                      locale={locale}
+                    />
                   </CollapsibleSection>
                 );
               })}
