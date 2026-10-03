@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, use, useMemo, useState } from 'react';
+import { Fragment, use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -79,10 +79,12 @@ type PropertyRef = NonNullable<CitizenFormData['propertyRefs']>[number];
  *    (`askableFields`, plus the building name a linked card carries);
  *  - «المبنى» — what the census says (`BuildingCensusSummary`).
  *
- * An open field reads «غير مؤكَّد» in its row, in warning text (no chips in a
- * read-back), and is answered under the panels — inside the card it belongs
- * to, never in a column of its own. The tab that holds an open field is the
- * one the card opens on.
+ * An open field is answered in its own row, where its value would be: the
+ * label, «غير مؤكَّد» and the officer's reason at the start, the box at the
+ * end (`OpenQuestion` `row`) — said once, not as a row and then again as a
+ * block. Panels take only their own height (`keepSpace={false}`); the card
+ * opens on the tab that holds the open field, and turns to the one a refused
+ * save points at.
  */
 function ReviewPropertyCard({
   values,
@@ -115,7 +117,6 @@ function ReviewPropertyCard({
     const leaf = path.split('.').at(-1) ?? '';
     return fieldLabels[leaf] ?? flagFieldLabel(path, locale);
   };
-  const unconfirmed = <span className="text-warning">{en ? 'Unconfirmed' : 'غير مؤكَّد'}</span>;
   const owner = card?.occupancyType === 'OWNER';
   const tone: PropertyTone = owner ? 'owner' : 'occupant';
 
@@ -181,11 +182,39 @@ function ReviewPropertyCard({
     ...(census?.building ? [{ value: 'building', label: en ? 'Building' : 'المبنى' }] : []),
   ];
   // Open where the open field is.
+  const tabOf = (path: string) => (path.split('.').length === 5 ? 'units' : 'property');
   const [tab, setTab] = useState(unitItems.length > 0 && cardItems.length === 0 ? 'units' : 'property');
+  /*
+    Closed panels are not laid out (`keepSpace={false}`), so a refused answer
+    in one would be out of sight: the card turns to the tab holding the first
+    field the save refused, where the focus is about to land.
+  */
+  const firstRefused = items.find((item) => item.path in state.fieldErrors)?.path ?? null;
+  useEffect(() => {
+    if (firstRefused) setTab(tabOf(firstRefused));
+  }, [firstRefused]);
+
+  /** An open field, answered in its own row of the read-back. */
+  const answerRow = (path: string, label: string) => {
+    const item = items.find((entry) => entry.path === path);
+    if (!item) return null;
+    return (
+      <OpenQuestionList
+        key={path}
+        state={state}
+        items={[item]}
+        base={base}
+        citizenId={citizenId}
+        locale={locale}
+        variant="row"
+        labelFor={() => label}
+      />
+    );
+  };
+  const placed = new Set<string>();
 
   const unitValue = (unitIndex: number, field: string) => {
     const path = `${prefix}units.${unitIndex}.${field}`;
-    if (open.has(path)) return unconfirmed;
     const value = displayValue(values, path, locale);
     if (!value) return <span className="font-normal text-muted-foreground">—</span>;
     if (field === 'unitArea') return <span className="tabular-nums">{en ? `${value} m²` : `${value} م²`}</span>;
@@ -248,38 +277,56 @@ function ReviewPropertyCard({
     >
       <CardPanels>
         {units.length > 0 ? (
-          <CardPanel active={tab === 'units'}>
+          <CardPanel active={tab === 'units'} keepSpace={false}>
             {units.map((unit, unitIndex) => {
               const UnitIcon = (unit.unitType && UNIT_ICON[unit.unitType]) || Building;
               const code = unitCodeAt(unitIndex);
+              const fact = (field: string, label: string, value: React.ReactNode) => {
+                const path = `${prefix}units.${unitIndex}.${field}`;
+                if (open.has(path)) {
+                  placed.add(path);
+                  return answerRow(path, label);
+                }
+                return <SummaryRow key={path} label={label}>{value}</SummaryRow>;
+              };
               return (
                 <Fragment key={unit.id ?? unitIndex}>
                   <SummaryRow label={en ? 'Unit' : 'الوحدة'} className="font-mono">
                     {code ?? (en ? `Unit ${unitIndex + 1}` : `الوحدة ${unitIndex + 1}`)}
                   </SummaryRow>
-                  <SummaryRow label={en ? 'Unit type' : 'نوع الوحدة'}>
+                  {fact(
+                    'unitType',
+                    en ? 'Unit type' : 'نوع الوحدة',
                     <span className="inline-flex items-center gap-1.5">
                       <UnitIcon className={cn('size-4', owner ? 'text-success' : 'text-info')} aria-hidden />
                       {unitValue(unitIndex, 'unitType')}
-                    </span>
-                  </SummaryRow>
-                  <SummaryRow label={leafLabel('floor')}>{unitValue(unitIndex, 'floor')}</SummaryRow>
-                  <SummaryRow label={leafLabel('side')}>{unitValue(unitIndex, 'side')}</SummaryRow>
-                  <SummaryRow label={leafLabel('unitArea')}>{unitValue(unitIndex, 'unitArea')}</SummaryRow>
-                  <SummaryRow label={leafLabel('unitStatus')}>{unitValue(unitIndex, 'unitStatus')}</SummaryRow>
+                    </span>,
+                  )}
+                  {fact('floor', leafLabel('floor'), unitValue(unitIndex, 'floor'))}
+                  {fact('side', leafLabel('side'), unitValue(unitIndex, 'side'))}
+                  {fact('unitArea', leafLabel('unitArea'), unitValue(unitIndex, 'unitArea'))}
+                  {fact('unitStatus', leafLabel('unitStatus'), unitValue(unitIndex, 'unitStatus'))}
                 </Fragment>
               );
             })}
           </CardPanel>
         ) : null}
 
-        <CardPanel active={tab === 'property'}>
+        <CardPanel active={tab === 'property'} keepSpace={false}>
           <SummaryRow label={en ? 'Property type' : 'نوع العقار'}>{typeText ?? '—'}</SummaryRow>
           <SummaryRow label={en ? 'Standing' : 'صفة الإشغال'}>{roleText ?? '—'}</SummaryRow>
-          <SummaryRow label={labels.citizenField.propertyNumber} className={numberOpen ? undefined : 'font-mono'}>
-            {numberOpen ? unconfirmed : (propertyNumber ?? '—')}
-          </SummaryRow>
+          {numberOpen ? (
+            (placed.add(`${prefix}propertyNumber`), answerRow(`${prefix}propertyNumber`, labels.citizenField.propertyNumber))
+          ) : (
+            <SummaryRow label={labels.citizenField.propertyNumber} className="font-mono">
+              {propertyNumber ?? '—'}
+            </SummaryRow>
+          )}
           {shown.map((field) => {
+            if (open.has(field.path)) {
+              placed.add(field.path);
+              return answerRow(field.path, leafLabel(field.path));
+            }
             const value = displayValue(values, field.path, locale) ?? '';
             const kind = controlFor(field.path).kind;
             return (
@@ -288,48 +335,50 @@ function ReviewPropertyCard({
                 label={leafLabel(field.path)}
                 className={kind === 'number' || kind === 'phone' ? 'tabular-nums' : undefined}
               >
-                {open.has(field.path)
-                  ? unconfirmed
-                  : field.field === 'unitStatus'
-                    ? <UnitStatusLine status={readRaw(values, field.path)} locale={locale} />
-                    : kind === 'phone'
-                      ? formatPhone(value)
-                      : value}
+                {field.field === 'unitStatus' ? (
+                  <UnitStatusLine status={readRaw(values, field.path)} locale={locale} />
+                ) : kind === 'phone' ? (
+                  formatPhone(value)
+                ) : (
+                  value
+                )}
               </SummaryRow>
             );
           })}
         </CardPanel>
 
         {census?.building ? (
-          <CardPanel active={tab === 'building'}>
+          <CardPanel active={tab === 'building'} keepSpace={false}>
             <BuildingCensusSummary building={census.building} code={census.buildingCode} bare locale={locale} />
           </CardPanel>
         ) : null}
       </CardPanels>
 
-      {/* The open fields, answered in place — in the card they belong to. */}
-      <div className="mx-4 mb-4 space-y-3">
+      {/*
+        What no row holds — a flag on a whole list of flats, «سجل مشابه» — and
+        the fields simply left blank, named once.
+      */}
+      <div className="mx-4 mb-4 space-y-3 empty:hidden">
+        {(() => {
+          const rest = items.filter((item) => !placed.has(item.path));
+          return rest.length > 0 ? (
+            <OpenQuestionList
+              state={state}
+              items={rest}
+              base={base}
+              citizenId={citizenId}
+              locale={locale}
+              variant="inline"
+              labelFor={(item) => leafLabel(item.path)}
+            />
+          ) : null;
+        })()}
         {blank.length > 0 ? (
           <p className="text-xs text-muted-foreground">
             {en ? 'Left blank: ' : 'تُركت فارغة: '}
             {blank.map((field) => leafLabel(field.path)).join(en ? ', ' : '، ')}
           </p>
         ) : null}
-        <OpenQuestionList
-          state={state}
-          items={items}
-          base={base}
-          citizenId={citizenId}
-          locale={locale}
-          variant="inline"
-          labelFor={(item) => {
-            const parts = item.path.split('.');
-            if (parts.length !== 5) return leafLabel(item.path);
-            const unitIndex = Number(parts[3]);
-            const unit = unitCodeAt(unitIndex) ?? (en ? `unit ${unitIndex + 1}` : `الوحدة ${unitIndex + 1}`);
-            return `${leafLabel(item.path)} — ${unit}`;
-          }}
-        />
       </div>
     </PropertyCardFrame>
   );

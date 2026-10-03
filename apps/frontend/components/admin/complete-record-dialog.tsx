@@ -747,7 +747,7 @@ export function OpenQuestionList({
 }: {
   state: RecordCompletion;
   items: OpenItem[];
-  variant?: 'card' | 'inline';
+  variant?: 'card' | 'inline' | 'row';
   /** A shorter name for a row inside its own section; `item.label` otherwise. */
   labelFor?: (item: OpenItem) => string;
   /** The admin path prefix, for the links out to the full form. */
@@ -1100,9 +1100,11 @@ function OpenQuestion({
    * `card` — a bordered card, as the dialog lists them. `inline` — a tinted
    * block in a record's read-back («فحص الملف»), sitting with the facts it
    * belongs to: no border, the status said in text, and the reason edit
-   * behind a disclosure so it does not compete with the answer box.
+   * behind a disclosure so it does not compete with the answer box. `row` —
+   * one row of a `SummaryList` read-back, answered where the fact would be:
+   * the label, the status and the reason on one side, the box on the other.
    */
-  variant?: 'card' | 'inline';
+  variant?: 'card' | 'inline' | 'row';
   /** Overrides `item.label` — «المساحة» inside its property's own section. */
   label?: string;
   /** Whether the reason was amended in this sitting — opens its disclosure. */
@@ -1136,6 +1138,103 @@ function OpenQuestion({
     />
   );
 
+  const elsewhereLink = (
+    /*
+      Two gaps with nothing to type, and they are answered in different
+      places — so the link says which, rather than «open the edit form» and
+      leaving the clerk to work out what to do once they are there.
+
+        • «سجل مشابه موجود» clears when somebody states that the match is a
+          different person. That is the duplicate review, which the edit
+          form carries.
+        • A flag on the whole units array is «we never got into the
+          building»; it is answered by going through it, unit by unit, on
+          the card's own editor.
+    */
+    <a
+      href={editHref}
+      className="inline-block text-xs font-medium text-primary underline-offset-4 hover:underline"
+    >
+      {item.path === 'personal.possibleDuplicate'
+        ? en
+          ? 'Answered in the duplicate review on the edit form →'
+          : 'يُحسم عبر مراجعة السجلات المشابهة في نموذج التعديل ←'
+        : en
+          ? 'The whole building has to be listed — open the full form →'
+          : 'يلزم جرد وحدات المبنى كاملاً — افتح نموذج التعديل ←'}
+    </a>
+  );
+
+  /*
+    Behind a disclosure: the answer is the task, an amended reason the
+    exception. Open when the reason was edited, or refused — a complaint about
+    it must never sit folded away.
+  */
+  const reasonDisclosure = (
+    <details open={reasonEdited || Boolean(error) || undefined}>
+      <summary className="cursor-pointer list-none text-xs font-medium text-primary underline-offset-4 hover:underline [&::-webkit-details-marker]:hidden">
+        {en ? 'Still missing? Update the reason' : 'ما زالت ناقصة؟ حدّث السبب'}
+      </summary>
+      <div className="mt-2">{reasonBox}</div>
+    </details>
+  );
+
+  const status = unverified ? (en ? 'Needs verification' : 'بانتظار التحقق') : en ? 'Unconfirmed' : 'غير مؤكَّد';
+
+  if (variant === 'row') {
+    /*
+      A row of the read-back, answered in place: the fact's label with its
+      status and the officer's reason at the start, the box at the end — the
+      same two edges a SummaryRow puts its label and value on, so the record
+      still reads down one column. Tinted, not boxed.
+    */
+    return (
+      <div
+        className={cn(
+          '-mx-3 grid gap-x-6 gap-y-2 px-3 py-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] sm:items-start',
+          error ? 'bg-destructive/5' : 'bg-warning/5',
+        )}
+      >
+        <dt className="min-w-0 space-y-0.5">
+          <span className="flex flex-wrap items-baseline gap-x-2">
+            <Label htmlFor={inputId} className="text-xs font-medium text-muted-foreground">
+              {label ?? item.label}
+            </Label>
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-warning">
+              {unverified ? <ShieldQuestion className="size-3.5 shrink-0" aria-hidden /> : null}
+              {status}
+            </span>
+          </span>
+          <p dir="auto" className="text-xs leading-relaxed text-muted-foreground">
+            {item.reason}
+          </p>
+        </dt>
+        <dd className="min-w-0 space-y-1.5">
+          {!item.answerable ? (
+            elsewhereLink
+          ) : (
+            <>
+              <AnswerControl
+                id={inputId}
+                control={item.control}
+                locale={locale}
+                value={answer}
+                onChange={onAnswer}
+                invalid={Boolean(error)}
+              />
+              {error ? (
+                <p role="alert" className="text-xs text-destructive">
+                  {error}
+                </p>
+              ) : null}
+              {unverified ? null : reasonDisclosure}
+            </>
+          )}
+        </dd>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -1159,13 +1258,7 @@ function OpenQuestion({
           // Said in text, not a chip (COL-3: a word, with its colour).
           <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-warning">
             {unverified ? <ShieldQuestion className="size-3.5 shrink-0" aria-hidden /> : null}
-            {unverified
-              ? en
-                ? 'Needs verification'
-                : 'بانتظار التحقق'
-              : en
-                ? 'Unconfirmed'
-                : 'غير مؤكَّد'}
+            {status}
           </span>
         ) : unverified ? (
           <Badge variant="soft-warning" className="shrink-0 gap-1">
@@ -1182,30 +1275,7 @@ function OpenQuestion({
       <p dir="auto" className="text-xs leading-relaxed text-muted-foreground">{item.reason}</p>
 
       {!item.answerable ? (
-        /*
-          Two gaps with nothing to type, and they are answered in different
-          places — so the link says which, rather than «open the edit form» and
-          leaving the clerk to work out what to do once they are there.
-
-            • «سجل مشابه موجود» clears when somebody states that the match is a
-              different person. That is the duplicate review, which the edit
-              form carries.
-            • A flag on the whole units array is «we never got into the
-              building»; it is answered by going through it, unit by unit, on
-              the card's own editor.
-        */
-        <a
-          href={editHref}
-          className="inline-block text-xs font-medium text-primary underline-offset-4 hover:underline"
-        >
-          {item.path === 'personal.possibleDuplicate'
-            ? en
-              ? 'Answered in the duplicate review on the edit form →'
-              : 'يُحسم عبر مراجعة السجلات المشابهة في نموذج التعديل ←'
-            : en
-              ? 'The whole building has to be listed — open the full form →'
-              : 'يلزم جرد وحدات المبنى كاملاً — افتح نموذج التعديل ←'}
-        </a>
+        elsewhereLink
       ) : (
         <>
           <AnswerControl
@@ -1248,17 +1318,7 @@ function OpenQuestion({
               that.
             */
             inline ? (
-              /*
-                Behind a disclosure: the answer is the task, an amended reason
-                the exception. Open when the reason was edited, or refused — a
-                complaint about it must never sit folded away.
-              */
-              <details open={reasonEdited || Boolean(error) || undefined}>
-                <summary className="cursor-pointer list-none text-xs font-medium text-primary underline-offset-4 hover:underline [&::-webkit-details-marker]:hidden">
-                  {en ? 'Still missing? Update the reason' : 'ما زالت ناقصة؟ حدّث السبب'}
-                </summary>
-                <div className="mt-2">{reasonBox}</div>
-              </details>
+              reasonDisclosure
             ) : (
               <div className="space-y-1">
                 <Label
