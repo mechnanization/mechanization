@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { loadSession } from '@/lib/session';
+import { param, useUrlState } from '@/lib/use-url-state';
 import { settingsCopy, type SettingsCopy } from '@/lib/settings-i18n';
 import { PageHeader } from '@/components/ui/page-header';
 import { ProfileSection } from '@/components/admin/settings/profile-section';
@@ -24,12 +25,8 @@ import { CadastreSection } from '@/components/admin/settings/cadastre-section';
 import { SettingsTabs } from '@/components/admin/settings/settings-ui';
 import { Skeleton } from '@/components/ui/skeleton';
 
-type SectionId =
-  | 'profile'
-  | 'finance'
-  | 'numbering'
-  | 'cadastre'
-  | 'users';
+const SECTION_IDS = ['profile', 'finance', 'numbering', 'cadastre', 'users'] as const;
+type SectionId = (typeof SECTION_IDS)[number];
 
 interface SectionDef {
   id: SectionId;
@@ -54,6 +51,14 @@ const SECTIONS: SectionDef[] = [
 ];
 
 /**
+ * The open section, as `?tab=`, so a reload stays on it. Every section is
+ * shown to every reader of this page (it is SUPER_ADMIN only), so the one list
+ * is the whole check. A switch unmounts the section either way — unsaved edits
+ * are dropped exactly as a click on another tab always dropped them.
+ */
+const URL_STATE = { tab: param.oneOf(SECTION_IDS, 'profile') };
+
+/**
  * إعدادات البلدية — every configuration surface the municipality owns.
  *
  * Restricted to SUPER_ADMIN. Personal account security (passwords, 2FA,
@@ -70,7 +75,7 @@ export default function SettingsPage({
   const copy = settingsCopy(locale);
 
   const [token, setToken] = useState<string | null>(null);
-  const [active, setActive] = useState<SectionId>('profile');
+  const [{ tab: active }, setUrl] = useUrlState(URL_STATE);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -130,7 +135,7 @@ export default function SettingsPage({
             label: section.label(copy),
           }))}
           active={active}
-          onSelect={setActive}
+          onSelect={(id) => setUrl({ tab: id })}
           label={copy.nav.label}
         />
 

@@ -282,6 +282,12 @@ export interface DataTableProps<TData, TValue = unknown> {
    * the rest.
    */
   fixedLayout?: boolean;
+  /**
+   * `cards` — the phone's card layout at every width. For a table placed in a
+   * narrow column on a wide screen (a side panel), where the breakpoint says
+   * «table» but there is room for one card, not five columns.
+   */
+  layout?: 'responsive' | 'cards';
 
   loading?: boolean;
   error?: string | null;
@@ -466,6 +472,7 @@ export function DataTable<TData, TValue = unknown>({
   pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
   paginated = true,
   fixedLayout = false,
+  layout = 'responsive',
   loading = false,
   error = null,
   onRetry,
@@ -656,6 +663,17 @@ export function DataTable<TData, TValue = unknown>({
     manualPagination,
     manualSorting,
     manualFiltering,
+    /*
+      Off when the caller owns the page.
+
+      TanStack's default returns a browser-paginated table to page one whenever
+      its data changes — including the first load. With the page held in the
+      URL (`useUrlPagination`), that is a reload of `?page=3` landing on page
+      one the moment the rows arrive. A search still restarts from page one —
+      `commitSearch` does that explicitly — and a page the data no longer
+      reaches is clamped below instead.
+    */
+    autoResetPageIndex: controlledPagination ? false : undefined,
     // `-1` means "unknown page count"; TanStack then trusts `pageCount` only
     // when the caller supplies one, and leaves next/previous enabled otherwise.
     pageCount: manualPagination ? (pageCount ?? -1) : undefined,
@@ -693,6 +711,22 @@ export function DataTable<TData, TValue = unknown>({
     totalRowCount ?? (manualFiltering ? data.length : table.getFilteredRowModel().rows.length);
   const resolvedPageCount = table.getPageCount();
   const currentPage = pagination.pageIndex + 1;
+
+  /*
+    A page past the end — `?page=9` reloaded after rows were deleted, or a link
+    to a list that has since shrunk — moves to the last page that exists rather
+    than showing an empty table under a pager reading «9 من 3». Only once rows
+    are in: while loading, after a failed read, or before a host has its session
+    token, the count is a fallback of zero, and clamping on it would throw away
+    the page the reader reloaded on.
+  */
+  React.useEffect(() => {
+    if (loading || error || resolvedTotal <= 0 || resolvedPageCount <= 0) return;
+    if (pagination.pageIndex <= resolvedPageCount - 1) return;
+    const last = { ...pagination, pageIndex: resolvedPageCount - 1 };
+    if (onPaginationChange) onPaginationChange(last);
+    else setInternalPagination(last);
+  }, [loading, error, resolvedTotal, resolvedPageCount, pagination, onPaginationChange]);
   const hasSearchTerm = committedSearch.trim().length > 0;
   /**
    * The box holds a term the table has not been filtered by yet.
@@ -980,7 +1014,7 @@ export function DataTable<TData, TValue = unknown>({
             name. Each row becomes a card instead: the heading is what the row
             is about, the rest are label/value pairs, and the action buttons
             are pinned to a footer where a thumb can reach them. */}
-        <div className="sm:hidden">
+        <div className={layout === 'cards' ? undefined : 'sm:hidden'}>
           <MobileCards
             rows={rows}
             loading={loading && rows.length === 0}
@@ -990,7 +1024,7 @@ export function DataTable<TData, TValue = unknown>({
         </div>
 
         {/* The scroll container for horizontal overflow — lets all 10 records show full height without vertical scrolling. */}
-        <div className="hidden overflow-x-auto sm:block">
+        <div className={cn('hidden overflow-x-auto', layout === 'responsive' && 'sm:block')}>
           <Table className={fixedLayout ? 'table-fixed' : undefined}>
             <TableHeader className="sticky top-0 z-10 bg-muted/95 shadow-[inset_0_-1px_0_hsl(var(--border))] backdrop-blur supports-[backdrop-filter]:bg-muted/80">
               {table.getHeaderGroups().map((headerGroup) => (

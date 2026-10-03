@@ -42,6 +42,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import type { CitizenListItem } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { useTabSearch, useUrlPagination } from '@/lib/use-url-state';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -144,19 +145,15 @@ export default function CitizensPage({
    * paginated *those* in the browser. A municipality with more than 200
    * registered citizens was shown a page counter that described a slice, with
    * no way to reach the rest.
-   */
-  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
-  /** The committed term — set when the clerk presses Enter, not as they type. */
-  const [appliedSearch, setAppliedSearch] = useState('');
-  /**
-   * Whether the table is narrowed to records still needing to be finished.
    *
-   * A toggle rather than a saved filter or a page of its own: «يتطلب مراجعة»
-   * is a slice of the register, not a different register, and someone working
-   * through it needs to be able to drop back to the whole thing in one tap
-   * when a name they are looking for is not in the queue.
+   * Both survive a reload, by different routes. The page is in the URL
+   * (`?page=` / `?limit=`), so the back button from a citizen's file returns
+   * to the same page. The search is a name, a national ID or a phone number,
+   * so it is kept in this tab's storage and never in the URL (`tab-search.ts`).
    */
-  const [reviewOnly, setReviewOnly] = useState(false);
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
+  /** The committed term — set when the clerk presses Enter, not as they type. */
+  const [appliedSearch, setAppliedSearch] = useTabSearch(tenant, 'citizens');
   /** A failed *write*. The read's own failure is the table's, via `useStaffQuery`. */
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -202,7 +199,6 @@ export default function CitizensPage({
       'citizens',
       tenant,
       appliedSearch,
-      reviewOnly,
       pagination.pageIndex,
       pagination.pageSize,
     ],
@@ -212,7 +208,6 @@ export default function CitizensPage({
         accessToken,
         {
           search: appliedSearch || undefined,
-          status: reviewOnly ? 'REQUIRES_REVIEW' : undefined,
           limit: pagination.pageSize,
           offset: pagination.pageIndex * pagination.pageSize,
         },
@@ -843,32 +838,27 @@ export default function CitizensPage({
       {/*
         The review queue, offered only when there is one.
 
-        A permanent tab reading «يتطلب مراجعة (٠)» is a standing invitation to
+        A permanent link reading «يتطلب مراجعة (٠)» is a standing invitation to
         check something that is never there. It appears when a record needs
-        finishing — and stays visible while the filter is on, so the way back
-        out is where the way in was.
+        finishing, and leads to the queue's own page (`/citizens/review`, also
+        in «استكمال البيانات»), which lists just those records with a «فحص
+        الملف» for each.
       */}
-      {totals.requiringReview > 0 || reviewOnly ? (
+      {totals.requiringReview > 0 ? (
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant={reviewOnly ? 'default' : 'outline'}
-            onClick={() => {
-              setReviewOnly((current) => !current);
-              setPagination((current) => ({ ...current, pageIndex: 0 }));
-            }}
-            className="h-8 gap-1.5 px-3 text-xs"
+          <Link
+            href={`${base}/citizens/review`}
+            className={cn(buttonVariants({ size: 'sm', variant: 'outline' }), 'h-8 gap-1.5 px-3 text-xs')}
           >
             <FileQuestion className="size-3.5" aria-hidden />
             {locale === 'en'
               ? `Requires review (${totals.requiringReview})`
               : `يتطلب مراجعة (${totals.requiringReview})`}
-          </Button>
+          </Link>
           <p className="text-xs text-muted-foreground">
             {locale === 'en'
-              ? 'Records filed with fields the officer could not establish. Open one to see the reason given for each.'
-              : 'سجلات حُفظت بحقول لم يتمكّن الموظف من التثبّت منها. افتح السجل لقراءة سبب كل حقل.'}
+              ? 'Records filed with fields the officer could not establish. Review each file to complete it.'
+              : 'سجلات حُفظت بحقول لم يتمكّن الموظف من التثبّت منها. افحص كل ملف لاستكماله.'}
           </p>
         </div>
       ) : null}
@@ -978,6 +968,7 @@ export default function CitizensPage({
         }
         confirmLabel={locale === 'en' ? 'Delete Permanently' : 'حذف نهائي'}
         cancelLabel={locale === 'en' ? 'Cancel' : 'إلغاء'}
+        busyLabel={locale === 'en' ? 'Working…' : 'جارٍ التنفيذ…'}
         requireText={pendingDelete?.fullName}
         requireTextHint={
           locale === 'en'

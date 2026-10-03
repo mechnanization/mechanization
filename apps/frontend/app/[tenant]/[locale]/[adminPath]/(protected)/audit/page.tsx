@@ -10,6 +10,7 @@ import { AUDIT_FAMILIES, auditFamilyOf } from '@/lib/audit-describe';
 import { formatMonth } from '@/lib/dates';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useUrlState } from '@/lib/use-url-state';
 import { AuditDaily } from '@/components/admin/audit-daily';
 import { AuditEntryItem } from '@/components/admin/audit-entry';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,39 @@ import { EmptyState, ErrorState } from '@/components/ui/states';
 
 const PAGE_SIZE = 50;
 const ANY = 'ANY';
+
+/*
+  Two readings of the same filtered trail.
+
+  «التقرير اليومي» answers «who was working, and on what» — a row per person
+  per day, with the day openable underneath. «مفصّل» is the entry-by-entry
+  timeline, which is what you want once you know which day to look at. The
+  filters belong to both, so switching never loses the narrowing.
+*/
+const VIEWS = ['daily', 'detailed'] as const;
+
+/**
+ * The reading, the four filters and the page, in the query string — an
+ * auditor's «what did this officer do on the 15th» survives a reload and can
+ * be sent as a link.
+ *
+ * `actor` is a staff account's id, never a name. `entity` is checked only for
+ * shape: the record types are whatever the log holds (`getAuditFacets` reads
+ * them back from the table), so there is no fixed list to hold it to, and one
+ * the log does not have simply matches nothing.
+ */
+const AUDIT_FILTERS = {
+  view: param.oneOf(VIEWS, 'daily'),
+  actor: param.id(),
+  family: param.oneOf(
+    AUDIT_FAMILIES.map((candidate) => candidate.key),
+    '',
+  ),
+  entity: param.id(),
+  from: param.date(),
+  to: param.date(),
+  page: param.page(),
+};
 
 /**
  * «سجل النشاطات» — who did what, to which record, and when.
@@ -45,21 +79,8 @@ export default function AuditTrailPage({
   const labels = getLabels(locale);
 
   const [session, setSession] = useState<Session | null>(null);
-  const [actorId, setActorId] = useState('');
-  const [family, setFamily] = useState('');
-  const [entityType, setEntityType] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [page, setPage] = useState(0);
-  /*
-    Two readings of the same filtered trail.
-
-    «التقرير اليومي» answers «who was working, and on what» — a row per person
-    per day, with the day openable underneath. «مفصّل» is the entry-by-entry
-    timeline, which is what you want once you know which day to look at. The
-    filters below belong to both, so switching never loses the narrowing.
-  */
-  const [view, setView] = useState<'daily' | 'detailed'>('daily');
+  const [filters, setFilters] = useUrlState(AUDIT_FILTERS);
+  const { view, actor: actorId, family, entity: entityType, from, to, page } = filters;
 
   useEffect(() => {
     const existing = loadSession(tenant);
@@ -129,19 +150,27 @@ export default function AuditTrailPage({
   const pages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
   const filtered = Boolean(actorId || family || entityType || from || to);
 
-  const resetTo = useCallback(<T,>(setter: (value: T) => void) => (value: T) => {
-    setter(value);
-    setPage(0);
-  }, []);
+  /** A new narrowing starts again from the newest page, in the same URL write. */
+  const narrow = useCallback(
+    (patch: Parameters<typeof setFilters>[0]) => setFilters(patch, { clear: ['page'] }),
+    [setFilters],
+  );
 
-  const clearFilters = () => {
-    setActorId('');
-    setFamily('');
-    setEntityType('');
-    setFrom('');
-    setTo('');
-    setPage(0);
-  };
+  const clearFilters = () => narrow({ actor: '', family: '', entity: '', from: '', to: '' });
+
+  /*
+    A page the trail no longer reaches — `?page=9` reloaded after the filters
+    or the log changed underneath it — moves to the oldest page that exists,
+    rather than an empty timeline under «9 / 3». Only on settled data:
+    `keepPrevious` holds the last answer while the next one loads. And not
+    while a `?family=` waits for the facets: until they arrive the family is
+    sent as `__NONE__`, whose empty answer would send `?family=…&page=3` to
+    page one before the real read ran.
+  */
+  useEffect(() => {
+    if (!query.data || query.fetching || (family && facets.loading)) return;
+    if (page > 0 && page >= pages) setFilters({ page: pages - 1 });
+  }, [query.data, query.fetching, family, facets.loading, page, pages, setFilters]);
 
   const days = useMemo(() => groupByDay(entries), [entries]);
   const today = dayKey(new Date());
@@ -169,7 +198,7 @@ export default function AuditTrailPage({
         className="grid gap-3 rounded-xl border bg-card p-3 sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(0,1fr))_auto_auto_auto] lg:items-end"
       >
         <FilterField id="audit-actor" label={en ? 'Staff member' : 'الموظف'}>
-          <Select value={actorId || ANY} onValueChange={(value) => resetTo(setActorId)(value === ANY ? '' : value)}>
+          <Select value={actorId || ANY} onValueChange={(value) => narrow({ actor: value === ANY ? '' : value })}>
             <SelectTrigger id="audit-actor" className="h-10">
               <SelectValue />
             </SelectTrigger>
@@ -190,7 +219,7 @@ export default function AuditTrailPage({
         </FilterField>
 
         <FilterField id="audit-family" label={en ? 'Kind of activity' : 'نوع النشاط'}>
-          <Select value={family || ANY} onValueChange={(value) => resetTo(setFamily)(value === ANY ? '' : value)}>
+          <Select value={family || ANY} onValueChange={(value) => narrow({ family: value === ANY ? '' : value })}>
             <SelectTrigger id="audit-family" className="h-10">
               <SelectValue />
             </SelectTrigger>
@@ -208,7 +237,7 @@ export default function AuditTrailPage({
         <FilterField id="audit-entity" label={en ? 'Record type' : 'نوع السجل'}>
           <Select
             value={entityType || ANY}
-            onValueChange={(value) => resetTo(setEntityType)(value === ANY ? '' : value)}
+            onValueChange={(value) => narrow({ entity: value === ANY ? '' : value })}
           >
             <SelectTrigger id="audit-entity" className="h-10">
               <SelectValue />
@@ -225,11 +254,11 @@ export default function AuditTrailPage({
         </FilterField>
 
         <FilterField id="audit-from" label={en ? 'From' : 'من تاريخ'}>
-          <DatePicker id="audit-from" value={from} onChange={resetTo(setFrom)} max={to || undefined} locale={en ? 'en' : 'ar'} />
+          <DatePicker id="audit-from" value={from} onChange={(value) => narrow({ from: value })} max={to || undefined} locale={en ? 'en' : 'ar'} />
         </FilterField>
 
         <FilterField id="audit-to" label={en ? 'To' : 'إلى تاريخ'}>
-          <DatePicker id="audit-to" value={to} onChange={resetTo(setTo)} locale={en ? 'en' : 'ar'} />
+          <DatePicker id="audit-to" value={to} onChange={(value) => narrow({ to: value })} locale={en ? 'en' : 'ar'} />
         </FilterField>
 
         <Button variant="ghost" className="h-10 gap-1.5" onClick={clearFilters} disabled={!filtered}>
@@ -242,10 +271,7 @@ export default function AuditTrailPage({
         className="sm:inline-flex sm:w-auto"
         fullWidth={false}
         value={view}
-        onChange={(value) => {
-          setView(value as 'daily' | 'detailed');
-          setPage(0);
-        }}
+        onChange={(value) => narrow({ view: value as (typeof VIEWS)[number] })}
         aria-label={en ? 'How to read the log' : 'طريقة عرض السجل'}
         options={[
           { value: 'daily', label: en ? 'Daily report' : 'التقرير اليومي', icon: CalendarDays },
@@ -347,7 +373,7 @@ export default function AuditTrailPage({
 
       {pages > 1 ? (
         <nav className="flex items-center justify-center gap-2" aria-label={en ? 'Pages' : 'الصفحات'}>
-          <Button variant="outline" size="sm" disabled={page === 0 || query.fetching} onClick={() => setPage((current) => current - 1)}>
+          <Button variant="outline" size="sm" disabled={page === 0 || query.fetching} onClick={() => setFilters((current) => ({ page: current.page - 1 }))}>
             <ChevronRight className="size-4 ltr:rotate-180" aria-hidden />
             {en ? 'Newer' : 'الأحدث'}
           </Button>
@@ -358,7 +384,7 @@ export default function AuditTrailPage({
             variant="outline"
             size="sm"
             disabled={page + 1 >= pages || query.fetching}
-            onClick={() => setPage((current) => current + 1)}
+            onClick={() => setFilters((current) => ({ page: current.page + 1 }))}
           >
             {en ? 'Older' : 'الأقدم'}
             <ChevronLeft className="size-4 ltr:rotate-180" aria-hidden />

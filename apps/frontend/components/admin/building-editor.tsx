@@ -3026,6 +3026,7 @@ export function BuildingEditor({
         }
         confirmLabel={en ? 'Yes, it is a building' : 'نعم، هي بناية'}
         cancelLabel={en ? 'No, keep it a house' : 'لا، أبقِها منزلاً'}
+        busyLabel={en ? 'Working…' : 'جارٍ التنفيذ…'}
         onConfirm={() => {
           const next = pendingUnits;
           setPendingUnits(null);

@@ -29,7 +29,6 @@ import {
   defaultUnitTypeFor,
   MAX_UNIT_COLUMN,
   spanLimits,
-  isOccupiableLifecycle,
   type DamageLevel,
   type UpsertUnitInput,
   type VacancyBasis,
@@ -72,6 +71,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
+import { BuildingCensusSummary } from '@/components/admin/building-census-summary';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
@@ -156,11 +156,20 @@ export function BuildingUnitMatrixView({
   locale,
   adminPath,
   buildingId,
+  selectedUnitId: selectedUnitIdProp,
+  onSelectUnit,
 }: {
   tenant: string;
   locale: string;
   adminPath: string;
   buildingId: string;
+  /**
+   * The selected unit, when the embedding owns it — the matrix page keeps it
+   * in `?unit=`. Both or neither: without `onSelectUnit` the selection is
+   * local state, so an embedding that passes nothing is never tied to the URL.
+   */
+  selectedUnitId?: string | null;
+  onSelectUnit?: (unitId: string | null) => void;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -194,7 +203,14 @@ export function BuildingUnitMatrixView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
+  const [localSelectedUnitId, setLocalSelectedUnitId] = useState<string | null>(null);
+  const requestedUnitId = onSelectUnit ? (selectedUnitIdProp ?? null) : localSelectedUnitId;
+  const setSelectedUnitId = onSelectUnit ?? setLocalSelectedUnitId;
+  /*
+    Local, always — even where the selection is in the URL. `action` opens a
+    form that writes (occupy, vacate, damage, resize…), and a reload or a
+    shared link must never reopen one of those.
+  */
   const [action, setAction] = useState<ActionKind>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -243,9 +259,15 @@ export function BuildingUnitMatrixView({
   );
 
   const selectedUnit = useMemo(
-    () => building?.units.find((unit) => unit.id === selectedUnitId) ?? null,
-    [building, selectedUnitId],
+    () => building?.units.find((unit) => unit.id === requestedUnitId) ?? null,
+    [building, requestedUnitId],
   );
+  /*
+    The selection as the screen uses it: an id that names no unit of this
+    building — a `?unit=` from a link to a unit since deleted, or from another
+    building — is no selection at all, rather than a lit-up nothing.
+  */
+  const selectedUnitId = selectedUnit?.id ?? null;
 
   /*
     «تعديل عرض الوحدة» — the span being drawn, before it is saved.
@@ -706,128 +728,16 @@ export function BuildingUnitMatrixView({
             </div>
 
             {/*
-              What the structure is, then where it stands cadastrally — one fact
-              per row, as «ملخص المنشأة» shows it before saving, so a building
-              reads the same on the way in and on the way back.
-
-              «قائم ومستعمل» is left unsaid, as it was on the badges: it is the
-              answer on nineteen buildings in twenty. The same goes for the rows
-              that are empty for most of the register — shared parcels, a posted
-              number, damage — and for the فرز, which is three-valued: «لم يُسأل»
-              is the default for every building recorded before the column
-              existed, and printing «غير مفروزة» for those would be asserting a
-              finding nobody made — see `Building.isPartitioned`.
-
-              Capped in width: on a desk, a label at one edge of the page and its
-              value at the other are too far apart to read as a pair.
+              The census summary — shared with «فحص الملف» (`BuildingCensusSummary`).
+              Capped in width by the column it sits in: on a desk, a label at one
+              edge of the page and its value at the other are too far apart to
+              read as a pair.
             */}
-            <SummaryList>
-              <SummaryRow label={en ? 'Structure Type' : 'نوع المنشأة'}>
-                {labels.structureType[building.structureType]}
-              </SummaryRow>
-
-              {building.lifecycleStatus !== 'IN_USE' ? (
-                <SummaryRow
-                  label={en ? 'Construction Status' : 'الحالة الإنشائية'}
-                  className="text-warning"
-                >
-                  {labels.buildingLifecycle[building.lifecycleStatus]}
-                </SummaryRow>
-              ) : null}
-
-              <SummaryRow label={en ? 'Floors' : 'الطوابق'}>
-                {en ? `${building.floorsCount} floors` : `${building.floorsCount} طابق`}
-                {/* The range the floors are labelled by — «B1–B2» — so it names the rows the matrix shows. */}
-                {building.basementsCount
-                  ? ` · ${building.basementsCount === 1 ? 'B1' : `B1–B${building.basementsCount}`}`
-                  : ''}
-              </SummaryRow>
-
-              {/*
-                A matrix on a structure nobody can be inside is an inventory, not
-                outstanding work — and the ledger's figures leave it out.
-              */}
-              <SummaryRow
-                label={en ? 'Units' : 'الوحدات'}
-                className={
-                  isOccupiableLifecycle(building.lifecycleStatus) &&
-                  building.unitsTotal > 0 &&
-                  building.unitsSurveyed === building.unitsTotal
-                    ? 'text-success'
-                    : undefined
-                }
-              >
-                {!isOccupiableLifecycle(building.lifecycleStatus)
-                  ? en
-                    ? `${building.unitsTotal} units recorded — not counted as survey work`
-                    : `${building.unitsTotal} وحدة مسجَّلة — غير محتسبة ضمن أعمال المسح`
-                  : en
-                    ? `${building.unitsSurveyed} of ${building.unitsTotal} units surveyed`
-                    : `${building.unitsSurveyed} من ${building.unitsTotal} وحدة ممسوحة`}
-              </SummaryRow>
-
-              {damage?.current ? (
-                <SummaryRow label={en ? 'Damage level' : 'مستوى الضرر'} className="text-destructive">
-                  {labels.damageLevel[damage.current]}
-                </SummaryRow>
-              ) : null}
-
-              {building.postedNumber ? (
-                <SummaryRow label={en ? 'Posted number' : 'الرقم المكتوب'} className="font-mono">
-                  {building.postedNumber}
-                </SummaryRow>
-              ) : null}
-
-              <SummaryRow label={en ? 'Parcel Number' : 'رقم العقار'} className="font-mono">
-                {building.parcelNumber}
-              </SummaryRow>
-
-              {building.sharedParcelNumbers?.length ? (
-                <SummaryRow label={en ? 'Shared parcels' : 'عقارات مشتركة'} className="font-mono">
-                  {building.sharedParcelNumbers.join(en ? ', ' : '، ')}
-                </SummaryRow>
-              ) : null}
-
-              {/*
-                The فرز with its أقسام where they have been collected: «مفروزة»
-                on its own does not answer the question anybody asks it — «which
-                قسم?». A ticked فرز with no numbers yet is still stated.
-              */}
-              {building.isPartitioned != null ? (
-                <SummaryRow label={en ? 'Partition' : 'الفرز'}>
-                  {building.isPartitioned
-                    ? building.partitionNumbers?.length
-                      ? en
-                        ? `Partitioned — parts ${building.partitionNumbers.join(', ')}`
-                        : `مفروزة — الأقسام ${building.partitionNumbers.join('، ')}`
-                      : en
-                        ? 'Partitioned'
-                        : 'مفروزة'
-                    : en
-                      ? 'Not partitioned'
-                      : 'غير مفروزة'}
-                </SummaryRow>
-              ) : null}
-
-              {building.zoneName ? (
-                <SummaryRow label={en ? 'Sector' : 'القطاع'}>
-                  {building.zoneCode ? `${building.zoneCode} · ${building.zoneName}` : building.zoneName}
-                </SummaryRow>
-              ) : null}
-
-              <SummaryRow
-                label={en ? 'Location' : 'الموقع'}
-                className={building.latitude != null ? undefined : 'text-muted-foreground'}
-              >
-                {building.latitude != null
-                  ? en
-                    ? 'Located'
-                    : 'محدَّد الموقع'
-                  : en
-                    ? 'Not on the map'
-                    : 'غير محدَّد على الخريطة'}
-              </SummaryRow>
-            </SummaryList>
+            <BuildingCensusSummary
+              building={{ ...building, located: building.latitude != null }}
+              damageLevel={damage?.current ?? null}
+              locale={locale}
+            />
           </div>
 
           {/* ── The matrix, painted the way it was drawn ─────────────── */}
@@ -1181,6 +1091,7 @@ export function BuildingUnitMatrixView({
             }
             confirmLabel={en ? 'Yes, save' : 'نعم، احفظ'}
             cancelLabel={en ? 'Cancel' : 'إلغاء'}
+            busyLabel={en ? 'Working…' : 'جارٍ التنفيذ…'}
             onConfirm={async () => {
               if (!pendingResize || !token) return;
               const { unit, to } = pendingResize;
@@ -1519,10 +1430,8 @@ export function BuildingUnitMatrixView({
                   token={token}
                   busy={busy}
                   locale={locale}
-                  newFileHref={(residence, name) =>
-                    `${base}/citizens/new?buildingId=${encodeURIComponent(building.id)}&unitId=${encodeURIComponent(selectedUnit.id)}&residence=${residence}${
-                      name ? `&name=${encodeURIComponent(name)}` : ''
-                    }`
+                  newFileHref={(residence) =>
+                    `${base}/citizens/new?buildingId=${encodeURIComponent(building.id)}&unitId=${encodeURIComponent(selectedUnit.id)}&residence=${residence}`
                   }
                   vacancy={activeVacancy(selectedUnit)}
                   owners={unitOwners(selectedUnit)}

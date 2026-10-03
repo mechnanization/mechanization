@@ -4,8 +4,14 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { CircleCheck, ShieldQuestion } from 'lucide-react';
-import { qualityLabels, type QualityFindingKind } from '@mechanization/shared-schemas';
+import {
+  QUALITY_FINDING_KIND,
+  qualityLabels,
+  type QualityFindingKind,
+} from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError, settleAllUnitStatuses } from '@/lib/api-client';
+import type { UrlParam } from '@/lib/url-state';
+import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import {
   dismissFinding,
   getFindings,
@@ -49,8 +55,10 @@ import { FindingDetails } from './finding-details';
  *
  * They are views rather than routes deliberately. The queue's filters, its
  * search and its page are a reviewer's working position in a list of a hundred
- * findings, and a route change throws all three away — so the way back from a
- * comparison lands exactly where the way in left.
+ * findings, and the way back from a comparison has to land exactly where the
+ * way in left. The filters, the page and the open detail view are in the query
+ * string and the search in tab storage (`useTabSearch`), so a reload keeps that
+ * position too; the comparison is not, because it writes (see `FINDING`).
  *
  * ## What is stored, and what is not
  *
@@ -67,6 +75,39 @@ type View =
   | { mode: 'compare'; key: string };
 
 const keyOf = (finding: QualityFinding) => `${finding.kind}|${finding.subjectKey}`;
+
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const FINDING_KEY = new RegExp(
+  `^(?:${QUALITY_FINDING_KIND.join('|')})\\|(?:${UUID}(?:,${UUID})?|queue)$`,
+);
+
+/**
+ * `?finding=` — the finding «عرض التفاصيل» is open on, spelled as `keyOf`.
+ *
+ * Only in the shape `DataQualityService` builds today: a known kind, then one
+ * row UUID, a sorted pair of them, or the owner-link `queue`. No subject key is
+ * a name or a document number, and a future one that is fails this test and
+ * stays out of the address (`url-state.ts`) — its detail view still opens, as
+ * component state.
+ *
+ * Only the detail view, which reads. «الإجراء» corrects and merges records, so
+ * a reload or a pasted link must never land inside it: a reload from there
+ * opens the same finding's detail instead, one click from where it was.
+ */
+const FINDING: UrlParam<string> = {
+  parse: (raw) => {
+    const value = raw?.trim() ?? '';
+    return FINDING_KEY.test(value) ? value : '';
+  },
+  serialize: (value) => (FINDING_KEY.test(value) ? value : null),
+};
+
+/** The queue's filters and the open detail view. `page`/`limit` are `useUrlPagination`'s. */
+const QUEUE = {
+  kind: param.oneOf<QualityFindingKind | ''>(QUALITY_FINDING_KIND, ''),
+  dismissed: param.flag(),
+  finding: FINDING,
+};
 
 /**
  * The roles that may write to a citizen's file at all.
@@ -158,11 +199,30 @@ export function FindingsList({
   const quality = useMemo(() => qualityLabels(locale), [locale]);
   const toast = useToast();
 
-  const [includeDismissed, setIncludeDismissed] = useState(false);
-  const [kind, setKind] = useState<QualityFindingKind | ''>('');
+  const [queue, setQueue] = useUrlState(QUEUE);
+  const { kind, dismissed: includeDismissed } = queue;
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
+  const [search, setSearch] = useTabSearch(tenant, 'quality-findings');
   const [busy, setBusy] = useState<string | null>(null);
   const [resolving, setResolving] = useState<QualityFinding | null>(null);
-  const [view, setView] = useState<View>({ mode: 'list' });
+  /**
+   * A view the address must not hold: the comparison, or a detail view whose
+   * key `FINDING` refuses. Wins over `?finding=` while set.
+   */
+  const [transient, setTransient] = useState<View>({ mode: 'list' });
+
+  const view: View =
+    transient.mode !== 'list'
+      ? transient
+      : queue.finding
+        ? { mode: 'details', key: queue.finding }
+        : { mode: 'list' };
+
+  const setView = (next: View) => {
+    const addressable = next.mode !== 'list' && FINDING_KEY.test(next.key);
+    setTransient(next.mode === 'details' && addressable ? { mode: 'list' } : next);
+    setQueue({ finding: addressable ? next.key : '' });
+  };
 
   const query = useStaffQuery({
     queryKey: ['quality-findings', tenant, includeDismissed],
@@ -423,12 +483,15 @@ export function FindingsList({
     [base, busy, en, locale, quality, tenant, token],
   );
 
+  // Each filter returns to page one in the same write. The table used to do
+  // that by itself whenever its rows changed; with the page in the URL it does
+  // not, so a reload of `?page=3` survives the rows arriving.
   const filterBar = (
     <div className="flex flex-wrap items-center gap-1.5">
       <button
         type="button"
         aria-pressed={kind === ''}
-        onClick={() => setKind('')}
+        onClick={() => setQueue({ kind: '' }, { clear: ['page'] })}
         className={cn(
           'min-h-9 rounded-md border px-3 text-sm transition-colors',
           kind === '' ? 'border-primary bg-primary/10 font-medium text-primary' : 'hover:bg-accent',
@@ -442,7 +505,7 @@ export function FindingsList({
           key={key}
           type="button"
           aria-pressed={kind === key}
-          onClick={() => setKind(key as QualityFindingKind)}
+          onClick={() => setQueue({ kind: key as QualityFindingKind }, { clear: ['page'] })}
           className={cn(
             'min-h-9 rounded-md border px-3 text-sm transition-colors',
             kind === key
@@ -459,7 +522,9 @@ export function FindingsList({
         size="sm"
         className="ms-auto h-9 gap-1.5"
         aria-pressed={includeDismissed}
-        onClick={() => setIncludeDismissed((current) => !current)}
+        onClick={() =>
+          setQueue((current) => ({ dismissed: !current.dismissed }), { clear: ['page'] })
+        }
       >
         <ShieldQuestion className="size-3.5" aria-hidden />
         {en ? 'Show resolved' : 'إظهار المحلولة'}
@@ -513,8 +578,11 @@ export function FindingsList({
     Reachable the ordinary way: a reviewer opens a comparison, corrects the name
     that made the two records look alike, and the finding stops existing on the
     next read — which is the system working. Saying so beats an empty grid.
+
+    Only once the findings are in: a reload on `?finding=` renders before the
+    session token arrives, when nothing is loading and nothing is loaded yet.
   */
-  if (view.mode !== 'list' && !selected && !query.loading) {
+  if (view.mode !== 'list' && !selected && query.data && !query.loading) {
     return (
       <div className="space-y-4">
         <div className="rounded-xl border bg-card p-6 text-center">
@@ -655,10 +723,11 @@ export function FindingsList({
         initialHiddenColumns={['records', 'at']}
         filterBar={filterBar}
         activeFiltersCount={(kind ? 1 : 0) + (includeDismissed ? 1 : 0)}
-        onClearFilters={() => {
-          setKind('');
-          setIncludeDismissed(false);
-        }}
+        onClearFilters={() => setQueue({ kind: '', dismissed: false }, { clear: ['page'] })}
+        searchValue={search}
+        onSearchChange={setSearch}
+        pagination={pagination}
+        onPaginationChange={setPagination}
         loading={query.loading}
         error={query.error}
         onRetry={query.refetch}

@@ -34,6 +34,7 @@ export function ConfirmDialog({
   description,
   confirmLabel = 'تأكيد',
   cancelLabel = 'إلغاء',
+  busyLabel = 'جارٍ التنفيذ…',
   destructive = true,
   requireText,
   requireTextHint,
@@ -47,6 +48,8 @@ export function ConfirmDialog({
   description?: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Shown on Confirm while `onConfirm` runs. Arabic by default, like the other labels. */
+  busyLabel?: string;
   /** Red confirm button and red icon. Off for a merely irreversible action. */
   destructive?: boolean;
   /** When set, Confirm stays disabled until this exact text is typed. */
@@ -184,7 +187,7 @@ export function ConfirmDialog({
             disabled={busy || blocked}
             className="w-full sm:w-auto"
           >
-            {busy ? 'جارٍ التنفيذ…' : confirmLabel}
+            {busy ? busyLabel : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

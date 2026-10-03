@@ -2,6 +2,18 @@
 
 import { buildingWidth, isStructuralUnitType, layoutFloorSpans, type UnitSpan } from '@mechanization/shared-schemas';
 import type { BuildingDetail, UnitWithOccupants } from '@/lib/api-client';
+
+/** A unit as a drawing reads it: where it is and what it is — never who lives there. */
+export type ElevationUnit = Pick<UnitWithOccupants, 'id' | 'floor' | 'sequence' | 'unitType' | 'unitCode' | 'startCol' | 'endCol'>;
+
+/**
+ * A building as a drawing reads it. Narrower than `BuildingDetail` on
+ * purpose: a screen that only draws the building can be sent this, without
+ * the occupants' names and phones the full record carries (CODE-5).
+ */
+export type ElevationBuilding = Pick<BuildingDetail, 'structureType' | 'lifecycleStatus' | 'floorsCount' | 'basementsCount'> & {
+  units: ElevationUnit[];
+};
 import type { CSSProperties } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -17,10 +29,138 @@ import { cn } from '@/lib/utils';
  */
 export type PropertyTone = 'owner' | 'occupant';
 
+/**
+ * What a property card is a picture *of* — one choice, shared by the
+ * citizen's properties page and «فحص الملف», and drawn in one language: the
+ * census elevation (ICO-3). There is no second, illustrated style.
+ *
+ *  - A card linked to a census building draws that building in its own
+ *    colours, the citizen's units outlined in their role's colour (`marker=
+ *    "outline"`) — never repainted. A building of one unit is the citizen's
+ *    property whole, so nothing is marked on it.
+ *  - A card linked to none is drawn as a one-unit elevation of its own kind:
+ *    a house as «منزل مستقل», a shop, office or clinic as a commercial front,
+ *    a warehouse or garage as a hangar, a flat as a residential block, a tent
+ *    as the camp. Nothing is invented — no floors or neighbours the record
+ *    does not have; the one unit is the card, unmarked.
+ *  - Land has no building to elevate: `PlotElevation` draws the plot on the
+ *    same ground line, in the same inks.
+ */
+export function PropertyScene({
+  propertyType,
+  building,
+  highlight,
+  tone,
+  soleType,
+  selected = null,
+  onSelect,
+  locale = 'ar',
+}: {
+  propertyType: string | null | undefined;
+  /** The census building, shape only. Null for a card linked to none. */
+  building: ElevationBuilding | null | undefined;
+  /** The census units that are this citizen's. */
+  highlight: ReadonlySet<string>;
+  tone: PropertyTone;
+  /** The one unit's type, when the card is a single unit. */
+  soleType: string | null | undefined;
+  selected?: string | null;
+  onSelect?: (unitId: string) => void;
+  locale?: string;
+}) {
+  if (building && building.units.length > 0) {
+    return (
+      <BuildingElevation
+        building={building}
+        // A one-unit building is the citizen's property whole: nothing to point at.
+        highlight={building.units.length > 1 ? highlight : NOTHING_LIT}
+        marker="outline"
+        tone={tone}
+        selected={selected}
+        onSelect={onSelect}
+        locale={locale}
+      />
+    );
+  }
+  if (propertyType === 'LAND') return <PlotElevation tone={tone} locale={locale} />;
+
+  const card = cardBuilding(propertyType, soleType, building);
+  return <BuildingElevation building={card} highlight={NOTHING_LIT} marker="outline" tone={tone} locale={locale} />;
+}
+
+/** A lit tent's ink in the camp drawing — the role's colour, as text for its SVG strokes. */
 const TONE_TEXT: Record<PropertyTone, string> = {
   owner: 'text-success',
   occupant: 'text-info',
 };
+
+/** The id of the one unit a card with no census building is drawn as. */
+const CARD_UNIT_ID = 'card-unit';
+const NOTHING_LIT: ReadonlySet<string> = new Set();
+
+/**
+ * The one-unit structure an unlinked card is drawn as. Its structure decides
+ * the look (`structureLook`); its unit decides the face. Two columns wide, so
+ * a house reads as a house and not a doorway.
+ */
+function cardBuilding(
+  propertyType: string | null | undefined,
+  soleType: string | null | undefined,
+  linked: ElevationBuilding | null | undefined,
+): ElevationBuilding {
+  const unitType = soleType ?? (propertyType === 'HOUSE' ? 'INDEPENDENT_HOUSE' : 'APARTMENT');
+  const structureType =
+    propertyType === 'TENT' || linked?.structureType === 'TENT_SHELTER'
+      ? 'TENT_SHELTER'
+      : linked?.structureType ??
+        (unitType === 'INDEPENDENT_HOUSE' || propertyType === 'HOUSE'
+          ? 'INDEPENDENT_HOUSE'
+          : unitType === 'SHOP' || unitType === 'OFFICE' || unitType === 'CLINIC'
+            ? 'COMMERCIAL_CENTER'
+            : unitType === 'WAREHOUSE' || unitType === 'GARAGE'
+              ? 'WAREHOUSE_HANGAR'
+              : 'RESIDENTIAL_BUILDING');
+  return {
+    structureType,
+    lifecycleStatus: linked?.lifecycleStatus ?? 'IN_USE',
+    floorsCount: 1,
+    basementsCount: 0,
+    units: [
+      { id: CARD_UNIT_ID, floor: 0, sequence: 1, unitType, unitCode: '0001', startCol: 1, endCol: 2 },
+    ],
+  } as ElevationBuilding;
+}
+
+/**
+ * «أرض» — a plot on the ground line, in the elevation's inks: the street and
+ * its lamps either side, and the plot between them marked out in the role's
+ * colour, with its corner posts. Decorative (`aria-hidden`); the card beside
+ * it is the record.
+ */
+function PlotElevation({ tone, locale }: { tone: PropertyTone; locale: string }) {
+  return (
+    <div dir="ltr" className="flex h-full w-full items-center justify-center px-5">
+      <div
+        className="flex w-full max-w-[320px] flex-col"
+        role="img"
+        aria-label={locale === 'en' ? 'A plot of land' : 'قطعة أرض'}
+      >
+        <div className="relative mx-6 flex h-10 items-end justify-between">
+          <span className={cn('h-full w-[3px] rounded-t-[1px]', TONE_PANEL[tone])} />
+          <span
+            aria-hidden
+            className={cn('absolute inset-x-[3px] bottom-0 h-1/2 border-t-2 border-dashed', TONE_BORDER[tone])}
+          />
+          <span aria-hidden className={cn('absolute inset-x-[3px] bottom-0 top-1/2 opacity-20', TONE_PANEL[tone])} />
+          <span className={cn('h-full w-[3px] rounded-t-[1px]', TONE_PANEL[tone])} />
+        </div>
+        <StreetLine />
+        <Forecourt columns={1} doorColumn={null} bushes={false} />
+      </div>
+    </div>
+  );
+}
+
 
 /**
  * The building as the census records it: every unit in its column, the
@@ -37,11 +177,19 @@ export function BuildingElevation({
   selected = null,
   onSelect,
   pickAny = false,
+  marker = 'fill',
   locale = 'ar',
 }: {
-  building: BuildingDetail;
+  building: ElevationBuilding;
   highlight: ReadonlySet<string>;
   tone: PropertyTone;
+  /**
+   * How a highlighted unit is shown. `fill` — painted in the role's colour,
+   * the matrix's picked unit. `outline` — left in its own grey and ringed in
+   * the role's colour: a property's picture, where the building is read as it
+   * stands and the citizen's unit is pointed at, not repainted.
+   */
+  marker?: 'fill' | 'outline';
   /** The language of the drawing's spoken name (TXT-2). */
   locale?: string;
   /** The lit unit whose details are open below the drawing — marked with a ring. */
@@ -70,7 +218,7 @@ export function BuildingElevation({
   */
   const bottom = Math.min(...unitFloors, -(building.basementsCount ?? 0), 0);
 
-  const floors: Array<{ floor: number; blocks: Array<UnitSpan<UnitWithOccupants>>; width: number }> = [];
+  const floors: Array<{ floor: number; blocks: Array<UnitSpan<ElevationUnit>>; width: number }> = [];
   for (let floor = top; floor >= bottom; floor -= 1) {
     const units = building.units
       .filter((unit) => unit.floor === floor)
@@ -103,6 +251,7 @@ export function BuildingElevation({
       <TentCamp
         building={building}
         highlight={highlight}
+        marker={marker}
         tone={tone}
         locale={locale}
         selected={selected}
@@ -129,7 +278,7 @@ export function BuildingElevation({
 
   /** One storey of the elevation; a basement is drawn by the same hand, inside the ground. */
   function renderFloor(
-    { floor, blocks }: { floor: number; blocks: Array<UnitSpan<UnitWithOccupants>> },
+    { floor, blocks }: { floor: number; blocks: Array<UnitSpan<ElevationUnit>> },
     index: number,
   ) {
           /*
@@ -181,6 +330,7 @@ export function BuildingElevation({
                 ) : (
                   blocks.map(({ unit, startCol, endCol }) => {
                     const lit = highlight.has(unit.id);
+                    const filled = lit && marker === 'fill';
                     const kind = unitKind(unit.unitType);
                     // What the front shows, which the structure decides as much as the unit does.
                     const faceKind = faceFor(kind, look);
@@ -196,8 +346,9 @@ export function BuildingElevation({
                       'relative block h-full w-full overflow-hidden rounded-[2px] transition-colors',
                       ghost
                         ? cn('border border-dashed bg-transparent', lifecycle === 'DEMOLISHED' ? 'border-destructive/50' : 'border-foreground/40')
-                        : panelFor(faceKind, lit, tone),
+                        : panelFor(faceKind, filled, tone),
                       lit && 'z-[1]',
+                      lit && marker === 'outline' && cn('ring-2 ring-offset-1 ring-offset-background', TONE_RING[tone]),
                       (lit || pickAny) && onSelect && 'cursor-pointer hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       // The picked unit: the selection colour (COL-2), not the role's.
                       unit.id === selected && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
@@ -209,7 +360,7 @@ export function BuildingElevation({
                             unitType={unit.unitType}
                             kind={faceKind}
                             columns={span}
-                            lit={lit}
+                            lit={filled}
                             tone={tone}
                             underground={floor < 0}
                           />
@@ -528,148 +679,8 @@ function StreetLamp({ className }: { className?: string }) {
   );
 }
 
-/** A house: tiled roof with its water tank, door and path, windows, a garden wall. */
-export function HouseArt({ tone }: { tone: PropertyTone }) {
-  return (
-    <svg viewBox="0 0 200 120" className={cn('h-full w-full', TONE_TEXT[tone])} aria-hidden>
-      <rect x="0" y="108" width="200" height="12" className="fill-foreground/10" />
-      <line x1="6" y1="108" x2="194" y2="108" className="stroke-foreground/50" strokeWidth="2" />
-      {/* path to the door */}
-      <path d="M93 108 L86 120 H115 L108 108 Z" className="fill-foreground/20" />
-      {/* garden wall and gate posts */}
-      <rect x="14" y="98" width="62" height="10" className="fill-foreground/15 stroke-foreground/30" strokeWidth="1" />
-      <rect x="124" y="98" width="62" height="10" className="fill-foreground/15 stroke-foreground/30" strokeWidth="1" />
-      {/* trees behind the wall */}
-      <circle cx="30" cy="84" r="13" className="fill-foreground/20" />
-      <rect x="28.5" y="90" width="3" height="10" className="fill-foreground/30" />
-      <circle cx="172" cy="86" r="11" className="fill-foreground/20" />
-      <rect x="170.5" y="91" width="3" height="9" className="fill-foreground/30" />
-      {/* body */}
-      <rect x="58" y="56" width="84" height="52" rx="2" className="fill-foreground/10 stroke-foreground/40" strokeWidth="1.5" />
-      {/* roof, its tiles, the chimney and the water tank */}
-      <rect x="118" y="24" width="8" height="18" className="fill-foreground/40" />
-      <rect x="72" y="20" width="14" height="10" rx="3" className="fill-foreground/35" />
-      <path d="M50 58 L100 22 L150 58 Z" fill="currentColor" fillOpacity="0.85" />
-      {[34, 42, 50].map((y) => (
-        <line
-          key={y}
-          x1={100 - (y - 22) * 1.39}
-          x2={100 + (y - 22) * 1.39}
-          y1={y}
-          y2={y}
-          className="stroke-background/40"
-          strokeWidth="1"
-        />
-      ))}
-      {/* door, with its step and handle */}
-      <rect x="92" y="80" width="16" height="28" rx="1.5" fill="currentColor" fillOpacity="0.6" />
-      <rect x="89" y="106" width="22" height="2" className="fill-foreground/40" />
-      <circle cx="104.5" cy="95" r="1.2" className="fill-background" />
-      {/* windows, with sills and a cross bar */}
-      {[66, 118].map((x) => (
-        <g key={x}>
-          <rect x={x} y="66" width="16" height="14" rx="1.5" fill="currentColor" fillOpacity="0.9" />
-          <line x1={x + 8} y1="66" x2={x + 8} y2="80" className="stroke-background" strokeWidth="1" />
-          <line x1={x} y1="73" x2={x + 16} y2="73" className="stroke-background" strokeWidth="1" />
-          <rect x={x - 2} y="80" width="20" height="2" className="fill-foreground/40" />
-        </g>
-      ))}
-      {/* the air conditioner's outdoor unit */}
-      <rect x="126" y="86" width="12" height="8" rx="1" className="fill-foreground/30 stroke-foreground/40" strokeWidth="0.75" />
-      <circle cx="132" cy="90" r="2.4" className="fill-none stroke-foreground/50" strokeWidth="0.75" />
-    </svg>
-  );
-}
 
-/**
- * A plot, fenced and grassed, with the citizen's أسهم drawn as a ring: 600 of
- * the cadastre's 2400 is a quarter of it filled. No ring when no share is
- * recorded — an empty ring would claim a share of nothing.
- */
-export function LandArt({
-  tone,
-  shares,
-  landType,
-}: {
-  tone: PropertyTone;
-  shares: number | null;
-  /** «زراعي» draws crops, «صناعي» bare gravel with a works in the corner. */
-  landType?: string | null;
-}) {
-  const industrial = landType === 'INDUSTRIAL';
-  const fraction = shares != null ? Math.max(0, Math.min(1, shares / 2400)) : null;
-  const radius = 20;
-  const circumference = 2 * Math.PI * radius;
-  return (
-    <svg viewBox="0 0 200 120" className={cn('h-full w-full', TONE_TEXT[tone])} aria-hidden>
-      <defs>
-        <pattern id="grass" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(30)">
-          <line x1="0" y1="0" x2="0" y2="8" className="stroke-success/35" strokeWidth="2" />
-        </pattern>
-        <pattern id="gravel" width="6" height="6" patternUnits="userSpaceOnUse">
-          <circle cx="2" cy="2" r="1" className="fill-foreground/25" />
-        </pattern>
-      </defs>
-      <path d="M30 88 L70 30 L176 40 L160 100 Z" fill={industrial ? 'url(#gravel)' : 'url(#grass)'} className="stroke-foreground/50" strokeWidth="1.5" strokeDasharray="5 4" />
-      {[
-        [30, 88],
-        [70, 30],
-        [176, 40],
-        [160, 100],
-      ].map(([x, y]) => (
-        <circle key={`${x}-${y}`} cx={x} cy={y} r="3" fill="currentColor" />
-      ))}
-      {industrial ? (
-        <g transform="translate(132 54)" className="fill-foreground/45">
-          <path d="M0 26 V10 L10 16 V10 L20 16 V10 L30 16 V26 Z" />
-          <rect x="22" y="-4" width="5" height="16" />
-        </g>
-      ) : landType === 'AGRICULTURAL' ? (
-        <g className="fill-success/60">
-          {[
-            [60, 70],
-            [80, 58],
-            [128, 82],
-            [146, 66],
-          ].map(([x, y]) => (
-            <path key={`${x}-${y}`} d={`M${x} ${y} q-6 -10 0 -16 q6 6 0 16 z`} />
-          ))}
-        </g>
-      ) : null}
-      {fraction != null ? (
-        <g transform="translate(103 66)">
-          <circle r={radius} className="fill-background/80 stroke-foreground/15" strokeWidth="6" />
-          <circle
-            r={radius}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="6"
-            strokeLinecap="round"
-            strokeDasharray={`${fraction * circumference} ${circumference}`}
-            transform="rotate(-90)"
-          />
-          <text textAnchor="middle" dy="4" className="fill-foreground text-[11px] font-bold">
-            {Math.round(fraction * 100)}%
-          </text>
-        </g>
-      ) : null}
-    </svg>
-  );
-}
 
-/** A tent, pegged to the ground. */
-export function TentArt({ tone }: { tone: PropertyTone }) {
-  return (
-    <svg viewBox="0 0 200 120" className={cn('h-full w-full', TONE_TEXT[tone])} aria-hidden>
-      <line x1="20" y1="104" x2="180" y2="104" className="stroke-foreground/50" strokeWidth="2" />
-      <path d="M50 104 L100 30 L150 104 Z" fill="currentColor" fillOpacity="0.8" />
-      <path d="M100 30 L88 104 L112 104 Z" className="fill-background/70" />
-      <line x1="100" y1="30" x2="100" y2="22" className="stroke-foreground/60" strokeWidth="2" />
-      <line x1="50" y1="104" x2="34" y2="110" className="stroke-foreground/40" strokeWidth="1.5" />
-      <line x1="150" y1="104" x2="166" y2="110" className="stroke-foreground/40" strokeWidth="1.5" />
-    </svg>
-  );
-}
 
 /**
  * What a unit is, in the ways a drawing can tell them apart: somewhere people
@@ -696,179 +707,14 @@ export function unitKind(unitType: string | null | undefined): UnitKind {
   }
 }
 
-/**
- * One unit on its own, drawn as what it is — the picture for a card that is a
- * single unit (a house, a shop, a garage) rather than a whole building.
- */
-export function UnitArt({ unitType, tone }: { unitType: string | null | undefined; tone: PropertyTone }) {
-  switch (unitType) {
-    case 'SHOP':
-      return <ShopArt tone={tone} />;
-    case 'OFFICE':
-      return <OfficeArt tone={tone} />;
-    case 'CLINIC':
-      return <ShopArt tone={tone} cross />;
-    case 'WAREHOUSE':
-      return <WarehouseArt tone={tone} />;
-    case 'GARAGE':
-      return <GarageArt tone={tone} />;
-    case 'PILOTIS':
-      return <PilotisArt tone={tone} />;
-    case 'EMPTY_FLOOR':
-      return <EmptyFloorArt tone={tone} />;
-    case 'APARTMENT':
-      return <ApartmentArt tone={tone} />;
-    default:
-      return <HouseArt tone={tone} />;
-  }
-}
 
-function Ground() {
-  return (
-    <>
-      <rect x="0" y="108" width="200" height="12" className="fill-foreground/10" />
-      <line x1="10" y1="108" x2="190" y2="108" className="stroke-foreground/50" strokeWidth="2" />
-    </>
-  );
-}
 
-/** A flat: one storey of a block, its balcony and windows lit, the storeys around it dark. */
-export function ApartmentArt({ tone }: { tone: PropertyTone }) {
-  return (
-    <svg viewBox="0 0 200 120" className={cn('h-full w-full', TONE_TEXT[tone])} aria-hidden>
-      <Ground />
-      <rect x="60" y="14" width="80" height="94" rx="2" className="fill-foreground/10 stroke-foreground/40" strokeWidth="1.5" />
-      <rect x="56" y="11" width="88" height="4" rx="1" className="fill-foreground/40" />
-      <rect x="68" y="3" width="11" height="8" rx="2.5" className="fill-foreground/35" />
-      <rect x="82" y="5" width="9" height="6" rx="2.5" className="fill-foreground/30" />
-      <path d="M112 10 l6 -5 h14 l-6 5 z" className="fill-foreground/20 stroke-foreground/35" strokeWidth="0.75" />
-      <rect x="142" y="58" width="10" height="7" rx="1" className="fill-foreground/30 stroke-foreground/40" strokeWidth="0.75" />
-      {[24, 50, 76].map((y) =>
-        y === 50 ? (
-          <g key={y}>
-            <rect x="68" y={y} width="28" height="18" rx="1.5" fill="currentColor" fillOpacity="0.9" />
-            <rect x="104" y={y} width="28" height="18" rx="1.5" fill="currentColor" fillOpacity="0.9" />
-            <rect x="64" y={y + 18} width="72" height="4" rx="1" fill="currentColor" fillOpacity="0.6" />
-          </g>
-        ) : (
-          <g key={y}>
-            <rect x="68" y={y} width="28" height="16" rx="1.5" className="fill-foreground/20" />
-            <rect x="104" y={y} width="28" height="16" rx="1.5" className="fill-foreground/20" />
-          </g>
-        ),
-      )}
-      <rect x="92" y="96" width="16" height="12" className="fill-foreground/30" />
-    </svg>
-  );
-}
 
-/** A shop: striped awning, shop window, door — and a cross in the window for a clinic. */
-export function ShopArt({ tone, cross = false }: { tone: PropertyTone; cross?: boolean }) {
-  return (
-    <svg viewBox="0 0 200 120" className={cn('h-full w-full', TONE_TEXT[tone])} aria-hidden>
-      <Ground />
-      <rect x="40" y="34" width="120" height="74" rx="2" className="fill-foreground/10 stroke-foreground/40" strokeWidth="1.5" />
-      <rect x="48" y="40" width="104" height="12" rx="1.5" className="fill-foreground/25" />
-      {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-        <path
-          key={i}
-          d={`M${40 + i * 15} 56 h15 v8 a7.5 7.5 0 0 1 -15 0 z`}
-          fill="currentColor"
-          fillOpacity={i % 2 ? 0.45 : 0.95}
-        />
-      ))}
-      <rect x="50" y="74" width="62" height="34" rx="1.5" fill="currentColor" fillOpacity="0.25" className="stroke-foreground/30" />
-      <rect x="122" y="74" width="26" height="34" rx="1.5" fill="currentColor" fillOpacity="0.7" />
-      {cross ? (
-        <g transform="translate(81 91)" className="fill-background">
-          <rect x="-3" y="-10" width="6" height="20" rx="1" />
-          <rect x="-10" y="-3" width="20" height="6" rx="1" />
-        </g>
-      ) : null}
-    </svg>
-  );
-}
 
-/** An office: a glazed front, a grid of panes. */
-export function OfficeArt({ tone }: { tone: PropertyTone }) {
-  return (
-    <svg viewBox="0 0 200 120" className={cn('h-full w-full', TONE_TEXT[tone])} aria-hidden>
-      <Ground />
-      <rect x="56" y="18" width="88" height="90" rx="2" fill="currentColor" fillOpacity="0.18" className="stroke-foreground/40" strokeWidth="1.5" />
-      {[0, 1, 2, 3].map((row) =>
-        [0, 1, 2].map((col) => (
-          <rect
-            key={`${row}-${col}`}
-            x={64 + col * 26}
-            y={26 + row * 18}
-            width="20"
-            height="13"
-            rx="1"
-            fill="currentColor"
-            fillOpacity={(row + col) % 3 === 0 ? 0.9 : 0.45}
-          />
-        )),
-      )}
-      <rect x="90" y="96" width="20" height="12" fill="currentColor" fillOpacity="0.7" />
-    </svg>
-  );
-}
 
-/** A warehouse: a shed roof and a roller door. */
-export function WarehouseArt({ tone }: { tone: PropertyTone }) {
-  return (
-    <svg viewBox="0 0 200 120" className={cn('h-full w-full', TONE_TEXT[tone])} aria-hidden>
-      <Ground />
-      <path d="M30 108 V54 L100 30 L170 54 V108 Z" className="fill-foreground/10 stroke-foreground/40" strokeWidth="1.5" />
-      <path d="M26 56 L100 28 L174 56" fill="none" stroke="currentColor" strokeWidth="5" strokeLinejoin="round" />
-      <rect x="66" y="62" width="68" height="46" rx="1.5" fill="currentColor" fillOpacity="0.35" />
-      {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-        <line key={i} x1="66" x2="134" y1={68 + i * 6} y2={68 + i * 6} stroke="currentColor" strokeOpacity="0.8" strokeWidth="1.5" />
-      ))}
-    </svg>
-  );
-}
 
-/** A garage: a sectional door, half up, and the car inside. */
-export function GarageArt({ tone }: { tone: PropertyTone }) {
-  return (
-    <svg viewBox="0 0 200 120" className={cn('h-full w-full', TONE_TEXT[tone])} aria-hidden>
-      <Ground />
-      <path d="M48 108 V48 L100 30 L152 48 V108 Z" className="fill-foreground/10 stroke-foreground/40" strokeWidth="1.5" />
-      <rect x="62" y="58" width="76" height="50" rx="2" className="fill-foreground/20" />
-      {[0, 1, 2].map((i) => (
-        <rect key={i} x="62" y={58 + i * 8} width="76" height="7" rx="1" fill="currentColor" fillOpacity="0.75" />
-      ))}
-      <path d="M72 104 v-8 l8 -10 h40 l8 10 v8 z" fill="currentColor" fillOpacity="0.9" />
-      <circle cx="84" cy="104" r="5" className="fill-foreground/70" />
-      <circle cx="116" cy="104" r="5" className="fill-foreground/70" />
-    </svg>
-  );
-}
 
-/** A column floor: a slab on pillars, open underneath. */
-export function PilotisArt({ tone }: { tone: PropertyTone }) {
-  return (
-    <svg viewBox="0 0 200 120" className={cn('h-full w-full', TONE_TEXT[tone])} aria-hidden>
-      <Ground />
-      <rect x="34" y="40" width="132" height="10" rx="1.5" fill="currentColor" fillOpacity="0.8" />
-      {[44, 78, 112, 146].map((x) => (
-        <rect key={x} x={x} y="50" width="10" height="58" className="fill-foreground/35" />
-      ))}
-    </svg>
-  );
-}
 
-/** A floor with no unit on it: the slab and an empty dashed outline. */
-export function EmptyFloorArt({ tone }: { tone: PropertyTone }) {
-  return (
-    <svg viewBox="0 0 200 120" className={cn('h-full w-full', TONE_TEXT[tone])} aria-hidden>
-      <Ground />
-      <rect x="40" y="46" width="120" height="62" rx="2" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="6 5" />
-      <rect x="34" y="40" width="132" height="6" rx="1.5" className="fill-foreground/40" />
-    </svg>
-  );
-}
 
 /** The columns a floor's units stand in. */
 export function occupiedColumns(blocks: ReadonlyArray<{ startCol: number; endCol: number }>): Set<number> {
@@ -946,11 +792,13 @@ function TentCamp({
   selected,
   onSelect,
   pickAny = false,
+  marker = 'fill',
   locale,
 }: {
-  building: BuildingDetail;
+  building: ElevationBuilding;
   highlight: ReadonlySet<string>;
   tone: PropertyTone;
+  marker?: 'fill' | 'outline';
   locale: string;
   selected: string | null;
   onSelect?: (unitId: string) => void;
@@ -967,16 +815,18 @@ function TentCamp({
         <div className="flex flex-wrap items-end justify-center gap-x-1.5 gap-y-1">
           {tents.map((tent) => {
             const lit = highlight.has(tent.id);
+            const filled = lit && marker === 'fill';
             const art = (
               <svg viewBox="0 0 40 32" className="h-full w-full" aria-hidden>
-                <path d="M2 31 L20 4 L38 31 Z" className={lit ? undefined : 'fill-foreground/30'} fill={lit ? 'currentColor' : undefined} />
+                <path d="M2 31 L20 4 L38 31 Z" className={filled ? undefined : 'fill-foreground/30'} fill={filled ? 'currentColor' : undefined} />
                 <path d="M20 4 L15 31 L25 31 Z" className="fill-background/60" />
                 <line x1="20" y1="4" x2="20" y2="1" className="stroke-foreground/60" strokeWidth="1.5" />
               </svg>
             );
             const className = cn(
               'h-[30px] w-[38px] rounded-sm',
-              lit ? TONE_TEXT[tone] : 'text-foreground',
+              filled ? TONE_TEXT[tone] : 'text-foreground',
+              lit && marker === 'outline' && cn('ring-2 ring-offset-1 ring-offset-background', TONE_RING[tone]),
               (lit || pickAny) && onSelect && 'cursor-pointer hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               tent.id === selected && 'ring-2 ring-foreground ring-offset-1 ring-offset-background',
             );
@@ -1056,6 +906,11 @@ const PLAIN_PANEL = 'bg-foreground/[0.22]';
 const TONE_PANEL: Record<PropertyTone, string> = {
   owner: 'bg-success',
   occupant: 'bg-info',
+};
+/** A highlighted unit's ring when it is outlined, not filled. */
+const TONE_RING: Record<PropertyTone, string> = {
+  owner: 'ring-success',
+  occupant: 'ring-info',
 };
 const TONE_BORDER: Record<PropertyTone, string> = {
   owner: 'border-success',
@@ -1251,11 +1106,11 @@ function UnitFace({
       // «منزل مستقل» — a window either side of its front door, the door's handle.
       return (
         <span aria-hidden className="absolute inset-0 flex items-end justify-evenly px-[6%]">
-          <Window className="mb-[28%] h-[38%] w-[22%] max-w-[16px]" />
+          <Window className="self-center h-[38%] w-[22%] max-w-[16px]" />
           <span className={cn('relative h-[64%] w-[18%] max-w-[13px] rounded-t-[2px]', OPENING)}>
             <span className={cn('absolute end-[20%] top-1/2 size-[2px] rounded-full', TRIM)} />
           </span>
-          <Window className="mb-[28%] h-[38%] w-[22%] max-w-[16px]" />
+          <Window className="self-center h-[38%] w-[22%] max-w-[16px]" />
         </span>
       );
     default: {

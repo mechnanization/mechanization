@@ -128,6 +128,17 @@ export class LandlordLinkService {
   }
 
   /**
+   * One open claim, as the queue shows it — the same match and the same
+   * hydration, so «فحص الرابط» and the row it was opened from cannot disagree.
+   * Null when the claim is no longer open: linked, dismissed, ended, or naming
+   * nobody registered.
+   */
+  async proposal(propertyEntryId: string): Promise<LandlordProposal | null> {
+    const [proposal] = await this.hydrate(await this.matchPairs({ entryId: propertyEntryId }));
+    return proposal ?? null;
+  }
+
+  /**
    * Claims filed *by* one registration that already name a registered citizen —
    * asked right after the save, while the officer is still with the tenant.
    */
@@ -190,6 +201,14 @@ export class LandlordLinkService {
    */
   private async matchPairs(
     scope: {
+      /** One claim — «فحص الرابط». */
+      entryId?: string;
+      /**
+       * Keep the claim even when it is already linked. Only `confirm` asks, so
+       * that a repeated confirm of the person the card is linked to reaches its
+       * no-op through the same match the queue offered them by.
+       */
+      includeLinked?: boolean;
       registrationId?: string;
       /** Claims naming this citizen — by one of these numbers, or by their name. */
       naming?: { citizenId: string; phones: readonly string[] };
@@ -197,13 +216,36 @@ export class LandlordLinkService {
     page?: { limit: number; offset: number },
   ): Promise<MatchPair[]> {
     const S = tenantSchemaRef(this.tenantContext.schemaName);
-    const narrow = scope.registrationId
+    const unlinkedOnly = scope.includeLinked ? Prisma.empty : Prisma.sql`AND pe."landlordCitizenId" IS NULL`;
+    const narrow = scope.entryId
+      ? Prisma.sql`AND pe.id = ${scope.entryId}::uuid`
+      : scope.registrationId
       ? Prisma.sql`AND pe."registrationId" = ${scope.registrationId}::uuid`
       : scope.naming
         ? Prisma.sql`AND (
             pe."landlordPhone" = ANY(${[...scope.naming.phones]}::text[])
             OR ${S}search_compact(pe."landlordName") IN (
               SELECT key FROM citizen_names WHERE citizen_id = ${scope.naming.citizenId}::uuid
+            )
+            OR (
+              -- A pre-filter only: which of these buildings' cards they are actually offered on is decided below.
+              pe."landlordPhone" IS NULL
+              AND (
+                pe."buildingId" IN (
+                  SELECT o."buildingId"
+                  FROM ${S}property_entries o
+                  JOIN ${S}registrations orr ON orr.id = o."registrationId"
+                  WHERE orr."citizenId" = ${scope.naming.citizenId}::uuid
+                    AND o."occupancyType" = 'OWNER' AND o."endedAt" IS NULL
+                )
+                OR pe."buildingId" IN (
+                  SELECT un."buildingId"
+                  FROM ${S}unit_occupancies uo
+                  JOIN ${S}units un ON un.id = uo."unitId"
+                  WHERE uo."citizenId" = ${scope.naming.citizenId}::uuid
+                    AND uo.role = 'OWNER' AND uo."toDate" IS NULL
+                )
+              )
             )
           )`
         : Prisma.empty;
@@ -229,6 +271,36 @@ export class LandlordLinkService {
       each candidate carries how it was found (`phoneCitizenIds`) and the card
       says «مطابقة بالاسم فقط». Name keys are computed once per citizen and
       equi-joined, so Postgres can hash the join as it does the phone one.
+
+      **By the property** is for the occupant who does not know the owner's
+      number — a free occupant living in a relative's flat, a tenant who pays a
+      middleman — and so names nobody the first two can find. Whoever is on the
+      register as the owner of that same property is offered instead: the
+      owner recorded on the flat itself in the buildings register, or a
+      citizen who filed an ownership card on the same building — the second
+      only when the flat has no recorded owner of its own that can still be
+      offered (one «لا أحد منهم» rejected, the filer, or a deactivated file
+      does not count, or rejecting the flat's owner would hide everyone who
+      might really be the landlord). Only for a card
+      with no number, and whose name (if any) found nobody it could still
+      offer: where the occupant gave a number, or a name that is somebody's,
+      that is the evidence, and a building's other owners would bury it. A
+      namesake «لا أحد منهم» rejected, or the filer's own name, is not that
+      evidence any more, so it no longer hides the property's owner — it used
+      to, and the card dropped out of the queue for good. Never preselected
+      and never linked from the queue's row, for the same reason as the name.
+
+      **Which ownership cards on the building count.** «The same building» is
+      not «the same flat»: in a block where every owner filed the flat they
+      own, offering all of them to the tenant of 0301 asked the clerk to pick
+      somebody, and the pick added 0301 to that person's card and bill. So an
+      ownership card is offered only when it names one of the flats the
+      tenant's card claims (`claim_units`, `planTarget`'s own rule), or names
+      no flat at all and its holder is recorded as owner of no other flat in
+      the structure — a whole-building owner, or one the census has not
+      reached. A card naming no flat whose holder *is* recorded on other flats
+      is about those flats: that is how a row-less card claims (see
+      `census-claim.ts`), and offering it here would be the same wrong bill.
     */
     return this.db.$queryRaw<MatchPair[]>`
       WITH citizen_names AS (
@@ -250,33 +322,109 @@ export class LandlordLinkService {
                pe."createdAt" AS created_at,
                pe."landlordLinkDismissedAt" AS dismissed_at,
                pe."landlordLinkDismissedIds" AS dismissed_ids,
-               r."citizenId" AS filer_id
+               r."citizenId" AS filer_id,
+               pe."buildingId" AS building_id,
+               pe."propertyType" AS property_type
         FROM ${S}property_entries pe
         JOIN ${S}registrations r ON r.id = pe."registrationId"
-        WHERE pe."landlordCitizenId" IS NULL
-          AND (pe."landlordPhone" IS NOT NULL OR nullif(btrim(pe."landlordName"), '') IS NOT NULL)
+        WHERE (
+            pe."landlordPhone" IS NOT NULL
+            OR nullif(btrim(pe."landlordName"), '') IS NOT NULL
+            OR pe."buildingId" IS NOT NULL
+          )
           AND pe."occupancyType" <> 'OWNER'
           AND pe."endedAt" IS NULL
+          ${unlinkedOnly}
           ${narrow}
+      ),
+      -- The flats a link on each card would claim: the rule planTarget applies, in SQL.
+      claim_units AS (
+        -- The census units its current rows name, in the building it names.
+        SELECT c.id, bu."unitId" AS unit_id
+        FROM open_claims c
+        JOIN ${S}building_units bu ON bu."propertyEntryId" = c.id AND bu."endedAt" IS NULL
+        JOIN ${S}units un ON un.id = bu."unitId" AND un."buildingId" = c.building_id
+        UNION
+        -- A منزل naming none, on a structure with exactly one unit: that unit.
+        SELECT c.id, un.id
+        FROM open_claims c
+        JOIN ${S}units un ON un."buildingId" = c.building_id
+        WHERE c.property_type = 'HOUSE'
+          AND (SELECT count(*) FROM ${S}units au WHERE au."buildingId" = c.building_id) = 1
+          AND NOT EXISTS (
+            SELECT 1
+            FROM ${S}building_units bu
+            JOIN ${S}units nu ON nu.id = bu."unitId" AND nu."buildingId" = c.building_id
+            WHERE bu."propertyEntryId" = c.id AND bu."endedAt" IS NULL
+          )
       ),
       matched AS (
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
-               u.id AS citizen_id, u."createdAt" AS citizen_created_at, true AS by_phone
+               u.id AS citizen_id, u."createdAt" AS citizen_created_at, 'PHONE' AS how, NULL::text AS src
         FROM open_claims c
         JOIN ${S}users u ON u.phone = c.phone AND u.kind = 'CITIZEN' AND u."isActive"
         UNION
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
-               u.id AS citizen_id, u."createdAt" AS citizen_created_at, true AS by_phone
+               u.id AS citizen_id, u."createdAt" AS citizen_created_at, 'PHONE' AS how, NULL::text
         FROM open_claims c
         JOIN ${S}users u ON u.whatsapp = c.phone AND u.kind = 'CITIZEN' AND u."isActive"
         UNION
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
-               n.citizen_id, n.citizen_created_at, false AS by_phone
+               n.citizen_id, n.citizen_created_at, 'NAME' AS how, NULL::text
         FROM open_claims c
         JOIN citizen_names n ON n.key = c.name_key
+        UNION
+        -- The owner recorded on the very flat the card claims.
+        SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
+               u.id, u."createdAt", 'PROPERTY' AS how, 'FLAT'::text
+        FROM open_claims c
+        JOIN claim_units cu ON cu.id = c.id
+        JOIN ${S}unit_occupancies uo
+          ON uo."unitId" = cu.unit_id AND uo.role = 'OWNER' AND uo."toDate" IS NULL
+        JOIN ${S}users u ON u.id = uo."citizenId" AND u.kind = 'CITIZEN' AND u."isActive"
+        WHERE c.phone IS NULL
+        UNION
+        -- A citizen whose ownership card on the same building is about this flat, or the whole structure.
+        -- Yields to the flat's own recorded owner — but only one still offerable (see offered, below).
+        SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
+               u.id, u."createdAt", 'PROPERTY' AS how, 'BUILDING'::text
+        FROM open_claims c
+        JOIN ${S}property_entries o
+          ON o."buildingId" = c.building_id AND o."occupancyType" = 'OWNER' AND o."endedAt" IS NULL
+        JOIN ${S}registrations orr ON orr.id = o."registrationId"
+        JOIN ${S}users u ON u.id = orr."citizenId" AND u.kind = 'CITIZEN' AND u."isActive"
+        WHERE c.phone IS NULL AND c.building_id IS NOT NULL
+          AND (
+            -- The card names one of the flats this card claims…
+            EXISTS (
+              SELECT 1
+              FROM ${S}building_units obu
+              JOIN claim_units cu ON cu.id = c.id AND cu.unit_id = obu."unitId"
+              WHERE obu."propertyEntryId" = o.id AND obu."endedAt" IS NULL
+            )
+            -- …or names no flat, and its holder is recorded as owner of no other flat here.
+            OR (
+              NOT EXISTS (
+                SELECT 1
+                FROM ${S}building_units obu
+                WHERE obu."propertyEntryId" = o.id AND obu."endedAt" IS NULL AND obu."unitId" IS NOT NULL
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM ${S}unit_occupancies ouo
+                JOIN ${S}units oun ON oun.id = ouo."unitId"
+                WHERE ouo."citizenId" = orr."citizenId"
+                  AND ouo.role = 'OWNER' AND ouo."toDate" IS NULL
+                  AND oun."buildingId" = c.building_id
+                  AND NOT EXISTS (
+                    SELECT 1 FROM claim_units cu WHERE cu.id = c.id AND cu.unit_id = ouo."unitId"
+                  )
+              )
+            )
+          )
       ),
-      offered AS (
-        SELECT id, created_at, citizen_id, by_phone
+      screened AS (
+        SELECT id, created_at, citizen_id, how, src
         FROM matched
         WHERE citizen_id <> filer_id
           AND NOT (citizen_id = ANY(dismissed_ids))
@@ -285,10 +433,31 @@ export class LandlordLinkService {
             AND cardinality(dismissed_ids) = 0
             AND citizen_created_at <= dismissed_at
           )
+      ),
+      offered AS (
+        -- By the property only where the name found nobody it can still offer;
+        -- by the building only where the flat's own recorded owner is not one
+        -- that can still be offered. Both judged after screening, so an owner
+        -- «لا أحد منهم» rejected, the filer, or a deactivated file stops
+        -- hiding the others — the same reason the namesake rule moved here.
+        SELECT s.id, s.created_at, s.citizen_id, s.how
+        FROM screened s
+        WHERE s.how <> 'PROPERTY'
+           OR (
+             NOT EXISTS (SELECT 1 FROM screened n WHERE n.id = s.id AND n.how = 'NAME')
+             AND (
+               s.src <> 'BUILDING'
+               OR NOT EXISTS (
+                 SELECT 1 FROM screened f WHERE f.id = s.id AND f.src = 'FLAT' AND f.citizen_id <> s.citizen_id
+               )
+             )
+           )
       )
       SELECT id AS "entryId",
              array_agg(DISTINCT citizen_id) AS "citizenIds",
-             coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE by_phone), '{}') AS "phoneCitizenIds",
+             coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE how = 'PHONE'), '{}') AS "phoneCitizenIds",
+             coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE how = 'NAME'), '{}') AS "nameCitizenIds",
+             coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE how = 'PROPERTY'), '{}') AS "propertyCitizenIds",
              count(*) OVER()::int AS total
       FROM offered
       GROUP BY id, created_at
@@ -334,7 +503,11 @@ export class LandlordLinkService {
               Said per candidate, because one card can hold both kinds: the
               father on the household number and a namesake found by name.
             */
-            matchedBy: pair.phoneCitizenIds.includes(citizen.id) ? ('PHONE' as const) : ('NAME' as const),
+            matchedBy: pair.phoneCitizenIds.includes(citizen.id)
+              ? ('PHONE' as const)
+              : pair.nameCitizenIds.includes(citizen.id)
+                ? ('NAME' as const)
+                : ('PROPERTY' as const),
             outcome: plan?.block ? null : (plan?.outcome ?? null),
             blocked: plan?.block ?? null,
           };
@@ -736,8 +909,15 @@ export class LandlordLinkService {
       say this person, by number or by name.
     */
     const matchedByName = !matchedByPhone && landlordNameMatches(entry.landlordName, citizen);
-    if (!matchedByPhone && !matchedByName) {
-      throw new ValidationError('رقم هاتف المالك أو اسمه لا يطابق هذا المواطن', {
+    /*
+      Or, on a card with no number, they are on the register as this
+      property's owner — the third way `matchPairs` offers, and only where it
+      offers it.
+    */
+    const matchedByProperty =
+      !matchedByPhone && !matchedByName && !claimed && (await this.ownsClaimedProperty(entry, citizen.id));
+    if (!matchedByPhone && !matchedByName && !matchedByProperty) {
+      throw new ValidationError('رقم هاتف المالك أو اسمه لا يطابق هذا المواطن، وليس مالكاً مسجَّلاً لهذا العقار', {
         propertyEntryId: input.propertyEntryId,
         citizenId: input.citizenId,
       });
@@ -813,7 +993,11 @@ export class LandlordLinkService {
       entryId: entry.id,
       footprint,
       // A name-only link is the weaker kind, and the audit row says which it was.
-      ...(matchedByName ? { detail: { matchedBy: 'NAME' } } : {}),
+      ...(matchedByName
+        ? { detail: { matchedBy: 'NAME' } }
+        : matchedByProperty
+          ? { detail: { matchedBy: 'PROPERTY' } }
+          : {}),
       actor: input.actor,
     });
 
@@ -825,6 +1009,23 @@ export class LandlordLinkService {
       rowsAdded: footprint.units.filter((unit) => unit.row).length,
       outcome: plan.outcome,
     };
+  }
+
+  /**
+   * Whether this citizen is on the register as the owner of the property a
+   * card names, as the queue decides it: recorded as owner of one of the
+   * flats it claims, or the filer of an ownership card on its building that
+   * is about one of those flats or the whole structure — and not somebody
+   * «لا أحد منهم» rejected on this card.
+   *
+   * Asked of `matchPairs` itself rather than restated: this used to be a
+   * second, wider copy of the rule (any ownership card on the building), so
+   * `confirm` accepted owners of other flats the queue was supposed to keep
+   * out, and put the tenant's flat on their bill.
+   */
+  private async ownsClaimedProperty(entry: { id: string }, citizenId: string): Promise<boolean> {
+    const pairs = await this.matchPairs({ entryId: entry.id, includeLinked: true });
+    return pairs.some((pair) => pair.propertyCitizenIds.includes(citizenId));
   }
 
   /**
@@ -2691,6 +2892,10 @@ interface MatchPair {
   citizenIds: string[];
   /** The subset of `citizenIds` whose number the card names. */
   phoneCitizenIds: string[];
+  /** Whose name the card names (and not their number). The rest were found by the property. */
+  nameCitizenIds: string[];
+  /** Who was found by the property — what `confirm` checks a «PROPERTY» link against. */
+  propertyCitizenIds: string[];
   total: number;
 }
 
@@ -3076,9 +3281,11 @@ export interface LandlordProposal {
     LandlordCandidate & {
       /**
        * How this person was found: the card's number is theirs (`PHONE`), or
-       * only the typed name is (`NAME`) — never preselected, and said so.
+       * only the typed name is (`NAME`), or — on a card with no number — they
+       * are the property's registered owner (`PROPERTY`). Only `PHONE` is
+       * ever preselected.
        */
-      matchedBy: 'PHONE' | 'NAME';
+      matchedBy: 'PHONE' | 'NAME' | 'PROPERTY';
       outcome: LinkOutcome | null;
       blocked: LinkBlock | null;
     }

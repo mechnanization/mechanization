@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import type { ColumnDef, PaginationState } from '@tanstack/react-table';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   Building2,
   ClipboardCheck,
@@ -20,11 +20,12 @@ import {
   X,
 } from 'lucide-react';
 import {
+  BUILDING_LIFECYCLE,
+  DAMAGE_LEVEL,
   getLabels,
-  type BuildingLifecycle,
+  STRUCTURE_TYPE,
+  SURVEY_STATUS,
   type DamageLevel,
-  type StructureType,
-  type SurveyStatus,
 } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
@@ -37,6 +38,7 @@ import {
   type ZoneSummary,
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
+import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
@@ -44,13 +46,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { FilterInput, FilterSelect } from '@/components/ui/filter-controls';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { useToast } from '@/components/ui/toast';
@@ -78,6 +74,27 @@ import { cn } from '@/lib/utils';
  */
 
 const PAGE_SIZE = 25;
+
+/**
+ * The ledger's filters, in the query string so a reload, the back button from
+ * a building's matrix and a link passed to a colleague all land on the same
+ * slice. Every value is a sector id, an enum or a parcel number — nothing that
+ * names a person. The free-text search is not here: it can hold a name, so it
+ * lives in tab storage (`useTabSearch`).
+ *
+ * The four enum lists are the type system's, used only to reject a stale or
+ * hand-edited value; what the selects *offer* is still read off the census
+ * (`getBuildingFilterOptions`).
+ */
+const FILTERS = {
+  zone: param.id(),
+  parcel: param.string(),
+  structure: param.oneOf(STRUCTURE_TYPE, ''),
+  lifecycle: param.oneOf(BUILDING_LIFECYCLE, ''),
+  survey: param.oneOf(SURVEY_STATUS, ''),
+  damage: param.oneOf(DAMAGE_LEVEL, ''),
+  noEntrance: param.flag(),
+};
 
 /**
  * How many rows one export will page through before it stops.
@@ -189,26 +206,27 @@ export default function BuildingsPage({
   const canDelete = role === 'SUPER_ADMIN';
 
   // ── Filters ───────────────────────────────────────────────────────
-  const [search, setSearch] = useState('');
-  const [zoneId, setZoneId] = useState('');
-  const [parcelNumber, setParcelNumber] = useState('');
-  const [parcelInput, setParcelInput] = useState('');
-  const [structureType, setStructureType] = useState('');
-  const [lifecycleStatus, setLifecycleStatus] = useState('');
-  const [surveyStatus, setSurveyStatus] = useState('');
-  const [damageLevel, setDamageLevel] = useState('');
-  /**
-   * «بلا مدخل مُثبت», as a filter rather than a select.
-   *
-   * Only one direction of it is worth offering. "Structures that *do* have a
-   * pin" is not a question anybody asks; "the ones that do not" is a morning's
-   * dispatch list, so this is a toggle the tile turns on.
-   */
-  const [withoutEntrance, setWithoutEntrance] = useState(false);
-  const [pagination, setPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: PAGE_SIZE,
-  });
+  const [search, setSearch] = useTabSearch(tenant, 'buildings');
+  const [filters, setFilters] = useUrlState(FILTERS);
+  const {
+    zone: zoneId,
+    parcel: parcelNumber,
+    structure: structureType,
+    lifecycle: lifecycleStatus,
+    survey: surveyStatus,
+    damage: damageLevel,
+    /*
+      «بلا مدخل مُثبت», as a filter rather than a select.
+
+      Only one direction of it is worth offering. "Structures that *do* have a
+      pin" is not a question anybody asks; "the ones that do not" is a
+      morning's dispatch list, so this is a toggle the tile turns on.
+    */
+    noEntrance: withoutEntrance,
+  } = filters;
+  /** What is typed in the parcel box; `parcelNumber` (the URL) is what was committed. */
+  const [parcelInput, setParcelInput] = useState(parcelNumber);
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: PAGE_SIZE });
 
   const activeFilters =
     [
@@ -223,49 +241,50 @@ export default function BuildingsPage({
     ].filter(Boolean).length;
 
   /**
+   * Any filter change is a different question, so it starts at page one —
+   * `?page=` is dropped in the same write as the new filter.
+   *
+   * Without this, narrowing a 300-row census to four unsafe buildings while on
+   * page five shows an empty table and a pager that says there is nothing —
+   * which reads as "no results" rather than "you are past the end". The search
+   * box needs no call here: `DataTable` resets the page itself on a search.
+   */
+  const setFilter = useCallback(
+    (patch: Parameters<typeof setFilters>[0]) => setFilters(patch, { clear: ['page'] }),
+    [setFilters],
+  );
+
+  /**
    * The parcel box is debounced; every other filter is not.
    *
    * A select fires once per decision, so it queries once. A text field fires
    * per keystroke, and «1042» typed at speed is four queries of which three are
    * about parcels 1, 10 and 104 — each a real answer to a question nobody
    * asked, and on a field connection each one delays the one that matters.
+   * So only the settled value reaches the URL — one write, not one per digit.
    */
   useEffect(() => {
     const next = parcelInput.trim();
     if (next === parcelNumber) return;
-    const timer = setTimeout(() => {
-      setParcelNumber(next);
-      setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-    }, 350);
+    const timer = setTimeout(() => setFilter({ parcel: next }), 350);
     return () => clearTimeout(timer);
-  }, [parcelInput, parcelNumber]);
+  }, [parcelInput, parcelNumber, setFilter]);
 
-  /**
-   * Any filter change is a different question, so it starts at page one.
-   *
-   * Without this, narrowing a 300-row census to four unsafe buildings while on
-   * page five shows an empty table and a pager that says there is nothing —
-   * which reads as "no results" rather than "you are past the end".
-   */
-  const setFilter = useCallback((apply: () => void) => {
-    apply();
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, []);
-
-  const clearFilters = () =>
-    setFilter(() => {
-      setSearch('');
-      setZoneId('');
-      setParcelInput('');
-      setParcelNumber('');
-      setStructureType('');
-      setSurveyStatus('');
-      setDamageLevel('');
-      setWithoutEntrance(false);
-      // `lifecycleStatus` is deliberately absent here, as it was before —
-      // clearing it is not part of what «مسح الفلاتر» has ever meant on this
-      // page. Left alone rather than quietly changed alongside a new filter.
+  const clearFilters = () => {
+    setSearch('');
+    setParcelInput('');
+    setFilter({
+      zone: '',
+      parcel: '',
+      structure: '',
+      survey: '',
+      damage: '',
+      noEntrance: false,
+      // `lifecycle` is deliberately absent here, as it was before — clearing
+      // it is not part of what «مسح الفلاتر» has ever meant on this page. Left
+      // alone rather than quietly changed alongside a new filter.
     });
+  };
 
   // ── Data ──────────────────────────────────────────────────────────
   /*
@@ -339,10 +358,10 @@ export default function BuildingsPage({
           search: search || undefined,
           zoneId: zoneId || undefined,
           parcelNumber: parcelNumber || undefined,
-          structureType: (structureType as StructureType) || undefined,
-          lifecycleStatus: (lifecycleStatus as BuildingLifecycle) || undefined,
-          surveyStatus: (surveyStatus as SurveyStatus) || undefined,
-          damageLevel: (damageLevel as DamageLevel) || undefined,
+          structureType: structureType || undefined,
+          lifecycleStatus: lifecycleStatus || undefined,
+          surveyStatus: surveyStatus || undefined,
+          damageLevel: damageLevel || undefined,
           // `false` is the whole point of the filter, so it cannot be `||`-ed
           // away like the string selects above.
           hasEntrance: withoutEntrance ? false : undefined,
@@ -416,10 +435,10 @@ export default function BuildingsPage({
         search: search || undefined,
         zoneId: zoneId || undefined,
         parcelNumber: parcelNumber || undefined,
-        structureType: (structureType as StructureType) || undefined,
-        lifecycleStatus: (lifecycleStatus as BuildingLifecycle) || undefined,
-        surveyStatus: (surveyStatus as SurveyStatus) || undefined,
-        damageLevel: (damageLevel as DamageLevel) || undefined,
+        structureType: structureType || undefined,
+        lifecycleStatus: lifecycleStatus || undefined,
+        surveyStatus: surveyStatus || undefined,
+        damageLevel: damageLevel || undefined,
         // The export follows the filters exactly — see the note above; a CSV
         // that quietly ignored one of them is how two people read the same
         // screen and disagree about what it said.
@@ -925,7 +944,7 @@ export default function BuildingsPage({
             manualFiltering
             sortable={false}
             searchValue={search}
-            onSearchChange={(value) => setFilter(() => setSearch(value))}
+            onSearchChange={setSearch}
             pageCount={Math.max(Math.ceil(total / pagination.pageSize), 1)}
             totalRowCount={total}
             pagination={pagination}
@@ -943,14 +962,14 @@ export default function BuildingsPage({
                   <FilterSelect
                     label={en ? 'Sector' : 'القطاع'}
                     value={zoneId}
-                    onChange={(value) => setFilter(() => setZoneId(value))}
+                    onChange={(value) => setFilter({ zone: value })}
                     options={zones.map((zone) => ({ value: zone.id, label: zone.name }))}
                     allLabel={en ? 'All sectors' : 'كل القطاعات'}
                   />
                   <FilterSelect
                     label={en ? 'Structure' : 'المنشأة'}
                     value={structureType}
-                    onChange={(value) => setFilter(() => setStructureType(value))}
+                    onChange={(value) => setFilter({ structure: value })}
                     options={(filterOptions?.structureTypes ?? []).map((value) => ({
                       value,
                       label: labels.structureType[value],
@@ -960,7 +979,7 @@ export default function BuildingsPage({
                   <FilterSelect
                     label={en ? 'Construction' : 'الحالة الإنشائية'}
                     value={lifecycleStatus}
-                    onChange={(value) => setFilter(() => setLifecycleStatus(value))}
+                    onChange={(value) => setFilter({ lifecycle: value })}
                     options={(filterOptions?.lifecycleStatuses ?? []).map((value) => ({
                       value,
                       label: labels.buildingLifecycle[value],
@@ -970,7 +989,7 @@ export default function BuildingsPage({
                   <FilterSelect
                     label={en ? 'Survey' : 'المسح'}
                     value={surveyStatus}
-                    onChange={(value) => setFilter(() => setSurveyStatus(value))}
+                    onChange={(value) => setFilter({ survey: value })}
                     options={(filterOptions?.surveyStatuses ?? []).map((value) => ({
                       value,
                       label: labels.surveyStatus[value],
@@ -980,7 +999,7 @@ export default function BuildingsPage({
                   <FilterSelect
                     label={en ? 'Condition' : 'الضرر'}
                     value={damageLevel}
-                    onChange={(value) => setFilter(() => setDamageLevel(value))}
+                    onChange={(value) => setFilter({ damage: value })}
                     options={(filterOptions?.damageLevels ?? []).map((value) => ({
                       value,
                       label: labels.damageLevel[value],
@@ -988,38 +1007,22 @@ export default function BuildingsPage({
                     allLabel={en ? 'Any condition' : 'كل مستويات الضرر'}
                   />
 
-                  {/* Parcel input with clear button */}
-                  <div className="relative w-full sm:w-32">
-                    <input
-                      value={parcelInput}
-                      onChange={(event) => setParcelInput(event.target.value)}
-                      dir="ltr"
-                      inputMode="numeric"
-                      aria-label={en ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
-                      placeholder={en ? 'Parcel #' : 'رقم العقار'}
-                      className={cn(
-                        'h-9 w-full rounded-md border bg-background px-3 text-start text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring transition-colors',
-                        parcelInput
-                          ? 'border-primary/60 bg-primary/5 text-primary font-medium pe-7'
-                          : 'border-input hover:bg-accent/50',
-                      )}
-                    />
-                    {parcelInput ? (
-                      <button
-                        type="button"
-                        onClick={() => setParcelInput('')}
-                        aria-label={en ? 'Clear parcel number' : 'مسح رقم العقار'}
-                        className="absolute end-1.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        <X className="size-3" />
-                      </button>
-                    ) : null}
-                  </div>
+                  <FilterInput
+                    label={en ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
+                    value={parcelInput}
+                    onChange={setParcelInput}
+                    placeholder={en ? 'Parcel #' : 'رقم العقار'}
+                    clearLabel={en ? 'Clear parcel number' : 'مسح رقم العقار'}
+                    inputMode="numeric"
+                    dir="ltr"
+                  />
 
                   {/* Without entrance toggle */}
                   <button
                     type="button"
-                    onClick={() => setFilter(() => setWithoutEntrance((on) => !on))}
+                    // Toggled off the live URL, not the render's value, which
+                    // can trail a quick second click by one write.
+                    onClick={() => setFilter((current) => ({ noEntrance: !current.noEntrance }))}
                     aria-pressed={withoutEntrance}
                     className={cn(
                       'flex h-9 w-full sm:w-auto items-center justify-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors',
@@ -1091,73 +1094,12 @@ export default function BuildingsPage({
         }
         confirmLabel={en ? 'Delete' : 'حذف'}
         cancelLabel={en ? 'Cancel' : 'إلغاء'}
+        busyLabel={en ? 'Working…' : 'جارٍ التنفيذ…'}
         onConfirm={async () => {
           if (pendingDelete) await removeBuilding(pendingDelete);
         }}
       />
     </div>
-  );
-}
-
-/** One filter select, with its own «الكل» option carrying the empty value. */
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-  allLabel,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: Array<{ value: string; label: string }>;
-  allLabel: string;
-}) {
-  /*
-    Radix refuses an empty-string `SelectItem` value, because that is how it
-    spells "nothing selected". So «الكل» carries a sentinel and is translated at
-    the boundary — the filter state stays an empty string, which is what the
-    query builder already treats as absent.
-  */
-  const ALL = '__all__';
-  /*
-    Nothing to choose between.
-
-    The options are now the values the census holds, so an empty list is a real
-    statement: no building has been assessed yet, nobody has recorded a
-    lifecycle other than the default. A select that opens onto «كل الأنواع» and
-    nothing else is a control that cannot change the answer, and offering it
-    invites the reader to look for a filter that is not there. It is also the
-    state while the list is still loading, which is the same thing from the
-    reader's side — there is nothing to pick yet.
-  */
-  const empty = options.length === 0;
-  return (
-    <Select
-      value={value || ALL}
-      onValueChange={(next) => onChange(next === ALL ? '' : next)}
-      disabled={empty}
-    >
-      <SelectTrigger
-        aria-label={label}
-        className={cn(
-          'h-9 w-full sm:w-auto min-w-[130px] flex-1 sm:flex-initial gap-2 text-xs transition-colors',
-          value
-            ? 'border-primary/60 bg-primary/5 text-primary font-medium'
-            : 'border-input bg-background hover:bg-accent/50',
-        )}
-      >
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={ALL}>{allLabel}</SelectItem>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   );
 }
 

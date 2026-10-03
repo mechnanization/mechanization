@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   AlertTriangle,
@@ -70,6 +69,8 @@ import {
 import { ACTION_TINT } from '@/lib/action-tint';
 import { formatDate, monthNames } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
+import { useTableLabels } from '@/lib/use-table-labels';
+import { stashLinkSeed } from '@/lib/tab-search';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -89,7 +90,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Checkbox } from '@/components/ui/checkbox';
-import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { DataTable } from '@/components/ui/data-table';
 import { Field, FieldFlagProvider } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -831,13 +832,15 @@ export function AddPersonForm({
   busy: boolean;
   locale: string;
   /**
-   * The registration form, pointed at this unit, with نوع الملف preset and the
-   * officer's search term carried across as the name or phone to start from.
+   * The registration form, pointed at this unit, with نوع الملف preset. The
+   * officer's search term goes across too, as the name or phone to start from —
+   * stashed in tab storage on the click (`stashLinkSeed`), never in the URL,
+   * because it is a person's name or number.
    *
    * Absent where the caller cannot build an admin URL; the search still works
    * and the no-match line says to register the person first.
    */
-  newFileHref?: (residence: CitizenResidence, name: string) => string;
+  newFileHref?: (residence: CitizenResidence) => string;
   /**
    * The «تأكيد الشغور» standing on this unit, when there is one.
    *
@@ -1166,14 +1169,16 @@ export function AddPersonForm({
               </p>
               <div className="flex flex-wrap gap-2">
                 <Link
-                  href={newFileHref('RESIDENT', term.trim())}
+                  href={newFileHref('RESIDENT')}
+                  onClick={() => stashLinkSeed(tenant, newFileHref('RESIDENT'), term)}
                   className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
                 >
                   <UsersRound className="size-4" aria-hidden />
                   {labels.citizenResidence.RESIDENT}
                 </Link>
                 <Link
-                  href={newFileHref('NON_RESIDENT_OWNER', term.trim())}
+                  href={newFileHref('NON_RESIDENT_OWNER')}
+                  onClick={() => stashLinkSeed(tenant, newFileHref('NON_RESIDENT_OWNER'), term)}
                   className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
                 >
                   <MapPin className="size-4" aria-hidden />
@@ -2275,11 +2280,14 @@ export function OccupantList({
   onLinkOwner,
   session,
   onOwnershipEnded,
+  compact = false,
 }: {
   unit: UnitWithOccupants;
   locale: string;
   canWrite: boolean;
   busy: boolean;
+  /** One card per person at every width — for a narrow side panel. */
+  compact?: boolean;
   /** Where a name links to; plain text when absent. */
   citizenHref?: (citizenId: string) => string;
   onEnd: (occupant: UnitOccupant, input: EndOccupancyAnswer) => Promise<void>;
@@ -2310,7 +2318,7 @@ export function OccupantList({
 
   const shown = unit.occupants.filter((occupant) => occupant.endReason !== 'RECORDED_IN_ERROR');
   const hidden = unit.occupants.length - shown.length;
-  const tableLabels = useOccupantTableLabels();
+  const tableLabels = useTableLabels();
 
   /*
     Columns only some flats need are left out where no row would fill them:
@@ -2581,6 +2589,7 @@ export function OccupantList({
             sortable={false}
             paginated={false}
             fixedLayout
+            layout={compact ? 'cards' : 'responsive'}
           />
         </section>
       ) : null}
@@ -2669,37 +2678,6 @@ function OwnerLinkCell({ link, en }: { link: OccupantOwnerLink; en: boolean }) {
       {en ? 'Not linked to an owner' : 'غير مربوط بمالك'}
       {link.typedName ? (en ? ` (named: ${link.typedName})` : ` (ذكر: ${link.typedName})`) : null}
     </CellTag>
-  );
-}
-
-/**
- * The occupant table's labels, from `messages.table` (§17: not another copy
- * of `getTableLabels`). Search and paging are off on this table, so only the
- * empty, error and sort strings are ever read; the rest are filled so the
- * type holds.
- */
-function useOccupantTableLabels(): DataTableLabels {
-  const t = useTranslations('table');
-  return useMemo(
-    () => ({
-      searchAriaLabel: t('search'),
-      searchPlaceholder: t('search'),
-      clearSearch: t('clearSearch'),
-      searchHint: 'Enter',
-      empty: t('empty'),
-      emptySearch: t('emptySearch'),
-      loadError: t('loadError'),
-      retry: t('retry'),
-      previous: t('previous'),
-      next: t('next'),
-      pageOf: t.raw('pageOf') as string,
-      rowsPerPage: t('rowsPerPage'),
-      totalRows: t.raw('totalRows') as string,
-      sortAscending: t('sortAsc'),
-      sortDescending: t('sortDesc'),
-      sortNone: t('sortNone'),
-    }),
-    [t],
   );
 }
 

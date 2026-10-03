@@ -3,23 +3,7 @@
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import type { ColumnDef } from '@tanstack/react-table';
-import {
-  CalendarClock,
-  CheckCircle2,
-  ClipboardList,
-  Grid3x3,
-  Link2,
-  Pencil,
-  Plus,
-  RotateCcw,
-  TrendingUp,
-  Trash2,
-  UserPlus,
-  X,
-} from 'lucide-react';
-import { getLabels, type CaseStatus, type CaseType } from '@mechanization/shared-schemas';
-import type { CitizenListItem } from '@/lib/api-client';
+import { ClipboardList, Filter, Plus, TrendingUp, X } from 'lucide-react';
 import {
   ApiRequestError,
   deleteCase,
@@ -31,116 +15,23 @@ import {
 import type { CaseSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { formatDate } from '@/lib/dates';
-import { CellTag } from '@/components/ui/cell-tag';
+import { useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DatePicker } from '@/components/ui/date-picker';
-import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { FilterInput, FilterSelect } from '@/components/ui/filter-controls';
+import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
-import { ActionTooltip } from '@/components/ui/tooltip';
-import { LinkCaseCitizenDialog } from '@/components/admin/link-case-citizen-dialog';
-import { cn } from '@/lib/utils';
 import { BuildingUnitMatrixDrawer } from '@/components/admin/building-unit-matrix-drawer';
-
-function getTableLabels(locale: string): DataTableLabels {
-  if (locale === 'en') {
-    return {
-      searchAriaLabel: 'Search cases',
-      searchPlaceholder: 'Search by property number, neighborhood, or notes…',
-      clearSearch: 'Clear search',
-      searchHint: 'Enter',
-      searchApplied: 'Search: "{term}"',
-      empty: 'No cases logged yet.',
-      emptySearch: 'No results match your search.',
-      loadError: 'Failed to load cases.',
-      retry: 'Retry',
-      previous: 'Previous',
-      next: 'Next',
-      pageOf: 'Page {current} of {total}',
-      rowsPerPage: 'Rows per page',
-      totalRows: '{count} cases',
-      sortAscending: 'Sort ascending',
-      sortDescending: 'Sort descending',
-      sortNone: 'Clear sorting',
-      columns: 'Columns',
-      columnsHint: 'Visible columns',
-      resetColumns: 'Reset to default',
-    };
-  }
-  return {
-    searchAriaLabel: 'بحث في الحالات',
-    searchPlaceholder: 'ابحث برقم العقار أو الحي أو الملاحظات…',
-    clearSearch: 'مسح البحث',
-    searchHint: 'Enter',
-    searchApplied: 'بحث: «{term}»',
-    empty: 'لا توجد حالات مسجّلة بعد.',
-    emptySearch: 'لا نتائج مطابقة لبحثك.',
-    loadError: 'تعذّر تحميل الحالات.',
-    retry: 'إعادة المحاولة',
-    previous: 'السابق',
-    next: 'التالي',
-    pageOf: 'صفحة {current} من {total}',
-    rowsPerPage: 'عدد الصفوف',
-    totalRows: '{count} حالة',
-    sortAscending: 'ترتيب تصاعدي',
-    sortDescending: 'ترتيب تنازلي',
-    sortNone: 'إلغاء الترتيب',
-    columns: 'الأعمدة',
-    columnsHint: 'الأعمدة الظاهرة',
-    resetColumns: 'استعادة الافتراضي',
-  };
-}
-
-/**
- * The four tabs, as groups of `CaseType` rather than one type each.
- *
- * The tab an officer wants is not "cases of type X", it is "cases I do the same
- * thing about". A locked door and a flat somebody thinks is empty are both
- * *go back and knock*; a refusal and an ownership dispute both need a person
- * with authority rather than another visit. Grouping them is what makes the
- * tabs a work queue instead of a second copy of the enum.
- *
- * `null` on the first tab is "no filter", not "no type" — every case is in it.
- */
-const CASE_TABS: ReadonlyArray<{
-  id: string;
-  ar: string;
-  en: string;
-  types: readonly CaseType[] | null;
-}> = [
-  { id: 'all', ar: 'الكل', en: 'All', types: null },
-  {
-    id: 'revisit',
-    ar: 'إعادة زيارة',
-    en: 'Revisit',
-    types: ['UNIT_UNREACHABLE', 'VACANT_UNCONFIRMED'],
-  },
-  {
-    id: 'disputes',
-    ar: 'رفض ونزاعات',
-    en: 'Refusals & disputes',
-    types: ['ACCESS_REFUSED', 'OWNERSHIP_DISPUTE'],
-  },
-  { id: 'notes', ar: 'ملاحظات', en: 'Notes', types: ['GENERAL_NOTE'] },
-];
-
-/**
- * The next state a quick tap moves a case to — `OPEN → SCHEDULED → RESOLVED`,
- * and from `RESOLVED` back to `OPEN`.
- *
- * A cycle rather than three buttons, because it is one control in a table row
- * and the order is the order a case actually travels: somebody agrees to a
- * revisit before the revisit happens. Reopening from the end is the correction
- * path — a case closed in error, or a household that moved out again.
- */
-function nextStatus(status: CaseStatus): CaseStatus {
-  if (status === 'OPEN') return 'SCHEDULED';
-  if (status === 'SCHEDULED') return 'RESOLVED';
-  return 'OPEN';
-}
+import { CASE_FILTERS, CASE_TABS, TYPED_FILTER_DELAY_MS } from '@/components/admin/cases/case-queues';
+import { nextStatus } from '@/components/admin/cases/case-status';
+import { getCaseTableLabels } from '@/components/admin/cases/case-table-labels';
+import { useCaseColumns } from '@/components/admin/cases/use-case-columns';
+import { useCaseLinking } from '@/components/admin/cases/use-case-linking';
+import { CaseLinkDialog, CaseUnlinkDialog } from '@/components/admin/cases/case-link-dialogs';
+import { CaseQueueTabs } from '@/components/admin/cases/case-queue-tabs';
 
 /**
  * حالات — field visits that could not become a citizen registration.
@@ -149,8 +40,8 @@ function nextStatus(status: CaseStatus): CaseStatus {
  * staff could observe about the property gets kept instead of lost before the
  * next visit. Not a citizen record on its own, but `resolvedCitizenId` bridges
  * to one once someone does register the resident — see `LinkCaseCitizenDialog`
- * and the "Register Citizen" action below, which are the two ways that link
- * gets made.
+ * and the "Register Citizen" action in `useCaseColumns`, which are the two ways
+ * that link gets made.
  *
  * Logging and editing happen on their own pages (`cases/new`, `cases/[id]/edit`)
  * rather than in a dialog here — see `CaseEditor` for why.
@@ -181,15 +72,45 @@ export default function CasesPage({
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<CaseSummary | null>(null);
-  const [linking, setLinking] = useState<CaseSummary | null>(null);
-  const [linkSubmitting, setLinkSubmitting] = useState(false);
-  const [linkError, setLinkError] = useState<string | null>(null);
 
   // ── Tabs and census filters (P3-T7) ────────────────────────────────
-  const [tab, setTab] = useState('all');
-  const [zoneId, setZoneId] = useState('');
-  const [parcelNumber, setParcelNumber] = useState('');
-  const [buildingCode, setBuildingCode] = useState('');
+  const [filters, setFilters] = useUrlState(CASE_FILTERS);
+  const { tab, zone: zoneId } = filters;
+  /*
+    Every filter narrows the rows, and a narrower list starts again from its
+    first page — `{ clear: ['page'] }` on each write. The table used to get that
+    for free from TanStack resetting on new data; with the page owned by the URL
+    that reset is off, so a reload of `?page=3` stays on page three.
+  */
+  const narrow = useCallback(
+    (patch: Parameters<typeof setFilters>[0]) => setFilters(patch, { clear: ['page'] }),
+    [setFilters],
+  );
+  const setTab = (id: string) => narrow({ tab: id });
+  const setZoneId = (id: string) => narrow({ zone: id });
+  /*
+    The two typed boxes filter on every keystroke from local state, as they
+    always have; the URL catches up once typing pauses. An input bound to
+    `useSearchParams` directly can lag a write behind and drop a character
+    typed quickly.
+  */
+  const [parcelNumber, setParcelDraft] = useState(filters.parcel);
+  const [buildingCode, setBuildingDraft] = useState(filters.building);
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setFilters({ parcel: parcelNumber, building: buildingCode }),
+      TYPED_FILTER_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [parcelNumber, buildingCode, setFilters]);
+  const setParcelNumber = (value: string) => {
+    setParcelDraft(value);
+    narrow({});
+  };
+  const setBuildingCode = (value: string) => {
+    setBuildingDraft(value);
+    narrow({});
+  };
   /**
    * When the case was opened — «ماذا ورد هذا الأسبوع».
    *
@@ -197,10 +118,22 @@ export default function CasesPage({
    * types, so it would silently drop every other row from a range that asked
    * an innocent question. `YYYY-MM-DD`, both ends inclusive.
    */
-  const [openedFrom, setOpenedFrom] = useState('');
-  const [openedTo, setOpenedTo] = useState('');
-  /** Which building's matrix is open from a case row, if any. */
-  const [matrixId, setMatrixId] = useState<string | null>(null);
+  const { from: openedFrom, to: openedTo } = filters;
+  const setOpenedFrom = (value: string) => narrow({ from: value });
+  const setOpenedTo = (value: string) => narrow({ to: value });
+  /** Which building's matrix is open from a case row, if any (`?matrix=&matrixUnit=`). */
+  const matrix = filters.matrix
+    ? { buildingId: filters.matrix, unitId: filters.matrixUnit || null }
+    : null;
+  const setMatrix = useCallback(
+    (next: { buildingId: string; unitId: string | null } | null) =>
+      setFilters({ matrix: next?.buildingId ?? '', matrixUnit: next?.unitId ?? '' }),
+    [setFilters],
+  );
+
+  /** The table's page in the URL; its search in tab storage, never the URL. */
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
+  const [search, setSearch] = useTabSearch(tenant, 'cases');
 
   const canWrite = role !== 'AUDITOR' && role !== 'ACCOUNTANT';
   const canDelete = role === 'SUPER_ADMIN';
@@ -211,7 +144,7 @@ export default function CasesPage({
     tenant,
     base,
     token,
-    errorMessage: 'تعذّر تحميل الحالات.',
+    errorMessage: locale === 'en' ? 'Failed to load cases.' : 'تعذّر تحميل الحالات.',
   });
 
   const allItems = useMemo(() => query.data?.cases ?? [], [query.data]);
@@ -321,6 +254,9 @@ export default function CasesPage({
     [queryClient, tenant],
   );
 
+  const linkage = useCaseLinking({ tenant, token, locale, load });
+  const { openLink } = linkage;
+
   /**
    * One tap moves a case one step: `OPEN → SCHEDULED → RESOLVED`, and back to
    * `OPEN` from the end.
@@ -353,9 +289,16 @@ export default function CasesPage({
         );
       } catch (caught) {
         logApiError(caught);
-        const message = caught instanceof ApiRequestError ? caught.message : 'تعذّر تحديث الحالة.';
+        const message =
+          caught instanceof ApiRequestError
+            ? caught.message
+            : locale === 'en'
+              ? 'Could not update the case.'
+              : 'تعذّر تحديث الحالة.';
         setActionError(message);
-        toast.error('تعذّر تحديث الحالة', { description: message });
+        toast.error(locale === 'en' ? 'Could not update the case' : 'تعذّر تحديث الحالة', {
+          description: message,
+        });
       } finally {
         setBusyId(null);
       }
@@ -365,286 +308,52 @@ export default function CasesPage({
 
   const removeCase = useCallback(
     async (item: CaseSummary) => {
-      if (!token) throw new Error('انتهت الجلسة.');
+      if (!token) throw new Error(locale === 'en' ? 'Your session has ended.' : 'انتهت الجلسة.');
       setBusyId(item.id);
       try {
         await deleteCase(tenant, token, item.id);
         await load();
-        toast.success('تم حذف الحالة');
+        toast.success(locale === 'en' ? 'Case deleted' : 'تم حذف الحالة');
       } catch (caught) {
         logApiError(caught);
-        const message = caught instanceof ApiRequestError ? caught.message : 'تعذّر حذف الحالة.';
+        const message =
+          caught instanceof ApiRequestError
+            ? caught.message
+            : locale === 'en'
+              ? 'Could not delete the case.'
+              : 'تعذّر حذف الحالة.';
         setActionError(message);
         throw new Error(message);
       } finally {
         setBusyId(null);
       }
     },
-    [tenant, token, load, toast],
+    [tenant, token, load, toast, locale],
   );
 
-  const linkCitizen = useCallback(
-    async (citizen: CitizenListItem) => {
-      if (!token || !linking) return;
-      setLinkSubmitting(true);
-      setLinkError(null);
-      try {
-        await updateCase(tenant, token, linking.id, { resolvedCitizenId: citizen.id });
-        await load();
-        toast.success(locale === 'en' ? 'Case linked and resolved' : 'تم ربط الحالة ووضعها محلولة', {
-          description: citizen.fullName,
-        });
-        setLinking(null);
-      } catch (caught) {
-        logApiError(caught);
-        setLinkError(caught instanceof ApiRequestError ? caught.message : 'تعذّر ربط الحالة.');
-      } finally {
-        setLinkSubmitting(false);
-      }
-    },
-    [tenant, token, linking, load, toast, locale],
-  );
+  const clearFilters = () => {
+    setZoneId('');
+    setParcelNumber('');
+    setBuildingCode('');
+    setOpenedFrom('');
+    setOpenedTo('');
+  };
 
-  const unlinkCitizen = useCallback(async () => {
-    if (!token || !linking) return;
-    setLinkSubmitting(true);
-    setLinkError(null);
-    try {
-      await updateCase(tenant, token, linking.id, { resolvedCitizenId: null });
-      await load();
-      toast.success(locale === 'en' ? 'Link removed' : 'أُزيل الربط');
-      setLinking(null);
-    } catch (caught) {
-      logApiError(caught);
-      setLinkError(caught instanceof ApiRequestError ? caught.message : 'تعذّر إلغاء الربط.');
-    } finally {
-      setLinkSubmitting(false);
-    }
-  }, [tenant, token, linking, load, toast, locale]);
-
-  const labels = getLabels(locale);
-
-  const columns = useMemo<ColumnDef<CaseSummary>[]>(
-    () => [
-      {
-        accessorKey: 'notes',
-        header: locale === 'en' ? 'What happened' : 'ماذا حصل',
-        cell: ({ row }) => (
-          <span className="block max-w-xs truncate" title={row.original.notes}>
-            {row.original.notes}
-          </span>
-        ),
-      },
-      {
-        accessorKey: 'propertyNumber',
-        header: locale === 'en' ? 'Property' : 'العقار',
-        cell: ({ row }) => {
-          const item = row.original;
-          const parts = [
-            item.propertyNumber ? (locale === 'en' ? `#${item.propertyNumber}` : `رقم ${item.propertyNumber}`) : null,
-            item.neighborhood,
-          ].filter(Boolean);
-          return parts.length > 0 ? (
-            <span dir="auto">{parts.join(' — ')}</span>
-          ) : (
-            <span className="text-muted-foreground text-xs">—</span>
-          );
-        },
-      },
-      {
-        accessorKey: 'propertyType',
-        header: locale === 'en' ? 'Type' : 'النوع',
-        cell: ({ row }) =>
-          row.original.propertyType ? (
-            labels.propertyType[row.original.propertyType as never] ?? row.original.propertyType
-          ) : (
-            <span className="text-muted-foreground text-xs">—</span>
-          ),
-      },
-      {
-        accessorKey: 'status',
-        header: locale === 'en' ? 'Status' : 'الحالة',
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <div className="space-y-1">
-              {item.status === 'RESOLVED' ? (
-                <CellTag tone="success">
-                  <CheckCircle2 className="size-3.5" aria-hidden />
-                  {labels.caseStatus.RESOLVED}
-                </CellTag>
-              ) : item.status === 'SCHEDULED' ? (
-                <CellTag tone="warning">
-                  <CalendarClock className="size-3.5" aria-hidden />
-                  {labels.caseStatus.SCHEDULED}
-                </CellTag>
-              ) : (
-                <CellTag>{labels.caseStatus.OPEN}</CellTag>
-              )}
-              {/* The date is what «مجدولة» means; a status without it is a
-                  promise nobody can plan around. */}
-              {item.scheduledRevisitAt ? (
-                <p className="text-xs text-muted-foreground">
-                  {locale === 'en' ? 'Revisit ' : 'العودة '}
-                  {formatDate(item.scheduledRevisitAt)}
-                </p>
-              ) : null}
-              {item.resolvedCitizenName ? (
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push(`${base}/citizens/${item.resolvedCitizenId}`)
-                  }
-                  className="flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
-                >
-                  <Link2 className="size-3 shrink-0" aria-hidden />
-                  {item.resolvedCitizenName}
-                </button>
-              ) : null}
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: 'createdByName',
-        header: locale === 'en' ? 'Logged By' : 'سجّلها',
-        cell: ({ row }) => row.original.createdByName ?? <span className="text-muted-foreground text-xs">—</span>,
-      },
-      {
-        accessorKey: 'createdAt',
-        header: locale === 'en' ? 'Date' : 'التاريخ',
-        cell: ({ row }) => formatDate(row.original.createdAt),
-      },
-      {
-        id: 'actions',
-        header: locale === 'en' ? 'Actions' : 'إجراء',
-        enableSorting: false,
-        meta: { mobile: 'actions' },
-        cell: ({ row }) => {
-          const item = row.original;
-          const busy = busyId === item.id;
-
-          if (!canWrite) return null;
-
-          return (
-            <div className="flex items-center gap-1.5">
-              {item.status === 'OPEN' ? (
-                <ActionTooltip label={locale === 'en' ? 'Register Citizen' : 'تسجيل المواطن'}>
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    className="border-primary/40 text-primary hover:bg-primary/5"
-                    aria-label={locale === 'en' ? 'Register Citizen' : 'تسجيل المواطن'}
-                    disabled={busy}
-                    onClick={() => router.push(`${base}/citizens/new?fromCaseId=${item.id}`)}
-                  >
-                    <UserPlus className="size-4" aria-hidden />
-                  </Button>
-                </ActionTooltip>
-              ) : null}
-
-              <ActionTooltip label={locale === 'en' ? 'Link to Citizen' : 'ربط بمواطن'}>
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  aria-label={locale === 'en' ? 'Link to Citizen' : 'ربط بمواطن'}
-                  disabled={busy}
-                  onClick={() => {
-                    setLinkError(null);
-                    setLinking(item);
-                  }}
-                >
-                  <Link2 className="size-4" aria-hidden />
-                </Button>
-              </ActionTooltip>
-
-              {/* One tap, one step along OPEN → SCHEDULED → RESOLVED. The
-                  label names where it goes, never where it is. */}
-              <ActionTooltip
-                label={
-                  item.status === 'OPEN'
-                    ? locale === 'en'
-                      ? 'Schedule a revisit'
-                      : 'جدولة زيارة'
-                    : item.status === 'SCHEDULED'
-                      ? locale === 'en'
-                        ? 'Mark resolved'
-                        : 'وضع علامة مُعالجة'
-                      : locale === 'en'
-                        ? 'Reopen'
-                        : 'إعادة فتح'
-                }
-              >
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  aria-label={locale === 'en' ? 'Advance status' : 'تقديم حالة المعاملة'}
-                  disabled={busy}
-                  onClick={() => void advanceStatus(item)}
-                >
-                  {item.status === 'OPEN' ? (
-                    <CalendarClock className="size-4" aria-hidden />
-                  ) : item.status === 'SCHEDULED' ? (
-                    <CheckCircle2 className="size-4" aria-hidden />
-                  ) : (
-                    <RotateCcw className="size-4" aria-hidden />
-                  )}
-                </Button>
-              </ActionTooltip>
-
-              {/* A case pinned to a censused structure opens its matrix — the
-                  fastest route from "somebody should go back" to the flat. */}
-              {item.buildingId ? (
-                <ActionTooltip label={locale === 'en' ? 'Open the unit matrix' : 'فتح مصفوفة الوحدات'}>
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    aria-label={locale === 'en' ? 'Open the unit matrix' : 'فتح مصفوفة الوحدات'}
-                    disabled={busy}
-                    onClick={() => setMatrixId(item.buildingId)}
-                  >
-                    <Grid3x3 className="size-4" aria-hidden />
-                  </Button>
-                </ActionTooltip>
-              ) : null}
-
-              <ActionTooltip label={locale === 'en' ? 'Edit' : 'تعديل'}>
-                <Button
-                  variant="secondary"
-                  size="icon-sm"
-                  aria-label={locale === 'en' ? 'Edit' : 'تعديل'}
-                  disabled={busy}
-                  onClick={() => router.push(`${base}/cases/${item.id}/edit`)}
-                >
-                  <Pencil className="size-4" aria-hidden />
-                </Button>
-              </ActionTooltip>
-
-              {canDelete ? (
-                <ActionTooltip label={locale === 'en' ? 'Delete' : 'حذف'}>
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    aria-label={locale === 'en' ? 'Delete' : 'حذف'}
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    disabled={busy}
-                    onClick={() => setPendingDelete(item)}
-                  >
-                    <Trash2 className="size-4" aria-hidden />
-                  </Button>
-                </ActionTooltip>
-              ) : null}
-            </div>
-          );
-        },
-      },
-    ],
-    [busyId, canWrite, canDelete, locale, labels, advanceStatus, router, base],
-  );
+  const columns = useCaseColumns({
+    locale,
+    base,
+    busyId,
+    canWrite,
+    canDelete,
+    advanceStatus,
+    openLink,
+    setMatrix,
+    setPendingDelete,
+  });
 
   if (!token) return null;
 
-  const tableLabels = getTableLabels(locale);
+  const tableLabels = getCaseTableLabels(locale);
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -666,155 +375,6 @@ export default function CasesPage({
         }
       />
 
-      {/*
-        Tabs as a work queue, not a copy of the enum.
-
-        Each one groups the case types an officer does the same thing about —
-        knock again, escalate to a person with authority, or just read. The
-        count rides on the tab so an empty queue is visible before it is opened.
-      */}
-      <div
-        role="tablist"
-        aria-label={locale === 'en' ? 'Case queues' : 'قوائم الحالات'}
-        className="flex flex-wrap gap-1.5 border-b pb-2"
-      >
-        {CASE_TABS.map((entry) => {
-          const active = entry.id === tab;
-          return (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setTab(entry.id)}
-              className={cn(
-                // `min-h-9 coarse:min-h-touch`, matching `SegmentedControl`:
-                // padding alone left these at 30px, and this row is tapped on
-                // a phone in the field. Kept as a `tablist` rather than folded
-                // into the segmented control because the queues are tabs over
-                // one table, and the counts ride in the label.
-                'flex min-h-9 coarse:min-h-touch items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
-                active ? 'border-primary bg-primary/10 text-primary' : 'hover:bg-accent',
-              )}
-            >
-              {locale === 'en' ? entry.en : entry.ar}
-              <span
-                className={cn(
-                  'rounded-full px-1.5 text-xs font-bold',
-                  active ? 'bg-primary/20' : 'bg-muted text-muted-foreground',
-                )}
-              >
-                {tabCounts[entry.id] ?? 0}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Zone, parcel and building — the three ways a dispatch list is cut. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <select
-          value={zoneId}
-          onChange={(event) => setZoneId(event.target.value)}
-          aria-label={locale === 'en' ? 'Filter by sector' : 'تصفية حسب القطاع'}
-          className={cn(
-            'h-9 rounded-md border border-input bg-background px-3 text-xs ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring',
-            zoneId && 'border-primary text-primary',
-          )}
-        >
-          <option value="">{locale === 'en' ? 'All sectors' : 'كل القطاعات'}</option>
-          {zones.map((zone) => (
-            <option key={zone.id} value={zone.id}>
-              {zone.name}
-            </option>
-          ))}
-        </select>
-
-        <input
-          value={parcelNumber}
-          onChange={(event) => setParcelNumber(event.target.value)}
-          dir="ltr"
-          inputMode="numeric"
-          aria-label={locale === 'en' ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
-          placeholder={locale === 'en' ? 'Parcel #' : 'رقم العقار'}
-          className="h-9 w-28 rounded-md border border-input bg-background px-3 text-start text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-
-        <input
-          value={buildingCode}
-          onChange={(event) => setBuildingCode(event.target.value)}
-          dir="ltr"
-          aria-label={locale === 'en' ? 'Filter by building code' : 'تصفية حسب رمز المبنى'}
-          placeholder={locale === 'en' ? 'Building code' : 'رمز المبنى'}
-          className="h-9 w-36 rounded-md border border-input bg-background px-3 text-start text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-
-        {/* «من» / «إلى» on the day the case was opened. */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-muted-foreground">{locale === 'en' ? 'Opened' : 'فُتحت'}</span>
-          <DatePicker
-            id="cases-from"
-            value={openedFrom}
-            onChange={setOpenedFrom}
-            max={openedTo || undefined}
-            placeholder={locale === 'en' ? 'From' : 'من'}
-            locale={locale === 'en' ? 'en' : 'ar'}
-          />
-          <DatePicker
-            id="cases-to"
-            value={openedTo}
-            onChange={setOpenedTo}
-            placeholder={locale === 'en' ? 'To' : 'إلى'}
-            locale={locale === 'en' ? 'en' : 'ar'}
-          />
-        </div>
-
-        {activeFilters > 0 ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setZoneId('');
-              setParcelNumber('');
-              setBuildingCode('');
-              setOpenedFrom('');
-              setOpenedTo('');
-            }}
-          >
-            <X className="size-4" aria-hidden />
-            {locale === 'en' ? `Clear ${activeFilters} filter(s)` : `مسح ${activeFilters} فلتر`}
-          </Button>
-        ) : null}
-
-        <span className="ms-auto text-xs text-muted-foreground">
-          {locale === 'en'
-            ? `${items.length} of ${allItems.length} cases`
-            : `${items.length} من ${allItems.length} حالة`}
-        </span>
-      </div>
-
-      {conversion.resolvedCount > 0 ? (
-        <div className="flex items-center gap-2.5 rounded-lg border border-border/70 bg-muted/20 px-3.5 py-2.5 text-sm">
-          <TrendingUp className="size-4 shrink-0 text-primary" aria-hidden />
-          <span>
-            {locale === 'en' ? (
-              <>
-                <strong>{conversion.linkedCount}</strong> of <strong>{conversion.resolvedCount}</strong> resolved
-                cases led to a registered citizen (
-                {Math.round((conversion.linkedCount / conversion.resolvedCount) * 100)}%
-                conversion).
-              </>
-            ) : (
-              <>
-                <strong>{conversion.linkedCount}</strong> من <strong>{conversion.resolvedCount}</strong> حالة محلولة
-                انتهت بتسجيل مواطن (نسبة التحويل{' '}
-                {Math.round((conversion.linkedCount / conversion.resolvedCount) * 100)}٪).
-              </>
-            )}
-          </span>
-        </div>
-      ) : null}
-
       {error ? (
         <p
           role="alert"
@@ -824,15 +384,53 @@ export default function CasesPage({
         </p>
       ) : null}
 
+      {/*
+        One frame for the work: what the list is, how much of it turned into a
+        registration, the queues, the filters and the rows — the order a
+        dispatcher reads it in. The queues and the filters used to float above
+        the card as a strip of chips and a row of bare inputs, each drawn its own
+        way; now they sit in the frame they act on.
+      */}
       <Card className="overflow-hidden">
-        <CardHeader className="border-b">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <ClipboardList className="size-5" aria-hidden />
-            {locale === 'en' ? 'Logged Cases' : 'الحالات المسجّلة'}
+        <CardHeader className="flex flex-col gap-2 space-y-0 border-b px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <CardTitle className="flex items-center gap-2 text-base font-semibold">
+            <ClipboardList className="size-5 text-primary" aria-hidden />
+            {locale === 'en' ? 'Logged cases' : 'الحالات المسجّلة'}
+            {/* Shown / all, so a narrowed list never reads as the whole register. */}
+            <span className="text-sm font-normal tabular-nums text-muted-foreground">
+              {items.length === allItems.length
+                ? `(${allItems.length})`
+                : locale === 'en'
+                  ? `(${items.length} of ${allItems.length})`
+                  : `(${items.length} من ${allItems.length})`}
+            </span>
           </CardTitle>
+          {/*
+            How many resolved cases ended in a registration — context for the
+            work, stated as one figure and its sentence, not a banner.
+          */}
+          {conversion.resolvedCount > 0 ? (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <TrendingUp className="size-4 shrink-0 text-primary" aria-hidden />
+              <span>
+                <span className="text-sm font-semibold tabular-nums text-foreground">
+                  {Math.round((conversion.linkedCount / conversion.resolvedCount) * 100)}
+                  {locale === 'en' ? '%' : '٪'}
+                </span>{' '}
+                {locale === 'en'
+                  ? `conversion — ${conversion.linkedCount} of ${conversion.resolvedCount} resolved cases led to a registered citizen`
+                  : `نسبة التحويل — ${conversion.linkedCount} من ${conversion.resolvedCount} حالة محلولة انتهت بتسجيل مواطن`}
+              </span>
+            </p>
+          ) : null}
         </CardHeader>
-        <CardContent className="p-6">
+
+        <CaseQueueTabs locale={locale} tab={tab} counts={tabCounts} onSelect={setTab} />
+
+        <CardContent className="p-0">
+          {/* One frame: the card's (BAN-4). */}
           <DataTable
+            className="rounded-none border-0 shadow-none"
             columns={columns}
             data={items}
             labels={tableLabels}
@@ -841,6 +439,73 @@ export default function CasesPage({
             loading={query.loading}
             error={query.error}
             onRetry={query.refetch}
+            searchValue={search}
+            onSearchChange={setSearch}
+            pagination={pagination}
+            onPaginationChange={setPagination}
+            activeFiltersCount={activeFilters}
+            onClearFilters={clearFilters}
+            filterBar={
+              // Sector, parcel and building — the three ways a dispatch list is cut — and the day it was opened.
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:flex-wrap md:items-center">
+                <span className="hidden items-center gap-1.5 pe-1 text-xs font-medium text-muted-foreground xl:flex">
+                  <Filter className="size-3.5" aria-hidden />
+                  {locale === 'en' ? 'Filter:' : 'تصفية:'}
+                </span>
+                <FilterSelect
+                  label={locale === 'en' ? 'Sector' : 'القطاع'}
+                  value={zoneId}
+                  onChange={setZoneId}
+                  options={zones.map((zone) => ({ value: zone.id, label: zone.name }))}
+                  allLabel={locale === 'en' ? 'All sectors' : 'كل القطاعات'}
+                />
+                <FilterInput
+                  label={locale === 'en' ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
+                  value={parcelNumber}
+                  onChange={setParcelNumber}
+                  placeholder={locale === 'en' ? 'Parcel #' : 'رقم العقار'}
+                  clearLabel={locale === 'en' ? 'Clear parcel number' : 'مسح رقم العقار'}
+                  inputMode="numeric"
+                  dir="ltr"
+                />
+                <FilterInput
+                  label={locale === 'en' ? 'Filter by building code' : 'تصفية حسب رمز المبنى'}
+                  value={buildingCode}
+                  onChange={setBuildingCode}
+                  placeholder={locale === 'en' ? 'Building code' : 'رمز المبنى'}
+                  clearLabel={locale === 'en' ? 'Clear building code' : 'مسح رمز المبنى'}
+                  dir="ltr"
+                  className="sm:w-36"
+                />
+                {/* «من» / «إلى» on the day the case was opened. */}
+                <div className="flex items-center gap-1.5 sm:col-span-2 md:col-span-1">
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {locale === 'en' ? 'Opened' : 'فُتحت'}
+                  </span>
+                  <DatePicker
+                    id="cases-from"
+                    value={openedFrom}
+                    onChange={setOpenedFrom}
+                    max={openedTo || undefined}
+                    placeholder={locale === 'en' ? 'From' : 'من'}
+                    locale={locale === 'en' ? 'en' : 'ar'}
+                  />
+                  <DatePicker
+                    id="cases-to"
+                    value={openedTo}
+                    onChange={setOpenedTo}
+                    placeholder={locale === 'en' ? 'To' : 'إلى'}
+                    locale={locale === 'en' ? 'en' : 'ar'}
+                  />
+                </div>
+                {activeFilters > 0 ? (
+                  <Button variant="ghost" size="sm" onClick={clearFilters} className="h-9 gap-1.5 text-xs md:ms-auto">
+                    <X className="size-3.5" aria-hidden />
+                    {locale === 'en' ? `Clear ${activeFilters} filter(s)` : `مسح ${activeFilters} فلتر`}
+                  </Button>
+                ) : null}
+              </div>
+            }
           />
         </CardContent>
       </Card>
@@ -857,48 +522,37 @@ export default function CasesPage({
             : 'ستُحذف هذه الحالة نهائياً. هذا لا يؤثر على أي سجل مواطن.'
         }
         confirmLabel={locale === 'en' ? 'Delete' : 'حذف'}
+        cancelLabel={locale === 'en' ? 'Cancel' : 'إلغاء'}
+        busyLabel={locale === 'en' ? 'Working…' : 'جارٍ التنفيذ…'}
         onConfirm={async () => {
           if (pendingDelete) await removeCase(pendingDelete);
         }}
       />
 
+      <CaseUnlinkDialog linkage={linkage} locale={locale} onOpenUnit={setMatrix} />
+
       {token ? (
         <BuildingUnitMatrixDrawer
-          open={matrixId !== null}
-          onClose={() => setMatrixId(null)}
+          open={matrix !== null}
+          onClose={() => setMatrix(null)}
           tenant={tenant}
           token={token}
-          buildingId={matrixId}
+          buildingId={matrix?.buildingId ?? null}
+          // Opened from a case on a flat: the drawer opens on that flat.
+          focusUnitId={matrix?.unitId ?? null}
           canWrite={canWrite}
           // A visit or an occupancy logged from here can auto-resolve the very
           // case the drawer was opened from, so the list is re-read on close.
           onChanged={() => void load()}
-          registerHref={(buildingId, unitId, residence, name) =>
-            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}${
-              name ? `&name=${encodeURIComponent(name)}` : ''
-            }`
+          registerHref={(buildingId, unitId, residence) =>
+            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}`
           }
           citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
           locale={locale}
         />
       ) : null}
 
-      {token ? (
-        <LinkCaseCitizenDialog
-          open={linking !== null}
-          onOpenChange={(open) => {
-            if (!open) setLinking(null);
-          }}
-          tenant={tenant}
-          token={token}
-          currentCitizenName={linking?.resolvedCitizenName}
-          submitting={linkSubmitting}
-          error={linkError}
-          onLink={(citizen) => void linkCitizen(citizen)}
-          onUnlink={() => void unlinkCitizen()}
-          locale={locale}
-        />
-      ) : null}
+      {token ? <CaseLinkDialog linkage={linkage} tenant={tenant} token={token} locale={locale} /> : null}
     </div>
   );
 }
