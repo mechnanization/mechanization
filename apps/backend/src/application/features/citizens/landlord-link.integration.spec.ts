@@ -1133,6 +1133,91 @@ describeIfDb('LandlordLinkService', () => {
     expect(result.linked).toBe(true);
   });
 
+  it('stops hiding the building’s owner once the flat’s recorded owner is rejected or deactivated', async () => {
+    /*
+      The flat's recorded owner is the answer, and the building's other
+      ownership cards yield to them — but only to one that can still be
+      offered. Rejecting them with «لا أحد منهم» used to hide everyone and drop
+      the card from the queue; now the whole-building owner surfaces, carrying
+      the block that tells the clerk the flat's record names somebody else.
+    */
+    const { units, building } = await surveyedBlock('LNK-PROP-REJECTED');
+    const recorded = await ownerWithFile(freshPhone().stored);
+    await db.unitOccupancy.create({ data: { unitId: units[0]!.id, citizenId: recorded.id, role: 'OWNER' } });
+    const wholeOwner = await ownerWithFile(freshPhone().stored);
+    await ownershipCard(wholeOwner, building, 'LNK-PROP-REJECTED', []);
+    const { entryId } = await tenantFiling({
+      landlordPhone: null,
+      landlordName: null,
+      parcelNumber: 'LNK-PROP-REJECTED',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+    });
+
+    // While the flat's own owner stands, the building's others are noise.
+    expect(await offeredOn(entryId)).toEqual([[recorded.id, 'PROPERTY']]);
+
+    await within(() => links.dismiss({ propertyEntryId: entryId, candidateIds: [recorded.id], actor: actor() }));
+    expect(await offeredOn(entryId)).toEqual([[wholeOwner.id, 'PROPERTY']]);
+    const candidate = (await within(() => links.proposal(entryId)))?.candidates.find((c) => c.id === wholeOwner.id);
+    expect(candidate?.blocked?.code).toBe('UNIT_OWNED_BY_OTHER');
+
+    // Offered with the reason, and still not linkable over the flat's record: nothing is written.
+    await expect(
+      within(() => links.confirm({ propertyEntryId: entryId, citizenId: wholeOwner.id, actor: actor() })),
+    ).rejects.toBeInstanceOf(ConflictError);
+    expect(await db.unitOccupancy.count({ where: { unitId: units[0]!.id, citizenId: wholeOwner.id } })).toBe(0);
+
+    // A deactivated file is not an owner the queue can offer either, so it hides nobody.
+    const { units: units2, building: building2 } = await surveyedBlock('LNK-PROP-INACTIVE');
+    const inactive = await ownerWithFile(freshPhone().stored);
+    await db.unitOccupancy.create({ data: { unitId: units2[0]!.id, citizenId: inactive.id, role: 'OWNER' } });
+    await db.user.update({ where: { id: inactive.id }, data: { isActive: false } });
+    const wholeOwner2 = await ownerWithFile(freshPhone().stored);
+    await ownershipCard(wholeOwner2, building2, 'LNK-PROP-INACTIVE', []);
+    const second = await tenantFiling({
+      landlordPhone: null,
+      landlordName: null,
+      parcelNumber: 'LNK-PROP-INACTIVE',
+      buildingId: building2.id,
+      unitIds: [units2[0]!.id],
+    });
+    expect(await offeredOn(second.entryId)).toEqual([[wholeOwner2.id, 'PROPERTY']]);
+  });
+
+  it('keeps the building’s other owners hidden while any of the flat’s recorded owners can still be offered', async () => {
+    // Two recorded co-owners of the flat; one also holds a whole-building card. A third owns the whole building.
+    const { units, building } = await surveyedBlock('LNK-PROP-COOWN');
+    const coOwnerA = await ownerWithFile(freshPhone().stored);
+    const coOwnerB = await ownerWithFile(freshPhone().stored);
+    for (const owner of [coOwnerA, coOwnerB]) {
+      await db.unitOccupancy.create({ data: { unitId: units[0]!.id, citizenId: owner.id, role: 'OWNER' } });
+    }
+    await ownershipCard(coOwnerA, building, 'LNK-PROP-COOWN', []);
+    const wholeOwner = await ownerWithFile(freshPhone().stored);
+    await ownershipCard(wholeOwner, building, 'LNK-PROP-COOWN', []);
+    const { entryId } = await tenantFiling({
+      landlordPhone: null,
+      landlordName: null,
+      parcelNumber: 'LNK-PROP-COOWN',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+    });
+
+    // Found by the flat and by the building, coOwnerA is still one candidate.
+    expect(await offeredOn(entryId)).toEqual(
+      [[coOwnerA.id, 'PROPERTY'], [coOwnerB.id, 'PROPERTY']].sort(),
+    );
+
+    // Rejecting one co-owner leaves the other standing, so the building's owner stays hidden.
+    await within(() => links.dismiss({ propertyEntryId: entryId, candidateIds: [coOwnerA.id], actor: actor() }));
+    expect(await offeredOn(entryId)).toEqual([[coOwnerB.id, 'PROPERTY']]);
+    await expect(
+      within(() => links.confirm({ propertyEntryId: entryId, citizenId: wholeOwner.id, actor: actor() })),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(await db.unitOccupancy.count({ where: { unitId: units[0]!.id, citizenId: wholeOwner.id } })).toBe(0);
+  });
+
   it('does not let a card that names its own filer hide the flat’s owner', async () => {
     // The occupant typed their own name where the landlord's goes — evidence of nobody.
     const { units, building } = await surveyedBlock('LNK-PROP-SELF');
