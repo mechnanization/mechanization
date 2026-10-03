@@ -15,8 +15,14 @@ import { cn } from '@/lib/utils';
  * itself, which is what the reader scans the bar for.
  */
 
-/** One filter select, with its own «الكل» option carrying the empty value. */
-export function FilterSelect({
+/**
+ * One filter select, with its own «الكل» option carrying the empty value.
+ *
+ * Generic over the option values, so a select over an enum hands back that
+ * enum — the URL filter state it usually writes to (`use-url-state.ts`) is
+ * typed by it. A plain-string caller infers `string` and is unaffected.
+ */
+export function FilterSelect<T extends string = string>({
   label,
   value,
   onChange,
@@ -25,9 +31,9 @@ export function FilterSelect({
   className,
 }: {
   label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: Array<{ value: string; label: string }>;
+  value: T | '';
+  onChange: (value: T | '') => void;
+  options: Array<{ value: T; label: string }>;
   allLabel: string;
   className?: string;
 }) {
@@ -48,7 +54,7 @@ export function FilterSelect({
   */
   const empty = options.length === 0;
   return (
-    <Select value={value || ALL} onValueChange={(next) => onChange(next === ALL ? '' : next)} disabled={empty}>
+    <Select value={value || ALL} onValueChange={(next) => onChange(next === ALL ? '' : (next as T))} disabled={empty}>
       <SelectTrigger
         aria-label={label}
         className={cn(

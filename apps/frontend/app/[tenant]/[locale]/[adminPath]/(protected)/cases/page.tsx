@@ -271,8 +271,11 @@ export default function CasesPage({
   const matrix = filters.matrix
     ? { buildingId: filters.matrix, unitId: filters.matrixUnit || null }
     : null;
-  const setMatrix = (next: { buildingId: string; unitId: string | null } | null) =>
-    setFilters({ matrix: next?.buildingId ?? '', matrixUnit: next?.unitId ?? '' });
+  const setMatrix = useCallback(
+    (next: { buildingId: string; unitId: string | null } | null) =>
+      setFilters({ matrix: next?.buildingId ?? '', matrixUnit: next?.unitId ?? '' }),
+    [setFilters],
+  );
 
   /** The table's page in the URL; its search in tab storage, never the URL. */
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
@@ -821,7 +824,7 @@ export default function CasesPage({
         },
       },
     ],
-    [busyId, canWrite, canDelete, locale, labels, advanceStatus, router, base],
+    [busyId, canWrite, canDelete, locale, labels, advanceStatus, router, base, setMatrix],
   );
 
   if (!token) return null;
