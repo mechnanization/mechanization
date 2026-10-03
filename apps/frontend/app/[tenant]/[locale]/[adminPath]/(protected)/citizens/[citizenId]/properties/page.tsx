@@ -1,28 +1,19 @@
 'use client';
 
-import { use, useMemo, useState, type ReactNode } from 'react';
+import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  Briefcase,
   Building,
   Building2,
-  Car,
-  Columns3,
   DoorOpen,
   ExternalLink,
   Home,
   House,
   IdCard,
   KeyRound,
-  LandPlot,
   MapPin,
-  SquareDashed,
-  Stethoscope,
-  Store,
-  Tent,
   Unlink,
-  Warehouse,
 } from 'lucide-react';
 import { getLabels, OWNER_BILLED_WHILE_ABSENT } from '@mechanization/shared-schemas';
 import {
@@ -36,7 +27,6 @@ import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate, formatMonthList } from '@/lib/dates';
 import { mapHref } from '@/lib/map-link';
-import { occupancyDot } from '@/lib/occupancy';
 import { formatPhone } from '@/lib/phone';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
@@ -45,11 +35,19 @@ import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { ChipGroup, SegmentedControl } from '@/components/ui/segmented-control';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
-import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
+import { SummaryRow } from '@/components/ui/summary-list';
 import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { PropertyScene, type PropertyTone } from '@/components/admin/property-illustrations';
+import {
+  CardPanel,
+  CardPanels,
+  PROPERTY_ICON,
+  PropertyCardFrame,
+  UNIT_ICON,
+  UnitStatusLine,
+} from '@/components/admin/property-card-frame';
 import { cn } from '@/lib/utils';
 
 type Labels = ReturnType<typeof getLabels>;
@@ -453,115 +451,66 @@ function PropertyBlock({
   const zone = building?.zoneName && building.zoneName !== neighbourhood ? building.zoneName : null;
 
   return (
-    <article
-      className="flex flex-col overflow-hidden rounded-lg border bg-card shadow-sm md:flex-row"
-    >
-      {/* ── The picture, with its badges over the sky ────────────── */}
-      <div
-        className="relative h-64 shrink-0 border-b bg-muted/40 md:order-last md:h-auto md:min-h-[22rem] md:w-80 md:border-b-0 md:border-s lg:w-96"
-      >
-        {/* An ended card's picture is greyed; its text is not, so it stays readable (COL-4). */}
-        <div className={cn('absolute inset-x-8 bottom-10 top-12 overflow-hidden md:inset-x-10 md:bottom-14 md:top-16', ended && 'grayscale')}>
-          {scene}
-        </div>
-        <div className="absolute inset-x-3 top-3 flex items-start justify-between gap-2">
-          <Badge variant={owner ? 'soft-success' : 'soft-info'} className="backdrop-blur">
-            {owner ? <KeyRound className="size-3" aria-hidden /> : <DoorOpen className="size-3" aria-hidden />}
-            {roleText}
-          </Badge>
-          <div className="flex flex-wrap justify-end gap-1.5">
-            {troubled ? (
-              <Badge variant={lifecycle === 'UNDER_CONSTRUCTION' || lifecycle === 'PERMITTED' ? 'soft-warning' : 'soft-destructive'}>
-                {labelOf(labels.buildingLifecycle, lifecycle)}
-              </Badge>
-            ) : null}
-            {ended ? (
-              <Badge variant="soft-muted">
-                {en ? 'Ended' : 'منتهية'} {property.endedAt ? formatDate(property.endedAt) : ''}
-              </Badge>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      {/* ── The info column: title, tabs, the open panel ─────────── */}
-      <div className="flex min-w-0 flex-1 flex-col">
-      {/* ── Title ────────────────────────────────────────────────── */}
-      {/*
-        Drawn as the page header is: the tile centred on the two lines beside
-        it, the place on the second line with the zone as a badge — which
-        keeps one baseline where «حي · حي» separated by a dot did not.
-      */}
-      <div className="flex items-center gap-3 px-4 pt-4">
-        <span
-          aria-hidden
-          className={cn(
-            'flex size-10 shrink-0 items-center justify-center rounded-lg',
-            owner ? 'bg-success/10 text-success' : 'bg-info/10 text-info',
-          )}
-        >
-          <TypeIcon className="size-5" />
-        </span>
-        <div className="min-w-0 flex-1 space-y-1">
-          <h2 className="truncate text-lg font-bold leading-tight">{title}</h2>
-          {neighbourhood || zone ? (
-            <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              {neighbourhood ? (
-                <span className="inline-flex min-w-0 items-center gap-1">
-                  <MapPin className="size-3.5 shrink-0" aria-hidden />
-                  <span className="truncate">{neighbourhood}</span>
-                </span>
-              ) : null}
-              {zone ? <Badge variant="soft-muted">{zone}</Badge> : null}
-            </div>
+    <PropertyCardFrame
+      picture={scene}
+      grayscale={ended}
+      badgeStart={
+        <Badge variant={owner ? 'soft-success' : 'soft-info'} className="backdrop-blur">
+          {owner ? <KeyRound className="size-3" aria-hidden /> : <DoorOpen className="size-3" aria-hidden />}
+          {roleText}
+        </Badge>
+      }
+      badgesEnd={
+        <>
+          {troubled ? (
+            <Badge variant={lifecycle === 'UNDER_CONSTRUCTION' || lifecycle === 'PERMITTED' ? 'soft-warning' : 'soft-destructive'}>
+              {labelOf(labels.buildingLifecycle, lifecycle)}
+            </Badge>
           ) : null}
-        </div>
-      </div>
-
-      <StatStrip className="mx-4 mt-3">
-        {liveUnits.length > 0 ? (
-          <StatItem
-            value={liveUnits.length}
-            label={owner ? (en ? 'Units owned' : 'وحدات يملكها') : en ? 'Units' : 'وحدات'}
-            className={owner ? 'text-success' : 'text-info'}
-          />
-        ) : null}
-        {building ? <StatItem value={building.floorsCount} label={en ? 'Floors' : 'طوابق'} /> : null}
-        {building && building.unitsTotal > 1 ? (
-          <StatItem value={building.unitsTotal} label={en ? 'Units in building' : 'وحدات المبنى'} />
-        ) : null}
-        {area ? <StatItem value={area} unit={areaUnit(en)} label={en ? 'Area' : 'المساحة'} /> : null}
-        {shares != null ? (
-          <StatItem value={Math.round((shares / 2400) * 100)} unit="%" label={en ? 'Of the plot' : 'من العقار'} />
-        ) : null}
-      </StatStrip>
-
-      {/* ── Which panel ──────────────────────────────────────────── */}
-      <div className="mx-4 mt-4">
-      <SegmentedControl
-        size="sm"
-        aria-label={en ? 'Section' : 'القسم'}
-        value={tab}
-        onChange={(next) => setTab(next as typeof tab)}
-        options={[
-          ...(units.length > 0
-            ? [{ value: 'units', label: en ? `Units (${liveUnits.length})` : `الوحدات (${liveUnits.length})` }]
-            : []),
-          { value: 'property', label: en ? 'Property' : 'العقار' },
-          ...(hasBuilding ? [{ value: 'building', label: en ? 'Building' : 'المبنى' }] : []),
-        ]}
-      />
-      </div>
-
-      {/* ── The property, one fact per line ──────────────────────── */}
-      {/*
-        Every panel of this block — the property, the building, and the table
-        of each of its units — laid in the same grid cell, only the open one
-        visible. The cell is as tall as the tallest, so nothing is ever cut off
-        or scrolled, and switching tab or unit never changes the block's size.
-      */}
-      <div className="mx-4 my-3 grid">
-      <Panel active={tab === 'property'}>
+          {ended ? (
+            <Badge variant="soft-muted">
+              {en ? 'Ended' : 'منتهية'} {property.endedAt ? formatDate(property.endedAt) : ''}
+            </Badge>
+          ) : null}
+        </>
+      }
+      icon={TypeIcon}
+      tone={tone}
+      title={title}
+      neighbourhood={neighbourhood}
+      zone={zone}
+      stats={
+        <>
+          {liveUnits.length > 0 ? (
+            <StatItem
+              value={liveUnits.length}
+              label={owner ? (en ? 'Units owned' : 'وحدات يملكها') : en ? 'Units' : 'وحدات'}
+              className={owner ? 'text-success' : 'text-info'}
+            />
+          ) : null}
+          {building ? <StatItem value={building.floorsCount} label={en ? 'Floors' : 'طوابق'} /> : null}
+          {building && building.unitsTotal > 1 ? (
+            <StatItem value={building.unitsTotal} label={en ? 'Units in building' : 'وحدات المبنى'} />
+          ) : null}
+          {area ? <StatItem value={area} unit={areaUnit(en)} label={en ? 'Area' : 'المساحة'} /> : null}
+          {shares != null ? (
+            <StatItem value={Math.round((shares / 2400) * 100)} unit="%" label={en ? 'Of the plot' : 'من العقار'} />
+          ) : null}
+        </>
+      }
+      tabs={[
+        ...(units.length > 0
+          ? [{ value: 'units', label: en ? `Units (${liveUnits.length})` : `الوحدات (${liveUnits.length})` }]
+          : []),
+        { value: 'property', label: en ? 'Property' : 'العقار' },
+        ...(hasBuilding ? [{ value: 'building', label: en ? 'Building' : 'المبنى' }] : []),
+      ]}
+      tab={tab}
+      onTab={(next) => setTab(next as typeof tab)}
+      locale={locale}
+    >
+      <CardPanels>
+      <CardPanel active={tab === 'property'}>
         <SummaryRow label={en ? 'Property type' : 'نوع العقار'}>{typeText}</SummaryRow>
         <SummaryRow label={en ? 'Standing' : 'صفة الإشغال'}>{roleText}</SummaryRow>
         {property.neighborhood ? (
@@ -609,7 +558,7 @@ function PropertyBlock({
             {property.side ? <SummaryRow label={en ? 'Side' : 'الجهة'}>{property.side}</SummaryRow> : null}
             {property.unitStatus ? (
               <SummaryRow label={en ? 'Status' : 'حالة الوحدة'}>
-                <StatusLine status={property.unitStatus} labels={labels} />
+                <UnitStatusLine status={property.unitStatus} locale={locale} />
               </SummaryRow>
             ) : null}
           </>
@@ -680,11 +629,11 @@ function PropertyBlock({
             ) : null}
           </>
         ) : null}
-      </Panel>
+      </CardPanel>
 
       {/* ── The building it stands in, from the census ───────────── */}
       {hasBuilding ? (
-        <Panel active={tab === 'building'}>
+        <CardPanel active={tab === 'building'}>
           {property.buildingCode ? (
             <SummaryRow label={en ? 'Building code' : 'رمز المبنى'} className="font-mono">
               <bdi dir="ltr">{property.buildingCode}</bdi>
@@ -716,16 +665,16 @@ function PropertyBlock({
               </SummaryRow>
             </>
           ) : null}
-        </Panel>
+        </CardPanel>
       ) : null}
 
       {/* ── The units: one table each, picked from the drawing ───── */}
       {units.map((unit, at) => (
-        <Panel key={unit.id} active={tab === 'units' && at === index}>
+        <CardPanel key={unit.id} active={tab === 'units' && at === index}>
           <UnitRows unit={unit} labels={labels} en={en} tone={tone} base={base} ended={ended || Boolean(unit.endedAt)} />
-        </Panel>
+        </CardPanel>
       ))}
-      </div>
+      </CardPanels>
 
       {/*
         Picking is done on the drawing. A unit the drawing cannot show — an
@@ -819,66 +768,10 @@ function PropertyBlock({
           ) : null}
         </>
       ) : null}
-      </div>
-    </article>
+    </PropertyCardFrame>
   );
 }
 
-const PROPERTY_ICON: Record<string, typeof Building2> = {
-  BUILDING: Building2,
-  HOUSE: House,
-  LAND: LandPlot,
-  TENT: Tent,
-};
-
-/** Every unit type the census knows, each with its own icon. */
-const UNIT_ICON: Record<string, typeof Building2> = {
-  APARTMENT: Building,
-  INDEPENDENT_HOUSE: House,
-  CLINIC: Stethoscope,
-  OFFICE: Briefcase,
-  SHOP: Store,
-  WAREHOUSE: Warehouse,
-  GARAGE: Car,
-  PILOTIS: Columns3,
-  EMPTY_FLOOR: SquareDashed,
-};
-
-
-/**
- * One section's facts. Every panel sits in the same grid cell; inactive ones
- * stay laid out but `invisible` — out of sight, focus order and the
- * accessibility tree alike — so the block is always as tall as its tallest
- * panel and switching section never moves the page. The section switch is a
- * radio group (SegmentedControl), so these are plain regions, not tab panels.
- */
-function Panel({ active, children }: { active: boolean; children: ReactNode }) {
-  return (
-    <div aria-hidden={!active} className={cn('rounded-lg border px-3 [grid-area:1/1]', !active && 'invisible')}>
-      <SummaryList>{children}</SummaryList>
-    </div>
-  );
-}
-
-function StatusLine({ status, labels }: { status: string | null | undefined; labels: Labels }) {
-  const dot = occupancyDot(status);
-  const text = labelOf(labels.unitStatus, status);
-  if (!text) return null;
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span
-        aria-hidden
-        className={cn(
-          'size-2.5 shrink-0 rounded-full',
-          dot === 'occupied' && 'bg-success',
-          dot === 'vacant' && 'bg-muted-foreground/50',
-          dot === 'seasonal' && 'border-2 border-success',
-        )}
-      />
-      {text}
-    </span>
-  );
-}
 
 /**
  * One unit: a door plate with its code and its type's icon, then every fact
@@ -947,14 +840,14 @@ function UnitRows({
           {status ? (
             <SummaryRow label={disagree ? (en ? 'Status (register)' : 'الحالة في السجل') : en ? 'Status' : 'حالة الوحدة'}>
               <span className="flex flex-col items-end gap-0.5">
-                <StatusLine status={status} labels={labels} />
+                <UnitStatusLine status={status} locale={en ? 'en' : 'ar'} />
                 {billedHint ? <span className="text-xs text-muted-foreground">{billedHint}</span> : null}
               </span>
             </SummaryRow>
           ) : null}
           {disagree ? (
             <SummaryRow label={en ? 'Status (card)' : 'الحالة على البطاقة'} className="text-warning">
-              <StatusLine status={unit.unitStatus} labels={labels} />
+              <UnitStatusLine status={unit.unitStatus} locale={en ? 'en' : 'ar'} />
             </SummaryRow>
           ) : null}
           {/*

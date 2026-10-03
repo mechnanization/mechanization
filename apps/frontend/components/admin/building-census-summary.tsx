@@ -42,6 +42,7 @@ export function BuildingCensusSummary({
   damageLevel,
   code,
   omitParcel = false,
+  bare = false,
   locale = 'ar',
 }: {
   building: BuildingCensusFacts;
@@ -49,6 +50,8 @@ export function BuildingCensusSummary({
   code?: string | null;
   /** Leaves out رقم العقار when the screen has just said it (the card's own, the same number). */
   omitParcel?: boolean;
+  /** The rows alone, for a caller that already holds them in a `SummaryList` (a card's panel). */
+  bare?: boolean;
   /** The current damage level, where the caller has read it. */
   damageLevel?: string | null;
   locale?: string;
@@ -58,8 +61,8 @@ export function BuildingCensusSummary({
   const label = (map: Record<string, string>, value: string) => map[value] ?? value;
   const occupiable = isOccupiableLifecycle(building.lifecycleStatus as never);
 
-  return (
-    <SummaryList>
+  const rows = (
+    <>
       {code ? (
         <SummaryRow label={en ? 'Building code' : 'رمز المبنى'} className="font-mono">
           {code}
@@ -165,6 +168,7 @@ export function BuildingCensusSummary({
             ? 'Not on the map'
             : 'غير محدَّد على الخريطة'}
       </SummaryRow>
-    </SummaryList>
+    </>
   );
+  return bare ? rows : <SummaryList>{rows}</SummaryList>;
 }
