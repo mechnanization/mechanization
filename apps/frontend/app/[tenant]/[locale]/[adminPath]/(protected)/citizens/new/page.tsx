@@ -1,9 +1,10 @@
 'use client';
 
-import { use } from 'react';
+import { use, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { CITIZEN_RESIDENCE } from '@mechanization/shared-schemas';
 import { CitizenEditor } from '@/components/admin/citizen-editor';
+import { readLinkSeed } from '@/lib/tab-search';
 
 /**
  * Register a citizen from the counter.
@@ -45,11 +46,16 @@ export default function NewCitizenPage({
   const initialResidence = CITIZEN_RESIDENCE.find((value) => value === residence);
 
   /*
-    `?name=` is whatever the officer had typed into the occupant search on the
-    unit panel before deciding nobody there was the person — a name or, as
-    often, a phone number. The form decides which field it fills
-    (`withSeededSearch`); the parameter kept its name so the four places that
-    build this link did not all have to change.
+    The search seed is whatever the officer had typed into the occupant search
+    on the unit panel before deciding nobody there was the person — a name or,
+    as often, a phone number. The form decides which field it fills
+    (`withSeededSearch`).
+
+    Read from tab storage, bound to this exact link (`stashLinkSeed`), not from
+    the URL: it was `?name=` until 2026-10-03, which put a person's name in
+    browser history and in the host's request log on every reload. Read once,
+    on the client — the server render has no storage, and the editor shows
+    nothing that depends on it until its own data has loaded.
 
     Carried so the search is not retyped, and — more to the point — so the
     duplicate check in the form has something to check on the first render.
@@ -57,7 +63,11 @@ export default function NewCitizenPage({
     it); the check that «asdfgh» cannot pass is the one here, against the name
     and phone actually being entered.
   */
-  const initialSearch = searchParams.get('name')?.trim() || undefined;
+  const [initialSearch] = useState(() =>
+    typeof window === 'undefined'
+      ? undefined
+      : readLinkSeed(tenant, `${window.location.pathname}${window.location.search}`),
+  );
 
   return (
     <CitizenEditor

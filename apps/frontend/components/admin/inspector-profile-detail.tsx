@@ -29,6 +29,7 @@ import { getLabels } from '@mechanization/shared-schemas';
 import type { InspectorProfileResponse } from '@mechanization/shared-schemas';
 import { getInspectorProfile, getMyInspectorProfile } from '@/lib/api-client';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useUrlState } from '@/lib/use-url-state';
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
 import { MyQualityTasks } from '@/components/admin/quality/my-tasks';
@@ -41,6 +42,14 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import { ActionTooltip } from '@/components/ui/tooltip';
+
+const TABS = ['registrations', 'payouts'] as const;
+
+/**
+ * The open tab, as `?tab=` — read-only view state, so a reload keeps it. The
+ * payout dialog, which writes, is deliberately not in the URL.
+ */
+const URL_STATE = { tab: param.oneOf(TABS, 'registrations') };
 
 /**
  * One inspector's field work and the commission it earned.
@@ -74,7 +83,7 @@ export function InspectorProfileDetail({
   const queryClient = useQueryClient();
 
   const [payoutOpen, setPayoutOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'registrations' | 'payouts'>('registrations');
+  const [{ tab: activeTab }, setUrl] = useUrlState(URL_STATE);
 
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
   const targetId = staffId ?? currentUser?.id;
@@ -424,14 +433,14 @@ export function InspectorProfileDetail({
         <div className="flex border-b">
           <TabButton
             active={activeTab === 'registrations'}
-            onClick={() => setActiveTab('registrations')}
+            onClick={() => setUrl({ tab: 'registrations' })}
             icon={FileText}
             label={isAr ? 'سجل المسح الميداني' : 'Field survey log'}
             count={data.recentRegistrations.length}
           />
           <TabButton
             active={activeTab === 'payouts'}
-            onClick={() => setActiveTab('payouts')}
+            onClick={() => setUrl({ tab: 'payouts' })}
             icon={Receipt}
             label={isAr ? 'الدفعات المستلمة' : 'Payouts'}
             count={data.payouts.length}

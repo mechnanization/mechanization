@@ -32,6 +32,7 @@ import {
 import { caseResidents, type CaseSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatDate } from '@/lib/dates';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
@@ -134,6 +135,33 @@ const CASE_TABS: ReadonlyArray<{
 ];
 
 /**
+ * The queue, the census filters and an open matrix, all in the query string so
+ * a reload — or a dispatch list sent to a colleague — comes back the same.
+ *
+ * Every value is structural: a sector, building or unit id, a parcel number, a
+ * building code, a date. The table's own search box takes notes and
+ * neighbourhoods, so it is kept in tab storage instead (`useTabSearch`).
+ * `matrix` / `matrixUnit` reopen a drawer that only reads on open; the unit
+ * actions inside it are its own state and never come back from a URL.
+ */
+const CASE_FILTERS = {
+  tab: param.oneOf(
+    CASE_TABS.map((entry) => entry.id),
+    'all',
+  ),
+  zone: param.id(),
+  parcel: param.string(),
+  building: param.string(),
+  from: param.date(),
+  to: param.date(),
+  matrix: param.id(),
+  matrixUnit: param.id(),
+};
+
+/** How long a typed parcel number or building code waits before it is written to the URL. */
+const TYPED_FILTER_DELAY_MS = 300;
+
+/**
  * The next state a quick tap moves a case to — `OPEN → SCHEDULED → RESOLVED`,
  * and from `RESOLVED` back to `OPEN`.
  *
@@ -192,10 +220,43 @@ export default function CasesPage({
   const [linkError, setLinkError] = useState<string | null>(null);
 
   // ── Tabs and census filters (P3-T7) ────────────────────────────────
-  const [tab, setTab] = useState('all');
-  const [zoneId, setZoneId] = useState('');
-  const [parcelNumber, setParcelNumber] = useState('');
-  const [buildingCode, setBuildingCode] = useState('');
+  const [filters, setFilters] = useUrlState(CASE_FILTERS);
+  const { tab, zone: zoneId } = filters;
+  /*
+    Every filter narrows the rows, and a narrower list starts again from its
+    first page — `{ clear: ['page'] }` on each write. The table used to get that
+    for free from TanStack resetting on new data; with the page owned by the URL
+    that reset is off, so a reload of `?page=3` stays on page three.
+  */
+  const narrow = useCallback(
+    (patch: Parameters<typeof setFilters>[0]) => setFilters(patch, { clear: ['page'] }),
+    [setFilters],
+  );
+  const setTab = (id: string) => narrow({ tab: id });
+  const setZoneId = (id: string) => narrow({ zone: id });
+  /*
+    The two typed boxes filter on every keystroke from local state, as they
+    always have; the URL catches up once typing pauses. An input bound to
+    `useSearchParams` directly can lag a write behind and drop a character
+    typed quickly.
+  */
+  const [parcelNumber, setParcelDraft] = useState(filters.parcel);
+  const [buildingCode, setBuildingDraft] = useState(filters.building);
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setFilters({ parcel: parcelNumber, building: buildingCode }),
+      TYPED_FILTER_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [parcelNumber, buildingCode, setFilters]);
+  const setParcelNumber = (value: string) => {
+    setParcelDraft(value);
+    narrow({});
+  };
+  const setBuildingCode = (value: string) => {
+    setBuildingDraft(value);
+    narrow({});
+  };
   /**
    * When the case was opened — «ماذا ورد هذا الأسبوع».
    *
@@ -203,10 +264,22 @@ export default function CasesPage({
    * types, so it would silently drop every other row from a range that asked
    * an innocent question. `YYYY-MM-DD`, both ends inclusive.
    */
-  const [openedFrom, setOpenedFrom] = useState('');
-  const [openedTo, setOpenedTo] = useState('');
-  /** Which building's matrix is open from a case row, if any. */
-  const [matrix, setMatrix] = useState<{ buildingId: string; unitId: string | null } | null>(null);
+  const { from: openedFrom, to: openedTo } = filters;
+  const setOpenedFrom = (value: string) => narrow({ from: value });
+  const setOpenedTo = (value: string) => narrow({ to: value });
+  /** Which building's matrix is open from a case row, if any (`?matrix=&matrixUnit=`). */
+  const matrix = filters.matrix
+    ? { buildingId: filters.matrix, unitId: filters.matrixUnit || null }
+    : null;
+  const setMatrix = useCallback(
+    (next: { buildingId: string; unitId: string | null } | null) =>
+      setFilters({ matrix: next?.buildingId ?? '', matrixUnit: next?.unitId ?? '' }),
+    [setFilters],
+  );
+
+  /** The table's page in the URL; its search in tab storage, never the URL. */
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
+  const [search, setSearch] = useTabSearch(tenant, 'cases');
 
   const canWrite = role !== 'AUDITOR' && role !== 'ACCOUNTANT';
   const canDelete = role === 'SUPER_ADMIN';
@@ -751,7 +824,7 @@ export default function CasesPage({
         },
       },
     ],
-    [busyId, canWrite, canDelete, locale, labels, advanceStatus, router, base],
+    [busyId, canWrite, canDelete, locale, labels, advanceStatus, router, base, setMatrix],
   );
 
   if (!token) return null;
@@ -881,6 +954,10 @@ export default function CasesPage({
             loading={query.loading}
             error={query.error}
             onRetry={query.refetch}
+            searchValue={search}
+            onSearchChange={setSearch}
+            pagination={pagination}
+            onPaginationChange={setPagination}
             activeFiltersCount={activeFilters}
             onClearFilters={clearFilters}
             filterBar={
@@ -978,10 +1055,8 @@ export default function CasesPage({
           // A visit or an occupancy logged from here can auto-resolve the very
           // case the drawer was opened from, so the list is re-read on close.
           onChanged={() => void load()}
-          registerHref={(buildingId, unitId, residence, name) =>
-            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}${
-              name ? `&name=${encodeURIComponent(name)}` : ''
-            }`
+          registerHref={(buildingId, unitId, residence) =>
+            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}`
           }
           citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
           locale={locale}

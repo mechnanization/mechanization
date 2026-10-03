@@ -15,7 +15,7 @@ import {
   Receipt,
   UserCheck,
 } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, PAYMENT_METHOD } from '@mechanization/shared-schemas';
 import {
   getAllPayments,
   getCitizenProfile,
@@ -31,6 +31,7 @@ import type {
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatLbp } from '@/lib/currency';
 import { formatDateTime, formatRelative } from '@/lib/dates';
 import { CellTag } from '@/components/ui/cell-tag';
@@ -148,6 +149,17 @@ const METHOD_TAB = {
 /** «الكل» is not a method — it is the absence of the filter — so it is always here. */
 const ALL_METHODS_TAB = { id: '', key: 'methodAll', icon: ArrowLeftRight } as const;
 
+/** «الكل» plus every method the column can hold. */
+const METHOD_FILTER_VALUES = [ALL_METHODS_TAB.id, ...PAYMENT_METHOD] as const;
+type MethodFilter = (typeof METHOD_FILTER_VALUES)[number];
+
+/**
+ * The method tab, in the query string so a reload or a shared link reopens the
+ * log on it. Validated against the enum rather than the tabs on screen: which
+ * tabs appear is only known once `filterOptionsQuery` answers.
+ */
+const PAYMENTS_URL_STATE = { method: param.oneOf(METHOD_FILTER_VALUES, ALL_METHODS_TAB.id) };
+
 /** Text tone and glyph per method — one place, so the filter and the row agree. */
 const METHOD_STYLE = {
   CASH: { icon: Banknote, tone: 'success' },
@@ -201,17 +213,22 @@ export default function PaymentsPage({
   const labels = getLabels(locale);
 
   const [token, setToken] = useState<string | null>(null);
-  const [method, setMethod] = useState<string>('');
-  /** The committed term — set when the clerk presses Enter, not as they type. */
-  const [appliedSearch, setAppliedSearch] = useState('');
+  const [{ method }, setUrlState] = useUrlState(PAYMENTS_URL_STATE);
   /**
-   * The page the server was asked for.
+   * The committed term — set when the clerk presses Enter, not as they type.
+   *
+   * In this tab's storage, not the URL: it is a payer's name, a رقم مرجعي or a
+   * transfer reference (see `tab-search.ts`).
+   */
+  const [appliedSearch, setAppliedSearch] = useTabSearch(tenant, 'payments');
+  /**
+   * The page the server was asked for, in the URL as `?page=` / `?limit=`.
    *
    * Held here rather than inside the table because it is a *request parameter*
    * now: the table shows one page of a larger set, so the page index has to
    * survive alongside the filters that produced it.
    */
-  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
   const [copiedId, setCopiedId] = useState<string | null>(null);
   /** A failed action — opening a وصل. The reads report their own failures. */
   const [actionError, setActionError] = useState<string | null>(null);
@@ -673,17 +690,14 @@ export default function PaymentsPage({
                 icon: tab.icon,
               }))}
               /*
-                Narrowing to one method returns to the first page, here rather
-                than in an effect watching `method`: two state updates in one
-                render make one query key and one request, where the effect
-                made two — the first at an offset that no longer existed.
+                Narrowing to one method returns to the first page, in the same
+                URL write rather than in an effect watching `method`: one write
+                makes one query key and one request, where the effect made
+                two — the first at an offset that no longer existed.
               */
-              onChange={(next) => {
-                setMethod(next);
-                setPagination((previous) =>
-                  previous.pageIndex === 0 ? previous : { ...previous, pageIndex: 0 },
-                );
-              }}
+              onChange={(next) =>
+                setUrlState({ method: next as MethodFilter }, { clear: ['page'] })
+              }
             />
           </div>
         </CardHeader>

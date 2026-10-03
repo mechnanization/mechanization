@@ -28,6 +28,7 @@ import { formatPhone } from '@/lib/phone';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
+import { useUrlPagination } from '@/lib/use-url-state';
 import { cn } from '@/lib/utils';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -98,7 +99,9 @@ export default function LandlordLinksPage({
   const en = locale === 'en';
   const { token, user } = useStaffSession(tenant, base);
 
-  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
+  // In the URL (`?page=` / `?limit=`), so a reload or Back from a citizen's
+  // file returns to the same page of the queue.
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 25 });
   const queryClient = useQueryClient();
   const { resolve } = useLandlordResolutions({ tenant, token: token ?? '', locale });
   const [linking, setLinking] = useState<{ proposal: LandlordProposal; candidate: LandlordProposalCandidate } | null>(

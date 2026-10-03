@@ -61,7 +61,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { LoadingState } from '@/components/ui/states';
 import { flagsFromArray, unverifiedFromArray } from '@/components/ui/field';
-import { ShellLink, shellNavigate } from './shell-nav';
+import { ShellLink } from './shell-nav';
+import { useLeaveTo } from '@/lib/nav-history';
 import { OfflineQueueNotice } from './offline-queue';
 import { offlineStorageAvailable } from '@/lib/offline-db';
 import {
@@ -838,6 +839,12 @@ export function CitizenEditor({
   lockedCensusTarget?: LockedCensusTarget | null;
 }) {
   const router = useRouter();
+  /**
+   * Every way out of this form — the back link, «إلغاء», a save, a merge — goes
+   * through this, never a push: pushing the citizen's file again is what left
+   * file → form → file in the history and sent the file's «رجوع» back here.
+   */
+  const leaveTo = useLeaveTo();
   const toast = useToast();
   const base = `/${tenant}/${locale}/${adminPath}`;
   const editing = citizenId !== undefined;
@@ -1503,7 +1510,7 @@ export function CitizenEditor({
                 ? 'This record had already been sent — there was nothing left to update.'
                 : 'كان هذا السجل قد أُرسل بالفعل — لا حاجة لتحديثه.',
           );
-          shellNavigate(router, `${base}/citizens`);
+          leaveTo(`${base}/citizens`);
         } catch (caught) {
           logApiError(caught);
           setError(
@@ -1540,7 +1547,7 @@ export function CitizenEditor({
               ? 'Saved on this device — it will sync automatically when you are back online.'
               : 'حُفظ على هذا الجهاز — سيُرسل تلقائياً عند عودة الاتصال.',
           );
-          shellNavigate(router, `${base}/citizens`);
+          leaveTo(`${base}/citizens`);
           return;
         } catch (caught) {
           // IndexedDB refused — a private window, a full disk, the store held
@@ -1596,7 +1603,7 @@ export function CitizenEditor({
           setLinkOffers({ offers, next });
           return;
         }
-        router.push(next);
+        leaveTo(next);
       };
 
       try {
@@ -1730,7 +1737,7 @@ export function CitizenEditor({
                 ? 'Connection lost — saved on this device and queued for sync.'
                 : 'انقطع الاتصال — حُفظ السجل على الجهاز وسيُرسل تلقائياً.',
             );
-            shellNavigate(router, `${base}/citizens`);
+            leaveTo(`${base}/citizens`);
             return;
           } catch (queueFailure) {
             logApiError(queueFailure);
@@ -1754,6 +1761,7 @@ export function CitizenEditor({
       lockedCensusTarget,
       base,
       router,
+      leaveTo,
       locale,
       willQueue,
       canQueue,
@@ -1888,6 +1896,12 @@ export function CitizenEditor({
     <div className="flex min-h-full w-full flex-col space-y-3.5 sm:space-y-6 px-3 py-3 sm:px-6 sm:py-6 lg:px-8 pb-20 sm:pb-8">
       <ShellLink
         href={cancelHref}
+        onClick={(event) => {
+          // Modified clicks open a new tab and belong to the browser.
+          if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+          event.preventDefault();
+          leaveTo(cancelHref);
+        }}
         className="inline-flex items-center gap-1.5 text-xs sm:text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowRight className="size-3.5 sm:size-4 rtl:rotate-180" aria-hidden />
@@ -2093,7 +2107,7 @@ export function CitizenEditor({
           // the one exit from this form that means that. Navigating away by
           // any other route deliberately keeps it.
           forgetDraft();
-          shellNavigate(router, cancelHref);
+          leaveTo(cancelHref);
         }}
         onValuesChange={rememberDraft}
         locale={locale}
@@ -2101,7 +2115,7 @@ export function CitizenEditor({
         onDeactivated={() => {
           forgetDraft();
           toast.success(locale === 'en' ? 'File deactivated. It is kept and can be reactivated.' : 'عُطِّل الملف. يبقى محفوظاً ويمكن إعادة تفعيله.');
-          shellNavigate(router, `${base}/citizens/${citizenId}`);
+          leaveTo(`${base}/citizens/${citizenId}`);
         }}
         canMerge={canMerge && editing && !isQueuedEdit}
         canOverrideDuplicates={canMerge}
@@ -2109,7 +2123,7 @@ export function CitizenEditor({
           forgetDraft();
           toast.success(locale === 'en' ? 'The two files were merged.' : 'دُمج الملفان.');
           // Whichever side this form was, the file that stays is the one to read now.
-          shellNavigate(router, `${base}/citizens/${encodeURIComponent(result.keepId)}`);
+          leaveTo(`${base}/citizens/${encodeURIComponent(result.keepId)}`);
         }}
       />
 
@@ -2247,7 +2261,7 @@ export function CitizenEditor({
           onClose={() => {
             const next = linkOffers.next;
             setLinkOffers(null);
-            router.push(next);
+            leaveTo(next);
             router.refresh();
           }}
           locale={locale}

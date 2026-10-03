@@ -14,6 +14,7 @@ import {
 } from '@/lib/quality-api';
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { param, useUrlState } from '@/lib/use-url-state';
 import { Badge } from '@/components/ui/badge';
 import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
@@ -27,6 +28,16 @@ import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
 const UNASSIGNED = 'UNASSIGNED';
+
+/** The two lists, in display order — also what `?status=` may name. */
+const CHECK_STATUSES = ['OPEN', 'DONE'] as const satisfies readonly QualityCheck['status'][];
+
+/**
+ * Which list is showing. The sample's period and share are not here: they are
+ * what «سحب عيّنة» draws with, not a view of anything, and a reload or a link
+ * from last week should not hand the next draw last week's dates.
+ */
+const LIST = { status: param.oneOf(CHECK_STATUSES, 'OPEN') };
 
 const isoDaysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 
@@ -61,7 +72,7 @@ export function ChecksPanel({
   const quality = qualityLabels(locale);
   const toast = useToast();
 
-  const [status, setStatus] = useState<'OPEN' | 'DONE'>('OPEN');
+  const [{ status }, setList] = useUrlState(LIST);
   const [from, setFrom] = useState(isoDaysAgo(7));
   const [to, setTo] = useState(isoDaysAgo(0));
   const [percent, setPercent] = useState('5');
@@ -155,12 +166,12 @@ export function ChecksPanel({
       ) : null}
 
       <div className="flex gap-1.5">
-        {(['OPEN', 'DONE'] as const).map((value) => (
+        {CHECK_STATUSES.map((value) => (
           <button
             key={value}
             type="button"
             aria-pressed={status === value}
-            onClick={() => setStatus(value)}
+            onClick={() => setList({ status: value })}
             className={cn(
               'min-h-9 rounded-md border px-3 text-sm transition-colors',
               status === value ? 'border-primary bg-primary/10 font-medium text-primary' : 'hover:bg-accent',

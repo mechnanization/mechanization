@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useMemo, useState } from 'react';
+import { use, useMemo } from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { ClipboardCheck, FileQuestion, UserRound, Users } from 'lucide-react';
@@ -10,6 +10,7 @@ import { formatPhone } from '@/lib/phone';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
+import { useTabSearch, useUrlPagination } from '@/lib/use-url-state';
 import { cn } from '@/lib/utils';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -41,9 +42,11 @@ export default function ReviewQueuePage({
   const labels = getLabels(locale);
   const { token } = useStaffSession(tenant, base);
 
-  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
+  // The page in the URL and the search in tab storage — a search here is a
+  // citizen's name or number, which never goes in a URL (`tab-search.ts`).
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
   /** The committed term — set on Enter, not as the clerk types. */
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useTabSearch(tenant, 'citizens-review');
 
   const query = useStaffQuery({
     queryKey: ['citizens', 'review-queue', tenant, search, pagination.pageIndex, pagination.pageSize],

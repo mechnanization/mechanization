@@ -8,6 +8,7 @@ import { AdminSidebar, SidebarNav } from '@/components/admin/admin-sidebar';
 import { CommandPalette } from '@/components/admin/command-palette';
 import { loadSession } from '@/lib/session';
 import type { Session } from '@/lib/api-client';
+import { useRecordNavigation } from '@/lib/nav-history';
 import { useServiceWorker } from '@/lib/use-service-worker';
 import { cn } from '@/lib/utils';
 
@@ -51,6 +52,10 @@ export function AdminShell({
    * the moment the shell is needed, not the moment it can be fetched.
    */
   useServiceWorker(base);
+
+  // Which page came before this one, for forms that leave by going back to
+  // it rather than pushing it again (`nav-history.ts`).
+  useRecordNavigation();
 
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [paletteOpen, setPaletteOpen] = React.useState(false);
