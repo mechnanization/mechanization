@@ -3062,7 +3062,24 @@ export interface CitizenFormData {
     propertyId: string;
     buildingCode: string | null;
     parcelNumber: string | null;
-    units: Array<{ id: string; unitCode: string | null }>;
+    /** `unitId` is the census unit the flat is — what the drawing lights. */
+    units: Array<{ id: string; unitCode: string | null; unitId: string | null }>;
+    /** The linked building's shape, for the elevation drawing — no occupants. */
+    building: {
+      structureType: string;
+      lifecycleStatus: string;
+      floorsCount: number;
+      basementsCount: number;
+      units: Array<{
+        id: string;
+        floor: number;
+        sequence: number;
+        unitType: string | null;
+        unitCode: string;
+        startCol: number | null;
+        endCol: number | null;
+      }>;
+    } | null;
   }>;
   /** The file as it stands now — sent back as `expectedVersion` on save. */
   version?: string;

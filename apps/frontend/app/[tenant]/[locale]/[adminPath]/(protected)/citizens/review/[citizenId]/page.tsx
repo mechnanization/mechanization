@@ -30,6 +30,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { SkeletonText } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
+import { PropertyScene, type ElevationBuilding } from '@/components/admin/property-illustrations';
 import { controlFor } from '@/lib/citizen-field-controls';
 import { formatDate } from '@/lib/dates';
 import { flagFieldLabel } from '@/lib/field-flags';
@@ -160,42 +161,91 @@ function PropertyDetails({
     ),
   ];
 
+  /*
+    The picture: the same one the citizen's properties page draws (`PropertyScene`),
+    with this citizen's census units lit — the flats on this card that the
+    census links. A card linked to no building is drawn as its type.
+  */
+  const lit = new Set((census?.units ?? []).map((unit) => unit.unitId).filter((id): id is string => Boolean(id)));
+  const litCodes = (census?.building?.units ?? []).filter((unit) => lit.has(unit.id)).map((unit) => unit.unitCode);
+  const soleType =
+    (units.length === 1 ? units[0]!.unitType : null) ??
+    (census?.building?.units.filter((unit) => lit.has(unit.id)).length === 1
+      ? census.building.units.find((unit) => lit.has(unit.id))!.unitType
+      : null) ??
+    (census?.building?.units.length === 1 ? census.building.units[0]!.unitType : null);
+  const sharesNumber = Number(card?.shares);
+
   return (
     <div className="space-y-4">
-      <SummaryList>
-        <SummaryRow
-          label={en ? 'Building code' : 'رمز المبنى'}
-          className={census?.buildingCode ? 'font-mono' : 'font-normal text-muted-foreground'}
-        >
-          {census?.buildingCode ?? (en ? 'Not linked to the census' : 'غير مربوط بالمسح')}
-        </SummaryRow>
-        {open.has(`${prefix}propertyNumber`) ? null : (
-          <SummaryRow
-            label={labels.citizenField.propertyNumber}
-            className={propertyNumber ? 'font-mono' : 'font-normal text-muted-foreground'}
-          >
-            {propertyNumber ?? '—'}
-          </SummaryRow>
-        )}
-        {parcel && parcel !== propertyNumber ? (
-          <SummaryRow label={en ? 'Property no. in the census' : 'رقم العقار في المسح'} className="font-mono">
-            {parcel}
-          </SummaryRow>
-        ) : null}
-        {filled.map((field) => {
-          const value = displayValue(values, field.path, locale) ?? '';
-          const kind = controlFor(field.path).kind;
-          return (
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="min-w-0 lg:col-span-2">
+          <SummaryList>
             <SummaryRow
-              key={field.path}
-              label={leafLabel(field.path)}
-              className={kind === 'number' || kind === 'phone' ? 'tabular-nums' : undefined}
+              label={en ? 'Building code' : 'رمز المبنى'}
+              className={census?.buildingCode ? 'font-mono' : 'font-normal text-muted-foreground'}
             >
-              {kind === 'phone' ? formatPhone(value) : value}
+              {census?.buildingCode ?? (en ? 'Not linked to the census' : 'غير مربوط بالمسح')}
             </SummaryRow>
-          );
-        })}
-      </SummaryList>
+            {open.has(`${prefix}propertyNumber`) ? null : (
+              <SummaryRow
+                label={labels.citizenField.propertyNumber}
+                className={propertyNumber ? 'font-mono' : 'font-normal text-muted-foreground'}
+              >
+                {propertyNumber ?? '—'}
+              </SummaryRow>
+            )}
+            {parcel && parcel !== propertyNumber ? (
+              <SummaryRow label={en ? 'Property no. in the census' : 'رقم العقار في المسح'} className="font-mono">
+                {parcel}
+              </SummaryRow>
+            ) : null}
+            {filled.map((field) => {
+              const value = displayValue(values, field.path, locale) ?? '';
+              const kind = controlFor(field.path).kind;
+              return (
+                <SummaryRow
+                  key={field.path}
+                  label={leafLabel(field.path)}
+                  className={kind === 'number' || kind === 'phone' ? 'tabular-nums' : undefined}
+                >
+                  {kind === 'phone' ? formatPhone(value) : value}
+                </SummaryRow>
+              );
+            })}
+          </SummaryList>
+        </div>
+        {/* Where it is: the building drawn, this citizen's unit lit (ICO-2: the list beside it is the record). */}
+        <figure className="space-y-2">
+          <div className="relative h-64 overflow-hidden rounded-lg border bg-muted/40">
+            <div className="absolute inset-x-6 bottom-6 top-8 overflow-hidden">
+              <PropertyScene
+                propertyType={card?.propertyType}
+                landType={card?.landType}
+                shares={Number.isFinite(sharesNumber) && sharesNumber > 0 ? sharesNumber : null}
+                building={census?.building as ElevationBuilding | null | undefined}
+                highlight={lit}
+                tone={card?.occupancyType === 'OWNER' ? 'owner' : 'occupant'}
+                soleType={soleType}
+                locale={locale}
+              />
+            </div>
+          </div>
+          <figcaption className="text-xs text-muted-foreground">
+            {census?.building && census.building.units.length > 1
+              ? litCodes.length > 0
+                ? en
+                  ? `Lit: this citizen's unit ${litCodes.join(', ')}`
+                  : `المضاءة: وحدة المواطن ${litCodes.join('، ')}`
+                : en
+                  ? 'No unit in this building is linked to this card yet.'
+                  : 'لا وحدة في هذا المبنى مربوطة بهذه البطاقة بعد.'
+              : en
+                ? 'Drawn by its type — this card is not linked to a building of several units.'
+                : 'مرسوم بحسب نوعه — هذه البطاقة غير مربوطة بمبنى متعدد الوحدات.'}
+          </figcaption>
+        </figure>
+      </div>
 
       {cardItems.length > 0 ? (
         <OpenQuestionList

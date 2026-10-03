@@ -2,6 +2,18 @@
 
 import { buildingWidth, isStructuralUnitType, layoutFloorSpans, type UnitSpan } from '@mechanization/shared-schemas';
 import type { BuildingDetail, UnitWithOccupants } from '@/lib/api-client';
+
+/** A unit as a drawing reads it: where it is and what it is — never who lives there. */
+export type ElevationUnit = Pick<UnitWithOccupants, 'id' | 'floor' | 'sequence' | 'unitType' | 'unitCode' | 'startCol' | 'endCol'>;
+
+/**
+ * A building as a drawing reads it. Narrower than `BuildingDetail` on
+ * purpose: a screen that only draws the building can be sent this, without
+ * the occupants' names and phones the full record carries (CODE-5).
+ */
+export type ElevationBuilding = Pick<BuildingDetail, 'structureType' | 'lifecycleStatus' | 'floorsCount' | 'basementsCount'> & {
+  units: ElevationUnit[];
+};
 import type { CSSProperties } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -16,6 +28,64 @@ import { cn } from '@/lib/utils';
  * uses for the two roles.
  */
 export type PropertyTone = 'owner' | 'occupant';
+
+/**
+ * What a property card is a picture *of* — one choice, shared by the
+ * citizen's properties page and «فحص الملف» so a card is drawn the same way
+ * wherever it is shown (ICO-3).
+ *
+ * A building of several units is drawn as itself, with the citizen's lit. A
+ * card that is one unit — a house, or a single shop, garage or flat — is drawn
+ * as that unit's type (`soleType`, which the caller reads from its own card
+ * and census data), and land and tents as themselves.
+ */
+export function PropertyScene({
+  propertyType,
+  landType,
+  shares,
+  building,
+  highlight,
+  tone,
+  soleType,
+  selected = null,
+  onSelect,
+  locale = 'ar',
+}: {
+  propertyType: string | null | undefined;
+  landType?: string | null;
+  shares: number | null;
+  /** The census building, shape only. Null for a card linked to none. */
+  building: ElevationBuilding | null | undefined;
+  /** The census units that are this citizen's. */
+  highlight: ReadonlySet<string>;
+  tone: PropertyTone;
+  /** The one unit's type, when the card is a single unit. */
+  soleType: string | null | undefined;
+  selected?: string | null;
+  onSelect?: (unitId: string) => void;
+  locale?: string;
+}) {
+  const manyUnits = Boolean(building && building.units.length > 1);
+  if (propertyType === 'LAND') return <LandArt tone={tone} shares={shares} landType={landType} />;
+  if (!manyUnits && (propertyType === 'TENT' || building?.structureType === 'TENT_SHELTER')) return <TentArt tone={tone} />;
+  if (manyUnits && building) {
+    return (
+      <BuildingElevation
+        building={building}
+        highlight={highlight}
+        tone={tone}
+        selected={selected}
+        onSelect={onSelect}
+        locale={locale}
+      />
+    );
+  }
+  if (soleType) return <UnitArt unitType={soleType} tone={tone} />;
+  if (building?.structureType === 'WAREHOUSE_HANGAR') return <UnitArt unitType="WAREHOUSE" tone={tone} />;
+  if (building?.structureType === 'COMMERCIAL_CENTER') return <UnitArt unitType="SHOP" tone={tone} />;
+  if (propertyType === 'BUILDING') return <UnitArt unitType="APARTMENT" tone={tone} />;
+  return <HouseArt tone={tone} />;
+}
 
 const TONE_TEXT: Record<PropertyTone, string> = {
   owner: 'text-success',
@@ -39,7 +109,7 @@ export function BuildingElevation({
   pickAny = false,
   locale = 'ar',
 }: {
-  building: BuildingDetail;
+  building: ElevationBuilding;
   highlight: ReadonlySet<string>;
   tone: PropertyTone;
   /** The language of the drawing's spoken name (TXT-2). */
@@ -70,7 +140,7 @@ export function BuildingElevation({
   */
   const bottom = Math.min(...unitFloors, -(building.basementsCount ?? 0), 0);
 
-  const floors: Array<{ floor: number; blocks: Array<UnitSpan<UnitWithOccupants>>; width: number }> = [];
+  const floors: Array<{ floor: number; blocks: Array<UnitSpan<ElevationUnit>>; width: number }> = [];
   for (let floor = top; floor >= bottom; floor -= 1) {
     const units = building.units
       .filter((unit) => unit.floor === floor)
@@ -129,7 +199,7 @@ export function BuildingElevation({
 
   /** One storey of the elevation; a basement is drawn by the same hand, inside the ground. */
   function renderFloor(
-    { floor, blocks }: { floor: number; blocks: Array<UnitSpan<UnitWithOccupants>> },
+    { floor, blocks }: { floor: number; blocks: Array<UnitSpan<ElevationUnit>> },
     index: number,
   ) {
           /*
@@ -948,7 +1018,7 @@ function TentCamp({
   pickAny = false,
   locale,
 }: {
-  building: BuildingDetail;
+  building: ElevationBuilding;
   highlight: ReadonlySet<string>;
   tone: PropertyTone;
   locale: string;

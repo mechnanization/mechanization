@@ -49,14 +49,7 @@ import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
-import {
-  BuildingElevation,
-  HouseArt,
-  LandArt,
-  TentArt,
-  UnitArt,
-  type PropertyTone,
-} from '@/components/admin/property-illustrations';
+import { PropertyScene, type PropertyTone } from '@/components/admin/property-illustrations';
 import { cn } from '@/lib/utils';
 
 type Labels = ReturnType<typeof getLabels>;
@@ -430,31 +423,20 @@ function PropertyBlock({
       ? units.filter((unit) => !(manyUnits && unit.unitId && highlight.has(unit.unitId)))
       : [];
 
-  const scene =
-    property.propertyType === 'LAND' ? (
-      <LandArt tone={tone} shares={shares} landType={property.landType} />
-    ) : !manyUnits && (property.propertyType === 'TENT' || building?.structureType === 'TENT_SHELTER') ? (
-      <TentArt tone={tone} />
-    ) : manyUnits && building ? (
-      <BuildingElevation
-        building={building}
-        highlight={highlight}
-        tone={tone}
-        selected={selectedUnit?.unitId ?? null}
-        onSelect={units.length > 0 ? selectFromDrawing : undefined}
-        locale={locale}
-      />
-    ) : soleType ? (
-      <UnitArt unitType={soleType} tone={tone} />
-    ) : building?.structureType === 'WAREHOUSE_HANGAR' ? (
-      <UnitArt unitType="WAREHOUSE" tone={tone} />
-    ) : building?.structureType === 'COMMERCIAL_CENTER' ? (
-      <UnitArt unitType="SHOP" tone={tone} />
-    ) : property.propertyType === 'BUILDING' ? (
-      <UnitArt unitType="APARTMENT" tone={tone} />
-    ) : (
-      <HouseArt tone={tone} />
-    );
+  const scene = (
+    <PropertyScene
+      propertyType={property.propertyType}
+      landType={property.landType}
+      shares={shares}
+      building={building}
+      highlight={highlight}
+      tone={tone}
+      soleType={soleType}
+      selected={selectedUnit?.unitId ?? null}
+      onSelect={units.length > 0 ? selectFromDrawing : undefined}
+      locale={locale}
+    />
+  );
 
   const TypeIcon = manyUnits
     ? Building2

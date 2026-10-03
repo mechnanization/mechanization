@@ -762,7 +762,29 @@ export class CitizensService {
                     // The census unit each flat is, for its code — see `propertyRefs`.
                     include: { unit: { select: { floor: true, sequence: true } } },
                   },
-                  building: { select: { code: true, parcelNumber: true } },
+                  building: {
+                    select: {
+                      code: true,
+                      parcelNumber: true,
+                      // What the elevation drawing reads — its shape, never its occupants.
+                      structureType: true,
+                      lifecycleStatus: true,
+                      floorsCount: true,
+                      basementsCount: true,
+                      units: {
+                        orderBy: [{ floor: 'asc' }, { sequence: 'asc' }],
+                        select: {
+                          id: true,
+                          floor: true,
+                          sequence: true,
+                          unitType: true,
+                          unitCode: true,
+                          startCol: true,
+                          endCol: true,
+                        },
+                      },
+                    },
+                  },
                   landlordCitizen: {
                     select: {
                       id: true,
@@ -830,13 +852,14 @@ export class CitizensService {
       notes: registration?.notes ?? null,
       /**
        * Each card's place in the census, read-only: the building's code and
-       * parcel, and each flat's unit code («0101»). What a reviewer reads a
-       * property by, and what is painted on the wall.
+       * parcel, each flat's unit code («0101») and census unit, and the
+       * building's shape for the elevation drawing. What a reviewer reads a
+       * property by, and where in the building it is.
        *
        * Beside `properties` rather than inside them, because the cards are the
        * form's own values and travel back on save; these are facts the census
-       * owns and the form never writes. Codes only — no other occupant of the
-       * building reaches this response.
+       * owns and the form never writes. Codes and shape only — no other
+       * occupant of the building reaches this response.
        */
       propertyRefs: (registration?.properties ?? []).map((property) => ({
         propertyId: property.id,
@@ -845,7 +868,23 @@ export class CitizensService {
         units: property.units.map((unit) => ({
           id: unit.id,
           unitCode: unit.unit ? formatUnitCode(unit.unit.floor, unit.unit.sequence) : null,
+          /** The census unit this flat is — what the drawing lights. */
+          unitId: unit.unitId,
         })),
+        /**
+         * The building drawn: its shape and every unit's place in it, so the
+         * reviewer sees where this citizen's unit is. Shape only — not one
+         * occupant of the building is in it.
+         */
+        building: property.building
+          ? {
+              structureType: property.building.structureType,
+              lifecycleStatus: property.building.lifecycleStatus,
+              floorsCount: property.building.floorsCount,
+              basementsCount: property.building.basementsCount,
+              units: property.building.units,
+            }
+          : null,
       })),
       residence: citizen.residence,
       personal: {
