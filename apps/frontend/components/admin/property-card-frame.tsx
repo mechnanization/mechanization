@@ -114,9 +114,9 @@ export function PropertyCardFrame({
       {/* ── The info column: title, figures, the switch, the open section ── */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/*
-          Drawn as the page header is: the tile centred on the two lines beside
-          it, the place on the second line with the zone as a badge — which
-          keeps one baseline where «حي · حي» separated by a dot did not.
+          The tile, then the title with its place on the same line: the
+          neighbourhood and the zone (as a badge) beside the name, wrapping
+          under it only when the name leaves no room.
         */}
         <div className="flex items-center gap-3 px-4 pt-4">
           <span
@@ -128,8 +128,8 @@ export function PropertyCardFrame({
           >
             <Icon className="size-5" />
           </span>
-          <div className="min-w-0 flex-1 space-y-1">
-            <h2 className="truncate text-lg font-bold leading-tight">{title}</h2>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+            <h2 className="min-w-0 truncate text-lg font-bold leading-tight">{title}</h2>
             {neighbourhood || zone ? (
               <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
                 {neighbourhood ? (
