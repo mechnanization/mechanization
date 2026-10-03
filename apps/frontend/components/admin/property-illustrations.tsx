@@ -34,13 +34,15 @@ export type PropertyTone = 'owner' | 'occupant';
  * citizen's properties page and «فحص الملف», and drawn in one language: the
  * census elevation (ICO-3). There is no second, illustrated style.
  *
- *  - A card linked to a census building draws that building, the citizen's
- *    units lit — whatever its size, a single house included.
+ *  - A card linked to a census building draws that building in its own
+ *    colours, the citizen's units outlined in their role's colour (`marker=
+ *    "outline"`) — never repainted. A building of one unit is the citizen's
+ *    property whole, so nothing is marked on it.
  *  - A card linked to none is drawn as a one-unit elevation of its own kind:
  *    a house as «منزل مستقل», a shop, office or clinic as a commercial front,
  *    a warehouse or garage as a hangar, a flat as a residential block, a tent
  *    as the camp. Nothing is invented — no floors or neighbours the record
- *    does not have; the one unit is the card, lit.
+ *    does not have; the one unit is the card, unmarked.
  *  - Land has no building to elevate: `PlotElevation` draws the plot on the
  *    same ground line, in the same inks.
  */
@@ -70,7 +72,9 @@ export function PropertyScene({
     return (
       <BuildingElevation
         building={building}
-        highlight={highlight}
+        // A one-unit building is the citizen's property whole: nothing to point at.
+        highlight={building.units.length > 1 ? highlight : NOTHING_LIT}
+        marker="outline"
         tone={tone}
         selected={selected}
         onSelect={onSelect}
@@ -81,7 +85,7 @@ export function PropertyScene({
   if (propertyType === 'LAND') return <PlotElevation tone={tone} locale={locale} />;
 
   const card = cardBuilding(propertyType, soleType, building);
-  return <BuildingElevation building={card} highlight={CARD_UNIT_LIT} tone={tone} locale={locale} />;
+  return <BuildingElevation building={card} highlight={NOTHING_LIT} marker="outline" tone={tone} locale={locale} />;
 }
 
 /** A lit tent's ink in the camp drawing — the role's colour, as text for its SVG strokes. */
@@ -92,7 +96,7 @@ const TONE_TEXT: Record<PropertyTone, string> = {
 
 /** The id of the one unit a card with no census building is drawn as. */
 const CARD_UNIT_ID = 'card-unit';
-const CARD_UNIT_LIT: ReadonlySet<string> = new Set([CARD_UNIT_ID]);
+const NOTHING_LIT: ReadonlySet<string> = new Set();
 
 /**
  * The one-unit structure an unlinked card is drawn as. Its structure decides
@@ -173,11 +177,19 @@ export function BuildingElevation({
   selected = null,
   onSelect,
   pickAny = false,
+  marker = 'fill',
   locale = 'ar',
 }: {
   building: ElevationBuilding;
   highlight: ReadonlySet<string>;
   tone: PropertyTone;
+  /**
+   * How a highlighted unit is shown. `fill` — painted in the role's colour,
+   * the matrix's picked unit. `outline` — left in its own grey and ringed in
+   * the role's colour: a property's picture, where the building is read as it
+   * stands and the citizen's unit is pointed at, not repainted.
+   */
+  marker?: 'fill' | 'outline';
   /** The language of the drawing's spoken name (TXT-2). */
   locale?: string;
   /** The lit unit whose details are open below the drawing — marked with a ring. */
@@ -239,6 +251,7 @@ export function BuildingElevation({
       <TentCamp
         building={building}
         highlight={highlight}
+        marker={marker}
         tone={tone}
         locale={locale}
         selected={selected}
@@ -317,6 +330,7 @@ export function BuildingElevation({
                 ) : (
                   blocks.map(({ unit, startCol, endCol }) => {
                     const lit = highlight.has(unit.id);
+                    const filled = lit && marker === 'fill';
                     const kind = unitKind(unit.unitType);
                     // What the front shows, which the structure decides as much as the unit does.
                     const faceKind = faceFor(kind, look);
@@ -332,8 +346,9 @@ export function BuildingElevation({
                       'relative block h-full w-full overflow-hidden rounded-[2px] transition-colors',
                       ghost
                         ? cn('border border-dashed bg-transparent', lifecycle === 'DEMOLISHED' ? 'border-destructive/50' : 'border-foreground/40')
-                        : panelFor(faceKind, lit, tone),
+                        : panelFor(faceKind, filled, tone),
                       lit && 'z-[1]',
+                      lit && marker === 'outline' && cn('ring-2 ring-offset-1 ring-offset-background', TONE_RING[tone]),
                       (lit || pickAny) && onSelect && 'cursor-pointer hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       // The picked unit: the selection colour (COL-2), not the role's.
                       unit.id === selected && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
@@ -345,7 +360,7 @@ export function BuildingElevation({
                             unitType={unit.unitType}
                             kind={faceKind}
                             columns={span}
-                            lit={lit}
+                            lit={filled}
                             tone={tone}
                             underground={floor < 0}
                           />
@@ -777,11 +792,13 @@ function TentCamp({
   selected,
   onSelect,
   pickAny = false,
+  marker = 'fill',
   locale,
 }: {
   building: ElevationBuilding;
   highlight: ReadonlySet<string>;
   tone: PropertyTone;
+  marker?: 'fill' | 'outline';
   locale: string;
   selected: string | null;
   onSelect?: (unitId: string) => void;
@@ -798,16 +815,18 @@ function TentCamp({
         <div className="flex flex-wrap items-end justify-center gap-x-1.5 gap-y-1">
           {tents.map((tent) => {
             const lit = highlight.has(tent.id);
+            const filled = lit && marker === 'fill';
             const art = (
               <svg viewBox="0 0 40 32" className="h-full w-full" aria-hidden>
-                <path d="M2 31 L20 4 L38 31 Z" className={lit ? undefined : 'fill-foreground/30'} fill={lit ? 'currentColor' : undefined} />
+                <path d="M2 31 L20 4 L38 31 Z" className={filled ? undefined : 'fill-foreground/30'} fill={filled ? 'currentColor' : undefined} />
                 <path d="M20 4 L15 31 L25 31 Z" className="fill-background/60" />
                 <line x1="20" y1="4" x2="20" y2="1" className="stroke-foreground/60" strokeWidth="1.5" />
               </svg>
             );
             const className = cn(
               'h-[30px] w-[38px] rounded-sm',
-              lit ? TONE_TEXT[tone] : 'text-foreground',
+              filled ? TONE_TEXT[tone] : 'text-foreground',
+              lit && marker === 'outline' && cn('ring-2 ring-offset-1 ring-offset-background', TONE_RING[tone]),
               (lit || pickAny) && onSelect && 'cursor-pointer hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               tent.id === selected && 'ring-2 ring-foreground ring-offset-1 ring-offset-background',
             );
@@ -887,6 +906,11 @@ const PLAIN_PANEL = 'bg-foreground/[0.22]';
 const TONE_PANEL: Record<PropertyTone, string> = {
   owner: 'bg-success',
   occupant: 'bg-info',
+};
+/** A highlighted unit's ring when it is outlined, not filled. */
+const TONE_RING: Record<PropertyTone, string> = {
+  owner: 'ring-success',
+  occupant: 'ring-info',
 };
 const TONE_BORDER: Record<PropertyTone, string> = {
   owner: 'border-success',

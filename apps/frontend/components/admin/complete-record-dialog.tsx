@@ -767,7 +767,8 @@ export function OpenQuestionList({
 }) {
   const { answers, reasons, fieldErrors, setAnswer, setReason } = state;
   return (
-    <div className="space-y-3">
+    // As rows of a read-back they take its rules between them; as blocks, space.
+    <div className={variant === 'row' ? 'divide-y divide-border/60' : 'space-y-3'}>
       {items.map((item) => (
         <OpenQuestion
           key={item.path}

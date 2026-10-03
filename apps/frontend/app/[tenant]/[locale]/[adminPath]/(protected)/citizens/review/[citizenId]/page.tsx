@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  ArrowDownToLine,
   Building,
   Building2,
   Check,
@@ -129,11 +130,14 @@ function ReviewPropertyCard({
   base,
   citizenId,
   locale,
+  jumpTo,
 }: {
   values: CitizenFormValues;
   index: number;
   /** This card's open questions. */
   items: OpenItem[];
+  /** The field «الحقل التالي» is taking the clerk to — its tab is opened if it is here. */
+  jumpTo: { path: string; at: number } | null;
   /** This card's census codes and building, from `propertyRefs`. */
   census: PropertyRef | undefined;
   state: RecordCompletion;
@@ -227,6 +231,11 @@ function ReviewPropertyCard({
   useEffect(() => {
     if (firstRefused) setTab(tabOf(firstRefused));
   }, [firstRefused]);
+  useEffect(() => {
+    if (jumpTo && items.some((item) => item.path === jumpTo.path)) setTab(tabOf(jumpTo.path));
+    // `at` is in the key so a second jump to the same field still opens it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpTo?.path, jumpTo?.at]);
 
   /** An open field, answered in its own row of the read-back. */
   const answerRow = (path: string, label: string) => {
@@ -497,6 +506,36 @@ export default function ReviewFilePage({
     };
   }, [items]);
 
+  /*
+    «الحقل التالي» — on a file with many open fields, the next one still
+    without an answer, after the one the cursor is in (wrapping round), in the
+    order the page shows them: the citizen's, then each property's. Its card
+    opens the tab it sits in (`jumpTo`), then the box is scrolled to and
+    focused — once that tab has been drawn, hence the frame's wait.
+  */
+  const [jump, setJump] = useState<{ path: string; at: number } | null>(null);
+  const ordered = [...personalItems, ...propertySections.flatMap(([, sectionItems]) => sectionItems)];
+  const nextOpen = () => {
+    const open = ordered.filter((item) => state.stillOpen(item) && item.answerable);
+    if (open.length === 0) return;
+    const here = typeof document !== 'undefined' ? document.activeElement?.id ?? '' : '';
+    const at = ordered.findIndex((item) => here.startsWith(`complete-${item.path.replace(/\./g, '-')}`));
+    const next = open.find((item) => ordered.indexOf(item) > at) ?? open[0]!;
+    setJump({ path: next.path, at: Date.now() });
+  };
+  useEffect(() => {
+    if (!jump) return;
+    const id = `complete-${jump.path.replace(/\./g, '-')}`;
+    const timer = window.setTimeout(() => {
+      const input = document.getElementById(id);
+      // Instant under reduced motion (MOT-6).
+      const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      input?.scrollIntoView({ block: 'center', behavior: still ? 'auto' : 'smooth' });
+      input?.focus({ preventScroll: true });
+    }, 60);
+    return () => window.clearTimeout(timer);
+  }, [jump]);
+
   const personal = values?.personal ?? {};
   const contact = values?.contact ?? {};
   const fullName =
@@ -610,18 +649,18 @@ export default function ReviewFilePage({
                     {record.lastStaffEdit.name ? ` · ${record.lastStaffEdit.name}` : null}
                   </SummaryRow>
                 ) : null}
+                {/* The open fields as rows of the same read-back, as on the property cards. */}
+                {personalItems.length > 0 ? (
+                  <OpenQuestionList
+                    state={state}
+                    items={personalItems}
+                    base={base}
+                    citizenId={citizenId}
+                    locale={locale}
+                    variant="row"
+                  />
+                ) : null}
               </SummaryList>
-
-              {personalItems.length > 0 ? (
-                <OpenQuestionList
-                  state={state}
-                  items={personalItems}
-                  base={base}
-                  citizenId={citizenId}
-                  locale={locale}
-                  variant="inline"
-                />
-              ) : null}
               </div>
             </CardContent>
           </Card>
@@ -649,6 +688,7 @@ export default function ReviewFilePage({
                     base={base}
                     citizenId={citizenId}
                     locale={locale}
+                    jumpTo={jump}
                   />
                 );
               })}
@@ -670,9 +710,16 @@ export default function ReviewFilePage({
               <RecordCompletionNotices state={state} base={base} citizenId={citizenId} locale={locale} />
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <RecordCompletionSummary state={state} locale={locale} />
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {state.remaining > 0 ? (
+                  <Button type="button" variant="outline" className="flex-1 gap-1.5 sm:flex-none" onClick={nextOpen}>
+                    <ArrowDownToLine className="size-4" aria-hidden />
+                    {en ? `Next field (${state.remaining} left)` : `الحقل التالي (${state.remaining} متبقٍ)`}
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
-                  className="shrink-0 gap-1.5"
+                  className="flex-1 gap-1.5 sm:flex-none"
                   disabled={saving || !state.canSave}
                   onClick={() => void state.save()}
                 >
@@ -683,6 +730,7 @@ export default function ReviewFilePage({
                   )}
                   {saveLabel(state, en)}
                 </Button>
+                </div>
               </div>
             </div>
           ) : null}
