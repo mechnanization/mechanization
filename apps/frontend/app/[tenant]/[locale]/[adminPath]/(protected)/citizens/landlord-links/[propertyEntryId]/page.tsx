@@ -76,7 +76,9 @@ export default function LandlordLinkPage({
   const resolution = resolved[propertyEntryId];
   const queue = `${base}/citizens/landlord-links`;
 
-  const typed = proposal?.landlordName?.trim() || (en ? 'No name given' : 'بلا اسم');
+  const typed =
+    proposal?.landlordName?.trim() ||
+    (proposal?.landlordPhone ? (en ? 'No name given' : 'بلا اسم') : en ? 'Does not know the owner' : 'لا يعرف المالك');
   const reference = proposal ? (proposal.buildingCode ?? proposal.propertyNumber) : null;
   const view = proposal ? landlordLinkStatusView(landlordLinkStatus(proposal), locale) : null;
   const dash = <span className="font-normal text-muted-foreground">—</span>;

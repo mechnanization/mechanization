@@ -4,7 +4,7 @@ import { use, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
-import { CircleSlash, HelpCircle, Link2, RefreshCw, Search, UserRound, Wallet } from 'lucide-react';
+import { Building2, CircleSlash, HelpCircle, Link2, RefreshCw, Search, UserRound, Wallet } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
@@ -21,6 +21,7 @@ import {
   landlordLinkStatus,
   nameLight,
   phoneLight,
+  phoneLinkable,
   type MatchLight,
 } from '@/lib/landlord-status';
 import { formatPhone } from '@/lib/phone';
@@ -68,10 +69,10 @@ function Light({ light }: { light: MatchLight }) {
 }
 
 /**
- * Why «ربط» is not offered on a row, or null when it is. The row links only
- * where there is nothing to choose — the status `READY`: one person, found by
- * the card's number, nothing blocking. Everything else is a choice, and
- * choices are made on «فحص».
+ * Why «ربط» is not offered on a row, or null when it is. The row links only on
+ * a matching phone number — the one certain match (`phoneLinkable`, the
+ * status `READY`). A name, a property, or a shared line the name does not
+ * settle is checked on «فحص».
  */
 function quickLinkRefusal(proposal: LandlordProposal, en: boolean): string | null {
   switch (landlordLinkStatus(proposal)) {
@@ -80,7 +81,13 @@ function quickLinkRefusal(proposal: LandlordProposal, en: boolean): string | nul
     case 'SEVERAL':
       return en ? 'Several people on this number — choose on «Check».' : 'عدة مرشحين على هذا الرقم — اختر في «فحص».';
     case 'NAME_ONLY':
-      return en ? 'Found by the name alone — confirm on «Check».' : 'وُجد بالاسم فقط — تحقّق في «فحص».';
+      return en
+        ? 'The number does not match — linking from here needs a matching number. Check on «Check».'
+        : 'الرقم غير مطابق — الربط المباشر بالرقم المطابق فقط. تحقّق في «فحص».';
+    case 'BY_PROPERTY':
+      return en
+        ? 'The occupant did not know the owner’s number — check on «Check».'
+        : 'لم يعرف الساكن رقم المالك — تحقّق في «فحص».';
     case 'BLOCKED':
       return en ? 'No link can be made yet — see «Check».' : 'لا يمكن الربط بعد — راجع «فحص».';
   }
@@ -237,14 +244,16 @@ export default function LandlordLinksPage({
           return (
             <div className="min-w-0 space-y-0.5">
               <p className={cn('truncate text-sm', typed ? 'font-medium' : 'text-muted-foreground')} title={typed}>
-                {typed || (en ? 'No name given' : 'لم يذكر اسماً')}
+                {typed || (proposal.landlordPhone ? (en ? 'No name given' : 'لم يذكر اسماً') : en ? 'Does not know the owner' : 'لا يعرف المالك')}
               </p>
               {proposal.landlordPhone ? (
                 <p dir="ltr" className="text-xs tabular-nums text-muted-foreground rtl:text-end">
                   {formatPhone(proposal.landlordPhone)}
                 </p>
-              ) : (
+              ) : typed ? (
                 <p className="text-xs text-muted-foreground">{en ? 'No phone given' : 'لم يذكر رقماً'}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">{en ? 'No name or phone' : 'لا اسم ولا رقم'}</p>
               )}
             </div>
           );
@@ -300,6 +309,12 @@ export default function LandlordLinksPage({
                   </span>
                 ) : null}
               </p>
+              {candidate.matchedBy === 'PROPERTY' ? (
+                <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Building2 className="size-3 shrink-0" aria-hidden />
+                  {en ? 'Registered owner of this property' : 'مالك مسجَّل لهذا العقار'}
+                </p>
+              ) : null}
               {/* The case this queue is for: the occupant came first, the owner registered since. */}
               {filedBeforeOwner(proposal, candidate) ? (
                 <p className="text-xs text-muted-foreground">
@@ -333,7 +348,7 @@ export default function LandlordLinksPage({
         cell: ({ row }) => {
           const proposal = row.original;
           const typed = proposal.landlordName?.trim() || (en ? 'this owner' : 'هذا المالك');
-          const candidate = bestCandidate(proposal);
+          const candidate = phoneLinkable(proposal);
           const refusal = quickLinkRefusal(proposal, en);
           const refusalId = `link-refusal-${proposal.propertyEntryId}`;
           return (
@@ -408,6 +423,16 @@ export default function LandlordLinksPage({
             {en
               ? 'When the owner is registered later, the register compares that phone with the citizen’s phone and WhatsApp, and the name with the citizen’s name — the lights in the table. Nothing is linked automatically.'
               : 'عندما يُسجَّل المالك لاحقاً، يقارن النظام ذلك الرقم برقم المواطن وواتسابه، والاسم باسمه — وهي الأضواء في الجدول. لا يُربط شيء تلقائياً.'}
+          </li>
+          <li>
+            {en
+              ? 'When the occupant knew neither the owner’s name nor number, the register offers whoever is recorded as the owner of that same property — the flat’s recorded owner, or a citizen who filed the building as theirs. Those are checked on «Check».'
+              : 'إذا لم يعرف الساكن اسم المالك ولا رقمه، يقترح النظام من هو مسجَّل مالكاً للعقار نفسه — مالك الوحدة في سجل المباني، أو مواطن سجّل المبنى ملكاً له. تُفحص هذه في «فحص».'}
+          </li>
+          <li>
+            {en
+              ? '«Link» on a row is offered only when the phone matches — the one certain match. Everything else is decided on «Check».'
+              : 'زر «ربط» في الصف متاح فقط عند تطابق رقم الهاتف — وهو التطابق المؤكَّد. غير ذلك يُقرَّر في «فحص».'}
           </li>
           <li>
             {en

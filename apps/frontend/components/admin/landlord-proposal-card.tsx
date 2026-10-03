@@ -109,12 +109,25 @@ export function LandlordProposalCard({
     const same = proposal.candidates.filter(
       (candidate) =>
         !candidate.blocked &&
-        candidate.matchedBy !== 'NAME' &&
+        candidate.matchedBy === 'PHONE' &&
         matches.get(candidate.id) === 'SAME',
     );
     return same.length === 1 ? same[0]!.id : null;
   }, [proposal, matches]);
   const foundByName = proposal.candidates.some((candidate) => candidate.matchedBy === 'NAME');
+  const foundByProperty = proposal.candidates.some((candidate) => candidate.matchedBy === 'PROPERTY');
+  // Where the people below were found — said in the question, so a list of owners is not read as a list of matches.
+  const foundOn = foundByProperty
+    ? en
+      ? 'as owners of this property'
+      : 'مالكين لهذا العقار'
+    : foundByName
+      ? en
+        ? 'on this number or name'
+        : 'بهذا الرقم أو الاسم'
+      : en
+        ? 'on this number'
+        : 'على هذا الرقم';
 
   const [selectedId, setSelectedId] = useState<string | null>(preselected);
   const [busy, setBusy] = useState<'link' | 'dismiss' | null>(null);
@@ -279,19 +292,13 @@ export function LandlordProposalCard({
         <fieldset className="space-y-2" disabled={Boolean(busy)}>
           <legend className="mb-2 text-sm font-semibold">
             {proposal.blocked
-              ? foundByName
-                ? en
-                  ? 'Registered on this number or name'
-                  : 'المسجَّلون بهذا الرقم أو الاسم'
-                : en
-                  ? 'Registered on this number'
-                  : 'المسجَّلون على هذا الرقم'
+              ? en
+                ? `Registered ${foundOn}`
+                : `المسجَّلون ${foundOn}`
               : shared
                 ? en
                   ? `Which of these ${proposal.candidates.length} people is the owner?`
-                  : foundByName
-                    ? `من هو المالك؟ ${proposal.candidates.length} مواطنين مسجَّلين بهذا الرقم أو الاسم`
-                    : `من هو المالك؟ ${proposal.candidates.length} مواطنين مسجَّلين على هذا الرقم`
+                  : `من هو المالك؟ ${proposal.candidates.length} مواطنين مسجَّلين ${foundOn}`
                 : en
                   ? 'Is this the owner?'
                   : 'هل هذا هو المالك؟'}
@@ -450,6 +457,10 @@ function CandidateRow({
             {candidate.matchedBy === 'NAME' ? (
               <Badge variant="soft-warning">
                 {en ? 'Matched by name only — check the number' : 'مطابقة بالاسم فقط — تحقَّق من الرقم'}
+              </Badge>
+            ) : candidate.matchedBy === 'PROPERTY' ? (
+              <Badge variant="soft-warning">
+                {en ? 'Registered owner of this property' : 'مالك مسجَّل لهذا العقار'}
               </Badge>
             ) : null}
             {candidate.residence === 'NON_RESIDENT_OWNER' ? (

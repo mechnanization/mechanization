@@ -3549,9 +3549,11 @@ export type LinkOutcome = 'NEW_CARD' | 'ADDED_TO_CARD' | 'ALREADY_ON_FILE' | 'OC
 export interface LandlordProposalCandidate extends LandlordCandidate {
   /**
    * `PHONE` — the card's number is theirs. `NAME` — only the name the tenant
-   * typed is theirs; never preselected, and the card says so.
+   * typed is theirs; never preselected, and the card says so. `PROPERTY` —
+   * the occupant gave no number, and this person is on the register as the
+   * property's owner; never preselected either.
    */
-  matchedBy: 'PHONE' | 'NAME';
+  matchedBy: 'PHONE' | 'NAME' | 'PROPERTY';
   outcome: LinkOutcome | null;
   blocked: LinkBlock | null;
 }
