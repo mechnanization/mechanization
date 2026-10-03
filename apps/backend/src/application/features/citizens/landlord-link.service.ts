@@ -278,7 +278,10 @@ export class LandlordLinkService {
       register as the owner of that same property is offered instead: the
       owner recorded on the flat itself in the buildings register, or a
       citizen who filed an ownership card on the same building — the second
-      only when the flat has no recorded owner of its own. Only for a card
+      only when the flat has no recorded owner of its own that can still be
+      offered (one «لا أحد منهم» rejected, the filer, or a deactivated file
+      does not count, or rejecting the flat's owner would hide everyone who
+      might really be the landlord). Only for a card
       with no number, and whose name (if any) found nobody it could still
       offer: where the occupant gave a number, or a name that is somebody's,
       that is the evidence, and a building's other owners would bury it. A
@@ -357,23 +360,23 @@ export class LandlordLinkService {
       ),
       matched AS (
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
-               u.id AS citizen_id, u."createdAt" AS citizen_created_at, 'PHONE' AS how
+               u.id AS citizen_id, u."createdAt" AS citizen_created_at, 'PHONE' AS how, NULL::text AS src
         FROM open_claims c
         JOIN ${S}users u ON u.phone = c.phone AND u.kind = 'CITIZEN' AND u."isActive"
         UNION
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
-               u.id AS citizen_id, u."createdAt" AS citizen_created_at, 'PHONE' AS how
+               u.id AS citizen_id, u."createdAt" AS citizen_created_at, 'PHONE' AS how, NULL::text
         FROM open_claims c
         JOIN ${S}users u ON u.whatsapp = c.phone AND u.kind = 'CITIZEN' AND u."isActive"
         UNION
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
-               n.citizen_id, n.citizen_created_at, 'NAME' AS how
+               n.citizen_id, n.citizen_created_at, 'NAME' AS how, NULL::text
         FROM open_claims c
         JOIN citizen_names n ON n.key = c.name_key
         UNION
         -- The owner recorded on the very flat the card claims.
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
-               u.id, u."createdAt", 'PROPERTY' AS how
+               u.id, u."createdAt", 'PROPERTY' AS how, 'FLAT'::text
         FROM open_claims c
         JOIN claim_units cu ON cu.id = c.id
         JOIN ${S}unit_occupancies uo
@@ -382,22 +385,15 @@ export class LandlordLinkService {
         WHERE c.phone IS NULL
         UNION
         -- A citizen whose ownership card on the same building is about this flat, or the whole structure.
+        -- Yields to the flat's own recorded owner — but only one still offerable (see offered, below).
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
-               u.id, u."createdAt", 'PROPERTY' AS how
+               u.id, u."createdAt", 'PROPERTY' AS how, 'BUILDING'::text
         FROM open_claims c
         JOIN ${S}property_entries o
           ON o."buildingId" = c.building_id AND o."occupancyType" = 'OWNER' AND o."endedAt" IS NULL
         JOIN ${S}registrations orr ON orr.id = o."registrationId"
         JOIN ${S}users u ON u.id = orr."citizenId" AND u.kind = 'CITIZEN' AND u."isActive"
         WHERE c.phone IS NULL AND c.building_id IS NOT NULL
-          -- The flat's own recorded owner, where there is one, is the answer; the building's others are noise.
-          AND NOT EXISTS (
-            SELECT 1
-            FROM claim_units cu
-            JOIN ${S}unit_occupancies uo
-              ON uo."unitId" = cu.unit_id AND uo.role = 'OWNER' AND uo."toDate" IS NULL
-            WHERE cu.id = c.id AND uo."citizenId" <> c.filer_id
-          )
           AND (
             -- The card names one of the flats this card claims…
             EXISTS (
@@ -428,7 +424,7 @@ export class LandlordLinkService {
           )
       ),
       screened AS (
-        SELECT id, created_at, citizen_id, how
+        SELECT id, created_at, citizen_id, how, src
         FROM matched
         WHERE citizen_id <> filer_id
           AND NOT (citizen_id = ANY(dismissed_ids))
@@ -439,11 +435,23 @@ export class LandlordLinkService {
           )
       ),
       offered AS (
-        -- By the property only where the name found nobody it can still offer.
+        -- By the property only where the name found nobody it can still offer;
+        -- by the building only where the flat's own recorded owner is not one
+        -- that can still be offered. Both judged after screening, so an owner
+        -- «لا أحد منهم» rejected, the filer, or a deactivated file stops
+        -- hiding the others — the same reason the namesake rule moved here.
         SELECT s.id, s.created_at, s.citizen_id, s.how
         FROM screened s
         WHERE s.how <> 'PROPERTY'
-           OR NOT EXISTS (SELECT 1 FROM screened n WHERE n.id = s.id AND n.how = 'NAME')
+           OR (
+             NOT EXISTS (SELECT 1 FROM screened n WHERE n.id = s.id AND n.how = 'NAME')
+             AND (
+               s.src <> 'BUILDING'
+               OR NOT EXISTS (
+                 SELECT 1 FROM screened f WHERE f.id = s.id AND f.src = 'FLAT' AND f.citizen_id <> s.citizen_id
+               )
+             )
+           )
       )
       SELECT id AS "entryId",
              array_agg(DISTINCT citizen_id) AS "citizenIds",
