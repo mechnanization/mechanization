@@ -430,6 +430,12 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
   if (after?.matchedBy === 'NAME') {
     fact(en ? 'Matched' : 'طريقة المطابقة', en ? 'By name only' : 'بالاسم فقط');
   }
+  if (after?.matchedBy === 'PROPERTY') {
+    fact(
+      en ? 'Matched' : 'طريقة المطابقة',
+      en ? 'Registered owner of the property — no number given' : 'مالك العقار المسجَّل — دون رقم',
+    );
+  }
   if (after?.acknowledgedRepeat === true) {
     fact(en ? 'Second visit today' : 'زيارة ثانية في اليوم نفسه', en ? 'Confirmed by the officer' : 'أكَّدها الموظف');
   }

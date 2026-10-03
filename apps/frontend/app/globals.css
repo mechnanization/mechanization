@@ -131,33 +131,16 @@
     --viz-critical: #d03b3b;
 
     /**
-     * Building-drawing materials — the elevation on the properties page and
-     * above the unit matrix. Walls by unit type, glass, sky, concrete, steel,
-     * sheet metal and timber, in one place so the drawing follows the theme
-     * instead of carrying forty hex values of its own (COL-7).
+     * Building-drawing materials. Concrete is the basement wash in the unit
+     * grid picker; shade is the darkness laid over the elevation's basements
+     * and the ground they are dug into — near-black in both themes, so it
+     * darkens there too (--foreground would lighten them in dark mode).
      *
-     * These are *material fills*, decorative surfaces: no ratio is asked of
-     * them against --card. What must read is the outline that carries the
-     * shape and the units that carry meaning, and those use --foreground,
-     * --success and --info, which are validated. Values are the PR #73
-     * drawing's own, converted exactly — change one and re-render both themes.
+     * *Material fills*, decorative surfaces: no ratio is asked of them
+     * against --card. Change one and re-render both themes.
      */
-    --illustration-wall: 39 46% 84%;
-    --illustration-wall-house: 41 59% 87%;
-    --illustration-shop: 220 13% 91%;
-    --illustration-clinic: 210 40% 98%;
-    --illustration-office: 213 27% 84%;
-    --illustration-warehouse: 240 5% 65%;
-    --illustration-garage: 39 39% 85%;
-    --illustration-frame: 215 20% 65%;
-    --illustration-window: 199 95% 74%;
-    --illustration-window-pale: 201 94% 86%;
     --illustration-concrete: 24 5% 64%;
-    --illustration-steel: 215 25% 27%;
-    --illustration-metal: 240 5% 84%;
-    --illustration-metal-edge: 240 5% 34%;
-    --illustration-wood: 26 90% 37%;
-    --illustration-wood-light: 32 95% 44%;
+    --illustration-shade: 30 10% 8%;
   }
 
   /**
@@ -242,22 +225,8 @@
     --viz-critical: #d03b3b;
 
     /* Building-drawing materials, dark: see the light block. */
-    --illustration-wall: 38 20% 35%;
-    --illustration-wall-house: 41 28% 35%;
-    --illustration-shop: 215 14% 34%;
-    --illustration-clinic: 215 16% 47%;
-    --illustration-office: 215 19% 35%;
-    --illustration-warehouse: 240 5% 34%;
-    --illustration-garage: 37 19% 31%;
-    --illustration-frame: 215 25% 27%;
-    --illustration-window: 198 93% 60%;
-    --illustration-window-pale: 199 95% 74%;
     --illustration-concrete: 25 5% 45%;
-    --illustration-steel: 215 16% 47%;
-    --illustration-metal: 240 5% 65%;
-    --illustration-metal-edge: 240 4% 46%;
-    --illustration-wood: 23 83% 31%;
-    --illustration-wood-light: 26 90% 37%;
+    --illustration-shade: 0 0% 0%;
   }
 }
 

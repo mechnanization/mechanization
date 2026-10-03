@@ -137,6 +137,28 @@ export class CitizenController {
   }
 
   /**
+   * «يتطلب مراجعة» — the records filed with fields left «غير مؤكَّد», oldest
+   * first, with only what the queue shows: name, mother's name, reference,
+   * phone, status and how many fields are open. The same roles as the
+   * registry above: the queue is a slice of it and discloses nothing more.
+   *
+   * A static path, declared before `@Get(':id')` so it is not read as an id.
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Get('review-queue')
+  reviewQueue(
+    @Query('search') search?: string,
+    @Query('limit') limit = '25',
+    @Query('offset') offset = '0',
+  ) {
+    return this.citizens.reviewQueue({
+      search,
+      limit: Number(limit) || 25,
+      offset: Number(offset) || 0,
+    });
+  }
+
+  /**
    * The signed-in citizen's own record: their properties and their fees.
    *
    * Deliberately **not** `@Roles`-guarded — those decorators list *staff*
@@ -314,6 +336,25 @@ export class CitizenController {
     if (!phone?.trim()) return { candidate: null, candidates: [] };
     const candidates = await this.landlordLinkService.candidatesFor(phone);
     return { candidate: candidates.length === 1 ? candidates[0] : null, candidates };
+  }
+
+  /**
+   * «فحص الرابط» — one open claim, as the queue row it was opened from: the
+   * same roles as the queue, which it is a view of. 404 when the claim is no
+   * longer open (linked, dismissed, ended, or naming nobody registered).
+   *
+   * Declared after the static `landlord-links/*` reads so neither is read as
+   * an id; a non-UUID is answered as not found rather than a database error.
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Get('landlord-links/:propertyEntryId')
+  async landlordLink(@Param('propertyEntryId') propertyEntryId: string) {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const proposal = uuid.test(propertyEntryId)
+      ? await this.landlordLinkService.proposal(propertyEntryId)
+      : null;
+    if (!proposal) throw new NotFoundError('LandlordLink', propertyEntryId);
+    return proposal;
   }
 
   /**

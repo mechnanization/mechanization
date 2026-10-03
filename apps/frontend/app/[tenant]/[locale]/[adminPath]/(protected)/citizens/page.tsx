@@ -51,6 +51,7 @@ import { Money } from '@/components/ui/money';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { ACTION_TINT } from '@/lib/action-tint';
 import { formatDate } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
@@ -58,29 +59,6 @@ import { getLabels } from '@mechanization/shared-schemas';
 
 /** Roles allowed to write. Mirrors the server; the server is the enforcement. */
 const CAN_WRITE = ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'];
-
-/**
- * The row actions: borderless, each on a soft wash of its own colour.
- *
- * Outlined, five icon buttons read as five identical boxes and the eye had to
- * find the icon inside each one to tell «تعديل» from «حذف». A hue per job does
- * that before the icon is read — the file in the primary colour, WhatsApp in
- * its green, editing in blue, disabling in amber, deleting in red — and without
- * the outline the row stops looking like a toolbar.
- */
-const ACTION_TINT = {
-  view: 'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary',
-  // Navigation, like `view`: primary is the colour of going somewhere (COL-2), not a palette violet.
-  properties: 'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary',
-  whatsapp:
-    'bg-success/10 text-success hover:bg-success/20 hover:text-success',
-  edit: 'bg-info/10 text-info hover:bg-info/20 hover:text-info',
-  disable:
-    'bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning',
-  enable:
-    'bg-success/10 text-success hover:bg-success/20 hover:text-success',
-  remove: 'bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive',
-} as const;
 
 function getTableLabels(locale: string): DataTableLabels {
   if (locale === 'en') {
@@ -170,15 +148,6 @@ export default function CitizensPage({
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
   /** The committed term — set when the clerk presses Enter, not as they type. */
   const [appliedSearch, setAppliedSearch] = useState('');
-  /**
-   * Whether the table is narrowed to records still needing to be finished.
-   *
-   * A toggle rather than a saved filter or a page of its own: «يتطلب مراجعة»
-   * is a slice of the register, not a different register, and someone working
-   * through it needs to be able to drop back to the whole thing in one tap
-   * when a name they are looking for is not in the queue.
-   */
-  const [reviewOnly, setReviewOnly] = useState(false);
   /** A failed *write*. The read's own failure is the table's, via `useStaffQuery`. */
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -224,7 +193,6 @@ export default function CitizensPage({
       'citizens',
       tenant,
       appliedSearch,
-      reviewOnly,
       pagination.pageIndex,
       pagination.pageSize,
     ],
@@ -234,7 +202,6 @@ export default function CitizensPage({
         accessToken,
         {
           search: appliedSearch || undefined,
-          status: reviewOnly ? 'REQUIRES_REVIEW' : undefined,
           limit: pagination.pageSize,
           offset: pagination.pageIndex * pagination.pageSize,
         },
@@ -865,32 +832,27 @@ export default function CitizensPage({
       {/*
         The review queue, offered only when there is one.
 
-        A permanent tab reading «يتطلب مراجعة (٠)» is a standing invitation to
+        A permanent link reading «يتطلب مراجعة (٠)» is a standing invitation to
         check something that is never there. It appears when a record needs
-        finishing — and stays visible while the filter is on, so the way back
-        out is where the way in was.
+        finishing, and leads to the queue's own page (`/citizens/review`, also
+        in «استكمال البيانات»), which lists just those records with a «فحص
+        الملف» for each.
       */}
-      {totals.requiringReview > 0 || reviewOnly ? (
+      {totals.requiringReview > 0 ? (
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant={reviewOnly ? 'default' : 'outline'}
-            onClick={() => {
-              setReviewOnly((current) => !current);
-              setPagination((current) => ({ ...current, pageIndex: 0 }));
-            }}
-            className="h-8 gap-1.5 px-3 text-xs"
+          <Link
+            href={`${base}/citizens/review`}
+            className={cn(buttonVariants({ size: 'sm', variant: 'outline' }), 'h-8 gap-1.5 px-3 text-xs')}
           >
             <FileQuestion className="size-3.5" aria-hidden />
             {locale === 'en'
               ? `Requires review (${totals.requiringReview})`
               : `يتطلب مراجعة (${totals.requiringReview})`}
-          </Button>
+          </Link>
           <p className="text-xs text-muted-foreground">
             {locale === 'en'
-              ? 'Records filed with fields the officer could not establish. Open one to see the reason given for each.'
-              : 'سجلات حُفظت بحقول لم يتمكّن الموظف من التثبّت منها. افتح السجل لقراءة سبب كل حقل.'}
+              ? 'Records filed with fields the officer could not establish. Review each file to complete it.'
+              : 'سجلات حُفظت بحقول لم يتمكّن الموظف من التثبّت منها. افحص كل ملف لاستكماله.'}
           </p>
         </div>
       ) : null}

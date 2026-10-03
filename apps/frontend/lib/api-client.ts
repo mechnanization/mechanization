@@ -878,6 +878,15 @@ export interface CaseSummary {
   buildingCode: string | null;
   unitId: string | null;
   unitCode: string | null;
+  /**
+   * Who the census records on that unit now. Optional on the wire for an
+   * older server. Non-empty means the flat is already somebody's — owned,
+   * rented or lent — so the case is answered by linking it to them, and
+   * «تسجيل المواطن» from the case is closed.
+   */
+  unitOccupants?: CaseUnitOccupant[];
+  /** The unit's recorded status — `OWNER_OCCUPIED` when its recorded owner lives in it. */
+  unitStatus?: string | null;
   /** The damage reading that prompted this case, if one did. A reference, not
    *  ownership — resolving the case says nothing about the damage (D6). */
   damageAssessmentId: string | null;
@@ -891,6 +900,28 @@ export interface CaseSummary {
   createdByName: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Who on a case's unit actually lives there, registered: a tenant, a free
+ * occupant, or an owner on a flat recorded «يشغلها المالك». Non-empty means
+ * the household the case was waiting for is on file, so «تسجيل المواطن» from
+ * the case is closed and the case is answered by linking it to them.
+ *
+ * An owner alone on a flat recorded «مؤجرة» is not that: the owner lets it,
+ * and the tenant the case is asking for is exactly who is missing.
+ */
+export function caseResidents(item: Pick<CaseSummary, 'unitOccupants' | 'unitStatus'>): CaseUnitOccupant[] {
+  return (item.unitOccupants ?? []).filter(
+    (person) => person.role !== 'OWNER' || item.unitStatus === 'OWNER_OCCUPIED',
+  );
+}
+
+/** A registered citizen the census records on a case's unit. */
+export interface CaseUnitOccupant {
+  citizenId: string;
+  name: string;
+  role: 'OWNER' | 'TENANT' | 'FREE_OCCUPANT';
 }
 
 export interface CaseWriteInput {
@@ -2984,6 +3015,46 @@ export function listCitizens(
 }
 
 /**
+ * One row of «يتطلب مراجعة» — `CitizensService.reviewQueue` on the server.
+ * Only what the queue shows: no fee figures, no identity-document number.
+ */
+export interface ReviewQueueItem {
+  id: string;
+  fullName: string;
+  /** Null on records filed before migration 0044 — «لم يُسأل», not a difference. */
+  motherName: string | null;
+  referenceNumber: string | null;
+  phone: string | null;
+  /** Always `REQUIRES_REVIEW` in this list. */
+  status: CitizenRecordStatus;
+  /** How many «غير مؤكَّد» fields the latest registration carries. */
+  openFieldCount: number;
+  submittedAt: string;
+}
+
+/**
+ * «يتطلب مراجعة» — citizens whose latest registration was filed with fields
+ * left «غير مؤكَّد», oldest first. Narrowed on the server; `search` matches as
+ * the registry's does.
+ */
+export function getReviewQueue(
+  tenant: string,
+  token: string,
+  filter: { search?: string; limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (filter.search) query.set('search', filter.search);
+  query.set('limit', String(filter.limit ?? 25));
+  query.set('offset', String(filter.offset ?? 0));
+  return apiFetch<{ items: ReviewQueueItem[]; total: number }>(
+    tenant,
+    `/citizens/review-queue?${query}`,
+    { token, signal },
+  );
+}
+
+/**
  * The three sections the admin form edits, exactly as it posts them back.
  *
  * `properties` carries only the citizen's most recent registration — the one
@@ -3014,6 +3085,46 @@ export interface CitizenFormData {
   flags: FieldFlag[];
   /** «ملاحظات» on the most recent registration, or null for none. */
   notes: string | null;
+  /**
+   * Each card's place in the census, read-only: the building's code and
+   * parcel, and each flat's unit code. Never sent back — the census owns it.
+   */
+  propertyRefs?: Array<{
+    propertyId: string;
+    buildingCode: string | null;
+    parcelNumber: string | null;
+    /** `unitId` is the census unit the flat is — what the drawing lights. */
+    units: Array<{ id: string; unitCode: string | null; unitId: string | null }>;
+    /**
+     * The linked building's shape, for the elevation drawing, and its census
+     * summary (`BuildingCensusSummary`) — no occupants.
+     */
+    building: {
+      structureType: string;
+      lifecycleStatus: string;
+      floorsCount: number;
+      basementsCount: number;
+      parcelNumber: string;
+      postedNumber: string | null;
+      sharedParcelNumbers: string[];
+      isPartitioned: boolean | null;
+      partitionNumbers: string[];
+      located: boolean;
+      unitsTotal: number;
+      unitsSurveyed: number;
+      zoneCode: string | null;
+      zoneName: string | null;
+      units: Array<{
+        id: string;
+        floor: number;
+        sequence: number;
+        unitType: string | null;
+        unitCode: string;
+        startCol: number | null;
+        endCol: number | null;
+      }>;
+    } | null;
+  }>;
   /** The file as it stands now — sent back as `expectedVersion` on save. */
   version?: string;
   /** The last member of staff who changed this file, and whether it was the viewer. */
@@ -3469,9 +3580,11 @@ export type LinkOutcome = 'NEW_CARD' | 'ADDED_TO_CARD' | 'ALREADY_ON_FILE' | 'OC
 export interface LandlordProposalCandidate extends LandlordCandidate {
   /**
    * `PHONE` — the card's number is theirs. `NAME` — only the name the tenant
-   * typed is theirs; never preselected, and the card says so.
+   * typed is theirs; never preselected, and the card says so. `PROPERTY` —
+   * the occupant gave no number, and this person is on the register as the
+   * property's owner; never preselected either.
    */
-  matchedBy: 'PHONE' | 'NAME';
+  matchedBy: 'PHONE' | 'NAME' | 'PROPERTY';
   outcome: LinkOutcome | null;
   blocked: LinkBlock | null;
 }
@@ -3567,6 +3680,20 @@ export function getLandlordLinks(
   return apiFetch<{ items: LandlordProposal[]; total: number }>(
     tenant,
     `/citizens/landlord-links?limit=${page.limit}&offset=${page.offset}`,
+    { token, signal },
+  );
+}
+
+/** One open claim — «فحص الرابط». 404 when it is no longer open. */
+export function getLandlordLink(
+  tenant: string,
+  token: string,
+  propertyEntryId: string,
+  signal?: AbortSignal,
+) {
+  return apiFetch<LandlordProposal>(
+    tenant,
+    `/citizens/landlord-links/${encodeURIComponent(propertyEntryId)}`,
     { token, signal },
   );
 }
