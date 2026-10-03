@@ -10,7 +10,6 @@ import {
   Calendar,
   Clock3,
   Droplet,
-  ExternalLink,
   FileDigit,
   FileQuestion,
   FileText,
@@ -19,7 +18,6 @@ import {
   Heart,
   Home,
   IdCard,
-  Loader2,
   MapPin,
   MessageCircle,
   Pencil,
@@ -37,7 +35,6 @@ import { getLabels } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   getCitizenProfile,
-  getDocumentViewUrl,
   getMunicipalitySettings,
   getTenantConfig,
   logApiError,
@@ -67,6 +64,7 @@ import { Money } from '@/components/ui/money';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { CompleteRecordDialog } from '@/components/admin/complete-record-dialog';
+import { DocumentList } from '@/components/admin/document-list';
 import {
   CitizenMergeNotes,
   MergeWithAnotherButton,
@@ -437,7 +435,6 @@ export default function CitizenProfilePage({
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | undefined>();
-  const [openingDocId, setOpeningDocId] = useState<string | null>(null);
   /** «استكمال البيانات الناقصة» — always on the newest registration. */
   const [completing, setCompleting] = useState(false);
   const toast = useToast();
@@ -562,30 +559,6 @@ export default function CitizenProfilePage({
       registration.properties.filter((property) => !property.endedAt),
     ),
   );
-
-  const openDocument = async (documentId: string) => {
-    if (!token) return;
-    setOpeningDocId(documentId);
-    try {
-      const { url } = await getDocumentViewUrl(tenant, token, documentId);
-      window.open(url, '_blank', 'noopener,noreferrer');
-    } catch (caught) {
-      logApiError(caught);
-      if (caught instanceof ApiRequestError && caught.status === 401) {
-        clearSession(tenant);
-        router.replace(`${base}/login`);
-        return;
-      }
-      toast.error(locale === 'en' ? 'Failed to open file' : 'تعذّر فتح الملف', {
-        description:
-          caught instanceof ApiRequestError
-            ? caught.message
-            : (locale === 'en' ? 'Link may have expired.' : 'قد يكون الرابط منتهي الصلاحية.'),
-      });
-    } finally {
-      setOpeningDocId(null);
-    }
-  };
 
   const waMessage = buildCitizenWelcomeMessage({
     fullName: citizen.fullName,
@@ -1175,44 +1148,16 @@ export default function CitizenProfilePage({
                         ? `Attachments ${registration.documents.length > 0 ? `(${registration.documents.length})` : ''}`
                         : `المرفقات ${registration.documents.length > 0 ? `(${registration.documents.length})` : ''}`}
                     </SubHeading>
-                    {registration.documents.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        {locale === 'en'
-                          ? 'No attachments for this application.'
-                          : 'لا توجد مرفقات لهذا الطلب.'}
-                      </p>
-                    ) : (
-                      <ul className="grid gap-2 sm:grid-cols-2">
-                        {registration.documents.map((document) => (
-                          <li key={document.id}>
-                            <button
-                              type="button"
-                              onClick={() => openDocument(document.id)}
-                              disabled={openingDocId === document.id}
-                              className="flex w-full items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3 text-start transition-colors hover:bg-muted/60 disabled:opacity-60"
-                            >
-                              <span className="flex min-w-0 items-center gap-2">
-                                <FileText
-                                  className="size-4 shrink-0 text-muted-foreground"
-                                  aria-hidden
-                                />
-                                <span className="truncate text-sm font-medium">
-                                  {labels.documentType?.[document.type as never] ?? document.type}
-                                </span>
-                              </span>
-                              {openingDocId === document.id ? (
-                                <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
-                              ) : (
-                                <ExternalLink
-                                  className="size-4 shrink-0 text-muted-foreground"
-                                  aria-hidden
-                                />
-                              )}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                    <DocumentList
+                      documents={registration.documents}
+                      tenant={tenant}
+                      base={base}
+                      token={token}
+                      locale={locale}
+                      emptyLabel={
+                        locale === 'en' ? 'No attachments for this application.' : 'لا توجد مرفقات لهذا الطلب.'
+                      }
+                    />
                   </div>
                   ) : null}
                 </CardContent>

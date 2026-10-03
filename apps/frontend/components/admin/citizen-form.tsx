@@ -726,7 +726,24 @@ function isBlank(value: unknown): boolean {
 }
 
 function validate(values: CitizenFormValues): Record<string, string> {
-  const result = adminCreateCitizenSubmissionSchema.safeParse(toSubmission(values));
+  return submissionFieldErrors(values, adminCreateCitizenSubmissionSchema);
+}
+
+/**
+ * The shared schema's complaints about this record, keyed by the dot-path of
+ * the field each is about — the same check the server runs, run before
+ * anything is sent. `schema` is the create or the update submission schema,
+ * whichever the caller is about to submit through.
+ */
+export function submissionFieldErrors(
+  values: CitizenFormValues,
+  schema: {
+    safeParse: (input: unknown) =>
+      | { success: true }
+      | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } };
+  },
+): Record<string, string> {
+  const result = schema.safeParse(toSubmission(values));
   if (result.success) return {};
 
   const flagPaths = [...values.flags.keys()];

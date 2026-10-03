@@ -12,6 +12,7 @@ import {
 } from '@/lib/api-client';
 import { controlFor, type FieldControl } from '@/lib/citizen-field-controls';
 import { flagFieldLabel } from '@/lib/field-flags';
+import { adminUpdateCitizenSubmissionSchema } from '@mechanization/shared-schemas';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -34,7 +35,12 @@ import {
 import { ErrorState, LoadingState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
-import { askableFields, toSubmission, type CitizenFormValues } from './citizen-form';
+import {
+  askableFields,
+  submissionFieldErrors,
+  toSubmission,
+  type CitizenFormValues,
+} from './citizen-form';
 import { toFormValues } from './citizen-editor';
 
 /**
@@ -96,7 +102,7 @@ import { toFormValues } from './citizen-editor';
  */
 
 /** One open question on the record. */
-interface OpenItem {
+export interface OpenItem {
   path: string;
   label: string;
   /** The sentence attached to the flag — the officer's, or the server's. */
@@ -252,7 +258,7 @@ export function useRecordCompletion({
    */
   const [record, setRecord] = useState<Pick<
     CitizenFormData,
-    'citizenReferenceNumber' | 'lastStaffEdit'
+    'citizenReferenceNumber' | 'lastStaffEdit' | 'registrationId' | 'status'
   > | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -312,6 +318,8 @@ export function useRecordCompletion({
         setRecord({
           citizenReferenceNumber: form.citizenReferenceNumber ?? null,
           lastStaffEdit: form.lastStaffEdit ?? null,
+          registrationId: form.registrationId,
+          status: form.status,
         });
       } catch (caught) {
         if (cancelled) return;
@@ -491,6 +499,18 @@ export function useRecordCompletion({
       ? values.flags.size + (values.unverified?.size ?? 0)
       : 0;
 
+  /**
+   * «إغلاق المراجعة» — the record stands at «يتطلب مراجعة» with nothing left
+   * to answer here: every flag it carries names a field it no longer has
+   * (`prunedCount`), or it carries none at all.
+   *
+   * Saving it as it is is the whole fix. The server derives the status from
+   * the flags on every write (`statusForFlags`), so a save that sends none
+   * takes the record out of the queue — through the same validated, audited
+   * path as any other answer, rather than a status the browser sets.
+   */
+  const closesReview = Boolean(values) && items.length === 0 && record?.status === 'REQUIRES_REVIEW';
+
   const setAnswer = (path: string, value: string) => {
     setAnswers((current) => new Map(current).set(path, value));
     setSaveError(null);
@@ -533,12 +553,50 @@ export function useRecordCompletion({
     let merged = values;
     for (const [path, answer] of answers) merged = writeAt(merged, path, answer);
 
+    const onScreen = new Set(items.map((item) => item.path));
     const flags = new Map<string, string>();
     for (const [path, reason] of values.flags) {
       if ((answers.get(path) ?? '').trim() !== '') continue;
+      /*
+        A flag on a field the record no longer has is dropped, not carried.
+        It excuses a question nothing asks any more (see `prunedCount`), and
+        carrying it would keep the record at «يتطلب مراجعة» for ever: no box
+        here or on the full form could ever answer it.
+      */
+      if (!onScreen.has(path)) continue;
       flags.set(path, (reasons.get(path) ?? reason).trim() || reason);
     }
     merged = { ...merged, flags };
+
+    /*
+      The server's own check, before anything is sent (FRM-2).
+
+      The same shared schema the server validates this save with — not a
+      second list of rules — so a value refused here is one the server would
+      refuse, and the clerk learns it on the row they typed it in without a
+      round trip. Routed exactly as the server's complaints are: onto the row
+      when it is on screen, into `blockedElsewhere` when it is not.
+    */
+    const issues = submissionFieldErrors(merged, adminUpdateCitizenSubmissionSchema);
+    if (Object.keys(issues).length > 0) {
+      setFieldErrors(issues);
+      setSaveError(
+        en
+          ? 'Some answers need correcting before the record can be saved — see the marked fields.'
+          : 'بعض الإجابات تحتاج تصحيحاً قبل حفظ السجل — راجع الحقول المشار إليها.',
+      );
+      // The first marked row, in the order the questions are shown.
+      const first = items.find((item) => item.path in issues);
+      if (first) {
+        const id = `complete-${first.path.replace(/\./g, '-')}`;
+        requestAnimationFrame(() => {
+          const input = document.getElementById(id) as HTMLElement | null;
+          const reasonBox = document.getElementById(`${id}-reason`) as HTMLElement | null;
+          (input && !input.hasAttribute('disabled') ? input : reasonBox ?? input)?.focus();
+        });
+      }
+      return;
+    }
 
     inFlight.current = true;
     setSaving(true);
@@ -553,7 +611,13 @@ export function useRecordCompletion({
           answer that replaces a value would (`highImpactChanges`), and this
           is the true one.
         */
-        changeReason: en ? 'Completing fields left unconfirmed' : 'استكمال بيانات غير مؤكَّدة',
+        changeReason: closesReview
+          ? en
+            ? 'Closing a review with no field left open'
+            : 'إغلاق مراجعة لم يبقَ فيها حقل مفتوح'
+          : en
+            ? 'Completing fields left unconfirmed'
+            : 'استكمال بيانات غير مؤكَّدة',
       });
       toast.success(
         flags.size === 0
@@ -609,11 +673,18 @@ export function useRecordCompletion({
       inFlight.current = false;
       setSaving(false);
     }
-  }, [values, token, answers, reasons, tenant, citizenId, version, toast, en, onSaved]);
+  }, [values, token, answers, reasons, tenant, citizenId, version, toast, en, onSaved, items, closesReview]);
 
-
-  const setReason = (path: string, value: string) =>
+  const setReason = (path: string, value: string) => {
     setReasons((current) => new Map(current).set(path, value));
+    // A reason too short to keep is a complaint on this row; retyping answers it.
+    setFieldErrors((current) => {
+      if (!(path in current)) return current;
+      const next = { ...current };
+      delete next[path];
+      return next;
+    });
+  };
 
   return {
     values,
@@ -632,6 +703,9 @@ export function useRecordCompletion({
     setReason,
     save,
     record,
+    closesReview,
+    /** Whether the save button has anything to do. */
+    canSave: Boolean(values && token) && (items.length > 0 || closesReview),
     reload: () => setReloadKey((key) => key + 1),
   };
 }
@@ -639,9 +713,179 @@ export function useRecordCompletion({
 export type RecordCompletion = ReturnType<typeof useRecordCompletion>;
 
 /**
- * The open questions themselves, and what a refused save said about them —
- * the part of «استكمال البيانات الناقصة» that is the same in the dialog and on
- * the «فحص الملف» page.
+ * Rows of open questions — all of them in the dialog, one section's on the
+ * «فحص الملف» page (the citizen's own, or one property's).
+ */
+export function OpenQuestionList({
+  state,
+  items,
+  base,
+  citizenId,
+  locale = 'ar',
+}: {
+  state: RecordCompletion;
+  items: OpenItem[];
+  /** The admin path prefix, for the links out to the full form. */
+  base: string;
+  citizenId: string;
+  locale?: string;
+}) {
+  const { answers, reasons, fieldErrors, setAnswer, setReason } = state;
+  return (
+    <div className="space-y-3">
+      {items.map((item) => (
+        <OpenQuestion
+          key={item.path}
+          item={item}
+          locale={locale}
+          /*
+            `has`, not `?? ''`. An UNVERIFIED row opens showing the value the
+            record holds, and a clerk who selects it and deletes it must see an
+            empty box — with a falsy check the box refilled itself from
+            `item.current` on the keystroke that emptied it, which reads as an
+            input refusing to be edited. Once the row is touched the map owns
+            it, empty string included.
+          */
+          answer={answers.has(item.path) ? (answers.get(item.path) ?? '') : item.current}
+          touched={answers.has(item.path)}
+          reason={reasons.get(item.path) ?? item.reason}
+          error={fieldErrors[item.path]}
+          onAnswer={(value) => setAnswer(item.path, value)}
+          onReason={(value) => setReason(item.path, value)}
+          editHref={`${base}/citizens/${citizenId}/edit`}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A record with no open question to show — said for what it is, never left
+ * as an empty box above a greyed-out button.
+ *
+ * Three cases, and they read differently:
+ *  - **flags on fields the record no longer has** (`prunedCount`): they excuse
+ *    questions nothing asks any more;
+ *  - **«يتطلب مراجعة» with no flag at all**: a record left in the queue with
+ *    nothing named — a hand-run fix, an older backup;
+ *
+ *  both of which «إغلاق المراجعة» resolves (`closesReview`), and
+ *  - **nothing open and not in review**: the record is already complete.
+ */
+export function RecordCompletionEmpty({ state, locale = 'ar' }: { state: RecordCompletion; locale?: string }) {
+  const en = locale === 'en';
+  const { prunedCount, closesReview } = state;
+
+  if (!closesReview) {
+    return (
+      <p className="py-8 text-center text-xs text-muted-foreground">
+        {en ? 'Nothing on this record is still open.' : 'لا توجد معلومات ناقصة على هذا السجل.'}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs text-warning">
+      <p className="font-semibold">
+        {prunedCount > 0
+          ? en
+            ? `This record is marked as needing review, but its ${prunedCount} open flag(s) name fields the form no longer asks about.`
+            : `هذا السجل مُعلَّم «يتطلب مراجعة»، لكن ملاحظاته الـ${prunedCount} تخصّ خانات لم يعد النموذج يسألها.`
+          : en
+            ? 'This record is marked as needing review, but no field on it is left open.'
+            : 'هذا السجل مُعلَّم «يتطلب مراجعة»، لكن لا يوجد عليه أي حقل مفتوح.'}
+      </p>
+      <p className="opacity-90">
+        {prunedCount > 0
+          ? en
+            ? 'That happens when the record changes kind after the flag was raised — a Lebanese record filed as non-Lebanese, or a property card whose type was corrected.'
+            : 'يحدث هذا عندما يتغيّر نوع السجل بعد تسجيل الملاحظة — كأن يُصحَّح نوع العقار أو الجنسية.'
+          : en
+            ? 'Nothing is waiting for an answer, so it is in the queue by mistake.'
+            : 'لا شيء ينتظر إجابة، فوجوده في قائمة المراجعة خطأ.'}{' '}
+        {en
+          ? '«Close review» saves the record as it is and takes it out of the queue; nothing else on it changes.'
+          : '«إغلاق المراجعة» يحفظ السجل كما هو ويُخرجه من القائمة، دون تغيير أي شيء آخر فيه.'}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * What a refused save said: complaints on fields this screen does not show,
+ * or the refusal itself. Sits by the save button, where the clerk is looking.
+ */
+export function RecordCompletionNotices({
+  state,
+  base,
+  citizenId,
+  locale = 'ar',
+}: {
+  state: RecordCompletion;
+  base: string;
+  citizenId: string;
+  locale?: string;
+}) {
+  const en = locale === 'en';
+  const { blockedElsewhere, saveError } = state;
+
+  /*
+    A refusal this screen cannot answer, named rather than repeated.
+
+    `blockedElsewhere` holds complaints about fields that are not on this
+    screen — the record is unsaveable for a reason unrelated to why it is in
+    the review queue. Retrying cannot help, so the block says which fields and
+    links to the one place they can be corrected, with the clerk's typed
+    answers explicitly declared lost. Saying so is the point: a clerk who
+    follows this link after filling four boxes must not find out by
+    discovering an empty form.
+  */
+  if (blockedElsewhere.length > 0) {
+    return (
+      <div role="alert" className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+        <p className="flex items-start gap-2 font-semibold">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>
+            {en
+              ? 'This record cannot be saved from here — other fields on it need correcting first:'
+              : 'لا يمكن حفظ هذا السجل من هنا — هناك خانات أخرى فيه تحتاج تصحيحاً أولاً:'}
+          </span>
+        </p>
+        <ul className="space-y-0.5 ps-6">
+          {blockedElsewhere.map(([path, message]) => (
+            <li key={path}>
+              <span className="font-medium">{flagFieldLabel(path, locale)}</span>
+              <span className="opacity-90"> — {message}</span>
+            </li>
+          ))}
+        </ul>
+        <a
+          href={`${base}/citizens/${citizenId}/edit`}
+          className="inline-block font-medium underline underline-offset-4"
+        >
+          {en
+            ? 'Open the full form to correct them (answers typed here are not kept) →'
+            : 'افتح نموذج التعديل الكامل لتصحيحها (لن تُحفظ الإجابات المكتوبة هنا) ←'}
+        </a>
+      </div>
+    );
+  }
+
+  if (saveError) {
+    return (
+      <div role="alert" className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs font-medium text-destructive">
+        <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+        <span>{saveError}</span>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+/**
+ * The dialog's whole body: loading, a failed load, the empty cases, every
+ * open question, and what a refused save said.
  */
 export function RecordCompletionBody({
   state,
@@ -656,18 +900,7 @@ export function RecordCompletionBody({
   locale?: string;
 }) {
   const en = locale === 'en';
-  const {
-    values,
-    loadError,
-    saveError,
-    fieldErrors,
-    answers,
-    reasons,
-    items,
-    blockedElsewhere,
-    prunedCount,
-    setAnswer,
-  } = state;
+  const { values, loadError, items } = state;
 
   return (
     <>
@@ -681,101 +914,11 @@ export function RecordCompletionBody({
       ) : !values ? (
         <LoadingState />
       ) : items.length === 0 ? (
-        prunedCount > 0 ? (
-          <div className="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs text-warning">
-            <p className="font-semibold">
-              {en
-                ? `This record is marked as needing review, but its ${prunedCount} open flag(s) name fields the form no longer asks about.`
-                : `هذا السجل مُعلَّم «يتطلب مراجعة»، لكن ملاحظاته الـ${prunedCount} تخصّ خانات لم يعد النموذج يسألها.`}
-            </p>
-            <p className="opacity-90">
-              {en
-                ? 'That happens when the record changes kind after the flag was raised — a Lebanese record filed as non-Lebanese, or a property card whose type was corrected. Saving it once from the full form clears them.'
-                : 'يحدث هذا عندما يتغيّر نوع السجل بعد تسجيل الملاحظة — كأن يُصحَّح نوع العقار أو الجنسية. حفظه مرة واحدة من نموذج التعديل الكامل يزيلها.'}
-            </p>
-            <a
-              href={`${base}/citizens/${citizenId}/edit`}
-              className="inline-block font-medium underline underline-offset-4"
-            >
-              {en ? 'Open the full form →' : 'افتح نموذج التعديل الكامل ←'}
-            </a>
-          </div>
-        ) : (
-          <p className="py-8 text-center text-xs text-muted-foreground">
-            {en
-              ? 'Nothing on this record is still open.'
-              : 'لا توجد معلومات ناقصة على هذا السجل.'}
-          </p>
-        )
+        <RecordCompletionEmpty state={state} locale={locale} />
       ) : (
-        items.map((item) => (
-          <OpenQuestion
-            key={item.path}
-            item={item}
-            locale={locale}
-            /*
-              `has`, not `?? ''`. An UNVERIFIED row opens showing the value
-              the record holds, and a clerk who selects it and deletes it
-              must see an empty box — with a falsy check the box refilled
-              itself from `item.current` on the keystroke that emptied it,
-              which reads as an input refusing to be edited. Once the row is
-              touched the map owns it, empty string included.
-            */
-            answer={answers.has(item.path) ? (answers.get(item.path) ?? '') : item.current}
-            touched={answers.has(item.path)}
-            reason={reasons.get(item.path) ?? item.reason}
-            error={fieldErrors[item.path]}
-            onAnswer={(value) => setAnswer(item.path, value)}
-            onReason={(value) => state.setReason(item.path, value)}
-            editHref={`${base}/citizens/${citizenId}/edit`}
-          />
-        ))
+        <OpenQuestionList state={state} items={items} base={base} citizenId={citizenId} locale={locale} />
       )}
-
-      {/*
-        A refusal this dialog cannot answer, named rather than repeated.
-
-        `blockedElsewhere` holds complaints about fields that are not on
-        this screen — the record is unsaveable for a reason unrelated to why
-        it is in the review queue. Retrying cannot help, so the block says
-        which fields and links to the one place they can be corrected, with
-        the clerk's typed answers explicitly declared lost. Saying so is the
-        point: a clerk who follows this link after filling four boxes must
-        not find out by discovering an empty form.
-      */}
-      {blockedElsewhere.length > 0 ? (
-        <div className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-          <p className="flex items-start gap-2 font-semibold">
-            <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-            <span>
-              {en
-                ? 'This record cannot be saved from here — other fields on it need correcting first:'
-                : 'لا يمكن حفظ هذا السجل من هنا — هناك خانات أخرى فيه تحتاج تصحيحاً أولاً:'}
-            </span>
-          </p>
-          <ul className="space-y-0.5 ps-6">
-            {blockedElsewhere.map(([path, message]) => (
-              <li key={path}>
-                <span className="font-medium">{flagFieldLabel(path, locale)}</span>
-                <span className="opacity-90"> — {message}</span>
-              </li>
-            ))}
-          </ul>
-          <a
-            href={`${base}/citizens/${citizenId}/edit`}
-            className="inline-block font-medium underline underline-offset-4"
-          >
-            {en
-              ? 'Open the full form to correct them (answers typed here are not kept) →'
-              : 'افتح نموذج التعديل الكامل لتصحيحها (لن تُحفظ الإجابات المكتوبة هنا) ←'}
-          </a>
-        </div>
-      ) : saveError ? (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs font-medium text-destructive">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-          <span>{saveError}</span>
-        </div>
-      ) : null}
+      <RecordCompletionNotices state={state} base={base} citizenId={citizenId} locale={locale} />
     </>
   );
 }
@@ -787,18 +930,28 @@ export function RecordCompletionBody({
  */
 export function RecordCompletionSummary({ state, locale = 'ar' }: { state: RecordCompletion; locale?: string }) {
   const en = locale === 'en';
-  const { willClear, remaining } = state;
+  const { willClear, remaining, closesReview } = state;
   return (
     <p className="min-w-0 text-xs leading-snug text-muted-foreground">
-      {willClear > 0
+      {closesReview
         ? en
-          ? `${willClear} will be filled in${remaining > 0 ? `, ${remaining} left open` : ' — the record leaves the review queue'}.`
-          : `سيُستكمل ${willClear}${remaining > 0 ? `، ويبقى ${remaining} مفتوحاً` : ' — ويخرج السجل من قائمة المراجعة'}.`
-        : en
-          ? 'Fill in what is known; the rest keeps its reason.'
-          : 'املأ ما هو معروف، ويبقى الباقي بسببه المسجَّل.'}
+          ? 'Nothing is left to answer — saving takes the record out of the review queue.'
+          : 'لا شيء ينتظر إجابة — الحفظ يُخرج السجل من قائمة المراجعة.'
+        : willClear > 0
+          ? en
+            ? `${willClear} will be filled in${remaining > 0 ? `, ${remaining} left open` : ' — the record leaves the review queue'}.`
+            : `سيُستكمل ${willClear}${remaining > 0 ? `، ويبقى ${remaining} مفتوحاً` : ' — ويخرج السجل من قائمة المراجعة'}.`
+          : en
+            ? 'Fill in what is known; the rest keeps its reason.'
+            : 'املأ ما هو معروف، ويبقى الباقي بسببه المسجَّل.'}
     </p>
   );
+}
+
+/** The save button's words: what pressing it will do (FRM-3). */
+export function saveLabel(state: RecordCompletion, en: boolean): string {
+  if (state.closesReview) return en ? 'Close review' : 'إغلاق المراجعة';
+  return en ? 'Save answers' : 'حفظ الإجابات';
 }
 
 export function CompleteRecordDialog({
@@ -836,7 +989,7 @@ export function CompleteRecordDialog({
       onSaved?.();
     },
   });
-  const { values, items, saving } = state;
+  const { items, saving } = state;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -881,7 +1034,7 @@ export function CompleteRecordDialog({
               type="button"
               size="sm"
               className="gap-1.5 text-xs"
-              disabled={saving || !token || !values || items.length === 0}
+              disabled={saving || !state.canSave}
               onClick={() => void state.save()}
             >
               {saving ? (
@@ -889,7 +1042,7 @@ export function CompleteRecordDialog({
               ) : (
                 <Check className="size-3.5" aria-hidden />
               )}
-              {en ? 'Save' : 'حفظ'}
+              {saveLabel(state, en)}
             </Button>
           </div>
         </DialogFooter>
