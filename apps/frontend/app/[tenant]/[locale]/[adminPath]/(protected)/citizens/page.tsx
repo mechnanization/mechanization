@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   Ban,
@@ -148,17 +148,6 @@ export default function CitizensPage({
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
   /** The committed term — set when the clerk presses Enter, not as they type. */
   const [appliedSearch, setAppliedSearch] = useState('');
-  /**
-   * Whether the table is narrowed to records still needing to be finished —
-   * read from the address: `/citizens/review` is this same page.
-   *
-   * «يتطلب مراجعة» is a slice of the register, not a different register, so it
-   * is not a second copy of this table. It has an address of its own so it can
-   * sit in «استكمال البيانات» beside the other collection worklists and be
-   * sent to someone; the toggle above the table still drops back to the whole
-   * register in one tap when a name being looked for is not in the queue.
-   */
-  const reviewOnly = (usePathname() ?? '').replace(/\/$/, '').endsWith('/citizens/review');
   /** A failed *write*. The read's own failure is the table's, via `useStaffQuery`. */
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -204,7 +193,6 @@ export default function CitizensPage({
       'citizens',
       tenant,
       appliedSearch,
-      reviewOnly,
       pagination.pageIndex,
       pagination.pageSize,
     ],
@@ -214,7 +202,6 @@ export default function CitizensPage({
         accessToken,
         {
           search: appliedSearch || undefined,
-          status: reviewOnly ? 'REQUIRES_REVIEW' : undefined,
           limit: pagination.pageSize,
           offset: pagination.pageIndex * pagination.pageSize,
         },
@@ -772,20 +759,7 @@ export default function CitizensPage({
 
   if (!token) return null;
 
-  /*
-    An empty review queue is the good outcome, not a first-use register:
-    «لا يوجد مواطنون مسجّلون بعد» and «أضف أول مواطن» would both be false here.
-  */
-  const tableLabels: DataTableLabels = reviewOnly
-    ? {
-        ...getTableLabels(locale),
-        empty: locale === 'en' ? 'No records are waiting for review.' : 'لا سجلات بانتظار المراجعة.',
-        emptyHint:
-          locale === 'en'
-            ? 'Every record has been completed. A record saved with fields left to confirm will appear here.'
-            : 'اكتملت كل السجلات. يظهر هنا كل سجل يُحفظ بحقول لم تُؤكَّد بعد.',
-      }
-    : getTableLabels(locale);
+  const tableLabels = getTableLabels(locale);
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -858,32 +832,27 @@ export default function CitizensPage({
       {/*
         The review queue, offered only when there is one.
 
-        A permanent tab reading «يتطلب مراجعة (٠)» is a standing invitation to
+        A permanent link reading «يتطلب مراجعة (٠)» is a standing invitation to
         check something that is never there. It appears when a record needs
-        finishing — and stays visible while the filter is on, so the way back
-        out is where the way in was. A link between `/citizens` and
-        `/citizens/review`, so the toggle and the nav row are one address;
-        `ShellLink` so the way back to the cached register works offline.
+        finishing, and leads to the queue's own page (`/citizens/review`, also
+        in «استكمال البيانات»), which lists just those records with a «فحص
+        الملف» for each.
       */}
-      {totals.requiringReview > 0 || reviewOnly ? (
+      {totals.requiringReview > 0 ? (
         <div className="flex flex-wrap items-center gap-2">
-          <ShellLink
-            href={reviewOnly ? `${base}/citizens` : `${base}/citizens/review`}
-            aria-current={reviewOnly ? 'page' : undefined}
-            className={cn(
-              buttonVariants({ size: 'sm', variant: reviewOnly ? 'default' : 'outline' }),
-              'h-8 gap-1.5 px-3 text-xs',
-            )}
+          <Link
+            href={`${base}/citizens/review`}
+            className={cn(buttonVariants({ size: 'sm', variant: 'outline' }), 'h-8 gap-1.5 px-3 text-xs')}
           >
             <FileQuestion className="size-3.5" aria-hidden />
             {locale === 'en'
               ? `Requires review (${totals.requiringReview})`
               : `يتطلب مراجعة (${totals.requiringReview})`}
-          </ShellLink>
+          </Link>
           <p className="text-xs text-muted-foreground">
             {locale === 'en'
-              ? 'Records filed with fields the officer could not establish. Open one to see the reason given for each.'
-              : 'سجلات حُفظت بحقول لم يتمكّن الموظف من التثبّت منها. افتح السجل لقراءة سبب كل حقل.'}
+              ? 'Records filed with fields the officer could not establish. Review each file to complete it.'
+              : 'سجلات حُفظت بحقول لم يتمكّن الموظف من التثبّت منها. افحص كل ملف لاستكماله.'}
           </p>
         </div>
       ) : null}

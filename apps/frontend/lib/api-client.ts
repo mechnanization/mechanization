@@ -2984,6 +2984,46 @@ export function listCitizens(
 }
 
 /**
+ * One row of «يتطلب مراجعة» — `CitizensService.reviewQueue` on the server.
+ * Only what the queue shows: no fee figures, no identity-document number.
+ */
+export interface ReviewQueueItem {
+  id: string;
+  fullName: string;
+  /** Null on records filed before migration 0044 — «لم يُسأل», not a difference. */
+  motherName: string | null;
+  referenceNumber: string | null;
+  phone: string | null;
+  /** Always `REQUIRES_REVIEW` in this list. */
+  status: CitizenRecordStatus;
+  /** How many «غير مؤكَّد» fields the latest registration carries. */
+  openFieldCount: number;
+  submittedAt: string;
+}
+
+/**
+ * «يتطلب مراجعة» — citizens whose latest registration was filed with fields
+ * left «غير مؤكَّد», oldest first. Narrowed on the server; `search` matches as
+ * the registry's does.
+ */
+export function getReviewQueue(
+  tenant: string,
+  token: string,
+  filter: { search?: string; limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (filter.search) query.set('search', filter.search);
+  query.set('limit', String(filter.limit ?? 25));
+  query.set('offset', String(filter.offset ?? 0));
+  return apiFetch<{ items: ReviewQueueItem[]; total: number }>(
+    tenant,
+    `/citizens/review-queue?${query}`,
+    { token, signal },
+  );
+}
+
+/**
  * The three sections the admin form edits, exactly as it posts them back.
  *
  * `properties` carries only the citizen's most recent registration — the one

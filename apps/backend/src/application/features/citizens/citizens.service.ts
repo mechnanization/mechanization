@@ -234,6 +234,41 @@ interface CitizenListAggregate {
 }
 
 /**
+ * One row of «يتطلب مراجعة»: who the record is, how to reach them, and how
+ * much is still open on it — nothing else. The queue is worked by people who
+ * finish records, not by people who collect money, so it carries no fee
+ * figures and no identity-document number: what a screen does not show, its
+ * payload does not send.
+ */
+export interface ReviewQueueItem {
+  id: string;
+  fullName: string;
+  /** Null on records filed before migration 0044 — «لم يُسأل», not a difference. */
+  motherName: string | null;
+  referenceNumber: string | null;
+  phone: string | null;
+  /** The latest registration's status: always `REQUIRES_REVIEW` in this list. */
+  status: string;
+  /** How many «غير مؤكَّد» fields that registration carries. */
+  openFieldCount: number;
+  /** When it was filed — the queue is worked oldest first. */
+  submittedAt: string;
+}
+
+interface ReviewQueueRow {
+  id: string;
+  firstName: string | null;
+  middleName: string | null;
+  lastName: string | null;
+  motherName: string | null;
+  referenceNumber: string | null;
+  phone: string | null;
+  status: string;
+  openFieldCount: number;
+  submittedAt: Date;
+}
+
+/**
  * Staff-side management of the citizen registry.
  *
  * The public wizard is gone from the landing page — a municipality clerk now
@@ -527,6 +562,83 @@ export class CitizensService {
         inArrears: aggregate?.allInArrears ?? 0,
         requiringReview: aggregate?.allRequiringReview ?? 0,
       },
+    };
+  }
+
+  /**
+   * «يتطلب مراجعة» — citizens whose latest registration was filed with fields
+   * left «غير مؤكَّد», oldest first.
+   *
+   * Its own query rather than `list` with a status filter: `list` computes six
+   * fee subqueries per row and four over the whole register for the cards
+   * above the table, none of which this queue shows, and it sends the identity
+   * document number with every row. Narrowed in the WHERE, so a citizen who is
+   * not in the queue never leaves the database.
+   *
+   * Matched against the *latest* registration, as `list` is: a citizen who
+   * came back with a complete second filing is not still queued for the first.
+   * The search is `list`'s, token for token, so a name found in one is found in
+   * the other.
+   */
+  async reviewQueue(
+    filter: { search?: string; limit?: number; offset?: number } = {},
+  ): Promise<{ items: ReviewQueueItem[]; total: number }> {
+    const limit = Math.min(Math.max(filter.limit ?? 25, 1), MAX_LIST_ROWS);
+    const offset = Math.max(filter.offset ?? 0, 0);
+    const tokens = searchTokens(filter.search);
+    const searchFilter = tokens.length
+      ? Prisma.join(
+          tokens.map((token) => Prisma.sql`AND u."searchText" LIKE ${likePattern(token)}`),
+          ' ',
+        )
+      : Prisma.empty;
+
+    // `jsonb_typeof` guards the count as `list` does: the column defaults to an
+    // array, but a hand-run fix or a restored backup need not hold one.
+    const queued = Prisma.sql`
+      FROM ${this.S}users u
+      JOIN LATERAL (
+        SELECT r.status::text AS status, r."submittedAt",
+               CASE WHEN jsonb_typeof(r."flaggedFields") = 'array'
+                    THEN jsonb_array_length(r."flaggedFields") ELSE 0 END AS "openFieldCount"
+          FROM ${this.S}registrations r
+         WHERE r."citizenId" = u.id
+         ORDER BY r."submittedAt" DESC
+         LIMIT 1
+      ) latest ON true
+      WHERE u.kind = 'CITIZEN'
+        AND latest.status = 'REQUIRES_REVIEW'
+        ${searchFilter}
+    `;
+
+    // One snapshot for the page and its count, for the reason `list` gives.
+    const [rows, [count]] = await withConnectionRetry(() =>
+      this.db.$transaction([
+        this.db.$queryRaw<ReviewQueueRow[]>`
+          SELECT u.id, u."firstName", u."middleName", u."lastName", u."motherName",
+                 u."referenceNumber", u.phone,
+                 latest.status, latest."openFieldCount"::int AS "openFieldCount",
+                 latest."submittedAt"
+          ${queued}
+          ORDER BY latest."submittedAt" ASC, u.id
+          LIMIT ${limit} OFFSET ${offset}
+        `,
+        this.db.$queryRaw<{ total: number }[]>`SELECT count(*)::int AS total ${queued}`,
+      ]),
+    );
+
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        fullName: [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' '),
+        motherName: row.motherName,
+        referenceNumber: row.referenceNumber,
+        phone: row.phone,
+        status: row.status,
+        openFieldCount: row.openFieldCount,
+        submittedAt: row.submittedAt.toISOString(),
+      })),
+      total: count?.total ?? 0,
     };
   }
 

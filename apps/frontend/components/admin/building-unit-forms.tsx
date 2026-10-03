@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   AlertTriangle,
@@ -70,6 +69,7 @@ import {
 import { ACTION_TINT } from '@/lib/action-tint';
 import { formatDate, monthNames } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
+import { useTableLabels } from '@/lib/use-table-labels';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -89,7 +89,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Checkbox } from '@/components/ui/checkbox';
-import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { DataTable } from '@/components/ui/data-table';
 import { Field, FieldFlagProvider } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -2310,7 +2310,7 @@ export function OccupantList({
 
   const shown = unit.occupants.filter((occupant) => occupant.endReason !== 'RECORDED_IN_ERROR');
   const hidden = unit.occupants.length - shown.length;
-  const tableLabels = useOccupantTableLabels();
+  const tableLabels = useTableLabels();
 
   /*
     Columns only some flats need are left out where no row would fill them:
@@ -2669,37 +2669,6 @@ function OwnerLinkCell({ link, en }: { link: OccupantOwnerLink; en: boolean }) {
       {en ? 'Not linked to an owner' : 'غير مربوط بمالك'}
       {link.typedName ? (en ? ` (named: ${link.typedName})` : ` (ذكر: ${link.typedName})`) : null}
     </CellTag>
-  );
-}
-
-/**
- * The occupant table's labels, from `messages.table` (§17: not another copy
- * of `getTableLabels`). Search and paging are off on this table, so only the
- * empty, error and sort strings are ever read; the rest are filled so the
- * type holds.
- */
-function useOccupantTableLabels(): DataTableLabels {
-  const t = useTranslations('table');
-  return useMemo(
-    () => ({
-      searchAriaLabel: t('search'),
-      searchPlaceholder: t('search'),
-      clearSearch: t('clearSearch'),
-      searchHint: 'Enter',
-      empty: t('empty'),
-      emptySearch: t('emptySearch'),
-      loadError: t('loadError'),
-      retry: t('retry'),
-      previous: t('previous'),
-      next: t('next'),
-      pageOf: t.raw('pageOf') as string,
-      rowsPerPage: t('rowsPerPage'),
-      totalRows: t.raw('totalRows') as string,
-      sortAscending: t('sortAsc'),
-      sortDescending: t('sortDesc'),
-      sortNone: t('sortNone'),
-    }),
-    [t],
   );
 }
 

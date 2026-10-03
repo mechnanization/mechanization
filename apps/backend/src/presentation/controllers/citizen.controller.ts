@@ -137,6 +137,28 @@ export class CitizenController {
   }
 
   /**
+   * «يتطلب مراجعة» — the records filed with fields left «غير مؤكَّد», oldest
+   * first, with only what the queue shows: name, mother's name, reference,
+   * phone, status and how many fields are open. The same roles as the
+   * registry above: the queue is a slice of it and discloses nothing more.
+   *
+   * A static path, declared before `@Get(':id')` so it is not read as an id.
+   */
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Get('review-queue')
+  reviewQueue(
+    @Query('search') search?: string,
+    @Query('limit') limit = '25',
+    @Query('offset') offset = '0',
+  ) {
+    return this.citizens.reviewQueue({
+      search,
+      limit: Number(limit) || 25,
+      offset: Number(offset) || 0,
+    });
+  }
+
+  /**
    * The signed-in citizen's own record: their properties and their fees.
    *
    * Deliberately **not** `@Roles`-guarded — those decorators list *staff*
