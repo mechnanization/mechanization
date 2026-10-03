@@ -1,11 +1,20 @@
 'use client';
 
 import { use, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
-import { CircleSlash, HelpCircle, Link2, RefreshCw, UserRound, Wallet } from 'lucide-react';
+import { CircleSlash, HelpCircle, Link2, RefreshCw, Search, UserRound, Wallet } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
-import { getLandlordLinks, getLandlordLinkSummary, type LandlordProposal } from '@/lib/api-client';
+import {
+  ApiRequestError,
+  confirmLandlordLink,
+  getLandlordLinks,
+  getLandlordLinkSummary,
+  type LandlordProposal,
+  type LandlordProposalCandidate,
+} from '@/lib/api-client';
+import { Consequences, useLandlordResolutions } from '@/components/admin/landlord-proposal-card';
 import {
   bestCandidate,
   filedBeforeOwner,
@@ -22,6 +31,7 @@ import { cn } from '@/lib/utils';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CellTag } from '@/components/ui/cell-tag';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 
@@ -29,10 +39,9 @@ import { PageHeader } from '@/components/ui/page-header';
  * One match light: a dot in the light's colour and its word beside it —
  * never the colour alone (COL-3).
  */
-function Light({ label, light }: { label: string; light: MatchLight }) {
+function Light({ light }: { light: MatchLight }) {
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs">
-      <span className="text-muted-foreground">{label}</span>
+    <span className="inline-flex items-center gap-1.5 text-sm">
       <span
         aria-hidden
         className={cn(
@@ -58,6 +67,25 @@ function Light({ label, light }: { label: string; light: MatchLight }) {
   );
 }
 
+/**
+ * Why «ربط» is not offered on a row, or null when it is. The row links only
+ * where there is nothing to choose — the status `READY`: one person, found by
+ * the card's number, nothing blocking. Everything else is a choice, and
+ * choices are made on «فحص».
+ */
+function quickLinkRefusal(proposal: LandlordProposal, en: boolean): string | null {
+  switch (landlordLinkStatus(proposal)) {
+    case 'READY':
+      return null;
+    case 'SEVERAL':
+      return en ? 'Several people on this number — choose on «Check».' : 'عدة مرشحين على هذا الرقم — اختر في «فحص».';
+    case 'NAME_ONLY':
+      return en ? 'Found by the name alone — confirm on «Check».' : 'وُجد بالاسم فقط — تحقّق في «فحص».';
+    case 'BLOCKED':
+      return en ? 'No link can be made yet — see «Check».' : 'لا يمكن الربط بعد — راجع «فحص».';
+  }
+}
+
 /** The roles `GET landlord-links/summary` answers — asking as anyone else is a 403. */
 const SUMMARY_ROLES = new Set(['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER']);
 
@@ -79,10 +107,11 @@ const SUMMARY_ROLES = new Set(['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINIST
  * A table, as «يتطلب مراجعة» is (UX-1): the occupant (tenant or free
  * occupant), who they said the owner is and on what number, the property,
  * the registered person it most likely is with a light for the name and one
- * for the phone — and «فحص الرابط» to the claim's own page, where the
- * question is answered. The question itself (which of these
- * people is the owner) wants room the row does not have, so it is not asked in
- * the row.
+ * for the phone, each in its own column — and two actions: «فحص», the
+ * claim's own page, and «ربط», which links from the row after a confirmation,
+ * offered only where there is nothing to choose (one person, found by the
+ * number). Choosing between people wants room the row does not have, so that
+ * stays on «فحص».
  */
 export default function LandlordLinksPage({
   params,
@@ -95,6 +124,41 @@ export default function LandlordLinksPage({
   const { token, user } = useStaffSession(tenant, base);
 
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
+  const queryClient = useQueryClient();
+  const { resolve } = useLandlordResolutions({ tenant, token: token ?? '', locale });
+  const [linking, setLinking] = useState<{ proposal: LandlordProposal; candidate: LandlordProposalCandidate } | null>(
+    null,
+  );
+
+  /*
+    «ربط» from the row: the same call «فحص» makes, after a confirmation that
+    says who and what. The toast carries the undo; the row leaves the queue on
+    the refetch.
+  */
+  const link = async () => {
+    if (!linking || !token) return;
+    const { proposal, candidate } = linking;
+    try {
+      await confirmLandlordLink(tenant, token, proposal.propertyEntryId, candidate.id);
+    } catch (caught) {
+      throw new Error(
+        caught instanceof ApiRequestError
+          ? caught.payload.message
+          : en
+            ? 'The owner was not linked. Check the connection and try again.'
+            : 'لم يتم ربط المالك. تحقّق من الاتصال وحاول مرة أخرى.',
+      );
+    }
+    resolve({
+      kind: 'linked',
+      propertyEntryId: proposal.propertyEntryId,
+      ownerName: candidate.name,
+      candidateIds: [candidate.id],
+    });
+    void queryClient.invalidateQueries({ queryKey: ['landlord-links'] });
+    void queryClient.invalidateQueries({ queryKey: ['landlord-links-summary'] });
+    void queryClient.invalidateQueries({ queryKey: ['landlord-link', tenant, proposal.propertyEntryId] });
+  };
 
   const query = useStaffQuery({
     queryKey: ['landlord-links', tenant, pagination.pageIndex, pagination.pageSize],
@@ -218,7 +282,7 @@ export default function LandlordLinksPage({
       },
       {
         id: 'match',
-        header: en ? 'Registered owner · match' : 'المالك المسجَّل والتطابق',
+        header: en ? 'Registered owner' : 'المالك المسجَّل',
         cell: ({ row }) => {
           const proposal = row.original;
           const candidate = bestCandidate(proposal);
@@ -236,10 +300,6 @@ export default function LandlordLinksPage({
                   </span>
                 ) : null}
               </p>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <Light label={en ? 'Name' : 'الاسم'} light={nameLight(proposal, candidate, locale)} />
-                <Light label={en ? 'Phone' : 'الهاتف'} light={phoneLight(proposal, candidate, locale)} />
-              </div>
               {/* The case this queue is for: the occupant came first, the owner registered since. */}
               {filedBeforeOwner(proposal, candidate) ? (
                 <p className="text-xs text-muted-foreground">
@@ -251,25 +311,65 @@ export default function LandlordLinksPage({
         },
       },
       {
-        id: 'inspect',
-        header: en ? 'Check link' : 'فحص الرابط',
+        id: 'nameMatch',
+        header: en ? 'Name match' : 'تطابق الاسم',
+        cell: ({ row }) => {
+          const candidate = bestCandidate(row.original);
+          return candidate ? <Light light={nameLight(row.original, candidate, locale)} /> : <CellTag tone="muted">—</CellTag>;
+        },
+      },
+      {
+        id: 'phoneMatch',
+        header: en ? 'Phone match' : 'تطابق الهاتف',
+        cell: ({ row }) => {
+          const candidate = bestCandidate(row.original);
+          return candidate ? <Light light={phoneLight(row.original, candidate, locale)} /> : <CellTag tone="muted">—</CellTag>;
+        },
+      },
+      {
+        id: 'actions',
+        header: en ? 'Actions' : 'الإجراءات',
         meta: { align: 'end', mobile: 'actions' },
         cell: ({ row }) => {
-          const typed = row.original.landlordName?.trim() || (en ? 'this owner' : 'هذا المالك');
+          const proposal = row.original;
+          const typed = proposal.landlordName?.trim() || (en ? 'this owner' : 'هذا المالك');
+          const candidate = bestCandidate(proposal);
+          const refusal = quickLinkRefusal(proposal, en);
+          const refusalId = `link-refusal-${proposal.propertyEntryId}`;
           return (
-            <Link
-              href={`${base}/citizens/landlord-links/${row.original.propertyEntryId}`}
-              aria-label={en ? `Check the link to ${typed}` : `فحص رابط ${typed}`}
-              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 gap-1.5 text-xs')}
-            >
-              <Link2 className="size-3.5" aria-hidden />
-              {en ? 'Check link' : 'فحص الرابط'}
-            </Link>
+            <div className="flex items-center justify-end gap-2">
+              <Link
+                href={`${base}/citizens/landlord-links/${proposal.propertyEntryId}`}
+                aria-label={en ? `Check the link to ${typed}` : `فحص رابط ${typed}`}
+                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 gap-1.5 text-xs')}
+              >
+                <Search className="size-3.5" aria-hidden />
+                {en ? 'Check' : 'فحص'}
+              </Link>
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 gap-1.5 text-xs"
+                disabled={Boolean(refusal) || !candidate || !token}
+                title={refusal ?? undefined}
+                aria-describedby={refusal ? refusalId : undefined}
+                aria-label={candidate ? (en ? `Link ${candidate.name} as owner` : `ربط ${candidate.name} مالكاً`) : undefined}
+                onClick={() => candidate && setLinking({ proposal, candidate })}
+              >
+                <Link2 className="size-3.5" aria-hidden />
+                {en ? 'Link' : 'ربط'}
+              </Button>
+              {refusal ? (
+                <span id={refusalId} className="sr-only">
+                  {refusal}
+                </span>
+              ) : null}
+            </div>
           );
         },
       },
     ],
-    [en, base, locale, occupancyLabels],
+    [en, base, locale, occupancyLabels, token],
   );
 
   return (
@@ -386,6 +486,52 @@ export default function LandlordLinksPage({
           />
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={linking !== null}
+        onOpenChange={(open) => !open && setLinking(null)}
+        destructive={false}
+        title={
+          linking
+            ? en
+              ? `Link ${linking.candidate.name} as the owner?`
+              : `ربط ${linking.candidate.name} مالكاً؟`
+            : ''
+        }
+        description={
+          linking
+            ? en
+              ? `${linking.proposal.filedBy?.name ?? 'The occupant'} named «${linking.proposal.landlordName?.trim() || '—'}» as the owner of ${linking.proposal.buildingCode ?? linking.proposal.propertyNumber ?? 'this property'}.`
+              : `ذكر ${linking.proposal.filedBy?.name ?? 'الساكن'} أن «${linking.proposal.landlordName?.trim() || '—'}» مالك ${linking.proposal.buildingCode ?? linking.proposal.propertyNumber ?? 'هذا العقار'}.`
+            : undefined
+        }
+        confirmLabel={en ? 'Link' : 'ربط'}
+        cancelLabel={en ? 'Cancel' : 'إلغاء'}
+        onConfirm={link}
+      >
+        {linking ? (
+          <div className="space-y-3">
+            <dl className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1.5 text-sm">
+              <dt className="text-muted-foreground">{en ? 'Name match' : 'تطابق الاسم'}</dt>
+              <dd>
+                <Light light={nameLight(linking.proposal, linking.candidate, locale)} />
+              </dd>
+              <dt className="text-muted-foreground">{en ? 'Phone match' : 'تطابق الهاتف'}</dt>
+              <dd>
+                <Light light={phoneLight(linking.proposal, linking.candidate, locale)} />
+              </dd>
+            </dl>
+            <Consequences
+              candidate={linking.candidate}
+              units={linking.proposal.units.map((unit) => unit.unitCode).filter(Boolean) as string[]}
+              locale={locale}
+            />
+            <p className="text-xs text-muted-foreground">
+              {en ? 'You can undo it from the toast or from either file.' : 'يمكن التراجع عنه من الإشعار أو من ملف أيٍّ منهما.'}
+            </p>
+          </div>
+        ) : null}
+      </ConfirmDialog>
     </div>
   );
 }

@@ -532,7 +532,7 @@ function MatchBadge({ match, locale }: { match: NameMatch; locale: string }) {
 }
 
 /** What pressing the button will write, for the person selected. */
-function Consequences({
+export function Consequences({
   candidate,
   units,
   locale,
