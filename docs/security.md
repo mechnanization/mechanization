@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/staff-refresh-tokens-rebased` (on `develop@8742c5b`), 2026-10-04.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -110,6 +110,25 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - One-time tokens travel in a URL fragment or a POST body, never in a query string, and the link format
   MUST match what the landing page parses.
 - JWT sign and verify SHOULD pin `HS256` and set issuer and audience.
+- **Staff sessions** (`StaffRefreshTokenService`, `IdentityService.refreshStaffSession`):
+  - The access token is short (`JWT_STAFF_IDLE_TTL`, 30 minutes by default) and carries `sid`, its
+    refresh family. `JwtAuthGuard` refuses a token whose family is revoked
+    (`SessionRevocationService.isFamilyLive`), so signing out stops it at once.
+  - The refresh token is opaque, 256 random bits, rotated on every use, and stored only as an HMAC
+    keyed from `JWT_SECRET`. It travels only in an `HttpOnly; Secure; SameSite=Strict` cookie with no
+    `Path` and no `Domain`, named per account (`staff-refresh-cookie.ts`). It MUST NOT appear in a
+    response body, a log, storage or a URL.
+  - A refresh needs both the cookie and the tab's own (usually expired) access token, which only
+    names the account. Presenting a token after its chain has moved on ends the whole family; a token
+    may be exchanged again at most three times while nothing it produced has been used (a lost
+    response). The cap `JWT_STAFF_TTL` / `JWT_STAFF_REMEMBER_TTL` is fixed at sign-in.
+  - Sign-in, refresh and sign-out run behind `TrustedOriginGuard` (the `Origin` must be in
+    `CORS_ORIGINS`) and their own throttle (`APP_CONFIG.throttle.staffSession`, keyed by the hashed
+    `Authorization` header).
+  - Tabs MUST NOT exchange the cookie concurrently: `apiFetch` serialises exchanges on the
+    `mechanization.refresh.<tenant>` Web Lock, and the tab that renews announces the new session on
+    the `mechanization.session` `BroadcastChannel` so the tabs queued behind it adopt it instead of
+    exchanging again ([apps/frontend/CLAUDE.md](../apps/frontend/CLAUDE.md#session)).
 
 ### Transport, headers and rate limits
 
@@ -176,9 +195,9 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 
 ### Client hardening
 
-- Tokens: `sessionStorage` by default, `localStorage` only with "remember me" (`saveSession`,
+- Access tokens: `sessionStorage` by default, `localStorage` only with "remember me" (`saveSession`,
   `apps/frontend/lib/session.ts`). Sent as `Authorization: Bearer` by `apiFetch`. MUST NOT put a token
-  in a URL.
+  in a URL. The staff refresh credential is the httpOnly cookie above, which page script cannot read.
 - `dangerouslySetInnerHTML` only with constants or sanitised values (`ACCENT_INIT_SCRIPT`, `safeHslTriple`).
 - MUST NOT take a redirect target from a query parameter. `window.location.href` only to a URL the
   server built (the Whish checkout) or an internal route.
@@ -278,7 +297,7 @@ add a row. Severity is the harm if exploited today.
 | Medium | Authorisation defaults to allow: a non-public route without `@Roles` admits any authenticated token, citizens included. Each such route self-checks today; forgetting fails open | `RolesGuard.canActivate`; `tenant-isolation.spec.ts` "admits requests to routes without role restrictions"; role-less routes in `AuthController`, `CadastreController`, `CitizenController.mySummary`, `FeesController` (`settings`, `GET payments/mine` and the two `POST payments/mine/:id/…` routes) | Refuse when no metadata is present unless an explicit self-service marker is declared; add a route-inventory test |
 | Medium | PII in stdout: every 4xx and 5xx logs `request.originalUrl` with its query string, 5xx logs the raw exception message, mail failures log the recipient, and dev SMS logs phone and body | `DomainExceptionFilter.catch`; `AppLogger` (no redaction); `SmtpEmailSender`; `SmsProviderService.send` | Log `redactUrl` / `redactText` output, or redact in `AppLogger.formatMessage`; mask recipients |
 | Medium | Field-device PII at rest: the offline queue and the citizen draft hold full records in plaintext and survive sign-out | `apps/frontend/lib/offline-db.ts` `QueuedSubmission`; `apps/frontend/lib/citizen-draft.ts` `KEY_PREFIX`; `apps/frontend/lib/session.ts` `clearSession` | Decide (Undecided): encrypt per session, and/or clear on sign-out and on user switch |
-| Medium | No server-side sign-out. A citizen token lives 7 days; a staff session up to its 8 h or 30 d cap through refresh | No logout route in `AuthController`; `clearSession` is client-only | A logout route that bumps `tokenVersion` and calls `SessionRevocationService.forget` |
+| Medium | No server-side sign-out for citizens: a citizen token lives 7 days and `clearSession` only forgets it locally. (Staff sign-out revokes the refresh family: `AuthController.logoutStaff`.) | `IdentityService.loginByReference`, `loginByReferenceOnly`; `apps/frontend/lib/session.ts` `clearSession` | A citizen logout that bumps `tokenVersion` and calls `SessionRevocationService.forget` |
 | Medium | Password reset cannot succeed and leaks the token: the email link carries `?token=` (access logs, Referer), while the page parses a Supabase-style `#type=recovery&access_token=` fragment | `IdentityService` `resetLink`; reset page `parseAuthHash` (`app/[tenant]/[locale]/[adminPath]/reset-password/page.tsx`) | Emit the token in the fragment, read it on the page, drop the Supabase parsing, and add a test that ties the two |
 | Medium | `NODE_ENV` defaults to `development`. A deploy that omits it returns `devCode` in OTP responses, allows `OTP_ENABLED=false`, skips the S3 requirements and logs SMS bodies. **Unverified:** the value on the host | `envSchema` `NODE_ENV`; `OtpService.issue`; `SmsProviderService.send` | No default: require it explicitly |
 | Medium | One database role per environment runs both the API and migrations across every tenant schema, so one SQL bug can reach every municipality | `scripts/db/targets.mjs` `TARGETS` (one `user` checked for `DATABASE_URL` and `DIRECT_URL`) | A DML-only runtime role and a separate migration role; consider per-tenant roles (Undecided) |
@@ -338,8 +357,6 @@ These need a human. Long-running product decisions live in [docs/open-decisions.
   resident status, or reduce what such a session can read, add a failure budget, or add CAPTCHA?
 - **SUPER_ADMIN TOTP.** Mandatory with an enrolment-only session, or officially optional (and fix the
   comments that say otherwise, such as the `User.requiresTotp` docblock)?
-- **Staff token storage.** Web Storage (exposed to XSS, mitigated by CSP) or an httpOnly cookie, which
-  needs a CSRF design?
 - **Rate-limit topology.** The `trust proxy` hop, a Redis throttler store, and per-account limits.
 - **Offline PII on field devices.** Encrypt the queue and drafts, clear them on sign-out or user switch,
   or accept the risk because field work must not be lost?

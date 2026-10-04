@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/staff-refresh-tokens-rebased` (on `develop@8742c5b`), 2026-10-04.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -83,6 +83,14 @@ component types; `components/admin/nav.ts` imports `QUALITY_REVIEWER_ROLES` from
 - `lib/session.ts`: key `mechanization.session.<tenant>`. `saveSession` uses sessionStorage,
   localStorage only for "remember me"; `updateSession` keeps the store it found (use it on
   refresh); `clearSession` clears both stores and the tab searches.
+- Staff renewal is `apiFetch`'s job, never a screen's. A 401 on a staff call runs
+  `exchangeStaffToken`: storage first, then, holding the `mechanization.refresh.<tenant>` Web Lock,
+  a renewal another tab announced on the `mechanization.session` `BroadcastChannel`, and only then
+  `POST /auth/staff/refresh` with `credentials: 'include'`. The tab that renews announces it inside
+  the lock, so three tabs waking together make one exchange. Sign-in and sign-out (`loginStaff`,
+  `logoutStaff`) take the same lock. A renewal that cannot be reached is
+  `SESSION_REFRESH_UNAVAILABLE` (status 0, a connection problem), never a sign-out. Rules:
+  [docs/security.md](../../docs/security.md#tokens-passwords-and-totp).
 - Staff pages MUST use `useStaffSession(tenant, base)` (`{token, user}`, null until its
   effect runs; redirects unless `kind === 'STAFF'`) and show a skeleton while the token is
   null (CODE-1). `StaffRouteGuard` checks `canAccessPath`, which opens a path with no

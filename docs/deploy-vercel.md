@@ -59,15 +59,15 @@ again: see the scoping rule at the top.
 | `SUPABASE_URL` | `https://<project-ref>.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service-role key. Never in the web project. |
 | `SUPABASE_STORAGE_BUCKET` | `documents` |
-| `JWT_SECRET` | ≥32 chars. `openssl rand -base64 48` |
-| `JWT_STAFF_TTL` | `8h` (the default) — now the **session** cap, not the token's. See §8 |
+| `JWT_SECRET` | ≥32 chars. `openssl rand -base64 48`. Also keys the staff refresh tokens, so rotating it ends every session — see §8 |
+| `JWT_STAFF_TTL` | `8h` (the default) — the **session** cap, stamped at sign-in, not any token's life. See §8 |
 | `JWT_STAFF_REMEMBER_TTL` | `30d` — same, for "تذكّرني" |
-| `JWT_STAFF_IDLE_TTL` | Optional, `30m`. How long one token lasts before it is exchanged |
-| `JWT_CITIZEN_TTL` | `7d` — unchanged, citizens have no exchange |
+| `JWT_STAFF_IDLE_TTL` | Optional, `30m`. How long one access token is accepted before the portal refreshes it — and so how long a stolen one is useful. See §8 |
+| `JWT_CITIZEN_TTL` | `7d` — unchanged, citizens have no refresh |
 | `OTP_ENABLED` | `true` — production refuses to boot without it |
 | `SMS_PROVIDER_API_KEY` | Optional and currently inert — no provider is implemented |
 | `SMS_PROVIDER_FALLBACK_API_KEY` | Same (see `open-decisions.md` #2) |
-| `CORS_ORIGINS` | The web project's origin, e.g. `https://mechanization-web.vercel.app` |
+| `CORS_ORIGINS` | The web project's origin, e.g. `https://mechanization-web.vercel.app`. Also the list staff sign-in, refresh and sign-out check `Origin` against — see §8 |
 | `PUBLIC_API_URL` | This project's origin + `/api/v1` |
 | `PUBLIC_PORTAL_URL` | The web project's origin |
 | `CRON_SECRET` | `openssl rand -hex 32` — see §4 |
@@ -178,7 +178,7 @@ guessing `true` gives you a scheduler nobody asked for, guessing `false` stops
 billing, and neither is visible until someone goes looking.
 
 **`TZ` is pinned to `UTC`** in `apps/backend/Dockerfile` and `docker-compose.yml`.
-Both jobs also name `timeZone: 'UTC'` on their `@Cron` decorators, so the
+Every job also names `timeZone: 'UTC'` on its `@Cron` decorator, so the
 schedule is right whatever the host clock says — that pin is what keeps *logged*
 timestamps comparable between deployments, and `main.ts` warns at boot if `TZ`
 is set to anything else. The reason the decorators name a zone at all:
@@ -196,6 +196,11 @@ hourly as this table said:
 | --- | --- | --- |
 | OTP challenge prune | `GET /api/v1/internal/cron/otp-cleanup` | hourly |
 | Recurring billing | `GET /api/v1/internal/cron/recurring-billing` | daily, 02:00 UTC |
+
+A third job, the staff refresh-token prune, has a route of its own —
+`GET /api/v1/internal/cron/staff-refresh-cleanup`, daily at 03:00 UTC in-process
+— and deliberately **no** `vercel.json` entry. The route exists for parity with
+these two; see §8.
 
 Vercel sends `Authorization: Bearer $CRON_SECRET` on every invocation. **The
 routes refuse to run at all when `CRON_SECRET` is unset** — a missing variable
@@ -423,7 +428,7 @@ configured, and reports nothing.
 
 ---
 
-## 8. Staff sessions and the token exchange
+## 8. Staff sessions: access token and refresh cookie
 
 This section describes the API's session behaviour, whatever hosts it.
 
@@ -436,54 +441,241 @@ It is now **two bounds instead of one**:
 
 | Bound | Variable | Default | What it is |
 | --- | --- | --- | --- |
-| Token life | `JWT_STAFF_IDLE_TTL` | `30m` | How long one token is accepted before it must be exchanged |
-| Session cap | `JWT_STAFF_TTL` / `JWT_STAFF_REMEMBER_TTL` | `8h` / `30d` | When the clerk signs in again. Stamped at login, never moves |
+| Access-token life | `JWT_STAFF_IDLE_TTL` | `30m` | How long one access token is accepted before the portal refreshes it |
+| Session cap | `JWT_STAFF_TTL` / `JWT_STAFF_REMEMBER_TTL` | `8h` / `30d` | When the clerk signs in again. Stamped at sign-in, never moves |
 
 `JWT_STAFF_TTL` keeps the value and the meaning an operator already had for it —
 how long a sign-in lasts. What changed is which expiry it names: it used to be
 the token's, and is now the session's. Nobody has to change a variable.
 
-The portal exchanges the token for a fresh one whenever a request meets an
-expired one (`POST /t/:slug/auth/staff/refresh`), replays the request, and the
-screen never sees the 401. Past `sessionExpiresAt` there is no exchange at any
-price, so a session still ends at exactly the wall-clock moment it did before.
+The portal refreshes whenever a request meets an expired access token
+(`POST /t/:slug/auth/staff/refresh`), replays the request, and the screen never
+sees the 401. Past the cap there is no refresh at any price, so a session still
+ends at exactly the wall-clock moment it did before.
 
-### What this does and does not buy
+The first version of this needed no migration: it refreshed by exchanging the
+expired access token itself. That kept the form and bought no security — the
+exchange had to accept an *expired* token, so anyone holding one could exchange
+it too, and a stolen token was good for the whole session cap. What replaced it
+is the second credential that version said it was a prerequisite for: stored
+server-side, accepted only by the refresh route, rotated on every use, with
+reuse detection. Migration `0059_staff_refresh_tokens` is its table.
 
-**It does not shrink the window a stolen token is useful for**, and it is worth
-being plain about that rather than letting the short TTL imply otherwise. The
-exchange has to accept an *expired* token — otherwise a clerk returning from
-lunch meets the same hard 401 at half an hour instead of eight, which is worse
-than what it replaced — so anyone holding the token can exchange it too. The
-credential's effective life is the session cap, exactly as it was.
+### Two credentials, and a refresh needs both
 
-What it buys is that the cap is now the *only* thing that ends a session, rather
-than the token's own expiry ending it at an arbitrary moment mid-task.
+| | Access token | Refresh token |
+| --- | --- | --- |
+| Held in | the tab's `sessionStorage` (`localStorage` with "تذكّرني") | an `HttpOnly` cookie the page cannot read |
+| What it is | a signed JWT, ≤ `JWT_STAFF_IDLE_TTL`, carrying `sid` | 256 random bits, opaque |
+| Kept server-side | no | only as an HMAC in the tenant table `staff_refresh_tokens` — never the token |
+| Accepted by | every authenticated route | the refresh route only |
 
-Reducing the theft window needs a second credential that only the exchange
-endpoint accepts, stored server-side, rotated on every use with reuse detection
-— i.e. real refresh tokens. That is a new tenant table and a migration applied
-per municipality, and it is deliberately not what this is. This change is a
-prerequisite for it, not a substitute.
+A refresh needs **both**. The cookie is the renewal credential. The tab's own
+access token, sent as `Authorization: Bearer`, is the *binding*: its signature
+is checked but not its expiry — expired is its normal state here — and it must
+be a STAFF token for this municipality whose `sub` owns the refresh token. It is
+never enough on its own and nothing is ever minted from it. All it says is which
+account this tab belongs to, so the right cookie is read and a tab can never be
+handed another account's session. A missing or invalid binding is a 401 with
+nothing written and no cookie cleared.
 
-### What is still enforced on every exchange
+That is also what keeps the promise `sessionStorage` made: closing the tab still
+ends a session that was not "تذكّرني". The access token went with the tab, and
+the cookie — a browser-session cookie in that case — is useless without it.
 
-The exchange route is `@Public()` because the guard rejects expired tokens and
-an expired token is the normal input here. The checks move inside the service
-rather than disappearing — signature, tenant, session cap, plus:
+The route is `@Public()` for the reason it always was: `JwtAuthGuard` rejects
+expired tokens, and an expired token is the expected binding. The checks live
+in `IdentityService.refreshStaffSession` instead.
 
-- **Revocation.** `tokenVersion` and `isActive` are re-read, so a dismissal
-  still takes effect within `SessionRevocationService`'s cache window and a
+### The cookie
+
+- **One name per account**: `mz_sr_` and 24 hex characters of an HMAC of the
+  user id. Two staff accounts in one browser never share a cookie; an outsider
+  cannot compute another account's name, which defeats planting one for them
+  (cookie tossing); and a late sign-out response for one account can never
+  clear another's. "تذكّرني" *storage* is still one slot per municipality, so
+  in a shared browser the last sign-in wins there, as before.
+- **Attributes**: `HttpOnly; Secure; SameSite=Strict`, and deliberately no
+  `Path` and no `Domain`. The browser's default path is then
+  `/api/v1/t/<slug>/auth/staff` — one municipality's staff auth routes — and
+  the cookie is host-only on the API. The other `/auth/staff/*` routes do
+  receive it; none reads it, and that should stay true.
+- **Lifetime**: with "تذكّرني", `Max-Age` and `Expires` run to the session cap.
+  Without it, neither is set and the cookie ends with the browser.
+- **Portal and API must be same-site.** The API sets the cookie on its own
+  responses and the portal's `fetch` sends it back with
+  `credentials: 'include'` (CORS already allows credentials for the origins in
+  `CORS_ORIGINS`). `SameSite=Strict` means a browser sends it only when the two
+  share a registrable domain. `https://baladyia.com` → `https://api.baladyia.com`
+  does, and so does `http://localhost:3000` → `http://localhost:4000`. Two
+  hosts under a shared hosting suffix do not — two `*.vercel.app` projects are
+  different sites — and there the portal would sign in and then fail its first
+  refresh.
+- **Safari may cut "تذكّرني" to 7 days.** WebKit caps a cookie set by a server
+  response at seven days when that server's IP address does not match the
+  site's own — likely whenever the portal and the API are served from different
+  machines. A clerk on Safari may then be asked to sign in weekly rather than
+  monthly.
+  Nothing on the server changes that; it is worth knowing when someone reports
+  it.
+- **Rotating `JWT_SECRET` ends every staff session**, refresh included. The key
+  the stored hashes are made with, and the cookie names, are both derived from
+  it, so after a rotation no stored hash matches and no cookie has the name the
+  API looks for.
+
+### Rotation, and the rule that detects reuse
+
+Every refresh exchanges the presented token for a new one and marks the old one
+used. The tokens one sign-in produces form a *family*, and every row of it
+carries the same session cap.
+
+A used token may be exchanged again, because a response lost on a flaky
+connection must not sign a clerk out — but only under the rule written on
+`StaffRefreshTokenService`:
+
+> A token can be exchanged again only while nothing it produced has been used,
+> at most three times. Presenting a token after the chain has moved past it
+> ends the family.
+
+So a retry after a lost response, or two tabs racing, gets a fresh token and
+supersedes the unused one it replaces; that is logged as a warning, not audited.
+A token presented after its successor has been used is treated as theft: the
+whole family is revoked, the cookie cleared, and one
+`STAFF_SESSION_REUSE_DETECTED` row is written to the audit log. Whoever was
+using that session, thief or clerk, signs in again.
+
+The residual gap, stated rather than implied away: someone who presents a stolen
+refresh token *before* its owner does gets one access-token lifetime
+(≤ `JWT_STAFF_IDLE_TTL`) plus at most three retries before the family is
+revoked. They also need a signed access token for the same account as the
+binding.
+
+The portal keeps benign races away from that budget. It holds a lock per
+municipality (`navigator.locks`, where the browser has it) around sign-in,
+refresh and sign-out, and before refreshing it checks storage: a request whose
+token has already been replaced — by a concurrent request in the same tab, or by
+another tab sharing "تذكّرني" storage — adopts the newer one instead of spending
+the cookie again, but only if it belongs to the same account. A
+refresh that fails for a connection reason (network, timeout, 429, 5xx) keeps
+the stored session and surfaces as a connection problem; only a 401 or 403 ends
+it.
+
+### `sid`: ending the access token too
+
+Staff access tokens carry `sid`, the family id. After the `tokenVersion` check,
+`JwtAuthGuard` refuses a token whose family has ended — root row missing,
+revoked, or past its cap. The answer is cached in `SessionRevocationService` for
+the same 30 seconds `tokenVersion` is, so a sign-out or a reuse detection ends
+outstanding access tokens within half a minute rather than at their own expiry.
+
+The root row is the authority. A rotation racing a revocation can insert a child
+the revocation never saw; that child is dead anyway, because its root is.
+
+Access tokens minted before this release carry no `sid` and skip the check.
+They end at their own `exp`, at most `JWT_STAFF_IDLE_TTL` after they were
+issued.
+
+### Signing out
+
+`POST /t/:slug/auth/staff/logout` ends the session on the server. It needs the
+tab's access token as the binding, and ends the family the cookie names if that
+belongs to the same account — otherwise the one in the token's `sid`, so signing
+out still works when the cookie is missing. It clears the cookie when the
+request carried one, writes `STAFF_LOGOUT` when it actually revoked something,
+and never fails for bad input: without a valid binding it does nothing and still
+answers `{ signedOut: true }`.
+
+The portal clears its own storage whatever that call returns, failure included.
+A sign-out button that can leave someone signed in on a shared municipal PC is
+the worse of the two bugs.
+
+### What is still enforced on every refresh
+
+Signature, tenant and session cap, plus:
+
+- **Revocation.** `tokenVersion` — bumped by a role or password change,
+  deactivation and a password reset — is compared with the version the family
+  was issued under, and a mismatch revokes the family. `isActive` is re-read: a
+  deactivated account gets a 403 and its family is revoked too. Either way a
+  dismissal still takes effect within the revocation cache window, and a
   revoked session cannot refresh its way back.
 - **Role.** Re-read from the row rather than copied from the token, so a
-  promotion or demotion reaches the session at the next exchange instead of the
+  promotion or demotion reaches the session at the next refresh instead of the
   next sign-in. `RolesGuard` authorises from this claim, so a stale one is an
   authorisation decision made on old information.
+- **Owner.** A refresh token whose owner is not the binding's `sub` is refused
+  with nothing written.
+
+### Where the origin is checked
+
+`TrustedOriginGuard` sits on sign-in, refresh and sign-out. A request whose
+`Origin` header is present and not in `CORS_ORIGINS` is refused with 403 before
+anything reads, sets or clears a cookie; a request with no `Origin` at all (curl,
+a script) passes. CORS alone does not cover this: a cross-site form POST goes
+out without a preflight, and CORS only stops the sending page from reading the
+answer. The guard is what stops another site signing a clerk into an attacker's
+account (login CSRF), and a second lock on refresh and sign-out, which already
+need an `Authorization` header a form cannot send. It reads the same `CORS_ORIGINS` the
+bootstrap does, so there is nothing new to configure — but the list must name
+the portal's origin exactly.
+
+### Throttling
+
+Sign-in keeps `staffLogin`, 5 a minute. Refresh and sign-out use
+`APP_CONFIG.throttle.staffSession`, 30 a minute, counted per `Authorization`
+header (hashed) and per client address only when there is none. Per header,
+because behind nginx every request currently reaches the throttler from
+nginx's own address, and one anonymous flood must not use up every clerk's
+refresh budget. A refresh token is 256 bits: this limit is load control, not a
+defence against guessing. Like every limit here it is per process (§5.3).
+
+### Pruning, backups and deleted accounts
+
+`StaffRefreshTokenCleanupJob` deletes rows past their session cap in every
+municipality, daily at 03:00 UTC, wherever the in-process scheduler runs (§4 —
+`SCHEDULER_ENABLED`). `GET /api/v1/internal/cron/staff-refresh-cleanup` runs the
+same prune behind `CRON_SECRET`, for parity with the other two jobs. It is not in
+`vercel.json`: Vercel is retired, and a Hobby plan's two cron jobs were taken
+anyway. If the prune never ran, nothing would be wrong but the table's size —
+an expired row is refused on sight.
+
+`staff_refresh_tokens.userId` is `ON DELETE CASCADE` from `users`. Deleting a
+staff account takes its rows with it. The table is deliberately not in a
+`BackupService` snapshot: a restore deletes and rewrites every user, the rows
+cascade away, and everyone signs in again — the right outcome after a register
+has been rolled back, and it never brings back a session that was signed out
+since.
 
 ### Deploying it
 
-No migration, and no coordination between the two projects. Sessions already in
-flight carry no `sessionExpiresAt`; the exchange falls back to the token's own
-`exp`, which means those sessions keep exactly the lifetime they were issued
-with and simply cannot be extended. Each clerk signs in once, at the moment they
-would have anyway, and gets the new shape.
+There is a migration this time, and the order matters.
+
+1. **The portal first.** It is a frontend-only change and safe against the API
+   already running: the old `/refresh` still accepts the Bearer exchange, the
+   new `/logout` call 404s and is ignored, and `credentials: 'include'` is
+   harmless. Which host serves `https://baladyia.com`, and what triggers its
+   build, is **not recorded in this repository** — no workflow here builds the
+   portal. Ask; do not guess.
+2. **Wait a working day**, so tabs opened on the old portal have reloaded.
+3. **The API and `0059` together, merged to `main` after hours.**
+   `deploy-backend.yml` runs its usual order: migrate staging, back up
+   production (0059 is pending, so the backup is taken), migrate production,
+   then build and cut over. `0059` is additive — one table, one foreign key to
+   `users`, indexes; no enum, trigger or function — so the release before it
+   runs untroubled against the migrated schema until the cut-over.
+
+   After hours, for two reasons. The foreign key briefly takes a
+   `SHARE ROW EXCLUSIVE` lock on `users` under the migrator's 5-second
+   `lock_timeout`, and a busy moment can time a municipality out; the run then
+   fails before the cut-over, and re-running it is safe because the migration is
+   idempotent throughout. And every staff member signs in once: a session minted
+   before the release has no cookie, so it ends when its current access token
+   does (≤ 30 minutes) and the next refresh asks for a sign-in. Staff sign-in is
+   throttled to 5 a minute per worker, and behind nginx every clerk shares one
+   address, so a working morning of sign-ins at once would queue.
+
+**Rollback**: the previous API with the new portal is exactly the combination
+step 1 already ran. The table stays behind, unread.
+
+Citizens are unaffected throughout: their tokens have no refresh and nothing
+here touches them.

@@ -93,6 +93,10 @@ export function auditFamilyOf(action: string): AuditFamily {
  * A deletion is a deletion whether a building or a case was deleted.
  */
 export function auditToneOf(action: string): AuditTone {
+  // A session ended because its refresh token was presented twice — the one
+  // entry in the access family that says something may have been stolen.
+  if (action === 'STAFF_SESSION_REUSE_DETECTED') return 'remove';
+  if (action === 'STAFF_LOGOUT') return 'access';
   if (action.startsWith('DATA_')) return 'correction';
   if (action.startsWith('RECORD_') || action.startsWith('QUALITY_')) return 'review';
   if (/DELETE|ENDED|DEACTIVATED|UNLINKED|DISMISSED|REJECTED|REMOVED|DISABLED|RESTORED$/.test(action)) {

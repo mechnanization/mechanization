@@ -284,69 +284,437 @@ function reportApiError(caught: unknown): void {
     });
 }
 
+// ───────────────────────────  The staff session  ───────────────────────────
+
+/**
+ * What a screen sees when a session could not be renewed *for now*.
+ *
+ * Status 0 on purpose. It is the status every screen and the offline queue
+ * already read as "no connection": the queue stops its drain and keeps the
+ * record, a form keeps what was typed, and nothing clears the stored session on
+ * it. That is the whole point. A refresh that timed out, was throttled or met a
+ * 5xx says nothing about whether the session is still good, and reporting it as
+ * the original 401 would sign a clerk out because the API was restarting.
+ */
+function refreshUnavailable(): ApiRequestError {
+  return new ApiRequestError(0, {
+    code: 'SESSION_REFRESH_UNAVAILABLE',
+    message: 'تعذّر تجديد الجلسة. تحقّق من الاتصال وحاول مرة أخرى.',
+  });
+}
+
+/**
+ * `AbortSignal.timeout`, with a fallback for the browsers that lack it.
+ *
+ * Safari only gained it in version 16. On an older one the call would throw a
+ * `TypeError` before the request left, the exchange would report that as
+ * "unavailable", and the session could never be renewed on that device at all.
+ */
+function timeoutSignal(ms: number): AbortSignal {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
+
+/**
+ * The account a JWT names — its `sub`, read without verifying anything.
+ *
+ * Only ever used to *refuse*: an exchange whose failing token and stored session
+ * name different accounts does nothing at all. Nothing is granted on the
+ * strength of it, so an unverified read is enough; the server verifies the
+ * token itself on every request. `null` for anything that does not parse.
+ */
+function tokenSubject(token: string): string | null {
+  const claims = unverifiedClaims(token);
+  return typeof claims?.sub === 'string' && claims.sub ? claims.sub : null;
+}
+
+/**
+ * When the server minted `token` (its `iat`, seconds), read without verifying.
+ *
+ * Only ever used to prefer the newer of two tokens the same server issued, so
+ * the comparison runs on the server's clock, never the device's. A wrong
+ * answer costs one replay that 401s and one more exchange, nothing else.
+ */
+function tokenIssuedAt(token: string): number | null {
+  const iat = unverifiedClaims(token)?.iat;
+  return typeof iat === 'number' && Number.isFinite(iat) ? iat : null;
+}
+
+function unverifiedClaims(token: string): { sub?: unknown; iat?: unknown } | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const binary = atob(base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '='));
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const claims = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    return claims && typeof claims === 'object' ? (claims as { sub?: unknown; iat?: unknown }) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Runs `fn` holding this municipality's refresh lock, across every tab.
+ *
+ * The refresh cookie is one per account per browser, and every exchange
+ * replaces it. Two tabs exchanging at once both send the cookie they found; the
+ * server serves the slower one as a retry — but only a few times, and only while
+ * nothing the faster one received has been used. Past that it reads as a stolen
+ * token and ends the whole session. Queuing the exchanges keeps the ordinary
+ * case, five tabs waking together from a laptop's sleep, from spending that
+ * allowance. Sign-in and sign-out take the lock too, so neither crosses another
+ * tab's exchange mid-flight.
+ *
+ * Where the Web Locks API is missing — an insecure origin, an older browser —
+ * this runs unlocked. The server's retry allowance covers that case, and a
+ * missing lock must not become a missing session.
+ *
+ * The wait is bounded: a lock still held after 20 seconds (a tab frozen
+ * mid-exchange) surfaces as `SESSION_REFRESH_UNAVAILABLE` rather than as a
+ * screen that waits for ever.
+ */
+async function withRefreshLock<T>(tenant: string, fn: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+  if (!locks || typeof locks.request !== 'function') return fn();
+
+  let granted = false;
+  try {
+    return await locks.request(
+      `mechanization.refresh.${tenant}`,
+      { signal: timeoutSignal(20_000) },
+      () => {
+        granted = true;
+        return fn();
+      },
+    );
+  } catch (caught) {
+    // Only the wait is translated. Whatever `fn` threw is its caller's to read
+    // — a refused sign-in is a 401, not a connection problem.
+    if (!granted) throw refreshUnavailable();
+    throw caught;
+  }
+}
+
+/** A token to replay with, and whether it took a round trip to get. */
+interface ExchangedToken {
+  token: string;
+  /**
+   * `false` when the session had already been renewed — by another tab, or an
+   * earlier call in this one — and the fresh token was simply read from
+   * storage. `apiFetch` reads it to decide whether a second 401 is worth one
+   * more exchange.
+   */
+  fromNetwork: boolean;
+}
+
+/**
+ * Exchanges in flight, one per municipality *and failing token*.
+ *
+ * A staff screen fires several reads at once — the header badge, the table,
+ * the filter options — so an expiry is met by all of them within the same tick.
+ * They carry the same token, so they share one exchange rather than each
+ * rotating the refresh cookie out from under the others. Keyed by the token as
+ * well because two different failing tokens are two different questions: one
+ * may already be answered by storage while the other needs the network.
+ *
+ * The `get` and the `set` in `exchangeStaffToken` run in one synchronous stretch,
+ * before its first `await`. That is what makes the sharing airtight.
+ */
+const refreshInFlight = new Map<string, Promise<ExchangedToken | null>>();
+
+/**
+ * `./session`, imported on first use and then shared by every exchange.
+ *
+ * One promise rather than an `import()` per exchange: two exchanges for
+ * different tokens can now be in flight together, and Vitest's module mocker
+ * was seen handing one of two concurrent `import()`s the real module instead
+ * of the mock — so the test for exactly that case exercised the wrong code.
+ * A browser returns the same module either way, so nothing changes there.
+ */
+let sessionModule: Promise<typeof import('./session')> | undefined;
+const importSession = () => (sessionModule ??= import('./session'));
+
+// ─────────────────────  Handing a renewal to the other tabs  ─────────────────────
+
+/**
+ * A session one tab renewed, handed to the others so they do not renew it too.
+ *
+ * The cross-tab lock already stops two tabs exchanging the cookie at once, and
+ * a «تذكّرني» session lives in `localStorage`, so a tab that takes the lock
+ * after another finds the new token there. A session without «تذكّرني» lives
+ * in each tab's own `sessionStorage`, though: the tabs queued behind the lock
+ * would each still go to the server in turn, every one rotating the cookie.
+ * Three tabs waking together would make three exchanges where one does.
+ *
+ * So the tab that renews announces the result on a `BroadcastChannel`, and a
+ * tab waiting for the lock takes it from there and sends nothing. It adopts a
+ * renewal only when all of these hold, and otherwise renews itself, which is
+ * still correct, only slower:
+ *
+ * - it is for the account this tab's own failing token names;
+ * - this tab's store still holds that account's session (not signed out, not
+ *   somebody else's sign-in since);
+ * - its token is newer than the failing one, by the server's `iat`.
+ *
+ * Same-origin only, like the storage it stands in for: a script that could
+ * read the channel could already read this tab's `sessionStorage`. Nothing is
+ * granted on the strength of a message; the server checks every token.
+ */
+const SESSION_CHANNEL = 'mechanization.session';
+
+/**
+ * Bumped in `localStorage` by every renewal. It holds no token, only a change
+ * counter, so a tab that takes the lock can tell a renewal happened while it
+ * waited and that its announcement is on the way.
+ */
+const renewalMarkKey = (tenant: string) => `mechanization.session-renewed.${tenant}`;
+
+/**
+ * How long such a tab waits for the announcement before renewing itself. The
+ * message is posted before the lock is released, so it is normally already
+ * there; this only covers the two arriving in the other order.
+ */
+const RENEWAL_HANDOFF_MS = 1_000;
+
+interface RenewalNotice {
+  type: 'staff-session-renewed';
+  tenant: string;
+  session: Session;
+}
+
+/** The latest renewal announced per municipality, by any tab. */
+const announcedRenewals = new Map<string, Session>();
+const renewalWaiters = new Map<string, Set<() => void>>();
+let renewalChannelInstance: BroadcastChannel | null | undefined;
+
+function renewalChannel(): BroadcastChannel | null {
+  if (renewalChannelInstance !== undefined) return renewalChannelInstance;
+  if (typeof BroadcastChannel !== 'function') return (renewalChannelInstance = null);
+
+  const channel = new BroadcastChannel(SESSION_CHANNEL);
+  channel.addEventListener('message', (event: MessageEvent) => {
+    const notice = event.data as Partial<RenewalNotice> | null;
+    if (notice?.type !== 'staff-session-renewed' || typeof notice.tenant !== 'string') return;
+    if (typeof notice.session?.accessToken !== 'string' || !notice.session.user) return;
+    announcedRenewals.set(notice.tenant, notice.session);
+    for (const wake of [...(renewalWaiters.get(notice.tenant) ?? [])]) wake();
+  });
+  // Node, where the tests run, keeps a process alive while a channel is open;
+  // browsers have no `unref` and need none.
+  (channel as unknown as { unref?: () => void }).unref?.();
+  return (renewalChannelInstance = channel);
+}
+
+// Listen from the first load in a browser, so a renewal announced before this
+// tab's own token expires is already known when it does.
+if (typeof window !== 'undefined' && typeof document !== 'undefined') renewalChannel();
+
+function readRenewalMark(tenant: string): string | null {
+  try {
+    return localStorage.getItem(renewalMarkKey(tenant));
+  } catch {
+    return null;
+  }
+}
+
+/** Tells the other tabs a renewal happened, and what it was. Called while holding the lock. */
+function announceRenewal(tenant: string, session: Session): void {
+  try {
+    localStorage.setItem(renewalMarkKey(tenant), `${Date.now()}:${Math.random().toString(36).slice(2)}`);
+  } catch {
+    // Private modes may refuse the write; the message below still goes out.
+  }
+  const notice: RenewalNotice = { type: 'staff-session-renewed', tenant, session };
+  renewalChannel()?.postMessage(notice);
+}
+
+/** An announced renewal this tab may adopt in place of `failingToken`, or null. */
+function adoptableRenewal(tenant: string, subject: string, failingToken: string): Session | null {
+  const session = announcedRenewals.get(tenant);
+  if (!session || session.user.kind !== 'STAFF' || session.user.id !== subject) return null;
+  if (session.accessToken === failingToken) return null;
+
+  const announced = tokenIssuedAt(session.accessToken);
+  const failing = tokenIssuedAt(failingToken);
+  // Unknown issue times prove nothing, and an older token would only 401 again.
+  if (announced === null || failing === null || announced < failing) return null;
+  return session;
+}
+
+/** Resolves when a renewal for `tenant` is announced, or after `ms`, whichever comes first. */
+function renewalAnnounced(tenant: string, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const waiters = renewalWaiters.get(tenant) ?? new Set<() => void>();
+    renewalWaiters.set(tenant, waiters);
+    const done = () => {
+      clearTimeout(timer);
+      waiters.delete(done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    waiters.add(done);
+  });
+}
+
+/**
+ * Renews the staff session behind `failingToken`, the token that just met a 401.
+ *
+ * The refresh credential is an httpOnly cookie this code cannot read. A refresh
+ * sends that cookie (`credentials: 'include'`) *and* the failing token as the
+ * bearer. The server uses the token only to learn which account this tab
+ * belongs to, so it reads the right cookie and can never hand this tab somebody
+ * else's session; an expired token is fine for that, and it is never what gets
+ * exchanged.
+ *
+ * In order:
+ *
+ * 1. The stored session must belong to the account the failing token names. If
+ *    it does not — somebody else signed in to this municipality with «تذكّرني»,
+ *    or nobody is signed in — then storage is not this tab's session, and
+ *    adopting it would have this tab quietly act as another person. `null`.
+ * 2. If storage holds a different token for that same account, the session was
+ *    already renewed. Use it; nothing is rotated. No clock comparison: a
+ *    phone's clock is not something to decide with, and if the stored token has
+ *    died too, `apiFetch`'s second exchange comes back here holding it.
+ * 3. Otherwise, under the cross-tab lock, look again — the tab that held the
+ *    lock may have just written one — and only then ask the server.
+ *
+ * Resolves to `null` when the session is over: the server answered 401 or 403
+ * because the cap passed, the account was dismissed or had its `tokenVersion`
+ * bumped, or the session was signed out. The caller lets the original 401
+ * through, and the screens send the clerk to sign in.
+ *
+ * **Throws** `SESSION_REFRESH_UNAVAILABLE` for everything else — no network, a
+ * timeout, a 429, a 5xx. None of those says the session is over, and letting
+ * the 401 through would have every screen clear it.
+ */
+async function exchangeStaffToken(
+  tenant: string,
+  failingToken: string,
+): Promise<ExchangedToken | null> {
+  const key = `${tenant}:${failingToken}`;
+  const existing = refreshInFlight.get(key);
+  if (existing) return existing;
+
+  // Read before anything waits: a change by the time the lock is ours means
+  // another tab renewed meanwhile, and its announcement is worth waiting for.
+  renewalChannel();
+  const markBefore = readRenewalMark(tenant);
+
+  const flight = (async (): Promise<ExchangedToken | null> => {
+    const { loadSession, updateSession } = await importSession();
+    const subject = tokenSubject(failingToken);
+
+    /**
+     * Another tab's renewal, taken into this tab's own store. Only while that
+     * store holds this account's session: written into anything else it would
+     * sign this tab in, or resurrect a session it had signed out of.
+     */
+    const adopt = (session: Session): ExchangedToken | null => {
+      const own = loadSession(tenant);
+      if (!own || own.user.kind !== 'STAFF' || own.user.id !== subject) return null;
+      updateSession(tenant, session);
+      return { token: session.accessToken, fromNetwork: false };
+    };
+
+    /** Step 3a. `undefined` means no other tab has answered: ask the server. */
+    const fromAnotherTab = async (): Promise<ExchangedToken | null | undefined> => {
+      if (!subject) return undefined;
+      let announced = adoptableRenewal(tenant, subject, failingToken);
+      if (!announced && readRenewalMark(tenant) !== markBefore) {
+        await renewalAnnounced(tenant, RENEWAL_HANDOFF_MS);
+        announced = adoptableRenewal(tenant, subject, failingToken);
+      }
+      return announced ? adopt(announced) : undefined;
+    };
+
+    /** Steps 1 and 2. `undefined` means storage cannot answer: ask the server. */
+    const fromStorage = (): ExchangedToken | null | undefined => {
+      const session = loadSession(tenant);
+      if (!subject || !session || session.user.kind !== 'STAFF' || session.user.id !== subject) {
+        return null;
+      }
+      if (session.accessToken !== failingToken) {
+        return { token: session.accessToken, fromNetwork: false };
+      }
+      return undefined;
+    };
+
+    const stored = fromStorage();
+    if (stored !== undefined) return stored;
+
+    try {
+      return await withRefreshLock(tenant, async () => {
+        const storedNow = fromStorage();
+        if (storedNow !== undefined) return storedNow;
+
+        const handedOver = await fromAnotherTab();
+        if (handedOver !== undefined) return handedOver;
+
+        const refreshed = await apiFetch<Session>(tenant, '/auth/staff/refresh', {
+          method: 'POST',
+          token: failingToken,
+          credentials: 'include',
+          // A 401 from the exchange is the answer, not a reason to exchange again.
+          skipTokenRefresh: true,
+          signal: timeoutSignal(15_000),
+        });
+
+        // The server binds the refresh to this account, so this cannot differ.
+        // If it ever does, storing it is the one thing that must not happen.
+        if (refreshed.user.kind !== 'STAFF' || refreshed.user.id !== subject) return null;
+
+        // Written and announced inside the lock, so the next tab to take it
+        // reads this token — from `localStorage` with «تذكّرني», from the
+        // announcement without — instead of exchanging the cookie this
+        // response has just replaced.
+        updateSession(tenant, refreshed);
+        announceRenewal(tenant, refreshed);
+        return { token: refreshed.accessToken, fromNetwork: true };
+      });
+    } catch (caught) {
+      if (caught instanceof ApiRequestError && (caught.status === 401 || caught.status === 403)) {
+        return null;
+      }
+      throw refreshUnavailable();
+    }
+  })();
+
+  refreshInFlight.set(key, flight);
+  try {
+    return await flight;
+  } finally {
+    refreshInFlight.delete(key);
+  }
+}
+
+/**
+ * The session routes. A 401 from any of them is the answer — a wrong password,
+ * a session that cannot be renewed, a sign-out with nothing to end — and never
+ * a reason to exchange the token and try again.
+ */
+const SESSION_ROUTES = ['/auth/staff/login', '/auth/staff/refresh', '/auth/staff/logout'];
+
+type ApiFetchInit = RequestInit & { token?: string; skipTokenRefresh?: boolean };
+
 /**
  * Every call is tenant-scoped by construction: the municipality slug is part of
  * the path, so a request cannot be made without naming which municipality it
  * belongs to.
  */
-/**
- * Exchanges an expiring staff token for a fresh one.
- *
- * One flight per municipality. A staff screen fires several reads at once —
- * the header badge, the table, the filter options — so an expiry is met by all
- * of them within the same tick. Without this map each would exchange the token
- * separately, and the last one to finish would overwrite the stored session
- * with a token the others had already replaced: a self-inflicted logout on a
- * session that was perfectly valid.
- *
- * Resolves to the new token, or `null` when the session cannot be extended —
- * the cap has passed, the account was dismissed, its `tokenVersion` was bumped.
- * `null` means the caller should let the original 401 through.
- */
-const refreshInFlight = new Map<string, Promise<string | null>>();
-
-async function exchangeStaffToken(tenant: string): Promise<string | null> {
-  const existing = refreshInFlight.get(tenant);
-  if (existing) return existing;
-
-  const flight = (async (): Promise<string | null> => {
-    const { loadSession, updateSession } = await import('./session');
-    const session = loadSession(tenant);
-
-    // Citizens have no exchange path — the server refuses their tokens — and a
-    // signed-out tab has nothing to exchange.
-    if (!session || session.user.kind !== 'STAFF') return null;
-
-    try {
-      const refreshed = await apiFetch<Session>(tenant, '/auth/staff/refresh', {
-        method: 'POST',
-        token: session.accessToken,
-        // Stops the recursion: a 401 from the exchange is the answer, not a
-        // reason to exchange again.
-        skipTokenRefresh: true,
-      });
-
-      updateSession(tenant, refreshed);
-      return refreshed.accessToken;
-    } catch {
-      // Any failure means the same thing to the caller: this session is over.
-      // The original 401 is what the screens already know how to handle.
-      return null;
-    }
-  })();
-
-  refreshInFlight.set(tenant, flight);
-  try {
-    return await flight;
-  } finally {
-    refreshInFlight.delete(tenant);
-  }
+export function apiFetch<T>(tenant: string, path: string, init: ApiFetchInit = {}): Promise<T> {
+  return send<T>(tenant, path, init, 2);
 }
 
-export async function apiFetch<T>(
+/** `apiFetch`, carrying how many token exchanges this call may still spend. */
+async function send<T>(
   tenant: string,
   path: string,
-  init: RequestInit & { token?: string; skipTokenRefresh?: boolean } = {},
+  init: ApiFetchInit,
+  exchangesLeft: number,
 ): Promise<T> {
   const { token, headers, skipTokenRefresh, ...rest } = init;
 
@@ -387,16 +755,22 @@ export async function apiFetch<T>(
   /*
     A 401 that may simply mean "this token has aged out".
 
-    Staff tokens are short now and slide forward as they are used, so the
-    ordinary way a working session meets a 401 is that it crossed the idle
-    window between two clicks. Exchanging the token and replaying the request
-    here is what makes that invisible — the alternative is what this replaced: a
-    hard logout mid-form, with whatever was typed still on screen and now
-    unsaveable.
+    Staff tokens are short and renewed as they age, so the ordinary way a
+    working session meets a 401 is that it crossed the idle window between two
+    clicks. Exchanging the token and replaying the request here is what makes
+    that invisible — the alternative is what this replaced: a hard logout
+    mid-form, with whatever was typed still on screen and now unsaveable.
 
-    It runs once. If the exchange fails, or the replay comes back 401 again, the
-    error goes to the screens that already know what to do with it — there are
-    two dozen of them, and none needed changing for this.
+    At most two exchanges per call, and the second only in one case. Screens
+    hold their token in React state, so once another tab — or another read in
+    this one — has renewed the session, this tab's next request still carries
+    the old token, and the exchange answers it from storage without a round
+    trip. If the stored token has died as well (the laptop slept past both),
+    that replay 401s too, and one more exchange, now holding the stored token,
+    goes to the network. After a network exchange the replay is final: a 401
+    then means the session was revoked, and the error goes to the screens that
+    already know what to do with it — there are two dozen of them, and none
+    needed changing for this.
 
     Replaying is safe because `rest.body` is a string or a `FormData`, both of
     which can be sent twice. A streaming body could not, and nothing here uses
@@ -406,13 +780,17 @@ export async function apiFetch<T>(
     response.status === 401 &&
     token &&
     !skipTokenRefresh &&
-    // Not for public routes — `login` answering 401 means the password was
-    // wrong, and there is no session to exchange.
-    !path.startsWith('/auth/staff/login')
+    exchangesLeft > 0 &&
+    !SESSION_ROUTES.some((route) => path.startsWith(route))
   ) {
-    const fresh = await exchangeStaffToken(tenant);
-    if (fresh && fresh !== token) {
-      return apiFetch<T>(tenant, path, { ...init, token: fresh, skipTokenRefresh: true });
+    const fresh = await exchangeStaffToken(tenant, token);
+    if (fresh && fresh.token !== token) {
+      return send<T>(
+        tenant,
+        path,
+        { ...init, token: fresh.token },
+        fresh.fromNetwork ? 0 : exchangesLeft - 1,
+      );
     }
   }
 
@@ -534,6 +912,16 @@ export function peekPropertyNumberCheck(tenant: string, propertyNumber: string) 
   return peekCachedRequest<PropertyNumberCheck>(parcelCheckKey(tenant, propertyNumber));
 }
 
+/**
+ * What sign-in (and, for staff, every refresh) answers with — and what
+ * `lib/session.ts` stores.
+ *
+ * For staff this holds only the short-lived access token (`JWT_STAFF_IDLE_TTL`,
+ * 30 minutes by default). The credential that renews it is not here and never
+ * reaches this code: it lives only in an httpOnly cookie on the API's own host,
+ * set by the sign-in response and replaced by every refresh. A token copied
+ * out of storage dies within its idle window; the session does not go with it.
+ */
 export interface Session {
   accessToken: string;
   expiresIn: string;
@@ -541,16 +929,17 @@ export interface Session {
    * When `accessToken` stops being accepted, ISO — STAFF only.
    *
    * Short, and not the end of the session: see `sessionExpiresAt`. Nothing
-   * reads this yet, because the exchange below is driven by the 401 rather than
-   * by a clock; it is stored so that a proactive refresh can be added later
-   * without another round of changes to what a session is.
+   * reads this yet, because the exchange in `apiFetch` is driven by the 401
+   * rather than by a clock; it is stored so that a proactive refresh can be
+   * added later without another round of changes to what a session is.
    */
   expiresAt?: string;
   /**
    * When the session ends for good, ISO — STAFF only.
    *
    * The wall-clock moment the clerk signs in again, unchanged at 8h (or 30d
-   * with "تذكّرني"). No exchange is possible past it.
+   * with "تذكّرني") and fixed at sign-in: a refresh renews the access token,
+   * never this. No exchange is possible past it.
    */
   sessionExpiresAt?: string;
   user: { id: string; name: string; kind: 'STAFF' | 'CITIZEN'; role?: string };
@@ -617,15 +1006,55 @@ export function isTotpRequired(
 
 /**
  * Staff sign-in.
+ *
+ * `credentials: 'include'` is what lets the browser keep the refresh cookie the
+ * response sets. The API is a different origin from the portal, and without it
+ * a cross-origin response's `Set-Cookie` is silently dropped — the sign-in would
+ * look fine, and the first expiry of the access token would sign the clerk out.
+ * Held under the refresh lock so the new cookie does not land in the middle of
+ * another tab's exchange of the old one.
  */
 export function loginStaff(
   tenant: string,
   input: { email: string; password: string; totpToken?: string; remember?: boolean },
 ) {
-  return apiFetch<StaffLoginResponse>(tenant, '/auth/staff/login', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+  return withRefreshLock(tenant, () =>
+    apiFetch<StaffLoginResponse>(tenant, '/auth/staff/login', {
+      method: 'POST',
+      body: JSON.stringify(input),
+      credentials: 'include',
+    }),
+  );
+}
+
+/**
+ * Ends this tab's staff session on the server: the refresh family behind it,
+ * and with it the access token, which the API checks against its family on
+ * every request.
+ *
+ * Sends the tab's own token as the binding, exactly as a refresh does — without
+ * one the server cannot tell which account's cookie to read, and does nothing.
+ * So with no token there is nothing to send. The timeout is short because a
+ * clerk is waiting to be signed out, and the local sign-out happens regardless.
+ *
+ * **May throw** — a dropped connection, a timeout, or the 404 an API from before
+ * this route answers with. Callers ignore it and clear the local session anyway;
+ * the server-side session is then left to run out at its cap, which is all that
+ * signing out did before this route existed.
+ */
+export async function logoutStaff(tenant: string, accessToken?: string): Promise<void> {
+  if (!accessToken) return;
+
+  await withRefreshLock(tenant, () =>
+    apiFetch<{ signedOut: boolean }>(tenant, '/auth/staff/logout', {
+      method: 'POST',
+      token: accessToken,
+      credentials: 'include',
+      // A 401 here means there was nothing to end, never "exchange and retry".
+      skipTokenRefresh: true,
+      signal: timeoutSignal(5_000),
+    }),
+  );
 }
 
 export interface DashboardCounters {

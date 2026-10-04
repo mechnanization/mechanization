@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { SkipThrottle } from '@nestjs/throttler';
 import { OtpCleanupJob } from '../../application/background-jobs/otp-cleanup.job';
 import { RecurringBillingJob } from '../../application/background-jobs/recurring-billing.job';
+import { StaffRefreshTokenCleanupJob } from '../../application/background-jobs/staff-refresh-token-cleanup.job';
 import { Public } from '../decorators/public.decorator';
 
 /**
@@ -34,6 +35,7 @@ export class InternalCronController {
     private readonly config: ConfigService,
     private readonly otpCleanup: OtpCleanupJob,
     private readonly recurringBilling: RecurringBillingJob,
+    private readonly staffRefreshCleanup: StaffRefreshTokenCleanupJob,
   ) {}
 
   /**
@@ -72,6 +74,21 @@ export class InternalCronController {
     this.authorise(authorization);
     await this.otpCleanup.pruneExpiredChallenges();
     return { job: 'otp-cleanup', status: 'ok' };
+  }
+
+  /**
+   * Not scheduled in `vercel.json`, deliberately. The API's production
+   * deployment is a long-lived process, where `@Cron` fires by itself; this
+   * gives the job the same HTTP door the other two have, for any deployment
+   * where it does not.
+   */
+  @Public()
+  @SkipThrottle()
+  @Get('staff-refresh-cleanup')
+  async staffRefresh(@Headers('authorization') authorization?: string) {
+    this.authorise(authorization);
+    await this.staffRefreshCleanup.pruneExpired();
+    return { job: 'staff-refresh-cleanup', status: 'ok' };
   }
 
   @Public()

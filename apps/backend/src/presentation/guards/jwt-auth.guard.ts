@@ -38,7 +38,7 @@ export class JwtAuthGuard implements CanActivate {
     const token = this.extractToken(request);
 
     if (!token) {
-      throw new UnauthorizedError('Authentication required');
+      throw new UnauthorizedError({ code: 'AUTHENTICATION_REQUIRED', message: 'Authentication required' });
     }
 
     let claims: SessionClaims;
@@ -47,7 +47,7 @@ export class JwtAuthGuard implements CanActivate {
     } catch {
       // Expired, wrong signature, malformed — all the same answer. Saying which
       // tells an attacker whether they have a real token to work with.
-      throw new UnauthorizedError('Invalid or expired session');
+      throw new UnauthorizedError({ code: 'SESSION_INVALID', message: 'Invalid or expired session' });
     }
 
     /**
@@ -77,7 +77,25 @@ export class JwtAuthGuard implements CanActivate {
     if (!(await this.revocation.isCurrent(claims.sub, claims.tokenVersion))) {
       // Same sentence an expired token gets. From the caller's side that is
       // exactly what has happened — the session is over.
-      throw new UnauthorizedError('Invalid or expired session');
+      throw new UnauthorizedError({ code: 'SESSION_INVALID', message: 'Invalid or expired session' });
+    }
+
+    /**
+     * The sign-in, not only the account.
+     *
+     * A staff token carries `sid`, the refresh-token family it was minted
+     * from. Signing out, or a refresh token being presented after the chain had
+     * moved past it, revokes that family — and without this check the access
+     * token already in the tab would go on working until it expired, so
+     * "sign out" would mean "stop refreshing" rather than "stop". Scoped to one
+     * family, so it ends this sign-in and leaves the same account's others on
+     * other devices alone, which bumping `tokenVersion` could not.
+     *
+     * Tokens without `sid` — citizens, and staff tokens minted before refresh
+     * families existed — are unaffected.
+     */
+    if (claims.sid && !(await this.revocation.isFamilyLive(claims.sid))) {
+      throw new UnauthorizedError({ code: 'SESSION_INVALID', message: 'Invalid or expired session' });
     }
 
     request.user = claims;
