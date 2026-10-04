@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { HandCoins, Loader2 } from 'lucide-react';
 import {
-  PAYOUT_WEEKLY_CAP,
   payoutAllowance,
   payoutRefusal,
   type RecordInspectorPayoutInput,
@@ -15,7 +14,6 @@ import {
   logApiError,
   recordInspectorPayout,
 } from '@/lib/api-client';
-import { formatDate } from '@/lib/dates';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import {
@@ -72,12 +70,10 @@ export function todayIso(): string {
  * is a positive number of dollars, and the caller is told what was recorded
  * instead of being left to re-read it.
  *
- * The payout rule — nothing before $100 earned, then at most $50 a week
- * counted from the first payout — is `payoutAllowance`, the same function the
- * server refuses with. The dialog reads the inspector's figures itself, so all
- * three screens show the same allowance without each passing it in, and it
- * follows the date: a payout backdated into last week is measured against
- * last week.
+ * The payout rule — never more than is still owed — is `payoutAllowance`, the
+ * same function the server refuses with. The dialog reads the inspector's
+ * figures itself, so all three screens show the same balance without each
+ * passing it in.
  */
 export function InspectorPayoutDialog({
   open,
@@ -119,22 +115,12 @@ export function InspectorPayoutDialog({
     enabled: open && Boolean(token && staff),
   });
 
-  // Null while the picker holds no date — there is no week to measure against.
-  const paidAtDate = new Date(`${paidOn}T12:00:00`);
-  const paidAt = Number.isNaN(paidAtDate.getTime()) ? null : paidAtDate.toISOString();
   const allowance = useMemo(
     () =>
-      profile.data && paidAt
-        ? payoutAllowance({
-            totalEarnings: profile.data.totalEarnings,
-            pendingBalance: profile.data.pendingBalance,
-            payouts: profile.data.payouts,
-            paidAt,
-          })
-        : null,
-    [profile.data, paidAt],
+      profile.data ? payoutAllowance({ pendingBalance: profile.data.pendingBalance }) : null,
+    [profile.data],
   );
-  /** Nothing can be paid on this date, whatever the amount. */
+  /** Nothing can be paid, whatever the amount. */
   const blocked = allowance && !allowance.allowed ? payoutRefusal(allowance, 0) : null;
 
   /*
@@ -237,35 +223,26 @@ export function InspectorPayoutDialog({
           ) : null}
 
           {/*
-            What the rule allows on the date below, read before an amount is
-            typed: rows, one figure each, the same as every read-back here.
-            When nothing can be paid, the reason — and the button is off.
+            What is owed — the most the rule allows — read before an amount is
+            typed, as a row like every read-back here. When nothing can be
+            paid, the reason — and the button is off.
           */}
           {profile.isLoading ? (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              {isAr ? 'جارٍ حساب المبلغ المتاح…' : 'Working out the allowance…'}
+              {isAr ? 'جارٍ حساب الرصيد المستحق…' : 'Working out the pending balance…'}
             </p>
           ) : allowance ? (
             <SummaryList className="rounded-lg border px-3">
-              <SummaryRow label={isAr ? 'الرصيد المستحق' : 'Pending balance'} className="tabular-nums">
-                ${allowance.owed.toFixed(2)}
-              </SummaryRow>
-              <SummaryRow label={isAr ? 'أسبوع الصرف' : 'Payout week'} className="tabular-nums">
-                {formatDate(`${allowance.weekStart}T12:00:00`)} – {formatDate(`${allowance.weekEnd}T12:00:00`)}
-              </SummaryRow>
-              <SummaryRow label={isAr ? 'صُرف في هذا الأسبوع' : 'Paid this week'} className="tabular-nums">
-                ${allowance.paidThisWeek.toFixed(2)} / ${PAYOUT_WEEKLY_CAP.toFixed(2)}
-              </SummaryRow>
               <SummaryRow
-                label={isAr ? 'أقصى مبلغ الآن' : 'Most payable now'}
+                label={isAr ? 'الرصيد المستحق' : 'Pending balance'}
                 className={
-                  allowance.maxAmount > 0
+                  allowance.allowed
                     ? 'tabular-nums text-success'
                     : 'tabular-nums text-muted-foreground'
                 }
               >
-                ${allowance.maxAmount.toFixed(2)}
+                ${allowance.owed.toFixed(2)}
               </SummaryRow>
             </SummaryList>
           ) : null}
