@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/tier1-review-tenancy-masked-refs` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -111,7 +111,7 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   MUST match what the landing page parses.
 - JWT sign and verify SHOULD pin `HS256` and set issuer and audience.
 - **Staff sessions** (`StaffRefreshTokenService`, `IdentityService.refreshStaffSession`):
-  - The access token is short (`JWT_STAFF_IDLE_TTL`, 30 minutes by default) and carries `sid`, its
+  - The access token is short (`JWT_STAFF_IDLE_TTL`, 15 minutes by default) and carries `sid`, its
     refresh family. `JwtAuthGuard` refuses a token whose family is revoked
     (`SessionRevocationService.isFamilyLive`), so signing out stops it at once.
   - The refresh token is opaque, 256 random bits, rotated on every use, and stored only as an HMAC

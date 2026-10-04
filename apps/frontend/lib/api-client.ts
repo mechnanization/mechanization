@@ -917,7 +917,7 @@ export function peekPropertyNumberCheck(tenant: string, propertyNumber: string) 
  * `lib/session.ts` stores.
  *
  * For staff this holds only the short-lived access token (`JWT_STAFF_IDLE_TTL`,
- * 30 minutes by default). The credential that renews it is not here and never
+ * 15 minutes by default). The credential that renews it is not here and never
  * reaches this code: it lives only in an httpOnly cookie on the API's own host,
  * set by the sign-in response and replaced by every refresh. A token copied
  * out of storage dies within its idle window; the session does not go with it.
@@ -937,7 +937,7 @@ export interface Session {
   /**
    * When the session ends for good, ISO — STAFF only.
    *
-   * The wall-clock moment the clerk signs in again, unchanged at 8h (or 30d
+   * The wall-clock moment the clerk signs in again, unchanged at 8h (or 7d
    * with "تذكّرني") and fixed at sign-in: a refresh renews the access token,
    * never this. No exchange is possible past it.
    */

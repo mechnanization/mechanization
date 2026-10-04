@@ -29,7 +29,7 @@ import type { Request, Response } from 'express';
  * «تذكّرني» makes it persistent (`Max-Age` and `Expires` at the session cap);
  * otherwise it is a browser-session cookie. Safari's tracking prevention may
  * cap a persistent cookie set by a server on a different IP from the page at
- * seven days, so «تذكّرني» can be shorter than 30 days there.
+ * seven days — the same as «تذكّرني»'s own default since 2026-10-04.
  */
 
 /** The shape `StaffRefreshTokenService` mints, loosely. Anything else is not ours. */

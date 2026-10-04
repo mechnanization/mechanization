@@ -32,7 +32,7 @@ export class StaffRefreshTokenCleanupJob {
 
   /**
    * Daily is plenty: nothing depends on the rows being gone, and the longest
-   * family lives thirty days. 03:00 UTC is early morning in Lebanon, away from
+   * family lives seven days. 03:00 UTC is early morning in Lebanon, away from
    * the working day's refreshes.
    */
   @Cron(CronExpression.EVERY_DAY_AT_3AM, { timeZone: 'UTC' })

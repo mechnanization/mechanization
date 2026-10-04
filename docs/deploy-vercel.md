@@ -1,6 +1,6 @@
 # Deploying to Vercel
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
 
 > **This doc now covers the frontend (the portal) only.** The API runs on AWS
 > Lightsail under pm2, deployed by `.github/workflows/deploy-backend.yml` on
@@ -61,8 +61,8 @@ again: see the scoping rule at the top.
 | `SUPABASE_STORAGE_BUCKET` | `documents` |
 | `JWT_SECRET` | ≥32 chars. `openssl rand -base64 48`. Also keys the staff refresh tokens, so rotating it ends every session — see §8 |
 | `JWT_STAFF_TTL` | `8h` (the default) — the **session** cap, stamped at sign-in, not any token's life. See §8 |
-| `JWT_STAFF_REMEMBER_TTL` | `30d` — same, for "تذكّرني" |
-| `JWT_STAFF_IDLE_TTL` | Optional, `30m`. How long one access token is accepted before the portal refreshes it — and so how long a stolen one is useful. See §8 |
+| `JWT_STAFF_REMEMBER_TTL` | `7d` (the default; it shipped at `30d`) — same, for "تذكّرني". A host that still sets `30d` keeps 30 days |
+| `JWT_STAFF_IDLE_TTL` | Optional, `15m`. How long one access token is accepted before the portal refreshes it — and so how long a stolen one is useful. See §8 |
 | `JWT_CITIZEN_TTL` | `7d` — unchanged, citizens have no refresh |
 | `OTP_ENABLED` | `true` — production refuses to boot without it |
 | `SMS_PROVIDER_API_KEY` | Optional and currently inert — no provider is implemented |
@@ -441,8 +441,8 @@ It is now **two bounds instead of one**:
 
 | Bound | Variable | Default | What it is |
 | --- | --- | --- | --- |
-| Access-token life | `JWT_STAFF_IDLE_TTL` | `30m` | How long one access token is accepted before the portal refreshes it |
-| Session cap | `JWT_STAFF_TTL` / `JWT_STAFF_REMEMBER_TTL` | `8h` / `30d` | When the clerk signs in again. Stamped at sign-in, never moves |
+| Access-token life | `JWT_STAFF_IDLE_TTL` | `15m` | How long one access token is accepted before the portal refreshes it |
+| Session cap | `JWT_STAFF_TTL` / `JWT_STAFF_REMEMBER_TTL` | `8h` / `7d` | When the clerk signs in again. Stamped at sign-in, never moves |
 
 `JWT_STAFF_TTL` keeps the value and the meaning an operator already had for it —
 how long a sign-in lasts. What changed is which expiry it names: it used to be
@@ -511,11 +511,11 @@ in `IdentityService.refreshStaffSession` instead.
   hosts under a shared hosting suffix do not — two `*.vercel.app` projects are
   different sites — and there the portal would sign in and then fail its first
   refresh.
-- **Safari may cut "تذكّرني" to 7 days.** WebKit caps a cookie set by a server
+- **Safari caps "تذكّرني" at 7 days.** WebKit caps a cookie set by a server
   response at seven days when that server's IP address does not match the
   site's own — likely whenever the portal and the API are served from different
-  machines. A clerk on Safari may then be asked to sign in weekly rather than
-  monthly.
+  machines. Since the default became `7d` that matches the session cap, so it
+  only matters if a host raises `JWT_STAFF_REMEMBER_TTL` above a week.
   Nothing on the server changes that; it is worth knowing when someone reports
   it.
 - **Rotating `JWT_SECRET` ends every staff session**, refresh included. The key
@@ -670,7 +670,7 @@ There is a migration this time, and the order matters.
    fails before the cut-over, and re-running it is safe because the migration is
    idempotent throughout. And every staff member signs in once: a session minted
    before the release has no cookie, so it ends when its current access token
-   does (≤ 30 minutes) and the next refresh asks for a sign-in. Staff sign-in is
+   does (≤ 15 minutes) and the next refresh asks for a sign-in. Staff sign-in is
    throttled to 5 a minute per worker, and behind nginx every clerk shares one
    address, so a working morning of sign-ins at once would queue.
 
