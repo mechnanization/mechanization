@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/staff-refresh-tokens-rebased` (on `develop@8742c5b`), 2026-10-04.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,

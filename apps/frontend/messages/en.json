@@ -329,6 +329,11 @@
     "LOCATION_INCOMPLETE": "A location needs both a latitude and a longitude.",
     "LOCATION_OUTSIDE_LEBANON": "The location is outside Lebanon.",
     "NETWORK_ERROR": "Could not connect. Check the network and try again.",
-    "UNKNOWN": "The request could not be completed. Try again."
+    "UNKNOWN": "The request could not be completed. Try again.",
+    "AUTHENTICATION_REQUIRED": "Sign in to continue.",
+    "SESSION_INVALID": "Your session has ended or is no longer valid. Sign in again.",
+    "SESSION_ENDED": "Your session has ended. Sign in again.",
+    "ORIGIN_NOT_ALLOWED": "This request did not come from the municipality’s portal.",
+    "SESSION_REFRESH_UNAVAILABLE": "The session could not be renewed. Check the connection and try again."
   }
 }

@@ -25,7 +25,7 @@ import type { Session } from './session';
  */
 
 /** A JWT-shaped token for `sub`. Only the payload matters: nothing here verifies it. */
-function tokenFor(sub: string, tag: string): string {
+function tokenFor(sub: string, tag: string, iat?: number): string {
   const part = (value: unknown) => {
     const bytes = new TextEncoder().encode(JSON.stringify(value));
     return btoa(String.fromCharCode(...bytes))
@@ -34,7 +34,8 @@ function tokenFor(sub: string, tag: string): string {
       .replace(/\//g, '_');
   };
   // The Arabic name puts multi-byte UTF-8 in the payload, as real tokens can.
-  return `${part({ alg: 'HS256', typ: 'JWT' })}.${part({ sub, kind: 'STAFF', name: 'موظف', tag })}.sig`;
+  const payload = { sub, kind: 'STAFF', name: 'موظف', tag, ...(iat === undefined ? {} : { iat }) };
+  return `${part({ alg: 'HS256', typ: 'JWT' })}.${part(payload)}.sig`;
 }
 
 const OLD = tokenFor('staff-1', 'old');
@@ -622,5 +623,130 @@ describe('logoutStaff', () => {
     await logoutStaff(TENANT, undefined);
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('apiFetch — tabs waking together hand one renewal around', () => {
+  /** `localStorage`, in memory: the renewal mark lives there. */
+  function memoryStorage() {
+    const items = new Map<string, string>();
+    return {
+      getItem: (key: string) => items.get(key) ?? null,
+      setItem: (key: string, value: string) => void items.set(key, value),
+      removeItem: (key: string) => void items.delete(key),
+    };
+  }
+
+  /** A lock another tab holds until `release` is called. */
+  function lockHeldElsewhere() {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const request = vi.fn(
+      async (_name: string, _options: unknown, callback: (lock: unknown) => Promise<unknown>) => {
+        await released;
+        return callback({});
+      },
+    );
+    vi.stubGlobal('navigator', { onLine: true, locks: { request } });
+    return { request, release };
+  }
+
+  /** What another tab does after renewing: bump the mark, announce, let go of the lock. */
+  function anotherTabRenewed(tenant: string, session: Session, storage: ReturnType<typeof memoryStorage>, mark = true) {
+    if (mark) storage.setItem(`mechanization.session-renewed.${tenant}`, `${Math.random()}`);
+    const tab = new BroadcastChannel('mechanization.session');
+    tab.postMessage({ type: 'staff-session-renewed', tenant, session });
+    tab.close();
+  }
+
+  it('takes the renewal another tab announced while it waited, and sends no refresh', async () => {
+    /*
+      Without «تذكّرني» every tab holds its own copy in sessionStorage, so the
+      tab queued behind the lock cannot read the first tab's token from storage.
+      Before the handoff it renewed again: one more cookie rotation per tab.
+    */
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    const lock = lockHeldElsewhere();
+    const mine = tokenFor('staff-1', 'tab-b', 100);
+    const renewed = tokenFor('staff-1', 'renewed-by-a', 200);
+    stored = sessionWith(mine);
+    serverAccepting(renewed);
+
+    const pending = apiFetch('handoff-a', '/citizens', { token: mine });
+    await vi.waitFor(() => expect(lock.request).toHaveBeenCalled());
+
+    anotherTabRenewed('handoff-a', sessionWith(renewed), storage);
+    lock.release();
+
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(refreshCalls()).toHaveLength(0);
+    expect(stored?.accessToken).toBe(renewed);
+    expect(authOf(1)).toBe(`Bearer ${renewed}`);
+  });
+
+  it('renews itself when the announcement is for another account', async () => {
+    // Two clerks signed in to the same municipality in one browser.
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    const lock = lockHeldElsewhere();
+    const mine = tokenFor('staff-1', 'tab-b', 100);
+    stored = sessionWith(mine);
+    serverAccepting(NEW);
+
+    const pending = apiFetch('handoff-b', '/citizens', { token: mine });
+    await vi.waitFor(() => expect(lock.request).toHaveBeenCalled());
+
+    anotherTabRenewed(
+      'handoff-b',
+      { ...sessionWith(tokenFor('staff-2', 'their-session', 200)), user: { ...STAFF_SESSION.user, id: 'staff-2' } },
+      storage,
+      false,
+    );
+    lock.release();
+
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(refreshCalls()).toHaveLength(1);
+    expect(stored?.accessToken).toBe(NEW);
+  });
+
+  it('ignores an announcement older than its own token', async () => {
+    // A renewal heard long ago would only 401 again; the server's iat says which is newer.
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    const lock = lockHeldElsewhere();
+    const mine = tokenFor('staff-1', 'tab-b', 300);
+    stored = sessionWith(mine);
+    serverAccepting(NEW);
+
+    const pending = apiFetch('handoff-c', '/citizens', { token: mine });
+    await vi.waitFor(() => expect(lock.request).toHaveBeenCalled());
+
+    anotherTabRenewed('handoff-c', sessionWith(tokenFor('staff-1', 'old-renewal', 200)), storage, false);
+    lock.release();
+
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(refreshCalls()).toHaveLength(1);
+  });
+
+  it('announces its own renewal, and bumps the mark, for the tabs behind it', async () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    const heard: unknown[] = [];
+    const otherTab = new BroadcastChannel('mechanization.session');
+    otherTab.onmessage = (event) => heard.push(event.data);
+    serverAccepting(NEW);
+
+    await apiFetch('handoff-d', '/citizens', { token: OLD });
+
+    await vi.waitFor(() => expect(heard).toHaveLength(1));
+    otherTab.close();
+    expect(heard[0]).toMatchObject({
+      type: 'staff-session-renewed',
+      tenant: 'handoff-d',
+      session: { accessToken: NEW, user: { id: 'staff-1' } },
+    });
+    expect(storage.getItem('mechanization.session-renewed.handoff-d')).toBeTruthy();
+    expect(refreshCalls()).toHaveLength(1);
   });
 });

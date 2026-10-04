@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/staff-refresh-tokens-rebased` (on `develop@8742c5b`), 2026-10-04.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -68,6 +68,9 @@ Data access for new code (decided):
   `@Roles` is absent (gap in [docs/security.md](../../docs/security.md#known-gaps)). Until that is fixed, a
   self-service route without `@Roles` MUST check `user.kind` and scope every query by `user.sub`. A
   handler's `@Roles` replaces the class's.
+- **Staff sessions.** Rotating refresh tokens in an httpOnly cookie (`StaffRefreshTokenService`,
+  `presentation/http/staff-refresh-cookie.ts`), checked by family in `JwtAuthGuard`; expired rows are
+  pruned by `StaffRefreshTokenCleanupJob`. Rules: [docs/security.md](../../docs/security.md#tokens-passwords-and-totp).
 - **Who is calling.** `@CurrentUser()` yields `SessionClaims` (`application/features/identity/identity.service.ts`);
   `@CurrentTenant()` yields `req.tenant`. Pass the actor to services as `{ id: user.sub, role: user.role ?? '' }`.
 - **Validation.** `@Body(new ZodValidationPipe(schema))`, schema from `@mechanization/shared-schemas`. Put

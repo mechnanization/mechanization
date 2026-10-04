@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `feat/staff-refresh-tokens-rebased` (on `develop@8742c5b`), 2026-10-04.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -39,7 +39,7 @@ every municipality ([security.md](security.md)).
 
 | Group | Tables | Written by |
 |---|---|---|
-| People | `users` (staff and citizens), `otp_challenges` | `IdentityService`, `OtpService`, `StaffService`, `CitizensService` |
+| People | `users` (staff and citizens), `otp_challenges`, `staff_refresh_tokens` (0059: keyed hashes only, cascade with the user) | `IdentityService`, `OtpService`, `StaffService`, `CitizensService`, `StaffRefreshTokenService` |
 | Citizen register | `registrations`, `property_entries`, `building_units`, `documents`, `citizen_merges` | `RegistrationService`, `CitizensService`, `LandlordLinkService`, `OwnershipService`, `TenancyService`, `CitizenMergeService`, `DocumentService` |
 | Map | `parcels`, `zones` | `CadastreImportService`, `ZonesService` |
 | Building census | `buildings`, `building_code_aliases`, `units`, `unit_occupancies`, `unit_visits`, `unit_vacancy_confirmations`, `damage_assessments` | `BuildingsService`, `CensusSyncService`, `DamageService`, `ParcelCorrectionService`, `UnitCorrectionService` |

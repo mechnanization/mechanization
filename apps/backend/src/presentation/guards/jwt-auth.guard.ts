@@ -38,7 +38,7 @@ export class JwtAuthGuard implements CanActivate {
     const token = this.extractToken(request);
 
     if (!token) {
-      throw new UnauthorizedError('Authentication required');
+      throw new UnauthorizedError({ code: 'AUTHENTICATION_REQUIRED', message: 'Authentication required' });
     }
 
     let claims: SessionClaims;
@@ -47,7 +47,7 @@ export class JwtAuthGuard implements CanActivate {
     } catch {
       // Expired, wrong signature, malformed — all the same answer. Saying which
       // tells an attacker whether they have a real token to work with.
-      throw new UnauthorizedError('Invalid or expired session');
+      throw new UnauthorizedError({ code: 'SESSION_INVALID', message: 'Invalid or expired session' });
     }
 
     /**
@@ -77,7 +77,7 @@ export class JwtAuthGuard implements CanActivate {
     if (!(await this.revocation.isCurrent(claims.sub, claims.tokenVersion))) {
       // Same sentence an expired token gets. From the caller's side that is
       // exactly what has happened — the session is over.
-      throw new UnauthorizedError('Invalid or expired session');
+      throw new UnauthorizedError({ code: 'SESSION_INVALID', message: 'Invalid or expired session' });
     }
 
     /**
@@ -95,7 +95,7 @@ export class JwtAuthGuard implements CanActivate {
      * families existed — are unaffected.
      */
     if (claims.sid && !(await this.revocation.isFamilyLive(claims.sid))) {
-      throw new UnauthorizedError('Invalid or expired session');
+      throw new UnauthorizedError({ code: 'SESSION_INVALID', message: 'Invalid or expired session' });
     }
 
     request.user = claims;

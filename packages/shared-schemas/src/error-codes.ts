@@ -167,9 +167,15 @@ export const ERROR_CODES = [
   'INTERNAL_ERROR',
   'TENANT_MISMATCH',
   'TENANT_NOT_PROVISIONED',
+  // Sessions
+  'AUTHENTICATION_REQUIRED',
+  'SESSION_INVALID',
+  'SESSION_ENDED',
+  'ORIGIN_NOT_ALLOWED',
   // Raised by the portal itself when no response arrives or it cannot be read
   'NETWORK_ERROR',
   'UNKNOWN',
+  'SESSION_REFRESH_UNAVAILABLE',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

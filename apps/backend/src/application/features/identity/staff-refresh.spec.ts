@@ -219,8 +219,9 @@ const TTLS: Record<string, string> = {
   JWT_CITIZEN_TTL: '7d',
 };
 
-const SESSION_INVALID = 'Invalid or expired session';
-const SESSION_ENDED = 'انتهت الجلسة. يرجى تسجيل الدخول مجدداً.';
+/** The codes a refusal carries; the frontend owns the words (see domain-error.ts). */
+const SESSION_INVALID = 'SESSION_INVALID';
+const SESSION_ENDED = 'SESSION_ENDED';
 
 /** 08:00 UTC on a working day: the sign-in every test starts from. */
 const T0 = new Date('2026-09-26T08:00:00.000Z');
@@ -474,7 +475,7 @@ describe('refreshStaffSession — the cap is fixed at sign-in', () => {
     const refused = refusal(await refresh(harness, grant.session.accessToken, cookieOf(grant)));
 
     expect(refused.error).toBeInstanceOf(UnauthorizedError);
-    expect(refused.error.message).toBe(SESSION_ENDED);
+    expect(refused.error.code).toBe(SESSION_ENDED);
     expect(refused.clearCookie).toBe(grant.refresh.cookieName);
     expect(harness.repository.snapshot()).toEqual(before);
   });
@@ -529,7 +530,7 @@ describe('refreshStaffSession — the access token binds the tab, and does nothi
       );
 
       expect(refused.error).toBeInstanceOf(UnauthorizedError);
-      expect(refused.error.message).toBe(SESSION_INVALID);
+      expect(refused.error.code).toBe(SESSION_INVALID);
       expect(refused.clearCookie).toBeUndefined();
       expect(readCookie).not.toHaveBeenCalled();
       expect(harness.repository.snapshot()).toEqual(before);
@@ -546,7 +547,7 @@ describe('refreshStaffSession — the access token binds the tab, and does nothi
 
     const refused = refusal(await refresh(harness, grant.session.accessToken, {}));
 
-    expect(refused.error.message).toBe(SESSION_INVALID);
+    expect(refused.error.code).toBe(SESSION_INVALID);
     expect(refused.clearCookie).toBeUndefined();
     expect(harness.repository.snapshot()).toEqual(before);
   });
@@ -562,7 +563,7 @@ describe('refreshStaffSession — the access token binds the tab, and does nothi
       }),
     );
 
-    expect(refused.error.message).toBe(SESSION_INVALID);
+    expect(refused.error.code).toBe(SESSION_INVALID);
     expect(refused.clearCookie).toBe(grant.refresh.cookieName);
     expect(harness.repository.snapshot()).toEqual(before);
   });
@@ -587,7 +588,7 @@ describe('refreshStaffSession — the access token binds the tab, and does nothi
       }),
     );
 
-    expect(refused.error.message).toBe(SESSION_INVALID);
+    expect(refused.error.code).toBe(SESSION_INVALID);
     expect(refused.clearCookie).toBeUndefined();
     expect(harness.repository.snapshot()).toEqual(before);
   });
@@ -636,7 +637,7 @@ describe('refreshStaffSession — what it re-reads on every exchange', () => {
     const refused = refusal(await refresh(harness, grant.session.accessToken, cookieOf(grant)));
 
     expect(refused.error).toBeInstanceOf(UnauthorizedError);
-    expect(refused.error.message).toBe(SESSION_ENDED);
+    expect(refused.error.code).toBe(SESSION_ENDED);
     expect(refused.clearCookie).toBe(grant.refresh.cookieName);
     expect(harness.repository.family(grant.refresh.familyId).every((row) => row.revokedAt)).toBe(true);
     expect(harness.liveness.forgetFamily).toHaveBeenCalledWith(grant.refresh.familyId);
@@ -747,14 +748,14 @@ describe('refreshStaffSession — a refresh token is spent by its exchange', () 
 
     const replay = refusal(await refresh(harness, stolen.session.accessToken, cookieOf(stolen)));
 
-    expect(replay.error.message).toBe(SESSION_ENDED);
+    expect(replay.error.code).toBe(SESSION_ENDED);
     expect(replay.clearCookie).toBe(stolen.refresh.cookieName);
     expect(harness.repository.family(stolen.refresh.familyId).every((row) => row.revokedAt)).toBe(true);
     expect(harness.liveness.forgetFamily).toHaveBeenCalledWith(stolen.refresh.familyId);
 
     // The owner's next refresh finds the family over — and is not a second alarm.
     const owner = refusal(await refresh(harness, current.session.accessToken, cookieOf(current)));
-    expect(owner.error.message).toBe(SESSION_ENDED);
+    expect(owner.error.code).toBe(SESSION_ENDED);
     // Nor is the copy presented yet again.
     refusal(await refresh(harness, stolen.session.accessToken, cookieOf(stolen)));
 
@@ -782,9 +783,7 @@ describe('logoutStaff', () => {
     expect(harness.repository.family(grant.refresh.familyId).every((row) => row.revokedAt)).toBe(true);
     // Dropped from the guard's cache, so the access token stops now.
     expect(harness.liveness.forgetFamily).toHaveBeenCalledWith(grant.refresh.familyId);
-    expect(refusal(await refresh(harness, grant.session.accessToken, cookieOf(grant))).error.message).toBe(
-      SESSION_ENDED,
-    );
+    expect(refusal(await refresh(harness, grant.session.accessToken, cookieOf(grant))).error.code).toBe(SESSION_ENDED);
 
     // A second click ends nothing, so it records nothing.
     await logout(harness, grant.session.accessToken, cookieOf(grant));

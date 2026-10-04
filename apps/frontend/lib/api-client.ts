@@ -326,14 +326,31 @@ function timeoutSignal(ms: number): AbortSignal {
  * token itself on every request. `null` for anything that does not parse.
  */
 function tokenSubject(token: string): string | null {
+  const claims = unverifiedClaims(token);
+  return typeof claims?.sub === 'string' && claims.sub ? claims.sub : null;
+}
+
+/**
+ * When the server minted `token` (its `iat`, seconds), read without verifying.
+ *
+ * Only ever used to prefer the newer of two tokens the same server issued, so
+ * the comparison runs on the server's clock, never the device's. A wrong
+ * answer costs one replay that 401s and one more exchange, nothing else.
+ */
+function tokenIssuedAt(token: string): number | null {
+  const iat = unverifiedClaims(token)?.iat;
+  return typeof iat === 'number' && Number.isFinite(iat) ? iat : null;
+}
+
+function unverifiedClaims(token: string): { sub?: unknown; iat?: unknown } | null {
   try {
     const payload = token.split('.')[1];
     if (!payload) return null;
     const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
     const binary = atob(base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '='));
     const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    const claims = JSON.parse(new TextDecoder().decode(bytes)) as { sub?: unknown } | null;
-    return typeof claims?.sub === 'string' && claims.sub ? claims.sub : null;
+    const claims = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    return claims && typeof claims === 'object' ? (claims as { sub?: unknown; iat?: unknown }) : null;
   } catch {
     return null;
   }
@@ -420,6 +437,128 @@ const refreshInFlight = new Map<string, Promise<ExchangedToken | null>>();
 let sessionModule: Promise<typeof import('./session')> | undefined;
 const importSession = () => (sessionModule ??= import('./session'));
 
+// ─────────────────────  Handing a renewal to the other tabs  ─────────────────────
+
+/**
+ * A session one tab renewed, handed to the others so they do not renew it too.
+ *
+ * The cross-tab lock already stops two tabs exchanging the cookie at once, and
+ * a «تذكّرني» session lives in `localStorage`, so a tab that takes the lock
+ * after another finds the new token there. A session without «تذكّرني» lives
+ * in each tab's own `sessionStorage`, though: the tabs queued behind the lock
+ * would each still go to the server in turn, every one rotating the cookie.
+ * Three tabs waking together would make three exchanges where one does.
+ *
+ * So the tab that renews announces the result on a `BroadcastChannel`, and a
+ * tab waiting for the lock takes it from there and sends nothing. It adopts a
+ * renewal only when all of these hold, and otherwise renews itself, which is
+ * still correct, only slower:
+ *
+ * - it is for the account this tab's own failing token names;
+ * - this tab's store still holds that account's session (not signed out, not
+ *   somebody else's sign-in since);
+ * - its token is newer than the failing one, by the server's `iat`.
+ *
+ * Same-origin only, like the storage it stands in for: a script that could
+ * read the channel could already read this tab's `sessionStorage`. Nothing is
+ * granted on the strength of a message; the server checks every token.
+ */
+const SESSION_CHANNEL = 'mechanization.session';
+
+/**
+ * Bumped in `localStorage` by every renewal. It holds no token, only a change
+ * counter, so a tab that takes the lock can tell a renewal happened while it
+ * waited and that its announcement is on the way.
+ */
+const renewalMarkKey = (tenant: string) => `mechanization.session-renewed.${tenant}`;
+
+/**
+ * How long such a tab waits for the announcement before renewing itself. The
+ * message is posted before the lock is released, so it is normally already
+ * there; this only covers the two arriving in the other order.
+ */
+const RENEWAL_HANDOFF_MS = 1_000;
+
+interface RenewalNotice {
+  type: 'staff-session-renewed';
+  tenant: string;
+  session: Session;
+}
+
+/** The latest renewal announced per municipality, by any tab. */
+const announcedRenewals = new Map<string, Session>();
+const renewalWaiters = new Map<string, Set<() => void>>();
+let renewalChannelInstance: BroadcastChannel | null | undefined;
+
+function renewalChannel(): BroadcastChannel | null {
+  if (renewalChannelInstance !== undefined) return renewalChannelInstance;
+  if (typeof BroadcastChannel !== 'function') return (renewalChannelInstance = null);
+
+  const channel = new BroadcastChannel(SESSION_CHANNEL);
+  channel.addEventListener('message', (event: MessageEvent) => {
+    const notice = event.data as Partial<RenewalNotice> | null;
+    if (notice?.type !== 'staff-session-renewed' || typeof notice.tenant !== 'string') return;
+    if (typeof notice.session?.accessToken !== 'string' || !notice.session.user) return;
+    announcedRenewals.set(notice.tenant, notice.session);
+    for (const wake of [...(renewalWaiters.get(notice.tenant) ?? [])]) wake();
+  });
+  // Node, where the tests run, keeps a process alive while a channel is open;
+  // browsers have no `unref` and need none.
+  (channel as unknown as { unref?: () => void }).unref?.();
+  return (renewalChannelInstance = channel);
+}
+
+// Listen from the first load in a browser, so a renewal announced before this
+// tab's own token expires is already known when it does.
+if (typeof window !== 'undefined' && typeof document !== 'undefined') renewalChannel();
+
+function readRenewalMark(tenant: string): string | null {
+  try {
+    return localStorage.getItem(renewalMarkKey(tenant));
+  } catch {
+    return null;
+  }
+}
+
+/** Tells the other tabs a renewal happened, and what it was. Called while holding the lock. */
+function announceRenewal(tenant: string, session: Session): void {
+  try {
+    localStorage.setItem(renewalMarkKey(tenant), `${Date.now()}:${Math.random().toString(36).slice(2)}`);
+  } catch {
+    // Private modes may refuse the write; the message below still goes out.
+  }
+  const notice: RenewalNotice = { type: 'staff-session-renewed', tenant, session };
+  renewalChannel()?.postMessage(notice);
+}
+
+/** An announced renewal this tab may adopt in place of `failingToken`, or null. */
+function adoptableRenewal(tenant: string, subject: string, failingToken: string): Session | null {
+  const session = announcedRenewals.get(tenant);
+  if (!session || session.user.kind !== 'STAFF' || session.user.id !== subject) return null;
+  if (session.accessToken === failingToken) return null;
+
+  const announced = tokenIssuedAt(session.accessToken);
+  const failing = tokenIssuedAt(failingToken);
+  // Unknown issue times prove nothing, and an older token would only 401 again.
+  if (announced === null || failing === null || announced < failing) return null;
+  return session;
+}
+
+/** Resolves when a renewal for `tenant` is announced, or after `ms`, whichever comes first. */
+function renewalAnnounced(tenant: string, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const waiters = renewalWaiters.get(tenant) ?? new Set<() => void>();
+    renewalWaiters.set(tenant, waiters);
+    const done = () => {
+      clearTimeout(timer);
+      waiters.delete(done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    waiters.add(done);
+  });
+}
+
 /**
  * Renews the staff session behind `failingToken`, the token that just met a 401.
  *
@@ -460,9 +599,37 @@ async function exchangeStaffToken(
   const existing = refreshInFlight.get(key);
   if (existing) return existing;
 
+  // Read before anything waits: a change by the time the lock is ours means
+  // another tab renewed meanwhile, and its announcement is worth waiting for.
+  renewalChannel();
+  const markBefore = readRenewalMark(tenant);
+
   const flight = (async (): Promise<ExchangedToken | null> => {
     const { loadSession, updateSession } = await importSession();
     const subject = tokenSubject(failingToken);
+
+    /**
+     * Another tab's renewal, taken into this tab's own store. Only while that
+     * store holds this account's session: written into anything else it would
+     * sign this tab in, or resurrect a session it had signed out of.
+     */
+    const adopt = (session: Session): ExchangedToken | null => {
+      const own = loadSession(tenant);
+      if (!own || own.user.kind !== 'STAFF' || own.user.id !== subject) return null;
+      updateSession(tenant, session);
+      return { token: session.accessToken, fromNetwork: false };
+    };
+
+    /** Step 3a. `undefined` means no other tab has answered: ask the server. */
+    const fromAnotherTab = async (): Promise<ExchangedToken | null | undefined> => {
+      if (!subject) return undefined;
+      let announced = adoptableRenewal(tenant, subject, failingToken);
+      if (!announced && readRenewalMark(tenant) !== markBefore) {
+        await renewalAnnounced(tenant, RENEWAL_HANDOFF_MS);
+        announced = adoptableRenewal(tenant, subject, failingToken);
+      }
+      return announced ? adopt(announced) : undefined;
+    };
 
     /** Steps 1 and 2. `undefined` means storage cannot answer: ask the server. */
     const fromStorage = (): ExchangedToken | null | undefined => {
@@ -484,6 +651,9 @@ async function exchangeStaffToken(
         const storedNow = fromStorage();
         if (storedNow !== undefined) return storedNow;
 
+        const handedOver = await fromAnotherTab();
+        if (handedOver !== undefined) return handedOver;
+
         const refreshed = await apiFetch<Session>(tenant, '/auth/staff/refresh', {
           method: 'POST',
           token: failingToken,
@@ -497,9 +667,12 @@ async function exchangeStaffToken(
         // If it ever does, storing it is the one thing that must not happen.
         if (refreshed.user.kind !== 'STAFF' || refreshed.user.id !== subject) return null;
 
-        // Written inside the lock, so the next tab to take it reads this token
-        // instead of exchanging the cookie this response has just replaced.
+        // Written and announced inside the lock, so the next tab to take it
+        // reads this token — from `localStorage` with «تذكّرني», from the
+        // announcement without — instead of exchanging the cookie this
+        // response has just replaced.
         updateSession(tenant, refreshed);
+        announceRenewal(tenant, refreshed);
         return { token: refreshed.accessToken, fromNetwork: true };
       });
     } catch (caught) {

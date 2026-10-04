@@ -52,9 +52,6 @@ const ABSENT_PASSWORD_HASH = '$2b$12$0TQq.TFqu6SjurFnnRd/3eWT5wd9BsdSSqeoT8tSlia
  * second for a session that did exist and is over, which is the one a clerk
  * can act on.
  */
-const SESSION_INVALID = 'Invalid or expired session';
-const SESSION_ENDED = 'انتهت الجلسة. يرجى تسجيل الدخول مجدداً.';
-
 /** The single token shape. Both citizens and staff carry exactly this. */
 export interface SessionClaims {
   sub: string;
@@ -943,30 +940,30 @@ export class IdentityService {
     readCookie: (name: string) => string | undefined;
   }): Promise<StaffRefreshOutcome> {
     const claims = this.bindTab(input.accessToken, input.tenantSlug);
-    if (!claims) return refused(SESSION_INVALID);
+    if (!claims) return refused('SESSION_INVALID');
 
     const cookieName = this.refreshTokens.cookieNameFor(claims.sub);
     const presented = input.readCookie(cookieName);
-    if (!presented) return refused(SESSION_INVALID);
+    if (!presented) return refused('SESSION_INVALID');
 
     const row = await this.refreshTokens.find(presented);
-    if (!row) return refused(SESSION_INVALID, cookieName);
+    if (!row) return refused('SESSION_INVALID', cookieName);
 
     // The cookie's name is this account's, so a row belonging to anyone else
     // was put there by something other than this service. Refuse, and neither
     // write nor clear on the strength of it.
-    if (row.userId !== claims.sub) return refused(SESSION_INVALID);
+    if (row.userId !== claims.sub) return refused('SESSION_INVALID');
 
     const now = new Date();
 
     const root = await this.refreshTokens.familyRoot(row.familyId);
-    if (!root || root.revokedAt) return refused(SESSION_ENDED, cookieName);
-    if (root.expiresAt <= now) return refused(SESSION_ENDED, cookieName);
+    if (!root || root.revokedAt) return refused('SESSION_ENDED', cookieName);
+    if (root.expiresAt <= now) return refused('SESSION_ENDED', cookieName);
 
     const user = await this.users.findById(row.userId);
     if (!user || user.kind !== 'STAFF' || user.tenantSlug !== input.tenantSlug) {
       await this.refreshTokens.revokeFamily(row.familyId, now);
-      return refused(SESSION_INVALID, cookieName);
+      return refused('SESSION_INVALID', cookieName);
     }
 
     // The guard does not run on this route — the access token is usually
@@ -982,7 +979,7 @@ export class IdentityService {
 
     if (user.tokenVersion !== row.tokenVersion) {
       await this.refreshTokens.revokeFamily(row.familyId, now);
-      return refused(SESSION_ENDED, cookieName);
+      return refused('SESSION_ENDED', cookieName);
     }
 
     const exchanged = await this.refreshTokens.exchange(row, now);
@@ -994,10 +991,10 @@ export class IdentityService {
       if (exchanged.revoked > 0) {
         this.auditSession('STAFF_SESSION_REUSE_DETECTED', user, input.tenantSlug);
       }
-      return refused(SESSION_ENDED, cookieName);
+      return refused('SESSION_ENDED', cookieName);
     }
 
-    if (exchanged.outcome === 'ended') return refused(SESSION_ENDED, cookieName);
+    if (exchanged.outcome === 'ended') return refused('SESSION_ENDED', cookieName);
 
     const session = this.issueSession({
       id: user.id,
@@ -1267,10 +1264,13 @@ function durationToSeconds(value: string, fallbackSeconds: number): number {
 }
 
 /** A 401 refresh refusal, clearing the named cookie when there is one to clear. */
-function refused(message: string, clearCookie?: string): StaffRefreshOutcome {
+function refused(code: 'SESSION_INVALID' | 'SESSION_ENDED', clearCookie?: string): StaffRefreshOutcome {
   return {
     ok: false,
-    error: new UnauthorizedError(message),
+    error: new UnauthorizedError({
+      code,
+      message: code === 'SESSION_ENDED' ? 'The staff session has ended' : 'Invalid or expired session',
+    }),
     ...(clearCookie ? { clearCookie } : {}),
   };
 }

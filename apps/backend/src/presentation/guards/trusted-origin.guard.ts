@@ -31,7 +31,7 @@ export class TrustedOriginGuard implements CanActivate {
 
     const trusted = this.config.get<string[]>('CORS_ORIGINS') ?? ['http://localhost:3000'];
     if (!trusted.includes(origin)) {
-      throw new ForbiddenError('Request origin is not allowed');
+      throw new ForbiddenError({ code: 'ORIGIN_NOT_ALLOWED', message: 'Request origin is not allowed' });
     }
 
     return true;
