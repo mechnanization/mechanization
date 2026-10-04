@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/tier1-review-tenancy-masked-refs` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -181,8 +181,9 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 ### Migration numbers collide across branches
 
 - **What happens:** two branches pick the same number and nothing errors.
-  `0016_*` and `0017_*` each exist twice; `0059_staff_refresh_tokens` waits on
-  an unmerged branch while `develop` is at `0066`.
+  `0016_*` and `0017_*` each exist twice; `0059_staff_refresh_tokens` was merged
+  to `develop` after `0066`, so it applies out of order (the migrator warns and
+  applies it).
 - **Why:** numbers are chosen by hand per branch.
 - **Do this:** list every unmerged branch's migrations before picking one
   ([database.md](database.md#numbering)).

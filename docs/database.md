@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/staff-refresh-tokens-rebased` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -355,8 +355,8 @@ reads staging's history from `.env.staging` and nothing else, and
 
 - The latest tenant migration on `develop` is `0066_payment_tender_controls`.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
-  each exist twice. `0059_staff_refresh_tokens` exists only on the unmerged branch
-  feat/staff-refresh-tokens. As of this check the next free number is
+  each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
+  `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of this check the next free number is
   `0067`.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:

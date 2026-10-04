@@ -214,8 +214,8 @@ function staff(overrides: Partial<StaffProps> = {}): User {
 
 const TTLS: Record<string, string> = {
   JWT_STAFF_TTL: '8h',
-  JWT_STAFF_REMEMBER_TTL: '30d',
-  JWT_STAFF_IDLE_TTL: '30m',
+  JWT_STAFF_REMEMBER_TTL: '7d',
+  JWT_STAFF_IDLE_TTL: '15m',
   JWT_CITIZEN_TTL: '7d',
 };
 
@@ -377,7 +377,7 @@ describe('loginStaff — what a staff sign-in hands out', () => {
 
     // The token lasts the idle window; the session runs the eight hours
     // JWT_STAFF_TTL has always named.
-    expect(claims.exp).toBe(T0_SECONDS + 30 * 60);
+    expect(claims.exp).toBe(T0_SECONDS + 15 * 60);
     expect(claims.sessionExpiresAt).toBe(T0_SECONDS + EIGHT_HOURS);
     expect(claims.sid).toBe(grant.refresh.familyId);
 
@@ -392,8 +392,8 @@ describe('loginStaff — what a staff sign-in hands out', () => {
     const grant = await signIn(harness, { remember: true });
     const claims = claimsOf(harness, grant.session.accessToken);
 
-    expect(claims.sessionExpiresAt).toBe(T0_SECONDS + 30 * 24 * 3600);
-    expect(claims.exp).toBe(T0_SECONDS + 30 * 60);
+    expect(claims.sessionExpiresAt).toBe(T0_SECONDS + 7 * 24 * 3600);
+    expect(claims.exp).toBe(T0_SECONDS + 15 * 60);
     expect(grant.refresh.persistent).toBe(true);
   });
 });
@@ -415,7 +415,7 @@ describe('refreshStaffSession — the cap is fixed at sign-in', () => {
 
     expect(() => harness.jwt.verify(renewed.session.accessToken)).not.toThrow();
     expect(claimsOf(harness, renewed.session.accessToken).exp).toBe(
-      T0_SECONDS + 45 * 60 + 30 * 60,
+      T0_SECONDS + 45 * 60 + 15 * 60,
     );
   });
 
@@ -453,7 +453,7 @@ describe('refreshStaffSession — the cap is fixed at sign-in', () => {
   });
 
   it('clamps the last access token of a session to the cap', async () => {
-    // Two minutes from the end, a full half-hour token would outlive the
+    // Two minutes from the end, a full fifteen-minute token would outlive the
     // session it belongs to.
     const harness = build();
     const grant = await signIn(harness);
@@ -480,7 +480,7 @@ describe('refreshStaffSession — the cap is fixed at sign-in', () => {
     expect(harness.repository.snapshot()).toEqual(before);
   });
 
-  it('keeps a remembered session’s thirty days and its persistent cookie', async () => {
+  it('keeps a remembered session’s seven days and its persistent cookie', async () => {
     const harness = build();
     const grant = await signIn(harness, { remember: true });
     later(24 * 60);
@@ -489,7 +489,7 @@ describe('refreshStaffSession — the cap is fixed at sign-in', () => {
 
     expect(renewed.refresh.persistent).toBe(true);
     expect(claimsOf(harness, renewed.session.accessToken).sessionExpiresAt).toBe(
-      T0_SECONDS + 30 * 24 * 3600,
+      T0_SECONDS + 7 * 24 * 3600,
     );
   });
 });

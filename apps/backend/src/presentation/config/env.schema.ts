@@ -198,24 +198,26 @@ export const envSchema = z
      * accepted an expired token up to the session cap, which is why this
      * comment used to say the opposite. Shortening it shortens that window, at
      * the price of one more refresh per interval for every signed-in clerk.
+     * 15 minutes since 2026-10-04 (was 30).
      */
-    JWT_STAFF_IDLE_TTL: z.string().default('30m'),
+    JWT_STAFF_IDLE_TTL: z.string().default('15m'),
     /**
      * The session cap used instead of JWT_STAFF_TTL when a staff member checks
      * "تذكّرني على هذا الجهاز". The refresh cookie is then persistent, expiring
      * at this cap, and the portal keeps the access token in `localStorage`;
      * without it the cookie ends with the browser and the token with the tab.
      *
-     * Still long, and now defensible: a 30-day token that could not be revoked
-     * meant a dismissed staff member kept access for a month. It is revocable
-     * now, so the remaining exposure is a device left signed in — which is what
-     * the `sessionStorage` default and this being an explicit opt-in address.
+     * One week since 2026-10-04 (it shipped at 30 days). A 30-day token that
+     * could not be revoked meant a dismissed staff member kept access for a
+     * month. It is revocable now, so the remaining exposure is a device left
+     * signed in — which is what the week, the `sessionStorage` default and
+     * this being an explicit opt-in address.
      *
-     * Safari may cut it to 7 days: WebKit caps a cookie set by a server
-     * response when that server's IP address does not match the site's own.
-     * Nothing server-side changes that — see docs/deploy-vercel.md §8.
+     * A week is also what Safari allows anyway: WebKit caps a cookie set by a
+     * server response at 7 days when that server's IP address does not match
+     * the site's own — see docs/deploy-vercel.md §8.
      */
-    JWT_STAFF_REMEMBER_TTL: z.string().default('30d'),
+    JWT_STAFF_REMEMBER_TTL: z.string().default('7d'),
     JWT_CITIZEN_TTL: z.string().default('7d'),
 
     SMS_PROVIDER_API_KEY: z.string().optional(),

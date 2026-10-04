@@ -1139,9 +1139,9 @@ export class IdentityService {
       durationToSeconds(
         this.config.get<string>(
           remember ? 'JWT_STAFF_REMEMBER_TTL' : 'JWT_STAFF_TTL',
-          remember ? '30d' : '8h',
+          remember ? '7d' : '8h',
         ),
-        remember ? 30 * 24 * 3600 : 8 * 3600,
+        remember ? 7 * 24 * 3600 : 8 * 3600,
       )
     );
   }
@@ -1199,15 +1199,15 @@ export class IdentityService {
      * The token's own life: the idle window, clamped to the cap.
      *
      * Clamping is what makes the last token of a session expire exactly at the
-     * deadline instead of a half-hour past it. Without it the final refresh
+     * deadline instead of up to an idle window past it. Without it the final refresh
      * before the cap would mint a token outliving the session it belongs to,
      * and the guard's family check (`isFamilyLive` reads the root's
      * `expiresAt`) would be the only thing refusing it — one check standing
      * where two should.
      */
     const idleSeconds = durationToSeconds(
-      this.config.get<string>('JWT_STAFF_IDLE_TTL', '30m'),
-      30 * 60,
+      this.config.get<string>('JWT_STAFF_IDLE_TTL', '15m'),
+      15 * 60,
     );
     const expiresIn = Math.max(1, Math.min(idleSeconds, sessionExpiresAt - nowSeconds));
 

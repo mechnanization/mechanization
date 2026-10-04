@@ -20,7 +20,7 @@ export type { Session };
  * safer default is unaffected for everyone who doesn't check it.
  *
  * For staff, what is stored here is only the short-lived access token
- * (`JWT_STAFF_IDLE_TTL`, 30 minutes by default). The credential that renews it
+ * (`JWT_STAFF_IDLE_TTL`, 15 minutes by default). The credential that renews it
  * is an httpOnly cookie, one per account, that no script on this page can read
  * — and a refresh needs both: the cookie, and this tab's own access token to
  * say which account the tab belongs to. That is why closing the tab still ends
