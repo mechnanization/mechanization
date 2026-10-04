@@ -90,7 +90,7 @@ describeIfDb('TenancyService', () => {
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
     const ownership = new OwnershipService(context, buildings, cases, links, events, audit);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
     citizens = new CitizensService(
       context,
       {} as never,
@@ -273,6 +273,23 @@ describeIfDb('TenancyService', () => {
   };
 
   // ─────────────────────────────  The matrix  ─────────────────────────────
+
+  it('writes TENANCY_ENDED inside the transaction that ends the tenancy (Tier 1)', async () => {
+    const linked = await linkedTenancy('TNC-T1');
+    const tenantSpell = await spell(linked.tenantId, linked.units[0]!.id);
+
+    await within(() =>
+      tenancy.endOccupancy(
+        tenantSpell.id,
+        { reason: 'MOVED_OUT', afterStatus: 'VACANT', vacancyBasis: 'FIELD_INSPECTION' },
+        actor(),
+      ),
+    );
+
+    const rows = await db.auditLogEntry.findMany({ where: { action: 'TENANCY_ENDED', entityId: linked.tenantId } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.after).toMatchObject({ reason: 'MOVED_OUT' });
+  });
 
   it('ends the card with the spell, keeps it as history, and leaves the owner as owner', async () => {
     const linked = await linkedTenancy('TNC-1');

@@ -324,6 +324,19 @@ describeIfDb('CitizenMergeService', () => {
     expect(kept.motherName).toBe('كاملة كنعان');
     expect(kept.middleName).toBe('علي');
 
+    // The trail names the other file by id. Its رقم مرجعي signs that person in,
+    // so it is never written out; only the masked hint is.
+    const merged = await db.auditLogEntry.findMany({
+      where: { action: { in: ['CITIZEN_MERGED', 'CITIZEN_MERGED_INTO'] }, entityId: { in: [f.keepId, f.absorbId] } },
+    });
+    expect(merged.find((row) => row.entityId === f.keepId)?.after).toMatchObject({
+      other: { id: f.absorbId, maskedReference: expect.stringMatching(/••••••$/) },
+    });
+    const written = JSON.stringify(merged.map((row) => row.after));
+    for (const reference of [absorbed.referenceNumber, kept.referenceNumber].filter(Boolean)) {
+      expect(written).not.toContain(reference);
+    }
+
     // The file: the newest filing, carrying every current card.
     expect((await db.registration.findUniqueOrThrow({ where: { id: f.absorbReg } })).citizenId).toBe(f.keepId);
     const moved = await db.propertyEntry.findUniqueOrThrow({ where: { id: f.keepCard } });

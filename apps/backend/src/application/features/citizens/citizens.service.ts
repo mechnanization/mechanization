@@ -2841,7 +2841,8 @@ export class CitizensService {
       action: 'CITIZEN_DELETED',
       before: {
         name: `${citizen.firstName} ${citizen.lastName}`,
-        referenceNumber: citizen.referenceNumber,
+        // A login credential: the trail keeps only the masked hint, never the key.
+        maskedReference: ReferenceNumber.mask(citizen.referenceNumber),
       },
       actorId: input.actor.id,
       actorRole: input.actor.role,

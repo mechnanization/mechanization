@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/staff-refresh-tokens-rebased` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/tier1-review-tenancy-masked-refs` (on `develop@8742c5b`), 2026-10-04.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -139,7 +139,8 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 
 1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
    settlements), payment reversals, corrections, ownership changes (ending an ownership, making, updating
-   or ending an owner link, a merge or its undo) and citizen status changes (activate, deactivate, delete).
+   or ending an owner link, a merge or its undo), ending a tenancy, review decisions (approving or returning
+   a record, completing a quality check) and citizen status changes (activate, deactivate, delete).
    The row is written in the same transaction as the change; if it fails, the change rolls back.
    - In `runInTenantTransaction`: `AuditService.recordInTransaction(entry)`, or
      `recordChangeInTransaction({ channel, payload })` for a change that is also a `citizen.changed` /
@@ -156,8 +157,9 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 
 Event names are string literals. Emission is synchronous with no wildcards, because listeners rely on the
 request's tenant scope. A misspelt or unheard name is dropped silently. Add each new action's label to
-`apps/frontend/lib/audit-labels.ts`. **Undecided:** whether the «يتطلب مراجعة» review decisions
-(`RecordReviewService`) and ending a tenancy (`TenancyService.end`) are Tier 1; both are Tier 2 today.
+`apps/frontend/lib/audit-labels.ts`. An audit row names a citizen by id and MUST NOT carry a login
+credential: a رقم مرجعي goes in only as `ReferenceNumber.mask(...)`
+([docs/security.md](../../docs/security.md#data-integrity-and-transactions)).
 
 ## Recipe: add an endpoint
 

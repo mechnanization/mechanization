@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ReferenceNumber } from '../../../domain/value-objects/reference-number.vo';
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
@@ -1313,6 +1314,8 @@ export class CitizenMergeService {
    *
    * The audit rows carry counts, field *names* and ids, never a field's value:
    * a filled civil record number is written as the word, as `fileChanges` does.
+   * The other file is named by its id; its رقم مرجعي, a login credential, only
+   * masked (`ReferenceNumber.mask`), so the trail is not a list of sign-ins.
    */
   private changes(input: {
     tenantSlug: string;
@@ -1348,7 +1351,7 @@ export class CitizenMergeService {
           ...base,
           citizenId: input.keepId,
           action: input.undo ? 'CITIZEN_MERGE_UNDONE' : 'CITIZEN_MERGED',
-          after: { ...summary, other: { id: input.absorbId, referenceNumber: input.absorbRef } },
+          after: { ...summary, other: { id: input.absorbId, maskedReference: ReferenceNumber.mask(input.absorbRef) } },
         },
       },
       {
@@ -1357,7 +1360,7 @@ export class CitizenMergeService {
           ...base,
           citizenId: input.absorbId,
           action: input.undo ? 'CITIZEN_MERGE_UNDONE' : 'CITIZEN_MERGED_INTO',
-          after: { ...summary, other: { id: input.keepId, referenceNumber: input.keepRef } },
+          after: { ...summary, other: { id: input.keepId, maskedReference: ReferenceNumber.mask(input.keepRef) } },
         },
       },
       ...input.buildings.map((buildingId): MergeChange => ({

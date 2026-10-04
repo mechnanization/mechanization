@@ -36,6 +36,8 @@ describeIfDb('Quality review', () => {
   let context: TenantContextService;
   let events: EventEmitter2;
   let reviews: RecordReviewService;
+  /** The same service with an audit trail that refuses every write. */
+  let failingReviews: RecordReviewService;
   let quality: DataQualityService;
   let audit: AuditService;
   let buildings: BuildingsService;
@@ -88,7 +90,10 @@ describeIfDb('Quality review', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    reviews = new RecordReviewService(context, events, cache as never, { get: () => 0 } as never);
+    reviews = new RecordReviewService(context, events, cache as never, { get: () => 0 } as never, audit);
+    failingReviews = new RecordReviewService(context, events, cache as never, { get: () => 0 } as never, {
+      recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
+    } as never);
     quality = new DataQualityService(context, links, events, cache as never, { get: () => 0 } as never);
     events.on('citizen.changed', (payload) => reviews.onCitizenChanged(payload));
 
@@ -143,6 +148,18 @@ describeIfDb('Quality review', () => {
   };
 
   // ─────────────────────────────  Reviews  ─────────────────────────────
+
+  it('records no review decision when its audit row cannot be written (Tier 1)', async () => {
+    const { registrationId } = await filing(staff.jawad, { firstName: 'سارة', lastName: 'تدقيق' });
+
+    await expect(within(() => failingReviews.approve(registrationId, as('auditor')))).rejects.toThrow(
+      'audit insert refused',
+    );
+    await expect(
+      within(() => failingReviews.returnToOfficer(registrationId, { reason: 'ناقص', fields: ['OTHER'] }, as('auditor'))),
+    ).rejects.toThrow('audit insert refused');
+    expect(await db.recordReview.count({ where: { registrationId } })).toBe(0);
+  });
 
   it('returns a record to its officer, closes the return on their save, and approves it', async () => {
     const { citizenId, registrationId } = await filing(staff.jawad, { firstName: 'ريم', lastName: 'مراجعة' });

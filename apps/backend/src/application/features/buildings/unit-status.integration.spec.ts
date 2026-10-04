@@ -77,7 +77,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
     );
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     const ownership = new OwnershipService(context, buildings, cases, links, events, audit);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
     fees = new FeesService(
       context,
       events,

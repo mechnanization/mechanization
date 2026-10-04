@@ -80,7 +80,7 @@ describeIfDb('OwnershipService', () => {
     failingOwnership = new OwnershipService(context, buildings, cases, links, events, {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
     } as never);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
     fees = new FeesService(
       context,
       events,

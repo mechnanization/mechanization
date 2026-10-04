@@ -216,6 +216,7 @@ function fieldLabels(en: boolean): Record<string, string> {
     total: ['المجموع', 'Total'],
     skipped: ['المتروك', 'Skipped'],
     referenceNumber: ['الرقم المرجعي', 'Reference'],
+    maskedReference: ['الرقم المرجعي (مخفي)', 'Reference (masked)'],
     keptReference: ['الرقم المرجعي المُبقى', 'Kept reference'],
     removedReference: ['الرقم المرجعي المحذوف', 'Removed reference'],
     propertyCount: ['عدد العقارات', 'Properties'],

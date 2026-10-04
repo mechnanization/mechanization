@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/tier1-review-tenancy-masked-refs` (on `develop@8742c5b`), 2026-10-04.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -341,6 +341,21 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   provider in `after`. Run the integration suite for the service you changed.
 - **Where:** `AuditService.recordInTransaction`; `audit_log_entries.actorId` (`@db.Uuid`),
   `actorRole` (`StaffRole?`) in the tenant `schema.prisma`.
+
+### Two reference numbers, one format, one credential
+
+- **What happens:** a value shaped like `BZR-2607-4K9QX2` is written into a log or an
+  audit row as harmless, and it signs a citizen in; or a filing number is masked for no
+  reason.
+- **Why:** `ReferenceNumber.generate` mints both `users.referenceNumber`, the citizen's
+  رقم مرجعي that `loginByReferenceOnly` accepts on its own, and
+  `registrations.referenceNumber`, the filing's own number, which signs nobody in.
+  Same format, same key name, different risk.
+- **Do this:** treat any `referenceNumber` read from `users` as a credential: in an audit
+  row or on an audit screen it goes through `ReferenceNumber.mask`. A registration's
+  may be written in full.
+- **Where:** `domain/value-objects/reference-number.vo.ts`;
+  `RegistrationService.submit` (`citizenReference`, `registrationReference`).
 
 ### Events are synchronous strings
 
