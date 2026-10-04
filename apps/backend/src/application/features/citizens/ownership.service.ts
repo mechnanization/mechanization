@@ -3,6 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { isDwellingUnitType, statusForFlags, type AfterTenancyStatus, type FieldFlag } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { AuditService, type CitizenChange } from '../audit/audit.service';
 import { settleUnit, type UnitStatusEvent } from '../buildings/unit-status';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { assertNotMergedAway } from './merged-away';
@@ -62,6 +63,7 @@ export class OwnershipService {
     private readonly cases: CasesService,
     private readonly links: LandlordLinkService,
     private readonly events: EventEmitter2,
+    private readonly auditTrail: AuditService,
   ) {}
 
   /**
@@ -113,11 +115,21 @@ export class OwnershipService {
       where: { id: propertyEntryId },
       select: { ...CARD_SELECT, endedAt: true, registration: { select: { citizenId: true } } },
     });
-    if (!card) throw new NotFoundError('بطاقة العقار غير موجودة');
-    if (card.endedAt) throw new ConflictError('انتهت هذه الملكية مسبقاً');
+    if (!card) throw new NotFoundError({
+      code: 'PROPERTY_CARD_NOT_FOUND',
+      message: 'This property card could not be found.',
+    });
+    if (card.endedAt) throw new ConflictError({
+      code: 'OWNERSHIP_ALREADY_ENDED',
+      message: 'This ownership has already ended.',
+    });
     if (card.occupancyType !== 'OWNER') {
-      throw new ValidationError('هذه ليست بطاقة مالك — لإنهاء إيجار أو إشغال استخدم «إنهاء الإيجار»', {
-        propertyEntryId,
+      throw new ValidationError({
+        code: 'OWNERSHIP_CARD_NOT_OWNER',
+        message: 'This is not an owner’s card. To end a tenancy or an occupancy, use “End tenancy”.',
+        details: {
+          propertyEntryId,
+        },
       });
     }
 
@@ -125,14 +137,22 @@ export class OwnershipService {
     if (selection.rowIds?.length) {
       const current = new Set(card.units.map((row) => row.id));
       if (selection.rowIds.some((rowId) => !current.has(rowId))) {
-        throw new ConflictError('إحدى الوحدات المحددة لم تعد قائمة على هذه البطاقة — حدّث الصفحة', {
-          rowIds: selection.rowIds,
+        throw new ConflictError({
+          code: 'CARD_UNITS_CHANGED',
+          message: 'One of the selected units is no longer on this card. Refresh the page.',
+          details: {
+            rowIds: selection.rowIds,
+          },
         });
       }
       endingRows = card.units.filter((row) => selection.rowIds!.includes(row.id));
     } else if (card.units.length > 1 && !selection.everyRow) {
-      throw new ValidationError('لهذه البطاقة أكثر من وحدة — حدِّد الوحدات التي انتهت ملكيتها', {
-        needsRows: true,
+      throw new ValidationError({
+        code: 'OWNERSHIP_SELECT_UNITS',
+        message: 'This card covers more than one unit. Select the units whose ownership ended.',
+        details: {
+          needsRows: true,
+        },
       });
     } else {
       endingRows = card.units;
@@ -185,10 +205,20 @@ export class OwnershipService {
         unit: { select: { id: true, buildingId: true, unitCode: true } },
       },
     });
-    if (!occupancy) throw new NotFoundError('سجل الإشغال غير موجود');
-    if (occupancy.toDate) throw new ConflictError('هذه الملكية منتهية مسبقاً');
+    if (!occupancy) throw new NotFoundError({
+      code: 'OCCUPANCY_NOT_FOUND',
+      message: 'This occupancy record could not be found.',
+    });
+    if (occupancy.toDate) throw new ConflictError({
+      code: 'OWNERSHIP_ALREADY_ENDED',
+      message: 'This ownership has already ended.',
+    });
     if (occupancy.role !== 'OWNER') {
-      throw new ValidationError('هذا الإشغال ليس ملكية — استخدم «إنهاء الإيجار»', { occupancyId });
+      throw new ValidationError({
+        code: 'OCCUPANCY_NOT_OWNERSHIP',
+        message: 'This occupancy is not an ownership. Use “End tenancy”.',
+        details: { occupancyId },
+      });
     }
 
     // The owner's current cards on this structure, and which of them claim the flat.
@@ -226,10 +256,12 @@ export class OwnershipService {
       (card) => card.propertyType === 'BUILDING' && card.units.length === 0,
     );
     if (wholeStructure && unitsInBuilding > 1) {
-      throw new ConflictError(
-        `بطاقة هذا المالك تشمل المبنى كله دون تحديد وحداته، فلا يمكن إنهاء ملكية الوحدة ${occupancy.unit.unitCode} وحدها. حدِّد وحدات البطاقة من ملف المالك، أو أنهِ ملكية المبنى كله من هناك`,
-        { propertyEntryId: wholeStructure.id, citizenId: occupancy.citizenId, code: 'CARD_COVERS_STRUCTURE' },
-      );
+      throw new ConflictError({
+        code: 'OWNER_CARD_COVERS_STRUCTURE',
+        message: `This owner’s card covers the whole building without naming its units, so the ownership of unit ${occupancy.unit.unitCode} cannot be ended on its own. Set the card’s units in the owner’s file, or end the ownership of the whole building there.`,
+        params: { unitCode: occupancy.unit.unitCode },
+        details: { propertyEntryId: wholeStructure.id, citizenId: occupancy.citizenId, code: 'CARD_COVERS_STRUCTURE' },
+      });
     }
 
     return this.describe({
@@ -308,7 +340,10 @@ export class OwnershipService {
           })
         : Promise.resolve([]),
     ]);
-    if (!owner) throw new NotFoundError('المالك غير موجود');
+    if (!owner) throw new NotFoundError({
+      code: 'OWNER_NOT_FOUND',
+      message: 'This owner could not be found.',
+    });
 
     /*
       حالة الوحدة as the seller's own card states it, where the unit has none —
@@ -412,7 +447,10 @@ export class OwnershipService {
 
   private async end(target: Target, input: EndOwnershipCommand, actor: Actor): Promise<EndOwnershipResult> {
     if (target.cards.length === 0 && target.spells.length === 0) {
-      throw new ConflictError('لا توجد ملكية قائمة لإنهائها');
+      throw new ConflictError({
+        code: 'OWNERSHIP_NONE_ACTIVE',
+        message: 'There is no current ownership to end.',
+      });
     }
 
     const sale = input.reason === 'OWNERSHIP_TRANSFERRED';
@@ -432,30 +470,46 @@ export class OwnershipService {
     const tenants = ending.flatMap((unit) => unit.linkedTenants.map((tenant) => ({ ...tenant, unitCode: unit.unitCode })));
     if (!sale && tenants.length > 0) {
       const names = [...new Set(tenants.map((tenant) => tenant.name))];
-      throw new ConflictError(
-        `${names.join('، ')} ${names.length === 1 ? 'مربوط' : 'مربوطون'} بهذا الشخص مالكاً للوحدة. ألغِ الربط من ${names.length === 1 ? 'بطاقة المستأجر' : 'بطاقات المستأجرين'} أولاً، ثم صحّح الملكية`,
-        { code: 'TENANTS_LINKED', linkedTenants: tenants },
-      );
+      throw new ConflictError({
+        code: 'OWNER_HAS_LINKED_TENANTS',
+        message: '<names> are linked to this person as the unit’s owner. Remove the link from the tenants’ cards first, then correct the ownership.',
+        params: { names: names.join('، '), count: names.length },
+        details: { code: 'TENANTS_LINKED', linkedTenants: tenants },
+      });
     }
 
     const endedAt = sale ? (input.endedAt ?? new Date()) : new Date();
     if (sale && target.startedAt && day(endedAt) < day(target.startedAt)) {
-      throw new ValidationError(
-        `تاريخ البيع قبل تسجيل الملكية (${day(target.startedAt)}) — اختر تاريخاً بعده`,
-        { endedAt },
-      );
+      throw new ValidationError({
+        code: 'OWNERSHIP_END_BEFORE_START',
+        message: `The sale date is before the ownership was recorded (${day(target.startedAt)}). Choose a later date.`,
+        params: { startedOn: day(target.startedAt) },
+        details: { endedAt },
+      });
     }
 
     if (input.newOwnerId) {
-      if (!sale) throw new ValidationError('المالك الجديد يُسجَّل عند البيع فقط', { newOwnerId: input.newOwnerId });
+      if (!sale) throw new ValidationError({
+        code: 'NEW_OWNER_ONLY_ON_SALE',
+        message: 'A new owner is recorded only for a sale.',
+        details: { newOwnerId: input.newOwnerId },
+      });
       if (input.newOwnerId === target.citizenId) {
-        throw new ValidationError('المالك الجديد هو نفسه المالك الحالي', { newOwnerId: input.newOwnerId });
+        throw new ValidationError({
+          code: 'NEW_OWNER_IS_CURRENT',
+          message: 'The new owner is the current owner.',
+          details: { newOwnerId: input.newOwnerId },
+        });
       }
       const buyer = await this.db.user.findFirst({
         where: { id: input.newOwnerId, kind: 'CITIZEN' },
         select: { id: true },
       });
-      if (!buyer) throw new ValidationError('المالك الجديد غير موجود في السجل', { newOwnerId: input.newOwnerId });
+      if (!buyer) throw new ValidationError({
+        code: 'NEW_OWNER_NOT_FOUND',
+        message: 'The new owner is not in the register.',
+        details: { newOwnerId: input.newOwnerId },
+      });
       await assertNotMergedAway(this.db, buyer.id);
     }
 
@@ -468,18 +522,30 @@ export class OwnershipService {
       ? ending.filter((unit) => unit.ownerLivedThere && unit.otherOwners.length === 0 && !buyerRents(unit))
       : [];
     if (asked.length > 0 && !input.afterStatus) {
-      throw new ValidationError('حدِّد من يسكن الوحدة الآن', {
-        needsStatus: true,
-        unitCodes: asked.map((unit) => unit.unitCode),
+      throw new ValidationError({
+        code: 'OWNERSHIP_AFTER_STATUS_REQUIRED',
+        message: 'Say who lives in the unit now.',
+        details: {
+          needsStatus: true,
+          unitCodes: asked.map((unit) => unit.unitCode),
+        },
       });
     }
     if (input.afterStatus === 'OWNER_OCCUPIED' && !input.newOwnerId) {
-      throw new ValidationError('اختر المالك الجديد لتسجيل أنه يسكنها، أو اختر «لا أعرف»', {
-        afterStatus: input.afterStatus,
+      throw new ValidationError({
+        code: 'NEW_OWNER_REQUIRED_FOR_STATUS',
+        message: 'Choose the new owner to record that they live there, or choose “I don’t know”.',
+        details: {
+          afterStatus: input.afterStatus,
+        },
       });
     }
     if (input.afterStatus === 'VACANT' && !input.vacancyBasis) {
-      throw new ValidationError('على ماذا يستند الشغور؟', { vacancyBasis: null });
+      throw new ValidationError({
+        code: 'VACANCY_BASIS_REQUIRED',
+        message: 'What is the vacancy based on?',
+        details: { vacancyBasis: null },
+      });
     }
 
     const events: PendingEvent[] = [];
@@ -505,6 +571,8 @@ export class OwnershipService {
     const buyerTenancyEndedOn: string[] = [];
 
     const settleEvents: UnitStatusEvent[] = [];
+    let ownershipEnded: (CitizenChange & { tenantSlug: string }) | null = null;
+    let linksReleased: Array<CitizenChange & { tenantSlug: string }> = [];
     await runInTenantTransaction(this.tenantContext, async () => {
       // 1 — the spells.
       for (const spell of target.spells) {
@@ -514,7 +582,10 @@ export class OwnershipService {
           where: { id: spell.id, toDate: null },
           data: { toDate: closedAt, endReason: input.reason as never },
         });
-        if (closed.count === 0) throw new ConflictError('تغيّرت هذه الملكية للتو — حدّث الصفحة');
+        if (closed.count === 0) throw new ConflictError({
+          code: 'OWNERSHIP_CHANGED_CONCURRENTLY',
+          message: 'This ownership just changed. Refresh the page.',
+        });
         result.occupanciesEnded += 1;
         const unit = target.units.find((row) => row.unitId === spell.unitId);
         events.push({
@@ -536,7 +607,10 @@ export class OwnershipService {
             data: { endedAt, endReason: input.reason as never },
           });
           if (rows.count !== card.endingRowIds.length) {
-            throw new ConflictError('تغيّرت وحدات هذه البطاقة للتو — حدّث الصفحة');
+            throw new ConflictError({
+              code: 'CARD_UNITS_CHANGED_CONCURRENTLY',
+              message: 'This card’s units just changed. Refresh the page.',
+            });
           }
           result.rowsEnded += rows.count;
           result.endedRowIds.push(...card.endingRowIds);
@@ -714,6 +788,42 @@ export class OwnershipService {
         });
         settleEvents.push(...(outcome?.events ?? []));
       }
+
+      /*
+        Tier 1 (docs/security.md): the change of ownership and the rows that
+        record it commit together. A failed audit write rolls the sale back.
+      */
+      ownershipEnded = {
+        tenantSlug: this.tenantContext.tenantSlug,
+        citizenId: target.citizenId,
+        action: 'OWNERSHIP_ENDED',
+        after: {
+          reason: input.reason,
+          endedAt,
+          unitCodes: ending.map((unit) => unit.unitCode),
+          cardIds: target.cards.map((card) => card.id),
+          afterStatus: result.statusApplied,
+          newOwnerId: input.newOwnerId ?? null,
+          occupanciesEnded: result.occupanciesEnded,
+          cardsEnded: result.cardsEnded,
+          tenantsReleased: tenantsReleased.map((tenant) => tenant.propertyEntryId),
+          ...(buyerTenancyEndedOn.length > 0 ? { buyerTenancyEndedOn } : {}),
+          ...(droppedFlags.length > 0 ? { flagsOnEndedCards: droppedFlags } : {}),
+        },
+        actorId: actor.id,
+        actorRole: actor.role,
+      };
+      linksReleased = tenantsReleased.map((tenant) => ({
+        tenantSlug: this.tenantContext.tenantSlug,
+        citizenId: tenant.tenantId,
+        action: 'LANDLORD_LINK_RELEASED_BY_SALE',
+        after: { propertyEntryId: tenant.propertyEntryId, sellerId: target.citizenId, mode: tenant.mode },
+        actorId: actor.id,
+        actorRole: actor.role,
+      }));
+      for (const payload of [ownershipEnded, ...linksReleased]) {
+        await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload });
+      }
     });
 
     for (const event of settleEvents) this.events.emit(event.channel, event.payload);
@@ -723,35 +833,9 @@ export class OwnershipService {
     result.buyerTenancyEndedOn = buyerTenancyEndedOn;
 
     this.links.emitAll(events, actor);
-    this.events.emit('citizen.changed', {
-      tenantSlug: this.tenantContext.tenantSlug,
-      citizenId: target.citizenId,
-      action: 'OWNERSHIP_ENDED',
-      after: {
-        reason: input.reason,
-        endedAt,
-        unitCodes: ending.map((unit) => unit.unitCode),
-        cardIds: target.cards.map((card) => card.id),
-        afterStatus: result.statusApplied,
-        newOwnerId: input.newOwnerId ?? null,
-        occupanciesEnded: result.occupanciesEnded,
-        cardsEnded: result.cardsEnded,
-        tenantsReleased: result.tenantsReleased.map((tenant) => tenant.propertyEntryId),
-        ...(result.buyerTenancyEndedOn.length > 0 ? { buyerTenancyEndedOn: result.buyerTenancyEndedOn } : {}),
-        ...(droppedFlags.length > 0 ? { flagsOnEndedCards: droppedFlags } : {}),
-      },
-      actorId: actor.id,
-      actorRole: actor.role,
-    });
-    for (const tenant of result.tenantsReleased) {
-      this.events.emit('citizen.changed', {
-        tenantSlug: this.tenantContext.tenantSlug,
-        citizenId: tenant.tenantId,
-        action: 'LANDLORD_LINK_RELEASED_BY_SALE',
-        after: { propertyEntryId: tenant.propertyEntryId, sellerId: target.citizenId, mode: tenant.mode },
-        actorId: actor.id,
-        actorRole: actor.role,
-      });
+    // Already audited inside the transaction; these clear the caches that listen.
+    for (const payload of [ownershipEnded, ...linksReleased]) {
+      if (payload) this.events.emit('citizen.changed', { ...payload, alreadyAudited: true });
     }
 
     return result;

@@ -30,10 +30,10 @@ export async function assertNotMergedAway(
   });
   if (!merge) return;
   const { survivor } = merge;
-  throw new ConflictError(
-    `هذا الملف مدموج في ملف ${survivor.firstName} ${survivor.lastName}${
-      survivor.referenceNumber ? ` (${survivor.referenceNumber})` : ''
-    } — استخدم ذلك الملف. للفصل بينهما يتراجع مدير النظام عن الدمج.`,
-    { code: 'MERGED_AWAY', survivorId: survivor.id },
-  );
+  throw new ConflictError({
+    code: 'CITIZEN_MERGED_AWAY',
+    message: 'This file was merged into the file of <name>. Use that file. A system administrator can undo the merge to separate them.',
+    params: { name: `${survivor.firstName} ${survivor.lastName}`, hasReference: survivor.referenceNumber ? 'yes' : 'no', reference: survivor.referenceNumber ?? '' },
+    details: { code: 'MERGED_AWAY', survivorId: survivor.id },
+  });
 }

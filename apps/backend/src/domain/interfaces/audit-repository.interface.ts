@@ -63,9 +63,21 @@ export interface AuditDailyRow {
   lastAt: Date;
 }
 
+/** A database transaction client, opaque here so the domain names no ORM. */
+export type TransactionHandle = unknown;
+
 export interface AuditRepository {
   /** Append only — there is deliberately no update or delete on this port. */
   append(entry: AuditLogEntry): Promise<void>;
+  /**
+   * Appends through a transaction, so the row commits or rolls back with the
+   * change it records. `transaction` is the transaction client of a write
+   * that opened its own; omitted, the row goes through the request scope's
+   * client, which `runInTenantTransaction` has swapped for its transaction.
+   * Never retried: inside a transaction a failed statement has already
+   * aborted it, and the caller must see the failure.
+   */
+  appendInTransaction(entry: AuditLogEntry, transaction?: TransactionHandle): Promise<void>;
   query(query: AuditQuery): Promise<{ items: AuditRow[]; total: number }>;
   /** One row per (day, staff member), for the log's summary view. */
   daily(query: AuditDailyQuery): Promise<{ items: AuditDailyRow[]; total: number }>;

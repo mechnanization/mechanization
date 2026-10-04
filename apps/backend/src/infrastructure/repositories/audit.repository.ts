@@ -7,6 +7,7 @@ import {
   AuditQuery,
   AuditRepository,
   AuditRow,
+  TransactionHandle,
 } from '../../domain/interfaces/audit-repository.interface';
 import { ValidationError } from '../../domain/errors/domain-error';
 import { TenantContextService } from '../context/tenant-context.service';
@@ -20,6 +21,23 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * tenant migration installs a Postgres trigger that rejects both anyway, so
  * adding one here would fail at runtime rather than quietly work.
  */
+/** The row an entry becomes. */
+function toRow(entry: AuditLogEntry): Prisma.AuditLogEntryUncheckedCreateInput {
+  return {
+    actorId: entry.props.actorId ?? null,
+    actorType: entry.props.actorType,
+    actorRole: (entry.props.actorRole ?? null) as never,
+    actorEmail: entry.props.actorEmail ?? null,
+    action: entry.props.action,
+    entityType: entry.props.entityType,
+    entityId: entry.props.entityId ?? null,
+    before: (entry.props.before ?? undefined) as never,
+    after: (entry.props.after ?? undefined) as never,
+    ipAddress: entry.props.ipAddress ?? null,
+    userAgent: entry.props.userAgent ?? null,
+  };
+}
+
 @Injectable()
 export class PrismaAuditRepository implements AuditRepository {
   constructor(private readonly tenantContext: TenantContextService) {}
@@ -41,23 +59,12 @@ export class PrismaAuditRepository implements AuditRepository {
   }
 
   async append(entry: AuditLogEntry): Promise<void> {
-    await withConnectionRetry(() =>
-      this.db.auditLogEntry.create({
-        data: {
-          actorId: entry.props.actorId ?? null,
-          actorType: entry.props.actorType,
-          actorRole: (entry.props.actorRole ?? null) as never,
-          actorEmail: entry.props.actorEmail ?? null,
-          action: entry.props.action,
-          entityType: entry.props.entityType,
-          entityId: entry.props.entityId ?? null,
-          before: (entry.props.before ?? undefined) as never,
-          after: (entry.props.after ?? undefined) as never,
-          ipAddress: entry.props.ipAddress ?? null,
-          userAgent: entry.props.userAgent ?? null,
-        },
-      }),
-    );
+    await withConnectionRetry(() => this.db.auditLogEntry.create({ data: toRow(entry) }));
+  }
+
+  async appendInTransaction(entry: AuditLogEntry, transaction?: TransactionHandle): Promise<void> {
+    const client = (transaction ?? this.db) as Prisma.TransactionClient;
+    await client.auditLogEntry.create({ data: toRow(entry) });
   }
 
   /**

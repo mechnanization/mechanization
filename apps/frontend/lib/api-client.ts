@@ -1,4 +1,5 @@
-import { IMPORT_BATCH_SIZE } from '@mechanization/shared-schemas';
+import { IMPORT_BATCH_SIZE, type ErrorParams } from '@mechanization/shared-schemas';
+import { localizeApiError } from './api-errors';
 import { cachedRequest, invalidateRequests, peekCachedRequest } from './request-cache';
 import type {
   BackupSchedule,
@@ -46,8 +47,17 @@ import type {
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
 
 export interface ApiError {
+  /**
+   * A specific code from `ERROR_CODES` (translated by `localizeApiError`), or
+   * the kind for a refusal the API has not given a code yet.
+   */
   code: string;
+  /** `CONFLICT`, `VALIDATION_FAILED`, … — absent from an API older than the error codes. */
+  kind?: string;
+  /** For logs, and the text shown only when the code has no translation. */
   message: string;
+  /** The values the translated message fills in. */
+  params?: ErrorParams;
   /**
    * Whatever the caller has to look at before it can decide.
    *
@@ -108,7 +118,7 @@ export interface DuplicateBuildingCandidate {
  * duplicate prompt rather than a failed save.
  */
 export function duplicateBuildingsOf(caught: unknown): DuplicateBuildingCandidate[] | null {
-  if (!(caught instanceof ApiRequestError) || caught.payload.code !== 'CONFLICT') return null;
+  if (!(caught instanceof ApiRequestError) || caught.kind !== 'CONFLICT') return null;
 
   const details = caught.payload.details;
   if (!details || Array.isArray(details)) return null;
@@ -146,7 +156,7 @@ export interface DuplicateUnitCandidate {
  * rather than a list it will render as the wrong thing.
  */
 export function duplicateUnitsOf(caught: unknown): DuplicateUnitCandidate[] | null {
-  if (!(caught instanceof ApiRequestError) || caught.payload.code !== 'CONFLICT') return null;
+  if (!(caught instanceof ApiRequestError) || caught.kind !== 'CONFLICT') return null;
 
   const details = caught.payload.details;
   if (!details || Array.isArray(details)) return null;
@@ -166,8 +176,10 @@ export class ApiRequestError extends Error {
     readonly status: number,
     readonly payload: ApiError,
   ) {
-    super(payload.message);
-    // `.message` stays the plain, citizen/staff-facing text shown in the UI —
+    super(localizeApiError(payload));
+    // `.message` is the text a screen shows: the translated code, or the
+    // server's own message where there is no translation (`lib/api-errors.ts`).
+    // It stays the plain, citizen/staff-facing text shown in the UI —
     // `.name` is what Error's own `toString()` (and every console.error /
     // uncaught-exception overlay) prefixes it with, so logging this anywhere
     // reads as "error (404): <message>" without a second formatted string to
@@ -182,6 +194,20 @@ export class ApiRequestError extends Error {
    * describes what was collided with, not which input was wrong, and there is
    * no field on the form to attach it to.
    */
+  /** The specific code, or the kind for an untranslated refusal. */
+  get code(): string {
+    return this.payload.code;
+  }
+
+  /**
+   * What kind of refusal this is — `CONFLICT`, `VALIDATION_FAILED`, … Branch
+   * on this, not on `code`: a converted throw site sends a specific code, and
+   * an API from before the error codes sends the kind as the code.
+   */
+  get kind(): string {
+    return this.payload.kind ?? this.payload.code;
+  }
+
   get fieldErrors(): Record<string, string> {
     const details = this.payload.details;
     if (!Array.isArray(details)) return {};
@@ -3141,7 +3167,7 @@ export interface StaleEdit {
 
 /** The details of a save refused because the file changed since it was opened, or null. */
 export function staleEditOf(caught: unknown): StaleEdit | null {
-  if (!(caught instanceof ApiRequestError) || caught.payload.code !== 'CONFLICT') return null;
+  if (!(caught instanceof ApiRequestError) || caught.kind !== 'CONFLICT') return null;
   const details = caught.payload.details;
   if (!details || Array.isArray(details)) return null;
   const stale = (details as { staleEdit?: unknown }).staleEdit;
@@ -3323,7 +3349,7 @@ export async function reviewCitizenDuplicates(
 
 /** The findings carried by a creation refused over a possible duplicate, or null. */
 export function duplicateReviewOf(caught: unknown): DuplicateReviewFindings | null {
-  if (!(caught instanceof ApiRequestError) || caught.payload.code !== 'CONFLICT') return null;
+  if (!(caught instanceof ApiRequestError) || caught.kind !== 'CONFLICT') return null;
   const details = caught.payload.details;
   if (!details || Array.isArray(details)) return null;
   const review = (details as { duplicateReview?: unknown }).duplicateReview;
@@ -5137,7 +5163,7 @@ export function unitCorrectionRefusal(
 ): 'PREVIEW_STALE' | 'BLOCKED' | 'BUSY' | 'UNVERIFIED' | 'CONFIRM_CODE' | null {
   if (!(caught instanceof ApiRequestError)) return null;
   const details = caught.payload.details as { reason?: unknown; confirmCode?: unknown } | undefined;
-  if (caught.payload.code === 'VALIDATION_FAILED' && details && 'confirmCode' in details) return 'CONFIRM_CODE';
+  if (caught.kind === 'VALIDATION_FAILED' && details && 'confirmCode' in details) return 'CONFIRM_CODE';
   const reason = details?.reason;
   return reason === 'PREVIEW_STALE' || reason === 'BLOCKED' || reason === 'BUSY' || reason === 'UNVERIFIED'
     ? reason

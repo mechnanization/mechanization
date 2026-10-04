@@ -231,17 +231,32 @@ export class CorrectionBillsService {
     const bill = (await this.openBills(paymentId))[0];
     if (!bill) {
       const exists = await this.db.citizenPayment.count({ where: { id: paymentId } });
-      if (!exists) throw new NotFoundError('الفاتورة', paymentId);
-      throw new ConflictError('هذه الفاتورة لم تعد مستحقة — سُدِّدت أو لا تُحتسب من السجل.', { code: 'NOT_OPEN' });
+      if (!exists) throw new NotFoundError({
+        code: 'INVOICE_NOT_FOUND',
+        message: `Invoice ${paymentId} was not found`,
+      });
+      throw new ConflictError({
+        code: 'INVOICE_NOT_OPEN',
+        message: 'This invoice is no longer due: it was paid, or the register no longer charges it.',
+        details: { code: 'NOT_OPEN' },
+      });
     }
     const figure = (await this.figuresFor([bill])).figures.get(bill.id);
     if (!figure) {
-      throw new ConflictError('هذه الفاتورة لا تُحتسب من السجل.', { code: 'NOT_OPEN' });
+      throw new ConflictError({
+        code: 'INVOICE_NOT_CHARGED',
+        message: 'The register does not charge this invoice.',
+        details: { code: 'NOT_OPEN' },
+      });
     }
     if (figureKey(figure) !== input.figure) {
-      throw new ConflictError('تغيّر المبلغ المحتسب منذ فتحت القائمة — حدِّثها وراجع الرقم الجديد.', {
-        code: 'FIGURE_CHANGED',
-        figure: figureKey(figure),
+      throw new ConflictError({
+        code: 'INVOICE_FIGURE_CHANGED',
+        message: 'The charged amount changed since you opened the list. Refresh it and check the new figure.',
+        details: {
+          code: 'FIGURE_CHANGED',
+          figure: figureKey(figure),
+        },
       });
     }
 

@@ -442,7 +442,7 @@ describe('PropertyEntry — coordinates', () => {
     // that every real marker collapses into a dot.
     expect(() =>
       PropertyEntry.create(building({ latitude: 48.85, longitude: 2.35 })),
-    ).toThrow(/خارج حدود لبنان/);
+    ).toThrow(expect.objectContaining({ code: 'LOCATION_OUTSIDE_LEBANON' }));
   });
 
   it('accepts a pin inside Lebanon', () => {

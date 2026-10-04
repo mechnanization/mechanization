@@ -12,6 +12,8 @@ import { BuildingsService } from '../buildings/buildings.service';
 import { CensusSyncService } from '../buildings/census-sync.service';
 import { adminCreateCitizenSubmissionSchema } from '@mechanization/shared-schemas';
 import { ConflictError } from '../../common/exceptions';
+import { AuditService } from '../audit/audit.service';
+import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { CitizenMergeService } from './citizen-merge.service';
 import { CitizensService } from './citizens.service';
 
@@ -65,7 +67,11 @@ describeIfDb('CitizenMergeService', () => {
     );
     buildings = new BuildingsService(context, cases, events);
     census = new CensusSyncService(context, cases, events);
-    merges = new CitizenMergeService(context, events);
+    merges = new CitizenMergeService(
+      context,
+      events,
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+    );
     users = new PrismaUserRepository(context);
 
     adminId = await staff('مدير', 'SUPER_ADMIN');
@@ -412,7 +418,7 @@ describeIfDb('CitizenMergeService', () => {
           actor: actor(),
         }),
       ),
-    ).rejects.toThrow(/تغيّر أحد الملفين/);
+    ).rejects.toMatchObject({ code: 'MERGE_PREVIEW_STALE' });
     expect((await db.user.findUniqueOrThrow({ where: { id: f.absorbId } })).isActive).toBe(true);
     expect(await db.citizenMerge.count({ where: { absorbedId: f.absorbId } })).toBe(0);
   });
@@ -527,6 +533,7 @@ describeIfDb('CitizenMergeService', () => {
       census,
       {} as never,
       new EventEmitter2(),
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
     const refusal = (work: () => Promise<unknown>) => within(work).then(() => null, (caught: unknown) => caught);
 
@@ -585,6 +592,7 @@ describeIfDb('CitizenMergeService', () => {
         census,
         {} as never,
         new EventEmitter2(),
+        new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
       );
 
     it('refuses an officer outright — from the form and from the offline queue alike — and writes nothing', async () => {
@@ -608,7 +616,7 @@ describeIfDb('CitizenMergeService', () => {
         ).catch((caught: unknown) => caught);
         expect(refusal).toBeInstanceOf(ConflictError);
         expect((refusal as ConflictError).details).toMatchObject({ code: 'DUPLICATE_BLOCKED' });
-        expect((refusal as Error).message).toContain('هذا الشخص مسجَّل مسبقاً');
+        expect(refusal).toMatchObject({ code: 'CITIZEN_DUPLICATE_BLOCKED' });
       }
       expect(submit).not.toHaveBeenCalled();
     });

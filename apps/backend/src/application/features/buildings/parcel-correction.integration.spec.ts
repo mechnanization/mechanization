@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
+import { AuditService } from '../audit/audit.service';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
@@ -59,7 +61,7 @@ describeIfDb('ParcelCorrectionService', () => {
     );
     buildings = new BuildingsService(context, cases, events);
     census = new CensusSyncService(context, cases, events);
-    correction = new ParcelCorrectionService(context, buildings, events);
+    correction = new ParcelCorrectionService(context, buildings, events, new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never));
 
     officerId = randomUUID();
     await db.user.create({
@@ -282,7 +284,7 @@ describeIfDb('ParcelCorrectionService', () => {
     expect(preview.neighbours.map((row) => row.id)).toEqual([there.id]);
     expect(preview.next.codeSuffix).toBe('B');
 
-    await expect(correct(wrong.id, 'PC-D4')).rejects.toThrow(/تأكَّد أن هذا المبنى ليس أحدها/);
+    await expect(correct(wrong.id, 'PC-D4')).rejects.toMatchObject({ code: 'PARCEL_HAS_OTHER_BUILDINGS' });
     expect((await db.building.findUniqueOrThrow({ where: { id: wrong.id } })).parcelNumber).toBe('PC-A4');
 
     const result = await correct(wrong.id, 'PC-D4', { acknowledgedDuplicates: true });
@@ -322,7 +324,7 @@ describeIfDb('ParcelCorrectionService', () => {
     const unknown = await within(() => correction.preview(wrong.id, 'NOT-IN-CADASTRE'));
     expect(unknown.cadastre).toMatchObject({ known: false, pinInside: null });
 
-    await expect(correct(wrong.id, 'PC-A7')).rejects.toThrow(/رقم عقار المبنى الحالي/);
+    await expect(correct(wrong.id, 'PC-A7')).rejects.toMatchObject({ code: 'PARCEL_NUMBER_UNCHANGED' });
     await expect(
       correct(wrong.id, 'PC-F', { expectedUpdatedAt: new Date(Date.now() - 86_400_000).toISOString() }),
     ).rejects.toThrow(/بعد أن فتحتَه/);

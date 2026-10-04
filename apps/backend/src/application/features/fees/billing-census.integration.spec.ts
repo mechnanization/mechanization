@@ -96,6 +96,8 @@ describeIfDb('billing over the census', () => {
         invalidatePrefix: jest.fn().mockResolvedValue(undefined),
       } as unknown as RedisCacheService,
       {} as PaymentLedgerService,
+      // AuditService: these tests never reach a payment.
+      {} as never,
     );
 
     clerkId = randomUUID();

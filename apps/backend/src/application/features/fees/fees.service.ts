@@ -38,6 +38,7 @@ import { assertNotMergedAway } from '../citizens/merged-away';
 import { searchTokens } from '../../common/search-terms';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { PaymentLedgerService, type Tender } from './payment-ledger.service';
+import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 
 /** Property categories that live on `PropertyEntry.propertyType`. */
 const PROPERTY_TYPE_CATEGORIES = new Set(['BUILDING', 'HOUSE', 'LAND', 'TENT']);
@@ -614,6 +615,7 @@ export class FeesService {
     @Inject(WHISH_GATEWAY) private readonly whish: WhishGateway,
     private readonly cache: RedisCacheService,
     private readonly ledger: PaymentLedgerService,
+    private readonly auditTrail: AuditService,
   ) {}
 
   private get db() {
@@ -842,14 +844,18 @@ export class FeesService {
     const citizenIds = await this.resolveTargets(input);
 
     if (citizenIds.length === 0) {
-      throw new ConflictError(
-        'لا يوجد مواطنون مطابقون لهذه الفئة — لن يتم إصدار أي إشعار',
-      );
+      throw new ConflictError({
+        code: 'FEE_NO_MATCHING_CITIZENS',
+        message: 'No citizens match this category, so no notice will be issued.',
+      });
     }
 
     const dueDate = new Date(input.dueDate);
     if (Number.isNaN(dueDate.getTime())) {
-      throw new ConflictError('تاريخ الاستحقاق غير صالح');
+      throw new ConflictError({
+        code: 'FEE_DUE_DATE_INVALID',
+        message: 'The due date is not valid.',
+      });
     }
 
     const { assessed, unassessable } = await this.assessTargets(citizenIds, input);
@@ -1237,7 +1243,10 @@ export class FeesService {
   /** Stops or resumes a recurring notice without touching its past invoices. */
   async setNoticeActive(id: string, isActive: boolean) {
     const notice = await this.db.feeNotice.findUnique({ where: { id }, select: { id: true } });
-    if (!notice) throw new NotFoundError('FeeNotice', id);
+    if (!notice) throw new NotFoundError({
+      code: 'FEE_NOTICE_NOT_FOUND',
+      message: `FeeNotice ${id} was not found`,
+    });
 
     await this.db.feeNotice.update({ where: { id }, data: { isActive } });
     return { isActive };
@@ -1271,7 +1280,10 @@ export class FeesService {
         where: { id: input.targetCitizenId, kind: 'CITIZEN', isActive: true },
         select: { id: true },
       });
-      if (!citizen) throw new NotFoundError('Citizen', input.targetCitizenId ?? '');
+      if (!citizen) throw new NotFoundError({
+        code: 'CITIZEN_NOT_FOUND',
+        message: `Citizen ${input.targetCitizenId ?? ''} was not found`,
+      });
       return [citizen.id];
     }
 
@@ -1793,18 +1805,32 @@ export class FeesService {
     // Prisma keeps those out of the plain update-many input — `updateMany` has
     // no `connect`, so the foreign key has to be assignable directly.
     data?: Prisma.CitizenPaymentUncheckedUpdateManyInput;
-    conflictMessage: string;
+    /**
+     * The audit row for this change — Tier 1 (docs/security.md). Written in the
+     * same transaction as the status, so a declaration or a refusal is never
+     * on the invoice without its row, nor the row without the change.
+     */
+    audit: AuditEntryInput;
   }): Promise<void> {
-    const { count } = await this.db.citizenPayment.updateMany({
-      where: {
-        id: input.paymentId,
-        paymentStatus: Array.isArray(input.from) ? { in: input.from } : input.from,
-        ...input.guard,
-      },
-      data: { ...input.data, paymentStatus: input.to },
-    });
+    await this.db.$transaction(async (tx) => {
+      const { count } = await tx.citizenPayment.updateMany({
+        where: {
+          id: input.paymentId,
+          paymentStatus: Array.isArray(input.from) ? { in: input.from } : input.from,
+          ...input.guard,
+        },
+        data: { ...input.data, paymentStatus: input.to },
+      });
 
-    if (count === 0) throw new ConflictError(input.conflictMessage);
+      if (count === 0) {
+        throw new ConflictError({
+          code: 'PAYMENT_STATE_CHANGED',
+          message: `Payment ${input.paymentId} is no longer in the state this change expected`,
+        });
+      }
+
+      await this.auditTrail.recordInTransaction(input.audit, tx);
+    });
   }
 
   async declare(input: {
@@ -1817,16 +1843,25 @@ export class FeesService {
       where: { id: input.paymentId, citizenId: input.citizenId },
       select: { id: true, paymentStatus: true },
     });
-    if (!payment) throw new NotFoundError('Payment', input.paymentId);
+    if (!payment) throw new NotFoundError({
+      code: 'PAYMENT_NOT_FOUND',
+      message: `Payment ${input.paymentId} was not found`,
+    });
 
     // Kept ahead of the write: this is what separates "not yours / no such
     // invoice" from the two specific states a citizen can act on. The
     // predicate below only fires on the genuine race.
     if (payment.paymentStatus === 'PAID') {
-      throw new ConflictError('هذه الدفعة مسدّدة بالفعل');
+      throw new ConflictError({
+        code: 'PAYMENT_ALREADY_PAID',
+        message: 'This payment has already been settled.',
+      });
     }
     if (payment.paymentStatus === 'PENDING_REVIEW') {
-      throw new ConflictError('هذه الدفعة قيد المراجعة بالفعل');
+      throw new ConflictError({
+        code: 'PAYMENT_ALREADY_UNDER_REVIEW',
+        message: 'This payment is already under review.',
+      });
     }
 
     await this.transition({
@@ -1844,9 +1879,17 @@ export class FeesService {
         // fresh claim as though it applied to it.
         reviewNote: null,
       },
-      conflictMessage: 'تغيّرت حالة هذه الدفعة. يرجى تحديث الصفحة',
+      audit: {
+        actorId: input.citizenId,
+        actorType: 'CITIZEN',
+        action: 'PAYMENT_DECLARED',
+        entityType: 'Payment',
+        entityId: payment.id,
+        after: { method: input.method },
+      },
     });
 
+    // For the caches that list this invoice; the audit row is already written.
     this.events.emit('payment.declared', {
       tenantSlug: this.tenantContext.tenantSlug,
       paymentId: payment.id,
@@ -1898,7 +1941,10 @@ export class FeesService {
       where: { id: paymentId },
       select: { id: true, paymentStatus: true },
     });
-    if (!payment) throw new NotFoundError('Payment', paymentId);
+    if (!payment) throw new NotFoundError({
+      code: 'PAYMENT_NOT_FOUND',
+      message: `Payment ${paymentId} was not found`,
+    });
 
     const updated = await withConnectionRetry(() =>
       this.db.citizenPayment.update({
@@ -1949,10 +1995,16 @@ export class FeesService {
         whishTransactionRef: true,
       },
     });
-    if (!payment) throw new NotFoundError('Payment', input.paymentId);
+    if (!payment) throw new NotFoundError({
+      code: 'PAYMENT_NOT_FOUND',
+      message: `Payment ${input.paymentId} was not found`,
+    });
 
     if (payment.paymentStatus !== 'PENDING_REVIEW') {
-      throw new ConflictError('لا توجد دفعة معلّقة للمراجعة على هذا السجل');
+      throw new ConflictError({
+        code: 'PAYMENT_NO_PENDING_REVIEW',
+        message: 'There is no pending payment to review on this record.',
+      });
     }
 
     if (!input.confirmed) {
@@ -1981,7 +2033,15 @@ export class FeesService {
           reviewedById: input.actor.id,
           reviewNote: input.note ?? null,
         },
-        conflictMessage: 'تغيّرت حالة هذه الدفعة منذ فتح الشاشة. يرجى تحديثها',
+        audit: {
+          actorId: input.actor.id,
+          actorType: 'STAFF',
+          actorRole: input.actor.role as never,
+          action: 'PAYMENT_REJECTED',
+          entityType: 'Payment',
+          entityId: payment.id,
+          after: { citizenId: payment.citizenId, confirmed: false },
+        },
       });
 
       this.events.emit('payment.reviewed', {
@@ -2005,7 +2065,10 @@ export class FeesService {
      */
     const outstanding = Number(payment.amount) - Number(payment.paidAmount);
     if (outstanding <= 0) {
-      throw new ConflictError('لا يوجد رصيد مستحق على هذه المطالبة');
+      throw new ConflictError({
+        code: 'PAYMENT_NOTHING_OUTSTANDING',
+        message: 'Nothing is outstanding on this charge.',
+      });
     }
 
     const settled = await this.ledger.record({
@@ -2015,6 +2078,15 @@ export class FeesService {
       externalRef: payment.whishTransactionRef,
       recordedById: input.actor.id,
       note: input.note,
+      audit: (movement) => ({
+        actorId: input.actor.id,
+        actorType: 'STAFF',
+        actorRole: input.actor.role as never,
+        action: 'PAYMENT_CONFIRMED',
+        entityType: 'Payment',
+        entityId: payment.id,
+        after: { citizenId: payment.citizenId, confirmed: true, receiptNumber: movement.receiptNumber },
+      }),
     });
 
     await this.db.citizenPayment.update({
@@ -2052,7 +2124,10 @@ export class FeesService {
       where: { id: input.citizenId, kind: 'CITIZEN' },
       select: { id: true },
     });
-    if (!citizen) throw new NotFoundError('Citizen', input.citizenId);
+    if (!citizen) throw new NotFoundError({
+      code: 'CITIZEN_NOT_FOUND',
+      message: `Citizen ${input.citizenId} was not found`,
+    });
     // A bill on a file folded into another is one the person never sees.
     await assertNotMergedAway(this.db, citizen.id);
 
@@ -2147,7 +2222,10 @@ export class FeesService {
         include: this.ADMIN_PAYMENT_INCLUDE,
       }),
     );
-    if (!row) throw new NotFoundError('Payment', id);
+    if (!row) throw new NotFoundError({
+      code: 'PAYMENT_NOT_FOUND',
+      message: `Payment ${id} was not found`,
+    });
     return this.toAdminPaymentItem(row, new Date());
   }
 
@@ -2503,18 +2581,30 @@ export class FeesService {
     if (!payment || payment.citizenId !== input.citizenId) {
       // Same error for "no such invoice" and "not yours", so the endpoint
       // cannot be used to discover which payment ids exist.
-      throw new NotFoundError('Payment', input.paymentId);
+      throw new NotFoundError({
+        code: 'PAYMENT_NOT_FOUND',
+        message: `Payment ${input.paymentId} was not found`,
+      });
     }
     if (payment.paymentStatus === 'PAID') {
-      throw new ConflictError('هذه المطالبة مسدّدة بالفعل');
+      throw new ConflictError({
+        code: 'CHARGE_ALREADY_PAID',
+        message: 'This charge has already been paid.',
+      });
     }
     if (payment.paymentStatus === 'PENDING_REVIEW') {
-      throw new ConflictError('هناك دفعة قيد التأكيد على هذه المطالبة');
+      throw new ConflictError({
+        code: 'CHARGE_PAYMENT_PENDING',
+        message: 'A payment on this charge is awaiting confirmation.',
+      });
     }
 
     const outstanding = Number(payment.amount) - Number(payment.paidAmount);
     if (outstanding <= 0) {
-      throw new ConflictError('لا يوجد رصيد مستحق على هذه المطالبة');
+      throw new ConflictError({
+        code: 'PAYMENT_NOTHING_OUTSTANDING',
+        message: 'Nothing is outstanding on this charge.',
+      });
     }
 
     const checkout = await this.whish.createCheckout({
@@ -2575,7 +2665,10 @@ export class FeesService {
       });
 
       if (count === 0) {
-        throw new ConflictError('تغيّرت حالة هذه المطالبة أثناء تجهيز الدفع. يرجى تحديث الصفحة');
+        throw new ConflictError({
+          code: 'CHARGE_CHANGED_DURING_CHECKOUT',
+          message: 'This charge changed while the payment was being prepared. Refresh the page.',
+        });
       }
 
       await tx.whishCheckout.create({
@@ -2744,6 +2837,28 @@ export class FeesService {
       method: 'WHISH_MONEY',
       externalRef: callback.transactionRef,
       note: 'دفع إلكتروني عبر Whish',
+      /*
+        A system row: no staff member acted. `actorId` is a uuid column and
+        `actorRole` the staff-role enum, so the provider is named in `after`.
+        Before this, the row was written with `actorId: 'WHISH'`, which the
+        database refused — and the refusal was caught and logged, so no Whish
+        settlement had ever been audited.
+      */
+      audit: (movement) => ({
+        actorId: null,
+        actorType: 'SYSTEM',
+        action: 'PAYMENT_CONFIRMED',
+        entityType: 'Payment',
+        entityId: payment.id,
+        after: {
+          citizenId: payment.citizenId,
+          confirmed: true,
+          provider: 'WHISH',
+          receiptNumber: movement.receiptNumber,
+          amount: movement.received,
+          externalRef: callback.transactionRef ?? null,
+        },
+      }),
     });
 
     /*
@@ -2836,7 +2951,10 @@ export class FeesService {
       where: { id: input.paymentId },
       select: { amount: true, paidAmount: true, citizenId: true, currency: true },
     });
-    if (!invoice) throw new NotFoundError('Payment', input.paymentId);
+    if (!invoice) throw new NotFoundError({
+      code: 'PAYMENT_NOT_FOUND',
+      message: `Payment ${input.paymentId} was not found`,
+    });
 
     /*
       «20$ و200,000 ليرة» — the credit is what the notes are worth in the
@@ -2884,28 +3002,27 @@ export class FeesService {
       occurredAt: occurredAtFor(input.paidOn),
       adjustmentReason: adjustment.required ? (input.adjustmentReason ?? null) : null,
       clientRequestId: input.clientRequestId ?? null,
-    });
-
-    // A retry answered from the first row was audited the first time.
-    if (!settled.replayed) {
-      this.events.emit('payment.reviewed', {
-        tenantSlug: this.tenantContext.tenantSlug,
-        paymentId: input.paymentId,
-        citizenId: invoice.citizenId,
-        confirmed: true,
+      /*
+        What a Court of Audit reviewer asks of a cash entry: how much, on which
+        receipt, on what day, in which notes, at what rate against the official
+        one, and — when either departs from the ordinary — why. Written in the
+        ledger's transaction; a retry answered from the first row writes none.
+      */
+      audit: (movement) => ({
         actorId: input.actor.id,
-        actorRole: input.actor.role,
-        /*
-          What a Court of Audit reviewer asks of a cash entry: how much, on
-          which receipt, on what day, in which notes, at what rate against the
-          official one, and — when either departs from the ordinary — why.
-        */
-        movement: {
-          receiptNumber: settled.receiptNumber,
+        actorType: 'STAFF',
+        actorRole: input.actor.role as never,
+        action: 'PAYMENT_CONFIRMED',
+        entityType: 'Payment',
+        entityId: input.paymentId,
+        after: {
+          citizenId: invoice.citizenId,
+          confirmed: true,
+          receiptNumber: movement.receiptNumber,
           method: input.method,
-          amount: settled.received,
+          amount: movement.received,
           currency: invoice.currency,
-          occurredAt: settled.occurredAt,
+          occurredAt: movement.occurredAt,
           ...(input.paidOn ? { paidOn: input.paidOn, backdatedDays: adjustment.backdatedDays } : {}),
           ...(tender
             ? {
@@ -2915,11 +3032,23 @@ export class FeesService {
                 exchangeRate: tender.exchangeRate,
                 officialExchangeRate: tender.officialExchangeRate,
                 rateOverridden: adjustment.rateOverridden,
-                changeGiven: settled.changeGiven,
+                changeGiven: movement.changeGiven,
               }
             : {}),
           ...(adjustment.required ? { adjustmentReason: input.adjustmentReason } : {}),
         },
+      }),
+    });
+
+    // For the caches that show this invoice. A replayed retry changed nothing.
+    if (!settled.replayed) {
+      this.events.emit('payment.reviewed', {
+        tenantSlug: this.tenantContext.tenantSlug,
+        paymentId: input.paymentId,
+        citizenId: invoice.citizenId,
+        confirmed: true,
+        actorId: input.actor.id,
+        actorRole: input.actor.role,
       });
     }
 
@@ -2959,6 +3088,24 @@ export class FeesService {
       transactionId: input.transactionId,
       recordedById: input.actor.id,
       note: input.note,
+      /*
+        Tier 1, and new: `payment.reversed` had no listener, so a reversal —
+        money taken back out of the register's totals — left no audit row at all.
+      */
+      audit: (movement) => ({
+        actorId: input.actor.id,
+        actorType: 'STAFF',
+        actorRole: input.actor.role as never,
+        action: 'PAYMENT_REVERSED',
+        entityType: 'PaymentTransaction',
+        entityId: input.transactionId,
+        after: {
+          reversalTransactionId: movement.transactionId,
+          receiptNumber: movement.receiptNumber,
+          amount: movement.received,
+          ...(input.note ? { note: input.note } : {}),
+        },
+      }),
     });
 
     this.events.emit('payment.reversed', {
@@ -3047,14 +3194,23 @@ export function toTender(
 ): Tender {
   const foreign = input.foreign > 0 ? input.foreign : null;
   if (foreign !== null && input.foreignCurrency === invoiceCurrency) {
-    throw new ValidationError(`الفاتورة بعملة ${invoiceCurrency} — أدخل المبلغ في خانة العملة نفسها`, {
-      foreignCurrency: input.foreignCurrency,
+    throw new ValidationError({
+      code: 'PAYMENT_CURRENCY_MISMATCH',
+      message: `This invoice is in ${invoiceCurrency}. Enter the amount in the field for that currency.`,
+      params: { currency: invoiceCurrency },
+      details: {
+        foreignCurrency: input.foreignCurrency,
+      },
     });
   }
   const rate = foreign !== null ? roundRate(input.exchangeRate ?? officialRate ?? 0) : null;
   if (foreign !== null && !rate) {
-    throw new ValidationError('لا يوجد سعر صرف معتمد في الإعدادات — أدخل سعراً لهذه الدفعة', {
-      exchangeRate: '',
+    throw new ValidationError({
+      code: 'EXCHANGE_RATE_MISSING',
+      message: 'No official exchange rate is set. Enter a rate for this payment.',
+      details: {
+        exchangeRate: '',
+      },
     });
   }
   return {
@@ -3094,23 +3250,37 @@ export function assertCashAdjustment(input: {
   const finance = canOverrideCashRules(input.role);
 
   if (rateOverridden && !finance) {
-    throw new ForbiddenError(
-      tender?.officialExchangeRate
-        ? `سعر الصرف المعتمد هو ${tender.officialExchangeRate.toLocaleString('en-US')} — تعديله لدفعة واحدة يعود للمحاسب أو مدير النظام`
-        : 'لا يوجد سعر صرف معتمد في الإعدادات — اطلب من المحاسب أو مدير النظام تحديده',
-    );
+    throw tender?.officialExchangeRate
+      ? new ForbiddenError({
+          code: 'EXCHANGE_RATE_OVERRIDE_FORBIDDEN',
+          message: `The official exchange rate is ${tender.officialExchangeRate}. Only an accountant or a system administrator can change it for one payment.`,
+          params: { rate: tender.officialExchangeRate },
+        })
+      : new ForbiddenError({
+          code: 'EXCHANGE_RATE_NOT_SET',
+          message: 'No official exchange rate is set. Ask an accountant or a system administrator to set one.',
+        });
   }
   if (backdatedDays > BACKDATE_WINDOW_DAYS && !finance) {
-    throw new ForbiddenError(
-      `لا يمكن تسجيل دفعة بتاريخ يسبق اليوم بأكثر من ${BACKDATE_WINDOW_DAYS} يوماً — هذا تصحيح يعود للمحاسب أو مدير النظام`,
-    );
+    throw new ForbiddenError({
+      code: 'PAYMENT_BACKDATE_FORBIDDEN',
+      message: `A payment cannot be dated more than ${BACKDATE_WINDOW_DAYS} days before today. That correction is for an accountant or a system administrator.`,
+      params: { days: BACKDATE_WINDOW_DAYS },
+    });
   }
   const required = rateOverridden || backdatedDays > 0;
   if (required && !input.reason?.trim()) {
-    throw new ValidationError(
-      rateOverridden ? 'اكتب سبب اعتماد سعر صرف غير السعر المعتمد' : 'اكتب سبب تسجيل الدفعة بتاريخ سابق',
-      { adjustmentReason: '' },
-    );
+    throw rateOverridden
+      ? new ValidationError({
+          code: 'PAYMENT_RATE_REASON_REQUIRED',
+          message: 'Give the reason for using a rate other than the official one.',
+          details: { adjustmentReason: '' },
+        })
+      : new ValidationError({
+          code: 'PAYMENT_BACKDATE_REASON_REQUIRED',
+          message: 'Give the reason for recording the payment with an earlier date.',
+          details: { adjustmentReason: '' },
+        });
   }
   return { required, rateOverridden, backdatedDays };
 }

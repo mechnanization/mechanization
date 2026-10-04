@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -85,22 +85,32 @@ Data access for new code (decided):
 
 ## Error codes
 
-Rule: every domain error carries a stable code that names the case. The frontend maps codes to ar/en
-text; the server `message` is a fallback only. A code is API: never rename one, add a new one.
+Rule: a refusal is thrown with a specific code from `ERROR_CODES` in
+`packages/shared-schemas/src/error-codes.ts`, and the frontend owns the words.
 
-Today:
-- `DomainError` declares `abstract readonly code`, but per class only: `NOT_FOUND`, `CONFLICT`,
-  `VALIDATION_FAILED`, `UNAUTHORIZED`, `FORBIDDEN`, `TENANT_MISMATCH`, `TENANT_NOT_PROVISIONED`. The filter
-  returns `{ code, message, details?, correlationId }`; a Nest `HttpException` becomes `HTTP_ERROR`, anything
-  else a generic 500 `INTERNAL_ERROR` reported to Sentry.
-- Case codes exist ad hoc in error details, under two keys: `details.code` (`STALE`, `TENANTS_LINKED`,
-  `NOT_OPEN`, `MERGED_AWAY`, …) and `details.reason` (`UnitCorrectionService`: `PREVIEW_STALE`, `BUSY`, …).
-- Messages mix Arabic and English (`NotFoundError('Staff user', userId)` beside `NotFoundError('المبنى غير موجود')`);
-  the frontend shows `payload.message` from `ApiRequestError`.
+- Throw the coded form: `new ConflictError({ code: 'PAYMENT_EXCEEDS_BALANCE', message, params, details })`.
+  `code` is from `ERROR_CODES`; `message` is English, for logs only, and MUST NOT carry a name, a phone
+  number or a رقم مرجعي (those go in `params` if the screen needs them); `params` are the values the
+  message fills in, raw (numbers stay numbers, the frontend formats them); `details` is data the client
+  acts on.
+- A new code needs `errors.<CODE>` in `apps/frontend/messages/ar.json` and `en.json`, with the same
+  placeholders: `apps/frontend/lib/api-errors.test.ts` fails otherwise. A code is API: never rename or reuse
+  one ([packages/shared-schemas/CLAUDE.md](../../packages/shared-schemas/CLAUDE.md)).
+- The filter sends `{ code, kind, message, params?, details?, correlationId }`. `kind` is the class
+  (`NOT_FOUND`, `CONFLICT`, `VALIDATION_FAILED`, `UNAUTHORIZED`, `FORBIDDEN`, `TENANT_MISMATCH`,
+  `TENANT_NOT_PROVISIONED`) and decides the status; a Nest `HttpException` is `HTTP_ERROR`, anything else a
+  generic 500 `INTERNAL_ERROR` reported to Sentry.
+- MUST NOT add a prose throw (`new ConflictError('نص')`). The older form still compiles for the sites not
+  converted yet: it sends the kind as `code` and its message is shown as is.
+  `domain/errors/error-codes.ratchet.spec.ts` counts them and fails if the number grows; lower its
+  constant in the same change that converts one. Fix a prose throw when you touch its file.
+- Existing `details.code` / `details.reason` values (`STALE`, `TENANTS_LINKED`, `PREVIEW_STALE`, …) are
+  kept beside the top-level code because screens still read them; do not add new ones.
 
-New code: put the case code in `details.code`, upper snake case, with an Arabic message safe to show as
-the fallback. **Undecided:** the final shape (a top-level case code on `DomainError`, with the code list in
-`packages/shared-schemas`) and how the class codes migrate.
+Today: the fee, payment, ownership, tenancy, landlord-link, correction and citizen-file services are
+converted (156 sites). The block-driven refusals (`plan.block.message` in `LandlordLinkService`,
+`blockerMessage` in `UnitCorrectionService`, `blocks[0].message` in `CitizenMergeService`) are not: their
+text is also rendered in the preview endpoints, which need localising first.
 
 ## Transactions
 
@@ -111,27 +121,40 @@ the fallback. **Undecided:** the final shape (a top-level case code on `DomainEr
   transaction client with no `$transaction`, and a bare call never swaps the scope, so services and audit
   listeners called inside it write outside the transaction. Existing calls are tracked debt
   ([docs/code-quality.md](../../docs/code-quality.md#backend)).
-- Side effects (audit rows, cache invalidation) MUST run after commit: emit after the transaction
+- Side effects (cache invalidation, Tier 2 audit rows) MUST run after commit: emit after the transaction
   returns, or push onto `scope.transaction.afterCommit`. A write through the closed client fails with
-  "Transaction already closed" and the row is lost.
+  "Transaction already closed" and the row is lost. A Tier 1 audit row is the exception: it is written,
+  awaited, inside the transaction ([Events and audit](#events-and-audit)).
 - Row locks use `FOR UPDATE` with `SET LOCAL lock_timeout`; parallel creators serialise on
   `pg_advisory_xact_lock(hashtext(key))`. Database-level rules (lock keys, constraints, `P2002`):
   [docs/database.md](../../docs/database.md#transactions-and-constraints).
 
 ## Events and audit
 
-Every state change MUST leave an `audit_log_entries` row, in one of two ways:
-1. Emit `<entity>.changed` on `EventEmitter2` after the transaction, with `{ tenantSlug, action,
-   <entity>Id, actorId, actorRole, before?, after? }`, and give `AuditService`
-   (`application/features/audit/audit.service.ts`) an `@OnEvent` for it. `record` queues on `afterCommit`
-   inside a transaction; a failed write is logged (`AUDIT WRITE FAILED`), never thrown.
-2. For corrections and destructive actions, write through `AUDIT_REPOSITORY` inside the transaction,
-   then emit with `alreadyAudited: true` so `AuditService` skips it. Model: `UnitCorrectionService.apply`.
+Every state change MUST leave an `audit_log_entries` row, in one of two tiers
+([docs/security.md](../../docs/security.md#data-integrity-and-transactions)):
+
+1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
+   settlements), payment reversals, corrections, ownership changes (ending an ownership, making, updating
+   or ending an owner link, a merge or its undo) and citizen status changes (activate, deactivate, delete).
+   The row is written in the same transaction as the change; if it fails, the change rolls back.
+   - In `runInTenantTransaction`: `AuditService.recordInTransaction(entry)`, or
+     `recordChangeInTransaction({ channel, payload })` for a change that is also a `citizen.changed` /
+     `building.changed` event. Emit that event after the commit with `alreadyAudited: true`.
+   - A write that owns its transaction passes its client: `recordInTransaction(entry, tx)`. The payment
+     ledger does this, and `PaymentLedgerService.record` / `reverse` take a **required** `audit` callback,
+     so no code path can move money without a row.
+   - `recordInTransaction` throws when called outside a transaction.
+   - Models: `PaymentLedgerService.record`, `OwnershipService.end`, `LandlordLinkService.recordAnnouncement`.
+2. **Tier 2, after the commit.** Everything else (a phone number, a preference, a building edit): emit
+   `<entity>.changed` with `{ tenantSlug, action, <entity>Id, actorId, actorRole, before?, after? }` and give
+   `AuditService` an `@OnEvent` for it. `record` queues on `afterCommit` inside a transaction; a failed
+   write is logged (`AUDIT WRITE FAILED`) and the change stands.
 
 Event names are string literals. Emission is synchronous with no wildcards, because listeners rely on the
-request's tenant scope. A misspelt or unheard name is dropped silently: `payment.reversed`
-(`FeesService.reverseTransaction`) has no listener today. Add each new action's label to
-`apps/frontend/lib/audit-labels.ts`. **Undecided:** which actions must audit inside the transaction.
+request's tenant scope. A misspelt or unheard name is dropped silently. Add each new action's label to
+`apps/frontend/lib/audit-labels.ts`. **Undecided:** whether the «يتطلب مراجعة» review decisions
+(`RecordReviewService`) and ending a tenancy (`TenancyService.end`) are Tier 1; both are Tier 2 today.
 
 ## Recipe: add an endpoint
 

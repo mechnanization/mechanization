@@ -83,8 +83,13 @@ describeIfDb('TenancyService', () => {
     );
     buildings = new BuildingsService(context, cases, events);
     census = new CensusSyncService(context, cases, events);
-    links = new LandlordLinkService(context, buildings, events);
-    const ownership = new OwnershipService(context, buildings, cases, links, events);
+    links = new LandlordLinkService(
+      context,
+      buildings,
+      events,
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+    );
+    const ownership = new OwnershipService(context, buildings, cases, links, events, audit);
     tenancy = new TenancyService(context, buildings, cases, links, events, ownership);
     citizens = new CitizensService(
       context,
@@ -94,6 +99,7 @@ describeIfDb('TenancyService', () => {
       census,
       links,
       events,
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
     fees = new FeesService(
       context,
@@ -104,6 +110,8 @@ describeIfDb('TenancyService', () => {
         set: jest.fn().mockResolvedValue(undefined),
         invalidatePrefix: jest.fn().mockResolvedValue(undefined),
       } as never,
+      {} as never,
+      // AuditService: these tests never reach a payment.
       {} as never,
     );
 

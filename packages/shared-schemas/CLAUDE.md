@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,
@@ -8,12 +8,12 @@ used on both sides of the wire. Repo-wide rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## What it exports
 
-`src/index.ts` re-exports 25 modules. Everything is imported from the package
+`src/index.ts` re-exports 26 modules. Everything is imported from the package
 root (`from '@mechanization/shared-schemas'`); there are no deep imports.
 
 | Kind | Modules |
 |---|---|
-| Vocabulary | `enums` (the `as const` value lists, their zod schemas and types), `labels` (`ar`, `en`, `getLabels`), `primitives` (`lebanesePhone`, `internationalPhone`, `arabicOrLatinName`, `documentNumber`, `civilRecordNumber`, `tenantSlug`, `uuid`, `normalizeDigits`) |
+| Vocabulary | `enums` (the `as const` value lists, their zod schemas and types), `error-codes` (`ERROR_KINDS`, `ERROR_CODES`, `ErrorCode`, `ErrorParams`, `ApiErrorBody`, `isSpecificErrorCode`), `labels` (`ar`, `en`, `getLabels`), `primitives` (`lebanesePhone`, `internationalPhone`, `arabicOrLatinName`, `documentNumber`, `civilRecordNumber`, `tenantSlug`, `uuid`, `normalizeDigits`) |
 | Contracts (`*.schema.ts`) | `citizen`, `field-flag`, `property`, `registration`, `admin-citizen`, `citizen-import`, `fee`, `auth`, `tenant`, `zone`, `building`, `unit-correction`, `staff`, `case`, `quality`, `citizen-merge` |
 | Pure rules | `numbering`, `unit-layout`, `cash-policy`, `payout-policy`, `inspector-earnings`, `unit-status-rule` |
 
@@ -99,6 +99,20 @@ What checks the copies:
 
 Never rename or remove a stored value: that is destructive DDL. Change the
 label instead (see the `NON_RESIDENT_OWNER` comment in `enums.ts`).
+
+## Add an error code
+
+`src/error-codes.ts` is the one list of codes the API refuses with
+([apps/backend/CLAUDE.md](../../apps/backend/CLAUDE.md#error-codes)).
+
+1. Add the code to `ERROR_CODES`, in its group, upper snake case, naming the
+   case (`PAYMENT_EXCEEDS_BALANCE`), not the screen.
+2. Add `errors.<CODE>` to `apps/frontend/messages/ar.json` and `en.json`, as ICU
+   with the same placeholders in both. `apps/frontend/lib/api-errors.test.ts`
+   fails if either is missing or they differ.
+3. Rebuild this package, then throw it from the backend.
+
+A code is API: never rename it or give a retired one a new meaning.
 
 ## Add a label
 

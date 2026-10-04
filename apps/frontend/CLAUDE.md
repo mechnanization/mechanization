@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -102,20 +102,22 @@ component types; `components/admin/nav.ts` imports `QUALITY_REVIEWER_ROLES` from
 
 ## Errors (decision D-errors)
 
-- Rule (UI TXT-6): show text mapped from the case code, `payload.details.code` (or
-  `details.reason`), then the class code `payload.code`, in both locales. `payload.message`
-  is only the fallback for an unknown code. Offline is `status === 0`, never a string match.
-  `merge-citizens-dialog.tsx` (`STALE_PREVIEW`) and the `fees/corrections` page
-  (`FIGURE_CHANGED`, `NOT_OPEN`) already read `details.code`.
-- Today: `useStaffQuery` reads show the caller's `errorMessage`, not API text. About 90 catch blocks
-  in 51 files render `caught.message` or `caught.payload.message`, the server's Arabic text,
-  on `/en/` too. `ErrorState` detects
-  offline by searching its description for «تعذّر الاتصال». `duplicateBuildingsOf`,
-  `duplicateUnitsOf`, `staleEditOf`, `duplicateReviewOf` and `unitCorrectionRefusal`
-  already narrow codes; copy that shape.
-- **Undecided:** where the code-to-text map lives (one `lib` helper over a messages
-  namespace is what D-i18n implies; none exists). Codes are coarse today (`NOT_FOUND`,
-  `CONFLICT`, `VALIDATION_FAILED`, …): [apps/backend/CLAUDE.md](../backend/CLAUDE.md#error-codes).
+- Rule (UI TXT-6): the words for an API refusal live in `messages/{ar,en}.json` under `errors`,
+  keyed by the code from `ERROR_CODES` (`packages/shared-schemas`). `ApiRequestError` builds its
+  `message` through `localizeApiError` (`lib/api-errors.ts`) in the page's language, so a screen shows
+  `error.message` and nothing else. The server's own text is shown only for a refusal with no code yet,
+  a code this build does not know, or params that do not fit.
+- Branch on `error.kind` (`CONFLICT`, `VALIDATION_FAILED`, …) for the class and `error.code` for one
+  case, never on the message. Offline is `status === 0`, never a string match. The older
+  `details.code` / `details.reason` values (`STALE_PREVIEW`, `FIGURE_CHANGED`, `NOT_OPEN`, …) are still
+  sent, and `merge-citizens-dialog.tsx` and the `fees/corrections` page read them.
+- Adding a code: [apps/backend/CLAUDE.md](../backend/CLAUDE.md#error-codes). Its `errors.<CODE>` entry
+  is ICU (`{amount, number}`, plural, select); `lib/api-errors.test.ts` checks both files have it with
+  the same placeholders.
+- Today: refusals the API has not converted (see the backend guide) still show its Arabic text on
+  `/en/`. `ErrorState` detects offline by searching its description for «تعذّر الاتصال».
+  `duplicateBuildingsOf`, `duplicateUnitsOf`, `staleEditOf`, `duplicateReviewOf` and
+  `unitCorrectionRefusal` narrow on `kind` and details; copy that shape.
 
 ## Offline
 

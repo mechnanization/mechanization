@@ -384,7 +384,10 @@ export class FeesController {
   @Get('payments/mine')
   async mine(@CurrentUser() user: SessionClaims) {
     if (user.kind !== 'CITIZEN') {
-      throw new ForbiddenError('هذا المسار للمواطنين فقط');
+      throw new ForbiddenError({
+        code: 'CITIZENS_ONLY',
+        message: 'This is available to citizens only.',
+      });
     }
     return { items: await this.fees.listForCitizen(user.sub) };
   }
@@ -424,7 +427,10 @@ export class FeesController {
     @CurrentUser() user: SessionClaims,
   ) {
     if (user.kind !== 'CITIZEN') {
-      throw new ForbiddenError('هذا المسار للمواطنين فقط');
+      throw new ForbiddenError({
+        code: 'CITIZENS_ONLY',
+        message: 'This is available to citizens only.',
+      });
     }
 
     const apiBase = APP_CONFIG.publicApiUrl;
@@ -470,7 +476,10 @@ export class FeesController {
     @CurrentUser() user: SessionClaims,
   ) {
     if (user.kind !== 'CITIZEN') {
-      throw new ForbiddenError('هذا المسار للمواطنين فقط');
+      throw new ForbiddenError({
+        code: 'CITIZENS_ONLY',
+        message: 'This is available to citizens only.',
+      });
     }
     return this.fees.declare({
       paymentId: id,

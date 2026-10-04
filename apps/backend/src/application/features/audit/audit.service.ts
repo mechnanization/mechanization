@@ -7,11 +7,69 @@ import {
   AuditDailyQuery,
   AuditQuery,
   AuditRepository,
+  TransactionHandle,
 } from '../../../domain/interfaces/audit-repository.interface';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { NotFoundError } from '../../common/exceptions';
 import { toAuditViews, type AuditView } from './audit-view';
+
+/** What one audit row records; the entity fills in the timestamp. */
+export type AuditEntryInput = Parameters<typeof AuditLogEntry.create>[0];
+
+/** The `citizen.changed` event. */
+export interface CitizenChange {
+  citizenId: string;
+  action: string;
+  changed?: string[];
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  actorId?: string;
+  actorRole?: string;
+  /** The row is already in the trail, written inside the change's transaction (Tier 1). */
+  alreadyAudited?: boolean;
+}
+
+/** The `building.changed` event. */
+export interface BuildingChange {
+  action: string;
+  buildingId: string;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  actorId: string;
+  actorRole: string;
+  /** As on `CitizenChange`. */
+  alreadyAudited?: boolean;
+}
+
+function citizenEntry(payload: CitizenChange): AuditEntryInput {
+  return {
+    actorId: payload.actorId ?? payload.citizenId,
+    actorType: payload.actorRole ? 'STAFF' : 'CITIZEN',
+    actorRole: (payload.actorRole ?? null) as never,
+    action: payload.action,
+    entityType: 'User',
+    entityId: payload.citizenId,
+    before: payload.before,
+    after: {
+      ...(payload.after ?? {}),
+      ...(payload.changed ? { changed: payload.changed } : {}),
+    },
+  };
+}
+
+function buildingEntry(payload: BuildingChange): AuditEntryInput {
+  return {
+    actorId: payload.actorId,
+    actorType: 'STAFF',
+    actorRole: payload.actorRole as never,
+    action: payload.action,
+    entityType: 'Building',
+    entityId: payload.buildingId,
+    before: payload.before,
+    after: payload.after,
+  };
+}
 
 /** One staff member's day, as «التقرير اليومي» lists it. */
 export interface AuditDailySummary {
@@ -174,27 +232,9 @@ export class AuditService {
    * on which flat, or when. This is that row.
    */
   @OnEvent('building.changed')
-  async onBuildingChanged(payload: {
-    action: string;
-    buildingId: string;
-    before?: Record<string, unknown>;
-    after?: Record<string, unknown>;
-    actorId: string;
-    actorRole: string;
-    /** Written by the emitter inside its own transaction (`UnitCorrectionService`); the event only clears caches. */
-    alreadyAudited?: boolean;
-  }): Promise<void> {
+  async onBuildingChanged(payload: BuildingChange): Promise<void> {
     if (payload.alreadyAudited) return;
-    await this.record({
-      actorId: payload.actorId,
-      actorType: 'STAFF',
-      actorRole: payload.actorRole as never,
-      action: payload.action,
-      entityType: 'Building',
-      entityId: payload.buildingId,
-      before: payload.before,
-      after: payload.after,
-    });
+    await this.record(buildingEntry(payload));
   }
 
   /**
@@ -293,31 +333,26 @@ export class AuditService {
   }
 
   @OnEvent('citizen.changed')
-  async onCitizenChanged(payload: {
-    citizenId: string;
-    action: string;
-    changed?: string[];
-    before?: Record<string, unknown>;
-    after?: Record<string, unknown>;
-    actorId?: string;
-    actorRole?: string;
-    /** As on `onBuildingChanged`: the row is already in the trail. */
-    alreadyAudited?: boolean;
-  }): Promise<void> {
+  async onCitizenChanged(payload: CitizenChange): Promise<void> {
     if (payload.alreadyAudited) return;
-    await this.record({
-      actorId: payload.actorId ?? payload.citizenId,
-      actorType: payload.actorRole ? 'STAFF' : 'CITIZEN',
-      actorRole: (payload.actorRole ?? null) as never,
-      action: payload.action,
-      entityType: 'User',
-      entityId: payload.citizenId,
-      before: payload.before,
-      after: {
-        ...(payload.after ?? {}),
-        ...(payload.changed ? { changed: payload.changed } : {}),
-      },
-    });
+    await this.record(citizenEntry(payload));
+  }
+
+  /**
+   * Tier 1 for a change that is also announced as an event: writes the row the
+   * `citizen.changed` or `building.changed` listener would have written, but
+   * now and inside the transaction (see `recordInTransaction`). Emit the
+   * event after the commit with `alreadyAudited: true` so the listener does
+   * not write it twice; the caches that listen still clear.
+   */
+  async recordChangeInTransaction(
+    change:
+      | { channel: 'citizen.changed'; payload: CitizenChange }
+      | { channel: 'building.changed'; payload: BuildingChange },
+  ): Promise<void> {
+    await this.recordInTransaction(
+      change.channel === 'citizen.changed' ? citizenEntry(change.payload) : buildingEntry(change.payload),
+    );
   }
 
   @OnEvent('fee.issued')
@@ -349,53 +384,13 @@ export class AuditService {
     });
   }
 
-  @OnEvent('payment.reviewed')
-  async onPaymentReviewed(payload: {
-    paymentId: string;
-    citizenId: string;
-    confirmed: boolean;
-    actorId: string | null;
-    actorRole: string;
-    /**
-     * The movement itself, when one was recorded at the counter: receipt,
-     * amount, day, notes, rate against the official one, change, and the
-     * reason for any departure. The ledger row holds the same facts; the trail
-     * is where a reviewer reads who decided them.
-     */
-    movement?: Record<string, unknown>;
-  }): Promise<void> {
-    await this.record({
-      actorId: payload.actorId ?? 'WHISH',
-      actorType: payload.actorRole === 'WHISH' ? 'SYSTEM' : 'STAFF',
-      actorRole: (payload.actorRole ?? null) as never,
-      action: payload.confirmed ? 'PAYMENT_CONFIRMED' : 'PAYMENT_REJECTED',
-      entityType: 'Payment',
-      entityId: payload.paymentId,
-      after: {
-        citizenId: payload.citizenId,
-        confirmed: payload.confirmed,
-        ...(payload.movement ?? {}),
-      },
-    });
-  }
-
-  @OnEvent('payment.declared')
-  async onPaymentDeclared(payload: {
-    paymentId: string;
-    citizenId: string;
-    method: string;
-  }): Promise<void> {
-    await this.record({
-      actorId: payload.citizenId,
-      actorType: 'CITIZEN',
-      action: 'PAYMENT_DECLARED',
-      entityType: 'Payment',
-      entityId: payload.paymentId,
-      after: {
-        method: payload.method,
-      },
-    });
-  }
+  /*
+    Payments are not recorded here. A payment, a confirmation, a refusal, a
+    declaration and a reversal are Tier 1: the ledger and FeesService write
+    their row inside the same transaction as the money, through
+    `recordInTransaction`, so no payment moves without one. `payment.*`
+    events still fire, for the caches that listen to them.
+  */
 
   @OnEvent('settings.changed')
   async onSettingsChanged(payload: {
@@ -658,7 +653,31 @@ export class AuditService {
    * trade. It is logged loudly instead; a gap in the trail is an operational
    * alarm, not a user-facing error.
    */
-  private async record(entry: Parameters<typeof AuditLogEntry.create>[0]): Promise<void> {
+  /**
+   * Tier 1: the audit row is part of the change it records.
+   *
+   * For payments, payment reversals, corrections, ownership changes and
+   * citizen status changes (docs/security.md, "Data integrity and
+   * transactions"). The row is written now, through the transaction, and a
+   * failure is not caught: it rolls the whole change back, so no money moves
+   * and no ownership changes unless its audit row is written too.
+   *
+   * `transaction` is the client of a write that opened its own transaction
+   * (the payment ledger). Without it this must run inside
+   * `runInTenantTransaction`, whose scope client is the transaction; anywhere
+   * else it throws, because a Tier 1 row written outside a transaction could
+   * survive a change that rolled back, or be missing from one that committed.
+   *
+   * Everything else is Tier 2: an event, and `record` after the commit.
+   */
+  async recordInTransaction(entry: AuditEntryInput, transaction?: TransactionHandle): Promise<void> {
+    if (transaction === undefined && !this.tenantContext.peek()?.transaction) {
+      throw new Error(`The audit row for ${entry.action} must be written inside the transaction it records`);
+    }
+    await this.audit.appendInTransaction(AuditLogEntry.create(entry), transaction);
+  }
+
+  private async record(entry: AuditEntryInput): Promise<void> {
     /*
       Emitted from inside a transaction: written once it commits, and not at all
       if it rolls back. Written straight away through the transaction client, a
@@ -673,7 +692,7 @@ export class AuditService {
     await this.write(entry);
   }
 
-  private async write(entry: Parameters<typeof AuditLogEntry.create>[0]): Promise<void> {
+  private async write(entry: AuditEntryInput): Promise<void> {
     try {
       await this.audit.append(AuditLogEntry.create(entry));
     } catch (error) {
