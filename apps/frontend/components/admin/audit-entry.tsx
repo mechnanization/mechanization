@@ -12,6 +12,7 @@ import {
   Layers,
   Link2,
   LogIn,
+  LogOut,
   Settings,
   ShieldAlert,
   UserRound,
@@ -68,6 +69,8 @@ function iconOf(action: string): LucideIcon {
   if (action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.startsWith('BILL_') || action.includes('PAYOUT')) return Banknote;
   if (action.startsWith('ZONE_') || action === 'CADASTRE_IMPORT') return Layers;
   if (action === 'LOGIN') return LogIn;
+  if (action === 'STAFF_LOGOUT') return LogOut;
+  if (action === 'STAFF_SESSION_REUSE_DETECTED') return ShieldAlert;
   if (/TOTP|PASSWORD|EMAIL|STAFF_/.test(action)) return KeyRound;
   if (action === 'DOCUMENT_VIEW' || action === 'CSV_EXPORT') return FileText;
   if (action === 'REGISTER_RESTORED') return ShieldAlert;

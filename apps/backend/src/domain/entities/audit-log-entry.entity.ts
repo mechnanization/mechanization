@@ -37,6 +37,10 @@ const REDACTED_KEYS = new Set([
   'landlordphone',
   'token',
   'accesstoken',
+  // Staff refresh tokens, and the keyed hash they are stored as. Nothing
+  // records either today; this is what keeps it that way if something starts.
+  'refreshtoken',
+  'tokenhash',
 ]);
 
 const REDACTED = '[redacted]';

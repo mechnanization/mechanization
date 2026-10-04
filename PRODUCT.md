@@ -1,30 +1,58 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-A high-performance, multi-tenant digital municipal platform tailored for Lebanese municipalities to automate cadastral mapping (GIS), citizen registry, property & building unit tracking, municipal fee collection (رسوم القيمة التأجيرية وبدل النفايات), in-person cash settlements, digital payments via Whish Money, and formal Arabic receipt generation.
+Last verified against the code: `develop@8742c5b`, 2026-10-03.
+
+A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
+building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
+وبدل النفايات), payment collection at the counter and on collectors' rounds, and formal
+Arabic receipts. The visual system is in [DESIGN.md](DESIGN.md); the binding UI rules are in
+[docs/ui-ux-standards.md](docs/ui-ux-standards.md).
 
 ---
 
-## 🏛️ Product Truth & Scope
+## Product truth and scope
 
-### 1. Municipal Stakeholders
-- **Municipal Citizens (المواطنون والمكلفون)**:
-  - Check outstanding taxes, fees, and waste management charges without visiting municipal halls.
-  - View registered properties, apartments, commercial shops, and land parcels.
-  - Settle payments digitally (via Whish Money or authorized collectors) and receive instant official receipts.
-- **Municipal Clerks & Field Collectors (الجباة وموظفو الاستقبال والتحصيل)**:
-  - Record in-person cash counter payments (full or partial).
-  - Issue official municipal cash receipts matching Lebanon's printed receipt books (`وصل جباية رسمي`).
-  - Share receipts directly to citizen WhatsApp accounts via native OS share sheet or PDF download.
-- **Municipal Admins & Council Leadership (رئيس وأعضاء المجلس البلدي والمشرفون)**:
-  - Real-time revenue analytics, collection velocity, overdue arrears, and resident demographics.
-  - Cadastral map explorer with boundary tracking, parcel numbering, and sector zoning.
-  - CSV reporting with injection-safe data export.
-  - Full audit logging of staff actions.
+### 1. Who uses it
+
+Staff hold one of six roles (`STAFF_ROLE` in `packages/shared-schemas/src/enums.ts`).
+Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in the same
+`users` table.
+
+- **Citizens (المواطنون والمكلفون)**:
+  - Check outstanding fees and charges without visiting the municipal hall.
+  - View their registered properties, apartments, shops and land parcels.
+  - Pay in cash at the municipality or to a collector, and receive an official receipt.
+  - Report a Whish Money transfer made in the Whish app. The report is a declaration
+    that stays pending until a clerk matches and confirms it. There is no live online
+    checkout: `WhishGatewayService.postCheckout` is not implemented, and without
+    credentials the gateway runs in sandbox mode.
+- **Collectors (`COLLECTOR`, جابي) and counter clerks**:
+  - Record in-person payments, full or partial, at the counter (`CASH`) or on a round
+    (`COLLECTOR`).
+  - Issue official receipts matching Lebanon's printed receipt books (`وصل جباية رسمي`).
+  - Share a receipt through the device share sheet, a WhatsApp link, or a PDF download.
+- **Field inspectors (`FIELD_INSPECTOR`, مفتّش ميداني)**: survey buildings and units on a
+  phone, queuing records offline when the connection drops.
+- **Accountants (`ACCOUNTANT`), administrative officers (`ADMINISTRATIVE_OFFICER`),
+  auditors (`AUDITOR`) and system administrators (`SUPER_ADMIN`)**, for the council and
+  the municipal administration:
+  - Dashboards: collection rate, monthly collection, unpaid and overdue balances,
+    registered population and households.
+  - A cadastral map explorer with parcel numbering and sector zones.
+  - CSV export with formula-injection-safe cells.
+  - An append-only audit log of staff actions.
 
 ---
 
-## ⚙️ Core Technical Constraints & Architecture
-- **Multi-Tenancy**: Schema-per-tenant (`tenant_<slug>`) in PostgreSQL with dynamic context resolution.
-- **Language & Direction**: RTL first (Arabic `dir="rtl"`), with secondary LTR for numbers, codes, and English.
-- **Currency**: Lebanese Pound (`LBP` / `ل.ل`) with compact formatting for billions/millions, and optional US Dollar (`USD` / `$`).
-- **Security**: JWT authentication, granular RBAC (`SUPER_ADMIN`, `ADMIN`, `COLLECTOR`, `CITIZEN`), and complete audit event recording.
+## Core technical constraints
+
+- **Multi-tenancy**: one PostgreSQL schema per municipality (`tenant_<slug>`), resolved
+  per request.
+- **Language and direction**: Arabic and right-to-left first (`dir="rtl"`); English is a
+  full second locale; numbers and codes run left-to-right.
+- **Currency**: Lebanese pound (`LBP`, `ل.ل`) with compact formatting for millions and
+  billions; US dollar and euro as foreign currencies.
+- **Security**: JWT sessions, role-based access over the six staff roles
+  (`SUPER_ADMIN`, `AUDITOR`, `FIELD_INSPECTOR`, `COLLECTOR`, `ACCOUNTANT`,
+  `ADMINISTRATIVE_OFFICER`) plus the citizen user kind, and an audit log. Rules:
+  [docs/security.md](docs/security.md).

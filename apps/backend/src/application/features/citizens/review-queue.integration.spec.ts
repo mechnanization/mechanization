@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
+import { AuditService } from '../audit/audit.service';
 import { Client } from 'pg';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
@@ -83,6 +85,7 @@ describeIfDb('CitizensService.reviewQueue', () => {
       {} as never,
       {} as never,
       {} as never,
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
 
     older = await citizen('سمير');

@@ -3,10 +3,17 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { StaffProps, User } from '../../../domain/entities/user.entity';
 import { PasswordHasher, TotpService } from '../../../domain/interfaces/otp-repository.interface';
+import {
+  NewStaffRefreshToken,
+  StaffRefreshTokenRepository,
+  StaffRefreshTokenRow,
+} from '../../../domain/interfaces/staff-refresh-token-repository.interface';
 import { UserRepository } from '../../../domain/interfaces/user-repository.interface';
 import { UnauthorizedError } from '../../common/exceptions';
-import { IdentityService, SessionResult } from './identity.service';
+import { IdentityService, SessionClaims, StaffSessionGrant } from './identity.service';
 import { OtpService } from './otp.service';
+import { SessionRevocationService } from './session-revocation.service';
+import { StaffRefreshTokenService } from './staff-refresh-token.service';
 
 /**
  * The staff sign-in path, which carried two defects that a single test each
@@ -124,6 +131,51 @@ interface BuildOptions {
   passwordVerifies?: boolean;
 }
 
+/**
+ * What the refresh-token port is asked to write, recorded rather than stored.
+ *
+ * Login only ever starts a family — one `create` — so this is the whole of the
+ * port it can reach. Every other method throws: a sign-in that reads, rotates
+ * or revokes a refresh token is doing something the design says it must not
+ * (it neither reads nor revokes whatever cookie the browser already held).
+ */
+function recordingRefreshTokens() {
+  const create = jest.fn(
+    async (input: NewStaffRefreshToken): Promise<StaffRefreshTokenRow> => ({
+      id: input.id ?? 'child-id',
+      userId: input.userId,
+      familyId: input.familyId,
+      parentId: input.parentId,
+      tokenHash: input.tokenHash,
+      tokenVersion: input.tokenVersion,
+      persistent: input.persistent,
+      expiresAt: input.expiresAt,
+      createdAt: new Date(),
+      usedAt: null,
+      supersededAt: null,
+      retryCount: 0,
+      revokedAt: null,
+    }),
+  );
+
+  const unreachable = (method: string) =>
+    jest.fn(() => {
+      throw new Error(`StaffRefreshTokenRepository.${method} must not be reached from loginStaff`);
+    });
+
+  const repository = {
+    create,
+    findById: unreachable('findById'),
+    findByHash: unreachable('findByHash'),
+    rotate: unreachable('rotate'),
+    retry: unreachable('retry'),
+    revokeFamily: unreachable('revokeFamily'),
+    deleteExpired: unreachable('deleteExpired'),
+  } satisfies StaffRefreshTokenRepository;
+
+  return { repository, create };
+}
+
 function build(repository: Partial<UserRepository> = {}, options: BuildOptions = {}) {
   const { totpVerifies = true, passwordVerifies = true } = options;
 
@@ -144,7 +196,25 @@ function build(repository: Partial<UserRepository> = {}, options: BuildOptions =
   };
 
   const email = unreachableEmail();
-  const revocation = { forget: jest.fn().mockResolvedValue(undefined) };
+  const revocation = {
+    forget: jest.fn().mockResolvedValue(undefined),
+    forgetFamily: jest.fn().mockResolvedValue(undefined),
+  };
+  const config = {
+    get: jest.fn().mockReturnValue('12h'),
+    getOrThrow: jest.fn().mockReturnValue('test-secret-at-least-32-characters-long-xx'),
+  } as unknown as ConfigService;
+  const jwt = { sign: jest.fn().mockReturnValue('jwt-token') };
+  const events = { emit: jest.fn() };
+
+  // The real service over a recording port: the key derivation, the cookie
+  // name and the family's shape are what login is responsible for handing on.
+  const refresh = recordingRefreshTokens();
+  const refreshTokens = new StaffRefreshTokenService(
+    refresh.repository,
+    config,
+    revocation as unknown as SessionRevocationService,
+  );
 
   const service = new IdentityService(
     users,
@@ -158,12 +228,23 @@ function build(repository: Partial<UserRepository> = {}, options: BuildOptions =
     email as unknown as never,
     {} as OtpService,
     revocation as unknown as never,
-    { sign: jest.fn().mockReturnValue('jwt-token') } as unknown as JwtService,
-    { get: jest.fn().mockReturnValue('12h') } as unknown as ConfigService,
-    { emit: jest.fn() } as unknown as EventEmitter2,
+    jwt as unknown as JwtService,
+    config,
+    events as unknown as EventEmitter2,
+    refreshTokens,
   );
 
-  return { service, createStaff, hasher, email };
+  return {
+    service,
+    createStaff,
+    hasher,
+    email,
+    users,
+    jwt,
+    events,
+    refreshTokens,
+    createFamily: refresh.create,
+  };
 }
 
 const LOGIN = {
@@ -181,7 +262,7 @@ describe('loginStaff — the password is checked here, against this schema’s r
       findStaffByEmail: jest.fn().mockResolvedValue(unenrolled()),
     });
 
-    const result = (await service.loginStaff(LOGIN)) as SessionResult;
+    const result = ((await service.loginStaff(LOGIN)) as StaffSessionGrant).session;
 
     expect(hasher.verify).toHaveBeenCalledWith(LOGIN.password, PASSWORD_HASH);
     expect(result.accessToken).toBe('jwt-token');
@@ -311,7 +392,7 @@ describe('loginStaff — the password is checked here, against this schema’s r
       findStaffByEmail: jest.fn().mockResolvedValue(unenrolled()),
     });
 
-    const result = (await service.loginStaff(LOGIN)) as SessionResult;
+    const result = ((await service.loginStaff(LOGIN)) as StaffSessionGrant).session;
 
     expect(result).not.toHaveProperty('supabaseAccessToken');
     expect(JSON.stringify(result)).not.toMatch(/supabase/i);
@@ -422,10 +503,9 @@ describe('loginStaff — the second factor is actually checked', () => {
       findStaffByEmail: jest.fn().mockResolvedValue(staff()),
     });
 
-    const result = (await service.loginStaff({
-      ...LOGIN,
-      totpToken: '123456',
-    })) as SessionResult;
+    const result = (
+      (await service.loginStaff({ ...LOGIN, totpToken: '123456' })) as StaffSessionGrant
+    ).session;
 
     expect(result.accessToken).toBe('jwt-token');
     expect(result.user.role).toBe('SUPER_ADMIN');
@@ -446,7 +526,7 @@ describe('loginStaff — the second factor is actually checked', () => {
       findStaffByEmail: jest.fn().mockResolvedValue(unenrolled({ role: 'AUDITOR' })),
     });
 
-    const result = (await service.loginStaff(LOGIN)) as SessionResult;
+    const result = ((await service.loginStaff(LOGIN)) as StaffSessionGrant).session;
     expect(result.accessToken).toBe('jwt-token');
   });
 
@@ -455,7 +535,7 @@ describe('loginStaff — the second factor is actually checked', () => {
       findStaffByEmail: jest.fn().mockResolvedValue(unenrolled()),
     });
 
-    const result = (await service.loginStaff(LOGIN)) as SessionResult;
+    const result = ((await service.loginStaff(LOGIN)) as StaffSessionGrant).session;
     expect(result.accessToken).toBe('jwt-token');
   });
 
@@ -464,7 +544,7 @@ describe('loginStaff — the second factor is actually checked', () => {
       findStaffByEmail: jest.fn().mockResolvedValue(staff({ totpConfirmedAt: null })),
     });
 
-    const result = (await service.loginStaff(LOGIN)) as SessionResult;
+    const result = ((await service.loginStaff(LOGIN)) as StaffSessionGrant).session;
     expect(result.accessToken).toBe('jwt-token');
   });
 });
@@ -506,5 +586,154 @@ describe('loginStaff — a TOTP code is single-use', () => {
 
     await expect(service.loginStaff({ ...LOGIN, totpToken: '000000' })).rejects.toThrow();
     expect(recordTotpStep).not.toHaveBeenCalled();
+  });
+});
+
+describe('loginStaff — the refresh-token family a sign-in starts', () => {
+  it('writes nothing while a second factor is still owed', async () => {
+    // A challenge is not a sign-in. A family started here would be a session
+    // credential handed to someone who has so far proved only the password.
+    const { service, createFamily, users, events } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(staff()),
+    });
+
+    await expect(service.loginStaff(LOGIN)).resolves.toEqual({ status: 'TOTP_REQUIRED' });
+
+    expect(createFamily).not.toHaveBeenCalled();
+    expect(users.markLoggedIn).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when the code is wrong', async () => {
+    const { service, createFamily } = build(
+      { findStaffByEmail: jest.fn().mockResolvedValue(staff()) },
+      { totpVerifies: false },
+    );
+
+    await expect(service.loginStaff({ ...LOGIN, totpToken: '000000' })).rejects.toThrow();
+    expect(createFamily).not.toHaveBeenCalled();
+  });
+
+  it('starts the family before it records that anyone signed in', async () => {
+    /*
+      The order is the point. The family is the one write here that can fail
+      for a reason the rest cannot see — a schema 0059 has not reached — and
+      written first, that failure leaves no `lastLoginAt` and no «logged in»
+      audit row for a session that was never handed out.
+    */
+    const { service, createFamily, users, events } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(unenrolled()),
+    });
+
+    await service.loginStaff(LOGIN);
+
+    const [familyWritten] = createFamily.mock.invocationCallOrder;
+    const [markedLoggedIn] = (users.markLoggedIn as jest.Mock).mock.invocationCallOrder;
+    const [published] = events.emit.mock.invocationCallOrder;
+
+    expect(familyWritten).toBeLessThan(markedLoggedIn);
+    expect(familyWritten).toBeLessThan(published);
+  });
+
+  it('records no sign-in when the family cannot be written', async () => {
+    const { service, createFamily, users, events } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(unenrolled()),
+    });
+    createFamily.mockRejectedValueOnce(new Error('relation "staff_refresh_tokens" does not exist'));
+
+    await expect(service.loginStaff(LOGIN)).rejects.toThrow(/staff_refresh_tokens/);
+
+    expect(users.markLoggedIn).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('keeps the refresh token out of the session the response body carries', async () => {
+    /*
+      The body is page-readable; the cookie is not. The grant keeps the two in
+      separate fields so the controller has to choose, and this pins that the
+      session half holds neither the token nor anything derived from it.
+    */
+    const { service, createFamily } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(unenrolled()),
+    });
+
+    const grant = (await service.loginStaff(LOGIN)) as StaffSessionGrant;
+    const body = JSON.stringify(grant.session);
+    const [stored] = createFamily.mock.calls[0];
+
+    expect(grant.refresh.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(body).not.toContain(grant.refresh.token);
+    expect(body).not.toContain(stored.tokenHash);
+    expect(grant.session).not.toHaveProperty('refresh');
+    expect(grant.session).not.toHaveProperty('refreshToken');
+  });
+
+  it('stores a keyed hash of the token, never the token', async () => {
+    const { service, createFamily } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(unenrolled()),
+    });
+
+    const grant = (await service.loginStaff(LOGIN)) as StaffSessionGrant;
+    const [stored] = createFamily.mock.calls[0];
+
+    expect(stored.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(stored.tokenHash).not.toContain(grant.refresh.token);
+  });
+
+  it('makes the family the access token’s sid, rooted at its own id', async () => {
+    const { service, createFamily, jwt } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(unenrolled({ tokenVersion: 4 })),
+    });
+
+    const grant = (await service.loginStaff(LOGIN)) as StaffSessionGrant;
+    const [stored] = createFamily.mock.calls[0];
+    const [claims] = jwt.sign.mock.calls[0] as [SessionClaims];
+
+    expect(stored.id).toBe(grant.refresh.familyId);
+    expect(stored.familyId).toBe(grant.refresh.familyId);
+    expect(stored.parentId).toBeNull();
+    expect(stored.userId).toBe(STAFF.id);
+    // The version the family began at — a bump since ends it at its next refresh.
+    expect(stored.tokenVersion).toBe(4);
+    expect(claims.sid).toBe(grant.refresh.familyId);
+  });
+
+  it('caps the family at the session cap the access token names', async () => {
+    const { service, createFamily, jwt } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(unenrolled()),
+    });
+
+    const grant = (await service.loginStaff(LOGIN)) as StaffSessionGrant;
+    const [stored] = createFamily.mock.calls[0];
+    const [claims] = jwt.sign.mock.calls[0] as [SessionClaims];
+
+    expect(stored.expiresAt.getTime()).toBe(claims.sessionExpiresAt! * 1000);
+    expect(grant.refresh.expiresAt).toEqual(stored.expiresAt);
+  });
+
+  it('makes the cookie persistent only when «تذكّرني» was ticked', async () => {
+    const plain = build({ findStaffByEmail: jest.fn().mockResolvedValue(unenrolled()) });
+    const remembered = build({ findStaffByEmail: jest.fn().mockResolvedValue(unenrolled()) });
+
+    const session = (await plain.service.loginStaff(LOGIN)) as StaffSessionGrant;
+    const kept = (await remembered.service.loginStaff({
+      ...LOGIN,
+      remember: true,
+    })) as StaffSessionGrant;
+
+    expect(session.refresh.persistent).toBe(false);
+    expect(plain.createFamily.mock.calls[0][0].persistent).toBe(false);
+    expect(kept.refresh.persistent).toBe(true);
+    expect(remembered.createFamily.mock.calls[0][0].persistent).toBe(true);
+  });
+
+  it('names the cookie for this account', async () => {
+    const { service, refreshTokens } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(unenrolled()),
+    });
+
+    const grant = (await service.loginStaff(LOGIN)) as StaffSessionGrant;
+
+    expect(grant.refresh.cookieName).toBe(refreshTokens.cookieNameFor(STAFF.id));
   });
 });

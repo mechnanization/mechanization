@@ -13,6 +13,8 @@ import { CensusSyncService } from '../buildings/census-sync.service';
 import { FeesService } from '../fees/fees.service';
 import { LandlordLinkService } from './landlord-link.service';
 import { OwnershipService } from './ownership.service';
+import { AuditService } from '../audit/audit.service';
+import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { TenancyService } from './tenancy.service';
 
 /**
@@ -41,6 +43,8 @@ describeIfDb('OwnershipService', () => {
   let census: CensusSyncService;
   let links: LandlordLinkService;
   let ownership: OwnershipService;
+  /** The same service with an audit trail that refuses every write. */
+  let failingOwnership: OwnershipService;
   let tenancy: TenancyService;
   let fees: FeesService;
   let officerId: string;
@@ -65,9 +69,18 @@ describeIfDb('OwnershipService', () => {
     );
     buildings = new BuildingsService(context, cases, events);
     census = new CensusSyncService(context, cases, events);
-    links = new LandlordLinkService(context, buildings, events);
-    ownership = new OwnershipService(context, buildings, cases, links, events);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership);
+    links = new LandlordLinkService(
+      context,
+      buildings,
+      events,
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+    );
+    const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
+    ownership = new OwnershipService(context, buildings, cases, links, events, audit);
+    failingOwnership = new OwnershipService(context, buildings, cases, links, events, {
+      recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
+    } as never);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
     fees = new FeesService(
       context,
       events,
@@ -77,6 +90,8 @@ describeIfDb('OwnershipService', () => {
         set: jest.fn().mockResolvedValue(undefined),
         invalidatePrefix: jest.fn().mockResolvedValue(undefined),
       } as never,
+      {} as never,
+      // AuditService: these tests never reach a payment.
       {} as never,
     );
 
@@ -249,7 +264,7 @@ describeIfDb('OwnershipService', () => {
 
     await expect(
       within(() => ownership.endCard(owner.cardId, { reason: 'OWNERSHIP_TRANSFERRED' }, actor())),
-    ).rejects.toThrow(/من يسكن الوحدة/);
+    ).rejects.toMatchObject({ code: 'OWNERSHIP_AFTER_STATUS_REQUIRED' });
 
     await within(() =>
       ownership.endCard(owner.cardId, { reason: 'OWNERSHIP_TRANSFERRED', afterStatus: 'UNKNOWN' }, actor()),
@@ -329,7 +344,7 @@ describeIfDb('OwnershipService', () => {
 
     await expect(
       within(() => tenancy.endOccupancy(spell.id, { reason: 'RECORDED_IN_ERROR' }, actor())),
-    ).rejects.toThrow(/ألغِ الربط/);
+    ).rejects.toMatchObject({ code: 'OWNER_HAS_LINKED_TENANTS' });
 
     const untouched = await db.unitOccupancy.findUniqueOrThrow({ where: { id: spell.id } });
     expect(untouched.toDate).toBeNull();
@@ -397,6 +412,33 @@ describeIfDb('OwnershipService', () => {
     expect(cases.some((row) => /اربطهم|سجِّل المالك الجديد/.test(row.notes ?? ''))).toBe(false);
   });
 
+  // ─────────────────────────────  The audit row (Tier 1)  ─────────────────────────────
+
+  it('writes OWNERSHIP_ENDED inside the transaction that ends the ownership', async () => {
+    const { building, units } = await block('OWN-T1');
+    const owner = await ownerOn({ parcelNumber: 'OWN-T1', buildingId: building.id, unitIds: [units[0]!.id] });
+
+    await within(() => ownership.endCard(owner.cardId, { reason: 'RECORDED_IN_ERROR' }, actor()));
+
+    const rows = await db.auditLogEntry.findMany({ where: { action: 'OWNERSHIP_ENDED', entityId: owner.ownerId } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.after).toMatchObject({ reason: 'RECORDED_IN_ERROR' });
+  });
+
+  it('ends nothing when the audit row cannot be written', async () => {
+    const { building, units } = await block('OWN-T2');
+    const owner = await ownerOn({ parcelNumber: 'OWN-T2', buildingId: building.id, unitIds: [units[0]!.id] });
+
+    await expect(
+      within(() => failingOwnership.endCard(owner.cardId, { reason: 'RECORDED_IN_ERROR' }, actor())),
+    ).rejects.toThrow('audit insert refused');
+
+    const spell = await ownerSpell(owner.ownerId, units[0]!.id);
+    expect(spell.toDate).toBeNull();
+    const card = await db.propertyEntry.findUniqueOrThrow({ where: { id: owner.cardId } });
+    expect(card.endReason).toBeNull();
+  });
+
   // ─────────────────────────────  Corrections and scope  ─────────────────────────────
 
   it('records a correction as an error, on the spell and the row', async () => {
@@ -421,7 +463,7 @@ describeIfDb('OwnershipService', () => {
 
     await expect(
       within(() => ownership.endCard(owner.cardId, { reason: 'OWNERSHIP_TRANSFERRED' }, actor())),
-    ).rejects.toThrow(/حدِّد الوحدات/);
+    ).rejects.toMatchObject({ code: 'OWNERSHIP_SELECT_UNITS' });
 
     await within(() =>
       ownership.endCard(owner.cardId, { reason: 'OWNERSHIP_TRANSFERRED', rowIds: [owner.rows[0]!.id] }, actor()),
@@ -456,6 +498,6 @@ describeIfDb('OwnershipService', () => {
 
     await expect(
       within(() => tenancy.endOccupancy(spell.id, { reason: 'OWNERSHIP_TRANSFERRED' }, actor())),
-    ).rejects.toThrow(/تشمل المبنى كله/);
+    ).rejects.toMatchObject({ code: 'OWNER_CARD_COVERS_STRUCTURE' });
   });
 });

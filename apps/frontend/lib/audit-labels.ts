@@ -93,11 +93,17 @@ export function auditActionLabel(action: string, locale: string): string {
     PAYMENT_DECLARED: ['تصريح بدفعة', 'Payment declared'],
     PAYMENT_CONFIRMED: ['تأكيد دفعة', 'Payment confirmed'],
     PAYMENT_REJECTED: ['رفض دفعة', 'Payment rejected'],
+    PAYMENT_REVERSED: ['عكس حركة دفع', 'Payment reversed'],
     BILL_BASIS_REVIEWED: ['مراجعة فاتورة تأثّرت بتصحيح', 'Bill affected by a correction reviewed'],
     INSPECTOR_PAYOUT_RECORDED: ['تسجيل دفعة لمفتش', 'Inspector payout recorded'],
 
     // ── the portal itself ──
     LOGIN: ['تسجيل دخول', 'Login'],
+    STAFF_LOGOUT: ['تسجيل خروج', 'Signed out'],
+    STAFF_SESSION_REUSE_DETECTED: [
+      'إنهاء جلسة: إعادة استخدام رمز التجديد',
+      'Session ended: refresh token reused',
+    ],
     REGISTER_RESTORED: ['استعادة سجل البلدية من نسخة احتياطية', 'Register restored from backup'],
     STAFF_EMAIL_CHANGED: ['تغيير بريد موظف', 'Staff email changed'],
     STAFF_PASSWORD_CHANGED: ['تغيير كلمة مرور موظف', 'Staff password changed'],
@@ -150,6 +156,7 @@ export function auditEntityLabel(entityType: string, locale: string): string {
     Document: ['مرفق', 'Document'],
     FeeNotice: ['رسم', 'Fee notice'],
     Payment: ['دفعة', 'Payment'],
+    PaymentTransaction: ['حركة دفع', 'Payment movement'],
     SystemSettings: ['إعدادات البلدية', 'Settings'],
     Tenant: ['سجل البلدية', 'Register'],
     DataQuality: ['مراجعة الجودة', 'Quality review'],

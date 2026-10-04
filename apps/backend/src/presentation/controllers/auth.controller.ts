@@ -1,6 +1,17 @@
-import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { Request } from 'express';
+import { Request, Response } from 'express';
+import { createHash } from 'node:crypto';
 import {
   changeEmailSchema,
   changePasswordSchema,
@@ -13,12 +24,52 @@ import {
   verifyOtpSchema,
 } from '@mechanization/shared-schemas';
 import { IdentityService } from '../../application/features/identity/identity.service';
-import { UnauthorizedError } from '../../application/common/exceptions';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { APP_CONFIG } from '../config/app.config';
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard';
+import {
+  clearStaffRefreshCookie,
+  readCookie,
+  setStaffRefreshCookie,
+} from '../http/staff-refresh-cookie';
+
+/**
+ * The throttle on refresh and sign-out, counted per `Authorization` header.
+ *
+ * The API sits behind nginx without `trust proxy`, so every request arrives
+ * from nginx's address and the default per-IP bucket is one bucket for
+ * everyone: one tab stuck in a refresh loop — or one anonymous flood — would
+ * spend every clerk's refreshes. The header is what tells tabs apart. Hashed
+ * so the bucket key never holds a bearer token.
+ *
+ * A caller can mint new buckets by varying the header, and that is acceptable
+ * for what this protects: a header that is not a token this service signed is
+ * refused before any database work, so the requests it lets through are only
+ * as expensive as a signature check. Anything costlier needs a real staff
+ * token, and each real token has exactly one bucket. The limit is
+ * `APP_CONFIG.throttle.staffSession`; each route has its own count.
+ */
+const STAFF_SESSION_THROTTLE = {
+  default: {
+    limit: APP_CONFIG.throttle.staffSession.limit,
+    ttl: APP_CONFIG.throttle.staffSession.ttlSeconds * 1000,
+    getTracker: (request: Record<string, unknown>) => {
+      const headers = request.headers as Record<string, string | string[] | undefined>;
+      const authorization = headers.authorization;
+      const key = typeof authorization === 'string' ? authorization : `ip:${String(request.ip)}`;
+      return `staff-session:${createHash('sha256').update(key).digest('hex')}`;
+    },
+  },
+};
+
+/** The bearer token on the request, if there is one. Absent is not an error here. */
+function bearer(request: Request): string | undefined {
+  const [scheme, value] = (request.header('authorization') ?? '').split(' ');
+  return scheme?.toLowerCase() === 'bearer' && value ? value : undefined;
+}
 
 /**
  * One controller for both kinds of sign-in — the routes differ, the token they
@@ -32,6 +83,7 @@ export class AuthController {
 
   @Public()
   @Post('staff/login')
+  @UseGuards(TrustedOriginGuard)
   @Throttle({
     default: {
       limit: APP_CONFIG.throttle.staffLogin.limit,
@@ -44,14 +96,20 @@ export class AuthController {
    * so `staffLoginSchema` would also validate `tenantSlug` — a plain string —
    * and fail every login with "Expected object, received string" before the
    * password was ever checked.
+   *
+   * The body is the access token exactly as before; the refresh token goes
+   * only into the cookie. A TOTP challenge is not a sign-in, so it sets
+   * nothing. `passthrough` keeps Nest serialising the return value — the
+   * response object is used for the header and nothing else.
    */
   async loginStaff(
     @Param('tenantSlug') tenantSlug: string,
     @Body(new ZodValidationPipe(staffLoginSchema))
     body: { email: string; password: string; totpToken?: string; remember?: boolean },
     @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
   ) {
-    return this.identity.loginStaff({
+    const result = await this.identity.loginStaff({
       tenantSlug,
       email: body.email,
       password: body.password,
@@ -59,43 +117,88 @@ export class AuthController {
       remember: body.remember,
       context: { ip: request.ip, userAgent: request.header('user-agent') },
     });
+
+    if ('status' in result) return result;
+
+    setStaffRefreshCookie(response, result.refresh.cookieName, result.refresh);
+    return result.session;
   }
 
   /**
-   * Exchanges a staff token for a fresh one — the sliding half of the session.
+   * Renews a staff session: the refresh cookie is the credential, the tab's own
+   * access token (usually expired) says which account it is for. See
+   * `IdentityService.refreshStaffSession` for why both are needed.
    *
    * `@Public()` is load-bearing and is *not* a hole. The guard cannot run here
-   * for the reason the route exists: the token being presented is usually
-   * expired, and the guard rejects expired tokens by design. So the checks move
-   * inside `refreshStaffSession`, which verifies the signature, the tenant, the
-   * session cap, the account's `tokenVersion` and whether it is still active —
-   * every one of the guard's, plus the cap the guard knows nothing about.
+   * for the reason the route exists: the access token presented is usually
+   * expired, and the guard rejects expired tokens by design. Every check that
+   * matters — the cookie, the family, the account, its `tokenVersion` and
+   * whether it is still active — happens inside the service.
    *
-   * The token travels in the `Authorization` header rather than the body, so a
-   * refresh looks like every other authenticated call to anything sitting in
-   * front of this — a proxy log, a WAF rule, the browser's own devtools — and
-   * so that no caller has to special-case how it sends its credential.
+   * A refusal is returned rather than thrown so the cookie can be cleared
+   * first; the `Set-Cookie` survives the throw because `DomainExceptionFilter`
+   * only sets the status and the body. An unexpected error is thrown straight
+   * through and leaves the cookie alone, so a database blip does not sign
+   * anyone out.
    *
-   * Throttled like the login: this route mints credentials, so it is worth the
-   * same protection against someone grinding at it with stolen material.
+   * The access token travels in the `Authorization` header rather than the
+   * body, so a refresh looks like every other authenticated call to anything
+   * sitting in front of this — a proxy log, a WAF rule, the browser's own
+   * devtools.
    */
   @Public()
   @Post('staff/refresh')
-  @Throttle({
-    default: {
-      limit: APP_CONFIG.throttle.staffLogin.limit,
-      ttl: APP_CONFIG.throttle.staffLogin.ttlSeconds * 1000,
-    },
-  })
-  async refreshStaff(@Param('tenantSlug') tenantSlug: string, @Req() request: Request) {
-    const header = request.header('authorization') ?? '';
-    const [scheme, token] = header.split(' ');
+  @UseGuards(TrustedOriginGuard)
+  @Throttle(STAFF_SESSION_THROTTLE)
+  async refreshStaff(
+    @Param('tenantSlug') tenantSlug: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const outcome = await this.identity.refreshStaffSession({
+      accessToken: bearer(request),
+      tenantSlug,
+      readCookie: (name) => readCookie(request, name),
+    });
 
-    if (scheme?.toLowerCase() !== 'bearer' || !token) {
-      throw new UnauthorizedError('Authentication required');
+    if (!outcome.ok) {
+      if (outcome.clearCookie) clearStaffRefreshCookie(response, outcome.clearCookie);
+      throw outcome.error;
     }
 
-    return this.identity.refreshStaffSession({ token, tenantSlug });
+    setStaffRefreshCookie(response, outcome.grant.refresh.cookieName, outcome.grant.refresh);
+    return outcome.grant.session;
+  }
+
+  /**
+   * Ends this tab's sign-in on the server: the refresh family is revoked, which
+   * stops both the cookie and — through `sid` in the guard — the access token.
+   *
+   * `@Public()` for the same reason as refresh: a clerk signing out after lunch
+   * holds an expired token, and must still be able to end the session behind
+   * it. Answers 200 with the same body whether or not there was anything to
+   * end — no binding, no cookie, a family already revoked — because the portal
+   * clears its own storage either way, and a sign-out that reports failure for
+   * a session that is already over is one the user cannot finish.
+   */
+  @Public()
+  @Post('staff/logout')
+  @HttpCode(200)
+  @UseGuards(TrustedOriginGuard)
+  @Throttle(STAFF_SESSION_THROTTLE)
+  async logoutStaff(
+    @Param('tenantSlug') tenantSlug: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.identity.logoutStaff({
+      accessToken: bearer(request),
+      tenantSlug,
+      readCookie: (name) => readCookie(request, name),
+    });
+
+    if (result.clearCookie) clearStaffRefreshCookie(response, result.clearCookie);
+    return { signedOut: true };
   }
 
   /**

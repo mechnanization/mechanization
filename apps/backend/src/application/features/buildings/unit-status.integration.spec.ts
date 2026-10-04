@@ -10,6 +10,8 @@ import { CasesService } from '../cases/cases.service';
 import { assessCitizen, FeesService } from '../fees/fees.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
 import { OwnershipService } from '../citizens/ownership.service';
+import { AuditService } from '../audit/audit.service';
+import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { TenancyService } from '../citizens/tenancy.service';
 import { BuildingsService } from './buildings.service';
 import { CensusSyncService } from './census-sync.service';
@@ -67,9 +69,15 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
     );
     buildings = new BuildingsService(context, cases, events);
     census = new CensusSyncService(context, cases, events);
-    const links = new LandlordLinkService(context, buildings, events);
-    const ownership = new OwnershipService(context, buildings, cases, links, events);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership);
+    const links = new LandlordLinkService(
+      context,
+      buildings,
+      events,
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+    );
+    const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
+    const ownership = new OwnershipService(context, buildings, cases, links, events, audit);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
     fees = new FeesService(
       context,
       events,
@@ -79,6 +87,8 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
         set: jest.fn().mockResolvedValue(undefined),
         invalidatePrefix: jest.fn().mockResolvedValue(undefined),
       } as never,
+      {} as never,
+      // AuditService: these tests never reach a payment.
       {} as never,
     );
 

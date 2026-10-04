@@ -1,4 +1,6 @@
 import { randomInt } from 'node:crypto';
+import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { AuditService, type CitizenChange } from '../audit/audit.service';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
@@ -96,6 +98,7 @@ export class RecordReviewService {
     private readonly events: EventEmitter2,
     private readonly cache: RedisCacheService,
     private readonly config: ConfigService,
+    private readonly auditTrail: AuditService,
   ) {}
 
   private get db() {
@@ -380,20 +383,23 @@ export class RecordReviewService {
       the reviewer changed their mind, and leaving the return open would show
       the officer a fix nobody wants any more.
     */
-    const review = await this.db.$transaction(async (tx) => {
-      await tx.recordReview.updateMany({
+    const change = this.change('RECORD_APPROVED', registration.citizenId, actor, {
+      referenceNumber: registration.referenceNumber,
+    });
+    const review = await runInTenantTransaction(this.tenantContext, async () => {
+      await this.db.recordReview.updateMany({
         where: { registrationId, outcome: 'RETURNED', resolvedAt: null },
         data: { resolvedAt: new Date(), resolvedById: actor.id },
       });
-      return tx.recordReview.create({
+      const created = await this.db.recordReview.create({
         data: { registrationId, outcome: 'APPROVED', reviewedById: actor.id },
         select: { id: true, createdAt: true },
       });
+      await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload: change });
+      return created;
     });
 
-    this.announce('RECORD_APPROVED', registration.citizenId, actor, {
-      referenceNumber: registration.referenceNumber,
-    });
+    this.announce(change);
     return { id: review.id, outcome: 'APPROVED' as const, at: review.createdAt.toISOString() };
   }
 
@@ -406,22 +412,27 @@ export class RecordReviewService {
     });
     if (open) throw new ConflictError('هذا السجل مُعاد إلى موظفه بالفعل وينتظر التصحيح.');
 
-    const review = await this.db.recordReview.create({
-      data: {
-        registrationId,
-        outcome: 'RETURNED',
-        reason: input.reason,
-        fields: [...input.fields],
-        reviewedById: actor.id,
-      },
-      select: { id: true, createdAt: true },
-    });
-
-    this.announce('RECORD_RETURNED', registration.citizenId, actor, {
+    const change = this.change('RECORD_RETURNED', registration.citizenId, actor, {
       referenceNumber: registration.referenceNumber,
       reason: input.reason,
       fields: input.fields,
     });
+    const review = await runInTenantTransaction(this.tenantContext, async () => {
+      const created = await this.db.recordReview.create({
+        data: {
+          registrationId,
+          outcome: 'RETURNED',
+          reason: input.reason,
+          fields: [...input.fields],
+          reviewedById: actor.id,
+        },
+        select: { id: true, createdAt: true },
+      });
+      await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload: change });
+      return created;
+    });
+
+    this.announce(change);
     return { id: review.id, outcome: 'RETURNED' as const, at: review.createdAt.toISOString() };
   }
 
@@ -501,11 +512,11 @@ export class RecordReviewService {
       */
       const selfResolved = resolvable.every((review) => review.reviewedById === payload.actorId);
 
-      this.announce(
-        'RECORD_CORRECTED',
-        payload.citizenId,
-        { id: payload.actorId, role: actor?.role ?? '' },
-        {
+      // Tier 2: a consequence of a save that already committed, not a decision,
+      // so the `citizen.changed` listener writes its row (no `alreadyAudited`).
+      this.events.emit(
+        'citizen.changed',
+        this.change('RECORD_CORRECTED', payload.citizenId, { id: payload.actorId, role: actor?.role ?? '' }, {
           reviewsClosed: closed.count,
           // The grounds, so an auto-close is legible in the trail rather than
           // appearing as an unexplained state change.
@@ -514,7 +525,7 @@ export class RecordReviewService {
           ...(open.length > resolvable.length
             ? { leftOpen: open.length - resolvable.length, leftOpenBecause: [...stillMissing] }
             : {}),
-        },
+        }),
       );
     } catch {
       // The save already succeeded; a return left open is visible and can be
@@ -823,35 +834,55 @@ export class RecordReviewService {
     }
 
     const now = new Date();
-    await this.db.qualityCheck.update({
-      where: { id: checkId },
-      data: {
-        status: 'DONE',
-        result: input.result,
-        differences: input.result === 'DIFFERS' ? [...input.differences] : [],
-        notes: input.notes ?? null,
-        checkedById: actor.id,
-        checkedAt: now,
-      },
-    });
-
-    this.announce('QUALITY_CHECK_DONE', check.registration.citizenId, actor, {
+    const change = this.change('QUALITY_CHECK_DONE', check.registration.citizenId, actor, {
       referenceNumber: check.registration.referenceNumber,
       result: input.result,
       differences: input.result === 'DIFFERS' ? input.differences : [],
       notes: input.notes ?? null,
     });
+    await runInTenantTransaction(this.tenantContext, async () => {
+      await this.db.qualityCheck.update({
+        where: { id: checkId },
+        data: {
+          status: 'DONE',
+          result: input.result,
+          differences: input.result === 'DIFFERS' ? [...input.differences] : [],
+          notes: input.notes ?? null,
+          checkedById: actor.id,
+          checkedAt: now,
+        },
+      });
+      await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload: change });
+    });
+
+    this.announce(change);
     return { id: checkId, status: 'DONE' as const, result: input.result, checkedAt: now.toISOString() };
   }
 
-  private announce(action: string, citizenId: string, actor: Actor, after: Record<string, unknown>) {
-    this.events.emit('citizen.changed', {
+  /**
+   * The row a review decision writes. Decisions are Tier 1 (docs/security.md):
+   * whether a record stands, goes back to its officer or failed a field check
+   * is what an inspector asks of the register, so the row commits with it.
+   * `referenceNumber` here is the filing's own number, not a login credential.
+   */
+  private change(
+    action: string,
+    citizenId: string,
+    actor: Actor,
+    after: Record<string, unknown>,
+  ): CitizenChange & { tenantSlug: string } {
+    return {
       tenantSlug: this.tenantContext.tenantSlug,
       citizenId,
       action,
       after,
       actorId: actor.id,
       actorRole: actor.role,
-    });
+    };
+  }
+
+  /** After the commit: the decision as an event, for the caches. Its row is already written. */
+  private announce(change: CitizenChange & { tenantSlug: string }) {
+    this.events.emit('citizen.changed', { ...change, alreadyAudited: true });
   }
 }

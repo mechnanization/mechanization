@@ -44,6 +44,8 @@ import {
   type ReconcileResult,
   type RevertReport,
 } from './landlord-link.service';
+import { AuditService, type CitizenChange } from '../audit/audit.service';
+import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import {
   identityDocumentOf,
   RegistrationService,
@@ -294,6 +296,7 @@ export class CitizensService {
     private readonly census: CensusSyncService,
     private readonly landlordLinks: LandlordLinkService,
     private readonly events: EventEmitter2,
+    private readonly auditTrail: AuditService,
   ) {}
 
   private get db() {
@@ -810,7 +813,10 @@ export class CitizensService {
       }),
     );
 
-    if (!citizen) throw new NotFoundError('Citizen', citizenId);
+    if (!citizen) throw new NotFoundError({
+      code: 'CITIZEN_NOT_FOUND',
+      message: `Citizen ${citizenId} was not found`,
+    });
 
     const registration = citizen.registrations[0] ?? null;
 
@@ -1301,19 +1307,26 @@ export class CitizensService {
           candidate.referenceNumber ? `${candidate.fullName} (${candidate.referenceNumber})` : candidate.fullName,
         )
         .join('، ');
-      throw new ConflictError(
-        `هذا الشخص مسجَّل مسبقاً: ${named}. لا يُنشأ له ملف ثانٍ — افتح ملفه وأضف العقار إليه. إن كان شخصاً آخر فعلاً فالقرار لمدير النظام.`,
-        { code: 'DUPLICATE_BLOCKED', duplicateReview: { ...open, possibleDuplicates: findings.possibleDuplicates } },
-      );
+      throw new ConflictError({
+        code: 'CITIZEN_DUPLICATE_BLOCKED',
+        message: 'This person is already registered: <name>. A second file is not created. Open their file and add the property there. If it really is someone else, a system administrator decides.',
+        params: { name: named },
+        details: { code: 'DUPLICATE_BLOCKED', duplicateReview: { ...open, possibleDuplicates: findings.possibleDuplicates } },
+      });
     }
 
     if (input.payload.reviewDuplicates && hasFindings(open)) {
-      throw new ConflictError(
-        open.possibleDuplicates.length > 0
-          ? 'قد يكون هذا المواطن مسجَّلاً مسبقاً. راجِع الملفات المشابهة قبل إنشاء ملف جديد.'
-          : 'رقم الهاتف المُدخل مسجَّل لشخص آخر. تأكَّد لمن هذا الرقم قبل الحفظ.',
-        { duplicateReview: open },
-      );
+      throw open.possibleDuplicates.length > 0
+        ? new ConflictError({
+            code: 'CITIZEN_POSSIBLE_DUPLICATE',
+            message: 'This citizen may already be registered. Review the similar files before creating a new one.',
+            details: { duplicateReview: open },
+          })
+        : new ConflictError({
+            code: 'PHONE_BELONGS_TO_OTHER',
+            message: 'This phone number is registered to someone else. Check whose number it is before saving.',
+            details: { duplicateReview: open },
+          });
     }
 
     const serverFlags =
@@ -1733,7 +1746,10 @@ export class CitizensService {
         },
       },
     });
-    if (!citizen) throw new NotFoundError('Citizen', input.citizenId);
+    if (!citizen) throw new NotFoundError({
+      code: 'CITIZEN_NOT_FOUND',
+      message: `Citizen ${input.citizenId} was not found`,
+    });
 
     /*
       A file «دمج ملفين» folded into another holds no filing, and a save here
@@ -1757,25 +1773,36 @@ export class CitizensService {
         a replaceable edit: the form has to be opened again.
       */
       if (current !== input.payload.expectedVersion && current.split(':')[0] !== input.payload.expectedVersion.split(':')[0]) {
-        throw new ConflictError('تغيّر طلب التسجيل الذي يمثّل هذا الملف منذ فتحتَ النموذج (دُمج فيه ملف آخر). أعد فتح الملف قبل الحفظ.', {
-          code: 'STALE',
+        throw new ConflictError({
+          code: 'CITIZEN_FILE_STALE_MERGED',
+          message: 'The filing behind this file changed since you opened the form (another file was merged into it). Reopen the file before saving.',
+          details: {
+            code: 'STALE',
+          },
         });
       }
       if (current !== input.payload.expectedVersion) {
         const lastEdit = await this.lastStaffEdit(citizen.id);
-        throw new ConflictError(
-          lastEdit?.name
-            ? `عدّل ${lastEdit.name} هذا الملف بعد أن فتحتَه. حدِّث الصفحة لترى تعديلاته، أو احفظ لتستبدلها.`
-            : 'عُدِّل هذا الملف بعد أن فتحتَه. حدِّث الصفحة لترى التعديلات، أو احفظ لتستبدلها.',
-          {
-            staleEdit: {
-              version: current,
-              lastEditedBy: lastEdit?.name ?? null,
-              lastEditedAt: lastEdit?.at ?? null,
-              byViewer: lastEdit?.staffId === input.actor.id,
-            },
+        const details = {
+          staleEdit: {
+            version: current,
+            lastEditedBy: lastEdit?.name ?? null,
+            lastEditedAt: lastEdit?.at ?? null,
+            byViewer: lastEdit?.staffId === input.actor.id,
           },
-        );
+        };
+        throw lastEdit?.name
+          ? new ConflictError({
+              code: 'CITIZEN_EDITED_BY_OTHER',
+              message: '<name> edited this file after you opened it. Refresh the page to see their changes, or save to replace them.',
+              params: { name: lastEdit.name },
+              details,
+            })
+          : new ConflictError({
+              code: 'CITIZEN_EDITED_SINCE_OPENED',
+              message: 'This file was edited after you opened it. Refresh the page to see the changes, or save to replace them.',
+              details,
+            });
       }
     }
 
@@ -1793,9 +1820,13 @@ export class CitizensService {
       flaggedPaths(input.payload.flags),
     );
     if (needsReason.length > 0 && !input.payload.changeReason) {
-      throw new ValidationError('اذكر سبب هذا التعديل — يمسّ حقولاً لا تُعدَّل دون سبب', {
-        code: 'REASON_REQUIRED',
-        fields: needsReason,
+      throw new ValidationError({
+        code: 'EDIT_REASON_REQUIRED',
+        message: 'Give a reason for this edit: it changes fields that need one.',
+        details: {
+          code: 'REASON_REQUIRED',
+          fields: needsReason,
+        },
       });
     }
 
@@ -1898,9 +1929,11 @@ export class CitizensService {
 
     for (const { entry } of entries) {
       if (!tenant.allowsPropertyType(entry.props.propertyType as PropertyType)) {
-        throw new ConflictError(
-          `هذه البلدية لا تستقبل حالياً تسجيل هذا النوع من العقارات (${entry.props.propertyType})`,
-        );
+        throw new ConflictError({
+          code: 'PROPERTY_TYPE_NOT_ACCEPTED',
+          message: `This municipality does not currently accept registrations of this property type (${entry.props.propertyType}).`,
+          params: { propertyType: entry.props.propertyType },
+        });
       }
     }
 
@@ -1923,13 +1956,21 @@ export class CitizensService {
     // Checked before anything is written, so a crafted payload fails whole.
     for (const { id } of entries) {
       if (id && endedIds.has(id)) {
-        throw new ConflictError('انتهى الإيجار على إحدى البطاقات منذ فتح هذا النموذج — حدّث الصفحة', {
-          propertyId: id,
+        throw new ConflictError({
+          code: 'TENANCY_ENDED_SINCE_OPENED',
+          message: 'A tenancy on one of the cards ended after this form was opened. Refresh the page.',
+          details: {
+            propertyId: id,
+          },
         });
       }
       if (id && !existingIds.has(id)) {
-        throw new ValidationError('هذا العقار لا ينتمي إلى آخر طلب لهذا المواطن', {
-          propertyId: id,
+        throw new ValidationError({
+          code: 'PROPERTY_NOT_IN_LATEST_FILING',
+          message: 'This property does not belong to this citizen’s latest filing.',
+          details: {
+            propertyId: id,
+          },
         });
       }
     }
@@ -1954,13 +1995,21 @@ export class CitizensService {
     for (const removal of removals) {
       const card = removedCards.get(removal.propertyId);
       if (!card) {
-        throw new ConflictError('بطاقة ذُكر سبب حذفها ليست من البطاقات المحذوفة — حدّث الصفحة', {
-          propertyId: removal.propertyId,
+        throw new ConflictError({
+          code: 'REMOVAL_REASON_FOR_KEPT_CARD',
+          message: 'A card has a removal reason but was not removed. Refresh the page.',
+          details: {
+            propertyId: removal.propertyId,
+          },
         });
       }
       if (removal.reason === 'OWNERSHIP_TRANSFERRED' && card.occupancyType !== 'OWNER') {
-        throw new ValidationError('«بيع أو نقل ملكية» يخص بطاقة مالك فقط', {
-          propertyId: removal.propertyId,
+        throw new ValidationError({
+          code: 'SALE_REASON_OWNER_ONLY',
+          message: '“Sale or transfer” applies only to an owner’s card.',
+          details: {
+            propertyId: removal.propertyId,
+          },
         });
       }
     }
@@ -1983,10 +2032,12 @@ export class CitizensService {
     );
     if (linkedTenants.length > 0) {
       const names = [...new Set(linkedTenants.map((tenant) => tenant.name))];
-      throw new ConflictError(
-        `${names.join('، ')} ${names.length === 1 ? 'مربوط' : 'مربوطون'} بهذا الشخص مالكاً لوحدة يحذفها هذا الحفظ من ملفه. ألغِ الربط من ${names.length === 1 ? 'بطاقة المستأجر' : 'بطاقات المستأجرين'} أولاً ثم احفظ، أو استخدم «إنهاء الملكية» إن كان قد باعها`,
-        { code: 'TENANTS_LINKED', linkedTenants },
-      );
+      throw new ConflictError({
+        code: 'OWNER_HAS_LINKED_TENANTS_ON_SAVE',
+        message: '<names> are linked to this person as the owner of a unit this save removes from their file. Remove the link from the tenants’ cards first and then save, or use “End ownership” if they sold it.',
+        params: { names: names.join('، '), count: names.length },
+        details: { code: 'TENANTS_LINKED', linkedTenants },
+      });
     }
 
     const endings = await this.removalEndings(removals, removedCards);
@@ -2030,8 +2081,12 @@ export class CitizensService {
         select: { id: true },
       });
       if ((newest?.id ?? null) !== (existing?.id ?? null)) {
-        throw new ConflictError('تغيّر هذا الملف أثناء الحفظ (دُمج فيه ملف آخر). أعد فتح الملف ثم احفظ.', {
-          code: 'STALE',
+        throw new ConflictError({
+          code: 'CITIZEN_FILE_CHANGED_DURING_SAVE',
+          message: 'This file changed while it was being saved (another file was merged into it). Reopen the file, then save.',
+          details: {
+            code: 'STALE',
+          },
         });
       }
 
@@ -2247,10 +2302,11 @@ export class CitizensService {
             const rowId = rowIds[position];
             const row = rowId ? storedById.get(rowId) : undefined;
             if (row?.endedAt) {
-              throw new ConflictError(
-                'انتهى الإيجار على إحدى وحدات هذه البطاقة منذ فتح هذا النموذج — حدّث الصفحة',
-                { propertyId: id, rowId },
-              );
+              throw new ConflictError({
+                code: 'TENANCY_ENDED_ON_CARD_SINCE_OPENED',
+                message: 'A tenancy on one of this card’s units ended after this form was opened. Refresh the page.',
+                details: { propertyId: id, rowId },
+              });
             }
             if (row && !kept.has(row.id)) {
               kept.add(row.id);
@@ -2745,7 +2801,10 @@ export class CitizensService {
       where: { id: input.citizenId, kind: 'CITIZEN' },
       select: { id: true, firstName: true, lastName: true, referenceNumber: true },
     });
-    if (!citizen) throw new NotFoundError('Citizen', input.citizenId);
+    if (!citizen) throw new NotFoundError({
+      code: 'CITIZEN_NOT_FOUND',
+      message: `Citizen ${input.citizenId} was not found`,
+    });
 
     /*
       A file on either side of a standing merge is not deleted: the delete
@@ -2757,10 +2816,11 @@ export class CitizensService {
       where: { undoneAt: null, OR: [{ survivorId: citizen.id }, { absorbedId: citizen.id }] },
     });
     if (merged > 0) {
-      throw new ConflictError(
-        'هذا الملف جزء من دمج قائم بين ملفين — لا يُحذف. تراجع عن الدمج أولاً إن كان يجب حذفه.',
-        { code: 'MERGED' },
-      );
+      throw new ConflictError({
+        code: 'CITIZEN_IN_MERGE',
+        message: 'This file is part of an active merge, so it cannot be deleted. Undo the merge first if it must be deleted.',
+        details: { code: 'MERGED' },
+      });
     }
 
     const [registrations, payments, feeNotices] = await Promise.all([
@@ -2769,24 +2829,31 @@ export class CitizensService {
       this.db.feeNotice.count({ where: { targetCitizenId: citizen.id } }),
     ]);
     if (registrations + payments + feeNotices > 0) {
-      throw new ConflictError(
-        'لا يمكن حذف مواطن لديه طلبات تسجيل أو مدفوعات أو رسوم مرتبطة به — يمكنك تعطيل الحساب بدلاً من ذلك.',
-      );
+      throw new ConflictError({
+        code: 'CITIZEN_HAS_RECORDS',
+        message: 'A citizen with filings, payments or fees cannot be deleted. Disable the account instead.',
+      });
     }
 
-    await this.db.user.delete({ where: { id: citizen.id } });
-
-    this.events.emit('citizen.changed', {
+    const deleted: CitizenChange & { tenantSlug: string } = {
       tenantSlug: input.tenantSlug,
       citizenId: citizen.id,
       action: 'CITIZEN_DELETED',
       before: {
         name: `${citizen.firstName} ${citizen.lastName}`,
-        referenceNumber: citizen.referenceNumber,
+        // A login credential: the trail keeps only the masked hint, never the key.
+        maskedReference: ReferenceNumber.mask(citizen.referenceNumber),
       },
       actorId: input.actor.id,
       actorRole: input.actor.role,
+    };
+    // Tier 1 (docs/security.md): the deletion and its row commit together.
+    await runInTenantTransaction(this.tenantContext, async () => {
+      await this.db.user.delete({ where: { id: citizen.id } });
+      await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload: deleted });
     });
+
+    this.events.emit('citizen.changed', { ...deleted, alreadyAudited: true });
 
     return { deleted: true };
   }
@@ -2806,7 +2873,10 @@ export class CitizensService {
       where: { id: input.citizenId, kind: 'CITIZEN' },
       select: { id: true },
     });
-    if (!citizen) throw new NotFoundError('Citizen', input.citizenId);
+    if (!citizen) throw new NotFoundError({
+      code: 'CITIZEN_NOT_FOUND',
+      message: `Citizen ${input.citizenId} was not found`,
+    });
 
     /*
       Reactivating a file «دمج ملفين» folded away would bring back the double
@@ -2815,12 +2885,7 @@ export class CitizensService {
     */
     if (input.isActive) await assertNotMergedAway(this.db, citizen.id);
 
-    await this.db.user.update({
-      where: { id: citizen.id },
-      data: { isActive: input.isActive },
-    });
-
-    this.events.emit('citizen.changed', {
+    const changed: CitizenChange & { tenantSlug: string } = {
       tenantSlug: input.tenantSlug,
       citizenId: citizen.id,
       action: input.isActive ? 'CITIZEN_REACTIVATED' : 'CITIZEN_DEACTIVATED',
@@ -2834,7 +2899,17 @@ export class CitizensService {
         : {}),
       actorId: input.actor.id,
       actorRole: input.actor.role,
+    };
+    // Tier 1 (docs/security.md): a status change and its row commit together.
+    await runInTenantTransaction(this.tenantContext, async () => {
+      await this.db.user.update({
+        where: { id: citizen.id },
+        data: { isActive: input.isActive },
+      });
+      await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload: changed });
     });
+
+    this.events.emit('citizen.changed', { ...changed, alreadyAudited: true });
 
     return { isActive: input.isActive };
   }

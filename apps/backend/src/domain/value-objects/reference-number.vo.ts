@@ -67,6 +67,25 @@ export class ReferenceNumber {
     return PATTERN.test(raw.trim().toUpperCase().replace(/\s/g, ''));
   }
 
+  /**
+   * The reference with its secret hidden — for audit rows and audit screens.
+   *
+   * Only the parts that are not secret survive: the municipality prefix and
+   * the issue month, so «BZR-2607-4K9QX2» becomes «BZR-2607-••••••». Not the
+   * last four, as tax and card numbers are often shown: the six-character
+   * suffix *is* the credential, and four of its characters leave 32² = 1,024
+   * candidates, which a guesser exhausts in minutes. A person is identified in
+   * the trail by their id; this is only a hint a human can recognise.
+   *
+   * `null` for no reference; a value that is not a reference is hidden whole.
+   */
+  static mask(raw: string | null | undefined): string | null {
+    if (!raw) return null;
+    const normalised = raw.trim().toUpperCase().replace(/\s/g, '');
+    if (!PATTERN.test(normalised)) return '••••••';
+    return `${normalised.slice(0, 8)}-••••••`;
+  }
+
   toString(): string {
     return this.value;
   }

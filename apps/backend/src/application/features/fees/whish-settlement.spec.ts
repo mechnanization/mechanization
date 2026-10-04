@@ -82,6 +82,8 @@ function build(
       invalidatePrefix: jest.fn().mockResolvedValue(undefined),
     } as unknown as RedisCacheService,
     { record } as unknown as PaymentLedgerService,
+    // AuditService: the settlement's row is written by the (mocked) ledger.
+    {} as never,
   );
 
   return { service, update, updateMany, record, whishCheckout };

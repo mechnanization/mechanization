@@ -36,7 +36,7 @@ function harness() {
   };
   const config = { get: () => 180 };
   const quality = new DataQualityService(context, {} as never, {} as never, cache as never, config as never);
-  const reviews = new RecordReviewService(context, {} as never, cache as never, config as never);
+  const reviews = new RecordReviewService(context, {} as never, cache as never, config as never, {} as never);
   return { context, invalidated, quality, reviews };
 }
 

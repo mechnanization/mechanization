@@ -86,9 +86,14 @@ describeIfDb('A tenant and the owner they rent from', () => {
     );
     buildings = new BuildingsService(context, cases, events);
     census = new CensusSyncService(context, cases, events);
-    links = new LandlordLinkService(context, buildings, events);
-    const ownership = new OwnershipService(context, buildings, cases, links, events);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership);
+    links = new LandlordLinkService(
+      context,
+      buildings,
+      events,
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+    );
+    const ownership = new OwnershipService(context, buildings, cases, links, events, audit);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
     citizens = new CitizensService(
       context,
       {} as never,
@@ -97,6 +102,7 @@ describeIfDb('A tenant and the owner they rent from', () => {
       census,
       links,
       events,
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
 
     officerId = randomUUID();
@@ -821,7 +827,7 @@ describeIfDb('A tenant and the owner they rent from', () => {
     // Deleting says they never owned it; the tenant's link says they do — the link goes first.
     await expect(
       within(() => citizens.update({ tenantSlug: 'owners', citizenId: owner.id, payload, actor: actor() })),
-    ).rejects.toThrow(/ألغِ الربط/);
+    ).rejects.toMatchObject({ code: 'OWNER_HAS_LINKED_TENANTS_ON_SAVE' });
 
     expect(await db.propertyEntry.count({ where: { id: ownerCard.id } })).toBe(1);
     expect(

@@ -231,6 +231,12 @@ ticket, or a shared document must be treated as disclosed.
 key, and `JWT_SECRET`. Rotating `JWT_SECRET` invalidates all existing sessions,
 which is harmless now and disruptive later — so do it now.
 
+That still holds with staff refresh tokens, and covers them too: the hash each
+refresh token is stored under and the name of its cookie are both keyed off
+`JWT_SECRET`, so after a rotation no stored token matches and every staff
+member, «تذكّرني» included, signs in again. There is no separate refresh secret
+to rotate or to forget.
+
 No real secret is committed to this repository; `apps/backend/.env.example`
 contains placeholders only.
 

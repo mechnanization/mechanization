@@ -160,13 +160,15 @@ function harness(options: HarnessOptions = {}) {
   };
 
   const recordOccupancy = jest.fn();
+  const recordChangeInTransaction = jest.fn().mockResolvedValue(undefined);
   const service = new LandlordLinkService(
     context as never,
     { recordOccupancy, ensureOnFile: jest.fn() } as never,
     { emit: jest.fn() } as never,
+    { recordChangeInTransaction } as never,
   );
 
-  return { service, db, transaction, recordOccupancy };
+  return { service, db, transaction, recordOccupancy, recordChangeInTransaction };
 }
 
 async function refusal(promise: Promise<unknown>): Promise<Error & { details?: unknown }> {

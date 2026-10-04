@@ -242,6 +242,9 @@ model User {
   mergesAbsorbed        CitizenMerge[]       @relation("CitizenMergeAbsorbed")
   mergesPerformed       CitizenMerge[]       @relation("CitizenMergedBy")
   mergesUndone          CitizenMerge[]       @relation("CitizenMergeUndoneBy")
+  /// Staff only: the refresh tokens behind this account's sessions (0059).
+  /// Cascades, so removing the account ends every session it holds.
+  staffRefreshTokens    StaffRefreshToken[]
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -274,6 +277,67 @@ model OtpChallenge {
 
   @@index([phone, createdAt])
   @@map("otp_challenges")
+}
+
+/// One refresh token of a staff session, stored as a keyed hash (migration 0059).
+///
+/// The refresh credential used to be the access token itself: an expired one
+/// was exchanged for a new one, so anyone who could read the page's storage
+/// once could keep the session alive until its cap. The token behind this row
+/// travels only in an httpOnly cookie the page cannot read, is exchanged once,
+/// and is replaced by a child row. Presenting it again after the chain has
+/// moved past it ends the whole family. `StaffRefreshTokenService` owns the
+/// rules; this is only what they are kept in.
+///
+/// **A family is the session.** `familyId` is the root row's `id`, and a staff
+/// access token carries it as `sid`. The root's `revokedAt` is the one that
+/// counts: a child inserted by a rotation that raced a logout is dead because
+/// its root is. `expiresAt` is the cap fixed at sign-in, copied onto every row
+/// and never moved — rotating does not lengthen a session.
+///
+/// **Never the token.** `tokenHash` is HMAC-SHA256 under a key derived from
+/// `JWT_SECRET`, so a leaked table hands out no session and rotating the secret
+/// voids every row. Deliberately not in `BackupService`'s snapshot: a restore
+/// cascades this away with the users, and everyone signs in again.
+model StaffRefreshToken {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The session: the root row's `id`, and the `sid` a staff access token carries.
+  familyId String  @db.Uuid
+  /// The token this one replaced; null on the root. No foreign key: every row of
+  /// a family shares one user and one `expiresAt`, so a family leaves whole.
+  parentId String? @db.Uuid
+
+  /// HMAC-SHA256 (hex) of the token. Never the token.
+  tokenHash    String  @unique
+  /// `User.tokenVersion` when the family began. A bump since ends the family at
+  /// its next exchange.
+  tokenVersion Int
+  /// «تذكّرني»: whether the cookie outlives the browser session.
+  persistent   Boolean @default(false)
+
+  /// The session cap. Identical on every row of a family; never moves.
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  /// Exchanged — set once, by a compare-and-set only one racing request can win.
+  usedAt       DateTime?
+  /// Replaced by a retry of its parent before it was ever used (a lost
+  /// response, or a racing request that won). Presenting it is a retry of the
+  /// parent, not a reuse.
+  supersededAt DateTime?
+  /// Retries served from this row as a parent. Capped in code.
+  retryCount   Int       @default(0)
+  /// The family ended: logout, detected reuse, or a refusal. Authoritative on
+  /// the root row.
+  revokedAt    DateTime?
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([parentId])
+  @@index([expiresAt])
+  @@map("staff_refresh_tokens")
 }
 
 // ────────────────────────────  Registration  ────────────────────────────

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ReferenceNumber } from '../../../domain/value-objects/reference-number.vo';
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
@@ -19,6 +20,7 @@ import {
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { AuditService, type BuildingChange, type CitizenChange } from '../audit/audit.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError } from '../../common/exceptions';
 import { readFootprint } from './landlord-link.service';
@@ -178,11 +180,17 @@ interface Loaded {
   officers: Map<string, string>;
 }
 
+/** A change a merge or its undo records, as the audit trail and the caches read it. */
+type MergeChange =
+  | { channel: 'citizen.changed'; payload: CitizenChange & { tenantSlug: string } }
+  | { channel: 'building.changed'; payload: BuildingChange & { tenantSlug: string } };
+
 @Injectable()
 export class CitizenMergeService {
   constructor(
     private readonly tenantContext: TenantContextService,
     private readonly events: EventEmitter2,
+    private readonly auditTrail: AuditService,
   ) {}
 
   private get db() {
@@ -235,10 +243,11 @@ export class CitizenMergeService {
         this.version(input.absorbId),
       ]);
       if (keepVersion !== input.expected.keep || absorbVersion !== input.expected.absorb) {
-        throw new ConflictError(
-          'تغيّر أحد الملفين منذ فتحت المعاينة — راجع المعاينة الجديدة ثم أكّد الدمج.',
-          { code: 'STALE_PREVIEW' },
-        );
+        throw new ConflictError({
+          code: 'MERGE_PREVIEW_STALE',
+          message: 'One of the two files changed since you opened the preview. Review the new preview, then confirm the merge.',
+          details: { code: 'STALE_PREVIEW' },
+        });
       }
       if (loaded.plan.blocks.length > 0) {
         throw new ConflictError(loaded.plan.blocks[0]!.message, { blocks: loaded.plan.blocks });
@@ -267,22 +276,24 @@ export class CitizenMergeService {
         select: { id: true },
       });
 
-      return { mergeId: record.id, preview, footprint, loaded, buildings };
+      const changes = this.changes({
+        tenantSlug: input.tenantSlug,
+        actor: input.actor,
+        keepId: input.keepId,
+        absorbId: input.absorbId,
+        mergeId: record.id,
+        reason: input.reason,
+        footprint,
+        keepRef: loaded.keep.referenceNumber,
+        absorbRef: loaded.absorb.referenceNumber,
+        buildings,
+        undo: false,
+      });
+      await this.recordChanges(changes);
+      return { mergeId: record.id, preview, footprint, loaded, buildings, changes };
     });
 
-    this.announce({
-      tenantSlug: input.tenantSlug,
-      actor: input.actor,
-      keepId: input.keepId,
-      absorbId: input.absorbId,
-      mergeId: outcome.mergeId,
-      reason: input.reason,
-      footprint: outcome.footprint,
-      keepRef: outcome.loaded.keep.referenceNumber,
-      absorbRef: outcome.loaded.absorb.referenceNumber,
-      buildings: outcome.buildings,
-      undo: false,
-    });
+    this.announce(outcome.changes);
 
     return {
       mergeId: outcome.mergeId,
@@ -311,7 +322,10 @@ export class CitizenMergeService {
   /** Whether «التراجع عن الدمج» would go through, and if not, why. */
   async unmergePreview(mergeId: string): Promise<CitizenUnmergePreview> {
     const row = await this.db.citizenMerge.findUnique({ where: { id: mergeId }, select: MERGE_RECORD_SELECT });
-    if (!row) throw new NotFoundError('الدمج غير موجود');
+    if (!row) throw new NotFoundError({
+      code: 'MERGE_NOT_FOUND',
+      message: 'This merge could not be found.',
+    });
     return { merge: toRecord(row), blocks: await this.unmergeBlocks(mergeId) };
   }
 
@@ -328,7 +342,10 @@ export class CitizenMergeService {
         where: { id: input.mergeId },
         select: { survivorId: true, absorbedId: true },
       });
-      if (!merge) throw new NotFoundError('الدمج غير موجود');
+      if (!merge) throw new NotFoundError({
+        code: 'MERGE_NOT_FOUND',
+        message: 'This merge could not be found.',
+      });
 
       const ids = [merge.survivorId, merge.absorbedId].sort();
       await this.db.$queryRaw`
@@ -407,32 +424,33 @@ export class CitizenMergeService {
         where: { id: { in: footprint.spellMoves } },
         select: { unit: { select: { buildingId: true } } },
       });
-      return {
+      const keepRef = refOf(footprint.keepId);
+      const absorbRef = refOf(footprint.absorbId);
+      const buildingsTouched = [
+        ...new Set([
+          ...touched.map((card) => card.buildingId!),
+          ...spellUnits.map((spell) => spell.unit.buildingId),
+        ]),
+      ];
+      const changes = this.changes({
+        tenantSlug: input.tenantSlug,
+        actor: input.actor,
+        keepId: footprint.keepId,
+        absorbId: footprint.absorbId,
+        mergeId: input.mergeId,
+        reason: input.reason,
         footprint,
-        keepRef: refOf(footprint.keepId),
-        absorbRef: refOf(footprint.absorbId),
-        buildings: [
-          ...new Set([
-            ...touched.map((card) => card.buildingId!),
-            ...spellUnits.map((spell) => spell.unit.buildingId),
-          ]),
-        ],
-      };
+        keepRef,
+        absorbRef,
+        buildings: buildingsTouched,
+        undo: true,
+      });
+      await this.recordChanges(changes);
+
+      return { footprint, keepRef, absorbRef, buildings: buildingsTouched, changes };
     });
 
-    this.announce({
-      tenantSlug: input.tenantSlug,
-      actor: input.actor,
-      keepId: outcome.footprint.keepId,
-      absorbId: outcome.footprint.absorbId,
-      mergeId: input.mergeId,
-      reason: input.reason,
-      footprint: outcome.footprint,
-      keepRef: outcome.keepRef,
-      absorbRef: outcome.absorbRef,
-      buildings: outcome.buildings,
-      undo: true,
-    });
+    this.announce(outcome.changes);
 
     const row = await this.db.citizenMerge.findUniqueOrThrow({
       where: { id: input.mergeId },
@@ -449,8 +467,14 @@ export class CitizenMergeService {
         this.db.user.findFirst({ where: { id, kind: 'CITIZEN' }, select: PERSON_SELECT }),
       ),
     );
-    if (!keep) throw new NotFoundError('Citizen', keepId);
-    if (!absorb) throw new NotFoundError('Citizen', absorbId);
+    if (!keep) throw new NotFoundError({
+      code: 'CITIZEN_NOT_FOUND',
+      message: `Citizen ${keepId} was not found`,
+    });
+    if (!absorb) throw new NotFoundError({
+      code: 'CITIZEN_NOT_FOUND',
+      message: `Citizen ${absorbId} was not found`,
+    });
     const people = [keepId, absorbId];
 
     const [liveMerges, registrations, spells] = await Promise.all([
@@ -1093,7 +1117,10 @@ export class CitizenMergeService {
       where: { id: mergeId },
       select: { survivorId: true, absorbedId: true, undoneAt: true, footprint: true },
     });
-    if (!merge) throw new NotFoundError('الدمج غير موجود');
+    if (!merge) throw new NotFoundError({
+      code: 'MERGE_NOT_FOUND',
+      message: 'This merge could not be found.',
+    });
     if (merge.undoneAt) return [{ code: 'ALREADY_UNDONE', message: 'تمّ التراجع عن هذا الدمج مسبقاً.' }];
 
     const later = await this.db.citizenMerge.findFirst({
@@ -1287,8 +1314,10 @@ export class CitizenMergeService {
    *
    * The audit rows carry counts, field *names* and ids, never a field's value:
    * a filled civil record number is written as the word, as `fileChanges` does.
+   * The other file is named by its id; its رقم مرجعي, a login credential, only
+   * masked (`ReferenceNumber.mask`), so the trail is not a list of sign-ins.
    */
-  private announce(input: {
+  private changes(input: {
     tenantSlug: string;
     actor: { id: string; role: string };
     keepId: string;
@@ -1301,7 +1330,7 @@ export class CitizenMergeService {
     /** Buildings whose cards the merge ended or moved — each gets a line in its own trail. */
     buildings: readonly string[];
     undo: boolean;
-  }): void {
+  }): MergeChange[] {
     const { footprint } = input;
     const summary = {
       mergeId: input.mergeId,
@@ -1314,32 +1343,50 @@ export class CitizenMergeService {
       tenantLinks: footprint.tenantLinks.length,
       filled: footprint.fills,
     };
-    this.events.emit('citizen.changed', {
-      tenantSlug: input.tenantSlug,
-      citizenId: input.keepId,
-      action: input.undo ? 'CITIZEN_MERGE_UNDONE' : 'CITIZEN_MERGED',
-      after: { ...summary, other: { id: input.absorbId, referenceNumber: input.absorbRef } },
-      actorId: input.actor.id,
-      actorRole: input.actor.role,
-    });
-    this.events.emit('citizen.changed', {
-      tenantSlug: input.tenantSlug,
-      citizenId: input.absorbId,
-      action: input.undo ? 'CITIZEN_MERGE_UNDONE' : 'CITIZEN_MERGED_INTO',
-      after: { ...summary, other: { id: input.keepId, referenceNumber: input.keepRef } },
-      actorId: input.actor.id,
-      actorRole: input.actor.role,
-    });
-    for (const buildingId of input.buildings) {
-      this.events.emit('building.changed', {
-        tenantSlug: input.tenantSlug,
-        buildingId,
-        action: input.undo ? 'CITIZEN_MERGE_UNDONE' : 'CITIZEN_MERGED',
-        after: { mergeId: input.mergeId, keptId: input.keepId, absorbedId: input.absorbId },
-        actorId: input.actor.id,
-        actorRole: input.actor.role,
-      });
-    }
+    const base = { tenantSlug: input.tenantSlug, actorId: input.actor.id, actorRole: input.actor.role };
+    return [
+      {
+        channel: 'citizen.changed',
+        payload: {
+          ...base,
+          citizenId: input.keepId,
+          action: input.undo ? 'CITIZEN_MERGE_UNDONE' : 'CITIZEN_MERGED',
+          after: { ...summary, other: { id: input.absorbId, maskedReference: ReferenceNumber.mask(input.absorbRef) } },
+        },
+      },
+      {
+        channel: 'citizen.changed',
+        payload: {
+          ...base,
+          citizenId: input.absorbId,
+          action: input.undo ? 'CITIZEN_MERGE_UNDONE' : 'CITIZEN_MERGED_INTO',
+          after: { ...summary, other: { id: input.keepId, maskedReference: ReferenceNumber.mask(input.keepRef) } },
+        },
+      },
+      ...input.buildings.map((buildingId): MergeChange => ({
+        channel: 'building.changed',
+        payload: {
+          ...base,
+          buildingId,
+          action: input.undo ? 'CITIZEN_MERGE_UNDONE' : 'CITIZEN_MERGED',
+          after: { mergeId: input.mergeId, keptId: input.keepId, absorbedId: input.absorbId },
+        },
+      })),
+    ];
+  }
+
+  /**
+   * Tier 1 (docs/security.md): a merge moves a person's properties and closes
+   * a file, so its rows are written inside its transaction, and a failed write
+   * rolls the merge back.
+   */
+  private async recordChanges(changes: readonly MergeChange[]): Promise<void> {
+    for (const change of changes) await this.auditTrail.recordChangeInTransaction(change);
+  }
+
+  /** After the commit: the same changes as events, for the caches. The rows are already written. */
+  private announce(changes: readonly MergeChange[]): void {
+    for (const change of changes) this.events.emit(change.channel, { ...change.payload, alreadyAudited: true });
   }
 
   /** The buildings a merge's ended and moved cards sit on. */
@@ -1403,8 +1450,12 @@ export class CitizenMergeService {
     ]);
     const strayBills = bills.filter((bill) => !leftBehind.has(bill.id)).length;
     if (registrations + spells + cases + notices + links + strayBills > 0) {
-      throw new ConflictError('تغيّر الملف المدموج أثناء الدمج (سُجِّل عليه شيء جديد). أعد فتح المعاينة وحاول مجدداً.', {
-        code: 'STALE_PREVIEW',
+      throw new ConflictError({
+        code: 'MERGE_ABSORBED_CHANGED',
+        message: 'The file being merged changed during the merge (something new was recorded on it). Reopen the preview and try again.',
+        details: {
+          code: 'STALE_PREVIEW',
+        },
       });
     }
   }

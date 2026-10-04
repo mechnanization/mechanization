@@ -60,6 +60,8 @@ describeIfDb('CorrectionBillsService', () => {
         invalidatePrefix: jest.fn().mockResolvedValue(undefined),
       } as unknown as RedisCacheService,
       {} as PaymentLedgerService,
+      // AuditService: these tests never reach a payment.
+      {} as never,
     );
     bills = new CorrectionBillsService(context, fees, new PrismaAuditRepository(context));
 

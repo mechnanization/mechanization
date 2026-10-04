@@ -154,6 +154,11 @@ export const envSchema = z
     /**
      * One secret for both citizen and staff tokens — v2 unified the two auth
      * systems precisely so there is one verification path to get right.
+     *
+     * It also keys the staff refresh tokens: the hash each one is stored under
+     * and its per-account cookie name are both derived from it. Rotating it
+     * therefore ends every session, «تذكّرني» included — which is what
+     * rotating a leaked secret is supposed to do.
      */
     JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
     /**
@@ -166,34 +171,53 @@ export const envSchema = z
      * seconds, expiry is about limiting a stolen token rather than about
      * revocation — and 8h is a municipal working day, so a clerk still signs in
      * once each morning.
+     *
+     * It is the **session's** cap, not any token's lifetime: stamped once at
+     * sign-in onto the refresh-token family (`staff_refresh_tokens.expiresAt`,
+     * identical on every row) and into each access token as
+     * `sessionExpiresAt`. No refresh moves it, so a session ends at the same
+     * wall-clock moment it would have before refresh tokens existed.
      */
     JWT_STAFF_TTL: z.string().default('8h'),
     /**
-     * How long one staff **token** is accepted before it must be exchanged.
+     * How long one staff **access token** is accepted before the portal
+     * refreshes it.
      *
-     * Not the same thing as `JWT_STAFF_TTL`, which is now the *session's* cap —
+     * Not the same thing as `JWT_STAFF_TTL`, which is the *session's* cap —
      * the wall-clock moment a clerk signs in again, unchanged at 8h. This is
-     * the sliding window in between: the portal swaps the token for a fresh one
-     * whenever a request meets an expired one, so the officer never sees the
+     * the interval in between: the portal refreshes whenever a request meets an
+     * expired token and replays the request, so the officer never sees the
      * hard 401 mid-form that the single-token design produced at hour eight.
      *
-     * The exchange accepts an expired token up to the session cap, so shortening
-     * this does **not** shorten how long a stolen token is useful — the cap
-     * does, and it has not moved. This is a UX bound, not a security one, and
-     * reading it as the latter is the mistake to avoid. Real theft-window
-     * reduction needs a separately stored refresh credential.
+     * Since refresh tokens (tenant migration 0059) this **is** a security
+     * bound. A refresh needs the httpOnly refresh cookie as well as the tab's
+     * token, and an access token is never accepted as the renewal credential,
+     * so a stolen access token is useful until its own `exp` and no longer —
+     * less if the session is signed out first, because the guard checks `sid`
+     * within `SessionRevocationService`'s cache window. The earlier exchange
+     * accepted an expired token up to the session cap, which is why this
+     * comment used to say the opposite. Shortening it shortens that window, at
+     * the price of one more refresh per interval for every signed-in clerk.
+     * 15 minutes since 2026-10-04 (was 30).
      */
-    JWT_STAFF_IDLE_TTL: z.string().default('30m'),
+    JWT_STAFF_IDLE_TTL: z.string().default('15m'),
     /**
-     * Issued instead of JWT_STAFF_TTL when a staff member checks
-     * "تذكّرني على هذا الجهاز".
+     * The session cap used instead of JWT_STAFF_TTL when a staff member checks
+     * "تذكّرني على هذا الجهاز". The refresh cookie is then persistent, expiring
+     * at this cap, and the portal keeps the access token in `localStorage`;
+     * without it the cookie ends with the browser and the token with the tab.
      *
-     * Still long, and now defensible: a 30-day token that could not be revoked
-     * meant a dismissed staff member kept access for a month. It is revocable
-     * now, so the remaining exposure is a device left signed in — which is what
-     * the `sessionStorage` default and this being an explicit opt-in address.
+     * One week since 2026-10-04 (it shipped at 30 days). A 30-day token that
+     * could not be revoked meant a dismissed staff member kept access for a
+     * month. It is revocable now, so the remaining exposure is a device left
+     * signed in — which is what the week, the `sessionStorage` default and
+     * this being an explicit opt-in address.
+     *
+     * A week is also what Safari allows anyway: WebKit caps a cookie set by a
+     * server response at 7 days when that server's IP address does not match
+     * the site's own — see docs/deploy-vercel.md §8.
      */
-    JWT_STAFF_REMEMBER_TTL: z.string().default('30d'),
+    JWT_STAFF_REMEMBER_TTL: z.string().default('7d'),
     JWT_CITIZEN_TTL: z.string().default('7d'),
 
     SMS_PROVIDER_API_KEY: z.string().optional(),

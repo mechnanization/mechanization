@@ -1,4 +1,5 @@
 import { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
+import { ReferenceNumber } from '../../../domain/value-objects/reference-number.vo';
 import type { AuditRow } from '../../../domain/interfaces/audit-repository.interface';
 import type { PrismaClient } from '../../../generated/tenant-client';
 
@@ -203,7 +204,8 @@ export async function toAuditViews(db: PrismaClient, rows: readonly AuditRow[]):
               ? { label: fullName(person), secondary: person.role, link: { kind: 'staff', id } }
               : {
                   label: fullName(person),
-                  secondary: person.referenceNumber,
+                  // The citizen's رقم مرجعي signs them in: auditors see it masked.
+                  secondary: ReferenceNumber.mask(person.referenceNumber),
                   link: { kind: 'citizen', id },
                 };
           }),

@@ -47,6 +47,19 @@ export const APP_CONFIG = {
     /** Staff login — credential stuffing is the threat here. */
     staffLogin: { ttlSeconds: 60, limit: 5 },
     /**
+     * Staff refresh and sign-out — load control, not a guessing defence.
+     *
+     * A refresh token is 256 random bits, so no rate is slow enough to matter
+     * to someone guessing and none needs to be. What this bounds is a tab
+     * stuck in a loop, or a flood aimed at the database work a refresh costs.
+     * Counted per `Authorization` header rather than per IP (see
+     * `AuthController`): behind nginx every clerk shares one IP, and a per-IP
+     * bucket would let one noisy client spend the whole municipality's
+     * refreshes. Thirty a minute is far above what one tab needs — one refresh
+     * per idle window, plus the retries a bad connection costs.
+     */
+    staffSession: { ttlSeconds: 60, limit: 30 },
+    /**
      * Citizen sign-in by رقم مرجعي alone.
      *
      * Tighter than every other bar because the reference *is* the whole

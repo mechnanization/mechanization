@@ -19,9 +19,16 @@ import {
   UserRepository,
 } from '../../../domain/interfaces/user-repository.interface';
 import { StaffRole, User } from '../../../domain/entities/user.entity';
-import { ConflictError, NotFoundError, UnauthorizedError } from '../../common/exceptions';
+import {
+  ConflictError,
+  DomainError,
+  ForbiddenError,
+  NotFoundError,
+  UnauthorizedError,
+} from '../../common/exceptions';
 import { OtpService } from './otp.service';
 import { SessionRevocationService } from './session-revocation.service';
+import { IssuedRefreshToken, StaffRefreshTokenService } from './staff-refresh-token.service';
 
 /**
  * Compared against when a staff row has no `passwordHash`, so that a sign-in
@@ -39,6 +46,12 @@ const RESET_KEY_LABEL = 'password-reset.v1';
 
 const ABSENT_PASSWORD_HASH = '$2b$12$0TQq.TFqu6SjurFnnRd/3eWT5wd9BsdSSqeoT8tSlia7rBFo8Pm6i';
 
+/**
+ * The two sentences a refused refresh answers with. The first for a request
+ * that does not add up — no binding, no cookie, a cookie nobody issued; the
+ * second for a session that did exist and is over, which is the one a clerk
+ * can act on.
+ */
 /** The single token shape. Both citizens and staff carry exactly this. */
 export interface SessionClaims {
   sub: string;
@@ -61,28 +74,42 @@ export interface SessionClaims {
   /**
    * When this **session** ends for good, epoch seconds — STAFF only.
    *
-   * Distinct from the token's own `exp`, and that distinction is the whole
-   * refresh design. `exp` is short and slides forward each time the token is
-   * exchanged; this does not move. It is stamped once at login from
-   * `JWT_STAFF_TTL` (or `JWT_STAFF_REMEMBER_TTL`) and copied unchanged into
-   * every token the session goes on to produce, so a clerk who works through
-   * the day still signs in again at the same wall-clock moment they do today.
+   * Distinct from the token's own `exp`. `exp` is short, and every refresh
+   * mints a token with a later one; this does not move. It is fixed once at
+   * login from `JWT_STAFF_TTL` (or `JWT_STAFF_REMEMBER_TTL`), so a clerk who
+   * works through the day still signs in again at the same wall-clock moment
+   * they always have. Without a fixed cap a rotating refresh token is a
+   * session that never ends.
    *
-   * Without it, "re-issue the token when it expires" is an session that never
-   * ends — which is strictly worse than the hard 401 it replaces.
+   * The authoritative copy is not this claim but the `expiresAt` of the
+   * session's refresh-token family, which every token in the family inherits
+   * and `refreshStaffSession` reads. The claim carries the same value so the
+   * portal can show when the session ends, and so `issueSession` can clamp
+   * `exp` to it; nothing on the server trusts it in place of the row.
    *
    * Optional because tokens minted before this existed do not carry it.
-   * `refreshStaffSession` treats a missing value as "cap at this token's own
-   * `exp`", so a session already in flight when this deploys keeps exactly the
-   * lifetime it was issued with and simply cannot be extended.
    */
   sessionExpiresAt?: number;
+  /**
+   * The refresh-token family this token was minted from — STAFF only.
+   *
+   * `JwtAuthGuard` asks on every request whether that family is still alive,
+   * which is what lets a logout, or a refresh token presented after its chain
+   * moved on, end the access token as well instead of leaving it to expire.
+   * Absent from citizen tokens and from staff tokens minted before refresh
+   * families existed; the guard skips the check for those.
+   */
+  sid?: string;
 }
 
 export interface SessionResult {
   accessToken: string;
   expiresIn: string;
-  /** When `accessToken` stops being accepted, ISO. The client refreshes before this. */
+  /**
+   * When `accessToken` stops being accepted, ISO. The portal refreshes on the
+   * 401 that follows rather than by this clock; it is carried so a proactive
+   * refresh can be added without changing what a session is.
+   */
   expiresAt?: string;
   /** When the session ends for good, ISO — STAFF only. No refresh past it. */
   sessionExpiresAt?: string;
@@ -108,6 +135,33 @@ export interface TotpChallengeRequired {
   status: 'TOTP_REQUIRED';
 }
 
+/**
+ * A staff sign-in or refresh that succeeded: the access token for the response
+ * body, and the refresh token for the cookie.
+ *
+ * Two fields rather than one flat object on purpose. The refresh token must
+ * never reach a JSON body, so the controller has to pick out what it returns;
+ * a handler that returned the grant whole would break the portal's sign-in
+ * outright — noticed in minutes — rather than working while also handing page
+ * script the one credential the cookie exists to keep from it.
+ */
+export interface StaffSessionGrant {
+  session: SessionResult;
+  refresh: IssuedRefreshToken;
+}
+
+export type StaffLoginResult = StaffSessionGrant | TotpChallengeRequired;
+
+/**
+ * A refresh is answered, not thrown. A refusal may also have to clear the
+ * cookie, and controllers here hold no try/catch (see `DomainExceptionFilter`),
+ * so the controller needs the refusal as a value to act on before it throws
+ * it. `clearCookie` is the name of the cookie to clear, when there is one.
+ */
+export type StaffRefreshOutcome =
+  | { ok: true; grant: StaffSessionGrant }
+  | { ok: false; error: DomainError; clearCookie?: string };
+
 @Injectable()
 export class IdentityService {
   constructor(
@@ -120,6 +174,7 @@ export class IdentityService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly events: EventEmitter2,
+    private readonly refreshTokens: StaffRefreshTokenService,
   ) {}
 
   // ────────────────────────────  Staff  ────────────────────────────
@@ -137,16 +192,27 @@ export class IdentityService {
    * every other password check in this file already verifies against it. The
    * one remaining question Supabase answered here — "is this the right
    * password" — is the one it answered from a copy.
+   *
+   * A successful sign-in starts a refresh-token family and returns its first
+   * token beside the access token, for the controller to set as a cookie.
+   * Whatever refresh cookie the request already carried is neither read nor
+   * revoked: the cookie is named per account, so this account's old one is
+   * simply overwritten, and the family it belonged to can no longer be reached
+   * from this browser and lapses at its own cap.
    */
   async loginStaff(input: {
     tenantSlug: string;
     email: string;
     password: string;
     totpToken?: string;
-    /** "تذكّرني على هذا الجهاز" — issues JWT_STAFF_REMEMBER_TTL instead of JWT_STAFF_TTL. */
+    /**
+     * "تذكّرني على هذا الجهاز" — caps the session at JWT_STAFF_REMEMBER_TTL
+     * instead of JWT_STAFF_TTL, and lets the refresh cookie outlive the browser
+     * session.
+     */
     remember?: boolean;
     context: { ip?: string; userAgent?: string };
-  }): Promise<SessionResult | TotpChallengeRequired> {
+  }): Promise<StaffLoginResult> {
     /**
      * 1. Resolve the staff profile that must already exist in this schema.
      *
@@ -206,19 +272,39 @@ export class IdentityService {
     const challenge = await this.challengeTotp(user, input.totpToken);
     if (challenge) return challenge;
 
+    /**
+     * The refresh family first, before anything records that a sign-in happened.
+     *
+     * It is the one write here that can fail for a reason the rest cannot see
+     * — above all, this code reaching a schema that migration 0059 has not
+     * been applied to. Written first, that failure is a clean 5xx, with no
+     * `lastLoginAt` and no «logged in» audit row for a session that was never
+     * handed out.
+     */
+    const sessionExpiresAt = this.staffSessionCap(input.remember, Math.floor(Date.now() / 1000));
+    const refresh = await this.refreshTokens.issueFamily({
+      userId: user.id,
+      tokenVersion: user.tokenVersion,
+      persistent: input.remember === true,
+      expiresAt: new Date(sessionExpiresAt * 1000),
+    });
+
     await this.users.markLoggedIn(user.id);
     user.recordLogin(input.context);
     this.publish(user.pullEvents(), input.tenantSlug);
 
-    return this.issueSession({
+    const session = this.issueSession({
       id: user.id,
       name: user.fullName,
       kind: 'STAFF',
       role: user.role,
       tenantSlug: input.tenantSlug,
-      remember: input.remember,
       tokenVersion: user.tokenVersion,
+      sessionExpiresAt,
+      sid: refresh.familyId,
     });
+
+    return { session, refresh };
   }
 
   /**
@@ -808,106 +894,256 @@ export class IdentityService {
   // ────────────────────────────  Shared  ────────────────────────────
 
   /**
-   * Exchanges a staff token for a fresh one, without a new sign-in.
+   * Renews a staff session from its refresh cookie, without a new sign-in.
    *
-   * Deliberately accepts an **expired** token, which is the only thing that
-   * makes this useful and is worth being explicit about. The alternative —
-   * requiring a live token — means the exchange has to happen before the idle
-   * window closes, so a clerk who steps away for lunch returns to the same hard
-   * 401 this exists to remove, just at half an hour instead of eight hours.
-   * Worse than what it replaced.
+   * Two things are needed, and neither is enough alone:
    *
-   * What bounds it instead is `sessionExpiresAt`, stamped at login and never
-   * moved. Past that there is no exchange at any price, so the credential's
-   * total life is exactly what it was before this change — a stolen token is
-   * usable for no longer than it already was. It is **not** shortened either:
-   * anyone holding the token can exchange it, so this buys convenience and
-   * costs nothing, rather than buying security. Reducing the theft window needs
-   * a second, separately-stored credential that only this endpoint accepts —
-   * i.e. real refresh tokens with server-side rotation and reuse detection.
+   * 1. **The refresh token**, from the httpOnly cookie — the credential. It is
+   *    opaque, stored only as a keyed hash, and consumed by the exchange: each
+   *    refresh returns its successor, and `StaffRefreshTokenService` decides
+   *    whether a token presented a second time is a client whose answer was
+   *    lost or a copy being replayed.
+   * 2. **The tab's own access token**, as `Authorization: Bearer` — the
+   *    binding (see `bindTab`). It is read with its expiry ignored, because a
+   *    tab usually refreshes precisely because its token has expired, and for
+   *    that reason it is never accepted as the renewal credential: nothing is
+   *    minted from it. It says only which account this tab belongs to, so the
+   *    right cookie is read and a tab can never be handed another account's
+   *    session. It is also what ends a session without «تذكّرني» when the tab
+   *    closes: the access token lived in that tab's sessionStorage, and the
+   *    cookie is useless without it.
    *
-   * Three things are re-checked on every exchange, none of which the token can
-   * speak for:
+   * Then, on every exchange, everything neither token can speak for:
    *
-   * 1. **Revocation** — `tokenVersion` and `isActive`, via the same service the
-   *    guard uses. A dismissal still takes effect within the cache window, and
-   *    a revoked session cannot refresh its way back.
-   * 2. **Role** — re-read from the row, so a promotion or demotion reaches the
-   *    session at the next exchange rather than at the next sign-in. `role`
-   *    travels in the token and `RolesGuard` authorises from it, so a stale one
-   *    is an authorisation decision made on old information.
-   * 3. **The tenant** — compared against the URL, as everywhere else.
+   * - **The family** — its root not revoked (logout, reuse) and not past its
+   *   `expiresAt`. That is the session cap, fixed at login and inherited by
+   *   every token in the family, so however often a session is refreshed it
+   *   ends at the wall-clock moment the sign-in set.
+   * - **The account** — still staff, still this municipality, still active, and
+   *   at the `tokenVersion` the family began at. A password change, a role
+   *   edit or a deactivation ends the family here, not only in the guard.
+   * - **The role** — re-read from the row rather than carried over, so a
+   *   promotion or demotion reaches the session at the next refresh rather
+   *   than the next sign-in. `RolesGuard` authorises from the token's claim, so
+   *   a stale one is an authorisation decision made on old information.
+   *
+   * Refusals come back as values so the controller can clear the cookie before
+   * it throws. One about the binding leaves the cookie alone and writes
+   * nothing: the cookie may be serving a healthy tab of the same account, and a
+   * request that cannot say whose session it is must not be able to end one.
+   * An infrastructure error is not a refusal — it propagates as a 5xx, cookie
+   * untouched, and the portal treats it as a connection problem.
    */
   async refreshStaffSession(input: {
-    token: string;
+    accessToken?: string;
     tenantSlug: string;
-  }): Promise<SessionResult> {
-    let claims: SessionClaims & { exp?: number };
-    try {
-      /*
-        `ignoreExpiration`, and nothing else relaxed.
+    readCookie: (name: string) => string | undefined;
+  }): Promise<StaffRefreshOutcome> {
+    const claims = this.bindTab(input.accessToken, input.tenantSlug);
+    if (!claims) return refused('SESSION_INVALID');
 
-        The signature is still verified, so this accepts only tokens this
-        service minted. Everything expiry would have caught is caught below by
-        the cap, which is the stricter of the two for any token worth
-        refusing.
-      */
-      claims = this.jwt.verify<SessionClaims & { exp?: number }>(input.token, {
-        ignoreExpiration: true,
-      });
-    } catch {
-      throw new UnauthorizedError('Invalid or expired session');
-    }
+    const cookieName = this.refreshTokens.cookieNameFor(claims.sub);
+    const presented = input.readCookie(cookieName);
+    if (!presented) return refused('SESSION_INVALID');
 
-    // Citizens have no refresh path — see `issueSession`. Answering this for
-    // them would silently extend a 7-day token forever.
-    if (claims.kind !== 'STAFF') {
-      throw new UnauthorizedError('Invalid or expired session');
-    }
+    const row = await this.refreshTokens.find(presented);
+    if (!row) return refused('SESSION_INVALID', cookieName);
 
-    if (claims.tenantSlug !== input.tenantSlug) {
-      throw new UnauthorizedError('Invalid or expired session');
-    }
+    // The cookie's name is this account's, so a row belonging to anyone else
+    // was put there by something other than this service. Refuse, and neither
+    // write nor clear on the strength of it.
+    if (row.userId !== claims.sub) return refused('SESSION_INVALID');
 
-    /**
-     * The cap, and the legacy case folded into it.
-     *
-     * A token minted before `sessionExpiresAt` existed falls back to its own
-     * `exp`, which means it can never be extended: the comparison below is
-     * already false by the time anything would want to refresh it. That is the
-     * right answer rather than a special case — a session in flight when this
-     * deploys keeps precisely the lifetime it was issued with, and the clerk
-     * signs in once at the moment they would have anyway.
-     */
-    const cap = claims.sessionExpiresAt ?? claims.exp ?? 0;
-    if (cap <= Math.floor(Date.now() / 1000)) {
-      throw new UnauthorizedError('انتهت الجلسة. يرجى تسجيل الدخول مجدداً.');
-    }
+    const now = new Date();
 
-    const user = await this.users.findById(claims.sub);
+    const root = await this.refreshTokens.familyRoot(row.familyId);
+    if (!root || root.revokedAt) return refused('SESSION_ENDED', cookieName);
+    if (root.expiresAt <= now) return refused('SESSION_ENDED', cookieName);
+
+    const user = await this.users.findById(row.userId);
     if (!user || user.kind !== 'STAFF' || user.tenantSlug !== input.tenantSlug) {
-      throw new UnauthorizedError('Invalid or expired session');
+      await this.refreshTokens.revokeFamily(row.familyId, now);
+      return refused('SESSION_INVALID', cookieName);
     }
 
-    // Deactivated accounts refuse here as well as in the guard. The guard does
-    // not run on this route — it cannot, because the token may be expired — so
-    // this is the check, not a duplicate of one.
-    user.assertMayStartSession();
-
-    if ((claims.tokenVersion ?? 0) !== user.tokenVersion) {
-      throw new UnauthorizedError('انتهت الجلسة. يرجى تسجيل الدخول مجدداً.');
+    // The guard does not run on this route — the access token is usually
+    // expired — so a deactivated account is refused here, and its family ended
+    // so the cookie is not tried again on every page load.
+    try {
+      user.assertMayStartSession();
+    } catch (error) {
+      if (!(error instanceof ForbiddenError)) throw error;
+      await this.refreshTokens.revokeFamily(row.familyId, now);
+      return { ok: false, error, clearCookie: cookieName };
     }
 
-    return this.issueSession({
+    if (user.tokenVersion !== row.tokenVersion) {
+      await this.refreshTokens.revokeFamily(row.familyId, now);
+      return refused('SESSION_ENDED', cookieName);
+    }
+
+    const exchanged = await this.refreshTokens.exchange(row, now);
+
+    if (exchanged.outcome === 'reused') {
+      // Recorded only when this request is the one that ended the family. Its
+      // other copies arriving afterwards find it revoked and change nothing,
+      // and a trail with one row per replay would bury the one that matters.
+      if (exchanged.revoked > 0) {
+        this.auditSession('STAFF_SESSION_REUSE_DETECTED', user, input.tenantSlug);
+      }
+      return refused('SESSION_ENDED', cookieName);
+    }
+
+    if (exchanged.outcome === 'ended') return refused('SESSION_ENDED', cookieName);
+
+    const session = this.issueSession({
       id: user.id,
       name: user.fullName,
       kind: 'STAFF',
-      // Re-read, not copied from the token — see (2) above.
       role: user.role,
       tenantSlug: input.tenantSlug,
       tokenVersion: user.tokenVersion,
-      sessionExpiresAt: cap,
+      sessionExpiresAt: Math.floor(root.expiresAt.getTime() / 1000),
+      sid: row.familyId,
     });
+
+    return { ok: true, grant: { session, refresh: exchanged.next } };
+  }
+
+  /**
+   * Ends this tab's sign-in on the server.
+   *
+   * The family is revoked, so the cookie cannot be exchanged again and —
+   * through `sid` in `JwtAuthGuard` — the access token stops working as well,
+   * instead of living out its idle window in whatever copied it.
+   *
+   * It needs the tab's binding, as a refresh does and for the same reason: the
+   * cookie to read is named per account, and only the tab can say which
+   * account. Without a binding this is a no-op rather than an error. The portal
+   * clears its own storage whatever the answer, and a request that cannot say
+   * whose session it is must not be able to end one.
+   *
+   * The family comes from the cookie when it resolves to this account, and
+   * from the access token's `sid` when it does not (the cookie already gone,
+   * or blocked). When both resolve and differ — the same account signed in
+   * again in another tab, which replaced the cookie — both end: the cookie's
+   * because it is this browser's credential for the account, and the `sid`'s
+   * because it is the access token this tab is holding.
+   *
+   * No transaction around the revocations: each is idempotent, and a failure
+   * between them leaves a family the next attempt ends.
+   */
+  async logoutStaff(input: {
+    accessToken?: string;
+    tenantSlug: string;
+    readCookie: (name: string) => string | undefined;
+  }): Promise<{ clearCookie?: string }> {
+    const claims = this.bindTab(input.accessToken, input.tenantSlug);
+    if (!claims) return {};
+
+    const cookieName = this.refreshTokens.cookieNameFor(claims.sub);
+    const presented = input.readCookie(cookieName);
+
+    const families = new Set<string>();
+    if (presented) {
+      const row = await this.refreshTokens.find(presented);
+      if (row && row.userId === claims.sub) families.add(row.familyId);
+    }
+    if (claims.sid) {
+      const root = await this.refreshTokens.familyRoot(claims.sid);
+      if (root && root.userId === claims.sub) families.add(root.familyId);
+    }
+
+    let revoked = 0;
+    for (const familyId of families) {
+      revoked += await this.refreshTokens.revokeFamily(familyId);
+    }
+
+    // Only a logout that ended something is one worth recording; a second
+    // click, or a tab whose session had already lapsed, is not an event.
+    if (revoked > 0) {
+      const user = await this.users.findById(claims.sub);
+      if (user) this.auditSession('STAFF_LOGOUT', user, input.tenantSlug);
+    }
+
+    // Cleared only when the request carried it: a clear for a cookie the
+    // browser does not hold is noise, and the name is this account's alone.
+    return presented ? { clearCookie: cookieName } : {};
+  }
+
+  /**
+   * Which staff account this tab belongs to — the binding a refresh and a
+   * logout need beside the cookie.
+   *
+   * `ignoreExpiration`, and nothing else relaxed: the signature is verified,
+   * so only tokens this service minted are read at all. What comes back is
+   * never a credential. Nothing is minted from it and nothing is authorised by
+   * it; it names the account whose cookie to read, and the row that cookie
+   * resolves to must then belong to that same account.
+   *
+   * Citizens have no refresh path — see `issueSession` — so a citizen token
+   * binds nothing, and neither does one from another municipality.
+   */
+  private bindTab(accessToken: string | undefined, tenantSlug: string): SessionClaims | null {
+    if (!accessToken) return null;
+
+    let claims: SessionClaims;
+    try {
+      claims = this.jwt.verify<SessionClaims>(accessToken, { ignoreExpiration: true });
+    } catch {
+      return null;
+    }
+
+    if (claims.kind !== 'STAFF' || claims.tenantSlug !== tenantSlug) return null;
+    if (typeof claims.sub !== 'string' || claims.sub === '') return null;
+
+    return claims;
+  }
+
+  /**
+   * Session events on the audit trail, through the `staff.changed` listener
+   * every other account event already uses.
+   *
+   * Only for a staff account that has a role: `actorRole` is an enum column,
+   * and an insert it refuses is an audit row lost to a log line.
+   */
+  private auditSession(
+    action: 'STAFF_LOGOUT' | 'STAFF_SESSION_REUSE_DETECTED',
+    user: User,
+    tenantSlug: string,
+  ): void {
+    if (user.kind !== 'STAFF' || !user.role) return;
+
+    this.events.emit('staff.changed', {
+      action,
+      tenantSlug,
+      staffId: user.id,
+      actorId: user.id,
+      actorRole: user.role,
+    });
+  }
+
+  /**
+   * The session's hard deadline, epoch seconds — fixed once, at sign-in.
+   *
+   * `JWT_STAFF_TTL` and `JWT_STAFF_REMEMBER_TTL` keep the values they have
+   * always had and keep meaning the same thing to an operator — how long a
+   * sign-in lasts. What changed is which expiry they name: they used to be the
+   * token's, and are now the session's. A clerk still signs in again after
+   * eight hours; they no longer get thrown out mid-form at hour eight and lose
+   * what was on screen.
+   */
+  private staffSessionCap(remember: boolean | undefined, nowSeconds: number): number {
+    return (
+      nowSeconds +
+      durationToSeconds(
+        this.config.get<string>(
+          remember ? 'JWT_STAFF_REMEMBER_TTL' : 'JWT_STAFF_TTL',
+          remember ? '7d' : '8h',
+        ),
+        remember ? 7 * 24 * 3600 : 8 * 3600,
+      )
+    );
   }
 
   /**
@@ -920,17 +1156,20 @@ export class IdentityService {
     kind: 'STAFF' | 'CITIZEN';
     role?: StaffRole;
     tenantSlug: string;
-    /** STAFF only — see loginStaff. */
+    /** STAFF only, and only read when no `sessionExpiresAt` is passed — see `staffSessionCap`. */
     remember?: boolean;
     /** Stamped into the token and compared on every request thereafter. */
     tokenVersion: number;
     /**
-     * STAFF only, and only on a refresh: the cap the original login set.
+     * STAFF only: the session cap. Computed once by `loginStaff`, and read back
+     * from the family's root row by `refreshStaffSession`.
      *
-     * Passed through rather than recomputed, which is what stops a refreshed
-     * session from walking its own deadline forward every time it is exchanged.
+     * Passed in rather than recomputed, which is what stops a refreshed session
+     * from walking its own deadline forward every time it is renewed.
      */
     sessionExpiresAt?: number;
+    /** STAFF only: the refresh-token family this token belongs to — see `SessionClaims.sid`. */
+    sid?: string;
   }): SessionResult {
     const nowSeconds = Math.floor(Date.now() / 1000);
 
@@ -953,39 +1192,22 @@ export class IdentityService {
       };
     }
 
-    /**
-     * The session's hard deadline, set once and carried forward.
-     *
-     * `JWT_STAFF_TTL` and `JWT_STAFF_REMEMBER_TTL` keep the values they have
-     * always had and keep meaning the same thing to an operator — how long a
-     * sign-in lasts. What changed is which expiry they name: they used to be
-     * the token's, and are now the session's. A clerk still signs in again
-     * after eight hours; they no longer get thrown out mid-form at hour eight
-     * and lose what was on screen.
-     */
     const sessionExpiresAt =
-      input.sessionExpiresAt ??
-      nowSeconds +
-        durationToSeconds(
-          this.config.get<string>(
-            input.remember ? 'JWT_STAFF_REMEMBER_TTL' : 'JWT_STAFF_TTL',
-            input.remember ? '30d' : '8h',
-          ),
-          input.remember ? 30 * 24 * 3600 : 8 * 3600,
-        );
+      input.sessionExpiresAt ?? this.staffSessionCap(input.remember, nowSeconds);
 
     /**
      * The token's own life: the idle window, clamped to the cap.
      *
      * Clamping is what makes the last token of a session expire exactly at the
-     * deadline instead of a half-hour past it. Without it the final refresh
+     * deadline instead of up to an idle window past it. Without it the final refresh
      * before the cap would mint a token outliving the session it belongs to,
-     * and `refreshStaffSession` would be the only thing refusing it — one
-     * check standing where two should.
+     * and the guard's family check (`isFamilyLive` reads the root's
+     * `expiresAt`) would be the only thing refusing it — one check standing
+     * where two should.
      */
     const idleSeconds = durationToSeconds(
-      this.config.get<string>('JWT_STAFF_IDLE_TTL', '30m'),
-      30 * 60,
+      this.config.get<string>('JWT_STAFF_IDLE_TTL', '15m'),
+      15 * 60,
     );
     const expiresIn = Math.max(1, Math.min(idleSeconds, sessionExpiresAt - nowSeconds));
 
@@ -996,6 +1218,7 @@ export class IdentityService {
       ...(input.role ? { role: input.role } : {}),
       tokenVersion: input.tokenVersion,
       sessionExpiresAt,
+      ...(input.sid ? { sid: input.sid } : {}),
     };
 
     return {
@@ -1038,6 +1261,18 @@ function durationToSeconds(value: string, fallbackSeconds: number): number {
   const unit = match[2] ?? 's';
   const multiplier = { s: 1, m: 60, h: 3600, d: 86400 }[unit] ?? 1;
   return amount * multiplier;
+}
+
+/** A 401 refresh refusal, clearing the named cookie when there is one to clear. */
+function refused(code: 'SESSION_INVALID' | 'SESSION_ENDED', clearCookie?: string): StaffRefreshOutcome {
+  return {
+    ok: false,
+    error: new UnauthorizedError({
+      code,
+      message: code === 'SESSION_ENDED' ? 'The staff session has ended' : 'Invalid or expired session',
+    }),
+    ...(clearCookie ? { clearCookie } : {}),
+  };
 }
 
 /**
