@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { CITIZEN_RESIDENCE } from '@mechanization/shared-schemas';
 import { CitizenEditor } from '@/components/admin/citizen-editor';
 import { readLinkSeed } from '@/lib/tab-search';
@@ -62,11 +62,19 @@ export default function NewCitizenPage({
     The panel's search is only a gate on *a* search having run («asdfgh» opens
     it); the check that «asdfgh» cannot pass is the one here, against the name
     and phone actually being entered.
+
+    The link is rebuilt from the router, never from `window.location`. On the
+    unit panel's client-side navigation this page renders before Next pushes
+    the new URL into history (it does that in an insertion effect after the
+    commit), so `window.location` still names the matrix page here, the seed's
+    target never matches, and the name and phone came up empty.
   */
+  const pathname = usePathname();
+  const query = searchParams.toString();
   const [initialSearch] = useState(() =>
     typeof window === 'undefined'
       ? undefined
-      : readLinkSeed(tenant, `${window.location.pathname}${window.location.search}`),
+      : readLinkSeed(tenant, query ? `${pathname}?${query}` : pathname),
   );
 
   return (
