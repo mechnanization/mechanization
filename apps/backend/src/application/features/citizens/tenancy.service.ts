@@ -10,6 +10,7 @@ import {
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { AuditService, type CitizenChange } from '../audit/audit.service';
 import { settleUnit, type UnitStatusEvent } from '../buildings/unit-status';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { claimsFlat } from '../../../domain/entities/census-claim';
@@ -69,6 +70,7 @@ export class TenancyService {
     private readonly links: LandlordLinkService,
     private readonly events: EventEmitter2,
     private readonly ownership: OwnershipService,
+    private readonly auditTrail: AuditService,
   ) {
     // A tenant can buy the flat they rent; the sale ends that tenancy through here.
     ownership.bindTenancy(this);
@@ -583,6 +585,7 @@ export class TenancyService {
     const droppedFlags: Array<Record<string, unknown>> = [];
 
     const settleEvents: UnitStatusEvent[] = [];
+    let changes: Array<CitizenChange & { tenantSlug: string }> = [];
     await this.inTransaction(async () => {
       // 1 — the spells.
       for (const spell of target.spells) {
@@ -750,37 +753,45 @@ export class TenancyService {
         });
         settleEvents.push(...(outcome?.events ?? []));
       }
+
+      /*
+        Tier 1 (docs/security.md): ending a tenancy changes who is billed for
+        the flat, so the rows that record it commit with it, and a failed
+        write rolls the ending back.
+      */
+      const base = { tenantSlug: this.tenantContext.tenantSlug, actorId: actor.id, actorRole: actor.role };
+      changes = [
+        {
+          ...base,
+          citizenId: target.citizenId,
+          action: 'TENANCY_ENDED',
+          after: {
+            reason: input.reason,
+            endedAt,
+            unitCodes: target.units.map((unit) => unit.unitCode),
+            cardIds: target.cards.map((card) => card.id),
+            afterStatus: result.statusApplied,
+            occupanciesEnded: result.occupanciesEnded,
+            cardsEnded: result.cardsEnded,
+            ...(droppedFlags.length > 0 ? { flagsOnEndedCards: droppedFlags } : {}),
+          },
+        },
+        ...result.link.map((link) => ({
+          ...base,
+          citizenId: link.ownerId,
+          action: link.kept ? 'LANDLORD_TENANCY_ENDED' : 'LANDLORD_LINK_REVERTED',
+          after: { propertyEntryId: link.propertyEntryId, tenantId: target.citizenId, reason: input.reason },
+        })),
+      ];
+      for (const payload of changes) {
+        await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload });
+      }
     });
 
     for (const event of settleEvents) this.events.emit(event.channel, event.payload);
     this.links.emitAll(events, actor);
-    this.events.emit('citizen.changed', {
-      tenantSlug: this.tenantContext.tenantSlug,
-      citizenId: target.citizenId,
-      action: 'TENANCY_ENDED',
-      after: {
-        reason: input.reason,
-        endedAt,
-        unitCodes: target.units.map((unit) => unit.unitCode),
-        cardIds: target.cards.map((card) => card.id),
-        afterStatus: result.statusApplied,
-        occupanciesEnded: result.occupanciesEnded,
-        cardsEnded: result.cardsEnded,
-        ...(droppedFlags.length > 0 ? { flagsOnEndedCards: droppedFlags } : {}),
-      },
-      actorId: actor.id,
-      actorRole: actor.role,
-    });
-    for (const link of result.link) {
-      this.events.emit('citizen.changed', {
-        tenantSlug: this.tenantContext.tenantSlug,
-        citizenId: link.ownerId,
-        action: link.kept ? 'LANDLORD_TENANCY_ENDED' : 'LANDLORD_LINK_REVERTED',
-        after: { propertyEntryId: link.propertyEntryId, tenantId: target.citizenId, reason: input.reason },
-        actorId: actor.id,
-        actorRole: actor.role,
-      });
-    }
+    // Already audited inside the transaction; these clear the caches that listen.
+    for (const payload of changes) this.events.emit('citizen.changed', { ...payload, alreadyAudited: true });
 
     return result;
   }
