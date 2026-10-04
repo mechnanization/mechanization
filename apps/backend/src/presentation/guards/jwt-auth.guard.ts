@@ -80,6 +80,24 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedError('Invalid or expired session');
     }
 
+    /**
+     * The sign-in, not only the account.
+     *
+     * A staff token carries `sid`, the refresh-token family it was minted
+     * from. Signing out, or a refresh token being presented after the chain had
+     * moved past it, revokes that family — and without this check the access
+     * token already in the tab would go on working until it expired, so
+     * "sign out" would mean "stop refreshing" rather than "stop". Scoped to one
+     * family, so it ends this sign-in and leaves the same account's others on
+     * other devices alone, which bumping `tokenVersion` could not.
+     *
+     * Tokens without `sid` — citizens, and staff tokens minted before refresh
+     * families existed — are unaffected.
+     */
+    if (claims.sid && !(await this.revocation.isFamilyLive(claims.sid))) {
+      throw new UnauthorizedError('Invalid or expired session');
+    }
+
     request.user = claims;
     return true;
   }

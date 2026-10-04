@@ -25,6 +25,9 @@ import { withConnectionRetry } from '../../../infrastructure/prisma/with-connect
  */
 const TOKEN_VERSION_TTL_SECONDS = 30;
 
+/** A family id is the root row's UUID; anything else cannot name one. */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * The revocation check behind every authenticated request.
  *
@@ -102,5 +105,58 @@ export class SessionRevocationService {
    */
   async forget(userId: string): Promise<void> {
     await this.cache.invalidatePrefix(this.key(userId));
+  }
+
+  private familyKey(familyId: string): string {
+    return `session:${this.tenantContext.tenantSlug}:family:${familyId}`;
+  }
+
+  /**
+   * Whether the sign-in a staff access token belongs to (its `sid`) is still
+   * alive — the check that lets a logout, or a detected refresh-token reuse,
+   * end the access token as well as the refresh token.
+   *
+   * `tokenVersion` cannot do this: it is per account, so bumping it to end one
+   * session would end every session that account has on every device.
+   *
+   * Read from the family's **root** row only, and that is deliberate. A
+   * revocation sweeps every row of the family, but a rotation committing a new
+   * child just after the sweep's snapshot would leave that child unrevoked. The
+   * root is written once at sign-in and revoked by every sweep, so asking it
+   * alone means an orphan child can never keep a revoked family alive.
+   *
+   * Cached for the same window as the version, for the same reason: this runs
+   * on every staff request. `false` is cached as well as `true` — a revoked
+   * family stays revoked, and a burst of requests from a signed-out tab should
+   * not each cost a round trip to find that out.
+   */
+  async isFamilyLive(familyId: string): Promise<boolean> {
+    if (!UUID_SHAPE.test(familyId)) return false;
+
+    const key = this.familyKey(familyId);
+
+    const cached = await this.cache.get<boolean>(key);
+    if (cached !== null && cached !== undefined) return cached;
+
+    const root = await withConnectionRetry(() =>
+      this.tenantContext.prisma.staffRefreshToken.findUnique({
+        where: { id: familyId },
+        select: { familyId: true, revokedAt: true, expiresAt: true },
+      }),
+    );
+
+    const live =
+      root !== null &&
+      root.familyId === familyId &&
+      root.revokedAt === null &&
+      root.expiresAt > new Date();
+
+    await this.cache.set(key, live, TOKEN_VERSION_TTL_SECONDS);
+    return live;
+  }
+
+  /** Drops the cached liveness of one family, after it has been revoked. */
+  async forgetFamily(familyId: string): Promise<void> {
+    await this.cache.invalidatePrefix(this.familyKey(familyId));
   }
 }

@@ -11,6 +11,7 @@ import {
   PASSWORD_HASHER,
   REGISTRATION_REPOSITORY,
   SMS_SENDER,
+  STAFF_REFRESH_TOKEN_REPOSITORY,
   TENANT_REPOSITORY,
   TOTP_SERVICE,
   USER_REPOSITORY,
@@ -32,6 +33,7 @@ import { PrismaDocumentRepository } from './repositories/document.repository';
 import { PrismaOtpRepository } from './repositories/otp.repository';
 import { PrismaParcelRepository } from './repositories/parcel.repository';
 import { PrismaRegistrationRepository } from './repositories/registration.repository';
+import { PrismaStaffRefreshTokenRepository } from './repositories/staff-refresh-token.repository';
 import { PrismaTenantRepository } from './repositories/tenant.repository';
 import { PrismaUserRepository } from './repositories/user.repository';
 import { PrismaZoneRepository } from './repositories/zone.repository';
@@ -62,6 +64,7 @@ import { SmsProviderService } from './sms/sms-provider.service';
     { provide: DOCUMENT_REPOSITORY, useClass: PrismaDocumentRepository },
     { provide: AUDIT_REPOSITORY, useClass: PrismaAuditRepository },
     { provide: OTP_REPOSITORY, useClass: PrismaOtpRepository },
+    { provide: STAFF_REFRESH_TOKEN_REPOSITORY, useClass: PrismaStaffRefreshTokenRepository },
     { provide: ZONE_REPOSITORY, useClass: PrismaZoneRepository },
     { provide: CASE_REPOSITORY, useClass: PrismaCaseRepository },
 
@@ -94,6 +97,7 @@ import { SmsProviderService } from './sms/sms-provider.service';
     DOCUMENT_REPOSITORY,
     AUDIT_REPOSITORY,
     OTP_REPOSITORY,
+    STAFF_REFRESH_TOKEN_REPOSITORY,
     ZONE_REPOSITORY,
     CASE_REPOSITORY,
     IMAGE_STORAGE_SERVICE,

@@ -24,7 +24,13 @@ export const staffLoginSchema = z.object({
     .trim()
     .regex(/^\d{6}$/, 'رمز التحقق مكوّن من 6 أرقام')
     .optional(),
-  /** "تذكّرني على هذا الجهاز" — extends the issued token's lifetime; see JWT_STAFF_REMEMBER_TTL. */
+  /**
+   * "تذكّرني على هذا الجهاز" — sets the *session* cap to JWT_STAFF_REMEMBER_TTL
+   * instead of JWT_STAFF_TTL. It also makes the refresh cookie persistent (it
+   * otherwise ends with the browser) and has the portal keep the access token
+   * in `localStorage` rather than the tab's `sessionStorage`. It does not
+   * lengthen any single access token: each still lasts JWT_STAFF_IDLE_TTL.
+   */
   remember: z.boolean().optional(),
 });
 export type StaffLogin = z.infer<typeof staffLoginSchema>;
