@@ -1,21 +1,45 @@
 # Deploying to Vercel
 
-Two projects, one repository. The frontend is a stock Next.js deployment; the
-backend is the NestJS app running as a single serverless function.
+Last verified against the code: `develop@8742c5b`, 2026-10-03.
+
+> **This doc now covers the frontend (the portal) only.** The API runs on AWS
+> Lightsail under pm2, deployed by `.github/workflows/deploy-backend.yml` on
+> every push to `main` ([database-environments.md](database-environments.md#3-the-normal-path)).
+> No workflow deploys the backend to Vercel. Sections that describe the API on
+> Vercel are marked **Retired** and kept for history; do not follow them. The
+> backend's Vercel files (`apps/backend/vercel.json`, `apps/backend/api/index.js`,
+> `presentation/serverless.ts`) are still tracked. **Undecided:** whether to
+> delete them.
+>
+> The Vercel projects are configured outside this repository. Project names
+> below are as last recorded (**Unverified**).
 
 | Project | Root Directory | Serves |
 | --- | --- | --- |
 | `mechanization-web` | `apps/frontend` | The portal and the admin UI |
-| `mechanization-api` | `apps/backend` | `/api/v1/**` |
+| `mechanization-api` (**Retired**) | `apps/backend` | was `/api/v1/**`; now served from Lightsail |
 
-Both read a `vercel.json` in their own root directory, so install and build
-commands are already set — do not override them in the dashboard.
+The portal reads `apps/frontend/vercel.json`, so install and build commands are
+already set — do not override them in the dashboard.
+
+**Scope every variable to one environment.** A variable that names an API, a
+database, a bucket or a signing secret is set separately for Production and
+for Preview, never once for both. Rule:
+[security.md](security.md#configuration-this-repository-cannot-see); incident:
+[incidents.md](incidents.md), entry 5.
 
 ---
 
-## 1. Create the API project
+## 1. Create the API project (Retired)
 
-1. **Add New → Project**, import `abed0srour/mechanization`.
+**Retired.** The API is not deployed to Vercel any more. This section records
+how it was. Its env table scoped every variable to Production and Preview
+together, which was the cause of incident 5. On Lightsail the
+API reads its variables from the server's `.env`; the variable names are
+validated in `apps/backend/src/presentation/config/env.schema.ts`.
+
+1. **Add New → Project**, import the repository (now
+   https://github.com/mechnanization/mechanization).
 2. **Root Directory**: `apps/backend`. Tick **Include source files outside of
    the Root Directory** — the backend depends on `@mechanization/shared-schemas`
    through the workspace, and without this the install has nothing to link.
@@ -24,7 +48,8 @@ commands are already set — do not override them in the dashboard.
 
 ### API environment variables
 
-Set all of these for **Production** and **Preview**.
+These were set for **Production** and **Preview** together. Never do that
+again: see the scoping rule at the top.
 
 | Variable | Value |
 | --- | --- |
@@ -35,7 +60,7 @@ Set all of these for **Production** and **Preview**.
 | `SUPABASE_SERVICE_ROLE_KEY` | Service-role key. Never in the web project. |
 | `SUPABASE_STORAGE_BUCKET` | `documents` |
 | `JWT_SECRET` | ≥32 chars. `openssl rand -base64 48` |
-| `JWT_STAFF_TTL` | `12h` — now the **session** cap, not the token's. See §8 |
+| `JWT_STAFF_TTL` | `8h` (the default) — now the **session** cap, not the token's. See §8 |
 | `JWT_STAFF_REMEMBER_TTL` | `30d` — same, for "تذكّرني" |
 | `JWT_STAFF_IDLE_TTL` | Optional, `30m`. How long one token lasts before it is exchanged |
 | `JWT_CITIZEN_TTL` | `7d` — unchanged, citizens have no exchange |
@@ -75,10 +100,10 @@ connect on every cold start.
 
 | Variable | Value |
 | --- | --- |
-| `NEXT_PUBLIC_API_URL` | The API project's origin + `/api/v1` |
-| `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` | Your own token — the checked-in fallback is a personal one |
+| `NEXT_PUBLIC_API_URL` | The API's origin + `/api/v1`. Scoped per environment: a preview must never call the production API |
+| `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` | A Mapbox public token (`pk.…`), URL-restricted. There is no checked-in fallback, so without it the maps get no token |
 | `NEXT_PUBLIC_SENTRY_DSN` | Optional. The **web** project's DSN — a different one from the API's. See §7 |
-| `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | Optional override; `VERCEL_ENV` is used when unset |
+| `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | Optional override; `NEXT_PUBLIC_VERCEL_ENV` is used when unset (`lib/sentry-options.ts`) |
 | `SENTRY_ORG` / `SENTRY_PROJECT` | Build-time only, for source-map upload |
 | `SENTRY_AUTH_TOKEN` | Build-time only. Without it the build still succeeds, just without source maps |
 
@@ -87,17 +112,22 @@ Changing any of them needs a redeploy, not a restart. None may ever hold a
 secret — which includes `SENTRY_AUTH_TOKEN`, so note that it is deliberately
 *not* prefixed and stays server-side.
 
-**Order matters**: deploy the API first, take its URL, then set
-`NEXT_PUBLIC_API_URL` and `CORS_ORIGINS` from the two real origins and redeploy
-both.
+**Origins must match.** `NEXT_PUBLIC_API_URL` names the API's origin, and the
+API's `CORS_ORIGINS` (in the server's `.env` on Lightsail) must contain the
+portal's origin exactly. Changing `NEXT_PUBLIC_API_URL` needs a portal
+redeploy; changing `CORS_ORIGINS` needs a pm2 reload of the API.
 
 ---
 
-## 3. How the backend runs as a function
+## 3. How the backend runs as a function (Retired)
 
-`apps/backend/api/index.js` is the entry point Vercel invokes. It requires
-`dist/presentation/serverless.js`, which boots the Nest app once per warm
-instance and hands back the Express instance the platform then calls.
+**Retired.** Nothing deploys the backend this way now. Kept for history and
+for whoever decides whether to delete these files.
+
+`apps/backend/api/index.js` is the entry point Vercel invoked. It requires the
+compiled `presentation/serverless.ts` from `dist`, which boots the Nest app
+once per warm instance and hands back the Express instance the platform then
+calls.
 
 Two details that are easy to undo by accident:
 
@@ -118,6 +148,12 @@ routes are unchanged from local: `https://<api>/api/v1/health`.
 ---
 
 ## 4. Scheduled jobs
+
+This section is about the API, wherever it runs. On Lightsail the API is a
+long-lived process, so the "one long-lived process" row below applies, and the
+Vercel cron schedule is **Retired**. Every process that boots with
+`SCHEDULER_ENABLED` unset registers the jobs, including the deploy's port-4001
+candidate ([gotchas.md](gotchas.md#every-process-owns-the-schedule-unless-told-otherwise)).
 
 `ScheduleModule` is registered only when `isSchedulerEnabled()` says so
 (`app.module.ts` → `presentation/config/env.schema.ts`). On Vercel it must not
@@ -151,8 +187,10 @@ is set to anything else. The reason the decorators name a zone at all:
 the last day of the previous month and computes the **previous** period's key.
 Daily repetition hid that as "a day late", never as an error.
 
-The two jobs are reachable over HTTP instead, through
-`InternalCronController`, and `vercel.json` schedules them:
+The two jobs are also reachable over HTTP, through `InternalCronController`.
+**Retired:** `apps/backend/vercel.json` scheduled them on Vercel, as below. The
+file is still tracked, and it schedules the OTP prune daily (`0 1 * * *`), not
+hourly as this table said:
 
 | Job | Route | Schedule |
 | --- | --- | --- |
@@ -179,9 +217,17 @@ including a developer's laptop pointed at staging. That is what
 
 ---
 
-## 5. Known limitations of this deployment
+## 5. Known limitations of this deployment (Retired)
 
-These are real behaviour changes, not warnings to skim.
+**Retired.** These were the limits of the API on Vercel. Two still hold on
+Lightsail: rate limiting is per process (3), and migrations are a separate step
+(5), though no longer a manual one: **every push to `main` migrates staging and
+then production automatically**, before the code ships, and the manual
+*Deploy production* workflow is only for dry runs and contract steps
+([database-environments.md](database-environments.md#3-the-normal-path)). The
+"reviewer's approval" in item 5 does not exist. Item 1 no longer applies
+anywhere: the import now uploads its layers through `CadastreStorage`
+(`S3CadastreStorageService`), not to the frontend's `public/`.
 
 1. **Cadastre import will fail.** `POST /t/:slug/cadastre/import` writes the
    generated map layers to `apps/frontend/public/tenants/<slug>/`. Vercel's
@@ -223,26 +269,28 @@ Symptom: pushes land on GitHub, CI runs, and Vercel produces **no deployment at
 all** — not a failed one, not a queued one. Nothing. The dashboard looks healthy
 because the last successful deploy is still serving.
 
-This happened on 2026-09-05, after the repository was transferred from
-`abed0srour/mechanization` to the `mechnanization` organization. Three pushes
-and a merge to `main` produced zero deployments over four hours.
+This happened on 2026-09-05, after the repository was transferred from the
+personal account abed0srour to the mechnanization organization. Three pushes
+and a merge to `main` produced zero deployments over four hours. It applies to
+the portal project today; at the time it was observed on the API project.
 
 What it is **not**: a broken project link. Check it before assuming —
 
 ```bash
 curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
-  https://api.vercel.com/v9/projects/mechanization-api | jq .link
+  https://api.vercel.com/v9/projects/<project> | jq .link
 ```
 
-The `org` and `repo` strings there go stale after a transfer and are cosmetic.
-The field that matters is `repoId`, and GitHub keeps the numeric id across a
-transfer or rename — so `repoId` still matching `gh api repos/:owner/:repo --jq .id`
-means Vercel is watching the right repository and the link is fine.
+The org and repo strings there go stale after a transfer and are cosmetic.
+The field that matters is the link's "repoId", and GitHub keeps the numeric id
+across a transfer or rename — so "repoId" still matching
+`gh api repos/:owner/:repo --jq .id` means Vercel is watching the right
+repository and the link is fine.
 
 What it actually is: the **Vercel GitHub App installation does not follow the
 repository**. It was installed on the personal account; the new organization has
 no installation, so no webhook fires and Vercel is never told a push happened.
-`repoOwnerId` on the link still pointing at the old owner is the tell.
+The link's "repoOwnerId" still pointing at the old owner is the tell.
 
 The fix has two halves, and **the first one alone does nothing** — this was
 measured, not assumed:
@@ -254,13 +302,13 @@ measured, not assumed:
 With (1) done and (2) skipped, a push to a fresh branch produced two GitHub
 check-runs and zero Vercel deployments — no failed build, no GitHub deployment
 record, nothing. Vercel matches an incoming event against the owner recorded on
-the project, and until step (2) rewrites `repoOwnerId` the event belongs to an
+the project, and until step (2) rewrites "repoOwnerId" the event belongs to an
 owner it does not recognise.
 
 Step (2) is easy to believe you have done, because Vercel's UI shows the project
-as connected throughout. The only reliable confirmation is `link.updatedAt`
-moving and `link.repoOwnerId` changing to the organisation's id — re-run the
-`curl` above and compare.
+as connected throughout. The only reliable confirmation is the link's
+"updatedAt" moving and "repoOwnerId" changing to the organisation's id — re-run
+the `curl` above and compare.
 
 Two things worth knowing while it is broken: `git push` keeps working through
 GitHub's redirect, so nothing warns you, and `git remote set-url origin` to the
@@ -269,6 +317,9 @@ new path is worth doing regardless to stop the redirect notice on every push.
 ---
 
 ## 6. After the first deploy
+
+The API checks below run against the Lightsail API, wherever the portal is
+deployed.
 
 ```bash
 curl https://<api>/api/v1/health          # {"status":"ok",...}
@@ -286,19 +337,24 @@ failure, `CORS_ORIGINS` on the API does not contain the web origin exactly
 
 ## 7. Error monitoring (Sentry)
 
-Two Sentry projects, one per Vercel project, because the two deployments fail
-for different reasons and a merged stream makes neither legible:
+Two Sentry projects, one per deployment, because the two fail for different
+reasons and a merged stream makes neither legible:
 
-| Vercel project | DSN variable | Covers |
+| Deployment | DSN variable | Covers |
 | --- | --- | --- |
-| `mechanization-api` | `SENTRY_DSN` | 5xx from `DomainExceptionFilter`, and cold-start boot failures |
-| `mechanization-web` | `NEXT_PUBLIC_SENTRY_DSN` | Browser errors, SSR and middleware failures |
+| The API (Lightsail; was `mechanization-api`) | `SENTRY_DSN`, in the server's `.env` | 5xx from `DomainExceptionFilter`, and boot failures |
+| The portal (`mechanization-web`) | `NEXT_PUBLIC_SENTRY_DSN` | Browser errors, SSR and middleware failures |
+
+The API tags events with `VERCEL_GIT_COMMIT_SHA` as the release
+(`presentation/config/sentry.ts`). That variable is not set on Lightsail, so
+API events carry no release.
 
 ### It is optional, on purpose
 
 An unset DSN disables the SDK and changes nothing else. There is deliberately
-**no** production guard demanding one: §8.7 of `AGENTS.md` is an incident about
-an env check whose only possible effect was a boot failure, and a municipality's
+**no** production guard demanding one: incident 7 in
+[incidents.md](incidents.md) is about an env check whose only possible effect
+was a boot failure, and a municipality's
 API refusing to start because an observability vendor's DSN is absent would make
 the register less available in exchange for nothing.
 
@@ -308,18 +364,21 @@ start. Read it after deploying rather than assuming.
 
 ### Scope each DSN to one environment
 
-Set `SENTRY_ENVIRONMENT` (API) and `NEXT_PUBLIC_SENTRY_ENVIRONMENT` (web)
-per Vercel environment, not once for both. Preview and production both run with
-`NODE_ENV=production`, so without this every pull-request preview reports into
-the production issue stream — §8.5 in a different system. The web project falls
-back to `VERCEL_ENV`, which is already per-environment; the API has no such
-fallback and needs the variable set explicitly.
+Set `NEXT_PUBLIC_SENTRY_ENVIRONMENT` (web) per Vercel environment, not once
+for both, and `SENTRY_ENVIRONMENT` (API) in each API host's `.env`. Preview and
+production both run with `NODE_ENV=production`, so without this every
+pull-request preview reports into the production issue stream — incident 5 in
+[incidents.md](incidents.md), in a different system. The web project falls
+back to `NEXT_PUBLIC_VERCEL_ENV`, which is already per-environment; the API has
+no such fallback and needs the variable set explicitly.
 
 ### What is deliberately not sent
 
 Sentry is a third party, and the tenant schemas hold national ID numbers, home
-addresses and residency status. `AGENTS.md` §4 forbids citizen data leaving
-staging; sending it to a SaaS index would be the same failure with extra steps.
+addresses and residency status.
+[database.md](database.md#moving-data-between-environments) forbids citizen
+data leaving staging; sending it to a SaaS index would be the same failure with
+extra steps.
 So both SDKs are configured to drop, before anything leaves:
 
 - request bodies, cookies, query strings and all headers outside a small allowlist
@@ -365,6 +424,8 @@ configured, and reports nothing.
 ---
 
 ## 8. Staff sessions and the token exchange
+
+This section describes the API's session behaviour, whatever hosts it.
 
 A staff sign-in used to produce one token with one lifetime — 8h, or 30d with
 "تذكّرني" — and when it ran out the next request came back 401. A clerk halfway

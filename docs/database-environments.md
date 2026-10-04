@@ -1,13 +1,17 @@
 # Database environments
 
-Three databases, three targets, and a set of checks whose only job is to make
-"I ran it against the wrong one" impossible rather than unlikely.
+Last verified against the code: `develop@8742c5b`, 2026-10-03.
 
-| Target | Database | Role | Where it is | Env file | Who runs it |
+Three databases, three targets, and a set of checks whose only job is to make
+"I ran it against the wrong one" impossible rather than unlikely. This is the
+runbook. The rules it serves (naming the target, migrations, moving data) live
+in [database.md](database.md).
+
+| Target | Database | Role | Where it is | Env file (in `apps/backend`) | Who runs it |
 | --- | --- | --- | --- | --- | --- |
-| `local` | `municipality_db_local` | `appuser_local` | Docker on your machine, `127.0.0.1:5434` | `apps/backend/.env` | `pnpm dev` and `db:*:local` on a laptop — §0 |
-| `staging` | `municipality_db_staging` | `appuser_staging` | Lightsail, via SSH tunnel | `apps/backend/.env.staging` | CI: push to `develop`, and before every production run — §3 |
-| `production` | `municipality_db` | `appuser` | Lightsail, via SSH tunnel | `apps/backend/.env.production` | CI: every push to `main`, before the code ships — §3 |
+| `local` | `municipality_db_local` | `appuser_local` | Docker on your machine, `127.0.0.1:5434` | `.env` | `pnpm dev` and `db:*:local` on a laptop — §0 |
+| `staging` | `municipality_db_staging` | `appuser_staging` | Lightsail, via SSH tunnel | `.env.staging` | CI: a push to `develop` that touches the migrations or the database tooling, and before every production run — §3 |
+| `production` | `municipality_db` | `appuser` | Lightsail, via SSH tunnel | `.env.production` | CI: every push to `main`, before the code ships — §3 |
 
 Staging and production live on the Lightsail box that also runs the backend
 (moved off Supabase in September 2026). **Port 5432 there is closed to the
@@ -25,7 +29,8 @@ client silently talks to that container instead.
 `local` is its own database, in its own container, and holds seeded data only.
 Until 2026-09-25 it was pinned to the staging database, so `pnpm dev` read and
 wrote staging, and running a feature branch left its migrations there
-permanently. Six such orphans are still on staging.
+permanently. Six such orphans are still on staging (**Unverified:** as last
+recorded; the repository cannot see staging's ledger).
 
 The database names and roles above are pinned in
 [`scripts/db/targets.mjs`](../scripts/db/targets.mjs). They are not secrets; the
@@ -81,7 +86,7 @@ starts `+96177`, and the output is identical on every machine.
 not with `pg_dump`, Navicat, the pre-migration backups, `verify-restore.mjs`,
 the app's own export, or an MCP server. Citizen records carry national IDs,
 addresses and residency/refugee status, and they do not leave staging
-([AGENTS.md](../AGENTS.md) §4). A laptop's database is outside every control
+([database.md](database.md#moving-data-between-environments)). A laptop's database is outside every control
 that protects them: no audit log, no access list, and no deletion when the
 laptop is lost.
 
@@ -167,8 +172,6 @@ and write its database.
 
 `pnpm db:seed` prints the logins. Every staff password is `Password123!`:
 
-| Municipality | Admin URL | Accounts |
-| --- | --- | --- |
 | Municipality | Admin URL |
 | --- | --- |
 | Al-Bazourieh | `http://localhost:3000/albazourieh/ar/admin-portal-a91f` |
@@ -189,7 +192,7 @@ a teammate's. If someone resets the admin's 2FA in the app, the seed says so
 instead, and the account signs in with the password alone. Every other account
 signs in with the password alone.
 
-Step 6 prints four `AWS_REGION/S3_CADASTRE_BUCKET not set` warnings. That is
+Step 5 prints four `AWS_REGION/S3_CADASTRE_BUCKET not set` warnings. That is
 correct: the import would otherwise upload over the **real** cartography bucket.
 Keep every `AWS_*`, `S3_*` and `SUPABASE_*` variable out of `.env` and out of
 your shell.
@@ -337,12 +340,12 @@ pnpm db:status:local          # what is pending on your local database, applies 
 pnpm db:deploy:local          # apply to it
 pnpm db:status:staging        # same for staging; reads .env.staging
 pnpm db:status:production     # same for production
-pnpm db:deploy:production     # apply, after typing the database name
+pnpm db:deploy:production     # CI only: a laptop has no .env.production; asks for the database name
 ```
 
 The `db:*:staging` forms read `.env.staging`, which CI writes for each run. A
 laptop has one only while someone is deliberately working on staging (§0,
-[AGENTS.md](../AGENTS.md) §2).
+[database.md](database.md#name-the-target)).
 
 Every one of them names its target. There is deliberately no bare `db:deploy`
 that reads ambient configuration and guesses.
@@ -354,9 +357,14 @@ pnpm db:migrate               # registry: prisma migrate dev --create-only
 pnpm db:migrate:tenant        # tenant:  prisma migrate dev --create-only
 ```
 
-Tenant migrations are hand-written SQL applied by the tenant migrator.
-`db:migrate:tenant` points Prisma's own engine at `public`, so use it only to
-draft SQL. Apply with `pnpm db:deploy:local`.
+`pnpm db:migrate` is for the registry. Tenant migrations are hand-written SQL
+applied by the tenant migrator. Do not use `db:migrate:tenant`, even to draft:
+it points Prisma's own engine at `public`, whose `_prisma_migrations` holds the
+registry's history (**Unverified:** expected to report drift and offer to
+reset `public`; reasoned, not run). Draft from the datamodel with
+`prisma migrate diff` instead, as the `0001_init` header says
+([database.md](database.md#a-hand-written-tenant-migration)). Apply with
+`pnpm db:deploy:local`.
 
 ---
 
@@ -394,12 +402,12 @@ application to real data. The same check refuses a `DATABASE_URL` or
 without the check ever seeing it.
 
 **Anything that loses data blocks the deploy.** Pending migrations are scanned
-for `DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, `ALTER COLUMN … TYPE`, `RENAME` and
-`DELETE FROM`. Those refuse to run without `--allow-destructive`, which only the
-manual *Deploy production* workflow can pass. Statements that take a heavy lock
-(`SET NOT NULL`, a non-concurrent `CREATE INDEX`) or rewrite existing rows
-(`UPDATE … SET`) print a warning and continue. A backfill is expected to fill
-new columns, and a scanner cannot tell that from an overwrite.
+(`scripts/db/destructive-sql.mjs`) before anything runs. A blocking statement
+refuses to run without `--allow-destructive`, which only the manual
+*Deploy production* workflow can pass; a heavy lock or a row rewrite prints a
+warning and continues, because a backfill is expected to fill new columns and a
+scanner cannot tell that from an overwrite. What blocks and what warns:
+[database.md](database.md#destructive-changes-go-in-a-later-release).
 
 **Production only accepts migrations staging has already applied.** The deploy
 reads staging's migration history, from `.env.staging` and nothing else, and
@@ -428,7 +436,7 @@ None of this is a substitute for reading the SQL. It is a floor, not a ceiling.
 
 ```
 feature branch
-    ↓  pnpm db:migrate            author the migration
+    ↓  write the migration        docs/database.md, "Recipes"
     ↓  pnpm db:deploy:local       it runs against your local database (§0.3)
   PR → develop
     ↓  CI: typecheck · test · db:test
@@ -443,9 +451,9 @@ Every push to `main` migrates production **before** the code that needs the
 migration ships, and ships nothing if the migration fails. The migration job is
 [`migrate-database.yml`](../.github/workflows/migrate-database.yml). A GitHub
 runner opens an SSH tunnel to the Lightsail box (runner port 5433 → the box's
-5432), writes the env files from the `db-production` environment's secrets for
-the length of the job, and runs `scripts/db/deploy.mjs`: staging first, then
-production. The guard's checks all apply, unattended:
+5432), writes the env files from the environment's secrets (`db-production`
+for a production run, `db-staging` for a staging-only one) for the length of
+the job, and runs `scripts/db/deploy.mjs`: staging first, then production. The guard's checks all apply, unattended:
 
 - the connection strings must name the pinned database and role;
 - a live schema whose migration history is missing stops the run (see below);
@@ -504,6 +512,9 @@ the registry's schema and then blocks every later deploy with P3009.
 
 ## 4. Schema changes that cannot lose data
 
+The rules are in [database.md](database.md#migrations); this section explains
+the pattern behind them.
+
 The scanner blocks destructive DDL; this is the discipline that means you rarely
 need to unblock it. It is the **expand/contract** pattern (also called parallel
 change), and it is the standard answer to schema changes on a live database.
@@ -516,7 +527,7 @@ releases:
 **Expand** — add the new thing, change nothing about the old. Add column `b` as
 nullable. The running application does not know it exists, and nothing breaks.
 
-**Migrate** — backfill `b` from `a` in batches, and deploy code that writes to
+**Backfill** — fill `b` from `a` in batches, and deploy code that writes to
 both and reads from `b` with a fallback to `a`. Both shapes are now correct, so
 a rollback at any point is just a redeploy.
 
@@ -529,18 +540,15 @@ The same three steps cover retyping a column, splitting a table, and making a
 column `NOT NULL` (add the constraint `NOT VALID`, backfill, then `VALIDATE`,
 which takes a far weaker lock).
 
-Two further rules for this codebase specifically:
+Two further rules for this codebase, whose home is
+[database.md](database.md#migrations):
 
-- **Indexes on tenant tables want `CREATE INDEX CONCURRENTLY`.** A plain
-  `CREATE INDEX` holds a write lock, and `tenant:migrate-all` runs it once per
-  municipality in sequence. Note that `CONCURRENTLY` cannot run inside a
-  transaction, and `tenant-migrator.ts` wraps each migration in one — so an
-  index built this way needs its own migration containing nothing else, and the
-  transaction wrapper adjusted for it. That is a real limitation, not a
-  formality.
-- **Migrations are immutable once merged.** Prisma records a checksum; editing
-  an applied migration makes every environment that already ran it fail. Fix
-  forward with a new migration.
+- **Indexes on tenant tables want `CREATE INDEX CONCURRENTLY`**, which the
+  migrator's per-migration transaction cannot run; today a plain index, its lock
+  justified in the header
+  ([How tenant migrations run](database.md#how-tenant-migrations-run)).
+- **Migrations are immutable once applied anywhere.** Fix forward
+  ([Applied migrations are immutable](database.md#applied-migrations-are-immutable)).
 
 ### Rollback
 
@@ -567,8 +575,8 @@ Two kinds, kept apart:
 
 Retired in September 2026, when the database moved to Lightsail:
 
-- the nightly `backup.yml` workflow. It was built for Supabase and Cloudflare
-  R2, never produced a backup after the move, and was deleted;
+- the nightly backup workflow. It was built for Supabase and Cloudflare R2,
+  never produced a backup after the move, and was deleted (`f1fa901`);
 - the in-app **Backup & restore** settings page, which downloaded a
   municipality's snapshot to the admin's computer and could write one back over
   the live register. Its tab is removed and its two routes are unregistered
@@ -579,9 +587,9 @@ Retired in September 2026, when the database moved to Lightsail:
 
 It runs inside [`migrate-database.yml`](../.github/workflows/migrate-database.yml),
 after staging has been migrated and before production is, and **only when
-production has something pending**. `node scripts/db/deploy.mjs production --check`
-answers that with its exit code: 0 up to date, 3 pending, anything else
-refused. Most pushes to `main` apply nothing and take no backup.
+production has something pending**. `deploy.mjs production --check` (run by
+the workflow; not a package script) answers that with its exit code: 0 up to
+date, 3 pending, anything else refused. Most pushes to `main` apply nothing and take no backup.
 
 ```
 dump → prove it restores → encrypt → upload (write-once, checksummed) → migrate
@@ -612,8 +620,8 @@ code is not deployed.
   checksum is compared again). It calls nothing but `PutObject`. Retention is a
   bucket lifecycle rule, not something the pipeline can shorten. **The
   credential can do more than the pipeline does:** as of 2026-09-25 the IAM
-  user holds `PutObject`, `GetObject`, `DeleteObject` and `ListBucket` on the
-  whole bucket, `daily/` included. DevOps accepted that to ship; step 3 is the
+  user holds `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and
+  `s3:ListBucket` on the whole bucket, `daily/` included. DevOps accepted that to ship; step 3 is the
   policy it should be narrowed to.
 
 Where it lands:
@@ -632,8 +640,9 @@ s3://nestjs-db-backups-687326766003-eu-west-3-an/pre-migrate/production-municipa
 | | Staging (a test environment; the backup protects production) |
 
 Schemas are **discovered**, not listed. This is the one place the "allowlist,
-never discover" rule in [AGENTS.md](../AGENTS.md) §4 inverts: that rule governs
-data *leaving*, where a discovered table is incident §8.4. A backup's failure
+never discover" rule in [database.md](database.md#moving-data-between-environments)
+inverts: that rule governs data *leaving*, where a discovered table is
+incident 4 in [incidents.md](incidents.md). A backup's failure
 mode is the opposite: a table nobody remembered to add, found missing on the day
 it was needed.
 
@@ -707,7 +716,7 @@ pg_restore --no-owner --no-privileges --exit-on-error \
   -d municipality_db_restore restore.dump
 ```
 
-**Then verify, do not assume (§5 of [AGENTS.md](../AGENTS.md)).** Compare every
+**Then verify, do not assume ([CLAUDE.md](../CLAUDE.md#how-to-work-here)).** Compare every
 count in `<base>.manifest.json` against the restored database. Only then decide
 what to move back into production, and how. Usually one municipality, one
 table, or a set of rows, because a whole-database swap discards every write
@@ -736,7 +745,7 @@ rm -f restore.sql
 | Where | What |
 | --- | --- |
 | `apps/backend/.env` | The local database (`localdev`, not a secret) and a `JWT_SECRET` generated on that machine. Gitignored. Contents: §0.1. |
-| `apps/backend/.env.staging` | Staging credentials. Gitignored. Written by CI per run; on a laptop only while working on staging, then deleted. |
+| `.env.staging` in `apps/backend` | Staging credentials. Gitignored. Written by CI per run; on a laptop only while working on staging, then deleted. |
 | GitHub → Environments → `db-staging` | `STAGING_DATABASE_URL`, `STAGING_DIRECT_URL` |
 | GitHub → Environments → `db-production` | `PRODUCTION_DATABASE_URL`, `PRODUCTION_DIRECT_URL`, **plus** the two `STAGING_` ones: a production run migrates staging first and checks its history. **Plus** `BACKUP_AGE_PUBLIC_KEY`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for the pre-migration backup (§5); the AWS keys belong in `db-production` only. Without them, a push with a migration pending stops before migrating. |
 | GitHub → repository secrets | `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY` (the deploy, and the migration tunnel), `SSH_KNOWN_HOSTS` (the tunnel) |
@@ -767,37 +776,46 @@ The first word of each line must be exactly what `SSH_HOST` holds. A rebuilt
 box has new keys: update both secrets together, or every deploy stops at
 "Host key verification failed", which is the point.
 
-`db-production` has **no required reviewer**: migrations run unattended on every
-push to `main`. Reinstating one makes each push wait for an approval at the
-migration job, even when nothing is pending.
+`db-production` has **no required reviewer**, only a branch policy (read from
+the GitHub API on 2026-10-03): migrations run unattended on every push to
+`main`. Reinstating one makes each push wait for an approval at the migration
+job, even when nothing is pending.
 
 The `db-` prefix is not decoration. The Vercel integration creates its own
-environments in this repository — `Production – mechanization-api`,
-`Preview – mechanization-web` and so on — which report the status of *code*
-deployments. These two gate *database migrations*. **Do not add protection
+environments in this repository — `Production – mechanization-api` (from the
+retired API project), `Preview – mechanization-web` and so on — which report
+the status of *code* deployments. These two gate *database migrations*. **Do not add protection
 rules to the Vercel-created ones**: a required reviewer there starts holding
 every site deploy for approval, which is not what anyone intended and is
 confusing to diagnose.
 
-There is no `apps/backend/.env.production`, and on a working laptop there should
-not be one. A copy of the production database password on a developer's disk is
-a credential with no expiry, no audit trail and no revocation path. The
-break-glass procedure, for when CI is down and production is broken, is written
-at the top of [`.env.production.example`](../apps/backend/.env.production.example) —
-including the step everyone forgets, which is deleting the file afterwards.
+There is no `.env.production` in `apps/backend`, and on a working laptop there
+should not be one. A copy of the production database password on a developer's
+disk is a credential with no expiry, no audit trail and no revocation path.
+**Undecided:** there is no break-glass procedure in the repository for when CI
+is down and production is broken. The last one was written at the top of
+`.env.production.example`, which was deleted in `c4efe07` and predates the
+move to Lightsail. Ask before improvising one, and whatever is agreed, the
+file is deleted afterwards.
 
 `JWT_SECRET` **must differ between staging and production.** Sharing it means a
 token minted by staging is accepted by production.
 
-### Vercel
+### The API host and Vercel
 
-The deployed API reads its configuration from Vercel's environment variables,
-not from anything in this repository or in GitHub secrets. That is a third
-surface, and it is the one that decides which database real traffic reaches.
+The API no longer runs on Vercel; Vercel hosts the portal only. Where the API
+host keeps its configuration, and the rule for both surfaces (every variable
+that names an API, a database, a bucket or a signing secret is scoped to
+**one** environment), are in
+[security.md](security.md#configuration-this-repository-cannot-see). Incident 5
+in [incidents.md](incidents.md) is why.
 
-Every variable on `mechanization-api` used to be scoped `[production, preview]`,
+**Retired, kept for history:** the API used to run as the Vercel project
+`mechanization-api`. Every variable on it was scoped `[production, preview]`,
 which meant every pull-request preview deployment read and wrote the production
-database. These five are now split, and must stay split:
+database. These five were split. **Unverified:** whether that project still
+exists; if it does, its variables still name databases and secrets, and they
+must be deleted or kept split:
 
 | Variable | Production scope | Preview scope |
 | --- | --- | --- |
@@ -807,15 +825,9 @@ database. These five are now split, and must stay split:
 | `SUPABASE_SERVICE_ROLE_KEY` | production key | staging key |
 | `JWT_SECRET` | production secret | staging secret |
 
-When adding any new variable that names a database, a bucket or a signing
-secret, scope it to one environment. Ticking both boxes is the same mistake as
-pointing `.env` at production — and unlike that one, no script here can catch
-it, because Vercel's configuration is not visible from the repository.
-
-Still shared, and lower stakes but not zero: `CORS_ORIGINS`, `PUBLIC_API_URL`,
-`PUBLIC_PORTAL_URL`, `CRON_SECRET`. On `mechanization-web`,
-`NEXT_PUBLIC_API_URL` is also shared, so preview builds of the portal call the
-production API.
+**Unverified**, as last recorded: on the portal project `mechanization-web`,
+`NEXT_PUBLIC_API_URL` is shared between preview and production, so preview
+builds of the portal call the production API. That breaks the rule above.
 
 ---
 

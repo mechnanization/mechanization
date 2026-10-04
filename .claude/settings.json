@@ -3,5 +3,19 @@
     "allow": [
       "Bash(npm run *)"
     ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/require-doc-updates.mjs\"",
+            "timeout": 30,
+            "statusMessage": "Checking that docs follow the code"
+          }
+        ]
+      }
+    ]
   }
 }

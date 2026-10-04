@@ -35,6 +35,10 @@ export default tseslint.config(
       '**/generated/**',
       '**/coverage/**',
       '.agents/**',
+      // Git worktrees that agent sessions check out inside the repository.
+      // Flat config does not read .gitignore, so without this `pnpm lint`
+      // lints every other branch checked out there, and fails on their code.
+      '.claude/worktrees/**',
       'apps/frontend/next-env.d.ts',
     ],
   },
