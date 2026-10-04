@@ -95,17 +95,22 @@ export class DomainExceptionFilter implements ExceptionFilter {
       const match = STATUS_BY_ERROR.find(([type]) => exception instanceof type);
       const status = match?.[1] ?? HttpStatus.BAD_REQUEST;
 
+      /*
+        `code` is what the client localises: a specific code from ERROR_CODES,
+        or — for a throw site not converted yet — the kind, with `message` as
+        the text to show. `kind` is always the category, so a client can branch
+        on "is this a conflict" without knowing every specific code.
+      */
       return {
         status,
         body: {
           code: exception.code,
+          kind: exception.kind,
           message: exception.message,
-          // Both error types carry an optional payload the client has to act
-          // on — the fields that failed, or the buildings already on the parcel.
-          ...((exception instanceof ValidationError || exception instanceof ConflictError) &&
-          exception.details
-            ? { details: exception.details }
-            : {}),
+          ...(exception.params ? { params: exception.params } : {}),
+          // An optional payload the client has to act on — the fields that
+          // failed, or the buildings already on the parcel.
+          ...(exception.details ? { details: exception.details } : {}),
           correlationId,
         },
       };
@@ -119,6 +124,7 @@ export class DomainExceptionFilter implements ExceptionFilter {
         status: exception.getStatus(),
         body: {
           code: 'HTTP_ERROR',
+          kind: 'HTTP_ERROR',
           message:
             typeof payload === 'string'
               ? payload
@@ -137,6 +143,7 @@ export class DomainExceptionFilter implements ExceptionFilter {
       status: HttpStatus.INTERNAL_SERVER_ERROR,
       body: {
         code: 'INTERNAL_ERROR',
+        kind: 'INTERNAL_ERROR',
         message: 'حدث خطأ غير متوقع. يرجى المحاولة لاحقاً أو مراجعة البلدية.',
         correlationId,
       },

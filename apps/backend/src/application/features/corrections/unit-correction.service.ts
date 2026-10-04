@@ -30,10 +30,6 @@ type Actor = { id: string; role: string };
 export const UNIT_CORRECTION_DELETED = 'UNIT_CORRECTION_DELETED';
 export const UNIT_CORRECTION_FILE_ENDED = 'UNIT_CORRECTION_FILE_ENDED';
 
-const STALE = 'تغيّرت بيانات هذه الوحدة منذ فتحت المعاينة. راجع المعاينة الجديدة ثم أكّد من جديد.';
-const BUSY = 'الوحدة أو ملف أحد المواطنين قيد التعديل الآن. أعد المحاولة بعد لحظات.';
-const UNVERIFIED = 'تعذّر التحقق من نتيجة الحذف، فأُلغيت العملية كاملة ولم يتغيّر شيء.';
-
 const fullName = (row: { firstName: string; middleName?: string | null; lastName: string } | null) =>
   row ? [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' ') : null;
 
@@ -148,13 +144,21 @@ export class UnitCorrectionService {
     const plan = planUnitCorrection(state);
 
     if (plan.fingerprint !== input.fingerprint) {
-      throw new ConflictError(STALE, { reason: 'PREVIEW_STALE' });
+      throw new ConflictError({
+        code: 'UNIT_CORRECTION_PREVIEW_STALE',
+        message: 'This unit’s data changed since you opened the preview. Review the new preview, then confirm again.',
+        details: { reason: 'PREVIEW_STALE' },
+      });
     }
     if (plan.blockers.length > 0) {
       throw new ConflictError(blockerMessage(plan.blockers[0]!), { reason: 'BLOCKED', blockers: plan.blockers });
     }
     if (input.confirmCode.trim() !== state.unit.unitCode) {
-      throw new ValidationError('الرمز المكتوب لا يطابق رمز الوحدة', { confirmCode: state.unit.unitCode });
+      throw new ValidationError({
+        code: 'UNIT_CONFIRM_CODE_MISMATCH',
+        message: 'The code you typed does not match the unit’s code.',
+        details: { confirmCode: state.unit.unitCode },
+      });
     }
 
     const snapshot = await this.snapshot(state, plan);
@@ -233,7 +237,11 @@ export class UnitCorrectionService {
       building?.unitsTotal !== plan.counters.totalAfter ||
       building?.unitsSurveyed !== plan.counters.surveyedAfter
     ) {
-      throw new ConflictError(UNVERIFIED, { reason: 'UNVERIFIED' });
+      throw new ConflictError({
+        code: 'UNIT_CORRECTION_UNVERIFIED',
+        message: 'The result of the deletion could not be verified, so the whole operation was cancelled and nothing changed.',
+        details: { reason: 'UNVERIFIED' },
+      });
     }
 
     // 7. The trail, inside the transaction: it commits with the delete or not at all.
@@ -337,7 +345,10 @@ export class UnitCorrectionService {
     const S = this.S;
     const units = await this.db.$queryRaw<Array<{ buildingId: string }>>`
       SELECT "buildingId" FROM ${S}units WHERE id = ${unitId}::uuid FOR UPDATE`;
-    if (units.length === 0) throw new NotFoundError('Unit', unitId);
+    if (units.length === 0) throw new NotFoundError({
+      code: 'UNIT_NOT_FOUND',
+      message: `Unit ${unitId} was not found`,
+    });
     await this.db.$queryRaw`SELECT id FROM ${S}buildings WHERE id = ${units[0]!.buildingId}::uuid FOR UPDATE`;
 
     const cards = await this.db.$queryRaw<Array<{ id: string; registrationId: string }>>`
@@ -375,7 +386,10 @@ export class UnitCorrectionService {
         building: { select: { id: true, code: true } },
       },
     });
-    if (!unit) throw new NotFoundError('Unit', unitId);
+    if (!unit) throw new NotFoundError({
+      code: 'UNIT_NOT_FOUND',
+      message: `Unit ${unitId} was not found`,
+    });
 
     const [siblings, occupancies, visits, vacancies, damage, cases, lineCards, linkCards] = await Promise.all([
       this.db.unit.findMany({ where: { buildingId: unit.buildingId }, select: { unitType: true, surveyStatus: true } }),
@@ -645,7 +659,11 @@ export class UnitCorrectionService {
 }
 
 function expectCount(actual: number, expected: number): void {
-  if (actual !== expected) throw new ConflictError(STALE, { reason: 'PREVIEW_STALE' });
+  if (actual !== expected) throw new ConflictError({
+    code: 'UNIT_CORRECTION_PREVIEW_STALE',
+    message: 'This unit’s data changed since you opened the preview. Review the new preview, then confirm again.',
+    details: { reason: 'PREVIEW_STALE' },
+  });
 }
 
 /**
@@ -666,7 +684,11 @@ function busyOr(error: unknown): unknown {
     code === '40P01' ||
     /lock timeout|deadlock detected|could not obtain lock/i.test(text)
   ) {
-    return new ConflictError(BUSY, { reason: 'BUSY' });
+    return new ConflictError({
+      code: 'UNIT_CORRECTION_BUSY',
+      message: 'The unit or one of the citizens’ files is being edited right now. Try again in a moment.',
+      details: { reason: 'BUSY' },
+    });
   }
   return error;
 }

@@ -1,6 +1,6 @@
 # Code quality
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
 
 Two parts: the code-pattern rules every change follows, and the debt the code carries today. The debt
 is not a precedent. **Fix an item when you touch its file, and remove its row in the same change.** Add a
@@ -58,7 +58,6 @@ in [docs/ui-ux-standards.md](ui-ux-standards.md) §17.
 | `buildings.service.ts` (5,389 lines), `landlord-link.service.ts` (3,368), `citizens.service.ts` (3,156), `fees.service.ts` (3,137), `reporting.service.ts` (1,808), `citizen-merge.service.ts` (1,487), `citizen.controller.ts` (794) | God files | Split into plan and helper modules with their own specs, as `unit-correction.plan.ts` did |
 | `FeesService`, `CitizensService`, `PaymentLedgerService`, `RecordReviewService`, `BuildingsService` (incl. `atomic`), `BackupService`, `PrismaRegistrationRepository`, `PrismaDocumentRepository`, `PrismaParcelRepository` | Bare `$transaction`: no scope swap, no after-commit queue, and it throws inside an enclosing `runInTenantTransaction` (`atomic` duck-types around this) | `runInTenantTransaction` |
 | `BuildingsService` `atomic` (15 s / 30 s), `BackupService` (15 s / 120 s), `runInTenantTransaction` defaults (15 s / 60 s) | Transaction timeouts hard-coded three ways | Named constants in `APP_CONFIG` |
-| `FeesService.reverseTransaction` emits `payment.reversed` | No listener, so a money reversal leaves no audit row | `@OnEvent('payment.reversed')` in `AuditService`, plus the label in `apps/frontend/lib/audit-labels.ts` |
 | Every `this.events.emit('…')` | Event names are free strings with payloads re-declared per listener; a typo is dropped silently | Typed event-name constants and payload types in one module |
 | `type Actor` in `ownership.service.ts`, `tenancy.service.ts`, `unit-correction.service.ts`, `record-review.service.ts`, `scripts/seed-census.ts`; `{ id: user.sub, role: user.role ?? '' }` 33 times in controllers | One shape declared five times and built inline everywhere | One exported actor type in `application/common` and a parameter decorator that builds it |
 | `@Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')`, 18 times in controllers | The all-staff role list is a repeated literal | Shared role-set constants, as `BuildingsController` (`READ_ROLES`, `WRITE_ROLES`) and `REVIEWER_ROLES` already do |
@@ -76,7 +75,7 @@ in [docs/ui-ux-standards.md](ui-ux-standards.md) §17.
 | `PrismaUserRepository` `translate` fallback | Any other unique violation reads «هذه الوثيقة مسجّلة مسبقاً لشخص آخر» | A generic «هذه البيانات مسجّلة مسبقاً», as `PrismaRegistrationRepository` does |
 | `PrismaUserRepository` `hideStaff`, `setStaffActive`, `restoreStaff`, `updateStaff` | `where: { id }` only; the STAFF check lives in `StaffService` before the call (check-then-act) | `where: { id, kind: 'STAFF' }` |
 | `OtpService` reads `process.env.NODE_ENV`; `APP_CONFIG.publicApiUrl` / `publicPortalUrl` read `process.env` at import; `WhishGatewayService` reads undeclared `WHISH_*` | Config bypasses `envSchema` | `ConfigService` and declared variables; only pre-DI code (`isSchedulerEnabled`, `initSentry`) reads `process.env` |
-| `DomainError` subclasses | Codes are per class; case codes are split between `details.code` and `details.reason`; messages mix Arabic and English | One case-code key, Arabic fallback messages ([apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#error-codes)) |
+| 220 prose throws (`new ConflictError('نص')`), counted by `error-codes.ratchet.spec.ts` | The server writes the words, so `/en/` shows Arabic, and the block-driven ones (`plan.block.message`, `blockerMessage`, `blocks[0].message`) also render in previews | A code from `ERROR_CODES` with `errors.<CODE>` in both message files; lower the ratchet constant ([apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#error-codes)) |
 | `TenantMiddleware`, `OtpCleanupJob`, `RecurringBillingJob` | The tenant scope is built by hand in three places | One helper that runs a function as a tenant |
 | `APP_CONFIG.tenantRoutePattern`, `APP_CONFIG.throttle.submission`, `OtpService.pruneExpired` | No readers or callers | Delete |
 | `SUPABASE_AUTH_SERVICE`, `domain/interfaces/supabase-auth.interface.ts`, `infrastructure/supabase/auth/supabase-auth.service.ts`, `infrastructure/supabase/storage/supabase-storage.service.ts`, `CadastreStorageService` (`infrastructure/cadastre/cadastre-storage.service.ts`), `@supabase/supabase-js`, `SUPABASE_*` | Unbound Supabase adapters kept after the cutover | Delete (**Undecided:** when; the `envSchema` comment waits for the cutover to be watched) |

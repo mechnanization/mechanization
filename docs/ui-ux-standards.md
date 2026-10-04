@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -460,16 +460,14 @@ Spacing, radius and shadow values as defined: [DESIGN.md](../DESIGN.md) "Layout"
   how to recover. Never show an internal code as the message.
 - **TXT-5. Complete, translatable sentences.** No string concatenation of
   fragments; variables stay structured.
-- **TXT-6. Errors by code (decision D-errors).** Every domain error carries a
-  stable code. The frontend maps the case code to text in both locales:
-  `ApiRequestError.payload.details.code` (or `details.reason`, where the server
-  sends that instead), then the class code `payload.code` (`CONFLICT`,
-  `NOT_FOUND`, …). Where the server puts the case code is set in
-  [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#error-codes). The
-  server's `message` is a fallback for an unknown code only. A network failure
+- **TXT-6. Errors by code (decision D-errors).** The API refuses with a code
+  from `ERROR_CODES`; the words live in `messages/{ar,en}.json` under
+  `errors`, and `ApiRequestError.message` is already translated
+  (`lib/api-errors.ts`). Show `error.message`; branch on `error.kind` or
+  `error.code`, never on the text. A new code ships with both entries
+  ([apps/frontend/CLAUDE.md](../apps/frontend/CLAUDE.md)). A network failure
   is recognised by status 0 or the `NETWORK_ERROR` code, never by matching
-  text. **Undecided:** where the map lives; see
-  [apps/frontend/CLAUDE.md](../apps/frontend/CLAUDE.md).
+  text.
 
 ---
 

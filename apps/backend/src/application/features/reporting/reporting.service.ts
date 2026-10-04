@@ -1748,6 +1748,8 @@ export class ReportingService {
   @OnEvent('fee.issued')
   @OnEvent('payment.declared')
   @OnEvent('payment.reviewed')
+  /** A reversal moves the same totals back, so it stales the same caches. */
+  @OnEvent('payment.reversed')
   /**
    * The census moves the map, so the census has to clear the map's cache.
    *

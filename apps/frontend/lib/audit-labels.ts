@@ -93,6 +93,7 @@ export function auditActionLabel(action: string, locale: string): string {
     PAYMENT_DECLARED: ['تصريح بدفعة', 'Payment declared'],
     PAYMENT_CONFIRMED: ['تأكيد دفعة', 'Payment confirmed'],
     PAYMENT_REJECTED: ['رفض دفعة', 'Payment rejected'],
+    PAYMENT_REVERSED: ['عكس حركة دفع', 'Payment reversed'],
     BILL_BASIS_REVIEWED: ['مراجعة فاتورة تأثّرت بتصحيح', 'Bill affected by a correction reviewed'],
     INSPECTOR_PAYOUT_RECORDED: ['تسجيل دفعة لمفتش', 'Inspector payout recorded'],
 
@@ -150,6 +151,7 @@ export function auditEntityLabel(entityType: string, locale: string): string {
     Document: ['مرفق', 'Document'],
     FeeNotice: ['رسم', 'Fee notice'],
     Payment: ['دفعة', 'Payment'],
+    PaymentTransaction: ['حركة دفع', 'Payment movement'],
     SystemSettings: ['إعدادات البلدية', 'Settings'],
     Tenant: ['سجل البلدية', 'Register'],
     DataQuality: ['مراجعة الجودة', 'Quality review'],

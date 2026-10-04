@@ -188,8 +188,12 @@ export class PropertyEntry {
     if (!NON_OWNER.has(props.occupancyType)) return;
 
     if (!props.landlordName?.trim() && !unestablished.has('landlordName')) {
-      throw new ValidationError('A non-owner entry requires the name of the property owner', {
-        propertyNumber: props.propertyNumber ?? null,
+      throw new ValidationError({
+        code: 'OWNER_NAME_REQUIRED',
+        message: 'A non-owner entry requires the name of the property owner',
+        details: {
+          propertyNumber: props.propertyNumber ?? null,
+        },
       });
     }
 
@@ -198,8 +202,12 @@ export class PropertyEntry {
       !props.landlordPhone?.trim() &&
       !unestablished.has('landlordPhone')
     ) {
-      throw new ValidationError('A tenant entry requires the landlord phone', {
-        propertyNumber: props.propertyNumber ?? null,
+      throw new ValidationError({
+        code: 'LANDLORD_PHONE_REQUIRED',
+        message: 'A tenant entry requires the landlord phone',
+        details: {
+          propertyNumber: props.propertyNumber ?? null,
+        },
       });
     }
   }
@@ -335,13 +343,21 @@ export class PropertyEntry {
     if (latitude == null && longitude == null) return;
 
     if (latitude == null || longitude == null) {
-      throw new ValidationError('A location needs both a latitude and a longitude', {
-        propertyNumber: props.propertyNumber ?? null,
+      throw new ValidationError({
+        code: 'LOCATION_INCOMPLETE',
+        message: 'A location needs both a latitude and a longitude.',
+        details: {
+          propertyNumber: props.propertyNumber ?? null,
+        },
       });
     }
     if (latitude < 33.0 || latitude > 34.7 || longitude < 35.0 || longitude > 36.7) {
-      throw new ValidationError('الموقع خارج حدود لبنان', {
-        propertyNumber: props.propertyNumber ?? null,
+      throw new ValidationError({
+        code: 'LOCATION_OUTSIDE_LEBANON',
+        message: 'The location is outside Lebanon.',
+        details: {
+          propertyNumber: props.propertyNumber ?? null,
+        },
       });
     }
   }

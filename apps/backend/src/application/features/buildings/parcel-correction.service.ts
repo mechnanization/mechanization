@@ -6,6 +6,7 @@ import type { CorrectBuildingParcelInput } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { AuditService, type BuildingChange, type CitizenChange } from '../audit/audit.service';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { BuildingsService, sharedParcelsExcluding } from './buildings.service';
 
@@ -47,12 +48,18 @@ import { BuildingsService, sharedParcelsExcluding } from './buildings.service';
  * number only labels an assessment's lines — and issued bills keep what they
  * were issued with. See the preview's `bills` note.
  */
+/** A change a parcel correction records, as the audit trail and the caches read it. */
+type CorrectionChange =
+  | { channel: 'building.changed'; payload: BuildingChange & { tenantSlug: string } }
+  | { channel: 'citizen.changed'; payload: CitizenChange & { tenantSlug: string } };
+
 @Injectable()
 export class ParcelCorrectionService {
   constructor(
     private readonly tenantContext: TenantContextService,
     private readonly buildings: BuildingsService,
     private readonly events: EventEmitter2,
+    private readonly auditTrail: AuditService,
   ) {}
 
   private get db() {
@@ -173,14 +180,19 @@ export class ParcelCorrectionService {
     */
     const neighbours = (await this.buildings.neighboursOn(next, before)).filter((row) => row.id !== id);
     if (neighbours.length > 0 && !input.acknowledgedDuplicates) {
-      throw new ConflictError(
-        `يوجد ${neighbours.length === 1 ? 'مبنى مسجَّل' : `${neighbours.length} مبانٍ مسجَّلة`} على العقار ${next}. تأكَّد أن هذا المبنى ليس أحدها قبل التصحيح.`,
-        { parcelNumber: next, candidates: neighbours },
-      );
+      throw new ConflictError({
+        code: 'PARCEL_HAS_OTHER_BUILDINGS',
+        message: `${neighbours.length} building(s) already recorded on parcel ${next}`,
+        params: { count: neighbours.length, parcel: next },
+        details: { parcelNumber: next, candidates: neighbours },
+      });
     }
 
     const cadastre = await this.cadastre(next, before);
+    // Read before the correction, so the trail's «before» is the zone as it was.
+    const zoneBefore = await this.buildings.zoneFor(before.parcelNumber);
 
+    let changes: CorrectionChange[] = [];
     const outcome = await runInTenantTransaction(this.tenantContext, async () => {
       /*
         Both parcels' suffix locks, in a fixed order so two corrections crossing
@@ -201,7 +213,10 @@ export class ParcelCorrectionService {
         select: { parcelNumber: true, codeSuffix: true, code: true, sharedParcelNumbers: true },
       });
       if (!current || current.parcelNumber !== before.parcelNumber || current.codeSuffix !== before.codeSuffix) {
-        throw new ConflictError('تغيّر رقم عقار هذا المبنى للتو — أعد فتحه');
+        throw new ConflictError({
+          code: 'PARCEL_CHANGED_CONCURRENTLY',
+          message: 'This building’s parcel number just changed. Reopen it.',
+        });
       }
 
       const inUse = await this.buildings.suffixesInUse(this.db, next, id);
@@ -239,7 +254,12 @@ export class ParcelCorrectionService {
         });
       } catch (caught) {
         if (caught instanceof Prisma.PrismaClientKnownRequestError && caught.code === 'P2002') {
-          throw new ConflictError(`الرمز ${code} مستخدم لمبنى آخر — أعد المحاولة`, { code });
+          throw new ConflictError({
+            code: 'BUILDING_CODE_TAKEN',
+            message: `Code ${code} is used by another building. Try again.`,
+            params: { code },
+            details: { code },
+          });
         }
         throw caught;
       }
@@ -277,76 +297,79 @@ export class ParcelCorrectionService {
         });
       }
 
-      return { updated, cards, cases, reclaims, zone, sharedParcelNumbers };
-    });
+      const byCitizen = new Map<string, string[]>();
+      for (const card of cards) {
+        const list = byCitizen.get(card.registration.citizenId) ?? [];
+        list.push(card.id);
+        byCitizen.set(card.registration.citizenId, list);
+      }
 
-    const zoneBefore = await this.buildings.zoneFor(before.parcelNumber);
-    const byCitizen = new Map<string, string[]>();
-    for (const card of outcome.cards) {
-      const list = byCitizen.get(card.registration.citizenId) ?? [];
-      list.push(card.id);
-      byCitizen.set(card.registration.citizenId, list);
-    }
-
-    /*
-      Before and after in full: a building's parcel is not a sensitive value, and
-      «who moved Z-1-45-A, from what, to what, and why» is the row somebody
-      holding an old receipt will need.
-    */
-    this.events.emit('building.changed', {
-      tenantSlug: this.tenantContext.tenantSlug,
-      action: 'BUILDING_PARCEL_CORRECTED',
-      buildingId: id,
-      before: {
-        parcelNumber: before.parcelNumber,
-        codeSuffix: before.codeSuffix,
-        code: before.code,
-        sharedParcelNumbers: before.sharedParcelNumbers,
-        zoneCode: zoneBefore?.code ?? null,
-      },
-      after: {
-        parcelNumber: next,
-        codeSuffix: outcome.updated.codeSuffix,
-        code: outcome.updated.code,
-        sharedParcelNumbers: outcome.sharedParcelNumbers,
-        zoneCode: outcome.zone?.code ?? null,
-        reason,
-        ...(outcome.reclaims ? { reclaimedOwnCode: true } : {}),
-        ...(keepOld ? { keptOldAsShared: true } : {}),
-        cardsCorrected: outcome.cards.map((card) => card.id),
-        casesCorrected: outcome.cases.map((row) => row.id),
-        pinInsideNewParcel: cadastre.pinInside,
-        ...(neighbours.length > 0
-          ? {
-              acknowledgedNeighbours: neighbours.map((row) => ({
-                id: row.id,
-                code: row.code,
-                distanceMetres: row.distanceMetres,
-              })),
-            }
-          : {}),
-      },
-      actorId: actor.id,
-      actorRole: actor.role,
-    });
-    // Each holder's own trail says why their card's رقم العقار changed.
-    for (const [citizenId, propertyEntryIds] of byCitizen) {
-      this.events.emit('citizen.changed', {
-        tenantSlug: this.tenantContext.tenantSlug,
-        citizenId,
-        action: 'PROPERTY_NUMBER_CORRECTED',
-        before: { propertyNumber: before.parcelNumber, buildingCode: before.code },
-        after: {
-          propertyNumber: next,
-          buildingCode: outcome.updated.code,
-          buildingId: id,
-          propertyEntryIds,
-          reason,
+      /*
+        Before and after in full: a building's parcel is not a sensitive value,
+        and «who moved Z-1-45-A, from what, to what, and why» is the row somebody
+        holding an old receipt will need. Each holder's own trail says why their
+        card's رقم العقار changed.
+      */
+      const base = { tenantSlug: this.tenantContext.tenantSlug, actorId: actor.id, actorRole: actor.role };
+      changes = [
+        {
+          channel: 'building.changed',
+          payload: {
+            ...base,
+            action: 'BUILDING_PARCEL_CORRECTED',
+            buildingId: id,
+            before: {
+              parcelNumber: before.parcelNumber,
+              codeSuffix: before.codeSuffix,
+              code: before.code,
+              sharedParcelNumbers: before.sharedParcelNumbers,
+              zoneCode: zoneBefore?.code ?? null,
+            },
+            after: {
+              parcelNumber: next,
+              codeSuffix: updated.codeSuffix,
+              code: updated.code,
+              sharedParcelNumbers,
+              zoneCode: zone?.code ?? null,
+              reason,
+              ...(reclaims ? { reclaimedOwnCode: true } : {}),
+              ...(keepOld ? { keptOldAsShared: true } : {}),
+              cardsCorrected: cards.map((card) => card.id),
+              casesCorrected: cases.map((row) => row.id),
+              pinInsideNewParcel: cadastre.pinInside,
+              ...(neighbours.length > 0
+                ? {
+                    acknowledgedNeighbours: neighbours.map((row) => ({
+                      id: row.id,
+                      code: row.code,
+                      distanceMetres: row.distanceMetres,
+                    })),
+                  }
+                : {}),
+            },
+          },
         },
-        actorId: actor.id,
-        actorRole: actor.role,
-      });
-    }
+        ...[...byCitizen].map(
+          ([citizenId, propertyEntryIds]): CorrectionChange => ({
+            channel: 'citizen.changed',
+            payload: {
+              ...base,
+              citizenId,
+              action: 'PROPERTY_NUMBER_CORRECTED',
+              before: { propertyNumber: before.parcelNumber, buildingCode: before.code },
+              after: { propertyNumber: next, buildingCode: updated.code, buildingId: id, propertyEntryIds, reason },
+            },
+          }),
+        ),
+      ];
+      // Tier 1 (docs/security.md): the correction and its rows commit together.
+      for (const change of changes) await this.auditTrail.recordChangeInTransaction(change);
+
+      return { updated, cards, cases, reclaims, zone, sharedParcelNumbers, citizensAffected: byCitizen.size };
+    });
+
+    // After the commit: the same changes as events, for the caches. The rows are already written.
+    for (const change of changes) this.events.emit(change.channel, { ...change.payload, alreadyAudited: true });
 
     return {
       building: {
@@ -360,7 +383,7 @@ export class ParcelCorrectionService {
       previousCode: before.code,
       reclaimedOwnCode: outcome.reclaims,
       cardsCorrected: outcome.cards.length,
-      citizensAffected: byCitizen.size,
+      citizensAffected: outcome.citizensAffected,
       casesCorrected: outcome.cases.length,
       pinInsideNewParcel: cadastre.pinInside,
     };
@@ -370,15 +393,26 @@ export class ParcelCorrectionService {
 
   private async loadBuilding(id: string) {
     const building = await this.db.building.findUnique({ where: { id } });
-    if (!building) throw new NotFoundError('المبنى غير موجود');
+    if (!building) throw new NotFoundError({
+      code: 'BUILDING_NOT_FOUND',
+      message: 'This building could not be found.',
+    });
     return building;
   }
 
   private nextParcel(before: { parcelNumber: string }, parcelNumber: string): string {
     const next = parcelNumber.trim();
-    if (!next) throw new ValidationError('أدخل رقم العقار الصحيح', { parcelNumber });
+    if (!next) throw new ValidationError({
+      code: 'PARCEL_NUMBER_REQUIRED',
+      message: 'Enter the correct parcel number.',
+      details: { parcelNumber },
+    });
     if (next === before.parcelNumber) {
-      throw new ValidationError('هذا هو رقم عقار المبنى الحالي', { parcelNumber: next });
+      throw new ValidationError({
+        code: 'PARCEL_NUMBER_UNCHANGED',
+        message: 'That is already the building’s parcel number.',
+        details: { parcelNumber: next },
+      });
     }
     return next;
   }

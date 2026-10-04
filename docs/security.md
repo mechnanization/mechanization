@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -131,9 +131,15 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 
 ### Data integrity and transactions
 
-- Multi-step writes run in `runInTenantTransaction`. The audit row is written in the same transaction
-  or queued on `scope.transaction.afterCommit`, never dropped
-  ([apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md)).
+- Multi-step writes run in `runInTenantTransaction`.
+- **Audit tiers.** Tier 1 MUST write its audit row inside the transaction of the change, so the change
+  rolls back if the row cannot be written: payments (declaration, confirmation, refusal, counter and
+  Whish settlement), payment reversals, corrections, ownership changes (ending an ownership, owner links,
+  merges) and citizen status changes (activate, deactivate, delete). Everything else is Tier 2: an event
+  after the commit, whose failed write is logged and does not undo the change. How:
+  [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#events-and-audit).
+- An audit row MUST NOT carry a credential. The merge rows (`CitizenMergeService.changes`,
+  `after.other.referenceNumber`) and `CITIZEN_DELETED` (`before.referenceNumber`) still do: see Known gaps.
 - MUST NOT bypass the append-only triggers on `audit_log_entries` and `payment_transactions`
   (`0001_init`, `0017_payment_ledger`), MUST NOT `SET session_replication_role`, and MUST NOT reach
   for `TRUNCATE` because a trigger refused a `DELETE`. A refusal is an answer
@@ -267,6 +273,7 @@ add a row. Severity is the harm if exploited today.
 | High | No `trust proxy`, so `request.ip` is the proxy's address. Throttle buckets are shared by every client per route (5 per minute for staff login across all staff: a lockout), and login audit IPs are wrong. **Unverified:** the nginx side | `presentation/bootstrap.ts` `createApiApp`; `MetricsController` class comment; `AppModule` `ThrottlerModule.forRoot`; `AuthController` (`context: { ip: request.ip }`) | Set `trust proxy` to the exact hop; Redis throttler storage; per-account limits beside per-IP |
 | High | Single-factor citizen login: the رقم مرجعي alone opens a 7-day session that reads phone, mother's name, nationality, resident status and marital status. Distributed guessing needs to hit any one citizen, not a chosen one | `AuthController.openByReference`; `IdentityService.loginByReferenceOnly`; `referenceOnlyLoginSchema` (`fee.schema.ts`); `CitizenController.mySummary` | Product decision (Undecided). Options: a fees-only session unless the phone is also given, a per-tenant failure budget, CAPTCHA after failures, alerting |
 | High | The CSV export carries `reference_number` (a login credential) with `phone` and `resident_status` for every citizen | `ReportingService.exportCsv`; `DashboardController.exportCsv` | Drop the column, or gate it behind its own permission and audit |
+| Medium | Audit rows store the رقم مرجعي: a merge writes both files' `referenceNumber` into `after.other`, and a deletion writes it into `before`. Anyone who can read the audit log can sign in as those citizens | `CitizenMergeService.changes`; `CitizensService.remove` (`CITIZEN_DELETED`) | Record the citizen id only; the reference is not needed to identify the file |
 | High | A gitignored age secret-key file sits in a developer machine's working tree | `.gitignore` age-key entries; confirmed with `git check-ignore`, not opened | Move it offline (password manager) and delete the file. Never open it |
 | Medium | Authorisation defaults to allow: a non-public route without `@Roles` admits any authenticated token, citizens included. Each such route self-checks today; forgetting fails open | `RolesGuard.canActivate`; `tenant-isolation.spec.ts` "admits requests to routes without role restrictions"; role-less routes in `AuthController`, `CadastreController`, `CitizenController.mySummary`, `FeesController` (`settings`, `GET payments/mine` and the two `POST payments/mine/:id/…` routes) | Refuse when no metadata is present unless an explicit self-service marker is declared; add a route-inventory test |
 | Medium | PII in stdout: every 4xx and 5xx logs `request.originalUrl` with its query string, 5xx logs the raw exception message, mail failures log the recipient, and dev SMS logs phone and body | `DomainExceptionFilter.catch`; `AppLogger` (no redaction); `SmtpEmailSender`; `SmsProviderService.send` | Log `redactUrl` / `redactText` output, or redact in `AppLogger.formatMessage`; mask recipients |

@@ -4,6 +4,7 @@ import type { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 
 /** One movement of money, as the caller describes it. */
 export interface LedgerEntryInput {
@@ -33,6 +34,17 @@ export interface LedgerEntryInput {
    */
   clientRequestId?: string | null;
 }
+
+/**
+ * The audit row for a movement — Tier 1 (docs/security.md).
+ *
+ * Called inside the ledger's own transaction once the movement is written,
+ * with what only that write knows (the receipt number, the day, the change),
+ * and written through the same transaction: the money and its record commit
+ * together or not at all. Required, so no caller can move money without one.
+ * A retry answered from an earlier movement (`replayed`) writes no second row.
+ */
+export type LedgerAudit = (settled: SettledTotals) => AuditEntryInput;
 
 /** Cash as it was handed over: the invoice's own currency, and another at a rate. */
 export interface Tender {
@@ -89,7 +101,10 @@ const USD_TOLERANCE = 0.001;
  */
 @Injectable()
 export class PaymentLedgerService {
-  constructor(private readonly tenantContext: TenantContextService) {}
+  constructor(
+    private readonly tenantContext: TenantContextService,
+    private readonly auditTrail: AuditService,
+  ) {}
 
   private get db() {
     return this.tenantContext.prisma;
@@ -114,10 +129,14 @@ export class PaymentLedgerService {
    * the citizen's handle on this specific movement — the thing that makes a
    * reprint possible at all.
    */
-  async record(input: LedgerEntryInput): Promise<SettledTotals> {
+  async record(input: LedgerEntryInput & { audit: LedgerAudit }): Promise<SettledTotals> {
     if (!Number.isFinite(input.amount) || input.amount <= 0) {
-      throw new ValidationError('المبلغ المستلم يجب أن يكون أكبر من صفر', {
-        amount: String(input.amount ?? ''),
+      throw new ValidationError({
+        code: 'PAYMENT_AMOUNT_NOT_POSITIVE',
+        message: 'The amount received must be greater than zero.',
+        details: {
+          amount: String(input.amount ?? ''),
+        },
       });
     }
 
@@ -135,15 +154,20 @@ export class PaymentLedgerService {
 
       const outstanding = invoice.amount - invoice.paidAmount;
       if (invoice.paymentStatus === 'PAID' || outstanding <= 0) {
-        throw new ConflictError('هذه الدفعة مسدّدة بالفعل');
+        throw new ConflictError({
+          code: 'PAYMENT_ALREADY_PAID',
+          message: 'This payment has already been settled.',
+        });
       }
 
       // Money cannot have been taken against a bill before the bill existed.
       if (input.occurredAt && municipalToday(input.occurredAt) < municipalToday(invoice.createdAt)) {
-        throw new ValidationError(
-          `تاريخ الدفع قبل تاريخ إصدار الفاتورة (${municipalToday(invoice.createdAt)})`,
-          { paidOn: municipalToday(input.occurredAt) },
-        );
+        throw new ValidationError({
+          code: 'PAYMENT_DATE_BEFORE_INVOICE',
+          message: `The payment date is before the invoice was issued (${municipalToday(invoice.createdAt)}).`,
+          params: { issuedOn: municipalToday(invoice.createdAt) },
+          details: { paidOn: municipalToday(input.occurredAt) },
+        });
       }
 
       const tolerance = toleranceFor(invoice.currency);
@@ -158,21 +182,27 @@ export class PaymentLedgerService {
       */
       if (input.tendered && input.amount > outstanding + tolerance) {
         if (!input.tendered.foreign || input.tendered.local > outstanding + tolerance) {
-          throw new ConflictError(
-            `المبلغ بعملة الفاتورة (${input.tendered.local.toLocaleString('en-US')}) أكبر من الرصيد المستحق (${outstanding.toLocaleString('en-US')})`,
-          );
+          throw new ConflictError({
+            code: 'PAYMENT_TENDER_EXCEEDS_BALANCE',
+            message: `The amount in the invoice currency (${input.tendered.local}) is more than the balance due (${outstanding}).`,
+            params: { amount: input.tendered.local, outstanding },
+          });
         }
         credit = outstanding;
         changeGiven = roundTo(input.amount - outstanding, invoice.currency);
       }
 
       if (credit > outstanding + tolerance) {
-        throw new ConflictError(
-          `المبلغ المستلم (${credit.toLocaleString('en-US')}) أكبر من الرصيد المستحق (${outstanding.toLocaleString('en-US')})`,
-        );
+        throw new ConflictError({
+          code: 'PAYMENT_EXCEEDS_BALANCE',
+          message: `The amount received (${credit}) is more than the balance due (${outstanding}).`,
+          params: { amount: credit, outstanding },
+        });
       }
 
-      return this.append(tx, invoice, credit, input, undefined, changeGiven);
+      const settled = await this.append(tx, invoice, credit, input, undefined, changeGiven);
+      await this.auditTrail.recordInTransaction(input.audit(settled), tx);
+      return settled;
     });
   }
 
@@ -188,6 +218,7 @@ export class PaymentLedgerService {
     transactionId: string;
     recordedById?: string | null;
     note?: string | null;
+    audit: LedgerAudit;
   }): Promise<SettledTotals> {
     return this.db.$transaction(async (tx) => {
       const original = await tx.paymentTransaction.findUnique({
@@ -202,20 +233,29 @@ export class PaymentLedgerService {
           reversedBy: { select: { id: true } },
         },
       });
-      if (!original) throw new NotFoundError('Transaction', input.transactionId);
+      if (!original) throw new NotFoundError({
+        code: 'TRANSACTION_NOT_FOUND',
+        message: `Transaction ${input.transactionId} was not found`,
+      });
 
       // The unique index on `reversalOfId` enforces this too; checking here
       // turns a constraint violation into a sentence a clerk can act on.
       if (original.reversedBy) {
-        throw new ConflictError('هذه الحركة معكوسة بالفعل');
+        throw new ConflictError({
+          code: 'TRANSACTION_ALREADY_REVERSED',
+          message: 'This transaction has already been reversed.',
+        });
       }
       if (Number(original.amount) < 0) {
-        throw new ConflictError('لا يمكن عكس حركة عكسية');
+        throw new ConflictError({
+          code: 'TRANSACTION_IS_REVERSAL',
+          message: 'A reversal cannot itself be reversed.',
+        });
       }
 
       const invoice = await this.lock(tx, original.paymentId);
 
-      return this.append(
+      const reversed = await this.append(
         tx,
         invoice,
         -Number(original.amount),
@@ -230,6 +270,8 @@ export class PaymentLedgerService {
         },
         original.id,
       );
+      await this.auditTrail.recordInTransaction(input.audit(reversed), tx);
+      return reversed;
     });
   }
 
@@ -315,7 +357,10 @@ export class PaymentLedgerService {
     `;
 
     const row = rows[0];
-    if (!row) throw new NotFoundError('Payment', paymentId);
+    if (!row) throw new NotFoundError({
+      code: 'PAYMENT_NOT_FOUND',
+      message: `Payment ${paymentId} was not found`,
+    });
 
     return {
       id: row.id,
@@ -345,7 +390,10 @@ export class PaymentLedgerService {
     });
     if (!row) return null;
     if (row.paymentId !== invoice.id) {
-      throw new ConflictError('معرّف هذه العملية مستخدم لفاتورة أخرى — أعد تحميل الصفحة');
+      throw new ConflictError({
+        code: 'PAYMENT_IDEMPOTENCY_KEY_REUSED',
+        message: 'This operation’s identifier was already used for another invoice. Reload the page.',
+      });
     }
     return {
       receiptNumber: row.receiptNumber,

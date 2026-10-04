@@ -43,13 +43,15 @@ describe('toTender', () => {
   });
 
   it('refuses dollars as the "foreign" part of a dollar invoice', () => {
-    expect(() => toTender({ local: 0, foreign: 10, foreignCurrency: 'USD', exchangeRate: 1 }, 'USD', null)).toThrow(
-      'الفاتورة بعملة USD',
-    );
+    expect(() =>
+      toTender({ local: 0, foreign: 10, foreignCurrency: 'USD', exchangeRate: 1 }, 'USD', null),
+    ).toThrow(expect.objectContaining({ code: 'PAYMENT_CURRENCY_MISMATCH', params: { currency: 'USD' } }));
   });
 
   it('refuses dollars when there is neither an official rate nor one typed', () => {
-    expect(() => toTender({ local: 0, foreign: 10, foreignCurrency: 'USD' }, 'LBP', null)).toThrow('سعر صرف');
+    expect(() => toTender({ local: 0, foreign: 10, foreignCurrency: 'USD' }, 'LBP', null)).toThrow(
+      expect.objectContaining({ code: 'EXCHANGE_RATE_MISSING' }),
+    );
   });
 });
 

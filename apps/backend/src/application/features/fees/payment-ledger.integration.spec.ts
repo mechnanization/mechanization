@@ -5,7 +5,9 @@ import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migra
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { ConflictError } from '../../common/exceptions';
-import { PaymentLedgerService } from './payment-ledger.service';
+import { PaymentLedgerService, type LedgerAudit } from './payment-ledger.service';
+import { AuditService } from '../audit/audit.service';
+import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 
 /**
  * The payment ledger, against a real Postgres.
@@ -79,7 +81,7 @@ describeIfDb('PaymentLedgerService', () => {
 
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
 
-    ledger = new PaymentLedgerService({
+    const context = {
       get prisma() {
         return db;
       },
@@ -91,7 +93,11 @@ describeIfDb('PaymentLedgerService', () => {
         that only works because the test client pins one schema per connection.
       */
       schemaName: SCHEMA,
-    } as unknown as TenantContextService);
+    } as unknown as TenantContextService;
+    ledger = new PaymentLedgerService(
+      context,
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+    );
   }, SETUP_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -145,8 +151,77 @@ describeIfDb('PaymentLedgerService', () => {
     paymentId = payment.id;
   });
 
+  /** The audit row a clerk's cash entry writes, filled in with what the ledger knows. */
+  const audit: LedgerAudit = (movement) => ({
+    actorId: clerkId,
+    actorType: 'STAFF',
+    action: 'PAYMENT_CONFIRMED',
+    entityType: 'Payment',
+    entityId: paymentId,
+    after: { receiptNumber: movement.receiptNumber, amount: movement.received },
+  });
+
+  const reversalAudit: LedgerAudit = (movement) => ({
+    actorId: clerkId,
+    actorType: 'STAFF',
+    action: 'PAYMENT_REVERSED',
+    entityType: 'PaymentTransaction',
+    entityId: movement.transactionId,
+    after: { receiptNumber: movement.receiptNumber, amount: movement.received },
+  });
+
+  const auditRows = (action: string) =>
+    db.auditLogEntry.findMany({ where: { action }, orderBy: { createdAt: 'asc' } });
+
   const cash = (amount: number) =>
-    ledger.record({ paymentId, amount, method: 'CASH', recordedById: clerkId });
+    ledger.record({ audit, paymentId, amount, method: 'CASH', recordedById: clerkId });
+
+  describe('the audit trail (Tier 1)', () => {
+    it('writes one row with the movement, in the same transaction', async () => {
+      const result = await cash(40_000);
+
+      const rows = await auditRows('PAYMENT_CONFIRMED');
+      expect(rows.filter((row) => row.entityId === paymentId)).toHaveLength(1);
+      expect(rows.at(-1)?.after).toMatchObject({ receiptNumber: result.receiptNumber, amount: 40_000 });
+    });
+
+    it('takes no money when the audit row cannot be written', async () => {
+      const before = await db.paymentTransaction.count({ where: { paymentId } });
+
+      await expect(
+        ledger.record({
+          paymentId,
+          amount: 30_000,
+          method: 'CASH',
+          recordedById: clerkId,
+          // Not a uuid: Postgres refuses the audit insert inside the ledger's transaction.
+          audit: () => ({ actorId: 'not-a-uuid', actorType: 'STAFF', action: 'PAYMENT_CONFIRMED', entityType: 'Payment' }),
+        }),
+      ).rejects.toThrow();
+
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(before);
+      const invoice = await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } });
+      expect(Number(invoice.paidAmount)).toBe(0);
+    });
+
+    it('writes no second row for a retry answered from the first movement', async () => {
+      const clientRequestId = randomUUID();
+      const first = await ledger.record({ audit, paymentId, amount: 20_000, method: 'CASH', recordedById: clerkId, clientRequestId });
+      const again = await ledger.record({ audit, paymentId, amount: 20_000, method: 'CASH', recordedById: clerkId, clientRequestId });
+
+      expect(again.receiptNumber).toBe(first.receiptNumber);
+      const rows = (await auditRows('PAYMENT_CONFIRMED')).filter((row) => row.entityId === paymentId);
+      expect(rows).toHaveLength(1);
+    });
+
+    it('records a reversal, which used to leave no row at all', async () => {
+      const taken = await cash(50_000);
+      const reversal = await ledger.reverse({ audit: reversalAudit, transactionId: taken.transactionId, recordedById: clerkId });
+
+      const rows = (await auditRows('PAYMENT_REVERSED')).filter((row) => row.entityId === reversal.transactionId);
+      expect(rows).toHaveLength(1);
+    });
+  });
 
   describe('recording money', () => {
     it('settles an invoice paid in full', async () => {
@@ -195,6 +270,7 @@ describeIfDb('PaymentLedgerService', () => {
       // cash at the counter. `whishTransactionRef` used to be cleared by the
       // second, erasing any record of the first.
       await ledger.record({
+        audit,
         paymentId,
         amount: 60_000,
         method: 'WHISH_MONEY',
@@ -212,6 +288,7 @@ describeIfDb('PaymentLedgerService', () => {
       // 10,500 + 1 × 89,500 = 100,000: the invoice is settled, and the record
       // still says a dollar changed hands, at what rate.
       const result = await ledger.record({
+        audit,
         paymentId,
         amount: 100_000,
         method: 'CASH',
@@ -231,6 +308,7 @@ describeIfDb('PaymentLedgerService', () => {
     it('marks a back-dated full payment paid on its own day, not today', async () => {
       const day = new Date('2026-09-28T12:00:00.000Z');
       const result = await ledger.record({
+        audit,
         paymentId,
         amount: 100_000,
         method: 'CASH',
@@ -249,6 +327,7 @@ describeIfDb('PaymentLedgerService', () => {
       // The CHECK from 0064: a tender that cannot be read back is not stored.
       await expect(
         ledger.record({
+          audit,
           paymentId,
           amount: 100_000,
           method: 'CASH',
@@ -264,6 +343,7 @@ describeIfDb('PaymentLedgerService', () => {
       // $2 at 89,500 is 179,000 against 100,000 owed: the bill is paid and
       // 79,000 ل.ل go back. tender − change = credit, on the row itself.
       const result = await ledger.record({
+        audit,
         paymentId,
         amount: 179_000,
         method: 'CASH',
@@ -279,6 +359,7 @@ describeIfDb('PaymentLedgerService', () => {
     it('refuses change on ليرة alone — that is a typing mistake, not a large note', async () => {
       await expect(
         ledger.record({
+          audit,
           paymentId,
           amount: 150_000,
           method: 'CASH',
@@ -290,8 +371,8 @@ describeIfDb('PaymentLedgerService', () => {
 
     it('answers a retry with the first receipt instead of taking the money twice', async () => {
       const clientRequestId = randomUUID();
-      const first = await ledger.record({ paymentId, amount: 30_000, method: 'CASH', recordedById: clerkId, clientRequestId });
-      const again = await ledger.record({ paymentId, amount: 30_000, method: 'CASH', recordedById: clerkId, clientRequestId });
+      const first = await ledger.record({ audit, paymentId, amount: 30_000, method: 'CASH', recordedById: clerkId, clientRequestId });
+      const again = await ledger.record({ audit, paymentId, amount: 30_000, method: 'CASH', recordedById: clerkId, clientRequestId });
       expect(again).toMatchObject({ receiptNumber: first.receiptNumber, replayed: true, paidAmount: 30_000 });
       expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(1);
     });
@@ -299,26 +380,28 @@ describeIfDb('PaymentLedgerService', () => {
     it('refuses a payment dated before the bill was issued', async () => {
       await expect(
         ledger.record({
+          audit,
           paymentId,
           amount: 10_000,
           method: 'CASH',
           recordedById: clerkId,
           occurredAt: new Date('2025-12-15T12:00:00.000Z'),
         }),
-      ).rejects.toThrow(/قبل تاريخ إصدار الفاتورة/);
+      ).rejects.toMatchObject({ code: 'PAYMENT_DATE_BEFORE_INVOICE' });
     });
 
     it('dates a settled bill by its last money, even when the final entry is back-dated', async () => {
       // 60,000 on 20 Sep, then the remaining 40,000 entered as taken on 10 Sep:
       // the bill was not settled before the 20th.
-      await ledger.record({ paymentId, amount: 60_000, method: 'CASH', recordedById: clerkId, occurredAt: new Date('2026-09-20T12:00:00.000Z') });
-      await ledger.record({ paymentId, amount: 40_000, method: 'CASH', recordedById: clerkId, occurredAt: new Date('2026-09-10T12:00:00.000Z') });
+      await ledger.record({ audit, paymentId, amount: 60_000, method: 'CASH', recordedById: clerkId, occurredAt: new Date('2026-09-20T12:00:00.000Z') });
+      await ledger.record({ audit, paymentId, amount: 40_000, method: 'CASH', recordedById: clerkId, occurredAt: new Date('2026-09-10T12:00:00.000Z') });
       const invoice = await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } });
       expect(invoice.paidAt?.toISOString()).toBe('2026-09-20T12:00:00.000Z');
     });
 
     it('returns the tender when the ledger is read back — the reprint and the cash-up', async () => {
       await ledger.record({
+        audit,
         paymentId,
         amount: 100_000,
         method: 'CASH',
@@ -336,7 +419,7 @@ describeIfDb('PaymentLedgerService', () => {
 
     it('refuses a payment against a settled invoice', async () => {
       await cash(100_000);
-      await expect(cash(1_000)).rejects.toThrow(/مسدّدة بالفعل/);
+      await expect(cash(1_000)).rejects.toMatchObject({ code: 'PAYMENT_ALREADY_PAID' });
     });
 
     it('refuses a zero or negative amount', async () => {
@@ -389,6 +472,7 @@ describeIfDb('PaymentLedgerService', () => {
       expect(original.paymentStatus).toBe('PAID');
 
       const reversed = await ledger.reverse({
+        audit: reversalAudit,
         transactionId: original.transactionId,
         recordedById: clerkId,
         note: 'قيد بالخطأ',
@@ -407,17 +491,17 @@ describeIfDb('PaymentLedgerService', () => {
 
     it('refuses to reverse the same entry twice', async () => {
       const original = await cash(50_000);
-      await ledger.reverse({ transactionId: original.transactionId });
+      await ledger.reverse({ audit: reversalAudit, transactionId: original.transactionId });
 
       // Twice would credit the citizen twice.
       await expect(
-        ledger.reverse({ transactionId: original.transactionId }),
-      ).rejects.toThrow(/معكوسة بالفعل/);
+        ledger.reverse({ audit: reversalAudit, transactionId: original.transactionId }),
+      ).rejects.toMatchObject({ code: 'TRANSACTION_ALREADY_REVERSED' });
     });
 
     it('refuses to reverse a reversal', async () => {
       const original = await cash(50_000);
-      const reversal = await ledger.reverse({ transactionId: original.transactionId });
+      const reversal = await ledger.reverse({ audit: reversalAudit, transactionId: original.transactionId });
 
       const rows = await db.paymentTransaction.findMany({
         where: { reversalOfId: original.transactionId },
@@ -426,13 +510,13 @@ describeIfDb('PaymentLedgerService', () => {
       expect(rows[0].id).toBe(reversal.transactionId);
 
       await expect(
-        ledger.reverse({ transactionId: reversal.transactionId }),
-      ).rejects.toThrow(/حركة عكسية/);
+        ledger.reverse({ audit: reversalAudit, transactionId: reversal.transactionId }),
+      ).rejects.toMatchObject({ code: 'TRANSACTION_IS_REVERSAL' });
     });
 
     it('reopens a settled invoice when its only payment is reversed', async () => {
       const original = await cash(100_000);
-      await ledger.reverse({ transactionId: original.transactionId });
+      await ledger.reverse({ audit: reversalAudit, transactionId: original.transactionId });
 
       const row = await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } });
       expect(row.paymentStatus).toBe('UNPAID');
@@ -463,7 +547,7 @@ describeIfDb('PaymentLedgerService', () => {
     it('keeps the invoice balance equal to the sum of its ledger rows', async () => {
       await cash(30_000);
       const second = await cash(20_000);
-      await ledger.reverse({ transactionId: second.transactionId });
+      await ledger.reverse({ audit: reversalAudit, transactionId: second.transactionId });
       await cash(10_000);
 
       const rows = await db.paymentTransaction.findMany({

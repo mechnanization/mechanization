@@ -82,7 +82,12 @@ describeIfDb('Quality review', () => {
 
     const cases = new CasesService(new PrismaCaseRepository(context), {} as never, events);
     buildings = new BuildingsService(context, cases, events);
-    const links = new LandlordLinkService(context, buildings, events);
+    const links = new LandlordLinkService(
+      context,
+      buildings,
+      events,
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+    );
     reviews = new RecordReviewService(context, events, cache as never, { get: () => 0 } as never);
     quality = new DataQualityService(context, links, events, cache as never, { get: () => 0 } as never);
     events.on('citizen.changed', (payload) => reviews.onCitizenChanged(payload));

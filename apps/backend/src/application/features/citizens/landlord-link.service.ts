@@ -11,6 +11,7 @@ import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { AuditService, type CitizenChange } from '../audit/audit.service';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { BuildingsService } from '../buildings/buildings.service';
 import type { FileLinkResult } from '../buildings/building.types';
@@ -66,6 +67,7 @@ export class LandlordLinkService {
     private readonly tenantContext: TenantContextService,
     private readonly buildings: BuildingsService,
     private readonly events: EventEmitter2,
+    private readonly auditTrail: AuditService,
   ) {}
 
   private get db() {
@@ -842,20 +844,31 @@ export class LandlordLinkService {
       with a validation error the filter renders as a 500.
     */
     if (!input.citizenId?.trim()) {
-      throw new ValidationError('المواطن مطلوب', { citizenId: input.citizenId });
+      throw new ValidationError({
+        code: 'CITIZEN_REQUIRED',
+        message: 'Choose a citizen.',
+        details: { citizenId: input.citizenId },
+      });
     }
 
     const entry = await this.db.propertyEntry.findUnique({
       where: { id: input.propertyEntryId },
       select: { ...ENTRY_SELECT, landlordLinkFootprint: true, endedAt: true },
     });
-    if (!entry) throw new NotFoundError('بطاقة العقار غير موجودة');
+    if (!entry) throw new NotFoundError({
+      code: 'PROPERTY_CARD_NOT_FOUND',
+      message: 'This property card could not be found.',
+    });
 
     // A tenancy that ended names the landlord it had; there is nothing to put
     // on anybody's file for a flat nobody rents any more.
     if (entry.endedAt) {
-      throw new ConflictError('انتهى هذا الإيجار — لا يمكن ربط مالك به', {
-        propertyEntryId: input.propertyEntryId,
+      throw new ConflictError({
+        code: 'TENANCY_ENDED_CANNOT_LINK',
+        message: 'This tenancy has ended, so an owner cannot be linked to it.',
+        details: {
+          propertyEntryId: input.propertyEntryId,
+        },
       });
     }
 
@@ -873,7 +886,11 @@ export class LandlordLinkService {
       },
     });
     if (!citizen || citizen.kind !== 'CITIZEN') {
-      throw new ValidationError('المواطن غير موجود', { citizenId: input.citizenId });
+      throw new ValidationError({
+        code: 'CITIZEN_NOT_FOUND',
+        message: 'This citizen could not be found.',
+        details: { citizenId: input.citizenId },
+      });
     }
 
     /*
@@ -882,15 +899,23 @@ export class LandlordLinkService {
       that decides who is billed should not rest on another layer tidying first.
     */
     if (entry.occupancyType === 'OWNER') {
-      throw new ValidationError('بطاقة المالك لا تحمل اسم مالك آخر', {
-        propertyEntryId: input.propertyEntryId,
+      throw new ValidationError({
+        code: 'OWNER_CARD_HAS_NO_LANDLORD',
+        message: 'An owner’s card names no other owner to link.',
+        details: {
+          propertyEntryId: input.propertyEntryId,
+        },
       });
     }
 
     // A card cannot name its own filer — someone recorded renting from themselves.
     if (entry.registration?.citizen.id === input.citizenId) {
-      throw new ValidationError('لا يمكن ربط البطاقة بمن قام بتقديمها', {
-        propertyEntryId: input.propertyEntryId,
+      throw new ValidationError({
+        code: 'LANDLORD_IS_FILER',
+        message: 'A card cannot be linked to the person who filed it.',
+        details: {
+          propertyEntryId: input.propertyEntryId,
+        },
       });
     }
 
@@ -917,9 +942,13 @@ export class LandlordLinkService {
     const matchedByProperty =
       !matchedByPhone && !matchedByName && !claimed && (await this.ownsClaimedProperty(entry, citizen.id));
     if (!matchedByPhone && !matchedByName && !matchedByProperty) {
-      throw new ValidationError('رقم هاتف المالك أو اسمه لا يطابق هذا المواطن، وليس مالكاً مسجَّلاً لهذا العقار', {
-        propertyEntryId: input.propertyEntryId,
-        citizenId: input.citizenId,
+      throw new ValidationError({
+        code: 'LANDLORD_DOES_NOT_MATCH',
+        message: 'The landlord’s phone number or name does not match this citizen, and they are not a recorded owner of this property.',
+        details: {
+          propertyEntryId: input.propertyEntryId,
+          citizenId: input.citizenId,
+        },
       });
     }
 
@@ -934,13 +963,21 @@ export class LandlordLinkService {
       still standing — the undo has to run first, and a person has to choose it.
     */
     if (entry.landlordCitizenId) {
-      throw new ConflictError('هذه البطاقة مربوطة بمالك آخر — ألغِ الربط أولاً', {
-        propertyEntryId: input.propertyEntryId,
+      throw new ConflictError({
+        code: 'CARD_LINKED_TO_OTHER_LANDLORD',
+        message: 'This card is linked to another owner. Remove that link first.',
+        details: {
+          propertyEntryId: input.propertyEntryId,
+        },
       });
     }
 
     if (!citizen.isActive) {
-      throw new ValidationError('ملف هذا المواطن معطَّل', { citizenId: input.citizenId });
+      throw new ValidationError({
+        code: 'CITIZEN_FILE_DISABLED',
+        message: 'This citizen’s file is disabled.',
+        details: { citizenId: input.citizenId },
+      });
     }
 
     const context = await this.loadPlanContext([entry], [citizen.id]);
@@ -952,6 +989,7 @@ export class LandlordLinkService {
       throw new ConflictError(plan.block.message, { block: plan.block });
     }
 
+    let changes: AnnouncedChange[] = [];
     const footprint = await this.inTransaction(async () => {
       /*
         The card is claimed first, conditionally. It is the row lock that makes
@@ -964,8 +1002,12 @@ export class LandlordLinkService {
         data: { landlordCitizenId: citizen.id },
       });
       if (taken.count === 0) {
-        throw new ConflictError('تغيّر ربط هذه البطاقة للتو — حدّث الصفحة', {
-          propertyEntryId: entry.id,
+        throw new ConflictError({
+          code: 'LANDLORD_LINK_CHANGED_CONCURRENTLY',
+          message: 'This card’s owner link just changed. Refresh the page.',
+          details: {
+            propertyEntryId: entry.id,
+          },
         });
       }
 
@@ -983,23 +1025,26 @@ export class LandlordLinkService {
         where: { id: entry.id },
         data: { landlordLinkFootprint: next as never },
       });
+
+      changes = this.announcement({
+        action: 'LANDLORD_LINKED',
+        ownerId: citizen.id,
+        tenantId: entry.registration?.citizen.id ?? null,
+        entryId: entry.id,
+        footprint: next,
+        // A name-only link is the weaker kind, and the audit row says which it was.
+        ...(matchedByName
+          ? { detail: { matchedBy: 'NAME' } }
+          : matchedByProperty
+            ? { detail: { matchedBy: 'PROPERTY' } }
+            : {}),
+        actor: input.actor,
+      });
+      await this.recordAnnouncement(changes);
       return next;
     });
 
-    this.announce({
-      action: 'LANDLORD_LINKED',
-      ownerId: citizen.id,
-      tenantId: entry.registration?.citizen.id ?? null,
-      entryId: entry.id,
-      footprint,
-      // A name-only link is the weaker kind, and the audit row says which it was.
-      ...(matchedByName
-        ? { detail: { matchedBy: 'NAME' } }
-        : matchedByProperty
-          ? { detail: { matchedBy: 'PROPERTY' } }
-          : {}),
-      actor: input.actor,
-    });
+    this.announce(changes);
 
     return {
       linked: true,
@@ -1064,10 +1109,16 @@ export class LandlordLinkService {
     confirmRecordedAfter?: boolean;
     actor: { id: string; role: string };
   }): Promise<RecordedOwnerLinkResult> {
-    const outcome = await this.inTransaction(() => this.linkRecordedOwnerInScope(input));
-    if (outcome.announce) {
-      this.announce({ ...outcome.announce, actor: input.actor });
-    }
+    let changes: AnnouncedChange[] = [];
+    const outcome = await this.inTransaction(async () => {
+      const linked = await this.linkRecordedOwnerInScope(input);
+      if (linked.announce) {
+        changes = this.announcement({ ...linked.announce, actor: input.actor });
+        await this.recordAnnouncement(changes);
+      }
+      return linked;
+    });
+    this.announce(changes);
     return outcome.result;
   }
 
@@ -1100,13 +1151,27 @@ export class LandlordLinkService {
         citizen: { select: { firstName: true, middleName: true, lastName: true } },
       },
     });
-    if (!spell) throw new NotFoundError('سجل الإشغال غير موجود');
-    if (spell.toDate) throw new ConflictError('انتهى هذا الإشغال — لا يُربط بمالك');
+    if (!spell) throw new NotFoundError({
+      code: 'OCCUPANCY_NOT_FOUND',
+      message: 'This occupancy record could not be found.',
+    });
+    if (spell.toDate) throw new ConflictError({
+      code: 'OCCUPANCY_ENDED_CANNOT_LINK',
+      message: 'This occupancy has ended, so it cannot be linked to an owner.',
+    });
     if (spell.role === 'OWNER') {
-      throw new ValidationError('المالك لا يُربط بمالك آخر', { occupancyId: input.occupancyId });
+      throw new ValidationError({
+        code: 'OWNER_CANNOT_HAVE_LANDLORD',
+        message: 'An owner is not linked to another owner.',
+        details: { occupancyId: input.occupancyId },
+      });
     }
     if (spell.citizenId === input.ownerId) {
-      throw new ValidationError('لا يمكن ربط الشخص بنفسه مالكاً', { occupancyId: input.occupancyId });
+      throw new ValidationError({
+        code: 'LANDLORD_IS_SELF',
+        message: 'A person cannot be linked as their own owner.',
+        details: { occupancyId: input.occupancyId },
+      });
     }
 
     const unitCode = spell.unit.unitCode;
@@ -1116,17 +1181,24 @@ export class LandlordLinkService {
       select: { createdAt: true },
     });
     if (!ownerSpell) {
-      throw new ValidationError(`هذا المواطن ليس مالكاً مسجَّلاً على الوحدة ${unitCode}`, {
-        landlordCitizenId: input.ownerId,
+      throw new ValidationError({
+        code: 'LANDLORD_NOT_OWNER_OF_UNIT',
+        message: `This citizen is not a recorded owner of unit ${unitCode}.`,
+        params: { unitCode },
+        details: {
+          landlordCitizenId: input.ownerId,
+        },
       });
     }
     // Recorded after the tenant: linked only once the officer confirms — see the docblock.
     const recordedAfter = ownerSpell.createdAt.getTime() > spell.createdAt.getTime();
     if (recordedAfter && !input.confirmRecordedAfter) {
-      throw new ConflictError(
-        `سُجِّل هذا المالك على الوحدة ${unitCode} بعد ${fullName(spell.citizen)}. تأكّد أنه من يستأجر منه قبل الربط.`,
-        { landlordCitizenId: input.ownerId, recordedAfter: true },
-      );
+      throw new ConflictError({
+        code: 'LANDLORD_RECORDED_AFTER_TENANT',
+        message: `This owner was recorded on unit ${unitCode} after <tenant>. Confirm that <tenant> rents from them before linking.`,
+        params: { unitCode, tenant: fullName(spell.citizen) },
+        details: { landlordCitizenId: input.ownerId, recordedAfter: true },
+      });
     }
 
     const owner = await this.db.user.findUnique({
@@ -1143,10 +1215,18 @@ export class LandlordLinkService {
       },
     });
     if (!owner || owner.kind !== 'CITIZEN') {
-      throw new ValidationError('المواطن غير موجود', { landlordCitizenId: input.ownerId });
+      throw new ValidationError({
+        code: 'CITIZEN_NOT_FOUND',
+        message: 'This citizen could not be found.',
+        details: { landlordCitizenId: input.ownerId },
+      });
     }
     if (!owner.isActive) {
-      throw new ValidationError('ملف هذا المواطن معطَّل', { landlordCitizenId: input.ownerId });
+      throw new ValidationError({
+        code: 'CITIZEN_FILE_DISABLED',
+        message: 'This citizen’s file is disabled.',
+        details: { landlordCitizenId: input.ownerId },
+      });
     }
 
     let card = await this.tenancyCardFor(spell);
@@ -1174,14 +1254,19 @@ export class LandlordLinkService {
         };
       }
       card = await this.tenancyCardFor(spell);
-      if (!card) throw new ConflictError('تعذّر إيجاد بطاقة المستأجر لهذه الوحدة — حدّث الصفحة');
+      if (!card) throw new ConflictError({
+        code: 'TENANT_CARD_NOT_FOUND',
+        message: 'The tenant’s card for this unit could not be found. Refresh the page.',
+      });
     }
 
     if (card.occupancyType !== spell.role) {
-      throw new ConflictError(
-        `الوحدة ${unitCode} مسجَّلة في ملف ${fullName(spell.citizen)} على بطاقة بصفة أخرى — صحِّح صفته على البطاقة في ملفه أولاً`,
-        { propertyEntryId: card.id },
-      );
+      throw new ConflictError({
+        code: 'UNIT_ON_CARD_WITH_OTHER_CAPACITY',
+        message: `Unit ${unitCode} is on a card in <tenant>’s file with a different capacity. Correct that capacity on the card in their file first.`,
+        params: { unitCode, tenant: fullName(spell.citizen) },
+        details: { propertyEntryId: card.id },
+      });
     }
 
     if (card.landlordCitizenId === owner.id) {
@@ -1219,10 +1304,12 @@ export class LandlordLinkService {
 
     if (card.landlordCitizenId) {
       const current = card.landlordCitizen ? fullName(card.landlordCitizen) : '';
-      throw new ConflictError(
-        `الوحدة ${unitCode} على بطاقة إيجار مربوطة بمالك آخر${current ? ` (${current})` : ''} — ألغِ ذلك الربط من ملف المستأجر أولاً`,
-        { propertyEntryId: card.id },
-      );
+      throw new ConflictError({
+        code: 'TENANT_CARD_LINKED_TO_OTHER_OWNER',
+        message: `Unit ${unitCode} is on a tenancy card linked to another owner. Remove that link from the tenant’s file first.`,
+        params: { unitCode, hasCurrent: current ? 'yes' : 'no', current: current ?? '' },
+        details: { propertyEntryId: card.id },
+      });
     }
 
     /*
@@ -1241,10 +1328,11 @@ export class LandlordLinkService {
         },
       });
       if (others > 0) {
-        throw new ConflictError(
-          'بطاقة المستأجر في هذا المبنى لا تحدد وحداته وله فيه أكثر من وحدة — حدِّد وحداته على البطاقة في ملفه أولاً',
-          { propertyEntryId: card.id },
-        );
+        throw new ConflictError({
+          code: 'TENANT_CARD_UNITS_UNSET',
+          message: 'The tenant’s card in this building names no units, and they hold more than one there. Set the card’s units in their file first.',
+          details: { propertyEntryId: card.id },
+        });
       }
     }
 
@@ -1277,7 +1365,10 @@ export class LandlordLinkService {
       where: { id: targetId },
       select: { ...ENTRY_SELECT, landlordPhone: true, landlordName: true },
     });
-    if (!entry) throw new ConflictError('تعذّر إيجاد بطاقة المستأجر لهذه الوحدة — حدّث الصفحة');
+    if (!entry) throw new ConflictError({
+      code: 'TENANT_CARD_NOT_FOUND',
+      message: 'The tenant’s card for this unit could not be found. Refresh the page.',
+    });
 
     const context = await this.loadPlanContext([entry], [owner.id]);
     const target = this.planTarget(entry, context);
@@ -1300,7 +1391,11 @@ export class LandlordLinkService {
       },
     });
     if (taken.count === 0) {
-      throw new ConflictError('تغيّر ربط هذه البطاقة للتو — حدّث الصفحة', { propertyEntryId: targetId });
+      throw new ConflictError({
+        code: 'LANDLORD_LINK_CHANGED_CONCURRENTLY',
+        message: 'This card’s owner link just changed. Refresh the page.',
+        details: { propertyEntryId: targetId },
+      });
     }
 
     const footprint = emptyFootprint(owner.id, input.actor.id);
@@ -1420,7 +1515,10 @@ export class LandlordLinkService {
         },
       }),
     ]);
-    if (!source || !registration) throw new ConflictError('تعذّر فصل الوحدة عن بطاقتها — حدّث الصفحة');
+    if (!source || !registration) throw new ConflictError({
+      code: 'UNIT_SPLIT_FAILED',
+      message: 'The unit could not be separated from its card. Refresh the page.',
+    });
 
     const created = await this.db.propertyEntry.create({
       select: { id: true },
@@ -1488,7 +1586,11 @@ export class LandlordLinkService {
         select: { id: true, buildingId: true, unitCode: true, unitStatus: true, surveyStatus: true },
       });
       if (!unit) {
-        throw new ConflictError(`الوحدة ${planned.unitCode ?? ''} لم تعد موجودة — حدّث الصفحة`.trim());
+        throw new ConflictError({
+          code: 'UNIT_NO_LONGER_EXISTS',
+          message: `Unit ${planned.unitCode ?? ''} no longer exists. Refresh the page.`,
+          params: { unitCode: planned.unitCode ?? '' },
+        });
       }
 
       const current = await this.db.unitOccupancy.findFirst({
@@ -1738,7 +1840,8 @@ export class LandlordLinkService {
 
       try {
         const events: PendingEvent[] = [];
-        const next = await this.inTransaction(async () => {
+        let changes: AnnouncedChange[] = [];
+        await this.inTransaction(async () => {
           const working: LinkFootprint = footprint
             ? { ...footprint, units: [...footprint.units], mintedCardIds: [...footprint.mintedCardIds] }
             : emptyFootprint(ownerId, actor.id);
@@ -1773,19 +1876,24 @@ export class LandlordLinkService {
             where: { id: entry.id, landlordCitizenId: ownerId },
             data: { landlordLinkFootprint: working as never },
           });
-          if (saved.count === 0) throw new ConflictError('تغيّر ربط هذه البطاقة أثناء التحديث');
-          return working;
+          if (saved.count === 0) throw new ConflictError({
+            code: 'LANDLORD_LINK_CHANGED_DURING_UPDATE',
+            message: 'This card’s owner link changed during the update.',
+          });
+
+          changes = this.announcement({
+            action: 'LANDLORD_LINK_UPDATED',
+            ownerId,
+            tenantId: entry.registration?.citizen.id ?? null,
+            entryId: entry.id,
+            footprint: working,
+            actor,
+          });
+          await this.recordAnnouncement(changes);
         });
 
         this.emitAll(events, actor);
-        this.announce({
-          action: 'LANDLORD_LINK_UPDATED',
-          ownerId,
-          tenantId: entry.registration?.citizen.id ?? null,
-          entryId: entry.id,
-          footprint: next,
-          actor,
-        });
+        this.announce(changes);
         result.updated += 1;
       } catch (error) {
         this.logger.error(
@@ -1829,7 +1937,10 @@ export class LandlordLinkService {
         units: { select: { unit: { select: { unitCode: true } } } },
       },
     });
-    if (!entry) throw new NotFoundError('بطاقة العقار غير موجودة');
+    if (!entry) throw new NotFoundError({
+      code: 'PROPERTY_CARD_NOT_FOUND',
+      message: 'This property card could not be found.',
+    });
     if (!entry.landlordCitizenId || !entry.landlordCitizen || entry.endedAt) {
       return {
         linked: false,
@@ -1903,7 +2014,10 @@ export class LandlordLinkService {
         units: { select: { unitId: true, unit: { select: { unitCode: true, buildingId: true } } } },
       },
     });
-    if (!entry) throw new NotFoundError('بطاقة العقار غير موجودة');
+    if (!entry) throw new NotFoundError({
+      code: 'PROPERTY_CARD_NOT_FOUND',
+      message: 'This property card could not be found.',
+    });
     if (!entry.landlordCitizenId) return { ...emptyUnlink(), unlinked: false };
     /*
       The link on an ended tenancy is the record of who the landlord was, and
@@ -1911,13 +2025,18 @@ export class LandlordLinkService {
       ended. Undoing it now would revert nothing and falsify the history.
     */
     if (entry.endedAt) {
-      throw new ConflictError('انتهى هذا الإيجار — الربط محفوظ كسجل لمن كان المالك', {
-        propertyEntryId: input.propertyEntryId,
+      throw new ConflictError({
+        code: 'TENANCY_ENDED_LINK_KEPT',
+        message: 'This tenancy has ended. The link is kept as the record of who the owner was.',
+        details: {
+          propertyEntryId: input.propertyEntryId,
+        },
       });
     }
 
     const ownerId = entry.landlordCitizenId;
     const events: PendingEvent[] = [];
+    let unlinked: AnnouncedChange[] = [];
 
     const report = await this.inTransaction(async () => {
       const outcome = await this.revertLink(this.db, {
@@ -1932,32 +2051,44 @@ export class LandlordLinkService {
         data: { landlordCitizenId: null, landlordLinkFootprint: Prisma.DbNull },
       });
       if (cleared.count === 0) {
-        throw new ConflictError('تغيّر ربط هذه البطاقة للتو — حدّث الصفحة', {
-          propertyEntryId: entry.id,
+        throw new ConflictError({
+          code: 'LANDLORD_LINK_CHANGED_CONCURRENTLY',
+          message: 'This card’s owner link just changed. Refresh the page.',
+          details: {
+            propertyEntryId: entry.id,
+          },
         });
       }
+
+      // Tier 1: the unlink and its rows commit together.
+      unlinked = [
+        {
+          tenantSlug: this.tenantContext.tenantSlug,
+          citizenId: ownerId,
+          action: 'LANDLORD_UNLINKED',
+          after: { propertyEntryId: entry.id, ...summarise(outcome.report) },
+          actorId: input.actor.id,
+          actorRole: input.actor.role,
+        },
+        ...(entry.registration?.citizenId
+          ? [
+              {
+                tenantSlug: this.tenantContext.tenantSlug,
+                citizenId: entry.registration.citizenId,
+                action: 'LANDLORD_UNLINKED',
+                after: { propertyEntryId: entry.id, ownerId },
+                actorId: input.actor.id,
+                actorRole: input.actor.role,
+              },
+            ]
+          : []),
+      ];
+      await this.recordAnnouncement(unlinked);
       return outcome.report;
     });
 
     this.emitAll(events, input.actor);
-    this.events.emit('citizen.changed', {
-      tenantSlug: this.tenantContext.tenantSlug,
-      citizenId: ownerId,
-      action: 'LANDLORD_UNLINKED',
-      after: { propertyEntryId: entry.id, ...summarise(report) },
-      actorId: input.actor.id,
-      actorRole: input.actor.role,
-    });
-    if (entry.registration?.citizenId) {
-      this.events.emit('citizen.changed', {
-        tenantSlug: this.tenantContext.tenantSlug,
-        citizenId: entry.registration.citizenId,
-        action: 'LANDLORD_UNLINKED',
-        after: { propertyEntryId: entry.id, ownerId },
-        actorId: input.actor.id,
-        actorRole: input.actor.role,
-      });
-    }
+    this.announce(unlinked);
 
     const reviewUnits = report.legacy
       ? entry.units
@@ -2644,7 +2775,11 @@ export class LandlordLinkService {
   }): Promise<{ dismissed: boolean }> {
     const ids = [...new Set(input.candidateIds.filter((id) => UUID.test(id)))];
     if (ids.length === 0) {
-      throw new ValidationError('حدّد المواطنين المرفوضين', { candidateIds: input.candidateIds });
+      throw new ValidationError({
+        code: 'DISMISS_CANDIDATES_REQUIRED',
+        message: 'Select the citizens to dismiss.',
+        details: { candidateIds: input.candidateIds },
+      });
     }
 
     const S = tenantSchemaRef(this.tenantContext.schemaName);
@@ -2781,7 +2916,8 @@ export class LandlordLinkService {
     }
   }
 
-  private announce(input: {
+  /** The `citizen.changed` rows a link records: the owner's, and the tenant's. */
+  private announcement(input: {
     action: string;
     ownerId: string;
     tenantId: string | null;
@@ -2790,7 +2926,7 @@ export class LandlordLinkService {
     /** How the link was made, when it was not the phone match. */
     detail?: Record<string, unknown>;
     actor: { id: string; role: string };
-  }): void {
+  }): AnnouncedChange[] {
     const after = {
       ...(input.detail ?? {}),
       propertyEntryId: input.entryId,
@@ -2799,28 +2935,34 @@ export class LandlordLinkService {
       rowsAdded: input.footprint.units.filter((unit) => unit.row).length,
       cardsCreated: input.footprint.mintedCardIds.length,
     };
-    this.events.emit('citizen.changed', {
-      tenantSlug: this.tenantContext.tenantSlug,
-      citizenId: input.ownerId,
-      action: input.action,
-      after,
-      actorId: input.actor.id,
-      actorRole: input.actor.role,
-    });
-    if (input.tenantId) {
-      this.events.emit('citizen.changed', {
-        tenantSlug: this.tenantContext.tenantSlug,
-        citizenId: input.tenantId,
-        action: input.action,
-        after: { ...after, ownerId: input.ownerId },
-        actorId: input.actor.id,
-        actorRole: input.actor.role,
-      });
+    const base = { tenantSlug: this.tenantContext.tenantSlug, action: input.action, actorId: input.actor.id, actorRole: input.actor.role };
+    return [
+      { ...base, citizenId: input.ownerId, after },
+      ...(input.tenantId ? [{ ...base, citizenId: input.tenantId, after: { ...after, ownerId: input.ownerId } }] : []),
+    ];
+  }
+
+  /**
+   * Tier 1 (docs/security.md): an owner link names who owns a rented flat, so
+   * its rows are written inside the transaction that makes or ends it, and a
+   * failed write rolls the link back.
+   */
+  private async recordAnnouncement(changes: readonly AnnouncedChange[]): Promise<void> {
+    for (const payload of changes) {
+      await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload });
     }
+  }
+
+  /** After the commit: the same changes as events, for the caches. The rows are already written. */
+  private announce(changes: readonly AnnouncedChange[]): void {
+    for (const payload of changes) this.events.emit('citizen.changed', { ...payload, alreadyAudited: true });
   }
 }
 
 // ─────────────────────────────  Shapes  ─────────────────────────────
+
+/** A `citizen.changed` payload as this service announces it. */
+type AnnouncedChange = CitizenChange & { tenantSlug: string };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

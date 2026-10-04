@@ -5,6 +5,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { ConflictError } from '../../common/exceptions';
 import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
+import type { AuditService } from '../audit/audit.service';
 
 /**
  * Status transitions that happen *outside* the payment ledger.
@@ -64,6 +65,9 @@ function build(row: Row | null, { updatedCount = 1 }: { updatedCount?: number } 
   const checkoutCreate = jest.fn().mockResolvedValue({ id: 'checkout-1' });
   const checkoutUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
 
+  // Tier 1: declarations and refusals write their audit row in the transaction.
+  const recordInTransaction = jest.fn().mockResolvedValue(undefined);
+
   const prisma: Record<string, unknown> = {
     citizenPayment: {
       findFirst: jest.fn().mockResolvedValue(row),
@@ -94,9 +98,20 @@ function build(row: Row | null, { updatedCount = 1 }: { updatedCount?: number } 
       invalidatePrefix: jest.fn().mockResolvedValue(undefined),
     } as unknown as RedisCacheService,
     { record } as unknown as PaymentLedgerService,
+    { recordInTransaction } as unknown as AuditService,
   );
 
-  return { service, update, updateMany, record, createCheckout, checkoutCreate, checkoutUpdateMany };
+  return {
+    service,
+    prisma,
+    update,
+    updateMany,
+    record,
+    recordInTransaction,
+    createCheckout,
+    checkoutCreate,
+    checkoutUpdateMany,
+  };
 }
 
 describe('declare', () => {
@@ -119,9 +134,37 @@ describe('declare', () => {
 
   it('refuses when a clerk settled the invoice while the citizen was typing', async () => {
     // The pre-read still saw UNPAID; the row moved before the write landed.
-    const { service } = build(INVOICE, { updatedCount: 0 });
+    const { service, recordInTransaction } = build(INVOICE, { updatedCount: 0 });
 
     await expect(service.declare(input)).rejects.toBeInstanceOf(ConflictError);
+    // Nothing changed, so nothing is audited.
+    expect(recordInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('writes its audit row inside the same transaction as the status (Tier 1)', async () => {
+    const { service, prisma, recordInTransaction } = build(INVOICE);
+
+    await service.declare(input);
+
+    expect(recordInTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'PAYMENT_DECLARED',
+        actorType: 'CITIZEN',
+        actorId: 'citizen-1',
+        entityId: 'payment-1',
+        after: { method: 'WHISH_MONEY' },
+      }),
+      prisma,
+    );
+  });
+
+  it('fails the declaration when its audit row cannot be written', async () => {
+    const { service, recordInTransaction } = build(INVOICE);
+    recordInTransaction.mockRejectedValueOnce(new Error('audit insert refused'));
+
+    // The transaction rolls back with it; the citizen sees a failure, not a
+    // claim the trail never heard of.
+    await expect(service.declare(input)).rejects.toThrow('audit insert refused');
   });
 
   it('still answers the ordinary cases from the pre-read, not from the predicate', async () => {
@@ -132,7 +175,7 @@ describe('declare', () => {
     */
     const { service, updateMany } = build({ ...INVOICE, paymentStatus: 'PAID' });
 
-    await expect(service.declare(input)).rejects.toThrow('مسدّدة بالفعل');
+    await expect(service.declare(input)).rejects.toMatchObject({ code: 'PAYMENT_ALREADY_PAID' });
     expect(updateMany).not.toHaveBeenCalled();
   });
 });
@@ -171,6 +214,24 @@ describe('review — refusing a claim', () => {
     const { service } = build({ ...INVOICE, paymentStatus: 'PENDING_REVIEW' }, { updatedCount: 0 });
 
     await expect(service.review(refuse)).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('writes the refusal to the audit trail inside the transaction (Tier 1)', async () => {
+    const { service, prisma, recordInTransaction } = build({ ...INVOICE, paymentStatus: 'PENDING_REVIEW' });
+
+    await service.review(refuse);
+
+    expect(recordInTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'PAYMENT_REJECTED',
+        actorType: 'STAFF',
+        actorId: 'staff-1',
+        actorRole: 'ACCOUNTANT',
+        entityId: 'payment-1',
+        after: { citizenId: expect.anything(), confirmed: false },
+      }),
+      prisma,
+    );
   });
 });
 

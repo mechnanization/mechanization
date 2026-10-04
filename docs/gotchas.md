@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -316,11 +316,37 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** declare static paths before `:id`.
 - **Where:** `CitizenController`, the comment above `review-queue`.
 
+### `ApiRequestError.message` is translated; branch on `kind`
+
+- **What happens:** a screen compares `error.payload.code === 'CONFLICT'` and stops
+  matching once the throw site is converted to a specific code such as
+  `PAYMENT_ALREADY_PAID`.
+- **Why:** `code` is now the specific code when there is one; the class is `kind`.
+  `ApiRequestError` also builds its `message` from `messages/{ar,en}.json` through
+  `localizeApiError`, so the server's text is no longer what a screen shows.
+- **Do this:** branch on `error.kind` for the class and on `error.code` for one specific
+  case; show `error.message`.
+- **Where:** `apps/frontend/lib/api-client.ts` (`ApiRequestError`),
+  `apps/frontend/lib/api-errors.ts` (`localizeApiError`).
+
+### A Tier 1 audit row that cannot be written undoes the change
+
+- **What happens:** a payment, an ownership change or a citizen status change fails with
+  a 500, and nothing changed, because its audit insert was refused (for example a non-uuid
+  `actorId`, or an `actorRole` outside the `StaffRole` enum).
+- **Why:** Tier 1 rows are written inside the change's transaction on purpose. Under the
+  old after-commit path the same bad row was caught and logged as `AUDIT WRITE FAILED`:
+  that is how every Whish settlement went unaudited (`actorId: 'WHISH'`).
+- **Do this:** a system actor is `actorType: 'SYSTEM'` with `actorId: null`; name a
+  provider in `after`. Run the integration suite for the service you changed.
+- **Where:** `AuditService.recordInTransaction`; `audit_log_entries.actorId` (`@db.Uuid`),
+  `actorRole` (`StaffRole?`) in the tenant `schema.prisma`.
+
 ### Events are synchronous strings
 
 - **What happens:** a misspelt event name is dropped silently; a listener on
-  `staff.*` never fires; `payment.reversed` is emitted and nothing listens, so a reversal
-  writes no audit row.
+  `staff.*` never fires. Until it was made Tier 1, `payment.reversed` was emitted with
+  no listener, so a reversal wrote no audit row for months without anyone noticing.
 - **Why:** `EventEmitterModule` is synchronous with no wildcards, and names are
   free strings. Synchronous is deliberate: listeners run in the emitting
   request's tenant scope, and an async emitter would write audit rows to
