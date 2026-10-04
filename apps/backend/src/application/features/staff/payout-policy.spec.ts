@@ -1,157 +1,53 @@
 import { payoutAllowance, payoutRefusal } from '@mechanization/shared-schemas';
 
 /*
-  The payout rule, as the server enforces it: at most $50 per week — weeks
-  counted in sevens of days from the first payout — and never more than is owed.
+  The payout rule, as the server enforces it: never more than is owed.
 
-  The $100 lifetime threshold was removed on 2026-09-27 at the municipality's
-  decision; it had stopped four of six officers from being paid anything. The
-  first test below is the one that used to assert it, inverted: a small balance
-  is now payable in full.
+  Two rules were removed by decision: the $100 lifetime threshold on
+  2026-09-27, which had stopped four of six officers from being paid anything,
+  and the $50 weekly cap on 2026-10-04. The first two tests below are the ones
+  that used to assert them, inverted: a small balance is payable in full, and so
+  is a large one, in a single payout.
 */
-const noon = (day: string) => `${day}T12:00:00.000Z`;
-
 describe('payoutAllowance', () => {
   it('pays a small balance in full — there is no lifetime threshold', () => {
-    const allowance = payoutAllowance({
-      totalEarnings: 8,
-      pendingBalance: 8,
-      payouts: [],
-      paidAt: noon('2026-09-01'),
-    });
-    expect(allowance).toMatchObject({ allowed: true, reason: 'OK', owed: 8, maxAmount: 8 });
+    const allowance = payoutAllowance({ pendingBalance: 8 });
+    expect(allowance).toEqual({ allowed: true, reason: 'OK', owed: 8 });
     expect(payoutRefusal(allowance, 8)).toBeNull();
     // Still never more than is owed.
     expect(payoutRefusal(allowance, 8.01)).not.toBeNull();
   });
 
-  it('allows up to $50 on the first payout', () => {
-    const allowance = payoutAllowance({
-      totalEarnings: 100,
-      pendingBalance: 100,
-      payouts: [],
-      paidAt: noon('2026-09-01'),
-    });
-    expect(allowance).toMatchObject({
-      allowed: true,
-      reason: 'OK',
-      weekStart: '2026-09-01',
-      weekEnd: '2026-09-07',
-      nextWeekStart: '2026-09-08',
-      maxAmount: 50,
-    });
-    expect(payoutRefusal(allowance, 50)).toBeNull();
-    expect(payoutRefusal(allowance, 50.01)).not.toBeNull();
-  });
-
-  it('caps the week after an earlier payout, whatever the lifetime total', () => {
-    // Earned $120, paid $50: the only rule left is the weekly cap.
-    const allowance = payoutAllowance({
-      totalEarnings: 120,
-      pendingBalance: 70,
-      payouts: [{ amount: 50, paidAt: noon('2026-09-01') }],
-      paidAt: noon('2026-09-08'),
-    });
-    expect(allowance).toMatchObject({ allowed: true, maxAmount: 50 });
-  });
-
-  it('counts every payout inside the same seven days against the $50', () => {
-    const allowance = payoutAllowance({
-      totalEarnings: 300,
-      pendingBalance: 270,
-      payouts: [
-        { amount: 20, paidAt: noon('2026-09-01') },
-        { amount: 10, paidAt: noon('2026-09-04') },
-      ],
-      paidAt: noon('2026-09-07'),
-    });
-    expect(allowance).toMatchObject({ allowed: true, paidThisWeek: 30, maxAmount: 20 });
-    expect(payoutRefusal(allowance, 20)).toBeNull();
-    expect(payoutRefusal(allowance, 25)).toContain('20.00$');
-  });
-
-  it('refuses the rest of a week whose $50 is spent, and says when it comes back', () => {
-    const allowance = payoutAllowance({
-      totalEarnings: 300,
-      pendingBalance: 250,
-      payouts: [{ amount: 50, paidAt: noon('2026-09-01') }],
-      paidAt: noon('2026-09-07'),
-    });
-    expect(allowance).toMatchObject({ allowed: false, reason: 'WEEK_USED', maxAmount: 0 });
-    expect(payoutRefusal(allowance, 1)).toContain('2026-09-08');
-  });
-
-  it('starts a fresh $50 on day 8, counted from the first payout', () => {
-    const allowance = payoutAllowance({
-      totalEarnings: 300,
-      pendingBalance: 250,
-      payouts: [{ amount: 50, paidAt: noon('2026-09-01') }],
-      paidAt: noon('2026-09-08'),
-    });
-    expect(allowance).toMatchObject({ allowed: true, weekStart: '2026-09-08', maxAmount: 50 });
-  });
-
-  it('anchors the weeks at the first payout, not the latest one', () => {
-    // First paid on the 1st, then on the 10th: the 10th is in the week of the
-    // 8th–14th, so a payout on the 15th starts the next week.
-    const allowance = payoutAllowance({
-      totalEarnings: 300,
-      pendingBalance: 220,
-      payouts: [
-        { amount: 30, paidAt: noon('2026-09-01') },
-        { amount: 50, paidAt: noon('2026-09-10') },
-      ],
-      paidAt: noon('2026-09-15'),
-    });
-    expect(allowance).toMatchObject({ weekStart: '2026-09-15', paidThisWeek: 0, maxAmount: 50 });
-  });
-
-  it('counts in calendar days, not instants', () => {
-    // Recorded at 3pm on the 1st, the next at noon on the 8th: a new week,
-    // though fewer than 7 × 24 hours have passed.
-    const allowance = payoutAllowance({
-      totalEarnings: 300,
-      pendingBalance: 250,
-      payouts: [{ amount: 50, paidAt: '2026-09-01T15:00:00.000Z' }],
-      paidAt: noon('2026-09-08'),
-    });
-    expect(allowance).toMatchObject({ allowed: true, maxAmount: 50 });
+  it('pays more than $50 in one payout — there is no weekly cap', () => {
+    const allowance = payoutAllowance({ pendingBalance: 120 });
+    expect(allowance).toEqual({ allowed: true, reason: 'OK', owed: 120 });
+    expect(payoutRefusal(allowance, 120)).toBeNull();
+    expect(payoutRefusal(allowance, 120.01)).not.toBeNull();
   });
 
   it('never allows more than is owed', () => {
-    const allowance = payoutAllowance({
-      totalEarnings: 100,
-      pendingBalance: 12.5,
-      payouts: [{ amount: 87.5, paidAt: noon('2026-08-01') }],
-      paidAt: noon('2026-09-01'),
-    });
-    expect(allowance).toMatchObject({ allowed: true, maxAmount: 12.5 });
+    const allowance = payoutAllowance({ pendingBalance: 12.5 });
+    expect(payoutRefusal(allowance, 12.5)).toBeNull();
     expect(payoutRefusal(allowance, 13)).toContain('الرصيد المستحق');
   });
 
-  it('refuses when nothing is owed', () => {
-    const allowance = payoutAllowance({
-      totalEarnings: 100,
-      pendingBalance: 0,
-      payouts: [
-        { amount: 50, paidAt: noon('2026-08-01') },
-        { amount: 50, paidAt: noon('2026-08-08') },
-      ],
-      paidAt: noon('2026-09-01'),
-    });
-    expect(allowance).toMatchObject({ allowed: false, reason: 'NOTHING_OWED' });
+  it('refuses when nothing is owed, whatever the amount', () => {
+    const allowance = payoutAllowance({ pendingBalance: 0 });
+    expect(allowance).toEqual({ allowed: false, reason: 'NOTHING_OWED', owed: 0 });
+    expect(payoutRefusal(allowance, 0.01)).toBe('لا يوجد رصيد مستحق لهذا المفتش.');
   });
 
-  it('adds money in cents, so float drift cannot tip a payout over the cap', () => {
-    const allowance = payoutAllowance({
-      totalEarnings: 300,
-      pendingBalance: 250,
-      payouts: [
-        { amount: 0.1, paidAt: noon('2026-09-01') },
-        { amount: 0.2, paidAt: noon('2026-09-02') },
-      ],
-      paidAt: noon('2026-09-03'),
+  it('reads a negative balance as nothing owed', () => {
+    expect(payoutAllowance({ pendingBalance: -1 })).toMatchObject({
+      allowed: false,
+      reason: 'NOTHING_OWED',
+      owed: 0,
     });
-    expect(payoutRefusal(allowance, 49.7)).toBeNull();
+  });
+
+  it('compares money in cents, so float drift cannot refuse an exact payout', () => {
+    // 0.1 + 0.2 is 0.30000000000000004 in floating point.
+    expect(payoutRefusal(payoutAllowance({ pendingBalance: 0.1 + 0.2 }), 0.3)).toBeNull();
+    expect(payoutRefusal(payoutAllowance({ pendingBalance: 0.3 }), 0.1 + 0.2)).toBeNull();
   });
 });

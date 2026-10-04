@@ -629,11 +629,10 @@ export class StaffService {
   /**
    * Super Admin records a commission payment made to a Field Inspector.
    *
-   * Refused unless `payoutAllowance` accepts it: nothing before $100 of
-   * lifetime earnings, at most $50 per week counted from the first payout, and
-   * never more than is still owed. The figures are the ones the inspector's
-   * dashboard shows, read through the same method, so the refusal and the
-   * screen cannot disagree about what is owed.
+   * Refused unless `payoutAllowance` accepts it: never more than is still
+   * owed. The figures are the ones the inspector's dashboard shows, read
+   * through the same method, so the refusal and the screen cannot disagree
+   * about what is owed.
    */
   async recordInspectorPayout(input: {
     tenantSlug: string;
@@ -653,12 +652,7 @@ export class StaffService {
       throw new ValidationError('تاريخ الدفع غير صالح.');
     }
     const refusal = payoutRefusal(
-      payoutAllowance({
-        totalEarnings: profile.totalEarnings,
-        pendingBalance: profile.pendingBalance,
-        payouts: profile.payouts,
-        paidAt,
-      }),
+      payoutAllowance({ pendingBalance: profile.pendingBalance }),
       input.payload.amount,
     );
     if (refusal) {
