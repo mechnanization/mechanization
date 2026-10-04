@@ -581,6 +581,21 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   Never put a search term in the URL.
 - **Where:** `lib/use-url-state.ts`, `lib/tab-search.ts`.
 
+### `window.location` is the previous page while a `<Link>` target renders
+
+- **What happens:** something read from the URL during render matches the
+  page the officer came from. The unit panel's «افتح ملفاً جديداً» opened the
+  registration form with an empty name and phone, because its tab-storage
+  seed is bound to a link that never matched.
+- **Why:** on a client-side navigation Next pushes the new URL into history in
+  an insertion effect after the commit, so the new page's first render (and
+  its `useState` initialisers) still see the old `window.location`. A reload
+  hides the bug, because a full load has the right URL from the start.
+- **Do this:** read the current path and query during render with
+  `usePathname()` and `useSearchParams()`, never `window.location`.
+- **Where:** `app/[tenant]/[locale]/[adminPath]/(protected)/citizens/new/page.tsx`,
+  `readLinkSeed` in `lib/tab-search.ts`.
+
 ### `navigator.onLine` is undefined under Node
 
 - **What happens:** offline tests pass a drain that sends nothing.
