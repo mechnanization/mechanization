@@ -43,6 +43,8 @@ enum StaffRole {
   COLLECTOR
   ACCOUNTANT
   ADMINISTRATIVE_OFFICER
+  /// «مشاهد فقط» — reads the register, census, cases and reports; writes nothing. 0067.
+  VIEWER
 }
 
 enum Gender {
@@ -961,6 +963,8 @@ enum DamageLevel {
   NOT_AFFECTED
   SAFE_MINOR_DAMAGE
   RESTRICTED_USE
+  /// «غير قابلة للسكن» — standing and safe to enter, not fit to live in until repaired. 0067.
+  UNINHABITABLE
   UNSAFE_EVACUATE
   TOTAL_COLLAPSE
   UNCLASSIFIED
@@ -1495,6 +1499,9 @@ model DamageAssessment {
   observations String?
 
   assessedAt DateTime @default(now())
+
+  /// «موعد إعادة الكشف» — when an UNINHABITABLE unit is due to be inspected again after repair. 0068.
+  reinspectAt DateTime?
 
   assessedById String? @db.Uuid
   assessedBy   User?   @relation("DamageAssessedBy", fields: [assessedById], references: [id])

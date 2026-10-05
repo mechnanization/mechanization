@@ -1,0 +1,33 @@
+-- 0067_uninhabitable_and_viewer_role
+--
+-- Two enum values, each for a feature whose code ships after this.
+--
+-- == «غير قابلة للسكن» — DamageLevel.UNINHABITABLE ==========================
+--
+-- A unit standing and safe to enter, but not fit to live in until it is
+-- repaired: no windows, no water, the kitchen gone. The UN-Habitat scale the
+-- enum follows has no word for it — «استخدام مقيّد» understates it and
+-- «يستوجب الإخلاء» says the structure is unsafe, which it is not — so an
+-- inspector had to pick a reading that was wrong either way. Placed between
+-- the two in the enum's order, which is its severity.
+--
+-- A reading of this level is the one that expects a second visit: the next
+-- migration adds the date that visit is due (0068).
+--
+-- == «مشاهد فقط» — StaffRole.VIEWER =========================================
+--
+-- An account that reads the register, the census, cases and reports, and
+-- writes nothing. AUDITOR was the nearest, but it decides quality reviews and
+-- reads the audit trail — powers a viewer must not have.
+--
+-- == Why this migration is alone =========================================
+--
+-- `ALTER TYPE … ADD VALUE` may not have its new value *used* by the transaction
+-- that added it, and the migrator wraps each migration in one (0051, 0053,
+-- 0062). It is also the "enum value before the code" rule: this ships ahead of
+-- the code that writes either value. No row is rewritten.
+--
+-- Written unqualified: the migrator sets `search_path` to the tenant schema.
+
+ALTER TYPE "DamageLevel" ADD VALUE IF NOT EXISTS 'UNINHABITABLE' BEFORE 'UNSAFE_EVACUATE';
+ALTER TYPE "StaffRole" ADD VALUE IF NOT EXISTS 'VIEWER';
