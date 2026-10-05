@@ -2836,7 +2836,12 @@ export class CitizensService {
    * schema still points at them.
    *
    * Refused whenever the citizen has a registration, a payment of any status,
-   * or a fee notice issued directly to them. A rejected claim or an unpaid
+   * or a fee notice issued directly to them — and, since a file with "zero
+   * relations" is the only one an admin officer may erase, whenever anything
+   * else still points at them: an occupancy on a census unit (ended ones
+   * too — they are the unit's history), a tenant's card naming them as its
+   * owner, a case resolved by them, a merge in either direction (undone ones
+   * too — their undo record would cascade away), or a Whish checkout. A rejected claim or an unpaid
    * invoice is still the municipality's own record of what was reviewed and
    * why; cascading it away with the person would erase that history rather
    * than the citizen's identity data alone, and an orphaned fee notice would
@@ -2883,6 +2888,27 @@ export class CitizensService {
       throw new ConflictError({
         code: 'CITIZEN_HAS_RECORDS',
         message: 'A citizen with filings, payments or fees cannot be deleted. Disable the account instead.',
+      });
+    }
+
+    /*
+      The links the cascade used to take silently: occupancies were deleted
+      with the person and a landlord link or a case's citizen set to null, so a
+      unit lost its owner and a case its answer without anyone choosing that.
+    */
+    const [occupancies, landlordOf, cases, merges, checkouts] = await Promise.all([
+      this.db.unitOccupancy.count({ where: { citizenId: citizen.id } }),
+      this.db.propertyEntry.count({ where: { landlordCitizenId: citizen.id } }),
+      this.db.case.count({ where: { resolvedCitizenId: citizen.id } }),
+      this.db.citizenMerge.count({ where: { OR: [{ survivorId: citizen.id }, { absorbedId: citizen.id }] } }),
+      this.db.whishCheckout.count({ where: { citizenId: citizen.id } }),
+    ]);
+    const links = occupancies + landlordOf + cases + merges + checkouts;
+    if (links > 0) {
+      throw new ConflictError({
+        code: 'CITIZEN_HAS_LINKS',
+        message: 'This citizen is still linked to other records. Disable the account instead.',
+        params: { count: links },
       });
     }
 

@@ -35,6 +35,12 @@ export const CITIZEN_RECORD_EDIT_ROLES: readonly string[] = [
   'ADMINISTRATIVE_OFFICER',
 ];
 
+/**
+ * «حذف الملف نهائياً» — erase a citizen nothing points at. Mirrors `@Roles`
+ * on `DELETE citizens/:id` in `citizen.controller.ts`.
+ */
+export const CITIZEN_DELETE_ROLES: readonly string[] = ['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER'];
+
 export function hasRole(roles: readonly string[], role: string | null | undefined): boolean {
   return role ? roles.includes(role) : false;
 }

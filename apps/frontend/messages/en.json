@@ -320,6 +320,7 @@
     "TENANCY_ENDED_ON_CARD_SINCE_OPENED": "A tenancy on one of this card’s units ended after this form was opened. Refresh the page.",
     "CITIZEN_IN_MERGE": "This file is part of an active merge, so it cannot be deleted. Undo the merge first if it must be deleted.",
     "CITIZEN_HAS_RECORDS": "A citizen with filings, payments or fees cannot be deleted. Disable the account instead.",
+    "CITIZEN_HAS_LINKS": "This citizen cannot be deleted: they are still linked to other records ({count}) — census units, tenants' cards naming them as owner, cases, or a file merge. Disable the account instead.",
     "MERGE_PREVIEW_STALE": "One of the two files changed since you opened the preview. Review the new preview, then confirm the merge.",
     "MERGE_NOT_FOUND": "This merge could not be found.",
     "MERGE_ABSORBED_CHANGED": "The file being merged changed during the merge (something new was recorded on it). Reopen the preview and try again.",

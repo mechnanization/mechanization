@@ -784,12 +784,14 @@ export class CitizenController {
   }
 
   /**
-   * Permanent, and cascades to everything the citizen owns. SUPER_ADMIN only:
-   * this erases identity data and registration history in one call, which is
-   * not a decision to leave with the role that exists to inspect properties.
-   * The service additionally refuses it for anyone with a settled payment.
+   * Permanent. Only for a citizen nothing points at — no filing, payment, fee,
+   * unit, landlord link, case, merge or checkout; the service refuses anything
+   * else (`CITIZEN_HAS_RECORDS`, `CITIZEN_HAS_LINKS`). SUPER_ADMIN and
+   * ADMINISTRATIVE_OFFICER, the clerk whose job is the register itself: a file
+   * opened by mistake, with nothing built on it, is theirs to remove. Not the
+   * field roles, whose remit is inspecting properties.
    */
-  @Roles('SUPER_ADMIN')
+  @Roles('SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER')
   @Delete(':id')
   async remove(
     @Param('tenantSlug') tenantSlug: string,

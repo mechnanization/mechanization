@@ -4291,8 +4291,10 @@ export function setCitizenActive(
 }
 
 /**
- * Permanent, cascading to registrations, properties, documents and invoices.
- * SUPER_ADMIN only, and the server refuses it for anyone with a settled payment.
+ * Permanent. SUPER_ADMIN and ADMINISTRATIVE_OFFICER, and only for a citizen
+ * nothing points at: the server refuses a filing, payment or fee
+ * (`CITIZEN_HAS_RECORDS`) and any unit, landlord link, case, merge or
+ * checkout (`CITIZEN_HAS_LINKS`).
  */
 export function deleteCitizen(tenant: string, token: string, citizenId: string) {
   return apiFetch<{ deleted: boolean }>(

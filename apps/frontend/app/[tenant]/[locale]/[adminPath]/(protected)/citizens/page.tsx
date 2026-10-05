@@ -55,6 +55,7 @@ import { cn } from '@/lib/utils';
 import { ACTION_TINT } from '@/lib/action-tint';
 import { formatDate } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
+import { CITIZEN_DELETE_ROLES, hasRole } from '@/lib/staff-roles';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
 import { getLabels } from '@mechanization/shared-schemas';
 
@@ -165,7 +166,7 @@ export default function CitizensPage({
   const [municipalityName, setMunicipalityName] = useState('');
 
   const canWrite = role ? CAN_WRITE.includes(role) : false;
-  const canDelete = role === 'SUPER_ADMIN';
+  const canDelete = hasRole(CITIZEN_DELETE_ROLES, role);
 
   useEffect(() => {
     const session = loadSession(tenant);
