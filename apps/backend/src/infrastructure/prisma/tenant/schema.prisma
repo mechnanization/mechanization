@@ -115,6 +115,31 @@ model User {
   phone    String?
   whatsapp String?
 
+  /// «لا يملك رقم هاتف» — this person owns no phone (migration 0069).
+  ///
+  /// A fact, not a blank. `phone IS NULL` alone cannot tell "has no phone"
+  /// from "nobody asked yet", and the two want opposite things from an
+  /// officer: the first is a finished answer, the second is «يتطلب مراجعة».
+  /// True here waives the form's phone requirement and is the one state in
+  /// which a household file is complete without a number.
+  hasNoPhone Boolean @default(false)
+
+  /// «رقم للتواصل» — a son's, a daughter's or a neighbour's number, for a
+  /// citizen the municipality cannot reach directly (migration 0069).
+  ///
+  /// **Not this person's number, and never treated as one.** It is excluded
+  /// from citizen sign-in (`findCitizensByPhone`) and from duplicate scoring
+  /// on purpose: a relative's number is *expected* to equal that relative's
+  /// own `phone`, so matching on it there would offer the father's file to
+  /// the son signing in and score the two as one person. Deliberately not
+  /// unique for the same reason — a father, a mother and a grandmother are
+  /// commonly reached on one son's phone.
+  ///
+  /// Read as a weaker, human-confirmed signal by `LandlordLinkService`
+  /// (`candidatesFor`), where an elderly owner whose tenant knows only the
+  /// son's number would otherwise be unreachable by any match.
+  contactPhone String?
+
   firstName  String
   middleName String?
   lastName   String
@@ -258,6 +283,8 @@ model User {
   /// The other half of the owner match — a landlord's number is as often the
   /// one they answer on WhatsApp as the one they registered with (0045).
   @@index([kind, whatsapp])
+  /// And the third: the relative's number an elderly owner is reached on (0069).
+  @@index([kind, contactPhone])
   @@index([kind, role])
   @@map("users")
 }
