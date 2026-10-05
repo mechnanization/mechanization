@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `feat/staff-scoping-roles-archive` (on `develop@ec70f68`), 2026-10-05.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -14,7 +14,7 @@ Arabic receipts. The visual system is in [DESIGN.md](DESIGN.md); the binding UI 
 
 ### 1. Who uses it
 
-Staff hold one of six roles (`STAFF_ROLE` in `packages/shared-schemas/src/enums.ts`).
+Staff hold one of seven roles (`STAFF_ROLE` in `packages/shared-schemas/src/enums.ts`).
 Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in the same
 `users` table.
 
@@ -48,6 +48,20 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - A cadastral map explorer with parcel numbering and sector zones.
   - CSV export with formula-injection-safe cells.
   - An append-only audit log of staff actions.
+- **View-only staff (`VIEWER`, مشاهد فقط)**: read the register, the census, the cases and
+  the reports, and write nothing. Every mutating route refuses the role, so a council
+  member or an outside reviewer can be given the whole picture and no way to change it.
+- **Worklists are each officer's own.** «يتطلب مراجعة» and «وحدات غير ممسوحة» show a
+  field inspector or a collector the records *they* filed and the units *they* put on the
+  census. The roles whose job is to look across everyone's work — `SUPER_ADMIN`,
+  `ADMINISTRATIVE_OFFICER`, `AUDITOR`, `VIEWER` (`SEES_ALL_STAFF_WORK`) — see every
+  staff member's.
+- **Staff accounts have three states, and none of them loses history.** An account is
+  active, disabled, or deleted. Disabling blocks sign-in and moves the account out of the
+  staff directory into «الأرشيف», where a system administrator reads it and can bring it
+  back; deleting hides it from both and is undone from «الموظفون المحذوفون». In every
+  case the row, the account's details and everything the person did stay on record, and a
+  field inspector's earnings and unpaid balance keep their place in the payout ledger.
 
 ---
 
@@ -59,7 +73,7 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   full second locale; numbers and codes run left-to-right.
 - **Currency**: Lebanese pound (`LBP`, `ل.ل`) with compact formatting for millions and
   billions; US dollar and euro as foreign currencies.
-- **Security**: JWT sessions, role-based access over the six staff roles
+- **Security**: JWT sessions, role-based access over the seven staff roles
   (`SUPER_ADMIN`, `AUDITOR`, `FIELD_INSPECTOR`, `COLLECTOR`, `ACCOUNTANT`,
-  `ADMINISTRATIVE_OFFICER`) plus the citizen user kind, and an audit log. Rules:
+  `ADMINISTRATIVE_OFFICER`, `VIEWER`) plus the citizen user kind, and an audit log. Rules:
   [docs/security.md](docs/security.md).

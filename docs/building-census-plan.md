@@ -647,7 +647,7 @@ naming that exact unit field, with a written reason, on a record that lands at
 | P2-T1 | `building.schema.ts` — create/update, `unitBlueprintSchema`, `createDamageAssessmentSchema`, `upsertOccupancySchema` | Schema unit tests | ✅ Also `upsertUnitSchema`/`updateUnitSchema`, `endOccupancySchema` and `buildingFilterSchema` — the controller needed request shapes for the matrix and the ledger, and a hand-rolled `@Query` parse beside a Zod one is how the two drift. 27 tests. |
 | P2-T2 | `buildings.service.ts` — `list`, `get`, `create` (§4.4 locked suffix allocation), `update`, `generateUnits`, code recompute | Service tests incl. **concurrent-create allocating distinct suffixes** | ✅ **6 simultaneous creates on one parcel → A,B,C,D,E,F**, against a real Postgres. Serialised by a transaction-scoped advisory lock keyed on `current_schema() || parcel` — namespaced because tenant schemas share a database. |
 | P2-T3 | `damage.service.ts` — `record`, `currentLevel`, `history` | Latest-row-wins verified | ✅ Verified with a 2024 `UNSAFE_EVACUATE` and a 2026 `SAFE_MINOR_DAMAGE`: current reads the repair, history keeps both. Ordered by `assessedAt`, not `createdAt` — an assessment typed up a week late describes the visit, not the paperwork. |
-| P2-T4 | `buildings.controller.ts` under `/t/:tenantSlug/buildings`, RBAC-guarded | Endpoints reachable; unauthorised roles rejected | ✅ Reads open to all six staff roles; writes to the four field/administrative ones (matching `CasesController`, not `ZonesController` — creating a building and logging a case are the same afternoon's work); delete SUPER_ADMIN only. |
+| P2-T4 | `buildings.controller.ts` under `/t/:tenantSlug/buildings`, RBAC-guarded | Endpoints reachable; unauthorised roles rejected | ✅ Reads open to all seven staff roles; writes to the four field/administrative ones (matching `CasesController`, not `ZonesController` — creating a building and logging a case are the same afternoon's work); delete SUPER_ADMIN only. |
 | P2-T5 | Cases: filter by `caseType`/`buildingId`/`unitId`; `SCHEDULED`; auto-resolve on occupancy | Existing case tests still pass | ✅ Auto-resolve lives in `recordOccupancy` — the moment the thing the case was waiting on happened. Only cases pinned to that exact `unitId`; a case carrying free-text «الطابق الثاني» is **not** resolved, because nothing can tell which of that floor's four flats was meant. |
 | P2-T6 | `GET /dashboard/map/buildings` with worst-case rollup (D11) | Single query, no N+1; snapshot test | ✅ Three queries total whatever the municipality's size — buildings, a `groupBy` over unit statuses, one `DISTINCT ON` for current damage. Verified: 2 of 3 units surveyed still reports `NOT_SURVEYED`. |
 | P2-T7 | Blanket reason auto-filling unexcused issues, ceiling raised to 120 | Name + phone only, one reason → `REQUIRES_REVIEW` with per-field flags each carrying it | ✅ 9 tests. See the note below on what "name + phone only" can actually mean. |
@@ -1076,7 +1076,7 @@ so under the table whenever that filter is on.
 
 - **`components/admin/nav.ts`** gained «سجل المباني» between the map and the
   sectors — the census is what the map draws pins from and what a sector is
-  ultimately a count of. Open to all six staff roles, matching
+  ultimately a count of. Open to all seven staff roles, matching
   `BuildingsController`'s read set: a collector needs a building's code to find
   a door as much as an inspector needs it to survey one. Without this the page
   existed at a URL nothing linked to, and `canAccessPath` would have treated it

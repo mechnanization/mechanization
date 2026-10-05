@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
+  Archive,
   ArchiveRestore,
   BadgeDollarSign,
   Ban,
@@ -53,22 +54,30 @@ import {
 } from '@/components/ui/dialog';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
-import { ChipGroup } from '@/components/ui/segmented-control';
+import { ChipGroup, SegmentedControl } from '@/components/ui/segmented-control';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { StaffForm, type StaffFormValues } from '@/components/admin/staff-form';
 
-function getTableLabels(locale: string): DataTableLabels {
+/**
+ * `archived` swaps the one line that differs between the two views: an empty
+ * table means "nobody has been added yet" in the directory and "nobody has
+ * been disabled" in the archive, and saying the first in the second told an
+ * admin their staff had vanished (STA-1).
+ */
+function getTableLabels(locale: string, archived: boolean): DataTableLabels {
   if (locale === 'en') {
     return {
-      searchAriaLabel: 'Search staff',
+      searchAriaLabel: archived ? 'Search the archive' : 'Search staff',
       searchPlaceholder: 'Search by name or email…',
       clearSearch: 'Clear search',
       searchHint: 'Enter',
       searchApplied: 'Search: "{term}"',
-      empty: 'No staff accounts yet.',
+      empty: archived
+        ? 'The archive is empty — no account has been disabled.'
+        : 'No staff accounts yet.',
       emptySearch: 'No results match your search.',
       loadError: 'Failed to load staff accounts.',
       retry: 'Retry',
@@ -86,12 +95,12 @@ function getTableLabels(locale: string): DataTableLabels {
     };
   }
   return {
-    searchAriaLabel: 'بحث في الموظفين',
+    searchAriaLabel: archived ? 'بحث في الأرشيف' : 'بحث في الموظفين',
     searchPlaceholder: 'ابحث بالاسم أو البريد الإلكتروني…',
     clearSearch: 'مسح البحث',
     searchHint: 'Enter',
     searchApplied: 'بحث: «{term}»',
-    empty: 'لا يوجد موظفون بعد.',
+    empty: archived ? 'الأرشيف فارغ — لم يُعطّل أي حساب.' : 'لا يوجد موظفون بعد.',
     emptySearch: 'لا نتائج مطابقة لبحثك.',
     loadError: 'تعذّر تحميل الموظفين.',
     retry: 'إعادة المحاولة',
@@ -112,8 +121,22 @@ function getTableLabels(locale: string): DataTableLabels {
 /** The role chips: «all», or one of the roles the server knows. */
 const ROLE_FILTERS = ['all', ...STAFF_ROLE] as const;
 
-/** `?role=` — which role the directory is narrowed to. Module scope: `useUrlState` memoises on it. */
-const FILTERS = { role: param.oneOf(ROLE_FILTERS, 'all') };
+/**
+ * The two halves of the directory. An account that is disabled keeps its row,
+ * its details and everything it did; what the archive changes is where that
+ * row is read, so the list of people who can sign in today is only those
+ * people. «الأرشيف» is the place, «معطّل» is still the state (TXT-3).
+ */
+const VIEWS = ['active', 'archived'] as const;
+
+/**
+ * `?view=` — the active directory or the archive; `?role=` — which role either
+ * is narrowed to. Module scope: `useUrlState` memoises on it.
+ */
+const FILTERS = {
+  view: param.oneOf(VIEWS, 'active'),
+  role: param.oneOf(ROLE_FILTERS, 'all'),
+};
 
 /**
  * Staff account administration — SUPER_ADMIN only.
@@ -222,7 +245,7 @@ export default function StaffPage({
         await restoreStaff(tenant, token, staff.id);
         await load();
         toast.success('تمت استعادة الحساب', {
-          description: `${staff.fullName} — عاد إلى القائمة معطّلاً؛ فعّله ليتمكّن من الدخول.`,
+          description: `${staff.fullName} — عاد معطّلاً إلى «الأرشيف»؛ فعّله ليتمكّن من الدخول.`,
         });
       } catch (caught) {
         logApiError(caught);
@@ -303,8 +326,8 @@ export default function StaffPage({
         await load();
         toast.success(reactivating ? 'تمت إعادة تفعيل الحساب' : 'تم تعطيل الحساب', {
           description: reactivating
-            ? `${staff.fullName} — يستطيع تسجيل الدخول من جديد.`
-            : `${staff.fullName} — لن يستطيع تسجيل الدخول. الحساب وسجل نشاطه محفوظان.`,
+            ? `${staff.fullName} — عاد إلى قائمة الفعّالين ويستطيع تسجيل الدخول من جديد.`
+            : `${staff.fullName} — لن يستطيع تسجيل الدخول، وانتقل إلى «الأرشيف». الحساب وسجل نشاطه محفوظان.`,
         });
       } catch (caught) {
         logApiError(caught);
@@ -327,7 +350,7 @@ export default function StaffPage({
         await deleteStaff(tenant, token, staff.id);
         await load();
         toast.success('تم حذف الموظف', {
-          description: `${staff.fullName} — أُزيل من القائمة، وبقي سجلّه محفوظاً. يمكن استعادته من «الموظفون المحذوفون».`,
+          description: `${staff.fullName} — أُزيل من قائمة الموظفين ومن «الأرشيف»، وبقي سجلّه محفوظاً. يمكن استعادته من «الموظفون المحذوفون».`,
         });
       } catch (caught) {
         logApiError(caught);
@@ -360,25 +383,41 @@ export default function StaffPage({
   const [search, setSearch] = useTabSearch(tenant, 'staff');
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
 
+  const archived = filters.view === 'archived';
+  /*
+    The directory is the accounts that can sign in; the archive is the ones
+    that cannot. Both are read from the same request — the server returns
+    every account that has not been deleted — so switching views costs nothing
+    and the counts on the switch are always in step with the rows under it.
+  */
+  const activeStaff = useMemo(() => items.filter((staff) => staff.isActive), [items]);
+  const archivedStaff = useMemo(() => items.filter((staff) => !staff.isActive), [items]);
+  const pool = archived ? archivedStaff : activeStaff;
+
   const roles = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const staff of items) counts.set(staff.role, (counts.get(staff.role) ?? 0) + 1);
+    for (const staff of pool) counts.set(staff.role, (counts.get(staff.role) ?? 0) + 1);
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [items]);
+  }, [pool]);
   /**
-   * Which role the list is narrowed to; «all» is everyone.
+   * Which role the list is narrowed to; «all» is everyone in this view.
    *
-   * A role nobody holds — a stale link, or the last such account deleted —
-   * reads as «all» once the accounts are in, rather than an empty table under
-   * a chip row with nothing selected.
+   * A role nobody holds — a stale link, the last such account deleted, or a
+   * role held only in the other view — reads as «all» once the accounts are
+   * in, rather than an empty table under a chip row with nothing selected.
    */
   const roleFilter =
     filters.role !== 'all' && roles.some(([role]) => role === filters.role) ? filters.role : 'all';
   const shown = useMemo(
-    () => (roleFilter === 'all' ? items : items.filter((staff) => staff.role === roleFilter)),
-    [items, roleFilter],
+    () => (roleFilter === 'all' ? pool : pool.filter((staff) => staff.role === roleFilter)),
+    [pool, roleFilter],
   );
-  const activeCount = items.filter((staff) => staff.isActive).length;
+  const activeCount = activeStaff.length;
+  /*
+    Every field inspector, disabled ones included. This section is a payout
+    ledger, not a roster: an inspector is archived still owed what they
+    earned, and hiding the card would hide the balance (STA-6).
+  */
   const inspectors = items.filter((staff) => staff.role === 'FIELD_INSPECTOR');
 
   const columns = useMemo<ColumnDef<StaffSummary>[]>(
@@ -508,11 +547,11 @@ export default function StaffPage({
                   label={
                     staff.isActive
                       ? en
-                        ? 'Disable — blocks sign-in, reversible'
-                        : 'تعطيل — يمنع الدخول ويمكن التراجع'
+                        ? 'Disable — blocks sign-in and moves the account to the archive, reversible'
+                        : 'تعطيل — يمنع الدخول وينقل الحساب إلى «الأرشيف»، ويمكن التراجع'
                       : en
-                        ? 'Re-activate'
-                        : 'إعادة التفعيل'
+                        ? 'Re-activate — back to the active list'
+                        : 'إعادة التفعيل — يعود إلى قائمة الفعّالين'
                   }
                 >
                   <Button
@@ -557,7 +596,7 @@ export default function StaffPage({
 
   if (!token) return null;
 
-  const tableLabels = getTableLabels(locale);
+  const tableLabels = getTableLabels(locale, archived);
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -589,12 +628,40 @@ export default function StaffPage({
       <StatStrip>
         <StatItem value={items.length} label={en ? 'Staff' : 'الموظفون'} />
         <StatItem value={activeCount} label={en ? 'Active' : 'فعّالون'} className="text-success" />
-        <StatItem value={items.length - activeCount} label={en ? 'Disabled' : 'معطّلون'} />
+        <StatItem value={archivedStaff.length} label={en ? 'In the archive' : 'في الأرشيف'} />
         <StatItem value={inspectors.length} label={en ? 'Field inspectors' : 'مفتشون ميدانيون'} />
       </StatStrip>
 
-      {/* ── The directory ───────────────────────────────────────────── */}
+      {/* ── The directory, and the archive beside it ────────────────── */}
       <section className="space-y-3">
+        {/*
+          Always rendered, both counts on it, so an archived account is always
+          one press away and an empty archive says so itself rather than
+          leaving an admin to wonder where a disabled account went.
+        */}
+        <SegmentedControl
+          aria-label={en ? 'Which accounts' : 'أي الحسابات'}
+          value={filters.view}
+          size="sm"
+          fullWidth={false}
+          // A role chosen in one view rarely exists in the other, and page 3
+          // of the directory is not page 3 of the archive.
+          onChange={(view) =>
+            setFilters({ view: view as (typeof VIEWS)[number] }, { clear: ['page', 'role'] })
+          }
+          options={[
+            {
+              value: 'active',
+              label: `${en ? 'Active' : 'الفعّالون'} (${activeStaff.length})`,
+              icon: UsersRound,
+            },
+            {
+              value: 'archived',
+              label: `${en ? 'Archive' : 'الأرشيف'} (${archivedStaff.length})`,
+              icon: Archive,
+            },
+          ]}
+        />
         {roles.length > 1 ? (
           <ChipGroup
             aria-label={en ? 'Role' : 'الصلاحية'}
@@ -604,7 +671,7 @@ export default function StaffPage({
               setFilters({ role: role as (typeof ROLE_FILTERS)[number] }, { clear: ['page'] })
             }
             options={[
-              { value: 'all', label: `${en ? 'All' : 'الكل'} (${items.length})` },
+              { value: 'all', label: `${en ? 'All' : 'الكل'} (${pool.length})` },
               ...roles.map(([role, count]) => ({ value: role, label: `${roleLabel(role)} (${count})` })),
             ]}
           />
@@ -625,9 +692,13 @@ export default function StaffPage({
           onSearchChange={setSearch}
         />
         <p className="text-xs leading-relaxed text-muted-foreground">
-          {en
-            ? 'Disabling blocks sign-in and can be undone. Deleting hides the account from this list and blocks sign-in; their details and everything they did stay on record, and it can be restored from «Deleted staff».'
-            : 'التعطيل يمنع الدخول ويمكن التراجع عنه. الحذف يُخفي الحساب من هذه القائمة ويمنع الدخول، وتبقى بياناته وكل ما قام به محفوظة في السجلات، ويمكن استعادته من «الموظفون المحذوفون».'}
+          {archived
+            ? en
+              ? 'These accounts cannot sign in. Their details and everything they did stay on record — what they registered, collected and inspected is still counted in the reports. Re-activating one returns it to the active list.'
+              : 'هذه الحسابات لا تستطيع الدخول. تبقى بياناتها وكل ما قامت به محفوظة في السجلات — ما سجّلته وحصّلته وفتّشته ما زال محتسباً في التقارير. إعادة التفعيل تُعيد الحساب إلى قائمة الفعّالين.'
+            : en
+              ? 'Disabling blocks sign-in and moves the account to the archive; it can be undone. Deleting hides the account from both lists and blocks sign-in; their details and everything they did stay on record, and it can be restored from «Deleted staff».'
+              : 'التعطيل يمنع الدخول وينقل الحساب إلى «الأرشيف»، ويمكن التراجع عنه. الحذف يُخفي الحساب من القائمتين ويمنع الدخول، وتبقى بياناته وكل ما قام به محفوظة في السجلات، ويمكن استعادته من «الموظفون المحذوفون».'}
         </p>
       </section>
 
@@ -778,16 +849,22 @@ export default function StaffPage({
             en ? (
               <>
                 <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> will be hidden from
-                the staff list and cannot sign in. Their details and everything they did stay on record, and the
-                account can be restored from «Deleted staff» — it comes back disabled.
-                <span className="mt-2 block text-muted-foreground">To block sign-in for a while instead, use «Disable».</span>
+                the staff list and the archive, and cannot sign in. Their details and everything they did stay on
+                record, and the account can be restored from «Deleted staff» — it comes back disabled, into the
+                archive.
+                <span className="mt-2 block text-muted-foreground">
+                  To block sign-in for a while instead, use «Disable»: the account moves to the archive and can come
+                  back.
+                </span>
               </>
             ) : (
               <>
                 سيُخفى <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> من قائمة
-                الموظفين ولن يستطيع الدخول. تبقى بياناته وكل ما قام به محفوظة في السجلات، ويمكن استعادته من
-                «الموظفون المحذوفون» — يعود معطّلاً.
-                <span className="mt-2 block text-muted-foreground">لمنع الدخول مؤقتاً فقط، استخدم «التعطيل».</span>
+                الموظفين ومن «الأرشيف» ولن يستطيع الدخول. تبقى بياناته وكل ما قام به محفوظة في السجلات، ويمكن
+                استعادته من «الموظفون المحذوفون» — يعود معطّلاً إلى «الأرشيف».
+                <span className="mt-2 block text-muted-foreground">
+                  لمنع الدخول مؤقتاً فقط، استخدم «التعطيل»: ينتقل الحساب إلى «الأرشيف» ويمكن إعادته.
+                </span>
               </>
             )
           ) : null
