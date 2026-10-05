@@ -62,6 +62,7 @@ export interface PlanPerson {
   motherName: string | null;
   phone: string | null;
   whatsapp: string | null;
+  contactPhone: string | null;
   gender: string | null;
   nationality: string | null;
   isLebanese: boolean | null;
@@ -241,6 +242,8 @@ export type FillableField =
   | 'motherName'
   | 'phone'
   | 'whatsapp'
+  /** «رقم للتواصل» — a relative's number, never an identity. See `User.contactPhone`. */
+  | 'contactPhone'
   | 'gender'
   | 'nationality'
   | 'isLebanese'
@@ -263,7 +266,13 @@ export type FillableField =
  * non-resident's مكان الإقامة, and a non-resident's short record is never given
  * a household's blood type: the edit form would neither show nor maintain it.
  */
-const SHARED_FIELDS: readonly FillableField[] = ['middleName', 'phone', 'whatsapp'];
+/*
+  `contactPhone` is shared rather than resident-only because
+  `citizenColumnsForEdit` writes it on both branches — a merge that could not
+  carry it would drop the one number an elderly file has, which is the
+  opposite of what a merge is for.
+*/
+const SHARED_FIELDS: readonly FillableField[] = ['middleName', 'phone', 'whatsapp', 'contactPhone'];
 const RESIDENT_FIELDS: readonly FillableField[] = [
   'motherName',
   'gender',
@@ -285,6 +294,7 @@ const COMPARED_FIELDS = [
   'motherName',
   'phone',
   'whatsapp',
+  'contactPhone',
   'residence',
   'gender',
   'nationality',
@@ -318,7 +328,12 @@ function display(value: unknown): string | null {
  * two spellings of the same word.
  */
 function sameAnswer(field: string, a: unknown, b: unknown): boolean {
-  if (field === 'phone' || field === 'whatsapp' || field === 'localContactPhone') {
+  if (
+    field === 'phone' ||
+    field === 'whatsapp' ||
+    field === 'contactPhone' ||
+    field === 'localContactPhone'
+  ) {
     return String(a).replace(/\D/g, '') === String(b).replace(/\D/g, '');
   }
   if (field === 'civilRecordNumber' || field === 'residencyNumber' || field === 'identityDocNumber') {

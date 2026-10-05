@@ -117,6 +117,7 @@ const PERSON_SELECT = {
   motherName: true,
   phone: true,
   whatsapp: true,
+  contactPhone: true,
   gender: true,
   nationality: true,
   isLebanese: true,

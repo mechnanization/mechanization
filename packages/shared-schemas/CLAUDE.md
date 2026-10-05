@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `feat/staff-refresh-tokens-rebased` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/staff-scoping-roles-archive` (on `develop@ec70f68`), 2026-10-05.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,
@@ -13,7 +13,7 @@ root (`from '@mechanization/shared-schemas'`); there are no deep imports.
 
 | Kind | Modules |
 |---|---|
-| Vocabulary | `enums` (the `as const` value lists, their zod schemas and types), `error-codes` (`ERROR_KINDS`, `ERROR_CODES`, `ErrorCode`, `ErrorParams`, `ApiErrorBody`, `isSpecificErrorCode`), `labels` (`ar`, `en`, `getLabels`), `primitives` (`lebanesePhone`, `internationalPhone`, `arabicOrLatinName`, `documentNumber`, `civilRecordNumber`, `tenantSlug`, `uuid`, `normalizeDigits`) |
+| Vocabulary | `enums` (the `as const` value lists, their zod schemas and types), `error-codes` (`ERROR_KINDS`, `ERROR_CODES`, `ErrorCode`, `ErrorParams`, `ApiErrorBody`, `isSpecificErrorCode`), `labels` (`ar`, `en`, `getLabels`), `primitives` (`lebanesePhone`, `internationalPhone`, `optionalInternationalPhone`, `arabicOrLatinName`, `documentNumber`, `civilRecordNumber`, `tenantSlug`, `uuid`, `normalizeDigits`) |
 | Contracts (`*.schema.ts`) | `citizen`, `field-flag`, `property`, `registration`, `admin-citizen`, `citizen-import`, `fee`, `auth`, `tenant`, `zone`, `building`, `unit-correction`, `staff`, `case`, `quality`, `citizen-merge` |
 | Pure rules | `numbering`, `unit-layout`, `cash-policy`, `payout-policy`, `inspector-earnings`, `unit-status-rule` |
 
@@ -139,6 +139,25 @@ package. Other new UI copy goes in next-intl messages
   `node_modules/zod` before you rely on an API you remember.
 - The output is CommonJS (`module: commonjs` in `tsconfig.base.json`), with
   `strict` and `noUncheckedIndexedAccess`.
+- **An optional phone is `optionalInternationalPhone`, never
+  `internationalPhone.optional().or(z.literal(''))`.** The union looks right
+  and leaks English: when the number is malformed every branch fails and zod
+  reports the union's own «Invalid input» instead of «رقم الهاتف غير صالح», on
+  an Arabic-first form, for the commonest typo there is (TXT-2, TXT-4). The
+  primitive preprocesses an empty string to `undefined` so there is only ever
+  one branch. `localContactPhone` still spells it the old way and still has
+  the bug — a row in [code-quality.md](../../docs/code-quality.md).
+- A field whose requirement depends on another answer — «لا يملك رقم هاتف»
+  waiving `phone` — is optional on the *object* and required again in
+  `superRefine`. A field cannot waive a requirement its own type has already
+  failed. Keep the refinement's path and message identical to what the strict
+  primitive would have raised, or the standard record's errors move.
+- `.partial()` drops a `.default()`. `shapeSubmission` parses the citizen
+  sections through the partial schemas, so a boolean flag with
+  `.default(false)` arrives **absent**, not `false`, when the client omits it.
+  Read such a flag as `=== true` and never `!== false` — that is what keeps an
+  older build, the offline queue and an import writing what they wrote before
+  (`no-phone.spec.ts` pins it).
 
 ## Tests
 

@@ -770,6 +770,8 @@ export class CitizensService {
           civilRecordNumber: true,
           phone: true,
           whatsapp: true,
+          hasNoPhone: true,
+          contactPhone: true,
           maritalStatus: true,
           totalRegisteredMembers: true,
           actualHouseholdMembers: true,
@@ -1004,6 +1006,18 @@ export class CitizensService {
         // phone «غير مؤكَّد» has neither, and filling the phone in later would
         // otherwise open an empty, required WhatsApp field nobody ever asked for.
         whatsappSameAsPhone: citizen.whatsapp == null || citizen.whatsapp === citizen.phone,
+        /*
+          «لا يملك رقم هاتف», so the form opens on the answer the record
+          already gives rather than on an empty required field.
+
+          Read from the column and not inferred from `phone == null`: the two
+          are different records. A file whose phone was never established has
+          its own «غير مؤكَّد» flag and belongs in «يتطلب مراجعة»; this one is
+          finished. Inferring the flag would quietly mark every unfinished
+          record as "has no phone" the moment it was opened.
+        */
+        hasNoPhone: citizen.hasNoPhone,
+        contactPhone: citizen.contactPhone ?? '',
         maritalStatus: citizen.maritalStatus,
         totalRegisteredMembers: citizen.totalRegisteredMembers,
         actualHouseholdMembers: citizen.actualHouseholdMembers,
@@ -3189,12 +3203,25 @@ export function citizenColumnsForEdit(
   stored: { identityDocType: string | null } = { identityDocType: null },
 ): Prisma.UserUpdateInput {
   const { personal, contact } = payload;
+  /*
+    «لا يملك رقم هاتف» — and the edit that frees a relative's number.
+
+    This is the write the whole feature turns on. An officer who ticks the box
+    on a file holding the son's number leaves `phone` NULL and the son's
+    number in `contactPhone`, and from this save onwards nothing reads it as
+    the father's: not citizen sign-in, not «شخص مسجَّل مرتين», not the owner
+    match. `|| null` rather than `?? null` because the cleared field arrives
+    as an empty string, and `''` is not an absence to Postgres.
+  */
+  const hasNoPhone = contact.hasNoPhone === true;
   const shared = {
     firstName: personal.firstName,
     middleName: personal.middleName || null,
     lastName: personal.lastName,
-    phone: contact.phone ?? null,
-    whatsapp: contact.whatsapp ?? contact.phone ?? null,
+    hasNoPhone,
+    phone: hasNoPhone ? null : (contact.phone || null),
+    whatsapp: hasNoPhone ? null : (contact.whatsapp || contact.phone || null),
+    contactPhone: contact.contactPhone || null,
   };
 
   if (payload.residence === 'NON_RESIDENT_OWNER') {

@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
+Last verified against the code: `feat/staff-scoping-roles-archive` (on `develop@ec70f68`), 2026-10-05.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -282,6 +282,34 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Where:** `.github/workflows/deploy-backend.yml` job `migrate`.
 
 ## Backend runtime
+
+### An optional phone built with `.or(z.literal(''))` answers in English
+
+- **What happens:** a malformed optional phone number is refused with «Invalid
+  input» instead of «رقم الهاتف غير صالح», on an Arabic-first form.
+- **Why:** `internationalPhone.optional().or(z.literal(''))` is a union. A bad
+  number fails all three branches, so zod reports the *union's* error rather
+  than any branch's. Nothing is wrong with `internationalPhone`.
+- **Do this:** use `optionalInternationalPhone`, which preprocesses the empty
+  string to `undefined` so one branch remains.
+- **Where:** `primitives.ts`; still spelled the old way on
+  `nonResidentOwnerContactSchema.localContactPhone`
+  ([code-quality.md](code-quality.md#backend)).
+
+### A `.default()` on a citizen form flag arrives absent, not defaulted
+
+- **What happens:** `contact.hasNoPhone` is `undefined` on a parsed submission
+  that did not send it, although the schema declares `.default(false)`. Code
+  written as `!== false` then reads a plain household record as having no phone.
+- **Why:** `shapeSubmission` parses the sections through
+  `partialContactDetailsSchema` / `partialPersonalDetailsSchema`, and zod's
+  `.partial()` strips the default along with the requirement. The strict
+  schemas are used for *reporting* issues, not for the shape that is written.
+- **Do this:** read such a flag as `=== true`. Put normalisation that must
+  reach the database on the partial schema too — `contactDetailsSchema` alone
+  does not run on the save path.
+- **Where:** `admin-citizen.schema.ts` `shapeSubmission`; pinned by
+  `no-phone.spec.ts`.
 
 ### The tenant middleware path must stay `t/:tenantSlug/*`
 

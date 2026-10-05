@@ -33,6 +33,13 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - Share a receipt through the device share sheet, a WhatsApp link, or a PDF download.
 - **Field inspectors (`FIELD_INSPECTOR`, مفتّش ميداني)**: survey buildings and units on a
   phone, queuing records offline when the connection drops.
+- **A citizen who owns no phone is a complete record.** «لا يملك رقم هاتف (حالات خاصة /
+  كبار السن)» is a real answer to the phone question, and «رقم للتواصل» holds the son's,
+  daughter's or neighbour's number the municipality reaches them through. The two are
+  separate on purpose: a relative's number recorded as the citizen's own used to offer
+  the parent's file to the child signing in and to name the parent as a landlord they
+  never were. A household may still share one phone — that is normal, and sign-in asks
+  which member is at the screen rather than guessing.
 - **Accountants (`ACCOUNTANT`), administrative officers (`ADMINISTRATIVE_OFFICER`),
   auditors (`AUDITOR`) and system administrators (`SUPER_ADMIN`)**, for the council and
   the municipal administration:

@@ -27,6 +27,18 @@ export const SENSITIVE_FILE_FIELDS = new Set([
   'residentStatus',
   'phone',
   'whatsapp',
+  /*
+    «رقم للتواصل» is a phone number like the two above, and the one in this
+    set that is somebody *else's* — a son's, a daughter's, a neighbour's. A
+    person who never dealt with the municipality should not have their number
+    written into its permanent trail because a relative's file was corrected.
+
+    `hasNoPhone` is deliberately not here: it is a boolean fact about the
+    file, carries nothing about anybody, and is the one value that makes this
+    change readable afterwards — the trail should be able to say the record
+    was corrected to «لا يملك رقم هاتف», not merely that two numbers moved.
+  */
+  'contactPhone',
   'localContactPhone',
   'landlordPhone',
 ]);

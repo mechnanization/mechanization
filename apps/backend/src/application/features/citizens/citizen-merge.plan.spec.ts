@@ -28,6 +28,7 @@ const person = (over: Partial<PlanPerson> & { id: string }): PlanPerson => ({
   motherName: null,
   phone: null,
   whatsapp: null,
+  contactPhone: null,
   gender: null,
   nationality: null,
   isLebanese: null,

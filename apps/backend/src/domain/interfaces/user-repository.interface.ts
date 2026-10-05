@@ -18,6 +18,17 @@ import { StaffRole, User } from '../entities/user.entity';
 export interface CitizenIdentityInput {
   phone?: string;
   whatsapp?: string;
+  /**
+   * «لا يملك رقم هاتف» — the person owns no phone, so the absence of `phone`
+   * above is an answer rather than a gap. True forces both numbers to NULL on
+   * the way in; see migration 0069 and `RegistrationRepository`.
+   */
+  hasNoPhone?: boolean;
+  /**
+   * «رقم للتواصل» — a relative's number, for a citizen with none of their own.
+   * Not an identity and not unique: see `User.contactPhone`.
+   */
+  contactPhone?: string;
   firstName: string;
   middleName?: string;
   lastName: string;

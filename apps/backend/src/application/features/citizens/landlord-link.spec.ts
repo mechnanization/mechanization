@@ -514,10 +514,36 @@ describe('candidatesFor — the form’s lookup', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           isActive: true,
-          OR: [{ phone: LANDLORD_PHONE }, { whatsapp: LANDLORD_PHONE }],
+          OR: [
+            { phone: LANDLORD_PHONE },
+            { whatsapp: LANDLORD_PHONE },
+            { contactPhone: LANDLORD_PHONE },
+          ],
         }),
       }),
     );
+  });
+
+  it('looks at «رقم للتواصل» too, or an elderly owner is unreachable by any match', async () => {
+    /*
+      The owner has no phone of their own (0069). Their tenant knows the son's
+      number and types it as the landlord's, so matching only `phone` and
+      `whatsapp` finds the son — who owns nothing — and never the owner.
+
+      Sound here precisely because nothing is linked by it: this feeds the
+      form's question, and only `confirm` writes a link, on a human's answer.
+      It is the opposite of 2026-09-15, where a relative's number sat in
+      `phone` pretending to be the citizen's own; here the register has been
+      told whose number it is.
+    */
+    const { service, db } = harness();
+    db.user.findMany.mockResolvedValue([
+      { id: 'elder', firstName: 'جدّ', middleName: 'علي', lastName: 'حرب', motherName: null, phone: null, whatsapp: null, contactPhone: LANDLORD_PHONE, referenceNumber: null, residence: 'RESIDENT', createdAt: new Date() },
+    ]);
+
+    const found = await service.candidatesFor(LANDLORD_PHONE);
+
+    expect(found.map((candidate) => candidate.id)).toEqual(['elder']);
   });
 
   it('returns everybody on a shared line, so the officer can say which one', async () => {

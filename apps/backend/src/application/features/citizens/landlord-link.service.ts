@@ -95,11 +95,26 @@ export class LandlordLinkService {
     if (!parsed.success) return [];
     const normalised = parsed.data;
 
+    /*
+      Three columns, and the third is «رقم للتواصل» (0069).
+
+      An elderly owner with no phone of their own is otherwise unreachable by
+      any match: their tenant knows the son's number, types it as the
+      landlord's, and the only citizen it finds is the son — who owns nothing.
+      Matching the relative's number too is what puts the actual owner in
+      front of the clerk.
+
+      This is sound here *because* nothing is linked by it: `candidatesFor`
+      feeds the form's question, and a link is only ever written by `confirm`,
+      which a human answers. It is also the opposite of the 2026-09-15 error,
+      where a relative's number sat in `phone` pretending to be the citizen's
+      own — here the register has been told whose number it is.
+    */
     const matches = await this.db.user.findMany({
       where: {
         kind: 'CITIZEN',
         isActive: true,
-        OR: [{ phone: normalised }, { whatsapp: normalised }],
+        OR: [{ phone: normalised }, { whatsapp: normalised }, { contactPhone: normalised }],
       },
       select: CANDIDATE_SELECT,
       orderBy: { createdAt: 'asc' },
@@ -879,6 +894,8 @@ export class LandlordLinkService {
         kind: true,
         phone: true,
         whatsapp: true,
+        /** The third number the match may have been made on — see `candidatesFor`. */
+        contactPhone: true,
         isActive: true,
         firstName: true,
         middleName: true,
@@ -926,7 +943,20 @@ export class LandlordLinkService {
       not invent it.
     */
     const claimed = entry.landlordPhone?.trim();
-    const matchedByPhone = Boolean(claimed && (claimed === citizen.phone || claimed === citizen.whatsapp));
+    /*
+      «رقم للتواصل» counts here too, and has to: `candidatesFor` offers an
+      elderly owner by it, and a candidate the form offered that `confirm`
+      then refuses is a dead end an officer cannot get past. The guard still
+      does its job — the card must name a number this citizen is actually
+      recorded under, one of the three, and a clerk still cannot assert a
+      citizen the card says nothing about.
+    */
+    const matchedByPhone = Boolean(
+      claimed &&
+        (claimed === citizen.phone ||
+          claimed === citizen.whatsapp ||
+          claimed === citizen.contactPhone),
+    );
     /*
       Or the name the tenant typed is this citizen's name — the same rule the
       queue offered them by (`matchPairs`), so a clerk can confirm exactly what

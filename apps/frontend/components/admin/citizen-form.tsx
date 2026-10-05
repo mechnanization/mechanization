@@ -146,7 +146,7 @@ export function emptyCitizen(): CitizenFormValues {
   return {
     residence: 'RESIDENT',
     personal: { isLebanese: true },
-    contact: { whatsappSameAsPhone: true },
+    contact: { whatsappSameAsPhone: true, hasNoPhone: false },
     // Empty, not one blank card — a citizen who owns nothing and only rents
     // has no property to file, and that is the common case this form should
     // not stand in the way of. Staff add a card only for someone who owns.
@@ -360,14 +360,26 @@ export function askableFields(values: CitizenFormValues): AskableField[] {
   }
 
   fields.push(
-    { path: 'contact.phone', field: 'phone', section: 'contact' },
     { path: 'contact.maritalStatus', field: 'maritalStatus', section: 'contact' },
     { path: 'contact.totalRegisteredMembers', field: 'totalRegisteredMembers', section: 'contact' },
     { path: 'contact.actualHouseholdMembers', field: 'actualHouseholdMembers', section: 'contact' },
   );
 
-  if (values.contact.whatsappSameAsPhone === false) {
-    fields.push({ path: 'contact.whatsapp', field: 'whatsapp', section: 'contact' });
+  /*
+    «لا يملك رقم هاتف» answers the phone question, so neither number is
+    offered a «غير مؤكَّد» flag any more.
+
+    A flag is an excuse for an answer the register still needs — the same
+    reason «فئة الدم» is absent above. Leaving the phone flaggable here would
+    put a finished record in «يتطلب مراجعة» over a field whose answer is
+    «there is no number», and ask a reviewer to find one that does not exist.
+  */
+  if (values.contact.hasNoPhone !== true) {
+    fields.push({ path: 'contact.phone', field: 'phone', section: 'contact' });
+
+    if (values.contact.whatsappSameAsPhone === false) {
+      fields.push({ path: 'contact.whatsapp', field: 'whatsapp', section: 'contact' });
+    }
   }
 
   fields.push(...propertyAskableFields(values));
@@ -934,6 +946,43 @@ export function CitizenForm({
 
   const update = useCallback((patch: Partial<CitizenFormValues>) => {
     setValues((current) => ({ ...current, ...patch }));
+  }, []);
+
+  /**
+   * The contact section, with one correction made on the officer's behalf:
+   * «لا يملك رقم هاتف» carries the number already on the file into «رقم
+   * للتواصل» instead of throwing it away.
+   *
+   * This is the whole point of the flag on an *existing* record. The file
+   * being corrected holds a relative's number in `phone` — that is why it is
+   * being corrected — and that number is the one thing in the record worth
+   * keeping: it is how the municipality reaches this person. Clearing the box
+   * without moving it would lose it, and losing it is what makes an officer
+   * type it back into `phone` next visit.
+   *
+   * Only ever on the tick, only from a number that is there, and never over a
+   * «رقم للتواصل» that already holds something — an officer who has already
+   * named the relative has said more than this rule knows. Unticking does not
+   * move it back: by then nobody can tell whose number it is any more, and
+   * guessing would put a relative's number back in the identity field.
+   *
+   * Lives here rather than in `ContactStep` because it is a correction rule
+   * rather than a rendering one — the same place the «غير مؤكَّد» flags and
+   * the نوع الملف switch are decided — and because it needs the file as it
+   * stood, which the step does not own.
+   */
+  const updateContact = useCallback((next: CitizenFormValues['contact']) => {
+    setValues((current) => {
+      const before = current.contact;
+      const held = typeof before.phone === 'string' ? before.phone.trim() : '';
+      const named = typeof next.contactPhone === 'string' ? next.contactPhone.trim() : '';
+      const justFlagged = next.hasNoPhone === true && before.hasNoPhone !== true;
+
+      return {
+        ...current,
+        contact: justFlagged && held && !named ? { ...next, contactPhone: held } : next,
+      };
+    });
   }, []);
 
   /**
@@ -1882,7 +1931,7 @@ export function CitizenForm({
             {isNonResident ? (
               <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={phoneNote} />
             ) : (
-              <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={phoneNote} />
+              <ContactStep value={values.contact} errors={shown} onChange={updateContact} locale={locale} afterPhone={phoneNote} />
             )}
           </FormSection>
       </div>

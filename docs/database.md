@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
+Last verified against the code: `feat/staff-scoping-roles-archive` (on `develop@ec70f68`), 2026-10-05.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -61,6 +61,24 @@ columns include `referenceNumber` (a login credential), `identityDocNumber`,
 `civilRecordNumber`, `residentStatus` and `motherName`.
 `users.tenantSlug` exists; staff login and refresh compare it with the
 request's tenant (`IdentityService`).
+
+**A phone is not an identity, and three columns now say so** (`0069`):
+
+| Column | What it means |
+|---|---|
+| `phone`, `whatsapp` | The person's own numbers. Not unique — see below. |
+| `hasNoPhone` | «لا يملك رقم هاتف». The person owns no number; `phone IS NULL` is an answer here, not a gap. |
+| `contactPhone` | «رقم للتواصل» — a son's, a daughter's, a neighbour's number. Never unique, never an identity. |
+
+- `contactPhone` MUST NOT be matched by anything that resolves a number to a
+  *person*. It is excluded from `findCitizensByPhone` (citizen sign-in) and
+  from duplicate scoring (`possible-duplicates.ts`) on purpose: a relative's
+  number is expected to equal that relative's own `phone`, so matching it
+  there would offer a father's file to the son signing in. The one reader is
+  `LandlordLinkService.candidatesFor`, where a human confirms every match.
+- `hasNoPhone` distinguishes "has no phone" from "nobody asked yet". Never
+  infer it from `phone IS NULL`: the second is an unfinished record with its
+  own «غير مؤكَّد» flag and belongs in «يتطلب مراجعة».
 
 - Every query on `users` MUST filter on `kind`, in the `where` of the statement
   itself. A prior read that checked `kind` is not enough for a write.
@@ -236,6 +254,20 @@ and fails intermittently with `42P01`.
   a prior read. Examples: `@@unique([identityDocType, identityDocNumber])` on
   `User`, the partial unique index `cases_status_conflict_open_unit_key`
   (`0063`), the CHECK `payment_transactions_change_not_negative` (`0066`).
+- **`users.phone` is deliberately NOT unique, and must not be made unique.**
+  A household sharing one phone is the designed case: `User` is keyed on the
+  identity document *because* of it, `verifyOtp` answers a phone matching
+  several people with `CHOOSE_PROFILE` rather than a guess, and
+  `docs/open-decisions.md` §4 records that v1's `@@unique([phone, lastName])`
+  was removed on purpose. A partial unique index over citizens with a number
+  was requested on 2026-10-05 and declined for those reasons and one more: it
+  fails to create on data that already exists. Attempted against the seeded
+  local database it raised «could not create unique index … Key
+  (phone)=(+96177500144) is duplicated», and a municipality where a mother and
+  a father share the family line is the normal case, not corruption. The
+  honest fix for a relative's number sitting in `phone` is `hasNoPhone` and
+  `contactPhone` (`0069`), which take it out of the identity column
+  altogether.
 - A unique violation (Prisma `P2002`) MUST become a `ConflictError` at the
   write that can raise it, naming the column from `error.meta.target`. An
   unmapped `P2002` reaches `DomainExceptionFilter` as a 500. Match the code

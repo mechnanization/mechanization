@@ -1,6 +1,6 @@
 # Code quality
 
-Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/staff-scoping-roles-archive` (on `develop@ec70f68`), 2026-10-05.
 
 Two parts: the code-pattern rules every change follows, and the debt the code carries today. The debt
 is not a precedent. **Fix an item when you touch its file, and remove its row in the same change.** Add a
@@ -60,6 +60,7 @@ in [docs/ui-ux-standards.md](ui-ux-standards.md) §17.
 | `BuildingsService` `atomic` (15 s / 30 s), `BackupService` (15 s / 120 s), `runInTenantTransaction` defaults (15 s / 60 s) | Transaction timeouts hard-coded three ways | Named constants in `APP_CONFIG` |
 | Every `this.events.emit('…')` | Event names are free strings with payloads re-declared per listener; a typo is dropped silently | Typed event-name constants and payload types in one module |
 | `type Actor` in `ownership.service.ts`, `tenancy.service.ts`, `unit-correction.service.ts`, `record-review.service.ts`, `scripts/seed-census.ts`; `{ id: user.sub, role: user.role ?? '' }` 33 times in controllers | One shape declared five times and built inline everywhere | One exported actor type in `application/common` and a parameter decorator that builds it |
+| `citizen.schema.ts` `nonResidentOwnerContactSchema.localContactPhone`, spelled `internationalPhone.optional().or(z.literal(''))` | A malformed number fails every branch of the union, so zod reports the union's «Invalid input» — English, on an Arabic-first form. `edit-null-fields.spec.ts` asserts no Zod English for a *phone* and passes only because it never sends a malformed local contact | `optionalInternationalPhone` (0069), which preprocesses the empty string so one branch remains and «رقم الهاتف غير صالح» survives |
 | `@Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')`, 18 times in controllers | The all-staff role list is a repeated literal | Shared role-set constants, as `BuildingsController` (`READ_ROLES`, `WRITE_ROLES`) and `REVIEWER_ROLES` already do |
 | `StaffRole` in `domain/entities/user.entity.ts`, `STAFF_ROLE` in `packages/shared-schemas/src/enums.ts`, Prisma `enum StaffRole` | Defined three times; `domain-enum-drift.spec.ts` does not cover it | Add `StaffRole` to `domain-enum-drift.spec.ts` |
 | 345 `as never` / `as unknown as` in non-spec backend code (comments excluded), 69 in `buildings.service.ts` | A mistyped enum value still compiles | Type values against `$Enums` |
