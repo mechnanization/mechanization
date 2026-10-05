@@ -22,6 +22,7 @@ import type {
   ImportRow,
   PossibleDuplicatesQuery,
 } from '@mechanization/shared-schemas';
+import { seesAllStaffWork } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
@@ -256,6 +257,22 @@ export interface ReviewQueueItem {
   openFieldCount: number;
   /** When it was filed — the queue is worked oldest first. */
   submittedAt: string;
+  /** Who filed it — for the roles that see everyone's queue; null when unrecorded. */
+  filedByName: string | null;
+}
+
+/**
+ * Who is asking for a worklist, and so whose work it shows. Absent means the
+ * whole register — the internal callers that are not a person's screen.
+ */
+export interface WorklistViewer {
+  id: string;
+  role: string;
+}
+
+/** The staff member a viewer's worklist is narrowed to, or null for everyone's. */
+function worklistOwner(viewer?: WorklistViewer): string | null {
+  return viewer && !seesAllStaffWork(viewer.role) ? viewer.id : null;
 }
 
 interface ReviewQueueRow {
@@ -269,6 +286,7 @@ interface ReviewQueueRow {
   status: string;
   openFieldCount: number;
   submittedAt: Date;
+  filedByName: string | null;
 }
 
 /**
@@ -339,6 +357,7 @@ export class CitizensService {
        */
       status?: string;
     } = {},
+    viewer?: WorklistViewer,
   ): Promise<{
     items: CitizenListItem[];
     total: number;
@@ -379,11 +398,27 @@ export class CitizensService {
       nothing instead of failing the whole query — the enum is per-tenant DDL,
       and a schema part-way through `tenant:migrate-all` is a thing that happens.
     */
+    /*
+      «يتطلب مراجعة» is each officer's own queue: someone who is not an admin
+      sees the records *they* filed (`worklistOwner`), on the latest filing as
+      the status is. Only that status is narrowed — it is the worklist; any
+      other value is a view of the register, which every role reads whole.
+    */
+    const owner = filter.status === 'REQUIRES_REVIEW' ? worklistOwner(viewer) : null;
+    const reviewOwner = worklistOwner(viewer);
     const statusFilter = filter.status
-      ? Prisma.sql`AND (
-          SELECT r.status::text FROM ${this.S}registrations r
-           WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1
-        ) = ${filter.status}`
+      ? owner
+        ? Prisma.sql`AND EXISTS (
+            SELECT 1 FROM (
+              SELECT r.status::text AS status, r."createdById" FROM ${this.S}registrations r
+               WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1
+            ) latest
+            WHERE latest.status = ${filter.status} AND latest."createdById" = ${owner}::uuid
+          )`
+        : Prisma.sql`AND (
+            SELECT r.status::text FROM ${this.S}registrations r
+             WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1
+          ) = ${filter.status}`
       : Prisma.empty;
 
     /*
@@ -512,9 +547,14 @@ export class CitizensService {
             narrowed too, ticking it would make the tab read its own result back.
           */
           count(*) FILTER (
-            WHERE (SELECT r.status::text FROM ${this.S}registrations r
-                    WHERE r."citizenId" = u.id
-                    ORDER BY r."submittedAt" DESC LIMIT 1) = 'REQUIRES_REVIEW'
+            WHERE EXISTS (
+              SELECT 1 FROM (
+                SELECT r.status::text AS status, r."createdById" FROM ${this.S}registrations r
+                 WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1
+              ) latest
+              WHERE latest.status = 'REQUIRES_REVIEW'
+                ${reviewOwner ? Prisma.sql`AND latest."createdById" = ${reviewOwner}::uuid` : Prisma.empty}
+            )
           )::int AS "allRequiringReview"
         FROM ${this.S}users u
         WHERE u.kind = 'CITIZEN'
@@ -586,7 +626,14 @@ export class CitizensService {
    */
   async reviewQueue(
     filter: { search?: string; limit?: number; offset?: number } = {},
+    /**
+     * Whose queue. Someone who is not an admin (`seesAllStaffWork`) sees only
+     * the records they filed — `registrations.createdById`, the officer who
+     * saved it «يتطلب مراجعة». Admins see every officer's.
+     */
+    viewer?: WorklistViewer,
   ): Promise<{ items: ReviewQueueItem[]; total: number }> {
+    const owner = worklistOwner(viewer);
     const limit = Math.min(Math.max(filter.limit ?? 25, 1), MAX_LIST_ROWS);
     const offset = Math.max(filter.offset ?? 0, 0);
     const tokens = searchTokens(filter.search);
@@ -602,7 +649,7 @@ export class CitizensService {
     const queued = Prisma.sql`
       FROM ${this.S}users u
       JOIN LATERAL (
-        SELECT r.status::text AS status, r."submittedAt",
+        SELECT r.status::text AS status, r."submittedAt", r."createdById",
                CASE WHEN jsonb_typeof(r."flaggedFields") = 'array'
                     THEN jsonb_array_length(r."flaggedFields") ELSE 0 END AS "openFieldCount"
           FROM ${this.S}registrations r
@@ -612,6 +659,7 @@ export class CitizensService {
       ) latest ON true
       WHERE u.kind = 'CITIZEN'
         AND latest.status = 'REQUIRES_REVIEW'
+        ${owner ? Prisma.sql`AND latest."createdById" = ${owner}::uuid` : Prisma.empty}
         ${searchFilter}
     `;
 
@@ -622,7 +670,9 @@ export class CitizensService {
           SELECT u.id, u."firstName", u."middleName", u."lastName", u."motherName",
                  u."referenceNumber", u.phone,
                  latest.status, latest."openFieldCount"::int AS "openFieldCount",
-                 latest."submittedAt"
+                 latest."submittedAt",
+                 (SELECT NULLIF(btrim(concat_ws(' ', s."firstName", s."lastName")), '')
+                    FROM ${this.S}users s WHERE s.id = latest."createdById") AS "filedByName"
           ${queued}
           ORDER BY latest."submittedAt" ASC, u.id
           LIMIT ${limit} OFFSET ${offset}
@@ -641,6 +691,7 @@ export class CitizensService {
         status: row.status,
         openFieldCount: row.openFieldCount,
         submittedAt: row.submittedAt.toISOString(),
+        filedByName: row.filedByName,
       })),
       total: count?.total ?? 0,
     };

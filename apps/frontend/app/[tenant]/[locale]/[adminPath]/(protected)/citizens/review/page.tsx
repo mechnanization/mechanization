@@ -4,7 +4,7 @@ import { use, useMemo } from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { ClipboardCheck, FileQuestion, FileText, UserRound, Users } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, seesAllStaffWork } from '@mechanization/shared-schemas';
 import { getReviewQueue, type ReviewQueueItem } from '@/lib/api-client';
 import { formatPhone } from '@/lib/phone';
 import { CITIZEN_RECORD_EDIT_ROLES, hasRole } from '@/lib/staff-roles';
@@ -54,6 +54,12 @@ export default function ReviewQueuePage({
     «فحص الملف» for that frame, and its page says the role cannot review.
   */
   const canReview = user ? hasRole(CITIZEN_RECORD_EDIT_ROLES, user.role) : true;
+  /*
+    Each officer's queue is their own: the server narrows it to the records
+    they filed unless they are an admin (seesAllStaffWork). The page says
+    which, and an admin sees who filed each one.
+  */
+  const seesAll = user ? seesAllStaffWork(user.role) : true;
 
   // The page in the URL and the search in tab storage — a search here is a
   // citizen's name or number, which never goes in a URL (`tab-search.ts`).
@@ -173,6 +179,20 @@ export default function ReviewQueuePage({
             <CellTag tone="muted">—</CellTag>
           ),
       },
+      ...(seesAll
+        ? ([
+            {
+              id: 'filedBy',
+              header: en ? 'Filed by' : 'سجّله',
+              cell: ({ row }) =>
+                row.original.filedByName ? (
+                  <span className="text-sm">{row.original.filedByName}</span>
+                ) : (
+                  <CellTag tone="muted">—</CellTag>
+                ),
+            },
+          ] satisfies ColumnDef<ReviewQueueItem>[])
+        : []),
       {
         id: 'review',
         header: canReview ? (en ? 'Review file' : 'فحص الملف') : en ? 'File' : 'الملف',
@@ -200,7 +220,7 @@ export default function ReviewQueuePage({
           ),
       },
     ],
-    [en, base, labels, canReview],
+    [en, base, labels, canReview, seesAll],
   );
 
   return (
@@ -210,8 +230,8 @@ export default function ReviewQueuePage({
         title={en ? 'Requires review' : 'يتطلب مراجعة'}
         subtitle={
           en
-            ? `Records filed with fields the officer could not establish, oldest first.${canReview ? ' Review a file to complete it.' : ''}`
-            : `سجلات حُفظت بحقول لم يتمكّن الموظف من التثبّت منها، الأقدم أولاً.${canReview ? ' افحص الملف لاستكماله.' : ''}`
+            ? `${seesAll ? 'Records every officer filed' : 'Records you filed'} with fields that could not be established, oldest first.${canReview ? ' Review a file to complete it.' : ''}`
+            : `${seesAll ? 'سجلات حفظها الموظفون' : 'سجلات حفظتَها أنت'} بحقول لم يُتثبَّت منها، الأقدم أولاً.${canReview ? ' افحص الملف لاستكماله.' : ''}`
         }
         actions={
           <Link href={`${base}/citizens`} className={buttonVariants({ variant: 'outline' })}>

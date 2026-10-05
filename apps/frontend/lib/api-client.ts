@@ -3485,6 +3485,8 @@ export interface ReviewQueueItem {
   /** How many «غير مؤكَّد» fields the latest registration carries. */
   openFieldCount: number;
   submittedAt: string;
+  /** Who filed it. Optional for an older server; null when unrecorded. */
+  filedByName?: string | null;
 }
 
 /**

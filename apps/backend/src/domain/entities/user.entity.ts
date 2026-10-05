@@ -8,7 +8,8 @@ export type StaffRole =
   | 'FIELD_INSPECTOR'
   | 'COLLECTOR'
   | 'ACCOUNTANT'
-  | 'ADMINISTRATIVE_OFFICER';
+  | 'ADMINISTRATIVE_OFFICER'
+  | 'VIEWER';
 
 export interface StaffProps {
   id: string;

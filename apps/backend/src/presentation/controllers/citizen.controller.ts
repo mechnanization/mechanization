@@ -127,13 +127,18 @@ export class CitizenController {
      * a 400.
      */
     @Query('status') status?: string,
+    @CurrentUser() user?: SessionClaims,
   ) {
-    return this.citizens.list({
-      search,
-      status,
-      limit: Number(limit) || 200,
-      offset: Number(offset) || 0,
-    });
+    return this.citizens.list(
+      {
+        search,
+        status,
+        limit: Number(limit) || 200,
+        offset: Number(offset) || 0,
+      },
+      // «يتطلب مراجعة» is the viewer's own queue unless they are an admin.
+      user ? { id: user.sub, role: user.role ?? '' } : undefined,
+    );
   }
 
   /**
@@ -141,6 +146,8 @@ export class CitizenController {
    * first, with only what the queue shows: name, mother's name, reference,
    * phone, status and how many fields are open. The same roles as the
    * registry above: the queue is a slice of it and discloses nothing more.
+   * Each officer sees the records they filed; admins see everyone's
+   * (`seesAllStaffWork`).
    *
    * A static path, declared before `@Get(':id')` so it is not read as an id.
    */
@@ -150,12 +157,16 @@ export class CitizenController {
     @Query('search') search?: string,
     @Query('limit') limit = '25',
     @Query('offset') offset = '0',
+    @CurrentUser() user?: SessionClaims,
   ) {
-    return this.citizens.reviewQueue({
-      search,
-      limit: Number(limit) || 25,
-      offset: Number(offset) || 0,
-    });
+    return this.citizens.reviewQueue(
+      {
+        search,
+        limit: Number(limit) || 25,
+        offset: Number(offset) || 0,
+      },
+      user ? { id: user.sub, role: user.role ?? '' } : undefined,
+    );
   }
 
   /**

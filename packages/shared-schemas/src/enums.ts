@@ -671,6 +671,13 @@ export function occupancyLiftsSurvey(status: string | null | undefined): boolean
  * residents must be out of it tonight. Aid allocation turns on that line, which
  * is why the scale is not collapsed to "damaged / not damaged".
  *
+ * **One local addition**, `UNINHABITABLE` «غير قابلة للسكن» (migration 0067):
+ * a unit standing and safe to enter but not fit to live in until repaired. The
+ * scale has no word for it — «استخدام مقيّد» understates it, «يستوجب الإخلاء»
+ * calls the structure unsafe — and it is the one reading that expects a second
+ * visit once the repair is done (`reinspectAt`). Exported with the rest, it
+ * maps to UN-Habitat's `RESTRICTED_USE` where a dataset needs the scale verbatim.
+ *
  * `UNDER_CONSTRUCTION` is deliberately absent — it is a lifecycle state, it
  * already exists in `UNIT_STATUS`, and admitting it here would overwrite a
  * building's damage history with a fact about its building permit.
@@ -679,6 +686,7 @@ export const DAMAGE_LEVEL = [
   'NOT_AFFECTED',
   'SAFE_MINOR_DAMAGE',
   'RESTRICTED_USE',
+  'UNINHABITABLE',
   'UNSAFE_EVACUATE',
   'TOTAL_COLLAPSE',
   'UNCLASSIFIED',
@@ -936,9 +944,32 @@ export const STAFF_ROLE = [
   'COLLECTOR',
   'ACCOUNTANT',
   'ADMINISTRATIVE_OFFICER',
+  /** «مشاهد فقط» — reads the register, census, cases and reports; writes nothing (0067). */
+  'VIEWER',
 ] as const;
 export const staffRoleSchema = arabicEnum(STAFF_ROLE, 'الصلاحية غير صالحة');
 export type StaffRole = z.infer<typeof staffRoleSchema>;
+
+/**
+ * The roles that see every staff member's work in the collection worklists —
+ * «يتطلب مراجعة» and «وحدات غير ممسوحة». Everyone else sees only their own:
+ * the records they filed, the buildings they put on the census.
+ *
+ * The admins, plus the two roles whose job is to look across everyone's work
+ * (AUDITOR reviews it, VIEWER reads it). A field inspector's queue is the
+ * work in front of *them*; a colleague's open records are not theirs to finish.
+ */
+export const SEES_ALL_STAFF_WORK = [
+  'SUPER_ADMIN',
+  'ADMINISTRATIVE_OFFICER',
+  'AUDITOR',
+  'VIEWER',
+] as const satisfies readonly StaffRole[];
+
+/** Whether this role sees every staff member's worklist, not only its own. */
+export function seesAllStaffWork(role: string | null | undefined): boolean {
+  return role != null && (SEES_ALL_STAFF_WORK as readonly string[]).includes(role);
+}
 
 export const DOCUMENT_TYPE = [
   'IDENTITY',

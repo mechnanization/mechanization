@@ -120,6 +120,7 @@ export const ar = {
     COLLECTOR: 'جابي',
     ACCOUNTANT: 'محاسب',
     ADMINISTRATIVE_OFFICER: 'موظف إداري',
+    VIEWER: 'مشاهد فقط',
   } satisfies Record<StaffRole, string>,
 
   residentStatus: {
@@ -258,6 +259,7 @@ export const ar = {
     NOT_AFFECTED: 'غير متأثر',
     SAFE_MINOR_DAMAGE: 'أضرار طفيفة — آمن',
     RESTRICTED_USE: 'استخدام مقيّد',
+    UNINHABITABLE: 'غير قابلة للسكن',
     UNSAFE_EVACUATE: 'غير آمن — يستوجب الإخلاء',
     TOTAL_COLLAPSE: 'انهيار كلي',
     UNCLASSIFIED: 'غير مصنّف',
@@ -486,6 +488,7 @@ export const en = {
     COLLECTOR: 'Collector',
     ACCOUNTANT: 'Accountant',
     ADMINISTRATIVE_OFFICER: 'Administrative Officer',
+    VIEWER: 'View only',
   } satisfies Record<StaffRole, string>,
 
   residentStatus: {
@@ -588,6 +591,7 @@ export const en = {
     NOT_AFFECTED: 'Not Affected',
     SAFE_MINOR_DAMAGE: 'Safe — Minor Damage',
     RESTRICTED_USE: 'Restricted Use',
+    UNINHABITABLE: 'Uninhabitable',
     UNSAFE_EVACUATE: 'Unsafe — Evacuate',
     TOTAL_COLLAPSE: 'Total Collapse',
     UNCLASSIFIED: 'Unclassified',
