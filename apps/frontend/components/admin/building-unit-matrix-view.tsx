@@ -778,6 +778,7 @@ export function BuildingUnitMatrixView({
                   tone="occupant"
                   selected={selectedUnitId}
                   pickAny
+                  stage
                   onSelect={(unitId) => {
                     setSelectedUnitId(unitId === selectedUnitId ? null : unitId);
                     setAction(null);

@@ -179,6 +179,7 @@ export function BuildingElevation({
   pickAny = false,
   marker = 'fill',
   locale = 'ar',
+  stage = false,
 }: {
   building: ElevationBuilding;
   highlight: ReadonlySet<string>;
@@ -201,6 +202,11 @@ export function BuildingElevation({
    * where any unit can be picked and the lit one is the one picked.
    */
   pickAny?: boolean;
+  /**
+   * Drawn on a full stage (the matrix page and drawer) rather than in a
+   * property card: a camp's tents are drawn large enough to read and press.
+   */
+  stage?: boolean;
 }) {
   const unitFloors = building.units.map((unit) => unit.floor);
   /*
@@ -257,6 +263,7 @@ export function BuildingElevation({
         selected={selected}
         onSelect={onSelect}
         pickAny={pickAny}
+        stage={stage}
       />
     );
   }
@@ -794,6 +801,7 @@ function TentCamp({
   pickAny = false,
   marker = 'fill',
   locale,
+  stage = false,
 }: {
   building: ElevationBuilding;
   highlight: ReadonlySet<string>;
@@ -803,16 +811,29 @@ function TentCamp({
   selected: string | null;
   onSelect?: (unitId: string) => void;
   pickAny?: boolean;
+  stage?: boolean;
 }) {
   const tents = [...building.units].sort((a, b) => a.floor - b.floor || a.sequence - b.sequence);
+  /*
+    On a stage the tents grow to fill it, and shrink back as the camp gets
+    bigger so a large one still wraps inside the frame instead of spilling
+    out of it. In a card they stay card-sized.
+  */
+  const tentSize = !stage
+    ? 'h-[30px] w-[38px]'
+    : tents.length <= 6
+      ? 'h-[72px] w-[90px] sm:h-[96px] sm:w-[120px]'
+      : tents.length <= 16
+        ? 'h-[48px] w-[60px]'
+        : 'h-[30px] w-[38px]';
   return (
     <div dir="ltr" className="flex h-full w-full items-center justify-center">
       <div
-        className="flex w-full max-w-[260px] flex-col"
+        className={cn('flex w-full flex-col', stage ? 'max-w-[720px]' : 'max-w-[260px]')}
         role={onSelect ? 'group' : 'img'}
         aria-label={locale === 'en' ? `${tents.length} tents` : `${tents.length} خيم`}
       >
-        <div className="flex flex-wrap items-end justify-center gap-x-1.5 gap-y-1">
+        <div className={cn('flex flex-wrap items-end justify-center', stage ? 'gap-x-3 gap-y-2' : 'gap-x-1.5 gap-y-1')}>
           {tents.map((tent) => {
             const lit = highlight.has(tent.id);
             const filled = lit && marker === 'fill';
@@ -824,7 +845,8 @@ function TentCamp({
               </svg>
             );
             const className = cn(
-              'h-[30px] w-[38px] rounded-sm',
+              tentSize,
+              'rounded-sm',
               filled ? TONE_TEXT[tone] : 'text-foreground',
               lit && marker === 'outline' && cn('ring-2 ring-offset-1 ring-offset-background', TONE_RING[tone]),
               (lit || pickAny) && onSelect && 'cursor-pointer hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
