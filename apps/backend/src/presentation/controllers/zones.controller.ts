@@ -24,7 +24,7 @@ export class ZonesController {
    * Every sector with its parcel count. Reading sectors is part of reading
    * the map, so every staff role may.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get()
   async list() {
     return { zones: await this.zones.list() };
@@ -39,14 +39,14 @@ export class ZonesController {
    * sector expects to see it on the map immediately, and the expensive part
    * (dissolving member parcels) is already memoised per zone in the service.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('geojson')
   @Header('Cache-Control', 'no-store')
   async geojson(@Param('tenantSlug') tenantSlug: string) {
     return this.zones.buildGeoJson(tenantSlug);
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get(':id')
   async get(@Param('id') id: string) {
     return this.zones.get(id);

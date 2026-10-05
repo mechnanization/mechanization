@@ -35,7 +35,7 @@ export class CasesController {
    * the unit matrix's "cases on this flat" panel filter on. Every one is
    * optional and they compose, because the page's controls stack.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get()
   async list(
     @Query('propertyNumber') propertyNumber?: string,
@@ -61,7 +61,7 @@ export class CasesController {
     };
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get(':id')
   async get(@Param('id') id: string) {
     return this.cases.get(id);

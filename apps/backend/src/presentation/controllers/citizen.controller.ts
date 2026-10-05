@@ -97,7 +97,7 @@ export class CitizenController {
    * what, and why. Open to everyone who can open the file; changes only, never
    * who viewed it or how it is being reviewed (see `AuditService.history`).
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get(':id/history')
   history(@Param('id') id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
     return this.audit.history({
@@ -113,7 +113,7 @@ export class CitizenController {
    * their fee standing. `search` matches name, phone, رقم مرجعي or document
    * number — the four things a clerk has in front of them.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get()
   async list(
     @Query('search') search?: string,
@@ -151,7 +151,7 @@ export class CitizenController {
    *
    * A static path, declared before `@Get(':id')` so it is not read as an id.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('review-queue')
   reviewQueue(
     @Query('search') search?: string,
@@ -305,7 +305,7 @@ export class CitizenController {
    * Readable by the roles that read the register, because it is a view of the
    * register. Acting on one is a narrower list — see `confirmLandlordLink`.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('landlord-links')
   landlordLinks(@Query('limit') limit?: string, @Query('offset') offset?: string) {
     /*
@@ -326,7 +326,7 @@ export class CitizenController {
    * different person's question: the queue is a clerk's afternoon, this is the
    * number somebody takes to the council. See `unbilledOwnedUnits`.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('landlord-links/summary')
   landlordLinkSummary() {
     return this.landlordLinkService.unbilledOwnedUnits();
@@ -357,7 +357,7 @@ export class CitizenController {
    * Declared after the static `landlord-links/*` reads so neither is read as
    * an id; a non-UUID is answered as not found rather than a database error.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('landlord-links/:propertyEntryId')
   async landlordLink(@Param('propertyEntryId') propertyEntryId: string) {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -546,7 +546,7 @@ export class CitizenController {
    * would otherwise be read as a citizen id — the same reasoning `citizens/new`
    * and `citizens/queue` already follow on the frontend router.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('parcel/:propertyNumber')
   parcelRoster(@Param('propertyNumber') propertyNumber: string) {
     return this.citizens.parcelRoster(propertyNumber);
@@ -558,7 +558,7 @@ export class CitizenController {
    * they are billing. The identity numbers on this response are the reason the
    * route is role-gated at all rather than open to any session.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get(':id')
   async getById(@Param('id') id: string) {
     const citizen = await this.reporting.getCitizenProfile(id);
@@ -670,7 +670,7 @@ export class CitizenController {
    * profile's «دُمج في» / «دُمج فيه» notes. Open to everyone who can open the
    * file: a clerk who lands on a merged record needs to be sent to the live one.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get(':id/merges')
   async mergesOf(@Param('id') id: string) {
     return this.merges.mergesOf(id);

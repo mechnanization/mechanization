@@ -728,7 +728,7 @@ export default function FeesPage({
               {locale === 'en' ? 'Refresh' : 'تحديث'}
             </Button>
 
-            {role === 'SUPER_ADMIN' || role === 'ACCOUNTANT' || role === 'AUDITOR' ? (
+            {role === 'SUPER_ADMIN' || role === 'ACCOUNTANT' || role === 'AUDITOR' || role === 'VIEWER' ? (
               <Link href={`${base}/fees/corrections`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
                 <FileWarning className="size-4 rtl:ml-1.5 ltr:mr-1.5" aria-hidden />
                 {locale === 'en' ? 'Bills affected by corrections' : 'فواتير تأثّرت بتصحيحات'}

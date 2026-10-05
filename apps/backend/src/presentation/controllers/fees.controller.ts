@@ -95,7 +95,7 @@ export class FeesController {
 
   // ──────────────────────────  Fee notices  ──────────────────────────
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('notices')
   async listNotices() {
     return { items: await this.fees.listNotices() };
@@ -115,7 +115,7 @@ export class FeesController {
     return this.fees.issue(body, { id: user.sub, role: user.role ?? '' });
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('summary')
   async summary() {
     return this.fees.summary();
@@ -177,7 +177,7 @@ export class FeesController {
   /**
    * Returns distinct fee titles registered across the municipality.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('titles')
   async listTitles() {
     return this.fees.listDistinctTitles();
@@ -189,13 +189,13 @@ export class FeesController {
    * Same roles as the ledger itself: an option the reader cannot then apply
    * is worse than no option.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('filter-options')
   async filterOptions() {
     return this.fees.filterOptions();
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('payments')
   async listPayments(
     @Query('status') status?: string,
@@ -276,7 +276,7 @@ export class FeesController {
    * settlement was the invoice's running total, so a citizen asking for a copy
    * of March's receipt could be told the balance and nothing else.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('payments/:id/transactions')
   async transactions(@Param('id') id: string) {
     return { items: await this.fees.listTransactions(id) };
@@ -306,7 +306,7 @@ export class FeesController {
 
   // ────────────────────  Staff verification queue  ────────────────────
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'VIEWER')
   @Get('payments/pending')
   async pending(@Query('unseenOnly') unseenOnly?: string) {
     return { items: await this.fees.listPendingReview(unseenOnly === 'true') };
@@ -347,7 +347,7 @@ export class FeesController {
    * «فواتير تأثّرت بتصحيحات» — open bills whose basis a correction changed,
    * with today's figure and what was recorded since. Read-only for AUDITOR.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'VIEWER')
   @Get('correction-affected')
   async correctionAffected(
     @Query('includeReviewed') includeReviewed?: string,
@@ -406,7 +406,7 @@ export class FeesController {
    * against real HTTP requests catches and a unit test calling the method
    * directly never would.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('payments/:id')
   async getPayment(@Param('id') id: string) {
     return this.fees.getPaymentById(id);

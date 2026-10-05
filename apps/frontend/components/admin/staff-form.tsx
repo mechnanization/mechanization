@@ -28,6 +28,8 @@ const ROLES = [
   'COLLECTOR',
   'ACCOUNTANT',
   'ADMINISTRATIVE_OFFICER',
+  // «مشاهد فقط» — reads the register, census, cases and reports; writes nothing.
+  'VIEWER',
 ] as const;
 
 export interface StaffFormValues {

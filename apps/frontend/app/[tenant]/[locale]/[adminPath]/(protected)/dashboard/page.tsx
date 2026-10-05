@@ -390,7 +390,7 @@ export default function StaffDashboard({
         subtitle={role ? (locale === 'en' ? role : (ar.staffRole?.[role as never] ?? role)) : undefined}
         actions={
           <>
-            {role === 'SUPER_ADMIN' || role === 'AUDITOR' ? (
+            {role === 'SUPER_ADMIN' || role === 'AUDITOR' || role === 'VIEWER' ? (
               <a
                 href={`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1'}/t/${tenant}/dashboard/export.csv`}
                 className={buttonVariants({ variant: 'outline' })}

@@ -108,7 +108,7 @@ const FILTERS = {
 const EXPORT_CEILING = 10_000;
 
 /** Read-only roles. They see the census; they do not edit it. */
-const READ_ONLY_ROLES = ['AUDITOR', 'ACCOUNTANT'];
+const READ_ONLY_ROLES = ['AUDITOR', 'ACCOUNTANT', 'VIEWER'];
 
 function getTableLabels(locale: string): DataTableLabels {
   if (locale === 'en') {

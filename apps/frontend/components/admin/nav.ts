@@ -136,18 +136,19 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'لوحة التحكم',
         labelEn: 'Dashboard',
         icon: LayoutDashboard,
-        roles: ['SUPER_ADMIN', 'AUDITOR'],
+        roles: ['SUPER_ADMIN', 'AUDITOR', 'VIEWER'],
         keywords: ['مؤشرات', 'تحليلات', 'إحصاءات', 'dashboard', 'analytics'],
       },
       // Self-service: `StaffController.getMyProfile` answers for whoever is
       // asking, so every role has a page here and none of them can see another
-      // person's.
+      // person's. Every role but «مشاهد فقط», who surveys nothing and earns
+      // nothing — and whom that route does not admit.
       {
         path: '/inspector/profile',
         label: 'أرباحي والمسح الميداني',
         labelEn: 'Inspector Earnings',
         icon: BadgeDollarSign,
-        roles: EVERY_STAFF_ROLE,
+        roles: EVERY_STAFF_ROLE.filter((role) => role !== 'VIEWER'),
         keywords: ['أرباح', 'عمولة', 'مفتش', 'مسح', 'عقارات', 'inspector', 'earnings'],
       },
     ],
@@ -292,7 +293,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'الرسوم والمدفوعات',
         labelEn: 'Fees & Billing',
         icon: Receipt,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER'],
+        roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER'],
         keywords: ['رسم', 'مطالبة', 'فاتورة', 'دفع', 'fees', 'billing'],
       },
       /*
@@ -305,7 +306,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'فواتير تأثّرت بتصحيحات',
         labelEn: 'Bills affected by corrections',
         icon: FileWarning,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT'],
+        roles: ['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'VIEWER'],
         keywords: ['تصحيح', 'فاتورة', 'فرق', 'مراجعة', 'corrections', 'bills', 'difference'],
       },
       // Read-only: the ledger above answers "who owes what", this answers
@@ -315,7 +316,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'سجل العمليات',
         labelEn: 'Payment Operations',
         icon: ArrowLeftRight,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT'],
+        roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'VIEWER'],
         keywords: ['قبض', 'إيصال', 'محصّل', 'نقد', 'payments', 'transactions'],
       },
     ],
@@ -329,7 +330,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'الخريطة',
         labelEn: 'Cadastral Map',
         icon: MapIcon,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER'],
+        roles: ['SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER', 'VIEWER'],
         keywords: ['عقارات', 'مواقع', 'مسح', 'map', 'cadastre'],
       },
       // Between the map and the sectors on purpose: the census is what the map
@@ -348,6 +349,7 @@ export const NAV_GROUPS: NavGroup[] = [
           'COLLECTOR',
           'ACCOUNTANT',
           'ADMINISTRATIVE_OFFICER',
+          'VIEWER',
         ],
         keywords: ['مبنى', 'مباني', 'وحدات', 'شقق', 'مسح', 'ضرر', 'إحصاء', 'buildings', 'units', 'census', 'damage'],
       },
@@ -356,7 +358,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'القطاعات',
         labelEn: 'Zones',
         icon: Layers,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER'],
+        roles: ['SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER'],
         keywords: ['قطاع', 'منطقة', 'حدود', 'zones', 'districts'],
       },
     ],

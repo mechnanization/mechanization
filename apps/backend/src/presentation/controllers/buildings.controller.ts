@@ -71,6 +71,8 @@ const READ_ROLES = [
   'COLLECTOR',
   'ACCOUNTANT',
   'ADMINISTRATIVE_OFFICER',
+  // «مشاهد فقط» reads the census and writes nothing — absent from WRITE_ROLES.
+  'VIEWER',
 ] as const;
 
 const WRITE_ROLES = [

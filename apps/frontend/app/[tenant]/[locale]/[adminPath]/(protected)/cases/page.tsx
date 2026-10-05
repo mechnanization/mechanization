@@ -135,7 +135,7 @@ export default function CasesPage({
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
   const [search, setSearch] = useTabSearch(tenant, 'cases');
 
-  const canWrite = role !== 'AUDITOR' && role !== 'ACCOUNTANT';
+  const canWrite = role !== 'AUDITOR' && role !== 'ACCOUNTANT' && role !== 'VIEWER';
   const canDelete = role === 'SUPER_ADMIN';
 
   const query = useStaffQuery({

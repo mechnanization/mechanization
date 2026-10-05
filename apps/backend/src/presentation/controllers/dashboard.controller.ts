@@ -37,7 +37,7 @@ export class DashboardController {
     «الخريطة», a working screen, and narrowing them here would take the map
     away from the collectors and officers who navigate by it.
   */
-  @Roles('SUPER_ADMIN', 'AUDITOR')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'VIEWER')
   @Get('counters')
   async counters() {
     return this.reporting.getDashboardCounters();
@@ -50,14 +50,14 @@ export class DashboardController {
    * the charts have to agree, and separately-cached fetches guarantee a window
    * where a rate computed from one response contradicts a total from another.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'VIEWER')
   @Get('analytics')
   async analytics() {
     return this.reporting.getAnalytics();
   }
 
   /** Marker coordinates for the MapLibre panel. */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('map')
   async spatial() {
     return { features: await this.reporting.getSpatialData() };
@@ -76,7 +76,7 @@ export class DashboardController {
    * a field officer refreshes after recording an occupancy, and a five-minute
    * TTL there reads as "the survey did not save".
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('map/buildings')
   @Header('Cache-Control', 'no-store')
   async buildingPins() {
@@ -91,7 +91,7 @@ export class DashboardController {
    * places an interactive marker only on what this returns — so a dot always
    * means there is a citizen record behind it.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
   @Get('map/parcels')
   async registeredParcels() {
     return { parcels: await this.reporting.getRegisteredParcels() };
@@ -102,7 +102,7 @@ export class DashboardController {
    * that moves every citizen's details out of the audited system and onto
    * someone's laptop. The export itself is recorded with its row count.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR')
+  @Roles('SUPER_ADMIN', 'AUDITOR', 'VIEWER')
   @Get('export.csv')
   @Header('Content-Type', 'text/csv; charset=utf-8')
   @Header('Content-Disposition', 'attachment; filename="registrations.csv"')

@@ -107,7 +107,7 @@ import {
   withDeclaredBasements,
 } from './building-unit-forms';
 
-const READ_ONLY_ROLES = ['AUDITOR', 'ACCOUNTANT'];
+const READ_ONLY_ROLES = ['AUDITOR', 'ACCOUNTANT', 'VIEWER'];
 
 type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | 'vacancy' | 'resize' | null;
 
