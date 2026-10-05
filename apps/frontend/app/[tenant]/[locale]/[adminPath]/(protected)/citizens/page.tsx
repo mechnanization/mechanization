@@ -801,7 +801,7 @@ export default function CitizensPage({
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          label={locale === 'en' ? 'Total Citizens' : 'إجمالي المواطنين'}
+          label={locale === 'en' ? 'Total families' : 'إجمالي الأسر'}
           value={total.toLocaleString('en-US')}
           loading={query.loading}
           icon={<Users className="size-6 text-primary" aria-hidden />}
