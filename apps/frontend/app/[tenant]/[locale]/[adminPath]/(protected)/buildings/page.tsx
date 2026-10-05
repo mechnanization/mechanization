@@ -25,7 +25,7 @@ import {
   getLabels,
   STRUCTURE_TYPE,
   SURVEY_STATUS,
-  type DamageLevel,
+  isImpairedDamage,
 } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
@@ -162,19 +162,6 @@ function getTableLabels(locale: string): DataTableLabels {
     clearFilters: 'مسح الفلاتر',
   };
 }
-
-/**
- * The three levels that mean a structure's use is impaired.
- *
- * Kept in step with `DAMAGED_LEVELS` on the server, which is what the «متضرر»
- * tile counts: an assessment finding a building undamaged must not make the
- * damaged figure go up.
- */
-const DAMAGED_LEVELS: readonly DamageLevel[] = [
-  'RESTRICTED_USE',
-  'UNSAFE_EVACUATE',
-  'TOTAL_COLLAPSE',
-];
 
 export default function BuildingsPage({
   params,
@@ -724,7 +711,7 @@ export default function BuildingsPage({
             );
           }
           return (
-            <CellTag tone={DAMAGED_LEVELS.includes(level) ? 'destructive' : 'success'}>
+            <CellTag tone={isImpairedDamage(level) ? 'destructive' : 'success'}>
               {labels.damageLevel[level]}
             </CellTag>
           );

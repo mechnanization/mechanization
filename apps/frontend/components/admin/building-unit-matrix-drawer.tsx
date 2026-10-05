@@ -24,6 +24,7 @@ import {
   type UpsertUnitInput,
   type VacancyBasis,
   type VacancyEndReason,
+  isImpairedDamage,
 } from '@mechanization/shared-schemas';
 import {
   addUnit,
@@ -87,6 +88,7 @@ import {
   vacancyBlocker,
   VacancyPanel,
   VisitForm,
+  ReinspectNotice,
   withDeclaredBasements,
 } from './building-unit-forms';
 
@@ -108,20 +110,6 @@ import {
  * something learned at the door and lost by the time a form is found: who
  * answered, why nobody did, that the flat is empty, that the ceiling is down.
  */
-
-/**
- * The three levels that mean a structure's use is impaired.
- *
- * The same set the server's `DAMAGED_LEVELS` counts and the ledger's tile
- * shows: an assessment finding a building *undamaged* is still an assessment,
- * and colouring it as damage would make the figure rise every time an officer
- * confirmed one was fine.
- */
-const DAMAGED_LEVELS: readonly DamageLevel[] = [
-  'RESTRICTED_USE',
-  'UNSAFE_EVACUATE',
-  'TOTAL_COLLAPSE',
-];
 
 /** Which unit action is open, if any. `null` = just the matrix. */
 type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | 'vacancy' | null;
@@ -1006,6 +994,8 @@ export function BuildingUnitMatrixDrawer({
               </header>
               <div className="space-y-4 p-4">
 
+              <ReinspectNotice history={damage?.history ?? []} unitId={selectedUnit.id} locale={locale} />
+
               <OccupantList
                 unit={selectedUnit}
                 compact
@@ -1300,6 +1290,7 @@ export function BuildingUnitMatrixDrawer({
                           source: values.source,
                           observations: values.observations || undefined,
                           assessedAt: values.assessedAt || undefined,
+                          reinspectAt: values.reinspectAt || undefined,
                         });
                         return en ? 'Assessment recorded' : 'تم تسجيل الكشف';
                       },
@@ -1350,6 +1341,7 @@ export function BuildingUnitMatrixDrawer({
                         source: values.source,
                         observations: values.observations || undefined,
                         assessedAt: values.assessedAt || undefined,
+                          reinspectAt: values.reinspectAt || undefined,
                       });
                       return en ? 'Assessment recorded' : 'تم تسجيل الكشف';
                     },
@@ -1407,7 +1399,7 @@ export function BuildingUnitMatrixDrawer({
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge
                           variant={
-                            DAMAGED_LEVELS.includes(row.level) ? 'soft-destructive' : 'soft-success'
+                            isImpairedDamage(row.level) ? 'soft-destructive' : 'soft-success'
                           }
                         >
                           {labels.damageLevel[row.level]}
@@ -1437,6 +1429,12 @@ export function BuildingUnitMatrixDrawer({
 
                       {row.observations ? (
                         <p className="leading-relaxed text-muted-foreground">{row.observations}</p>
+                      ) : null}
+                      {row.reinspectAt ? (
+                        <p className="text-muted-foreground">
+                          {en ? 'Re-inspection due ' : 'موعد إعادة الكشف '}
+                          <span className="font-medium tabular-nums text-foreground">{formatDate(row.reinspectAt)}</span>
+                        </p>
                       ) : null}
 
                       {row.assessedByName ? (

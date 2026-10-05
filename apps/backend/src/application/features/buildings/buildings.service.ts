@@ -31,6 +31,7 @@ import {
   type UpdateUnitInput,
   type UpsertOccupancyInput,
   type UpsertUnitInput,
+  IMPAIRED_DAMAGE_LEVELS,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -225,11 +226,6 @@ const MAX_VISITS_RETURNED = 10;
  */
 const MAX_VACANCIES_RETURNED = 5;
 
-const DAMAGED_LEVELS: readonly string[] = [
-  'RESTRICTED_USE',
-  'UNSAFE_EVACUATE',
-  'TOTAL_COLLAPSE',
-];
 
 /**
  * A building with its units, as the matrix drawer reads it.
@@ -495,7 +491,7 @@ export class BuildingsService {
     const allTotals = await withConnectionRetry(() =>
       this.db.building.aggregate({ where, _sum: { unitsTotal: true } }),
     );
-    const damaged = await this.countAtDamageLevels(where, DAMAGED_LEVELS);
+    const damaged = await this.countAtDamageLevels(where, IMPAIRED_DAMAGE_LEVELS);
     /*
       Counted over the filtered predicate, like every other tile — never
       over the page. A tile that quietly described the first twenty-five

@@ -1717,6 +1717,8 @@ export interface DamageAssessmentRow {
   observations: string | null;
   /** When the visit happened, not when it was typed up — see the schema. */
   assessedAt: string;
+  /** «موعد إعادة الكشف» — only on an UNINHABITABLE reading. Optional for an older server. */
+  reinspectAt?: string | null;
   assessedById: string | null;
   assessedByName: string | null;
   createdAt: string;
@@ -2051,6 +2053,8 @@ export interface RecordDamageInput {
   source?: DamageSource;
   observations?: string;
   assessedAt?: string;
+  /** «موعد إعادة الكشف», "YYYY-MM-DD" — only with `UNINHABITABLE`; refused on any other level. */
+  reinspectAt?: string;
 }
 
 /**

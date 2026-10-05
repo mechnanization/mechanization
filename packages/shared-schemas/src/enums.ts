@@ -695,6 +695,27 @@ export const damageLevelSchema = arabicEnum(DAMAGE_LEVEL, 'مستوى الضرر
 export type DamageLevel = z.infer<typeof damageLevelSchema>;
 
 /**
+ * The levels that mean a structure's use is impaired — what the «متضرر» tile
+ * counts and what the history colours as damage. An assessment finding a
+ * building undamaged is still an assessment, and counting it would make the
+ * figure rise every time an officer confirmed one was fine.
+ *
+ * One list for the server's count and every screen that colours a reading;
+ * it was four copies, which is how a new level reaches one and not the rest.
+ */
+export const IMPAIRED_DAMAGE_LEVELS = [
+  'RESTRICTED_USE',
+  'UNINHABITABLE',
+  'UNSAFE_EVACUATE',
+  'TOTAL_COLLAPSE',
+] as const satisfies readonly DamageLevel[];
+
+/** Whether a reading at this level means the structure's use is impaired. */
+export function isImpairedDamage(level: string | null | undefined): boolean {
+  return level != null && (IMPAIRED_DAMAGE_LEVELS as readonly string[]).includes(level);
+}
+
+/**
  * Where a damage reading came from, and therefore how far to trust it.
  *
  * Recorded on every assessment rather than inferred from who wrote it: a

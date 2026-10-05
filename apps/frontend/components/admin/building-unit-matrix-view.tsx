@@ -33,6 +33,7 @@ import {
   type UpsertUnitInput,
   type VacancyBasis,
   type VacancyEndReason,
+  isImpairedDamage,
 } from '@mechanization/shared-schemas';
 import {
   addUnit,
@@ -102,16 +103,11 @@ import {
   vacancyBlocker,
   VacancyPanel,
   VisitForm,
+  ReinspectNotice,
   withDeclaredBasements,
 } from './building-unit-forms';
 
 const READ_ONLY_ROLES = ['AUDITOR', 'ACCOUNTANT'];
-
-const DAMAGED_LEVELS: readonly DamageLevel[] = [
-  'RESTRICTED_USE',
-  'UNSAFE_EVACUATE',
-  'TOTAL_COLLAPSE',
-];
 
 type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | 'vacancy' | 'resize' | null;
 
@@ -1545,6 +1541,7 @@ export function BuildingUnitMatrixView({
                           source: values.source,
                           observations: values.observations || undefined,
                           assessedAt: values.assessedAt || undefined,
+                          reinspectAt: values.reinspectAt || undefined,
                         });
                         return en ? 'Assessment recorded' : 'تم تسجيل الكشف';
                       },
@@ -1582,6 +1579,8 @@ export function BuildingUnitMatrixView({
                   {labels.surveyStatus[selectedUnit.surveyStatus]}
                 </SummaryRow>
               </SummaryList>
+
+              <ReinspectNotice history={damage?.history ?? []} unitId={selectedUnit.id} locale={locale} />
 
               <OccupantList
                 unit={selectedUnit}
@@ -1633,6 +1632,7 @@ export function BuildingUnitMatrixView({
                         source: values.source,
                         observations: values.observations || undefined,
                         assessedAt: values.assessedAt || undefined,
+                          reinspectAt: values.reinspectAt || undefined,
                       });
                       return en ? 'Assessment recorded' : 'تم تسجيل الكشف';
                     },
@@ -1675,7 +1675,7 @@ export function BuildingUnitMatrixView({
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge
                           variant={
-                            DAMAGED_LEVELS.includes(row.level) ? 'soft-destructive' : 'soft-success'
+                            isImpairedDamage(row.level) ? 'soft-destructive' : 'soft-success'
                           }
                         >
                           {labels.damageLevel[row.level]}
@@ -1697,6 +1697,12 @@ export function BuildingUnitMatrixView({
                       </div>
                       {row.observations ? (
                         <p className="leading-relaxed text-muted-foreground">{row.observations}</p>
+                      ) : null}
+                      {row.reinspectAt ? (
+                        <p className="text-muted-foreground">
+                          {en ? 'Re-inspection due ' : 'موعد إعادة الكشف '}
+                          <span className="font-medium tabular-nums text-foreground">{formatDate(row.reinspectAt)}</span>
+                        </p>
                       ) : null}
                       {row.assessedByName ? (
                         <p className="text-xs text-muted-foreground">

@@ -32,6 +32,7 @@ import type { DamageRow } from './building.types';
 const SEVERITY: readonly string[] = [
   'TOTAL_COLLAPSE',
   'UNSAFE_EVACUATE',
+  'UNINHABITABLE',
   'RESTRICTED_USE',
   'SAFE_MINOR_DAMAGE',
   'NOT_AFFECTED',
@@ -97,6 +98,8 @@ export class DamageService {
         source: input.source as never,
         observations: input.observations?.trim() || null,
         ...(input.assessedAt ? { assessedAt: input.assessedAt } : {}),
+        // Only on «غير قابلة للسكن» — the schema refuses it on any other level.
+        reinspectAt: input.reinspectAt ?? null,
         assessedById: actor.id,
       },
       include: { assessedBy: { select: { firstName: true, lastName: true } } },
@@ -177,6 +180,7 @@ function toDamageRow(row: {
   source: string;
   observations: string | null;
   assessedAt: Date;
+  reinspectAt: Date | null;
   assessedById: string | null;
   assessedBy?: { firstName: string; lastName: string } | null;
   createdAt: Date;
@@ -189,6 +193,7 @@ function toDamageRow(row: {
     source: row.source,
     observations: row.observations,
     assessedAt: row.assessedAt,
+    reinspectAt: row.reinspectAt,
     assessedById: row.assessedById,
     assessedByName: row.assessedBy
       ? `${row.assessedBy.firstName} ${row.assessedBy.lastName}`

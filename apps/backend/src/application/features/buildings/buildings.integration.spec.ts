@@ -1094,6 +1094,28 @@ describeIfDb('BuildingsService', () => {
     expect(await damage.history(building.id)).toHaveLength(2);
   });
 
+  it('keeps «غير قابلة للسكن» with its re-inspection day, and the repaired reading after it', async () => {
+    const { building } = await createBuilding(
+      { parcelNumber: '9001', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const due = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const uninhabitable = await damage.record(
+      { buildingId: building.id, level: 'UNINHABITABLE', source: 'FIELD_VISIT', reinspectAt: due },
+      actor(),
+    );
+    expect(uninhabitable.reinspectAt?.toISOString()).toBe(due.toISOString());
+    expect(await damage.currentLevel(building.id)).toBe('UNINHABITABLE');
+
+    // The revisit after the repair is a new reading; the old one keeps its day.
+    await damage.record({ buildingId: building.id, level: 'NOT_AFFECTED', source: 'FIELD_VISIT' }, actor());
+    const history = await damage.history(building.id);
+    expect(history.map((row) => [row.level, row.reinspectAt?.toISOString() ?? null])).toEqual([
+      ['NOT_AFFECTED', null],
+      ['UNINHABITABLE', due.toISOString()],
+    ]);
+  });
+
   it('reads a unit’s damage as the building’s', async () => {
     // "Top three floors gone, ground floor shop still trading" is one structure
     // and two rows; a history showing only building-level readings would be

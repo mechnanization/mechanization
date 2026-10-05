@@ -736,8 +736,32 @@ export const createDamageAssessmentSchema = z
       .date({ invalid_type_error: 'تاريخ الكشف غير صالح' })
       .refine(notAfterNow, 'تاريخ الكشف في المستقبل')
       .optional(),
+    /**
+     * «موعد إعادة الكشف» — when a unit read «غير قابلة للسكن» is to be visited
+     * again, once it is repaired. Only on that level: it is the one reading
+     * that expects a second visit. A planned day, so today or later.
+     */
+    reinspectAt: z.coerce.date({ invalid_type_error: 'موعد إعادة الكشف غير صالح' }).optional(),
   })
   .superRefine((value, ctx) => {
+    if (value.reinspectAt) {
+      if (value.level !== 'UNINHABITABLE') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['reinspectAt'],
+          message: 'موعد إعادة الكشف يُحدَّد للوحدة غير القابلة للسكن فقط',
+        });
+      }
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      if (value.reinspectAt < startOfToday) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['reinspectAt'],
+          message: 'موعد إعادة الكشف في الماضي',
+        });
+      }
+    }
     /*
       Exactly one target, mirroring the CHECK constraint in migration 0030.
 

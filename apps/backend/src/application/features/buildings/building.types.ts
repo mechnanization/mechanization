@@ -261,6 +261,8 @@ export interface DamageRow {
   source: string;
   observations: string | null;
   assessedAt: Date;
+  /** «موعد إعادة الكشف» — set only on an UNINHABITABLE reading (0068). */
+  reinspectAt: Date | null;
   assessedById: string | null;
   assessedByName: string | null;
   createdAt: Date;
