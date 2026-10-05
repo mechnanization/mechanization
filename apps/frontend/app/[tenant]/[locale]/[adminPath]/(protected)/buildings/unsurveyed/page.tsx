@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useMemo, useState } from 'react';
+import { use, useMemo } from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Building2, Footprints, Grid3x3, ScanSearch, UserPlus } from 'lucide-react';
@@ -13,13 +13,12 @@ import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { useTabSearch, useUrlPagination } from '@/lib/use-url-state';
 import { cn } from '@/lib/utils';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CellTag } from '@/components/ui/cell-tag';
 import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 import { ActionTooltip } from '@/components/ui/tooltip';
-import { BuildingUnitMatrixDrawer } from '@/components/admin/building-unit-matrix-drawer';
 import { floorLabel } from '@/components/admin/building-unit-forms';
 
 /**
@@ -52,8 +51,6 @@ export default function UnsurveyedUnitsPage({
 
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 25 });
   const [search, setSearch] = useTabSearch(tenant, 'buildings-unsurveyed');
-  /** The unit whose building's matrix is open, if any. */
-  const [matrix, setMatrix] = useState<{ buildingId: string; unitId: string } | null>(null);
 
   const query = useStaffQuery({
     queryKey: ['buildings', 'unsurveyed-units', tenant, search, pagination.pageIndex, pagination.pageSize],
@@ -190,14 +187,14 @@ export default function UnsurveyedUnitsPage({
           return (
             <div className="flex items-center justify-end gap-1.5">
               <ActionTooltip label={en ? 'Open in the unit matrix' : 'فتح في مصفوفة الوحدات'}>
-                <Button
-                  variant="outline"
-                  size="icon-sm"
+                {/* The full-page matrix, with `?unit=` selecting this unit there. */}
+                <Link
+                  href={`${base}/buildings/${encodeURIComponent(unit.buildingId)}/matrix?unit=${encodeURIComponent(unit.unitId)}`}
                   aria-label={en ? `Open ${name} in the unit matrix` : `فتح ${name} في مصفوفة الوحدات`}
-                  onClick={() => setMatrix({ buildingId: unit.buildingId, unitId: unit.unitId })}
+                  className={buttonVariants({ variant: 'outline', size: 'icon-sm' })}
                 >
                   <Grid3x3 className="size-4" aria-hidden />
-                </Button>
+                </Link>
               </ActionTooltip>
               {canRegister ? (
                 <ActionTooltip label={en ? 'Register a citizen in this unit' : 'تسجيل مواطن في هذه الوحدة'}>
@@ -267,25 +264,6 @@ export default function UnsurveyedUnitsPage({
           />
         </CardContent>
       </Card>
-
-      {token ? (
-        <BuildingUnitMatrixDrawer
-          open={matrix !== null}
-          onClose={() => setMatrix(null)}
-          tenant={tenant}
-          token={token}
-          buildingId={matrix?.buildingId ?? null}
-          focusUnitId={matrix?.unitId ?? null}
-          canWrite={canRegister}
-          // A visit or an occupancy logged there can take the unit off this list.
-          onChanged={() => void query.refetch()}
-          registerHref={(buildingId, unitId, residence) =>
-            `${base}/citizens/new?buildingId=${encodeURIComponent(buildingId)}&unitId=${encodeURIComponent(unitId)}&residence=${residence}`
-          }
-          citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}
-          locale={locale}
-        />
-      ) : null}
     </div>
   );
 }
