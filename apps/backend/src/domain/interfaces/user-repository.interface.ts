@@ -180,6 +180,16 @@ export interface StaffSummary {
   overpaidBalance?: number;
   createdAt: string;
   lastLoginAt: string | null;
+  /**
+   * «آخر ظهور» — when this account last made a request, or null if it has not
+   * since migration 0070 shipped.
+   *
+   * Presence is derived from this and not reported as a boolean, deliberately:
+   * a server that says «online» has already decided how fresh counts as
+   * present, and a client holding the timestamp can show «آخر ظهور» for the
+   * ones that are not. The threshold is `ONLINE_WITHIN_SECONDS`.
+   */
+  lastSeenAt: string | null;
   /** Set only on a deleted account returned for the earnings roster. */
   deletedAt?: string | null;
 }

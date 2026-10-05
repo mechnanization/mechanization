@@ -28,6 +28,7 @@ import {
   deleteStaff,
   getDeletedStaff,
   getStaff,
+  isStaffOnline,
   restoreStaff,
   logApiError,
   setStaffActive,
@@ -37,7 +38,7 @@ import type { DeletedStaffSummary, StaffSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
-import { formatDate } from '@/lib/dates';
+import { formatDate, formatRelative } from '@/lib/dates';
 import { formatForeign } from '@/lib/currency';
 import { CellTag } from '@/components/ui/cell-tag';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
@@ -199,6 +200,16 @@ export default function StaffPage({
     base,
     token,
     errorMessage: 'تعذّر تحميل الموظفين.',
+    /*
+      «متصل الآن» stops being true on its own, with nothing on this page to
+      invalidate it, so the directory re-reads itself every minute while it is
+      open — the same minute the server's presence throttle writes on, so the
+      label is never more than about a minute behind the truth. The re-render
+      is also what moves «آخر ظهور» along: the timestamps are formatted
+      relative to now, and without a new render they would sit at whatever
+      they said when the page loaded.
+    */
+    refreshMs: 60_000,
   });
 
   const items = useMemo(() => query.data?.items ?? [], [query.data]);
@@ -414,6 +425,13 @@ export default function StaffPage({
   );
   const activeCount = activeStaff.length;
   /*
+    Counted off the active half only, for the same reason the column refuses to
+    call a disabled account present: a revoked session cannot be making
+    requests. Recomputed on each render, which the directory's own one-minute
+    re-read is what drives.
+  */
+  const onlineCount = activeStaff.filter((staff) => isStaffOnline(staff.lastSeenAt)).length;
+  /*
     Every field inspector, disabled ones included. This section is a payout
     ledger, not a roster: an inspector is archived still owed what they
     earned, and hiding the card would hide the balance (STA-6).
@@ -491,6 +509,58 @@ export default function StaffPage({
             ) : null}
           </div>
         ),
+      },
+      {
+        /*
+          «الحضور» — here now, or when they last were.
+
+          Its own column rather than another tag in «الحالة», because the two
+          answer different questions: «الحالة» is whether this account *may*
+          sign in, «الحضور» is whether somebody is using it. An account can be
+          فعّال and away for a week, which is the normal state of most of them.
+
+          Sorted on the raw timestamp, so «متصل الآن» sorts above «منذ ٥
+          دقائق» above «لم يظهر بعد» — an administrator asking "who is on right
+          now" gets them at one end of one sort.
+        */
+        id: 'presence',
+        accessorFn: (row) => (row.lastSeenAt ? new Date(row.lastSeenAt).getTime() : 0),
+        header: en ? 'Presence' : 'الحضور',
+        cell: ({ row }) => {
+          const staff = row.original;
+          /*
+            A disabled account is never «متصل الآن», whatever its stamp says.
+            Deactivation bumps `tokenVersion` and revokes every session, so it
+            cannot be making requests; a fresh stamp on one only means it was
+            disabled moments ago. Reporting it as present would be the one
+            wrong answer here — it tells an administrator who just revoked
+            someone's access that they are still working.
+          */
+          const online = staff.isActive && isStaffOnline(staff.lastSeenAt);
+
+          if (online) {
+            return (
+              <CellTag tone="success">
+                <span className="size-2 rounded-full bg-current" aria-hidden />
+                {en ? 'Online' : 'متصل الآن'}
+              </CellTag>
+            );
+          }
+
+          return (
+            <div className="flex items-center gap-1.5">
+              <CellTag tone="muted">
+                <span className="size-2 rounded-full bg-current opacity-60" aria-hidden />
+                {en ? 'Offline' : 'غير متصل'}
+              </CellTag>
+              {staff.lastSeenAt ? (
+                <span className="truncate text-xs text-muted-foreground">
+                  {formatRelative(staff.lastSeenAt, locale)}
+                </span>
+              ) : null}
+            </div>
+          );
+        },
       },
       {
         accessorKey: 'lastLoginAt',
@@ -591,7 +661,7 @@ export default function StaffPage({
         },
       },
     ],
-    [selfId, busyId, toggleActive, en, roleLabel, base, router],
+    [selfId, busyId, toggleActive, en, locale, roleLabel, base, router],
   );
 
   if (!token) return null;
@@ -627,7 +697,12 @@ export default function StaffPage({
       {/* ── At a glance ─────────────────────────────────────────────── */}
       <StatStrip>
         <StatItem value={items.length} label={en ? 'Staff' : 'الموظفون'} />
-        <StatItem value={activeCount} label={en ? 'Active' : 'فعّالون'} className="text-success" />
+        <StatItem value={activeCount} label={en ? 'Active' : 'فعّالون'} />
+        <StatItem
+          value={onlineCount}
+          label={en ? 'Online now' : 'متصلون الآن'}
+          className="text-success"
+        />
         <StatItem value={archivedStaff.length} label={en ? 'In the archive' : 'في الأرشيف'} />
         <StatItem value={inspectors.length} label={en ? 'Field inspectors' : 'مفتشون ميدانيون'} />
       </StatStrip>

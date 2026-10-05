@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/staff-refresh-tokens-rebased` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/staff-scoping-roles-archive` (on `develop@ec70f68`), 2026-10-05.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -67,7 +67,12 @@ component types; `components/admin/nav.ts` imports `QUALITY_REVIEWER_ROLES` from
 - **Reads** MUST use `useStaffQuery` (`lib/use-staff-query.ts`) with key
   `[resource, tenant, ...every param that changes the answer]`. It waits for the token,
   clears the session on a 401, and returns `{data, loading, fetching, error, refetch}`.
-  `keepPrevious` for server-paged tables, `reference` for lookup lists.
+  `keepPrevious` for server-paged tables, `reference` for lookup lists, `refreshMs`
+  for the few reads whose answer goes stale with nothing on the page to invalidate it
+  (today only «متصل الآن» on `/staff`, at 60 s — the same minute the server's presence
+  throttle writes on). TanStack pauses the interval while the tab is hidden. It is not
+  a way to make an ordinary table feel live; invalidating the key after a write is.
+  A relative label («آخر ظهور») needs the re-render as much as the data does.
 - **Writes** are imperative: an `inFlight` ref and a `busy` state, `await apiFn()`, then
   `queryClient.invalidateQueries` on the key prefix (STA-3, STA-4). Model:
   `components/admin/landlord-proposal-card.tsx`.

@@ -289,6 +289,7 @@ export class PrismaUserRepository implements UserRepository {
         isActive: true,
         createdAt: true,
         lastLoginAt: true,
+        lastSeenAt: true,
         totpConfirmedAt: true,
       },
       orderBy: { createdAt: 'asc' },
@@ -383,6 +384,7 @@ export class PrismaUserRepository implements UserRepository {
         overpaidBalance: overpaid,
         createdAt: row.createdAt.toISOString(),
         lastLoginAt: row.lastLoginAt?.toISOString() ?? null,
+        lastSeenAt: row.lastSeenAt?.toISOString() ?? null,
         deletedAt: row.deletedAt?.toISOString() ?? null,
       };
     });

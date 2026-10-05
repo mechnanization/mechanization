@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
+Last verified against the code: `feat/staff-scoping-roles-archive` (on `develop@ec70f68`), 2026-10-05.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -53,6 +53,13 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   self-service route without `@Roles` MUST check `user.kind` itself and scope every query by `user.sub`.
 - A handler's `@Roles` replaces the class's (`getAllAndOverride`). Read the method decorators before
   assuming the class-level role applies.
+- `JwtAuthGuard` MUST NOT be given work that can refuse a request for a reason unrelated to
+  authentication. It stamps `users.lastSeenAt` (`StaffPresenceService`, `0070`) only after every
+  check has passed, and that call swallows its own errors by contract: a failed presence write must
+  never become a 401 or a 500 on an officer's save. Anything added there follows the same rule, or it
+  does not belong in a guard. Staff presence is readable only through `/staff`, which is
+  `@Roles('SUPER_ADMIN')` — when it is surfaced anywhere else, that is a new decision, because who
+  was at their desk and when is surveillance of staff and not a general-purpose field.
 - Scope citizen reads and writes by `user.sub` in the WHERE clause: `findFirst({ where: { id, citizenId } })`
   as in `FeesService.declare`. Where a row is fetched first and compared (`FeesService.startWhishCheckout`),
   another citizen's row MUST get exactly the not-found answer, so ids cannot be probed.

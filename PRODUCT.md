@@ -56,6 +56,10 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   census. The roles whose job is to look across everyone's work — `SUPER_ADMIN`,
   `ADMINISTRATIVE_OFFICER`, `AUDITOR`, `VIEWER` (`SEES_ALL_STAFF_WORK`) — see every
   staff member's.
+- **A system administrator can see who is working right now.** The staff directory marks each
+  account «متصل الآن» or «غير متصل», with «آخر ظهور» for whoever is not. It is derived from
+  requests the account actually made, not from when it signed in, and it is visible on the
+  `SUPER_ADMIN`-only staff screen and nowhere else.
 - **Staff accounts have three states, and none of them loses history.** An account is
   active, disabled, or deleted. Disabling blocks sign-in and moves the account out of the
   staff directory into «الأرشيف», where a system administrator reads it and can bring it

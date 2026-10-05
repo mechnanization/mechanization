@@ -80,6 +80,14 @@ request's tenant (`IdentityService`).
   infer it from `phone IS NULL`: the second is an unfinished record with its
   own «غير مؤكَّد» flag and belongs in «يتطلب مراجعة».
 
+**`lastSeenAt` is staff presence, and the one write on the authenticated hot
+path** (`0070`). `StaffPresenceService` stamps it from `JwtAuthGuard` behind a
+Redis gate — one UPDATE a minute per account, never one per request — and only
+for `kind = 'STAFF'`, so a citizen row stays NULL for ever and the portal
+keeps no write on its hot path. Do not read `lastLoginAt` as presence: it is
+stamped once at sign-in, and a staff token lives behind a week-long refresh
+chain, so it reports an officer who worked all morning as last seen at eight.
+
 - Every query on `users` MUST filter on `kind`, in the `where` of the statement
   itself. A prior read that checked `kind` is not enough for a write.
 - Most other tenant tables hold or point at citizen rows, including

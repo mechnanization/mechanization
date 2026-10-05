@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { SessionRevocationService } from '../../application/features/identity/session-revocation.service';
+import { StaffPresenceService } from '../../application/features/identity/staff-presence.service';
 import { RolesGuard } from './roles.guard';
 import {
   ForbiddenError,
@@ -55,10 +56,15 @@ function liveSessions(): SessionRevocationService {
   return { isCurrent: jest.fn().mockResolvedValue(true) } as unknown as SessionRevocationService;
 }
 
+/** Presence is best-effort and asserted nowhere here; it must not refuse a request. */
+function presence(): StaffPresenceService {
+  return { touch: jest.fn().mockResolvedValue(undefined) } as unknown as StaffPresenceService;
+}
+
 describe('JwtAuthGuard — cross-tenant rejection', () => {
   const jwt = new JwtService({ secret: SECRET });
   const reflector = new Reflector();
-  const guard = new JwtAuthGuard(jwt, reflector, liveSessions());
+  const guard = new JwtAuthGuard(jwt, reflector, liveSessions(), presence());
 
   const tokenFor = (claims: Partial<SessionClaims>): string =>
     jwt.sign({ sub: 'u1', kind: 'STAFF', tenantSlug: 'albazourieh', ...claims });

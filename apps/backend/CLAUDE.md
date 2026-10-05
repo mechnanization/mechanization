@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/tier1-review-tenancy-masked-refs` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `feat/staff-scoping-roles-archive` (on `develop@ec70f68`), 2026-10-05.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -57,7 +57,8 @@ Data access for new code (decided):
   compression, a 1 MB JSON limit, CORS from `CORS_ORIGINS`, and `rawBody` for the Whish HMAC.
   `presentation/main.ts` listens. `presentation/serverless.ts` is the retired Vercel entry.
 - Request flow: `TenantMiddleware` resolves the tenant (`TenantService.resolve`, `TenantPrismaFactory.forSchema`) and
-  runs the request in `TenantContextService.run`; `JwtAuthGuard` then requires token tenant = URL tenant and a current `tokenVersion`.
+  runs the request in `TenantContextService.run`; `JwtAuthGuard` then requires token tenant = URL tenant and a current `tokenVersion`,
+  and finally stamps `users.lastSeenAt` through `StaffPresenceService` (see **Staff presence** below).
 
 ## Conventions
 
@@ -71,6 +72,15 @@ Data access for new code (decided):
 - **Staff sessions.** Rotating refresh tokens in an httpOnly cookie (`StaffRefreshTokenService`,
   `presentation/http/staff-refresh-cookie.ts`), checked by family in `JwtAuthGuard`; expired rows are
   pruned by `StaffRefreshTokenCleanupJob`. Rules: [docs/security.md](../../docs/security.md#tokens-passwords-and-totp).
+- **Staff presence.** `StaffPresenceService.touch` stamps `users.lastSeenAt` from `JwtAuthGuard`, after
+  every check has passed. It is the only write on the authenticated hot path, and it stays affordable
+  through a Redis gate: one UPDATE a minute per account, not one per request. Three rules hold it in
+  place — set the gate *before* the write (or a burst stampedes), stamp `STAFF` only (`users` holds
+  citizens too and the portal is the busier half), and never throw (presence is a label on one admin
+  screen; a pooler blip must not 500 an officer's save). `ONLINE_WITHIN_SECONDS` is the threshold
+  readers apply, and the frontend's `STAFF_ONLINE_WITHIN_MS` mirrors it — change both or the label
+  disagrees with its data. Pinned by `staff-presence.spec.ts`. Do not read `lastLoginAt` as presence:
+  it is stamped once at sign-in and a staff token lives behind a week-long refresh chain.
 - **Who is calling.** `@CurrentUser()` yields `SessionClaims` (`application/features/identity/identity.service.ts`);
   `@CurrentTenant()` yields `req.tenant`. Pass the actor to services as `{ id: user.sub, role: user.role ?? '' }`.
 - **Validation.** `@Body(new ZodValidationPipe(schema))`, schema from `@mechanization/shared-schemas`. Put

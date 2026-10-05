@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { UnauthorizedError } from '../../application/common/exceptions';
 import { SessionClaims } from '../../application/features/identity/identity.service';
 import { SessionRevocationService } from '../../application/features/identity/session-revocation.service';
+import { StaffPresenceService } from '../../application/features/identity/staff-presence.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 /**
@@ -44,10 +45,17 @@ function build(options: { current?: boolean; familyLive?: boolean } = {}) {
     isCurrent: jest.fn().mockResolvedValue(options.current ?? true),
     isFamilyLive: jest.fn().mockResolvedValue(options.familyLive ?? true),
   };
+  /*
+    Presence is best-effort and nothing in this file asserts on it — but it is
+    handed in as a real stub rather than `undefined` so a guard that stopped
+    awaiting it, or started letting it throw, fails here.
+  */
+  const presence = { touch: jest.fn().mockResolvedValue(undefined) };
   const guard = new JwtAuthGuard(
     jwt,
     new Reflector(),
     revocation as unknown as SessionRevocationService,
+    presence as unknown as StaffPresenceService,
   );
 
   const bearer = (claims: Partial<SessionClaims>) =>
@@ -60,7 +68,7 @@ function build(options: { current?: boolean; familyLive?: boolean } = {}) {
       ...claims,
     })}`;
 
-  return { guard, revocation, bearer };
+  return { guard, revocation, presence, bearer };
 }
 
 describe('JwtAuthGuard — the sign-in a staff token belongs to', () => {

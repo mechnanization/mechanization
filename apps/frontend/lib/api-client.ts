@@ -4378,8 +4378,37 @@ export interface StaffSummary {
   overpaidBalance?: number;
   createdAt: string;
   lastLoginAt: string | null;
+  /**
+   * «آخر ظهور» — when this account last made a request, null if not since
+   * migration 0070.
+   *
+   * A timestamp and not an `online` boolean, deliberately: the staff page
+   * needs «آخر ظهور» for whoever is *not* here, and a server that answered
+   * only yes/no would have thrown that away. `isStaffOnline` applies the
+   * threshold. Older accounts and a backend before 0070 send null, which
+   * reads as offline with nothing to say about when.
+   */
+  lastSeenAt?: string | null;
   /** Set only on a deleted account the earnings roster asked for. */
   deletedAt?: string | null;
+}
+
+/**
+ * How recently a staff account must have been seen to read «متصل الآن».
+ *
+ * Mirrors `ONLINE_WITHIN_SECONDS` in the backend's `StaffPresenceService`,
+ * which stamps the column at most once a minute — so the slack here is for
+ * that throttle, not for taste. Changing one without the other makes the
+ * label disagree with the data behind it.
+ */
+export const STAFF_ONLINE_WITHIN_MS = 5 * 60 * 1000;
+
+/** Whether this account counts as here now. Null — never seen — is offline. */
+export function isStaffOnline(lastSeenAt: string | null | undefined): boolean {
+  if (!lastSeenAt) return false;
+  const seen = new Date(lastSeenAt).getTime();
+  if (Number.isNaN(seen)) return false;
+  return Date.now() - seen <= STAFF_ONLINE_WITHIN_MS;
 }
 
 /**
