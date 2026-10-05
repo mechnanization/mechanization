@@ -3515,6 +3515,46 @@ export function getReviewQueue(
   );
 }
 
+/** One row of «وحدات غير ممسوحة» — `GET /buildings/unsurveyed-units`. */
+export interface UnsurveyedUnitRow {
+  unitId: string;
+  unitCode: string;
+  floor: number;
+  unitType: UnitType;
+  surveyStatus: SurveyStatus;
+  /** Attempts so far — three unanswered doors are a different visit from none. */
+  visitCount: number;
+  lastVisitAt: string | null;
+  buildingId: string;
+  buildingCode: string;
+  buildingName: string | null;
+  parcelNumber: string;
+  /** Who put the building on the census — shown to the roles that see everyone's. */
+  addedByName: string | null;
+}
+
+/**
+ * «وحدات غير ممسوحة» — units with no survey answer and nobody recorded on
+ * them, in the buildings the viewer added; the roles that see all staff work
+ * (`seesAllStaffWork`) get everyone's. Narrowed and paged on the server.
+ */
+export function getUnsurveyedUnits(
+  tenant: string,
+  token: string,
+  filter: { search?: string; limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (filter.search) query.set('search', filter.search);
+  query.set('limit', String(filter.limit ?? 25));
+  query.set('offset', String(filter.offset ?? 0));
+  return apiFetch<{ items: UnsurveyedUnitRow[]; total: number }>(
+    tenant,
+    `/buildings/unsurveyed-units?${query}`,
+    { token, signal },
+  );
+}
+
 /**
  * The three sections the admin form edits, exactly as it posts them back.
  *

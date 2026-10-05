@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   FileQuestion,
+  ScanSearch,
   FileWarning,
   KeyRound,
   LayoutDashboard,
@@ -258,6 +259,19 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: ClipboardList,
         roles: EVERY_STAFF_ROLE,
         keywords: ['زيارة', 'لا أحد في المنزل', 'متابعة', 'cases', 'follow-up', 'visit'],
+      },
+      /*
+        Units nobody has surveyed or registered anyone in yet — each officer's
+        own (the buildings they added), everyone's for the admins. The server
+        narrows it; every role reaches the page and sees what is theirs.
+      */
+      {
+        path: '/buildings/unsurveyed',
+        label: 'وحدات غير ممسوحة',
+        labelEn: 'Unsurveyed units',
+        icon: ScanSearch,
+        roles: EVERY_STAFF_ROLE,
+        keywords: ['مسح', 'غير ممسوحة', 'وحدة', 'زيارة', 'ميداني', 'unsurveyed', 'survey', 'unit'],
       },
     ],
   },

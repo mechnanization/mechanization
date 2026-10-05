@@ -135,6 +135,25 @@ export class BuildingsController {
     return this.buildings.filterOptions();
   }
 
+  /**
+   * «وحدات غير ممسوحة» — units with no survey answer and nobody recorded on
+   * them, in the buildings the viewer added; admins see everyone's. Declared
+   * before `:id` for the reason `filter-options` is.
+   */
+  @Roles(...READ_ROLES)
+  @Get('unsurveyed-units')
+  async unsurveyedUnits(
+    @Query('search') search: string | undefined,
+    @Query('limit') limit = '25',
+    @Query('offset') offset = '0',
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.buildings.unsurveyedUnits(
+      { search, limit: Number(limit) || 25, offset: Number(offset) || 0 },
+      this.actor(user),
+    );
+  }
+
   /** One building with its whole unit matrix and each unit's occupants. */
   @Roles(...READ_ROLES)
   @Get(':id')

@@ -1094,6 +1094,59 @@ describeIfDb('BuildingsService', () => {
     expect(await damage.history(building.id)).toHaveLength(2);
   });
 
+  // ────────────────────────  «وحدات غير ممسوحة»  ────────────────────────
+
+  it('lists the unsurveyed, unlinked units of the buildings an officer added, and every officer’s to an admin', async () => {
+    const otherId = randomUUID();
+    await db.user.create({
+      data: {
+        id: otherId,
+        kind: 'STAFF',
+        tenantSlug: 'census',
+        email: `other-${otherId}@census.gov.lb`,
+        firstName: 'مفتش',
+        lastName: 'آخر',
+        role: 'FIELD_INSPECTOR',
+      },
+    });
+    const other = { id: otherId, role: 'FIELD_INSPECTOR' };
+
+    const { building: mine } = await createBuilding(
+      { parcelNumber: '9100', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const { units } = await buildings.generateUnits(
+      mine.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 3, unitType: 'APARTMENT' },
+      actor(),
+    );
+    // Surveyed; linked to a citizen; still waiting.
+    await buildings.updateUnit(units[0]!.id, { surveyStatus: 'COMPLETE' }, actor());
+    await buildings.recordOccupancy({ unitId: units[1]!.id, citizenId: await citizen('سكن'), role: 'TENANT' }, actor());
+    const waiting = units[2]!;
+
+    const { building: theirs } = await createBuilding(
+      { parcelNumber: '9101', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      other,
+    );
+    const { units: theirUnits } = await buildings.generateUnits(
+      theirs.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+      other,
+    );
+
+    const mineOnly = await buildings.unsurveyedUnits({ search: '910', limit: 100 }, actor());
+    expect(mineOnly.items.map((row) => row.unitId)).toEqual([waiting.id]);
+    expect(mineOnly.items[0]).toMatchObject({ buildingCode: mine.code, visitCount: 0, addedByName: 'مفتش ميداني' });
+
+    const theirsOnly = await buildings.unsurveyedUnits({ search: '910', limit: 100 }, other);
+    expect(theirsOnly.items.map((row) => row.unitId)).toEqual([theirUnits[0]!.id]);
+
+    const admin = await buildings.unsurveyedUnits({ search: '910', limit: 100 }, { id: otherId, role: 'SUPER_ADMIN' });
+    expect(admin.items.map((row) => row.unitId).sort()).toEqual([waiting.id, theirUnits[0]!.id].sort());
+    expect(admin.total).toBe(2);
+  });
+
   it('keeps «غير قابلة للسكن» with its re-inspection day, and the repaired reading after it', async () => {
     const { building } = await createBuilding(
       { parcelNumber: '9001', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },

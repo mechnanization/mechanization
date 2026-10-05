@@ -22,7 +22,7 @@ import type {
   ImportRow,
   PossibleDuplicatesQuery,
 } from '@mechanization/shared-schemas';
-import { seesAllStaffWork } from '@mechanization/shared-schemas';
+import { worklistOwner, type WorklistViewer } from '../../common/worklist-viewer';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
@@ -259,20 +259,6 @@ export interface ReviewQueueItem {
   submittedAt: string;
   /** Who filed it — for the roles that see everyone's queue; null when unrecorded. */
   filedByName: string | null;
-}
-
-/**
- * Who is asking for a worklist, and so whose work it shows. Absent means the
- * whole register — the internal callers that are not a person's screen.
- */
-export interface WorklistViewer {
-  id: string;
-  role: string;
-}
-
-/** The staff member a viewer's worklist is narrowed to, or null for everyone's. */
-function worklistOwner(viewer?: WorklistViewer): string | null {
-  return viewer && !seesAllStaffWork(viewer.role) ? viewer.id : null;
 }
 
 interface ReviewQueueRow {

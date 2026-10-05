@@ -32,7 +32,9 @@ import {
   type UpsertOccupancyInput,
   type UpsertUnitInput,
   IMPAIRED_DAMAGE_LEVELS,
+  STRUCTURAL_UNIT_TYPE,
 } from '@mechanization/shared-schemas';
+import { worklistOwner, type WorklistViewer } from '../../common/worklist-viewer';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
@@ -53,6 +55,7 @@ import type {
   OccupancyOwnerLink,
   OccupancyRow,
   UnitRow,
+  UnsurveyedUnitRow,
   VacancyRow,
   VisitRow,
 } from './building.types';
@@ -419,6 +422,104 @@ export class BuildingsService {
    * out of the same total. `summary` is computed over the same predicate, so
    * the tiles and the rows can never describe different sets.
    */
+  /**
+   * «وحدات غير ممسوحة» — the units still waiting for someone to go in and
+   * record who lives there.
+   *
+   * A unit is on it while its survey has produced no answer (not in
+   * `SURVEYED_STATUS`) **and** nobody is recorded on it — the second because
+   * linking a citizen is what the visit is for, and a flat with its family on
+   * file is done whatever its survey flag says. Structural rows (أعمدة، طابق
+   * فارغ) and structures nobody can live in are not work, so they are left out
+   * exactly as the survey figures leave them out.
+   *
+   * Whose: units have no creator and nothing assigns them, so a staff member's
+   * own are the units of the buildings *they* put on the census
+   * (`buildings.createdById`). Admins see everyone's (`worklistOwner`), with
+   * who added each building.
+   *
+   * Ordered as a round is walked: building by building, top floor down.
+   */
+  async unsurveyedUnits(
+    filter: { search?: string; limit?: number; offset?: number },
+    viewer?: WorklistViewer,
+  ): Promise<{ items: UnsurveyedUnitRow[]; total: number }> {
+    const limit = Math.min(Math.max(filter.limit ?? 25, 1), 100);
+    const offset = Math.max(filter.offset ?? 0, 0);
+    const owner = worklistOwner(viewer);
+    const search = filter.search?.trim();
+
+    const where: Prisma.UnitWhereInput = {
+      surveyStatus: { notIn: [...SURVEYED_STATUS] as never },
+      unitType: { notIn: [...STRUCTURAL_UNIT_TYPE] as never },
+      occupancies: { none: { toDate: null } },
+      building: {
+        lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never },
+        ...(owner ? { createdById: owner } : {}),
+      },
+      ...(search
+        ? {
+            OR: [
+              { unitCode: { contains: search, mode: 'insensitive' } },
+              { building: { code: { contains: search, mode: 'insensitive' } } },
+              { building: { name: { contains: search, mode: 'insensitive' } } },
+              { building: { parcelNumber: { contains: search } } },
+            ],
+          }
+        : {}),
+    };
+
+    const [rows, total] = await withConnectionRetry(() =>
+      this.db.$transaction([
+        this.db.unit.findMany({
+          where,
+          orderBy: [{ building: { code: 'asc' } }, { floor: 'desc' }, { sequence: 'asc' }],
+          skip: offset,
+          take: limit,
+          select: {
+            id: true,
+            unitCode: true,
+            floor: true,
+            unitType: true,
+            surveyStatus: true,
+            _count: { select: { visits: true } },
+            visits: { orderBy: { visitedAt: 'desc' }, take: 1, select: { visitedAt: true } },
+            building: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                parcelNumber: true,
+                createdBy: { select: { firstName: true, lastName: true } },
+              },
+            },
+          },
+        }),
+        this.db.unit.count({ where }),
+      ]),
+    );
+
+    return {
+      items: rows.map((row) => ({
+        unitId: row.id,
+        unitCode: row.unitCode,
+        floor: row.floor,
+        unitType: row.unitType,
+        surveyStatus: row.surveyStatus,
+        visitCount: row._count.visits,
+        lastVisitAt: row.visits[0]?.visitedAt ?? null,
+        buildingId: row.building.id,
+        buildingCode: row.building.code,
+        buildingName: row.building.name,
+        parcelNumber: row.building.parcelNumber,
+        addedByName: row.building.createdBy
+          ? `${row.building.createdBy.firstName} ${row.building.createdBy.lastName}`
+          : null,
+      })),
+      total,
+    };
+  }
+
   async list(
     filter: BuildingListFilter,
   ): Promise<{

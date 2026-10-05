@@ -253,6 +253,24 @@ export interface VacancyRow {
   createdAt: Date;
 }
 
+/** One row of «وحدات غير ممسوحة» — see `BuildingsService.unsurveyedUnits`. */
+export interface UnsurveyedUnitRow {
+  unitId: string;
+  unitCode: string;
+  floor: number;
+  unitType: string;
+  surveyStatus: string;
+  /** Attempts so far — three unanswered doors are a different visit from none. */
+  visitCount: number;
+  lastVisitAt: Date | null;
+  buildingId: string;
+  buildingCode: string;
+  buildingName: string | null;
+  parcelNumber: string;
+  /** Who put the building on the census — shown to those who see everyone's. */
+  addedByName: string | null;
+}
+
 export interface DamageRow {
   id: string;
   buildingId: string | null;
