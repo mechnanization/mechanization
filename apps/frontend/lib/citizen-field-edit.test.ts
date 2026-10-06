@@ -447,3 +447,56 @@ describe('isEditableOn', () => {
     expect(isEditableOn(form({ residence: 'NON_RESIDENT_OWNER' }), 'phone')).toBe(true);
   });
 });
+
+/*
+  «لا يملك رقم هاتف» is a finished answer and the flag decides over the field: a
+  number sent beside it is dropped on save. So a phone typed on «ملاحظات
+  الجودة» for such a file was reported as corrected («صُحِّح السجل») and never
+  stored. The screen now says so instead of offering the edit, and the patch
+  cannot be built with a value the save would drop.
+*/
+describe('a file marked «لا يملك رقم هاتف»', () => {
+  const noPhone = () =>
+    form({
+      contact: {
+        ...form().contact,
+        phone: null as never,
+        whatsapp: null as never,
+        whatsappSameAsPhone: true,
+        hasNoPhone: true,
+        contactPhone: '+96170555444',
+      },
+    });
+
+  it('is not offered a phone correction, and is offered everything else', () => {
+    expect(isEditableOn(noPhone(), 'phone')).toBe(false);
+    for (const field of ['firstName', 'middleName', 'lastName', 'motherName'] as const) {
+      expect(isEditableOn(noPhone(), field)).toBe(true);
+    }
+  });
+
+  it('leaves a file that has a phone as it was, whether the flag is false or absent', () => {
+    expect(isEditableOn(form(), 'phone')).toBe(true);
+    expect(isEditableOn(form({ contact: { ...form().contact, hasNoPhone: false } }), 'phone')).toBe(true);
+  });
+
+  it('never writes the phone it was asked to, and still corrects the name', () => {
+    const patch = citizenFieldPatch(noPhone(), { phone: '+96171000000', lastName: 'سعد' });
+
+    expect((patch.contact as Record<string, unknown>).phone).toBeUndefined();
+    expect(patch.contact).toMatchObject({ hasNoPhone: true, contactPhone: '+96170555444' });
+    expect(patch.personal).toMatchObject({ lastName: 'سعد' });
+  });
+
+  it('is stored as the screen showed it: still no phone, the relative’s number kept', () => {
+    const result = adminUpdateCitizenSubmissionSchema.safeParse(
+      citizenFieldPatch(noPhone(), { phone: '+96171000000', lastName: 'سعد' }),
+    );
+
+    expect(result.error?.issues ?? []).toEqual([]);
+    const contact = (result.data as { contact: Record<string, unknown> }).contact;
+    expect(contact.hasNoPhone).toBe(true);
+    expect(contact.phone).toBeUndefined();
+    expect(contact.contactPhone).toBe('+96170555444');
+  });
+});

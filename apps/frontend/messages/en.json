@@ -1019,7 +1019,8 @@
       "noNumber": "No number",
       "contactPhone": "Contact number (son, daughter or relative)",
       "completeNote": "The record is saved with no phone and no WhatsApp, and both questions close. The contact number is optional and never signs the citizen in.",
-      "closedWithNoPhone": "Closed with «Does not have a phone number»."
+      "closedWithNoPhone": "Closed with «Does not have a phone number».",
+      "compareNote": "This file is marked «Does not have a phone number». To record one, open the file and untick it."
     },
     "phone": {
       "changed": "The citizen signs in with their reference number and this phone. After saving, they must use the new number — the old one (<ltr>{number}</ltr>) will stop working.",
