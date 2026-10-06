@@ -31,8 +31,8 @@ overrides:
   uuid@11: ^11.1.1
   lodash: ^4.18.1
   # Next's optional image-optimisation dependency; inherits libvips CVEs below
-  # 0.35.0.
-  sharp: ^0.35.4
+  # 0.35.0, and the librsvg one (CVE-2026-96889, high, 2026-10-06) below 0.35.5.
+  sharp: ^0.35.5
   # Reached through ajv, which declares `^3.0.1` and resolved to 3.1.4. Five
   # high advisories land below 3.1.6 — host confusion via backslash and via
   # skipped IDN, and three SSRF paths. ajv's own range already admits this, so
