@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `develop@4512abf`, 2026-10-06.
+Last verified against the code: `fix/no-phone-follow-ups` (on `develop@4512abf`), 2026-10-06.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,
@@ -153,6 +153,14 @@ package. Other new UI copy goes in next-intl messages
   preprocesses an empty string to `undefined` so there is only ever one
   branch. A test of a form's payload sends the empty strings the form sends,
   not an absent key.
+- **A rule on a citizen field is written in the strict schema and in its
+  `partial*` twin.** `shapeSubmission` re-parses what the strict pass accepted
+  with `partialContactDetailsSchema` and `partialPropertyEntrySchema`, and those
+  throw rather than report. Relax a field in one only and a value that should
+  save, or be refused with a message, makes `safeParse` throw, which the API
+  answers with a 500 (`landlordPhone` of a شاغل بتسامح is in both). Test through
+  `adminCreateCitizenSubmissionSchema` or `adminUpdateCitizenSubmissionSchema`,
+  never the card or section alone.
 - A field whose requirement depends on another answer — «لا يملك رقم هاتف»
   waiving `phone` — is optional on the *object* and required again in
   `superRefine`. A field cannot waive a requirement its own type has already

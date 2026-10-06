@@ -77,8 +77,18 @@ const NON_RESIDENT_CONTACT = [
   'localContactPhone',
 ] as const;
 
-/** A field the form does not ask on this kind of file cannot be corrected on it. */
+/**
+ * A field the form does not ask on this kind of file cannot be corrected on it.
+ *
+ * Two files do not ask for the phone or the mother's name: «غير مقيم في البلدة»
+ * has no اسم الأم, and a file marked «لا يملك رقم هاتف» has no phone. The second
+ * is a finished answer and the flag decides over the field — a number sent
+ * beside it is dropped on save (`contactDetailsSchema`), so a correction made
+ * here would be reported as made and not stored. Giving the person a phone is
+ * a decision for the full form, where the flag is unticked on purpose.
+ */
 export function isEditableOn(form: CitizenFormData, field: CitizenEditableField): boolean {
+  if (field === 'phone' && form.contact.hasNoPhone === true) return false;
   if (form.residence !== 'NON_RESIDENT_OWNER') return true;
   return field !== 'motherName';
 }
@@ -205,7 +215,8 @@ export function citizenFieldPatch(
   const contact: Record<string, unknown> = { ...form.contact };
 
   for (const [field, value] of Object.entries(edits) as Array<[CitizenEditableField, string]>) {
-    if (value === undefined) continue;
+    // Never a value the save would drop: see `isEditableOn`.
+    if (value === undefined || !isEditableOn(form, field)) continue;
     if (SECTION[field] === 'personal') personal[field] = value;
     else contact[field] = value;
   }

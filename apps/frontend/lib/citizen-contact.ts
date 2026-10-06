@@ -46,6 +46,34 @@ export function carryHeldPhone<T extends Contact>(before: Contact, next: T): T {
 }
 
 /**
+ * The contact section as it goes to the server: with a WhatsApp number only
+ * when one is in use.
+ *
+ * It is in use only when the person has a phone of their own and has said the
+ * WhatsApp number is another one (`whatsappSameAsPhone: false`). Otherwise the
+ * box is not on screen — «نفس رقم الهاتف» stands in for it, or «لا يملك رقم
+ * هاتف» — and what it still holds is something the officer typed and walked
+ * away from: half a number, or the `''` the tick leaves. The server discards it
+ * (the WhatsApp number is then the phone, or nothing), but its validation runs
+ * first, so a leftover that is not a number reddened the step over a field
+ * nobody could see, with no message to explain it.
+ *
+ * Only the submission leaves it out. It stays in the form's own values, so
+ * unticking «نفس رقم الهاتف» brings back what was typed.
+ *
+ * One consequence, and a deliberate one: a phone left «غير مؤكَّد» with
+ * «نفس رقم الهاتف» ticked stores no WhatsApp number even if the hidden box still
+ * holds one. The server used to fall back to it (`phone ?? whatsapp`), against
+ * its own rule that with no phone there is nothing to copy and both end empty.
+ */
+export function withoutUnusedWhatsapp<T extends Contact>(contact: T): T {
+  const inUse = contact.hasNoPhone !== true && contact.whatsappSameAsPhone === false;
+  if (inUse || !('whatsapp' in contact)) return contact;
+  const { whatsapp: _unused, ...rest } = contact;
+  return rest as unknown as T;
+}
+
+/**
  * Whether the file already names a relative's number that is not the typed
  * phone. Then «رقم أحد أقاربه» is no answer to a phone found on another file:
  * there is one «رقم للتواصل», and saying the typed number is a relative's would
