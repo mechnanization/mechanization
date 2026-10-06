@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { ArrowLeft, ExternalLink, GitMerge, Loader2, Pencil, ShieldAlert } from 'lucide-react';
 import {
   arabicOrLatinName,
@@ -468,6 +469,7 @@ function CitizenCompare({
   const labels = getLabels(locale);
   const toast = useToast();
   const router = useRouter();
+  const tNoPhone = useTranslations('citizenForm.noPhone');
   const [merging, setMerging] = useState(false);
 
   const query = useStaffQuery({
@@ -657,6 +659,18 @@ function CitizenCompare({
         <span className="mt-1 block text-xs text-muted-foreground">
           {en ? 'Not asked on a non-resident file.' : 'لا يُسأل في ملف «غير مقيم».'}
         </span>
+      );
+    }
+
+    /*
+      «لا يملك رقم هاتف» is a finished answer, and the flag decides over the
+      field: a number typed here would be dropped on save while the screen said
+      the record was corrected (`isEditableOn`). Said instead of offered, for the
+      same reason as above — and it says where the change is made.
+    */
+    if (target === 'phone' && person.hasNoPhone) {
+      return (
+        <span className="mt-1 block text-xs text-muted-foreground">{tNoPhone('compareNote')}</span>
       );
     }
 

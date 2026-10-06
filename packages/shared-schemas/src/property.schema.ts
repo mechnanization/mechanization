@@ -9,7 +9,12 @@ import {
   isStructuralUnitType,
   type PropertyType,
 } from './enums';
-import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
+import {
+  arabicOrLatinName,
+  internationalPhone,
+  optionalInternationalPhone,
+  uuid,
+} from './primitives';
 
 /**
  * Steps 3–4 — a single repeatable "property card".
@@ -93,11 +98,16 @@ const occupancyBranch = z.discriminatedUnion(
      * phone field there does not produce a phone number, it produces an
      * invented one, or an «غير مؤكَّد» flag on every such record until the flag
      * stops meaning anything.
+     *
+     * An emptied box is absent, not a malformed number. The box is on screen
+     * and not flaggable here, so a number typed and then cleared left `''`
+     * behind, refused as «رقم الهاتف غير صالح» with nothing to do but type one:
+     * the invented number this branch exists to avoid.
      */
     z.object({
       occupancyType: z.literal('FREE_OCCUPANT'),
       landlordName: arabicOrLatinName,
-      landlordPhone: internationalPhone.optional(),
+      landlordPhone: optionalInternationalPhone,
       landlordCitizenId: landlordCitizenIdField,
     }),
   ],
@@ -458,7 +468,9 @@ export const partialPropertyEntrySchema = z
   .object({
     occupancyType: occupancyTypeSchema,
     landlordName: arabicOrLatinName,
-    landlordPhone: internationalPhone,
+    // Reads `''` as absent so a شاغل بتسامح card the strict branch accepts with
+    // an emptied box is shaped, not thrown at (see the FREE_OCCUPANT branch).
+    landlordPhone: optionalInternationalPhone,
     landlordCitizenId: landlordCitizenIdField,
     propertyType: propertyTypeSchema,
     neighborhood: neighborhoodField.optional(),

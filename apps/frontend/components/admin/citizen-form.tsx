@@ -57,7 +57,7 @@ import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
 import { ResidenceChangeDialog } from './residence-change-dialog';
 import { applyResidenceMove, planResidenceMove } from '@/lib/residence-move';
-import { carryHeldPhone } from '@/lib/citizen-contact';
+import { carryHeldPhone, withoutUnusedWhatsapp } from '@/lib/citizen-contact';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
 
@@ -684,10 +684,16 @@ function submittedPersonal(values: CitizenFormValues): Record<string, unknown> {
   return personal;
 }
 
+/**
+ * The contact section as it goes on the wire — and, like the personal one, only
+ * what this kind of file asks. A WhatsApp number nobody is using is left out
+ * (`withoutUnusedWhatsapp`), so a value typed into a box that has since been
+ * hidden cannot fail validation on a field nobody can see.
+ */
 function submittedContact(values: CitizenFormValues): Record<string, unknown> {
-  if (values.residence !== 'NON_RESIDENT_OWNER') return values.contact;
+  if (values.residence !== 'NON_RESIDENT_OWNER') return withoutUnusedWhatsapp(values.contact);
   const { phone, whatsapp, whatsappSameAsPhone, localContactName, localContactPhone } = values.contact;
-  return { phone, whatsapp, whatsappSameAsPhone, localContactName, localContactPhone };
+  return withoutUnusedWhatsapp({ phone, whatsapp, whatsappSameAsPhone, localContactName, localContactPhone });
 }
 
 /**

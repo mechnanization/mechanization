@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `fix/no-phone-follow-ups` (on `develop@4512abf`), 2026-10-06.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -297,20 +297,50 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 
 ## Backend runtime
 
-### An optional phone built with `.or(z.literal(''))` answers in English
+### An optional phone must read an empty box as absent
 
-- **What happens:** a malformed optional phone number is refused with «Invalid
-  input» instead of «رقم الهاتف غير صالح», on an Arabic-first form.
-- **Why:** `internationalPhone.optional().or(z.literal(''))` is a union. A bad
-  number fails all three branches, so zod reports the *union's* error rather
-  than any branch's. Nothing is wrong with `internationalPhone`.
+- **What happens:** two spellings of "optional phone" go wrong. With
+  `.or(z.literal(''))`, a malformed number is refused with «Invalid input»
+  instead of «رقم الهاتف غير صالح», on an Arabic-first form. With a bare
+  `internationalPhone.optional()`, the `''` a cleared box holds is refused as a
+  malformed number, on whatever field it sits, including one the form does not
+  render. `whatsapp` did this: ticking «لا يملك رقم هاتف» writes `''` there and
+  hides the box, so the step went red with no message and a citizen with no
+  phone could not be saved or edited (fixed 2026-10-06). A شاغل بتسامح's
+  `landlordPhone` did it on a visible box that could not be cleared.
+- **Why:** the union fails all three branches, so zod reports the *union's*
+  error rather than any branch's. `.optional()` accepts `undefined` and nothing
+  else, and a controlled input holds `''`. Nothing is wrong with
+  `internationalPhone`.
 - **Do this:** use `optionalInternationalPhone`, which preprocesses the empty
-  string to `undefined` so one branch remains.
-- **Where:** `primitives.ts`. `phone` and `contactPhone` (`contactDetailsSchema`) and
-  `localContactPhone` (`nonResidentOwnerContactSchema`, since 2026-10-06) use it.
-  `whatsapp` and `landlordPhone` are still `internationalPhone.optional()`: no union, so a
-  bad number keeps its Arabic message, but an empty string is refused as a malformed number
-  rather than read as absent.
+  string to `undefined` so one branch remains. Test a form's payload with the
+  empty strings the form sends, not an absent key (`no-phone.spec.ts`,
+  `landlord-phone.spec.ts`). Send only the boxes the form is using
+  (`withoutUnusedWhatsapp`): a value left in a hidden box would otherwise still
+  reach validation.
+- **Where:** `optionalInternationalPhone` is defined in `primitives.ts`.
+  `phone`, `contactPhone` and `whatsapp` in `contactDetailsSchema`, `whatsapp`
+  and `localContactPhone` in `nonResidentOwnerContactSchema`, and `landlordPhone`
+  of a شاغل بتسامح in `property.schema.ts` use it. `landlordPhone` in
+  `building.schema.ts` (the unit matrix) is still a bare
+  `internationalPhone.optional()`: its one writer sends no blank
+  (`building-unit-forms.tsx`).
+
+### A field relaxed in the strict schema and not in its `partial*` twin throws on save
+
+- **What happens:** a submission the strict schema accepts makes `safeParse`
+  *throw* a `ZodError` instead of returning a failure, so the API answers 500
+  for a value that should have saved, or been refused with a message.
+- **Why:** `shapeSubmission` re-parses each section and card with
+  `partialContactDetailsSchema` and `partialPropertyEntrySchema`, whose rules
+  restate the field one by one and which throw rather than report. That is safe
+  only because the strict pass has already vetted every value that reaches
+  them, so the two must accept the same values.
+- **Do this:** change a field in both, and test through
+  `adminCreateCitizenSubmissionSchema` or `adminUpdateCitizenSubmissionSchema`,
+  not the card or section alone (`landlord-phone.spec.ts`).
+- **Where:** `admin-citizen.schema.ts` `shapeSubmission`; `property.schema.ts`
+  `occupancyBranch` and `partialPropertyEntrySchema`.
 
 ### A `.default()` on a citizen form flag arrives absent, not defaulted
 

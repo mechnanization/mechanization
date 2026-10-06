@@ -170,6 +170,71 @@ describe('«لا يملك رقم هاتف» — an elderly citizen with no numbe
   });
 });
 
+/*
+  The box exactly as the form writes it.
+
+  Every test above leaves `whatsapp` out of the payload; the form never does.
+  Ticking the box writes `''` into `phone` *and* `whatsapp` (`ContactStep`) and
+  then hides the WhatsApp input, and unticking writes only `hasNoPhone: false`,
+  so the `''` stays behind. `whatsapp` was the one phone field that read `''` as
+  a malformed number, so the complaint landed on a box nobody could see: the
+  step went red with no message and a citizen with no phone could not be saved,
+  new or edited. These pin the payload the form really sends.
+*/
+const TICKED = { hasNoPhone: true, phone: '', whatsapp: '', whatsappSameAsPhone: true };
+
+describe('«لا يملك رقم هاتف» as the ticked box writes it — empty strings, not absent keys', () => {
+  it('saves a new file, with a relative’s number to reach them on', () => {
+    const contact = contactOf(create({ ...TICKED, contactPhone: '81023433' }));
+    expect(contact.hasNoPhone).toBe(true);
+    expect(contact.phone).toBeUndefined();
+    expect(contact.whatsapp).toBeUndefined();
+    expect(contact.contactPhone).toBe('+96181023433');
+  });
+
+  it('saves a new file with nobody to name', () => {
+    expect(messages(create({ ...TICKED }))).toEqual([]);
+  });
+
+  it('saves a correction, and writes both of the citizen’s numbers as NULL', () => {
+    const result = edit({ ...TICKED, contactPhone: '81023433' });
+    if (!result.success) throw new Error(JSON.stringify(messages(result)));
+    const columns = citizenColumnsForEdit(result.data as never);
+    expect(columns.phone).toBeNull();
+    expect(columns.whatsapp).toBeNull();
+    expect(columns.hasNoPhone).toBe(true);
+    expect(columns.contactPhone).toBe('+96181023433');
+  });
+
+  it('saves once the box is unticked and a number typed, with the empty WhatsApp left behind', () => {
+    const contact = contactOf(
+      create({ hasNoPhone: false, phone: '03111222', whatsapp: '', whatsappSameAsPhone: true }),
+    );
+    expect(contact.phone).toBe('+9613111222');
+    expect(contact.whatsapp).toBe('+9613111222');
+  });
+
+  it('asks for the phone and nothing else when the box is unticked and no number is typed', () => {
+    expect(messages(create({ hasNoPhone: false, phone: '', whatsapp: '', whatsappSameAsPhone: true }))).toEqual([
+      'contact.phone: رقم الهاتف مطلوب',
+    ]);
+  });
+
+  it('reads an empty WhatsApp box as an unanswered question, not as a malformed number', () => {
+    for (const whatsapp of ['', '   ']) {
+      expect(messages(create({ phone: '70123456', whatsappSameAsPhone: false, whatsapp }))).toEqual([
+        'contact.whatsapp: رقم الواتساب مطلوب',
+      ]);
+    }
+  });
+
+  it('still refuses a WhatsApp number that is malformed', () => {
+    expect(messages(create({ phone: '70123456', whatsappSameAsPhone: false, whatsapp: '12' }))).toEqual([
+      'contact.whatsapp: رقم الهاتف غير صالح',
+    ]);
+  });
+});
+
 describe('«رقم للتواصل» — a relative’s number, recorded as a relative’s', () => {
   it('is accepted and normalised beside a phone the citizen does have', () => {
     const contact = contactOf(create({ phone: '70123456', contactPhone: '03 999888' }));
