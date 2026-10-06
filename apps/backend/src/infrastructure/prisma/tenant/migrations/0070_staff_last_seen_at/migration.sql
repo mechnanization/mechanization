@@ -1,0 +1,45 @@
+-- 0070_staff_last_seen_at
+--
+-- «متصل الآن» / «آخر ظهور» — whether a staff account is working right now,
+-- and when it last was.
+--
+-- == Why a column, and not `lastLoginAt` =================================
+--
+-- `lastLoginAt` already exists and cannot answer this. It is stamped once, at
+-- sign-in, and a staff access token lasts fifteen minutes behind a refresh
+-- chain that can run for a week (0059). So an officer who signed in at eight
+-- and has been registering citizens all morning has a `lastLoginAt` of eight,
+-- and one who signed in two minutes ago and shut the laptop has a
+-- `lastLoginAt` of two minutes ago. Read as presence it is wrong in both
+-- directions, and wrong in the direction that matters: it would report people
+-- as present who are not.
+--
+-- This is stamped from activity instead — the revocation check that already
+-- runs on every authenticated request — so it means "this account made a
+-- request", which is the only thing a server can honestly know about it.
+--
+-- == Why not Redis alone =================================================
+--
+-- Presence could be a key with a TTL and no column at all. But the second
+-- half of the request is «آخر ظهور»: an account last seen three days ago has
+-- to say so, and a key whose whole purpose is to expire cannot. Redis still
+-- does the throttling — see `StaffPresenceService`, which writes this column
+-- at most once a minute per account rather than once per request.
+--
+-- == Staff only ==========================================================
+--
+-- Nothing stamps a citizen. `users` holds both kinds, and the citizen portal
+-- is the busier half by far: stamping it would put a write on the hot path of
+-- every portal request to answer a question no screen asks. The presence
+-- service checks `kind` before it writes, and this column stays NULL for
+-- every citizen row for ever.
+--
+-- == Safety ==============================================================
+--
+-- Additive only: one nullable column, no default, no existing row touched. A
+-- staff member who has not made a request since the deploy reads NULL, which
+-- the staff page renders as «غير متصل» with no «آخر ظهور» — the same thing it
+-- shows for an account that has never signed in. The previous build keeps
+-- working against this schema and a rollback is a redeploy.
+
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "lastSeenAt" TIMESTAMP(3);
