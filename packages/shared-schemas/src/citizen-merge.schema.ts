@@ -184,17 +184,23 @@ export interface CitizenMergeBlock {
   message: string;
 }
 
-/** A field both files answer, differently. The kept file's answer stays. */
+/**
+ * A field both files answer, differently. The kept file's answer stays.
+ *
+ * Each answer as stored: text, or a boolean for a yes-or-no (`isLebanese`,
+ * `hasNoPhone`), which the dialog says in the page's language. An enum stays
+ * its code, labelled by the dialog.
+ */
 export interface CitizenMergeFieldConflict {
   field: string;
-  keep: string | null;
-  absorb: string | null;
+  keep: string | boolean | null;
+  absorb: string | boolean | null;
 }
 
-/** A field the kept file is missing and takes from the other. */
+/** A field the kept file is missing and takes from the other — the answer as in a conflict. */
 export interface CitizenMergeFieldFill {
   field: string;
-  value: string | null;
+  value: string | boolean | null;
 }
 
 /** A card as the dialog names it. */

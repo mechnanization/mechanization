@@ -39,9 +39,7 @@ import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
 import { PaymentReceipt, type RecordedMovement } from '@/components/admin/payment-receipt';
 import { cn } from '@/lib/utils';
-
-/** Mirrors `@Roles` on `PATCH fees/payments/:id/settle`; the server is the enforcement. */
-const SETTLE_ROLES = ['SUPER_ADMIN', 'COLLECTOR', 'ACCOUNTANT'];
+import { PAYMENT_SETTLE_ROLES, hasRole } from '@/lib/staff-roles';
 
 /** What the citizen is paying in. «BOTH» is «20$ و200,000 ليرة» handed over together. */
 type PayIn = 'LBP' | 'FOREIGN' | 'BOTH';
@@ -89,7 +87,8 @@ export default function SettleCashPage({
 
   // A role that cannot settle has nothing to do here; the file is where it came from.
   useEffect(() => {
-    if (user && !SETTLE_ROLES.includes(user.role)) router.replace(citizenHref);
+    // `PAYMENT_SETTLE_ROLES` mirrors the route's `@Roles`; the server is the enforcement.
+    if (user && !hasRole(PAYMENT_SETTLE_ROLES, user.role)) router.replace(citizenHref);
   }, [user, router, citizenHref]);
 
   const profile = useStaffQuery({
@@ -678,6 +677,8 @@ export default function SettleCashPage({
               if (!open) router.push(citizenHref);
             }}
             tenant={tenant}
+            // Only the money roles reach this page, and each of them may send a citizen their reference.
+            canSend
             locale={locale}
             citizen={citizen}
             payment={receipt ? { ...payment, remaining: receipt.remaining } : null}

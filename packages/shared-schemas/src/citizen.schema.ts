@@ -287,6 +287,13 @@ export const contactDetailsSchema = contactDetailsObject
         message: 'رقم الواتساب مطلوب',
       });
     }
+    if (data.contactPhone && data.phone && data.contactPhone === data.phone) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['contactPhone'],
+        message: 'رقم للتواصل هو رقم المواطن نفسه — اتركه فارغاً أو أدخل رقم أحد أقاربه',
+      });
+    }
     if (
       data.actualHouseholdMembers != null &&
       data.totalRegisteredMembers != null &&
@@ -398,7 +405,7 @@ const nonResidentOwnerContactObject = z.object({
   whatsappSameAsPhone: z.boolean().default(true),
   whatsapp: internationalPhone.optional(),
   localContactName: z.string().trim().max(120, 'الاسم طويل جداً').optional(),
-  localContactPhone: internationalPhone.optional().or(z.literal('')),
+  localContactPhone: optionalInternationalPhone,
 });
 
 export const nonResidentOwnerContactSchema = nonResidentOwnerContactObject

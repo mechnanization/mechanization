@@ -28,6 +28,7 @@ const person = (over: Partial<PlanPerson> & { id: string }): PlanPerson => ({
   motherName: null,
   phone: null,
   whatsapp: null,
+  hasNoPhone: false,
   contactPhone: null,
   gender: null,
   nationality: null,
@@ -406,5 +407,120 @@ describe('planFields — the person afterwards', () => {
   it('reads one phone typed two ways as one answer', () => {
     const plan = planFields({ ...keep, phone: '+961 76 000 009' }, absorb);
     expect(plan.conflicts.some((conflict) => conflict.field === 'phone')).toBe(false);
+  });
+});
+
+/*
+  «لا يملك رقم هاتف» through a merge. The typical pair: the old file holding the
+  son's number in `phone`, and the corrected one saying the father has none.
+*/
+describe('planFields — «لا يملك رقم هاتف»', () => {
+  const corrected = person({ id: 'K', hasNoPhone: true, phone: null, whatsapp: null });
+  const old = person({ id: 'X', phone: '+96170111222', whatsapp: '+96170111222' });
+
+  it('never refills the phone of a kept file that says it has none — the number becomes its «رقم للتواصل»', () => {
+    const plan = planFields(corrected, old);
+    const fields = plan.fills.map((fill) => fill.field);
+    expect(fields).not.toContain('phone');
+    expect(fields).not.toContain('whatsapp');
+    expect(plan.fills).toContainEqual({ field: 'contactPhone', value: '+96170111222' });
+  });
+
+  it('keeps the kept file’s own «رقم للتواصل» rather than replacing it', () => {
+    const plan = planFields({ ...corrected, contactPhone: '+96171999888' }, old);
+    expect(plan.fills.some((fill) => fill.field === 'contactPhone')).toBe(false);
+  });
+
+  it('shows the administrator that the two files disagree about the phone', () => {
+    expect(planFields(corrected, old).conflicts.map((conflict) => conflict.field)).toContain('hasNoPhone');
+  });
+
+  it('shows a yes-or-no as a boolean, for the dialog to say in the page’s language', () => {
+    const plan = planFields(corrected, { ...old, hasNoPhone: false });
+    expect(plan.conflicts).toContainEqual({ field: 'hasNoPhone', keep: true, absorb: false });
+    const filled = planFields(person({ id: 'K' }), { ...corrected, id: 'X' });
+    expect(filled.fillsForDisplay).toContainEqual({ field: 'hasNoPhone', value: true });
+  });
+
+  it('takes «لا يملك رقم هاتف» onto a kept file with no phone and no answer', () => {
+    const plan = planFields(person({ id: 'K' }), { ...corrected, id: 'X', contactPhone: '+96171999888' });
+    expect(plan.fills).toEqual(
+      expect.arrayContaining([
+        { field: 'hasNoPhone', value: true },
+        { field: 'contactPhone', value: '+96171999888' },
+      ]),
+    );
+    expect(plan.fills.some((fill) => fill.field === 'phone')).toBe(false);
+    // Filled, so not also listed as the kept file's «لا» that stays.
+    expect(plan.conflicts.some((conflict) => conflict.field === 'hasNoPhone')).toBe(false);
+  });
+
+  it('lists no disagreement against a file that never answered the phone question', () => {
+    const plan = planFields(corrected, person({ id: 'X' }));
+    expect(plan.conflicts.some((conflict) => conflict.field === 'hasNoPhone')).toBe(false);
+  });
+
+  it('never fills a «رقم للتواصل» that is the kept file’s own phone', () => {
+    const plan = planFields(
+      person({ id: 'K', phone: '+96170111222' }),
+      person({ id: 'X', contactPhone: '+961 70 111 222' }),
+    );
+    expect(plan.fills.some((fill) => fill.field === 'contactPhone')).toBe(false);
+  });
+
+  it('never marks a kept file with a WhatsApp number of its own as having no phone', () => {
+    const plan = planFields(person({ id: 'K', phone: null, whatsapp: '+96171555666' }), { ...corrected, id: 'X' });
+    expect(plan.fills.some((fill) => fill.field === 'hasNoPhone')).toBe(false);
+    expect(plan.conflicts.map((conflict) => conflict.field)).toContain('hasNoPhone');
+  });
+
+  it('never fills as the phone a number the kept file records as its «رقم للتواصل»', () => {
+    const plan = planFields(
+      person({ id: 'K', phone: null, contactPhone: '+96170111222' }),
+      person({ id: 'X', phone: '+961 70 111 222', whatsapp: '+96170111222' }),
+    );
+    expect(plan.fills.some((fill) => fill.field === 'phone' || fill.field === 'whatsapp')).toBe(false);
+  });
+
+  /*
+    0072's two rules, over every combination of the phone answers a pair can
+    hold, merged both ways: whatever the plan fills, the kept row afterwards is
+    one the database accepts.
+  */
+  it('never plans a kept row that 0072 would refuse', () => {
+    const own = [null, '+96170111222'];
+    const states = own.flatMap((phone) =>
+      own.flatMap((whatsapp) =>
+        [null, '+96170111222', '+96171999888'].flatMap((contactPhone) =>
+          [false, true].map((hasNoPhone) => ({ phone, whatsapp, contactPhone, hasNoPhone })),
+        ),
+      ),
+    );
+    // Only rows that already satisfy the rules can be on either side of a merge.
+    const valid = states.filter(
+      (s) =>
+        !(s.hasNoPhone && (s.phone !== null || s.whatsapp !== null)) &&
+        !(s.contactPhone !== null && s.phone !== null && s.contactPhone === s.phone),
+    );
+    for (const k of valid) {
+      for (const x of valid) {
+        const plan = planFields(person({ id: 'K', ...k }), person({ id: 'X', ...x }));
+        const after: Record<string, unknown> = { ...k };
+        for (const fill of plan.fills) after[fill.field] = fill.value;
+        const phone = after.phone as string | null;
+        const whatsapp = after.whatsapp as string | null;
+        const contact = after.contactPhone as string | null;
+        expect([k, x, !(after.hasNoPhone === true && (phone !== null || whatsapp !== null))]).toEqual([k, x, true]);
+        expect([k, x, !(contact !== null && phone !== null && contact.replace(/\D/g, '') === phone.replace(/\D/g, ''))]).toEqual([k, x, true]);
+      }
+    }
+  });
+
+  it('gives a non-resident survivor neither answer — the household form owns them', () => {
+    const plan = planFields(
+      person({ id: 'K', residence: 'NON_RESIDENT_OWNER', phone: '+96176000001' }),
+      { ...corrected, id: 'X', contactPhone: '+96171999888' },
+    );
+    expect(plan.fills.some((fill) => fill.field === 'hasNoPhone' || fill.field === 'contactPhone')).toBe(false);
   });
 });

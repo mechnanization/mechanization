@@ -24,7 +24,7 @@ import {
   withoutFlagged,
   type FieldFlag,
 } from './field-flag.schema';
-import { uuid } from './primitives';
+import { optionalInternationalPhone, uuid } from './primitives';
 import {
   citizenResidenceSchema,
   isDwellingUnitType,
@@ -338,6 +338,9 @@ function strictIssuePaths(input: SubmissionInput, excused: ReadonlySet<string>):
     'contact',
     schemas.contact.safeParse(withoutFlagged(input.contact, 'contact', excused)),
   );
+  for (const issue of householdPhoneIssues(input)) {
+    if (!excused.has(issue.path)) paths.push(issue.path);
+  }
   input.properties.forEach((card, index) => {
     const prefix = `properties.${index}`;
     collect(prefix, propertyEntrySchema.safeParse(withoutFlagged(card, prefix, excused)));
@@ -405,9 +408,19 @@ function autoFlags(input: SubmissionInput, explicit: ReadonlySet<string>): Field
  * same input and the function is pure, so they cannot disagree.
  */
 function allFlags(input: SubmissionInput): FieldFlag[] {
-  const explicit = flaggedPaths(input.flags);
-  const auto = autoFlags(input, explicit);
-  return [...input.flags, ...auto, ...unasked(input, new Set([...explicit, ...auto.map((flag) => flag.path)]))];
+  /*
+    «لا يملك رقم هاتف» is the complete answer to the phone. A «غير مؤكَّد» flag
+    on the phone or WhatsApp sent beside it — a stale draft, a non-form client —
+    would park a finished file in «يتطلب مراجعة» over a number the person does
+    not have, so it is dropped here, before any pass reads the flags.
+  */
+  const own =
+    input.residence !== 'NON_RESIDENT_OWNER' && input.contact?.hasNoPhone === true
+      ? input.flags.filter((flag) => !(PHONE_PATHS as readonly string[]).includes(flag.path))
+      : input.flags;
+  const explicit = flaggedPaths(own);
+  const auto = autoFlags({ ...input, flags: own }, explicit);
+  return [...own, ...auto, ...unasked(input, new Set([...explicit, ...auto.map((flag) => flag.path)]))];
 }
 
 const UNIT_STATUS_NOT_ASKED =
@@ -585,6 +598,49 @@ function ownerUnitStatusIssues(card: unknown, prefix: string): string[] {
   return [];
 }
 
+/**
+ * «رقم الهاتف مطلوب» / «رقم الواتساب مطلوب» for a household file, checked on
+ * the raw submission.
+ *
+ * The contact schema waives `phone` for «لا يملك رقم هاتف», so the requirement
+ * lives in its refinement — and a zod refinement behind a transform runs only
+ * once the *rest* of the section is valid. An officer who flagged «الحالة
+ * الاجتماعية», or used «حفظ سريع», and left the phone blank without ticking the
+ * box had the record accepted with no phone, no flag and no answer: the state
+ * docs/database.md says cannot exist. Checked here, on what was sent, the
+ * requirement stands whatever else in the section is missing. The refinement
+ * stays for the direct users of `contactDetailsSchema`.
+ *
+ * A non-resident's contact section has its own required phone, a plain field
+ * the strict schema already reports.
+ */
+const PHONE_PATHS = ['contact.phone', 'contact.whatsapp'] as const;
+
+function householdPhoneIssues(input: SubmissionInput): Array<{ path: string; message: string }> {
+  if (input.residence === 'NON_RESIDENT_OWNER') return [];
+  const contact = input.contact ?? {};
+  if (contact.hasNoPhone === true) return [];
+  const issues: Array<{ path: string; message: string }> = [];
+  if (isAbsent(contact.phone)) issues.push({ path: 'contact.phone', message: 'رقم الهاتف مطلوب' });
+  if (contact.whatsappSameAsPhone === false && isAbsent(contact.whatsapp)) {
+    issues.push({ path: 'contact.whatsapp', message: 'رقم الواتساب مطلوب' });
+  }
+  /*
+    «رقم للتواصل» is somebody else's number. Compared normalised, so «03 123456»
+    and «+9613123456» are the same number; the CHECK in 0072 holds the table to
+    it, and this keeps a save from reaching that CHECK as a 500.
+  */
+  const own = optionalInternationalPhone.safeParse(contact.phone);
+  const relative = optionalInternationalPhone.safeParse(contact.contactPhone);
+  if (own.success && relative.success && own.data && relative.data && own.data === relative.data) {
+    issues.push({
+      path: 'contact.contactPhone',
+      message: 'رقم للتواصل هو رقم المواطن نفسه — اتركه فارغاً أو أدخل رقم أحد أقاربه',
+    });
+  }
+  return issues;
+}
+
 /** Every issue the strict schemas raise that no flag accounts for. */
 function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
   const flags = allFlags(input);
@@ -599,10 +655,13 @@ function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
     return;
   }
 
+  const reported = new Set<string>();
   const report = (prefix: string, result: z.SafeParseReturnType<unknown, unknown>) => {
     if (result.success) return;
     for (const issue of result.error.issues) {
-      if (paths.has(issuePath(prefix, issue.path))) continue;
+      const path = issuePath(prefix, issue.path);
+      if (paths.has(path)) continue;
+      reported.add(path);
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: [...prefix.split('.'), ...issue.path],
@@ -618,6 +677,10 @@ function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
     schemas.personal.safeParse(withoutFlagged(input.personal, 'personal', paths)),
   );
   report('contact', schemas.contact.safeParse(withoutFlagged(input.contact, 'contact', paths)));
+  for (const issue of householdPhoneIssues(input)) {
+    if (paths.has(issue.path) || reported.has(issue.path)) continue;
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: issue.path.split('.'), message: issue.message });
+  }
 
   input.properties.forEach((card, index) => {
     const prefix = `properties.${index}`;
@@ -930,21 +993,43 @@ export const adminUpdateCitizenSubmissionSchema = z
 export type AdminCitizenUpdateSubmission = z.infer<typeof adminUpdateCitizenSubmissionSchema>;
 
 /**
- * Deactivating a file, or reactivating it.
+ * «أرشفة الملف» and its undo — the only way a citizen file leaves the register.
  *
- * A deactivated citizen is skipped by the biller, so «why did this file stop
- * being billed?» is a question the trail has to answer. `reason` and `movedOn`
- * are optional for older clients; «تغيير الإقامة» sends both when someone who
- * moved away is left holding nothing here, and they go on the audit row.
+ * A citizen record is never deleted (decision, 2026-10-05): a public register
+ * keeps who was registered, and erasing a row erases the municipality's own
+ * history of it. A file opened by mistake, a duplicate, or a person who moved
+ * away is archived instead — `isActive` false, every row it owns kept, skipped
+ * by the biller and by sign-in, and back with one click if it was wrong.
+ *
+ * Archiving requires a written answer to two questions, which go on the Tier 1
+ * audit row: **why** (`reason`) and **who asked** (`requestedBy` — the citizen
+ * themselves, a relative, the mukhtar, an officer). Reactivating requires
+ * neither. `movedOn` is sent by «تغيير الإقامة» when someone moved away.
  */
-export const setCitizenActiveSchema = z.object({
-  isActive: z.boolean(),
-  reason: z.string().trim().min(3, 'اذكر السبب').max(500, 'السبب طويل جداً').optional(),
-  movedOn: z.coerce
-    .date({ invalid_type_error: 'تاريخ الانتقال غير صالح' })
-    .refine((value) => value.getTime() <= Date.now() + 60_000, 'تاريخ الانتقال في المستقبل')
-    .optional(),
-});
+export const setCitizenActiveSchema = z
+  .object({
+    isActive: z.boolean(),
+    reason: z.string().trim().min(3, 'اذكر السبب').max(500, 'السبب طويل جداً').optional(),
+    requestedBy: z
+      .string()
+      .trim()
+      .min(2, 'اذكر من طلب الأرشفة')
+      .max(200, 'اسم صاحب الطلب طويل جداً')
+      .optional(),
+    movedOn: z.coerce
+      .date({ invalid_type_error: 'تاريخ الانتقال غير صالح' })
+      .refine((value) => value.getTime() <= Date.now() + 60_000, 'تاريخ الانتقال في المستقبل')
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.isActive) return;
+    if (!value.reason) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['reason'], message: 'اذكر سبب الأرشفة' });
+    }
+    if (!value.requestedBy) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['requestedBy'], message: 'اذكر من طلب الأرشفة' });
+    }
+  });
 
 export type SetCitizenActive = z.infer<typeof setCitizenActiveSchema>;
 

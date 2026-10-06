@@ -64,6 +64,13 @@ export interface BillableUnit {
    * with no canonical unit has nothing to disagree with.
    */
   underReview: boolean;
+  /**
+   * The flat's current damage reading says nobody can live in it — its
+   * occupancy fee is held until a re-inspection says otherwise (decision,
+   * 2026-10-05; `assessCitizen`). Like `underReview`, only ever true for a
+   * flat the census holds: a reading is about a census unit or building.
+   */
+  uninhabitable: boolean;
   /** The canonical unit, when there is one — so a held flat is counted once, however many cards bill it. */
   unitId?: string | null;
 }
@@ -89,6 +96,8 @@ export interface LinkedUnit {
   unitStatus?: string | null;
   /** See `BillableUnit.underReview`. */
   underReview?: boolean;
+  /** See `BillableUnit.uninhabitable`. */
+  uninhabitable?: boolean;
 }
 
 /** The stored shape this reads — a property card and its unit rows. */
@@ -105,6 +114,8 @@ export interface BillablePropertyEntry {
    * twin of `LinkedUnit.underReview`, for the shape that has no unit rows.
    */
   underReview?: boolean;
+  /** A منزل whose one flat is read «غير صالحة للسكن» — the card-level twin of `LinkedUnit.uninhabitable`. */
+  uninhabitable?: boolean;
   /** The one flat of the structure a منزل card names, when billing found it. */
   soleUnitId?: string | null;
   /**
@@ -143,6 +154,7 @@ export interface BillablePropertyEntry {
     unitArea: { toString(): string } | number | null;
     unitStatus?: string | null;
     underReview?: boolean;
+    uninhabitable?: boolean;
   }>;
 }
 
@@ -218,6 +230,7 @@ function heldThroughOccupancy(entry: BillablePropertyEntry): BillableUnit[] | nu
     propertyType: entry.propertyType,
     propertyNumber: entry.propertyNumber,
     underReview: occupancy.underReview ?? false,
+    uninhabitable: occupancy.uninhabitable ?? false,
     unitId: occupancy.unitId ?? null,
   }));
 }
@@ -300,6 +313,7 @@ function collectBillableUnits(entry: BillablePropertyEntry): BillableUnit[] {
       propertyType: entry.propertyType,
       propertyNumber: entry.propertyNumber,
       underReview: line.unit?.underReview ?? false,
+      uninhabitable: line.unit?.uninhabitable ?? false,
       unitId: line.unit?.id ?? null,
     }));
   }
@@ -324,6 +338,7 @@ function collectBillableUnits(entry: BillablePropertyEntry): BillableUnit[] {
       propertyType: entry.propertyType,
       propertyNumber: entry.propertyNumber,
       underReview: entry.underReview ?? false,
+      uninhabitable: entry.uninhabitable ?? false,
       unitId: entry.soleUnitId ?? null,
     },
   ];

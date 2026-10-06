@@ -4,7 +4,6 @@ import { StaffRole, User } from '../../domain/entities/user.entity';
 import { ConflictError } from '../../domain/errors/domain-error';
 import {
   CitizenChoice,
-  CitizenIdentityInput,
   DeletedStaffSummary,
   StaffSummary,
   UserRepository,
@@ -141,83 +140,6 @@ export class PrismaUserRepository implements UserRepository {
       displayName: `${row.firstName} ${row.lastName}`,
       identityDocLastDigits: (row.identityDocNumber ?? '').slice(-2).padStart(2, '•'),
     }));
-  }
-
-  /**
-   * Keyed on the identity document rather than the phone: re-submitting from a
-   * relative's phone must update the same person, not create a second record.
-   */
-  async upsertCitizen(input: CitizenIdentityInput, referenceNumber: string): Promise<string> {
-    /*
-      An upsert needs the key it upserts on.
-
-      Since «غير مؤكَّد» flags exist, a citizen may be registered with no
-      identity document at all — and this method has nothing to match such a
-      person on. Refused loudly rather than quietly turned into an insert:
-      "upsert" is a promise not to duplicate anyone, and it cannot be kept
-      here. The write path that *can* handle it is
-      `PrismaRegistrationRepository.submit`, which chooses between upsert and
-      insert with the same question in hand.
-    */
-    if (!input.identityDocType || !input.identityDocNumber) {
-      throw new ConflictError(
-        'لا يمكن مطابقة هذا السجل بدون نوع ورقم وثيقة الإثبات',
-      );
-    }
-    const identityDocNumber = input.identityDocNumber;
-
-    try {
-      const row = await this.db.user.upsert({
-        where: {
-          identityDocType_identityDocNumber: {
-            identityDocType: input.identityDocType as never,
-            identityDocNumber,
-          },
-        },
-        update: {
-          phone: input.phone,
-          whatsapp: input.whatsapp ?? input.phone,
-          firstName: input.firstName,
-          middleName: input.middleName ?? null,
-          lastName: input.lastName,
-          gender: input.gender as never,
-          nationality: input.nationality,
-          isLebanese: input.isLebanese,
-          residencyNumber: input.residencyNumber ?? null,
-          residentStatus: input.residentStatus as never,
-          civilRecordNumber: input.civilRecordNumber,
-          totalRegisteredMembers: input.totalRegisteredMembers ?? input.actualHouseholdMembers,
-          actualHouseholdMembers: input.actualHouseholdMembers,
-          maritalStatus: input.maritalStatus as never,
-        },
-        create: {
-          kind: 'CITIZEN',
-          tenantSlug: this.tenantContext.tenantSlug,
-          phone: input.phone,
-          whatsapp: input.whatsapp ?? input.phone,
-          firstName: input.firstName,
-          middleName: input.middleName ?? null,
-          lastName: input.lastName,
-          gender: input.gender as never,
-          nationality: input.nationality,
-          isLebanese: input.isLebanese,
-          residencyNumber: input.residencyNumber ?? null,
-          residentStatus: input.residentStatus as never,
-          identityDocType: input.identityDocType as never,
-          identityDocNumber,
-          civilRecordNumber: input.civilRecordNumber,
-          totalRegisteredMembers: input.totalRegisteredMembers ?? input.actualHouseholdMembers,
-          actualHouseholdMembers: input.actualHouseholdMembers,
-          maritalStatus: input.maritalStatus as never,
-          referenceNumber,
-        },
-        select: { id: true },
-      });
-
-      return row.id;
-    } catch (error) {
-      throw this.translate(error);
-    }
   }
 
   /** Stamps `lastLoginAt` on a successful sign-in. */

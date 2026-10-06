@@ -1,4 +1,7 @@
 import { Controller, Get, Param } from '@nestjs/common';
+import {
+  WORKING_STAFF_ROLES,
+} from '@mechanization/shared-schemas';
 import { DocumentService } from '../../application/features/documents/document.service';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
@@ -8,7 +11,7 @@ import type { SessionClaims } from '../../application/features/identity/identity
 export class DocumentController {
   constructor(private readonly documents: DocumentService) {}
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...WORKING_STAFF_ROLES)
   @Get('registration/:registrationId')
   async listForRegistration(@Param('registrationId') registrationId: string) {
     const documents = await this.documents.listForRegistration(registrationId);
@@ -32,7 +35,7 @@ export class DocumentController {
    * of someone's national ID is exactly the staff action an audit trail exists
    * to capture.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...WORKING_STAFF_ROLES)
   @Get(':id/url')
   async getViewUrl(
     @Param('tenantSlug') tenantSlug: string,

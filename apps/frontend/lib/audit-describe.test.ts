@@ -77,3 +77,64 @@ describe('describeAudit — reasons', () => {
     expect(written.quotes.find((line) => line.label === 'السبب')?.value).toBe('المحل الثاني سُجّل خطأً');
   });
 });
+
+describe('describeAudit — the archive, the relative’s number, and damage readings', () => {
+  it('quotes who asked for a file to be archived, beside the reason', () => {
+    const archived = describeAudit(
+      { ...entry(null, { reason: 'ملف مكرّر لنفس الشخص', requestedBy: 'المختار' }), action: 'CITIZEN_DEACTIVATED' },
+      'ar',
+    );
+    expect(archived.quotes).toEqual(
+      expect.arrayContaining([
+        { label: 'السبب', value: 'ملف مكرّر لنفس الشخص' },
+        { label: 'بطلب من', value: 'المختار' },
+      ]),
+    );
+    // Said once, as a quote — not again as a raw field.
+    expect([...archived.facts, ...archived.details].some((line) => /requested/i.test(line.label))).toBe(false);
+  });
+
+  it('names a relative’s number as changed without ever valuing it', () => {
+    const described = describeAudit(entry(null, { changed: ['contactPhone', 'hasNoPhone'], hasNoPhone: true }), 'ar');
+    const sensitive = described.facts.find((fact) => /لا تُحفظ القيمة/.test(fact.label));
+    expect(sensitive?.value).toMatch(/رقم للتواصل/);
+    expect(described.facts.some((fact) => fact.label === 'لا يملك رقم هاتف' && fact.value === 'نعم')).toBe(true);
+  });
+
+  it('says a link was made through a relative’s number', () => {
+    const linked = describeAudit({ ...entry(null, { matchedBy: 'CONTACT' }), action: 'LANDLORD_LINKED' }, 'ar');
+    expect(linked.facts).toContainEqual({ label: 'طريقة المطابقة', value: expect.stringMatching(/أحد أقاربه/) });
+  });
+
+  it('reads a damage reading in words, its re-inspection as a calendar day', () => {
+    const reading = describeAudit(
+      {
+        ...entry(null, {
+          level: 'UNSAFE_EVACUATE',
+          unitCode: 'Z-1-45-A-101',
+          habitable: false,
+          reinspectAt: '2026-11-15',
+          source: 'FIELD_VISIT',
+        }),
+        action: 'DAMAGE_RECORDED',
+        entityType: 'Building',
+      },
+      'ar',
+    );
+    const value = (label: string) => reading.facts.find((fact) => fact.label === label)?.value;
+    expect(value('الوحدة')).toBe('Z-1-45-A-101');
+    expect(value('مستوى الضرر')).not.toBe('UNSAFE_EVACUATE');
+    expect(value('صالحة للسكن')).toBe('لا');
+    expect(value('مصدر التقييم')).not.toBe('FIELD_VISIT');
+    expect(value('موعد إعادة الكشف')).toMatch(/15/);
+    expect(value('موعد إعادة الكشف')).not.toMatch(/:/);
+  });
+
+  it('writes the English page in English, separators included', () => {
+    const described = describeAudit(entry(null, { changed: ['fatherName', 'motherName', 'phone'] }), 'en');
+    const all = [...described.facts, ...described.quotes, ...described.details, ...described.changes]
+      .flatMap((line) => Object.values(line))
+      .join(' ');
+    expect(all).not.toMatch(/[؀-ۿ]/);
+  });
+});

@@ -86,6 +86,17 @@ duplicate — do not just warn".
   the «سجل مشابه موجود» flag for the quality screen.
 - **NONE** — nothing is shown.
 
+The same dialog asks **whose number** a phone is when it is also the number of
+somebody this officer registered in the last two hours, or the landlord's on
+one of the record's own cards: «رقم مشترك بينهم» (a family line, with a reason),
+«ليس رقمه» (the field is emptied and flagged «غير مؤكَّد»), or «سأصحّح الرقم». On
+a household record there is a fourth answer, «رقم أحد أقاربه — لا يملك رقماً
+خاصاً»: the file is saved «لا يملك رقم هاتف» with that number as its «رقم
+للتواصل», which no sign-in and no duplicate score reads, and nothing is flagged
+(`DuplicateReviewDialog`, `outcome.relative`). It is not offered when the file
+already names a different relative's number: a file holds one «رقم للتواصل», and
+the officer's stays (`namesAnotherRelative`, `lib/citizen-contact.ts`).
+
 Edits are never refused by the rule: correcting a file must stay possible.
 Two existing files that turn out to be one person are merged (§3).
 
@@ -117,14 +128,23 @@ third-party card locked:
   and no tool cancels a bill. The accountant sees it in «فواتير تأثّرت
   بتصحيحات» (merges count as corrections).
 - Fields the kept file lacks are filled from the other; fields both answer
-  differently keep the kept file's answer (listed in the dialog). The identity
-  document is unique, so it moves.
+  differently keep the kept file's answer (listed in the dialog, a yes-or-no and
+  an enum said in the page's language — the preview carries them as a boolean
+  and a code). The identity document is unique, so it moves.
 - «غير مؤكَّد» flags are re-anchored to the card and row they named — read with
   the edit form's own query, and written at the positions that query returns
   after the move. Cards saved in one filing share `createdAt` to the
   microsecond, so their order is whatever the database returns (see §5).
-- The absorbed citizen is deactivated and its portal sessions end. Before
-  commit the merge checks that nothing landed on it meanwhile.
+- The absorbed citizen is made inactive — shown as «مدموج في ملف آخر», never
+  as «مؤرشف» — and its portal sessions end. Before commit the merge checks that
+  nothing landed on it meanwhile.
+- «لا يملك رقم هاتف» is honoured. A kept file marked so takes no phone or
+  WhatsApp from the other side, and the absorbed file's number becomes its «رقم
+  للتواصل» if it has none — the move the form makes when the box is ticked. A
+  kept file with no phone and no answer takes the absorbed file's answer: its
+  numbers, or «لا يملك رقم هاتف». «رقم للتواصل» is a household file's field and
+  is never filled equal to the kept phone (`0072` refuses the pair). The undo
+  puts all of it back.
 
 Refused (with the step that unblocks it): same file, a deactivated or
 already-merged file, a flat owned on one file and rented on the other, a
@@ -141,8 +161,9 @@ in reverse order). Flag reasons kept for the undo are redacted once it has run.
 ### A merged-away file
 
 `assertNotMergedAway` refuses edits, reactivation, occupancies, a sale to it,
-and individual charges. Cases refuse any inactive file. Deleting either side of
-a standing merge is refused. Pickers skip it, the register shows «مدموج في ملف
+and individual charges. Cases refuse any inactive file. A citizen file is
+never deleted (decision of 2026-10-05; it is archived instead), so neither side
+of a merge can disappear from under it. Pickers skip it, the register shows «مدموج في ملف
 آخر», and dashboards leave it out of population counts. The kept file's history
 includes the absorbed file's trail. The absorbed file's رقم مرجعي no longer
 logs in to the portal; that is deliberate — following the merge would hand one

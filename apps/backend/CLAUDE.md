@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/staff-scoping-roles-archive` (on `develop@ec70f68`), 2026-10-05.
+Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -28,7 +28,9 @@ Data access for new code (decided):
   service.
 - Application code MAY import from infrastructure only: `TenantContextService` and `TenantScope`,
   `runInTenantTransaction`, `tenantSchemaRef` / `tenantSchemaPrefix`, `withConnectionRetry` /
-  `isTransientConnectionError`, `RedisCacheService`, and types or the `Prisma` namespace from
+  `isTransientConnectionError`, `RedisCacheService`, `citizenPhoneRuleError` /
+  `violatedCheckConstraint` (`infrastructure/prisma/check-violation.ts`, which turns the `0072` CHECKs'
+  refusal into a coded `ValidationError`), and types or the `Prisma` namespace from
   `src/generated/tenant-client`. `TenantPrismaFactory` only in a background job that builds a tenant scope.
 - Application code MUST NOT import a `Prisma*Repository`, an adapter (`S3StorageService`,
   `SmtpEmailSender`, `SmsProviderService`, `WhishGatewayService`, `BcryptPasswordHasher`,
@@ -49,7 +51,9 @@ Data access for new code (decided):
 - `InfrastructureModule` is `@Global()` and binds each port symbol in use to its adapter
   (`SUPABASE_AUTH_SERVICE` is declared but unbound). `ApplicationModule`
   registers `JwtModule` (`JWT_SECRET`) and every service and job. In both, a new entry goes in `providers` AND `exports`.
-- `PresentationModule` registers the controllers, `APP_FILTER` = `DomainExceptionFilter`, and
+- `PresentationModule` registers the controllers, `APP_FILTER` = `DomainExceptionFilter`,
+  `APP_INTERCEPTOR` = `ViewerCredentialMaskInterceptor` (masks a رقم مرجعي in every response to
+  «مشاهد فقط»; [docs/security.md](../../docs/security.md#authentication-and-authorisation)), and
   `APP_GUARD` in this order: `ThrottlerGuard`, `JwtAuthGuard`, `RolesGuard`. `configure()` applies
   `CorrelationIdMiddleware` to every route and `TenantMiddleware` to `t/:tenantSlug/*` (keep the bare
   `*`; see [docs/gotchas.md](../../docs/gotchas.md)). `BackupController` is deliberately unregistered.
@@ -58,7 +62,8 @@ Data access for new code (decided):
   `presentation/main.ts` listens. `presentation/serverless.ts` is the retired Vercel entry.
 - Request flow: `TenantMiddleware` resolves the tenant (`TenantService.resolve`, `TenantPrismaFactory.forSchema`) and
   runs the request in `TenantContextService.run`; `JwtAuthGuard` then requires token tenant = URL tenant and a current `tokenVersion`,
-  and finally stamps `users.lastSeenAt` through `StaffPresenceService` (see **Staff presence** below).
+  and finally, unless the request is a background one, starts the `users.lastSeenAt` stamp without
+  awaiting it (see **Staff presence** below).
 
 ## Conventions
 
@@ -69,18 +74,55 @@ Data access for new code (decided):
   `@Roles` is absent (gap in [docs/security.md](../../docs/security.md#known-gaps)). Until that is fixed, a
   self-service route without `@Roles` MUST check `user.kind` and scope every query by `user.sub`. A
   handler's `@Roles` replaces the class's.
+- **Role lists.** `@Roles(...)` takes a set from `role-sets.ts` in `@mechanization/shared-schemas`
+  (`EVERY_STAFF_ROLE`, `WORKING_STAFF_ROLES`, `REGISTER_WRITE_ROLES`, `CENSUS_WORKLIST_ROLES`,
+  `FEE_ISSUE_ROLES`, `REGISTER_EXPORT_ROLES` and the rest), never a literal list: the frontend's
+  `lib/staff-roles.ts` reads the same sets, so a route and its button move together. A new audience is a
+  new named set there. `route-inventory.spec.ts` checks every controller on disk: `@Roles` on every
+  non-public route (or a reviewed entry in its `SELF_SERVICE` list), «مشاهد فقط» on no write and no
+  side-effecting GET, and no route that deletes a citizen.
 - **Staff sessions.** Rotating refresh tokens in an httpOnly cookie (`StaffRefreshTokenService`,
   `presentation/http/staff-refresh-cookie.ts`), checked by family in `JwtAuthGuard`; expired rows are
   pruned by `StaffRefreshTokenCleanupJob`. Rules: [docs/security.md](../../docs/security.md#tokens-passwords-and-totp).
 - **Staff presence.** `StaffPresenceService.touch` stamps `users.lastSeenAt` from `JwtAuthGuard`, after
-  every check has passed. It is the only write on the authenticated hot path, and it stays affordable
-  through a Redis gate: one UPDATE a minute per account, not one per request. Three rules hold it in
-  place — set the gate *before* the write (or a burst stampedes), stamp `STAFF` only (`users` holds
-  citizens too and the portal is the busier half), and never throw (presence is a label on one admin
-  screen; a pooler blip must not 500 an officer's save). `ONLINE_WITHIN_SECONDS` is the threshold
-  readers apply, and the frontend's `STAFF_ONLINE_WITHIN_MS` mirrors it — change both or the label
-  disagrees with its data. Pinned by `staff-presence.spec.ts`. Do not read `lastLoginAt` as presence:
-  it is stamped once at sign-in and a staff token lives behind a week-long refresh chain.
+  every check has passed, without the guard awaiting it. It is the only write on the authenticated hot
+  path, and it stays affordable through a Redis gate: one UPDATE a minute per account, not one per
+  request. Four rules hold it in place. Win the gate *before* the write, atomically
+  (`RedisCacheService.setIfAbsent`, `SET NX EX`), because a read-then-set lets a burst stampede. Stamp
+  `STAFF` only and say so in the UPDATE's WHERE (`users` holds citizens too and the portal is the busier
+  half). Write the database's `now()`, not the process clock. Never throw: presence is a label on one
+  admin screen, and a pooler blip must not 500 an officer's save. A request carrying
+  `x-background-request` (`BACKGROUND_REQUEST_HEADER`, the portal's polls) is not stamped. The interval,
+  the threshold and the rule (`STAFF_PRESENCE_STAMP_EVERY_SECONDS`, `STAFF_ONLINE_WITHIN_SECONDS`,
+  `isStaffOnline`) live once, in `staff-presence.ts` in `@mechanization/shared-schemas`.
+  `GET staff/presence` (`StaffPresenceService.presence`) returns `{ now, items }` with the database's
+  clock, so the portal judges «متصل الآن» on the server's time, not the browser's. Pinned by
+  `staff-presence.spec.ts` and `jwt-auth.guard.spec.ts`. Do not read `lastLoginAt` as presence: it is
+  stamped once at sign-in and a staff token lives behind a week-long refresh chain.
+- **Worklists.** «يتطلب مراجعة», «وحدات غير ممسوحة» and «بانتظار إعادة الكشف» share one query contract
+  (`worklistQuerySchema`: search, `owner`, limit, offset) and one scoping rule.
+  `worklistOwnerFilter` (`application/common/worklist-viewer.ts`) narrows an officer to their own work
+  whatever they send, and lets a role in `SEES_ALL_STAFF_WORK` filter by an officer or by `UNASSIGNED`
+  (the filer was never recorded, or their account is archived or deleted). The census two are raw SQL in
+  `buildings/census-worklists.ts`; they are plain reads, not transactions.
+- **Habitability.** A damage reading carries the UN-Habitat level and, beside it, `habitable`
+  (decision of 2026-10-05). «غير صالحة للسكن» is `isUninhabitableReading` in
+  `@mechanization/shared-schemas` (`damage-rule.ts`) and `uninhabitableSql` in
+  `buildings/habitability.ts`: the same predicate, once in TypeScript and once in SQL, so change them
+  together. A unit's reading is the latest of its own and its building's (`currentReadingForUnit`). The
+  fee assessment holds an occupant-borne fee on such a unit (`uninhabitableUnitIds`), counted apart from
+  the review hold. Only a reading that answers decides: «غير مصنّف» with no answer judged nothing, so
+  the hold, both census worklists and the panels skip it (`answersHabitability` and its SQL twin
+  `answersHabitabilitySql`, `currentReadingForUnit(…, { answering: true })`) and it never ends a hold.
+- **Searching citizens as «مشاهد فقط».** The register, the review queue and the payments list match a
+  citizen through `citizenSearchText(S, role)` (`application/common/citizen-search.ts`) rather than
+  `u."searchText"` directly: for VIEWER it removes the رقم مرجعي (folded and compact) from the searched
+  text, so a role that is never shown the reference cannot confirm one by searching. A new citizen search
+  uses it too.
+- **The citizen portal names what it sends.** `CitizenController.mySummary` builds «ملفّي» from the staff
+  profile: a flat's owners go as an allowlist (name and أسهم), the landlord link's id and reference are
+  dropped, and everything else on a property or unit passes through, so decide for each field you add to
+  `CitizenProfile` ([docs/gotchas.md](../../docs/gotchas.md)).
 - **Who is calling.** `@CurrentUser()` yields `SessionClaims` (`application/features/identity/identity.service.ts`);
   `@CurrentTenant()` yields `req.tenant`. Pass the actor to services as `{ id: user.sub, role: user.role ?? '' }`.
 - **Validation.** `@Body(new ZodValidationPipe(schema))`, schema from `@mechanization/shared-schemas`. Put
@@ -94,7 +136,8 @@ Data access for new code (decided):
 - **Config.** Read env through `ConfigService`; every variable MUST be declared in `envSchema`. Policy
   constants go in `APP_CONFIG` (`presentation/config/app.config.ts`). No literals for limits or TTLs.
 - **Logging.** `new Logger(ClassName.name)`. Never log PII, tokens, a رقم مرجعي or a URL with its query string.
-- **Cache.** `RedisCacheService` (`get`, `set`, `invalidatePrefix`), keys `<area>:<tenantSlug>:…`.
+- **Cache.** `RedisCacheService` (`get`, `set`, `setIfAbsent`, `invalidatePrefix`), keys `<area>:<tenantSlug>:…`.
+  While Redis is offline, `get` and `set` use the in-process layer alone rather than waiting on a retry.
 
 ## Error codes
 
@@ -120,8 +163,8 @@ Rule: a refusal is thrown with a specific code from `ERROR_CODES` in
 - Existing `details.code` / `details.reason` values (`STALE`, `TENANTS_LINKED`, `PREVIEW_STALE`, …) are
   kept beside the top-level code because screens still read them; do not add new ones.
 
-Today: the fee, payment, ownership, tenancy, landlord-link, correction and citizen-file services are
-converted (156 sites). The block-driven refusals (`plan.block.message` in `LandlordLinkService`,
+Today: the fee, payment, ownership, tenancy, landlord-link, correction, citizen-file and damage services
+are converted; what is left is counted by `LEGACY_PROSE_THROWS` (206 on 2026-10-06). The block-driven refusals (`plan.block.message` in `LandlordLinkService`,
 `blockerMessage` in `UnitCorrectionService`, `blocks[0].message` in `CitizenMergeService`) are not: their
 text is also rendered in the preview endpoints, which need localising first.
 
@@ -150,8 +193,9 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
    settlements), payment reversals, corrections, ownership changes (ending an ownership, making, updating
    or ending an owner link, a merge or its undo), ending a tenancy, review decisions (approving or returning
-   a record, completing a quality check) and citizen status changes (activate, deactivate, delete).
-   The row is written in the same transaction as the change; if it fails, the change rolls back.
+   a record, completing a quality check) and citizen status changes (archive and restore; a citizen file
+   is never deleted). The row is written in the same transaction as the change; if it fails, the change
+   rolls back.
    - In `runInTenantTransaction`: `AuditService.recordInTransaction(entry)`, or
      `recordChangeInTransaction({ channel, payload })` for a change that is also a `citizen.changed` /
      `building.changed` event. Emit that event after the commit with `alreadyAudited: true`.
@@ -163,11 +207,15 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 2. **Tier 2, after the commit.** Everything else (a phone number, a preference, a building edit): emit
    `<entity>.changed` with `{ tenantSlug, action, <entity>Id, actorId, actorRole, before?, after? }` and give
    `AuditService` an `@OnEvent` for it. `record` queues on `afterCommit` inside a transaction; a failed
-   write is logged (`AUDIT WRITE FAILED`) and the change stands.
+   write is logged (`AUDIT WRITE FAILED`) and the change stands. A damage reading is one:
+   `damage.recorded` goes to `AuditService.onDamageRecorded` (`DAMAGE_RECORDED`, filed under the
+   building with the unit's id and code in `after`), because a reading can hold or resume a flat's
+   fees; «فواتير تأثّرت بتصحيحات» finds the holders by that code (`bill-corrections.ts`).
 
 Event names are string literals. Emission is synchronous with no wildcards, because listeners rely on the
 request's tenant scope. A misspelt or unheard name is dropped silently. Add each new action's label to
-`apps/frontend/lib/audit-labels.ts`. An audit row names a citizen by id and MUST NOT carry a login
+`auditActions` in both message files (`apps/frontend/messages/{ar,en}.json`), which
+`apps/frontend/lib/audit-labels.ts` reads. An audit row names a citizen by id and MUST NOT carry a login
 credential: a رقم مرجعي goes in only as `ReferenceNumber.mask(...)`
 ([docs/security.md](../../docs/security.md#data-integrity-and-transactions)).
 
@@ -184,7 +232,7 @@ Model: commit `f9fd805` — `CorrectionsController`, `UnitCorrectionService`, `u
 4. Service in `application/features/<area>/<feature>.service.ts`: inject `TenantContextService` and
    `EventEmitter2` (plus a port where one exists); add `private get db()` and `private get S()`; writes in
    `runInTenantTransaction`; domain errors with a case code; emit after the transaction.
-5. Audit: an `@OnEvent` handler in `AuditService` plus the label in `apps/frontend/lib/audit-labels.ts`.
+5. Audit: an `@OnEvent` handler in `AuditService` plus the label under `auditActions` in both message files.
 6. Controller in `presentation/controllers/<feature>.controller.ts`: `@Roles` on every handler,
    `ParseUUIDPipe` ids, `ZodValidationPipe` body, `@CurrentUser()`, no try/catch.
 7. Register the service in `ApplicationModule` `providers` and `exports`, the controller in `PresentationModule`.
@@ -229,7 +277,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 92 specs, 23 of them `*.integration.spec.ts`.
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 114 specs, 26 of them `*.integration.spec.ts`.
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`
@@ -237,8 +285,10 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 - Locally: the throwaway-container commands and which suites to run are in
   [docs/database.md](../../docs/database.md#test-a-migration-on-a-throwaway-postgres-17).
 - Convention specs: `raw-sql-is-schema-qualified.spec.ts`, `migration-guards-are-schema-scoped.spec.ts`,
-  `domain-enum-drift.spec.ts`, `tenant-isolation.spec.ts`, `env.schema.spec.ts`. Missing: HTTP-level tests (only
-  `metrics.spec.ts` boots an app), a route-inventory test for `@Public` / `@Roles`, an every-event-has-a-listener test.
+  `domain-enum-drift.spec.ts` (the domain's enums, `StaffRole` among them, against the shared ones),
+  `tenant-isolation.spec.ts`, `env.schema.spec.ts`, `route-inventory.spec.ts` (`@Public` / `@Roles` over
+  every controller, and the «مشاهد فقط» boundary). Missing: HTTP-level tests (only `metrics.spec.ts` boots
+  an app), an every-event-has-a-listener test.
 
 ## Current state and known issues
 

@@ -1,4 +1,7 @@
 import { Controller, Get, Param } from '@nestjs/common';
+import {
+  WORKING_STAFF_ROLES,
+} from '@mechanization/shared-schemas';
 import { TenantService } from '../../application/features/tenant/tenant.service';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
@@ -18,7 +21,7 @@ export class TenantController {
     return this.tenants.getPublicConfig(tenantSlug);
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...WORKING_STAFF_ROLES)
   @Get('admin-config')
   async getAdminConfig(@Param('tenantSlug') tenantSlug: string) {
     return this.tenants.getAdminConfig(tenantSlug);

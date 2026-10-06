@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import {
   BLOOD_TYPE,
   GENDER,
@@ -419,7 +420,8 @@ export function ContactStep({
   afterPhone?: ReactNode;
 }) {
   const labels = getLabels(locale);
-  const en = locale === 'en';
+  const t = useTranslations('citizenForm.contact');
+  const tNoPhone = useTranslations('citizenForm.noPhone');
   const set = (patch: Values) => onChange({ ...value, ...patch });
   const sameAsPhone = value.whatsappSameAsPhone !== false;
   /** «لا يملك رقم هاتف» — the person owns no number of their own. */
@@ -434,9 +436,7 @@ export function ContactStep({
         checked={sameAsPhone}
         onCheckedChange={(checked) => set({ whatsappSameAsPhone: checked === true })}
       />
-      <span className="whitespace-nowrap font-medium">
-        {locale === 'en' ? 'Same as phone' : 'نفس رقم الهاتف'}
-      </span>
+      <span className="whitespace-nowrap font-medium">{t('sameAsPhone')}</span>
     </label>
   );
 
@@ -486,17 +486,9 @@ export function ContactStep({
             }
           />
           <span className="min-w-0">
-            <span className="font-medium text-foreground">
-              {en
-                ? 'Does not have a phone number (elderly / special cases)'
-                : 'لا يملك رقم هاتف (حالات خاصة / كبار السن)'}
-            </span>
+            <span className="font-medium text-foreground">{tNoPhone('label')}</span>
             {hasNoPhone ? (
-              <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-                {en
-                  ? 'The two numbers below are left empty, and the record counts as complete without them. Give a relative’s number under «Contact number» so the municipality can still reach this person.'
-                  : 'يُترك الرقمان أدناه فارغين، ويُعدّ الملف مكتملاً بدونهما. سجّل رقم أحد الأقارب في «رقم للتواصل» ليبقى للبلدية سبيل للوصول إلى هذا الشخص.'}
-              </span>
+              <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{tNoPhone('note')}</span>
             ) : null}
           </span>
         </label>
@@ -505,11 +497,11 @@ export function ContactStep({
       {/* Row 1 — the numbers */}
       <div className="review-body grid grid-cols-1 items-start gap-3.5 md:grid-cols-2">
         <Field
-          label={locale === 'en' ? 'Primary Phone Number' : 'رقم الهاتف الأساسي'}
+          label={t('primaryPhone')}
           htmlFor="phone"
           path="contact.phone"
           required={!hasNoPhone}
-          optionalLabel={en ? '(no number)' : '(لا يوجد رقم)'}
+          optionalLabel={tNoPhone('optional')}
           error={errors['contact.phone']}
         >
           <Input
@@ -545,29 +537,27 @@ export function ContactStep({
         {hasNoPhone ? (
           <div className="space-y-1.5">
             <Label htmlFor="whatsapp" className="text-xs font-medium text-foreground/90">
-              {en ? 'WhatsApp Number' : 'رقم الواتساب'}
+              {t('whatsappNumber')}
             </Label>
             <div className="flex h-10 min-w-0 items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-3 text-xs text-muted-foreground coarse:h-12">
-              <span className="truncate">{en ? 'No number' : 'لا يوجد رقم'}</span>
+              <span className="truncate">{tNoPhone('noNumber')}</span>
             </div>
           </div>
         ) : sameAsPhone ? (
           <div className="space-y-1.5">
             <Label htmlFor="whatsappSameAsPhone" className="text-xs font-medium text-foreground/90">
-              {locale === 'en' ? 'WhatsApp Number' : 'رقم الواتساب'}
+              {t('whatsappNumber')}
             </Label>
             <div className="flex items-center gap-3">
               <div className="flex h-10 min-w-0 flex-1 items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-3 text-xs text-muted-foreground coarse:h-12">
-                <span className="truncate">
-                  {locale === 'en' ? '✓ Using primary phone for WhatsApp' : '✓ يتم استخدام رقم الهاتف الأساسي للواتساب'}
-                </span>
+                <span className="truncate">{t('usingPrimaryForWhatsapp')}</span>
               </div>
               {sameAsPhoneToggle}
             </div>
           </div>
         ) : (
           <Field
-            label={locale === 'en' ? 'WhatsApp Number' : 'رقم الواتساب'}
+            label={t('whatsappNumber')}
             htmlFor="whatsapp"
             path="contact.whatsapp"
             required
@@ -603,7 +593,7 @@ export function ContactStep({
           son's phone collide with nothing (0069).
         */}
         <Field
-          label={en ? 'Contact number (son, daughter or relative)' : 'رقم للتواصل (الابن/الابنة أو أحد الأقارب)'}
+          label={tNoPhone('contactPhone')}
           htmlFor="contactPhone"
           path="contact.contactPhone"
           error={errors['contact.contactPhone']}
@@ -627,7 +617,7 @@ export function ContactStep({
       {/* Row 2 — the household */}
       <div className="grid grid-cols-1 items-start gap-3.5 lg:grid-cols-2">
         <Field
-          label={locale === 'en' ? 'Marital Status' : 'الحالة الاجتماعية'}
+          label={t('maritalStatus')}
           htmlFor="maritalStatus"
           path="contact.maritalStatus"
           required
@@ -646,11 +636,7 @@ export function ContactStep({
         </Field>
 
         <Field
-          label={
-            locale === 'en'
-              ? 'Family Members Living in the House (without married children)'
-              : 'عدد أفراد الأسرة المقيمين في المنزل (دون المتزوجين)'
-          }
+          label={t('householdMembers')}
           htmlFor="actualHouseholdMembers"
           path="contact.actualHouseholdMembers"
           required
@@ -660,7 +646,7 @@ export function ContactStep({
             id="actualHouseholdMembers"
             inputMode="numeric"
             dir="ltr"
-            placeholder={locale === 'en' ? 'e.g. 4' : 'مثال: ٤'}
+            placeholder={t('householdMembersPlaceholder')}
             className="text-start"
             invalid={Boolean(errors['contact.actualHouseholdMembers'])}
             value={str(value.actualHouseholdMembers)}

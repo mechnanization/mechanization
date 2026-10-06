@@ -37,6 +37,7 @@ export type ErrorKind = (typeof ERROR_KINDS)[number];
 export const ERROR_CODES = [
   // Fees and payments
   'FEE_NO_MATCHING_CITIZENS',
+  'FEE_NOTHING_TO_CHARGE',
   'FEE_DUE_DATE_INVALID',
   'FEE_NOTICE_NOT_FOUND',
   'PAYMENT_NOT_FOUND',
@@ -152,9 +153,13 @@ export const ERROR_CODES = [
   'OWNER_HAS_LINKED_TENANTS_ON_SAVE',
   'CITIZEN_FILE_CHANGED_DURING_SAVE',
   'TENANCY_ENDED_ON_CARD_SINCE_OPENED',
+  // The two rules migration 0072 keeps on a citizen's numbers.
+  'CITIZEN_NO_PHONE_HAS_NUMBER',
+  'CITIZEN_CONTACT_PHONE_IS_OWN',
+  // Retired 2026-10-05 with the citizen hard delete (a citizen is archived,
+  // never deleted). Kept because a code is never given a new meaning.
   'CITIZEN_IN_MERGE',
   'CITIZEN_HAS_RECORDS',
-  'CITIZEN_HAS_LINKS',
   'MERGE_PREVIEW_STALE',
   'MERGE_NOT_FOUND',
   'MERGE_ABSORBED_CHANGED',

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Check, Loader2, UserCheck, X } from 'lucide-react';
 import { getLandlordCandidates, logApiError, type LandlordCandidate } from '@/lib/api-client';
 import { compareNames } from '@/lib/landlord-display';
@@ -35,13 +36,20 @@ const LOOKUP_DEBOUNCE_MS = 500;
  *
  * A number matching nobody renders nothing. Most landlords are not registered,
  * and a «غير مسجَّل» line on nine cards out of ten is one people stop reading.
+ *
+ * ## A relative's number is never the default
+ *
+ * The lookup also finds a citizen whose «رقم للتواصل» is this number — a
+ * relative's, recorded because they have no phone (`matchedBy: 'CONTACT'`).
+ * The relative may be the owner as easily as the citizen, so such a match is
+ * marked as one, asked about in words that say so, and never preselected: even
+ * alone on the number, the officer has to choose it.
  */
 export function LandlordMatchHint({
   tenant,
   token,
   phone,
   typedName,
-  locale = 'ar',
   agreedCitizenId,
   onAgree,
   onWithdraw,
@@ -51,7 +59,6 @@ export function LandlordMatchHint({
   phone: string;
   /** What the officer typed as the owner's name, to compare against. */
   typedName?: string;
-  locale?: string;
   /** The card's standing answer, so the control re-opens showing it. */
   agreedCitizenId?: string;
   /** «نعم، هو المالك» — the officer took the register's answer for this number. */
@@ -59,7 +66,8 @@ export function LandlordMatchHint({
   /** «لا أحد منهم» here, and «تغيير» on the locked name — one decision. */
   onWithdraw: () => void;
 }) {
-  const en = locale === 'en';
+  const t = useTranslations('landlordLink.hint');
+  const tLink = useTranslations('landlordLink');
   const group = useId();
   const [candidates, setCandidates] = useState<LandlordCandidate[]>([]);
   const [looking, setLooking] = useState(false);
@@ -121,7 +129,7 @@ export function LandlordMatchHint({
     return (
       <p className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
         <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
-        {en ? 'Checking the register…' : 'جارٍ البحث في السجل…'}
+        {t('checking')}
       </p>
     );
   }
@@ -134,7 +142,9 @@ export function LandlordMatchHint({
   if (rejected) return null;
 
   const single = candidates.length === 1;
-  const selectedId = single ? candidates[0]!.id : chosen;
+  // A lone match is taken as the answer to choose only when the number is their own.
+  const alone = single && candidates[0]!.matchedBy !== 'CONTACT' ? candidates[0]! : null;
+  const selectedId = alone ? alone.id : chosen;
   const selected = candidates.find((candidate) => candidate.id === selectedId) ?? null;
 
   return (
@@ -142,12 +152,10 @@ export function LandlordMatchHint({
       <p className="flex items-start gap-2 font-medium">
         <UserCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
         {single
-          ? en
-            ? 'This number belongs to a registered citizen. Is this the owner?'
-            : 'هذا الرقم يعود لمواطن مسجَّل. هل هو المالك؟'
-          : en
-            ? `${candidates.length} registered citizens share this number. Which one is the owner?`
-            : `${candidates.length} مواطنين مسجَّلين على هذا الرقم. أيّهم المالك؟`}
+          ? candidates[0]!.matchedBy === 'CONTACT'
+            ? t('questionOneContact')
+            : t('questionOne')
+          : t('questionMany', { count: candidates.length })}
       </p>
 
       <div role="radiogroup" className="space-y-1.5">
@@ -167,17 +175,20 @@ export function LandlordMatchHint({
                 name={group}
                 checked={isSelected}
                 onChange={() => setChosen(candidate.id)}
-                className={cn('size-4 shrink-0 accent-[hsl(var(--primary))]', single && 'sr-only')}
+                className={cn('size-4 shrink-0 accent-[hsl(var(--primary))]', alone && 'sr-only')}
               />
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className="font-semibold">{candidate.name}</span>
                   {match === 'SAME' ? (
-                    <Badge variant="soft-success">{en ? 'Same name' : 'الاسم مطابق'}</Badge>
+                    <Badge variant="soft-success">{t('sameName')}</Badge>
                   ) : match === 'SIMILAR' ? (
-                    <Badge variant="soft-info">{en ? 'Similar name' : 'اسم مشابه'}</Badge>
+                    <Badge variant="soft-info">{t('similarName')}</Badge>
                   ) : match === 'DIFFERENT' ? (
-                    <Badge variant="soft-warning">{en ? 'Different name' : 'اسم مختلف'}</Badge>
+                    <Badge variant="soft-warning">{t('differentName')}</Badge>
+                  ) : null}
+                  {candidate.matchedBy === 'CONTACT' ? (
+                    <Badge variant="soft-warning">{tLink('provenance.CONTACT')}</Badge>
                   ) : null}
                 </span>
                 <span className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
@@ -186,16 +197,8 @@ export function LandlordMatchHint({
                       {candidate.referenceNumber}
                     </bdi>
                   ) : null}
-                  {candidate.fatherName ? (
-                    <span>
-                      {en ? 'Father' : 'الأب'}: {candidate.fatherName}
-                    </span>
-                  ) : null}
-                  {candidate.motherName ? (
-                    <span>
-                      {en ? 'Mother' : 'الأم'}: {candidate.motherName}
-                    </span>
-                  ) : null}
+                  {candidate.fatherName ? <span>{t('father', { name: candidate.fatherName })}</span> : null}
+                  {candidate.motherName ? <span>{t('mother', { name: candidate.motherName })}</span> : null}
                 </span>
               </span>
             </label>
@@ -212,17 +215,7 @@ export function LandlordMatchHint({
           className="h-10 transition-transform duration-150 ease-out active:scale-[0.97] motion-reduce:transform-none"
         >
           <Check className="size-4" aria-hidden />
-          {selected
-            ? single
-              ? en
-                ? 'Yes, this is the owner'
-                : 'نعم، هو المالك'
-              : en
-                ? `${selected.name} is the owner`
-                : `${selected.name} هو المالك`
-            : en
-              ? 'Choose the owner'
-              : 'اختر المالك'}
+          {selected ? (single ? t('agreeOne') : t('agreeNamed', { name: selected.name })) : t('choose')}
         </Button>
         <Button
           type="button"
@@ -235,13 +228,11 @@ export function LandlordMatchHint({
           className="h-10"
         >
           <X className="size-4" aria-hidden />
-          {single ? (en ? 'No, someone else' : 'لا، شخص آخر') : en ? 'None of them' : 'لا أحد منهم'}
+          {single ? t('rejectOne') : t('rejectMany')}
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        {en
-          ? 'Saying yes links the owner when this record is saved, and adds the property to their file.'
-          : 'الموافقة تربط المالك عند حفظ السجل، ويُضاف العقار إلى ملفه.'}
+        {t('footnote')}
       </p>
     </div>
   );

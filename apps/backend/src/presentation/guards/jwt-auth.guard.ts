@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
+import { BACKGROUND_REQUEST_HEADER } from '@mechanization/shared-schemas';
 import { SessionClaims } from '../../application/features/identity/identity.service';
 import { SessionRevocationService } from '../../application/features/identity/session-revocation.service';
 import { StaffPresenceService } from '../../application/features/identity/staff-presence.service';
@@ -104,13 +105,17 @@ export class JwtAuthGuard implements CanActivate {
      * «آخر ظهور» — this account was here, now.
      *
      * Stamped after every check has passed, so a rejected token never marks
-     * anybody present, and awaited rather than left dangling: an unawaited
-     * promise here would be an unhandled rejection on the one path that must
-     * never throw. It costs a cache lookup on all but one request a minute
-     * (`StaffPresenceService`), it swallows its own failures, and it is a
-     * no-op for a citizen token.
+     * anybody present. Not for a request the screen made by itself — a poll,
+     * an interval refresh, sent with `BACKGROUND_REQUEST_HEADER`: a tab left
+     * open on a lit screen would otherwise keep its owner «متصل الآن» all day.
+     *
+     * Not awaited: the request does not wait for a label on an admin screen.
+     * `touch` catches every failure itself, so the floating promise can never
+     * reject; it is a no-op for a citizen token.
      */
-    await this.presence.touch(claims.sub, claims.kind);
+    if (!request.header(BACKGROUND_REQUEST_HEADER)) {
+      void this.presence.touch(claims.sub, claims.kind);
+    }
 
     request.user = claims;
     return true;

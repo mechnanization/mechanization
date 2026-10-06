@@ -9,6 +9,10 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  EVERY_STAFF_ROLE,
+  LANDLORD_LINK_ANSWER_ROLES,
+  LANDLORD_SUMMARY_READ_ROLES,
+  REGISTER_WRITE_ROLES,
   adminCreateCitizenSubmissionSchema,
   adminUpdateCitizenSubmissionSchema,
   citizenImportSchema,
@@ -19,6 +23,7 @@ import {
   endTenancySchema,
   possibleDuplicatesQuerySchema,
   setCitizenActiveSchema,
+  worklistQuerySchema,
 } from '@mechanization/shared-schemas';
 import type {
   AdminCitizenSubmission,
@@ -31,6 +36,7 @@ import type {
   EndTenancyInput,
   PossibleDuplicatesQuery,
   SetCitizenActive,
+  WorklistQuery,
 } from '@mechanization/shared-schemas';
 import { CitizenMergeService } from '../../application/features/citizens/citizen-merge.service';
 import { CitizensService } from '../../application/features/citizens/citizens.service';
@@ -97,7 +103,7 @@ export class CitizenController {
    * what, and why. Open to everyone who can open the file; changes only, never
    * who viewed it or how it is being reviewed (see `AuditService.history`).
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get(':id/history')
   history(@Param('id') id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
     return this.audit.history({
@@ -113,7 +119,7 @@ export class CitizenController {
    * their fee standing. `search` matches name, phone, رقم مرجعي or document
    * number — the four things a clerk has in front of them.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get()
   async list(
     @Query('search') search?: string,
@@ -151,22 +157,13 @@ export class CitizenController {
    *
    * A static path, declared before `@Get(':id')` so it is not read as an id.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get('review-queue')
   reviewQueue(
-    @Query('search') search?: string,
-    @Query('limit') limit = '25',
-    @Query('offset') offset = '0',
-    @CurrentUser() user?: SessionClaims,
+    @Query(new ZodValidationPipe(worklistQuerySchema)) query: WorklistQuery,
+    @CurrentUser() user: SessionClaims,
   ) {
-    return this.citizens.reviewQueue(
-      {
-        search,
-        limit: Number(limit) || 25,
-        offset: Number(offset) || 0,
-      },
-      user ? { id: user.sub, role: user.role ?? '' } : undefined,
-    );
+    return this.citizens.reviewQueue(query, { id: user.sub, role: user.role ?? '' });
   }
 
   /**
@@ -276,11 +273,13 @@ export class CitizenController {
         .filter((property) => !property.endedAt)
         .map(({ landlordCitizenId: _id, landlordReferenceNumber: _reference, ...property }) => ({
           ...property,
-          // The owners' names are the tenant's to see; their register ids and
-          // co-owners' numbers are not — the landlord's number is on the card.
+          // The owners' names and أسهم are the tenant's to see; their register
+          // ids and numbers — their own or a relative's — are not: the
+          // landlord's number is on the card. Named, so a field added to the
+          // staff view never reaches the portal by default.
           units: property.units.map((unit) => ({
             ...unit,
-            owners: unit.owners.map(({ citizenId: _owner, phone: _phone, ...owner }) => owner),
+            owners: unit.owners.map((owner) => ({ name: owner.name, shares: owner.shares })),
           })),
         })),
       payments: citizen.payments,
@@ -305,7 +304,7 @@ export class CitizenController {
    * Readable by the roles that read the register, because it is a view of the
    * register. Acting on one is a narrower list — see `confirmLandlordLink`.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get('landlord-links')
   landlordLinks(@Query('limit') limit?: string, @Query('offset') offset?: string) {
     /*
@@ -326,7 +325,7 @@ export class CitizenController {
    * different person's question: the queue is a clerk's afternoon, this is the
    * number somebody takes to the council. See `unbilledOwnedUnits`.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...LANDLORD_SUMMARY_READ_ROLES)
   @Get('landlord-links/summary')
   landlordLinkSummary() {
     return this.landlordLinkService.unbilledOwnedUnits();
@@ -341,7 +340,7 @@ export class CitizenController {
    * is kept for a client from before the list existed: the one person, or null
    * where there are several.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Get('landlord-links/candidate')
   async landlordCandidate(@Query('phone') phone?: string) {
     if (!phone?.trim()) return { candidate: null, candidates: [] };
@@ -357,7 +356,7 @@ export class CitizenController {
    * Declared after the static `landlord-links/*` reads so neither is read as
    * an id; a non-UUID is answered as not found rather than a database error.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get('landlord-links/:propertyEntryId')
   async landlordLink(@Param('propertyEntryId') propertyEntryId: string) {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -373,7 +372,7 @@ export class CitizenController {
    * still lives in each, who owns them — so «إنهاء الإيجار» asks the right
    * questions before anything is pressed.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Get('tenancies/:propertyEntryId/end-preview')
   tenancyEndPreview(@Param('propertyEntryId') propertyEntryId: string) {
     return this.tenancy.previewCard(propertyEntryId);
@@ -384,7 +383,7 @@ export class CitizenController {
    * history, lease included — the owner stays owner, and the flat gets the
    * status the officer gives it. The same operation the unit matrix runs.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post('tenancies/:propertyEntryId/end')
   endTenancy(
     @Param('propertyEntryId') propertyEntryId: string,
@@ -411,7 +410,7 @@ export class CitizenController {
    * keeps each, whether the seller lived there, which tenants' links name them
    * — so «إنهاء الملكية» asks only what applies.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Get('ownerships/:propertyEntryId/end-preview')
   ownershipEndPreview(@Param('propertyEntryId') propertyEntryId: string) {
     return this.ownership.previewCard(propertyEntryId);
@@ -422,7 +421,7 @@ export class CitizenController {
    * the buyer recorded or asked for) or recorded in error. The same operation
    * the unit matrix runs for an owner's spell.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post('ownerships/:propertyEntryId/end')
   endOwnership(
     @Param('propertyEntryId') propertyEntryId: string,
@@ -449,7 +448,7 @@ export class CitizenController {
    * clerk is told which flats leave the owner's file, and whether bills have
    * been raised since, before deciding.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Get('landlord-links/:propertyEntryId/unlink-preview')
   landlordUnlinkPreview(@Param('propertyEntryId') propertyEntryId: string) {
     return this.landlordLinkService.unlinkPreview(propertyEntryId);
@@ -468,7 +467,7 @@ export class CitizenController {
    * writing, so a request naming an arbitrary pair is refused rather than
    * recorded as a confirmed match.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Post('landlord-links/:propertyEntryId/confirm')
   confirmLandlordLink(
     @Param('propertyEntryId') propertyEntryId: string,
@@ -488,7 +487,7 @@ export class CitizenController {
    * Names the citizens the clerk was shown, so somebody registering on the
    * number later is still offered. See `landlordLinkDismissedIds`.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Post('landlord-links/:propertyEntryId/dismiss')
   dismissLandlordLink(
     @Param('propertyEntryId') propertyEntryId: string,
@@ -505,7 +504,7 @@ export class CitizenController {
   }
 
   /** The «تراجع» on a dismissal — offers those citizens on the card again. */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Post('landlord-links/:propertyEntryId/restore')
   restoreLandlordLink(
     @Param('propertyEntryId') propertyEntryId: string,
@@ -527,7 +526,7 @@ export class CitizenController {
    * — is reverted, exactly that and only while unedited. See
    * `LandlordLinkService.unlink` for what is kept and why.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Delete('landlord-links/:propertyEntryId')
   unlinkLandlord(
     @Param('propertyEntryId') propertyEntryId: string,
@@ -546,7 +545,7 @@ export class CitizenController {
    * would otherwise be read as a citizen id — the same reasoning `citizens/new`
    * and `citizens/queue` already follow on the frontend router.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get('parcel/:propertyNumber')
   parcelRoster(@Param('propertyNumber') propertyNumber: string) {
     return this.citizens.parcelRoster(propertyNumber);
@@ -558,7 +557,7 @@ export class CitizenController {
    * they are billing. The identity numbers on this response are the reason the
    * route is role-gated at all rather than open to any session.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get(':id')
   async getById(@Param('id') id: string) {
     const citizen = await this.reporting.getCitizenProfile(id);
@@ -571,7 +570,7 @@ export class CitizenController {
    * three sections `PATCH` expects, so the edit page loads and posts the same
    * object rather than mapping between two shapes.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Get(':id/form')
   async getEditable(@Param('id') id: string, @CurrentUser() user: SessionClaims) {
     return this.citizens.getEditable(id, user.sub);
@@ -587,7 +586,7 @@ export class CitizenController {
    * officer named a reason for. A second, laxer endpoint would be a second
    * place for "what counts as a registration" to be decided.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post()
   async create(
     @Param('tenantSlug') tenantSlug: string,
@@ -614,7 +613,7 @@ export class CitizenController {
    * A static path declared before any `:id` route, for the reason `import`
    * gives.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post('duplicate-review')
   async duplicateReview(
     @Body(new ZodValidationPipe(adminCreateCitizenSubmissionSchema))
@@ -629,7 +628,7 @@ export class CitizenController {
    * what has been typed so far (`CitizensService.possibleDuplicates`). Same
    * roles as `create` and `update`, the two forms that show it.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post('possible-duplicates')
   async possibleDuplicates(
     @Body(new ZodValidationPipe(possibleDuplicatesQuerySchema)) query: PossibleDuplicatesQuery,
@@ -670,7 +669,7 @@ export class CitizenController {
    * profile's «دُمج في» / «دُمج فيه» notes. Open to everyone who can open the
    * file: a clerk who lands on a merged record needs to be sent to the live one.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get(':id/merges')
   async mergesOf(@Param('id') id: string) {
     return this.merges.mergesOf(id);
@@ -711,7 +710,7 @@ export class CitizenController {
    * it is matched as a literal: registered after a `:id` route, Nest would read
    * `import` as an id and this would never be reached.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post('import')
   async import(
     @Param('tenantSlug') tenantSlug: string,
@@ -732,7 +731,7 @@ export class CitizenController {
    * what it changes, what else it touches, what would refuse it, and whether
    * it needs a reason. The form shows it before the officer presses save.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post(':id/edit-review')
   async reviewEdit(
     @Param('id') id: string,
@@ -743,7 +742,7 @@ export class CitizenController {
   }
 
   /** A clerk correcting a citizen already on file. */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Patch(':id')
   async update(
     @Param('tenantSlug') tenantSlug: string,
@@ -761,11 +760,12 @@ export class CitizenController {
   }
 
   /**
-   * Soft delete and its undo. A deactivated citizen keeps every row they own
-   * and is simply skipped by the fee biller — which is what an inspector
-   * wants for someone who has moved away, as against erasing them.
+   * «أرشفة الملف» and its undo — there is no route that deletes a citizen
+   * (decision, 2026-10-05). An archived citizen keeps every row they own and
+   * is skipped by the fee biller; archiving requires a reason and who asked
+   * (`setCitizenActiveSchema`).
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Patch(':id/active')
   async setActive(
     @Param('tenantSlug') tenantSlug: string,
@@ -778,29 +778,8 @@ export class CitizenController {
       citizenId: id,
       isActive: body.isActive,
       ...(body.reason ? { reason: body.reason } : {}),
+      ...(body.requestedBy ? { requestedBy: body.requestedBy } : {}),
       ...(body.movedOn ? { movedOn: body.movedOn } : {}),
-      actor: { id: user.sub, role: user.role ?? '' },
-    });
-  }
-
-  /**
-   * Permanent. Only for a citizen nothing points at — no filing, payment, fee,
-   * unit, landlord link, case, merge or checkout; the service refuses anything
-   * else (`CITIZEN_HAS_RECORDS`, `CITIZEN_HAS_LINKS`). SUPER_ADMIN and
-   * ADMINISTRATIVE_OFFICER, the clerk whose job is the register itself: a file
-   * opened by mistake, with nothing built on it, is theirs to remove. Not the
-   * field roles, whose remit is inspecting properties.
-   */
-  @Roles('SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER')
-  @Delete(':id')
-  async remove(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
-    @CurrentUser() user: SessionClaims,
-  ) {
-    return this.citizens.remove({
-      tenantSlug,
-      citizenId: id,
       actor: { id: user.sub, role: user.role ?? '' },
     });
   }

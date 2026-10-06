@@ -233,6 +233,28 @@ describeIfDb('Quality review', () => {
     expect(returned.target).toMatchObject({ type: 'User', label: 'ريم مراجعة', link: { kind: 'citizen', id: citizenId } });
   });
 
+  it('closes a return for the phone once the officer answers «لا يملك رقم هاتف»', async () => {
+    /*
+      The return asked for a number; «لا يملك رقم هاتف» is the complete answer
+      that there is none. Saved with `phone` NULL by design, it used to leave
+      the return open for ever.
+    */
+    const { citizenId, registrationId } = await filing(staff.jawad, { firstName: 'حسن', lastName: 'بلا هاتف' });
+    await within(() =>
+      reviews.returnToOfficer(registrationId, { reason: 'الهاتف ناقص', fields: ['PHONE'] }, as('auditor')),
+    );
+
+    // A save that leaves the phone blank with no answer keeps it open.
+    await within(() => reviews.onCitizenChanged({ citizenId, action: 'CITIZEN_UPDATED', actorId: staff.jawad }));
+    expect((await within(() => reviews.openReturnFor(citizenId)))?.reason).toBe('الهاتف ناقص');
+
+    await within(async () => {
+      await db.user.update({ where: { id: citizenId }, data: { hasNoPhone: true, phone: null, whatsapp: null } });
+      await reviews.onCitizenChanged({ citizenId, action: 'CITIZEN_UPDATED', actorId: staff.jawad });
+    });
+    expect(await within(() => reviews.openReturnFor(citizenId))).toBeNull();
+  });
+
   // ─────────────────────────────  Sample  ─────────────────────────────
 
   it("draws a per-officer sample, never lets an officer check their own filing, and scores the result", async () => {

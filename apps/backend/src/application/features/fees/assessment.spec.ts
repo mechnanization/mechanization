@@ -360,8 +360,9 @@ describe('billable units — one list from two storage shapes', () => {
         unitStatus: null,
         occupancyType: 'OWNER',
         propertyType: 'LAND',
-        // A plot has no canonical unit, so nothing can hold it for review.
+        // A plot has no canonical unit, so nothing can hold it for review or as uninhabitable.
         underReview: false,
+        uninhabitable: false,
         unitId: null,
         propertyNumber: '1553',
       },
@@ -982,3 +983,90 @@ describe('a flat under review — its occupancy fee held (2026-09-30)', () => {
     expect(outcome).toMatchObject({ kind: 'assessed', amount: 1000, assessment: { heldUnitCount: 0 } });
   });
 });
+
+describe('a flat nobody can live in — its occupancy fee held until re-inspected (2026-10-05)', () => {
+  const flat = (options: { unitStatus?: string | null; underReview?: boolean; uninhabitable?: boolean; id?: string }) => ({
+    propertyType: 'BUILDING',
+    propertyNumber: '4212',
+    occupancyType: 'OWNER',
+    unitType: null,
+    unitArea: null,
+    units: [
+      {
+        unitType: 'APARTMENT',
+        unitArea: 100,
+        unitStatus: options.unitStatus ?? 'OWNER_OCCUPIED',
+        unit: {
+          id: options.id ?? 'unit-1',
+          unitType: 'APARTMENT',
+          unitArea: 100,
+          unitStatus: options.unitStatus ?? 'OWNER_OCCUPIED',
+          underReview: options.underReview ?? false,
+          uninhabitable: options.uninhabitable ?? false,
+        },
+      },
+    ],
+  });
+
+  it('holds the occupancy fee, counted apart from a review and named by flat', () => {
+    const outcome = assessCitizen([flat({ uninhabitable: true })], { amount: 1000, basis: 'PER_UNIT', bearer: 'OCCUPANT' });
+    expect(outcome).toMatchObject({
+      kind: 'assessed',
+      amount: 0,
+      uninhabitableUnitIds: ['unit-1'],
+      assessment: { uninhabitableUnitCount: 1, heldUnitCount: 0, excludedUnitCount: 0, unitCount: 0 },
+    });
+  });
+
+  it('holds only the occupancy fee — an owner-borne fee follows the deed', () => {
+    const outcome = assessCitizen([flat({ uninhabitable: true })], { amount: 1000, basis: 'PER_UNIT', bearer: 'OWNER' });
+    expect(outcome).toMatchObject({ kind: 'assessed', amount: 1000, assessment: { uninhabitableUnitCount: 0 } });
+  });
+
+  it('counts a flat that is both once, as under review — the hold the office can lift', () => {
+    const outcome = assessCitizen([flat({ uninhabitable: true, underReview: true })], { amount: 1000, basis: 'PER_UNIT' });
+    expect(outcome).toMatchObject({
+      kind: 'assessed',
+      amount: 0,
+      assessment: { heldUnitCount: 1, uninhabitableUnitCount: 0 },
+    });
+  });
+
+  it('charges the same flat once a re-inspection reads it habitable', () => {
+    const outcome = assessCitizen([flat({ uninhabitable: false })], { amount: 1000, basis: 'PER_UNIT' });
+    expect(outcome).toMatchObject({ kind: 'assessed', amount: 1000, assessment: { uninhabitableUnitCount: 0 } });
+  });
+
+  it('holds a منزل whose one flat is uninhabitable, from the card itself', () => {
+    const house = {
+      propertyType: 'HOUSE',
+      propertyNumber: '4213',
+      occupancyType: 'OWNER',
+      unitType: 'INDEPENDENT_HOUSE',
+      unitArea: 150,
+      unitStatus: 'OWNER_OCCUPIED',
+      soleUnitId: 'house-unit',
+      uninhabitable: true,
+      units: [],
+    };
+    const outcome = assessCitizen([house], { amount: 1000, basis: 'PER_UNIT' });
+    expect(outcome).toMatchObject({ kind: 'assessed', amount: 0, assessment: { uninhabitableUnitCount: 1 } });
+  });
+
+  it('holds a flat held through the census occupancy table', () => {
+    const viaOccupancy = {
+      propertyType: 'BUILDING',
+      propertyNumber: '4214',
+      occupancyType: 'OWNER',
+      unitType: null,
+      unitArea: null,
+      units: [],
+      occupiedUnits: [
+        { role: 'TENANT', unitId: 'occ-1', unitType: 'APARTMENT', unitArea: 80, unitStatus: null, uninhabitable: true },
+      ],
+    };
+    const outcome = assessCitizen([viaOccupancy], { amount: 1000, basis: 'PER_UNIT' });
+    expect(outcome).toMatchObject({ kind: 'assessed', amount: 0, uninhabitableUnitIds: ['occ-1'] });
+  });
+});
+

@@ -23,8 +23,6 @@ import {
 import {
   CASE_TYPE,
   contradictsVacancy,
-  DAMAGE_LEVEL,
-  DAMAGE_SOURCE,
   getLabels,
   isOccupiableLifecycle,
   isStructuralUnitType,
@@ -40,7 +38,6 @@ import {
   type CaseType,
   type CitizenResidence,
   type DamageLevel,
-  type DamageSource,
   type OccupancyEndReason,
   type OccupancyRole,
   type StructureType,
@@ -58,7 +55,6 @@ import {
   REPEAT_VISIT_WINDOW_MS,
   type AfterTenancyAnswer,
   type CitizenListItem,
-  type DamageAssessmentRow,
   type OccupancyFileLink,
   type OccupantOwnerLink,
   type RecordedOwnerLink,
@@ -93,7 +89,6 @@ import { CellTag } from '@/components/ui/cell-tag';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DataTable } from '@/components/ui/data-table';
 import { Field, FieldFlagProvider } from '@/components/ui/field';
-import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -1924,195 +1919,7 @@ export function CaseForm({
   );
 }
 
-/**
- * One observation, appended to the log. There is no edit and no delete: a
- * building that was unsafe in 2024 and repaired in 2026 is two facts (D3).
- */
-export function DamageForm({
-  busy,
-  locale,
-  target,
-  onSubmit,
-}: {
-  busy: boolean;
-  locale: string;
-  /** What is being assessed, named in the button so the two cannot be confused. */
-  target: string;
-  onSubmit: (values: {
-    level: DamageLevel;
-    source: DamageSource;
-    observations: string;
-    assessedAt: string;
-    /** «موعد إعادة الكشف» — only with «غير قابلة للسكن»; empty otherwise. */
-    reinspectAt: string;
-  }) => void;
-}) {
-  const en = locale === 'en';
-  const labels = getLabels(locale);
-
-  const [level, setLevel] = useState<DamageLevel>('SAFE_MINOR_DAMAGE');
-  const [reinspectAt, setReinspectAt] = useState('');
-  const uninhabitable = level === 'UNINHABITABLE';
-  const today = new Date().toISOString().slice(0, 10);
-  const [source, setSource] = useState<DamageSource>('FIELD_VISIT');
-  const [observations, setObservations] = useState('');
-  const [assessedAt, setAssessedAt] = useState('');
-
-  return (
-    <div className="space-y-3 rounded-md border bg-background p-3">
-      <div className="grid gap-3">
-        <Field label={en ? 'Damage level' : 'مستوى الضرر'} htmlFor="damage-level" required>
-          <Select value={level} onValueChange={(value) => setLevel(value as DamageLevel)}>
-            <SelectTrigger id="damage-level">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {DAMAGE_LEVEL.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {labels.damageLevel[value]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-
-        <Field label={en ? 'Source' : 'مصدر التقييم'} htmlFor="damage-source" required>
-          <Select value={source} onValueChange={(value) => setSource(value as DamageSource)}>
-            <SelectTrigger id="damage-source">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {DAMAGE_SOURCE.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {labels.damageSource[value]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-
-        {/*
-          «غير قابلة للسكن» is the reading that expects a second visit, once
-          the unit is repaired. When is planned, not recorded: today or later,
-          and optional — an inspector who cannot say yet leaves it empty and
-          the unit still reads as waiting.
-        */}
-        {uninhabitable ? (
-          <Field
-            label={en ? 'Re-inspect after repair on' : 'موعد إعادة الكشف بعد الترميم'}
-            htmlFor="damage-reinspect"
-          >
-            <DatePicker
-              id="damage-reinspect"
-              value={reinspectAt}
-              onChange={setReinspectAt}
-              min={today}
-              placeholder={en ? 'Pick a day (optional)' : 'اختر يوماً (اختياري)'}
-              locale={en ? 'en' : 'ar'}
-            />
-          </Field>
-        ) : null}
-
-        {/* Back-dating is allowed and forward-dating is not: an assessment typed
-            up a week late describes the visit, not the paperwork. */}
-        <Field
-          label={en ? 'Inspected on' : 'تاريخ الكشف'}
-          htmlFor="damage-date"
-        >
-          <Input
-            id="damage-date"
-            type="date"
-            max={new Date().toISOString().slice(0, 10)}
-            value={assessedAt}
-            onChange={(event) => setAssessedAt(event.target.value)}
-            dir="ltr"
-            className="text-start"
-          />
-        </Field>
-      </div>
-
-      <Field label={en ? 'What was seen' : 'ما شوهد'} htmlFor="damage-observations">
-        <Textarea
-          id="damage-observations"
-          rows={2}
-          value={observations}
-          onChange={(event) => setObservations(event.target.value)}
-          placeholder={
-            en
-              ? 'The fourth floor is down, the stairwell is impassable'
-              : 'الطابق الرابع مهدوم، الدرج غير سالك'
-          }
-        />
-      </Field>
-
-      <Button
-        size="sm"
-        disabled={busy}
-        onClick={() =>
-          onSubmit({
-            level,
-            source,
-            observations: observations.trim(),
-            assessedAt,
-            // Only with the level that asks for it — a date left over from
-            // switching levels is not sent.
-            reinspectAt: uninhabitable ? reinspectAt : '',
-          })
-        }
-      >
-        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-        {en ? `Record for ${target}` : `تسجيل الكشف على ${target}`}
-      </Button>
-    </div>
-  );
-}
-
-/**
- * «بانتظار إعادة الكشف بعد الترميم» — on a unit whose latest reading is
- * «غير قابلة للسكن». It stays until the next inspection is recorded, whatever
- * that one finds: the history keeps the old reading, the notice goes.
- */
-export function ReinspectNotice({
-  history,
-  unitId,
-  locale,
-}: {
-  history: readonly DamageAssessmentRow[];
-  unitId: string;
-  locale: string;
-}) {
-  const en = locale === 'en';
-  // `history` is newest first; the unit's own latest reading decides.
-  const latest = history.find((row) => row.unitId === unitId);
-  if (!latest || latest.level !== 'UNINHABITABLE') return null;
-  const due = latest.reinspectAt ?? null;
-  const overdue = due !== null && new Date(due) < new Date(new Date().toDateString());
-  return (
-    <p
-      role="status"
-      className={cn(
-        'flex items-start gap-2 rounded-md px-3 py-2 text-xs leading-relaxed',
-        overdue ? 'bg-destructive/10 text-destructive' : 'bg-warning/10 text-warning',
-      )}
-    >
-      <CalendarClock className="mt-px size-3.5 shrink-0" aria-hidden />
-      <span>
-        <span className="font-semibold">
-          {en ? 'Uninhabitable — waiting for re-inspection after repair' : 'غير قابلة للسكن — بانتظار إعادة الكشف بعد الترميم'}
-        </span>
-        {due ? (
-          <>
-            {' · '}
-            {overdue ? (en ? 'was due ' : 'كان موعدها ') : en ? 'due ' : 'الموعد '}
-            <span className="tabular-nums">{formatDate(due)}</span>
-          </>
-        ) : (
-          <> · {en ? 'no date set' : 'لم يُحدَّد موعد'}</>
-        )}
-      </span>
-    </p>
-  );
-}
+/* The damage form, its notice and its history live in `components/admin/damage/`. */
 
 // ─────────────────────────  Who is, and was, in a unit  ─────────────────────────
 

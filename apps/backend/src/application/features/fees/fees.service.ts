@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { $Enums, Prisma } from '../../../generated/tenant-client';
+import { Prisma, type $Enums } from '../../../generated/tenant-client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WHISH_GATEWAY } from '../../../domain/interfaces/whish-gateway.interface';
 import type {
@@ -32,10 +32,13 @@ import {
 } from '../../../domain/entities/billable-unit';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
+import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { unitsUnderReview } from '../buildings/unit-status';
+import { uninhabitableUnitIds } from '../buildings/habitability';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { assertNotMergedAway } from '../citizens/merged-away';
-import { searchTokens } from '../../common/search-terms';
+import { likePattern, searchTokens } from '../../common/search-terms';
+import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { PaymentLedgerService, type Tender } from './payment-ledger.service';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
@@ -60,6 +63,8 @@ export interface CitizenAssessment {
   assessment: FeeAssessment | null;
   /** The flats held under review on this bill — for counting each once across a run. Not stored. */
   heldUnitIds?: string[];
+  /** The flats held as «غير صالحة للسكن» on this bill, for the same reason. Not stored. */
+  uninhabitableUnitIds?: string[];
 }
 
 /** What one citizen holds today, as billing reads it. See `FeesService.holdingsOf`. */
@@ -138,18 +143,40 @@ function bearsFee(unit: BillableUnit, bearer: FeeBearer): boolean {
   return !isOccupiedByOthers(unit.unitStatus) && !isUnoccupied(unit.unitStatus);
 }
 
-/** Held flats across a run, each counted once — by id where known, by count where not. */
-function distinctHeld(
-  assessed: ReadonlyArray<{ heldUnitIds?: readonly string[]; assessment?: FeeAssessment | null }>,
+type HeldEntry = {
+  heldUnitIds?: readonly string[];
+  uninhabitableUnitIds?: readonly string[];
+  assessment?: FeeAssessment | null;
+};
+
+/** Flats one hold covers across a run, each counted once — by id where known, by count where not. */
+function distinctUnits(
+  assessed: readonly HeldEntry[],
+  idsOf: (entry: HeldEntry) => readonly string[] | undefined,
+  countOf: (assessment: FeeAssessment) => number | undefined,
 ): number {
   const ids = new Set<string>();
   let unidentified = 0;
   for (const entry of assessed) {
-    const known = entry.heldUnitIds ?? [];
+    const known = idsOf(entry) ?? [];
     for (const id of known) ids.add(id);
-    unidentified += Math.max(0, (entry.assessment?.heldUnitCount ?? 0) - known.length);
+    unidentified += Math.max(0, (entry.assessment ? countOf(entry.assessment) ?? 0 : 0) - known.length);
   }
   return ids.size + unidentified;
+}
+
+/** Flats held under review across a run (`assessCitizen`). */
+function distinctHeld(assessed: readonly HeldEntry[]): number {
+  return distinctUnits(assessed, (entry) => entry.heldUnitIds, (assessment) => assessment.heldUnitCount);
+}
+
+/** Flats held as «غير صالحة للسكن» across a run (`assessCitizen`). */
+function distinctUninhabitable(assessed: readonly HeldEntry[]): number {
+  return distinctUnits(
+    assessed,
+    (entry) => entry.uninhabitableUnitIds,
+    (assessment) => assessment.uninhabitableUnitCount,
+  );
 }
 
 /**
@@ -221,7 +248,13 @@ export function assessCitizen(
     bearer?: FeeBearer;
   },
 ):
-  | { kind: 'assessed'; amount: number; assessment: FeeAssessment; heldUnitIds?: string[] }
+  | {
+      kind: 'assessed';
+      amount: number;
+      assessment: FeeAssessment;
+      heldUnitIds?: string[];
+      uninhabitableUnitIds?: string[];
+    }
   | { kind: 'unassessable'; reason: string } {
   /*
     A flat charge never asks the register anything.
@@ -244,6 +277,7 @@ export function assessCitizen(
         totalArea: 0,
         excludedUnitCount: 0,
         heldUnitCount: 0,
+        uninhabitableUnitCount: 0,
         lines: [],
       },
     };
@@ -296,12 +330,35 @@ export function assessCitizen(
     counting it as an exemption would report as settled what is not.
   */
   const reviewing = bearer === 'OCCUPANT' ? held.filter((unit) => unit.underReview) : [];
-  const decided = bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview) : held;
+  /*
+    A flat nobody can live in is not charged its occupancy fee — to anybody —
+    until a re-inspection reads it habitable (the user's decision, 2026-10-05).
+
+    The rental-value fee is due only for actual occupancy (Law 60/1988 Art.
+    11), and the annual maintenance fee follows it (Art. 79); a flat whose
+    current damage reading says «غير صالحة للسكن» cannot be occupied in the
+    sense either article means. Held rather than dropped, and counted apart
+    from the review hold: the clerk settles a review in the register and an
+    uninhabitable flat with a visit. A flat that is both is counted as under
+    review — that is the hold someone in the office can lift.
+
+    Only the occupancy fee, for the reason the review hold gives: an
+    owner-borne fee follows the deed, and the deed does not depend on whether
+    the roof is on.
+  */
+  const unlivable =
+    bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview && unit.uninhabitable) : [];
+  const decided =
+    bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview && !unit.uninhabitable) : held;
   const units = decided.filter((unit) => bearsFee(unit, bearer));
   const excludedUnitCount = decided.length - units.length;
   const heldUnitCount = reviewing.length;
+  const uninhabitableUnitCount = unlivable.length;
   // Which flats, so a run can count each once — an owner and a tenant hold the same one.
   const heldUnitIds = reviewing.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+  const uninhabitableUnitIds = unlivable
+    .map((unit) => unit.unitId)
+    .filter((id): id is string => Boolean(id));
 
   if (notice.basis === 'PER_AREA') {
     /*
@@ -336,6 +393,7 @@ export function assessCitizen(
     */
     amount: Math.round(notice.amount * multiplier),
     heldUnitIds,
+    uninhabitableUnitIds,
     assessment: {
       basis: notice.basis,
       rate: notice.amount,
@@ -343,6 +401,7 @@ export function assessCitizen(
       totalArea,
       excludedUnitCount,
       heldUnitCount,
+      uninhabitableUnitCount,
       lines: units.map((unit) => ({
         propertyNumber: unit.propertyNumber,
         propertyType: unit.propertyType,
@@ -622,6 +681,10 @@ export class FeesService {
     return this.tenantContext.prisma;
   }
 
+  private get S() {
+    return tenantSchemaRef(this.tenantContext.schemaName);
+  }
+
   // ───────────────────────────  Settings  ───────────────────────────
 
   /** Namespaced per tenant so one municipality's entry cannot serve another. */
@@ -874,6 +937,8 @@ export class FeesService {
     );
     /** Flats whose occupancy fee is held under review — see `assessCitizen`. Each flat once. */
     const heldUnits = distinctHeld(assessed);
+    /** Flats whose occupancy fee is held as «غير صالحة للسكن» — see `assessCitizen`. Each flat once. */
+    const uninhabitableUnits = distinctUninhabitable(assessed);
 
     if (billable.length === 0) {
       /*
@@ -889,16 +954,22 @@ export class FeesService {
         flats and exempted five was reported as "everything held", and the
         clerk went looking for the wrong thing.
       */
-      const reasons = [
-        heldUnits > 0 ? `${heldUnits} وحدة موقوفة للمراجعة (تعارض في حالة الوحدة)` : null,
-        exemptedUnits > 0 ? `${exemptedUnits} وحدة شاغرة أو قيد الإنجاز أو معفاة حسب المكلَّف` : null,
-        unassessable.length > 0 ? `${unassessable.length} مواطن تحتاج سجلاته إلى جرد ميداني أولاً` : null,
-      ].filter(Boolean);
-      throw new ConflictError(
-        reasons.length > 0
-          ? `لا يوجد ما يُحتسب — ${reasons.join('، ')} — لن يتم إصدار أي إشعار`
-          : 'لا يوجد مواطنون مطابقون لهذه الفئة — لن يتم إصدار أي إشعار',
-      );
+      if (heldUnits + uninhabitableUnits + exemptedUnits + unassessable.length === 0) {
+        throw new ConflictError({
+          code: 'FEE_NO_MATCHING_CITIZENS',
+          message: 'No citizen matches this notice, so nothing was issued',
+        });
+      }
+      throw new ConflictError({
+        code: 'FEE_NOTHING_TO_CHARGE',
+        message: 'Every unit this notice targets is held, exempted or unassessable, so nothing was issued',
+        params: {
+          held: heldUnits,
+          uninhabitable: uninhabitableUnits,
+          exempted: exemptedUnits,
+          unassessable: unassessable.length,
+        },
+      });
     }
 
     const result = await this.db.$transaction(async (tx) => {
@@ -986,6 +1057,7 @@ export class FeesService {
       unassessableCount: unassessable.length,
       exemptedUnitCount: exemptedUnits,
       heldUnitCount: heldUnits,
+      uninhabitableUnitCount: uninhabitableUnits,
       actorId: actor.id,
       actorRole: actor.role,
     });
@@ -1005,8 +1077,13 @@ export class FeesService {
         `Fee "${input.title}": ${heldUnits} unit(s) held under review (تعارض في حالة الوحدة)`,
       );
     }
+    if (uninhabitableUnits > 0) {
+      this.logger.log(
+        `Fee "${input.title}": ${uninhabitableUnits} unit(s) held as uninhabitable (غير صالحة للسكن)`,
+      );
+    }
 
-    return { ...result, unassessable, exemptedUnits, heldUnits };
+    return { ...result, unassessable, exemptedUnits, heldUnits, uninhabitableUnits };
   }
 
   /**
@@ -1115,6 +1192,13 @@ export class FeesService {
           `Recurring "${notice.title}" (${periodKey}): ${heldUnits} unit(s) held under review (تعارض في حالة الوحدة) — not charged this period`,
         );
       }
+      // Flats nobody can live in this period — logged as the review hold is, never silent.
+      const uninhabitableUnits = distinctUninhabitable(assessed);
+      if (uninhabitableUnits > 0) {
+        this.logger.warn(
+          `Recurring "${notice.title}" (${periodKey}): ${uninhabitableUnits} unit(s) held as uninhabitable (غير صالحة للسكن) — not charged this period`,
+        );
+      }
       if (billable.length === 0) {
         await this.recordBillingRun(notice.id, periodKey, startedAt, {
           outcome: 'SKIPPED',
@@ -1158,6 +1242,7 @@ export class FeesService {
           recurring: true,
           periodKey,
           heldUnitCount: heldUnits,
+          uninhabitableUnitCount: uninhabitableUnits,
         });
       }
 
@@ -1417,6 +1502,7 @@ export class FeesService {
           amount: outcome.amount,
           assessment: outcome.assessment,
           heldUnitIds: outcome.heldUnitIds,
+          uninhabitableUnitIds: outcome.uninhabitableUnitIds,
         });
       }
     }
@@ -1608,6 +1694,18 @@ export class FeesService {
       const underReview = (unitId: string | undefined | null) =>
         Boolean(unitId && (review.get(unitId)?.conflicts.length ?? 0) > 0);
       /*
+        The flats nobody can live in, by the same reading the screens show
+        (`isUninhabitableReading`): recomputed from the damage log every run,
+        so a re-inspection that reads a flat habitable releases it from the
+        next run on, from whichever screen recorded it.
+      */
+      const unlivable =
+        heldHere.size === 0
+          ? new Set<string>()
+          : await withConnectionRetry(() => uninhabitableUnitIds(this.db, this.S, [...heldHere]));
+      /** Held: the flat's current damage reading says «غير صالحة للسكن». */
+      const uninhabitable = (unitId: string | undefined | null) => Boolean(unitId && unlivable.has(unitId));
+      /*
         The status the rule decides, where the stored one lags it — a flat with a
         registered tenant still stored as «مشغولة من المالك» is billed as the
         «مؤجرة» it is, so the tenant pays and the owner does not, today, rather
@@ -1636,6 +1734,7 @@ export class FeesService {
           unitArea: unknown;
           unitStatus: string | null;
           underReview: boolean;
+          uninhabitable: boolean;
           unitId: string;
         }>>();
         for (const occupancy of row.unitOccupancies) {
@@ -1648,6 +1747,7 @@ export class FeesService {
             unitId: occupancy.unit.id,
             unitStatus: settledStatus(occupancy.unit.id, occupancy.unit.unitStatus),
             underReview: underReview(occupancy.unit.id),
+            uninhabitable: uninhabitable(occupancy.unit.id),
           });
           occupanciesByBuilding.set(buildingId, list);
         }
@@ -1687,6 +1787,7 @@ export class FeesService {
                   const sole = soleUnits.get(card.buildingId!)!;
                   return {
                     soleUnitId: sole.id,
+                    uninhabitable: uninhabitable(sole.id),
                     /*
                       A منزل card that states nothing bills by its flat's answer —
                       «مؤجرة» with a tenant registered in it, «شاغرة» under a
@@ -1705,6 +1806,7 @@ export class FeesService {
                     ...line.unit,
                     unitStatus: settledStatus(line.unit.id, line.unit.unitStatus) as never,
                     underReview: underReview(line.unit.id),
+                    uninhabitable: uninhabitable(line.unit.id),
                   }
                 : line.unit,
             })),
@@ -2369,6 +2471,8 @@ export class FeesService {
       limit?: number;
       offset?: number;
     } = {},
+    /** The caller — «مشاهد فقط» searches without the payer's رقم مرجعي (`citizenSearchText`). */
+    viewer?: { role: string },
   ) {
     /*
       A pasted invoice id is a lookup, not a search.
@@ -2381,6 +2485,25 @@ export class FeesService {
     const search = filter.search?.trim();
     const exactId = search && UUID.test(search) ? search.toLowerCase() : undefined;
     const tokens = exactId ? [] : searchTokens(search);
+    /*
+      «مشاهد فقط» is shown a payer's رقم مرجعي masked, so its search must not
+      match on it. Prisma's `where` cannot fold a column, so for that role the
+      payer side of each word is resolved first, through the same
+      reference-free text the register search uses.
+    */
+    const payerMatches =
+      viewer?.role === 'VIEWER' && tokens.length
+        ? await Promise.all(
+            tokens.map((token) =>
+              withConnectionRetry(() =>
+                this.db.$queryRaw<Array<{ id: string }>>`
+                  SELECT u.id FROM ${this.S}users u
+                   WHERE u.kind = 'CITIZEN'
+                     AND ${citizenSearchText(this.S, viewer.role)} LIKE ${likePattern(token)}`,
+              ),
+            ),
+          )
+        : null;
 
     /**
      * The page, and the ceiling on it.
@@ -2447,10 +2570,12 @@ export class FeesService {
         ? { id: exactId }
         : tokens.length
           ? {
-              AND: tokens.map((token) => ({
+              AND: tokens.map((token, index) => ({
                 OR: [
                   { searchText: { contains: token } },
-                  { citizen: { searchText: { contains: token } } },
+                  payerMatches
+                    ? { citizenId: { in: payerMatches[index]!.map((row) => row.id) } }
+                    : { citizen: { searchText: { contains: token } } },
                 ],
               })),
             }

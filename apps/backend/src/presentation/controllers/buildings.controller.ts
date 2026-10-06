@@ -1,6 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
+  CENSUS_WORKLIST_ROLES,
+  EVERY_STAFF_ROLE,
+  REGISTER_WRITE_ROLES,
   buildingFilterSchema,
+  worklistQuerySchema,
   confirmVacancySchema,
   correctBuildingParcelSchema,
   createBuildingSchema,
@@ -17,6 +21,7 @@ import {
   upsertOccupancySchema,
   upsertUnitSchema,
   type BuildingFilter,
+  type WorklistQuery,
   type ConfirmVacancyInput,
   type CorrectBuildingParcelInput,
   type CreateBuildingInput,
@@ -64,23 +69,11 @@ import type { SessionClaims } from '../../application/features/identity/identity
  * cannot be corrected by doing it again, and the service refuses it outright
  * once anyone has been recorded as living in the building.
  */
-const READ_ROLES = [
-  'SUPER_ADMIN',
-  'AUDITOR',
-  'FIELD_INSPECTOR',
-  'COLLECTOR',
-  'ACCOUNTANT',
-  'ADMINISTRATIVE_OFFICER',
-  // «مشاهد فقط» reads the census and writes nothing — absent from WRITE_ROLES.
-  'VIEWER',
-] as const;
-
-const WRITE_ROLES = [
-  'SUPER_ADMIN',
-  'FIELD_INSPECTOR',
-  'COLLECTOR',
-  'ADMINISTRATIVE_OFFICER',
-] as const;
+/*
+ * Reads are `EVERY_STAFF_ROLE`, writes `REGISTER_WRITE_ROLES`, the collection
+ * worklists `CENSUS_WORKLIST_ROLES` — one copy each, in
+ * `@mechanization/shared-schemas` (`role-sets.ts`), mirrored by the dashboard.
+ */
 
 @Controller('t/:tenantSlug/buildings')
 export class BuildingsController {
@@ -98,7 +91,7 @@ export class BuildingsController {
    * whom, from what to what, and why. Everyone who can read the building; changes
    * only (see `AuditService.history`).
    */
-  @Roles(...READ_ROLES)
+  @Roles(...EVERY_STAFF_ROLE)
   @Get(':id/history')
   history(@Param('id') id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
     return this.audit.history({
@@ -114,7 +107,7 @@ export class BuildingsController {
   }
 
   /** The census ledger — filters compose, and every one of them is optional. */
-  @Roles(...READ_ROLES)
+  @Roles(...EVERY_STAFF_ROLE)
   @Get()
   async list(@Query(new ZodValidationPipe(buildingFilterSchema)) query: BuildingFilter) {
     return this.buildings.list(query);
@@ -131,7 +124,7 @@ export class BuildingsController {
    * Same roles as the ledger: a filter offering values the reader cannot then
    * apply is a worse answer than no filter at all.
    */
-  @Roles(...READ_ROLES)
+  @Roles(...EVERY_STAFF_ROLE)
   @Get('filter-options')
   async filterOptions() {
     return this.buildings.filterOptions();
@@ -139,25 +132,35 @@ export class BuildingsController {
 
   /**
    * «وحدات غير ممسوحة» — units with no survey answer and nobody recorded on
-   * them, in the buildings the viewer added; admins see everyone's. Declared
+   * them, in the buildings the viewer added; admins see everyone's, and may
+   * narrow to one officer or to work whose officer is gone (`owner`). Declared
    * before `:id` for the reason `filter-options` is.
    */
-  @Roles(...READ_ROLES)
+  @Roles(...CENSUS_WORKLIST_ROLES)
   @Get('unsurveyed-units')
   async unsurveyedUnits(
-    @Query('search') search: string | undefined,
-    @Query('limit') limit = '25',
-    @Query('offset') offset = '0',
+    @Query(new ZodValidationPipe(worklistQuerySchema)) query: WorklistQuery,
     @CurrentUser() user: SessionClaims,
   ) {
-    return this.buildings.unsurveyedUnits(
-      { search, limit: Number(limit) || 25, offset: Number(offset) || 0 },
-      this.actor(user),
-    );
+    return this.buildings.unsurveyedUnits(query, this.actor(user));
+  }
+
+  /**
+   * «بانتظار إعادة الكشف» — flats and structures read «غير صالحة للسكن»,
+   * waiting for the visit after repair that releases their fee hold. The
+   * officer who recorded each reading sees it; admins see everyone's.
+   */
+  @Roles(...CENSUS_WORKLIST_ROLES)
+  @Get('reinspections')
+  async reinspections(
+    @Query(new ZodValidationPipe(worklistQuerySchema)) query: WorklistQuery,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.buildings.reinspections(query, this.actor(user));
   }
 
   /** One building with its whole unit matrix and each unit's occupants. */
-  @Roles(...READ_ROLES)
+  @Roles(...EVERY_STAFF_ROLE)
   @Get(':id')
   async get(@Param('id') id: string) {
     return this.buildings.get(id);
@@ -168,7 +171,7 @@ export class BuildingsController {
    * including its units' own readings, since "top three floors gone, ground
    * floor shop still trading" is two rows about one building.
    */
-  @Roles(...READ_ROLES)
+  @Roles(...EVERY_STAFF_ROLE)
   @Get(':id/damage')
   async damageHistory(@Param('id') id: string) {
     const [current, history] = await Promise.all([
@@ -178,7 +181,7 @@ export class BuildingsController {
     return { current, history };
   }
 
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post()
   async create(
     @Body(new ZodValidationPipe(createBuildingSchema)) body: CreateBuildingInput,
@@ -187,7 +190,7 @@ export class BuildingsController {
     return this.buildings.create(body, this.actor(user));
   }
 
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Patch(':id')
   async update(
     @Param('id') id: string,
@@ -201,7 +204,7 @@ export class BuildingsController {
    * The building editor's save: the shell and the matrix difference in one
    * transaction, all or nothing — or, with `dryRun`, what it would do.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post(':id/matrix-save')
   async saveMatrix(
     @Param('id') id: string,
@@ -216,7 +219,7 @@ export class BuildingsController {
    * structures already on that parcel, whether the pin falls inside it, and
    * which citizen cards and cases follow — before anything is asked.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Get(':id/parcel-correction')
   async parcelCorrectionPreview(
     @Param('id') id: string,
@@ -230,7 +233,7 @@ export class BuildingsController {
    * «تصحيح رقم العقار». Anyone who can edit a building may, with a reason —
    * the reason and the full before/after go on the audit row.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post(':id/parcel-correction')
   async correctParcel(
     @Param('id') id: string,
@@ -254,7 +257,7 @@ export class BuildingsController {
    * already holds the requested number of units is topped up to it, never
    * doubled, so a re-tap on a slow connection cannot invent flats.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post(':id/units/generate')
   async generateUnits(
     @Param('id') id: string,
@@ -264,7 +267,7 @@ export class BuildingsController {
     return this.buildings.generateUnits(id, body, this.actor(user));
   }
 
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post(':id/units')
   async addUnit(
     @Param('id') id: string,
@@ -279,7 +282,7 @@ export class BuildingsController {
    * its own, and requiring the building in the path would let a caller pass a
    * pair that disagree — which the handler would then have to decide about.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Patch('units/:unitId')
   async updateUnit(
     @Param('unitId') unitId: string,
@@ -294,7 +297,7 @@ export class BuildingsController {
    * rather than `startCol`/`endCol` on the PATCH above: a resize also pins the
    * floor's unpositioned neighbours, and refuses drawing over one.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Patch('units/:unitId/span')
   async resizeUnitSpan(
     @Param('unitId') unitId: string,
@@ -308,12 +311,12 @@ export class BuildingsController {
    * Removes a flat the matrix says exists and the street does not.
    *
    * Not nested under its building for the same reason `PATCH` is not. Held to
-   * `WRITE_ROLES` rather than `SUPER_ADMIN` — unlike deleting a whole building,
+   * `REGISTER_WRITE_ROLES` rather than `SUPER_ADMIN` — unlike deleting a whole building,
    * this is a survey correction an officer makes standing in the stairwell, and
    * the service refuses it the moment anything has been recorded against the
    * unit. The narrowing that matters is in the guards, not the role.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Delete('units/:unitId')
   async deleteUnit(@Param('unitId') unitId: string, @CurrentUser() user: SessionClaims) {
     await this.buildings.deleteUnit(unitId, this.actor(user));
@@ -333,7 +336,7 @@ export class BuildingsController {
    * A write, so the field roles — the person who found the flat empty is the
    * person standing at it.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post('units/:unitId/vacancy')
   async confirmVacancy(
     @Param('unitId') unitId: string,
@@ -350,7 +353,7 @@ export class BuildingsController {
    * confirmation is closed and kept, like an ended occupancy), and the action
    * takes a body — the reason decides what the unit goes back to.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post('units/:unitId/vacancy/end')
   async endVacancy(
     @Param('unitId') unitId: string,
@@ -381,7 +384,7 @@ export class BuildingsController {
     return this.buildings.settleAllUnits(this.actor(user));
   }
 
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post('occupancies')
   async recordOccupancy(
     @Body(new ZodValidationPipe(upsertOccupancySchema)) body: UpsertOccupancyInput,
@@ -395,7 +398,7 @@ export class BuildingsController {
    * holds it from. An owner recorded after the tenant needs the officer's
    * confirmation; see `LandlordLinkService.linkRecordedOwner`.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post('occupancies/:occupancyId/owner-link')
   async linkOccupancyOwner(
     @Param('occupancyId') occupancyId: string,
@@ -419,7 +422,7 @@ export class BuildingsController {
    * flat is given the status the officer says it has now. An owner's spell keeps
    * its own path.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Patch('occupancies/:occupancyId/end')
   async endOccupancy(
     @Param('occupancyId') occupancyId: string,
@@ -445,7 +448,7 @@ export class BuildingsController {
    * reads from the owner's file, reached from the flat. Refused, with the way
    * out, when the owner's card covers the whole structure without naming flats.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Get('occupancies/:occupancyId/ownership-preview')
   ownershipPreview(@Param('occupancyId') occupancyId: string) {
     return this.ownership.previewOccupancy(occupancyId);
@@ -460,7 +463,7 @@ export class BuildingsController {
    * officer does in a stairwell, and routing it through a narrower role would
    * mean the person who knocked cannot record that they knocked.
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post('visits')
   async logVisit(
     @Body(new ZodValidationPipe(logVisitSchema)) body: LogVisitInput,
@@ -470,7 +473,7 @@ export class BuildingsController {
   }
 
   /** Every attempt on one unit — the panel behind «٣ محاولات». */
-  @Roles(...READ_ROLES)
+  @Roles(...EVERY_STAFF_ROLE)
   @Get('units/:unitId/visits')
   async unitVisits(@Param('unitId') unitId: string) {
     return { visits: await this.buildings.visits(unitId) };
@@ -483,7 +486,7 @@ export class BuildingsController {
    * a building that was unsafe in 2024 and repaired in 2026 is two facts, and
    * the first is what a compensation claim rests on (D3).
    */
-  @Roles(...WRITE_ROLES)
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post('damage')
   async recordDamage(
     @Body(new ZodValidationPipe(createDamageAssessmentSchema)) body: CreateDamageAssessmentInput,

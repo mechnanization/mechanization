@@ -535,6 +535,8 @@ export function generateRegister(tenant: SeedTenantProfile, options: SeedOptions
       referenceNumber: citizenReference,
       phone: contact.phone ?? null,
       whatsapp: contact.whatsapp ?? contact.phone ?? null,
+      hasNoPhone: contact.hasNoPhone === true,
+      contactPhone: contact.contactPhone || null,
       firstName: personal.firstName,
       middleName: personal.middleName || null,
       lastName: personal.lastName,
@@ -826,14 +828,30 @@ function drawPerson(
         : {}),
       ...(foreign && d.chance(0.35) ? { residencyNumber: String(d.int(100_000, 9_999_999)) } : {}),
     },
-    contact: {
-      phone,
-      whatsappSameAsPhone: !separateWhatsapp,
-      ...(separateWhatsapp ? { whatsapp: phoneNumber(tenant, 2, index + 1) } : {}),
-      maritalStatus,
-      actualHouseholdMembers: actual,
-      totalRegisteredMembers: total,
-    },
+    /*
+      «لا يملك رقم هاتف» (0069): about one person in fifty owns no phone and is
+      reached on the previous person's — a son's — which is what the owner
+      match's «رقم للتواصل» provenance exists for. Chosen by index rather than
+      by the dice, so every other value this seed draws is unchanged.
+    */
+    contact:
+      index > 0 && index % 47 === 46
+        ? {
+            hasNoPhone: true,
+            contactPhone: phoneNumber(tenant, 1, index),
+            whatsappSameAsPhone: true,
+            maritalStatus,
+            actualHouseholdMembers: actual,
+            totalRegisteredMembers: total,
+          }
+        : {
+            phone,
+            whatsappSameAsPhone: !separateWhatsapp,
+            ...(separateWhatsapp ? { whatsapp: phoneNumber(tenant, 2, index + 1) } : {}),
+            maritalStatus,
+            actualHouseholdMembers: actual,
+            totalRegisteredMembers: total,
+          },
   };
 }
 

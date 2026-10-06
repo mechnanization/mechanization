@@ -342,6 +342,60 @@ describeIfDb('LandlordLinkService', () => {
     expect(queue.items.map((item) => item.propertyEntryId)).toContain(entryId);
   });
 
+  it('offers an elderly owner by the relative’s number they are reached on — never preselected — and links on the form’s answer', async () => {
+    /*
+      «لا يملك رقم هاتف» + «رقم للتواصل» (0069): the father owns the flat and
+      has no phone; his tenant knows only the son's number. Matching the
+      number alone finds the son, who owns nothing — the father is reachable
+      only through the number the register knows is his relative's.
+    */
+    const { units, building } = await surveyedBlock('LNK-CONTACT');
+    const son = freshPhone();
+    const sonId = await citizen('ابن', son.stored);
+    const fatherId = await citizen('أب', null, { hasNoPhone: true, contactPhone: son.stored });
+    await db.registration.create({
+      data: { citizenId: fatherId, referenceNumber: `REF-${randomUUID().slice(0, 10)}` },
+    });
+
+    // The form's lookup: both, and says which number is whose.
+    const offered = await within(() => links.candidatesFor(son.typed));
+    expect(Object.fromEntries(offered.map((candidate) => [candidate.id, candidate.matchedBy]))).toEqual({
+      [sonId]: 'PHONE',
+      [fatherId]: 'CONTACT',
+    });
+
+    const { entryId, registrationId } = await tenantFiling({
+      landlordPhone: son.stored,
+      parcelNumber: 'LNK-CONTACT',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+      landlordName: null,
+    });
+
+    // The queue's match offers the father too, as a relative's number.
+    const [proposal] = await within(() => links.claimsFiledBy(registrationId));
+    expect(proposal).toBeDefined();
+    expect(Object.fromEntries(proposal!.candidates.map((candidate) => [candidate.id, candidate.matchedBy]))).toEqual({
+      [sonId]: 'PHONE',
+      [fatherId]: 'CONTACT',
+    });
+
+    // The backward direction: the father's own save is asked about the card.
+    expect((await within(() => links.claimsNaming(fatherId))).map((item) => item.propertyEntryId)).toContain(entryId);
+
+    // «نعم، هو المالك» pressed on the form for the father is applied, not dropped.
+    const applied = await within(() =>
+      links.applyAgreements({
+        filed: [proposal!],
+        agreements: [{ phone: son.stored, citizenId: fatherId }],
+        actor: actor(),
+      }),
+    );
+    expect(applied.linked).toBe(1);
+    expect(applied.remaining).toEqual([]);
+    expect((await db.propertyEntry.findUniqueOrThrow({ where: { id: entryId } })).landlordCitizenId).toBe(fatherId);
+  });
+
   // ─────────────────────────────  Confirming  ─────────────────────────────
 
   it('puts the flat on the owner’s file and bill, and records exactly what it wrote', async () => {

@@ -1,28 +1,20 @@
 import { ReferenceNumber } from './reference-number.vo';
 
-describe('ReferenceNumber.mask', () => {
-  it('keeps the municipality and the issue month, and hides the whole secret suffix', () => {
-    expect(ReferenceNumber.mask('BZR-2607-4K9QX2')).toBe('BZR-2607-••••••');
+/*
+  «مشاهد فقط» is never shown a رقم مرجعي, and the interceptor masks one inside any string by
+  its pattern. The reference-only sign-in accepts it lower case and spaced, so a
+  note or a search echo can carry it that way; those are masked too.
+*/
+describe('ReferenceNumber.maskWithin', () => {
+  it('masks the canonical form and the ways a person types it', () => {
+    expect(ReferenceNumber.maskWithin('BZR-2610-NZ58VK')).toBe('BZR-2610-••••••');
+    expect(ReferenceNumber.maskWithin('see bzr-2610-nz58vk')).toBe('see BZR-2610-••••••');
+    expect(ReferenceNumber.maskWithin('BZR 2610 NZ58VK, BZR2610NZ58VK')).toBe('BZR-2610-••••••, BZR-2610-••••••');
+    expect(ReferenceNumber.maskWithin('ref_BZR-2610-NZ58VK')).toBe('ref_BZR-2610-••••••');
   });
 
-  it('reveals not one character of the suffix', () => {
-    const reference = ReferenceNumber.generate('BZR').value;
-    const suffix = reference.slice(-6);
-    const masked = ReferenceNumber.mask(reference)!;
-
-    expect(masked.endsWith('••••••')).toBe(true);
-    for (const char of new Set(suffix)) {
-      expect(masked.slice(9)).not.toContain(char);
-    }
-  });
-
-  it('reads what a citizen types, and hides anything that is not a reference whole', () => {
-    expect(ReferenceNumber.mask(' bzr-2607-4k9qx2 ')).toBe('BZR-2607-••••••');
-    expect(ReferenceNumber.mask('not-a-reference')).toBe('••••••');
-  });
-
-  it('has nothing to mask for no reference', () => {
-    expect(ReferenceNumber.mask(null)).toBeNull();
-    expect(ReferenceNumber.mask('')).toBeNull();
+  it('leaves a unit code, a phone and a longer token alone', () => {
+    expect(ReferenceNumber.maskWithin('Z-1-45-A-201 +96170123456')).toBe('Z-1-45-A-201 +96170123456');
+    expect(ReferenceNumber.maskWithin('XBZR-2610-NZ58VK1')).toBe('XBZR-2610-NZ58VK1');
   });
 });

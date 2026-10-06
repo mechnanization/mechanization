@@ -62,6 +62,8 @@ export interface PlanPerson {
   motherName: string | null;
   phone: string | null;
   whatsapp: string | null;
+  /** «لا يملك رقم هاتف» — see `planFields` for how a merge honours it. */
+  hasNoPhone: boolean;
   contactPhone: string | null;
   gender: string | null;
   nationality: string | null;
@@ -244,6 +246,8 @@ export type FillableField =
   | 'whatsapp'
   /** «رقم للتواصل» — a relative's number, never an identity. See `User.contactPhone`. */
   | 'contactPhone'
+  /** «لا يملك رقم هاتف» — filled true only onto a kept file with no phone and no answer. */
+  | 'hasNoPhone'
   | 'gender'
   | 'nationality'
   | 'isLebanese'
@@ -267,13 +271,14 @@ export type FillableField =
  * a household's blood type: the edit form would neither show nor maintain it.
  */
 /*
-  `contactPhone` is shared rather than resident-only because
-  `citizenColumnsForEdit` writes it on both branches — a merge that could not
-  carry it would drop the one number an elderly file has, which is the
-  opposite of what a merge is for.
+  `contactPhone` is a household file's answer — `citizenColumnsForEdit` writes
+  it on that branch alone — so it fills a household survivor only. Its phone
+  and WhatsApp are filled by `planFields` with «لا يملك رقم هاتف» in hand, not
+  from this list.
 */
-const SHARED_FIELDS: readonly FillableField[] = ['middleName', 'phone', 'whatsapp', 'contactPhone'];
+const SHARED_FIELDS: readonly FillableField[] = ['middleName'];
 const RESIDENT_FIELDS: readonly FillableField[] = [
+  'contactPhone',
   'motherName',
   'gender',
   'nationality',
@@ -294,6 +299,7 @@ const COMPARED_FIELDS = [
   'motherName',
   'phone',
   'whatsapp',
+  'hasNoPhone',
   'contactPhone',
   'residence',
   'gender',
@@ -313,9 +319,14 @@ const COMPARED_FIELDS = [
 
 const blank = (value: unknown) => value === null || value === undefined || (typeof value === 'string' && !value.trim());
 
-function display(value: unknown): string | null {
+/**
+ * An answer as the preview carries it: text trimmed, a yes-or-no left a
+ * boolean (`isLebanese`, `hasNoPhone`) for the dialog to say in the page's
+ * language — the server writing «نعم» put Arabic on the English page.
+ */
+function display(value: unknown): string | boolean | null {
   if (blank(value)) return null;
-  if (typeof value === 'boolean') return value ? 'نعم' : 'لا';
+  if (typeof value === 'boolean') return value;
   return String(value).trim();
 }
 
@@ -352,11 +363,65 @@ export function planFields(keep: PlanPerson, absorb: PlanPerson): Pick<
       : [...SHARED_FIELDS, ...RESIDENT_FIELDS];
 
   const fills: MergePlan['fills'] = [];
-  for (const field of kinds) {
-    if (blank(keep[field]) && !blank(absorb[field])) fills.push({ field, value: absorb[field] });
+  const resident = keep.residence !== 'NON_RESIDENT_OWNER';
+
+  /*
+    The person's own numbers, with «لا يملك رقم هاتف» in hand.
+
+    The typical pair is the old file holding a son's number in `phone` and the
+    corrected one saying the father has no phone. Filling the kept file's empty
+    `phone` from the absorbed one would put the son's number back in the
+    identity column — citizen sign-in would offer the father's file to the son
+    again, which is the defect the answer exists to end. So:
+
+    - a kept file that says «لا يملك رقم هاتف» gets no phone and no WhatsApp;
+      the absorbed file's number becomes its «رقم للتواصل», if it has none —
+      the same move the form makes when the box is ticked, shown to the
+      administrator in the fills before anything is written;
+    - a kept file with no phone and no answer takes the absorbed file's answer:
+      its numbers, or «لا يملك رقم هاتف» — the latter only when the kept file
+      has no WhatsApp number of its own either, because a person with one is
+      not a person with no phone (0072 refuses the pair; the disagreement stays
+      in the compared fields for the administrator to see);
+    - an absorbed phone that is the kept file's own «رقم للتواصل» is never
+      filled as the phone: by the kept file's own answer it is a relative's,
+      and filling it would put it back in the identity column (0072 refuses
+      that pair too);
+    - a kept file with a phone keeps it, and a «رقم للتواصل» equal to it is
+      never filled.
+  */
+  const fill = (field: FillableField, value: unknown) => fills.push({ field, value });
+  let ownPhone = keep.phone;
+  let contact = keep.contactPhone;
+  if (keep.hasNoPhone) {
+    const relative = absorb.contactPhone ?? absorb.phone;
+    if (resident && blank(contact) && !blank(relative)) {
+      fill('contactPhone', relative);
+      contact = relative;
+    }
+  } else if (blank(keep.phone)) {
+    if (absorb.hasNoPhone) {
+      if (resident && blank(keep.whatsapp)) fill('hasNoPhone', true);
+    } else if (!blank(absorb.phone)) {
+      const keptRelative = !blank(contact) && sameAnswer('phone', contact, absorb.phone);
+      if (!keptRelative) {
+        fill('phone', absorb.phone);
+        ownPhone = absorb.phone;
+        if (blank(keep.whatsapp) && !blank(absorb.whatsapp)) fill('whatsapp', absorb.whatsapp);
+      }
+    }
+  } else if (blank(keep.whatsapp) && !blank(absorb.whatsapp)) {
+    fill('whatsapp', absorb.whatsapp);
+  }
+  if (resident && blank(contact) && !blank(absorb.contactPhone)) {
+    const sameAsOwn = !blank(ownPhone) && sameAnswer('phone', ownPhone, absorb.contactPhone);
+    if (!sameAsOwn) fill('contactPhone', absorb.contactPhone);
   }
 
-  const resident = keep.residence !== 'NON_RESIDENT_OWNER';
+  for (const field of kinds) {
+    if (field === 'contactPhone') continue; // decided with the phone, above
+    if (blank(keep[field]) && !blank(absorb[field])) fills.push({ field, value: absorb[field] });
+  }
 
   /*
     The household counts are one answer in two columns, bound by a CHECK
@@ -384,11 +449,24 @@ export function planFields(keep: PlanPerson, absorb: PlanPerson): Pick<
     fills.push({ field: 'identityDocNumber', value: absorb.identityDocNumber });
   }
 
+  /*
+    A disagreement needs two answers. «لا يملك رقم هاتف» unticked answers only
+    beside a number of the file's own — on a file with neither phone nor
+    WhatsApp it is no answer — and a field the plan fills had none on the kept
+    file, so listing either would show a disagreement nobody made.
+  */
+  const answered = (side: typeof keep, field: (typeof COMPARED_FIELDS)[number]) => {
+    const value = side[field];
+    if (blank(value)) return false;
+    if (field === 'hasNoPhone' && value === false) return !blank(side.phone) || !blank(side.whatsapp);
+    return true;
+  };
+  const filled = new Set<string>(fills.map((fill) => fill.field));
   const conflicts: CitizenMergeFieldConflict[] = [];
   for (const field of COMPARED_FIELDS) {
     const a = keep[field];
     const b = absorb[field];
-    if (blank(a) || blank(b) || sameAnswer(field, a, b)) continue;
+    if (filled.has(field) || !answered(keep, field) || !answered(absorb, field) || sameAnswer(field, a, b)) continue;
     conflicts.push({ field, keep: display(a), absorb: display(b) });
   }
 

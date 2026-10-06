@@ -1,11 +1,14 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
+  QUALITY_CHECK_ROLES,
+  QUALITY_FINDING_KIND,
+  QUALITY_RETURN_READ_ROLES,
+  QUALITY_REVIEWER_ROLES,
+  WORKING_STAFF_ROLES,
   assignCheckSchema,
   completeCheckSchema,
   dismissFindingSchema,
   drawSampleSchema,
-  QUALITY_CHECK_ROLES,
-  QUALITY_FINDING_KIND,
   returnRecordSchema,
   type AssignCheckInput,
   type CompleteCheckInput,
@@ -21,7 +24,6 @@ import type { SessionClaims } from '../../application/features/identity/identity
 import { DataQualityService } from '../../application/features/quality/data-quality.service';
 import {
   RecordReviewService,
-  REVIEWER_ROLES,
   TO_REVIEW,
   type ReviewState,
 } from '../../application/features/quality/record-review.service';
@@ -47,7 +49,7 @@ function optionalUuid(value: string | undefined, name: string): string | undefin
  * «مراجعة الجودة».
  *
  * Deciding on records, drawing the re-check sample and dismissing findings are
- * for the roles that answer for the register — `REVIEWER_ROLES` — and never for
+ * for the roles that answer for the register — `QUALITY_REVIEWER_ROLES` — and never for
  * the officer whose work is being looked at: an officer who could approve their
  * own filings or dismiss the findings about them would make the screen a
  * formality. An officer does see their own returned records, the checks they
@@ -62,7 +64,7 @@ export class QualityController {
 
   // ─────────────────────────────  Reviews  ─────────────────────────────
 
-  @Roles(...REVIEWER_ROLES)
+  @Roles(...QUALITY_REVIEWER_ROLES)
   @Get('reviews')
   async queue(
     @Query('state') state = 'TO_REVIEW',
@@ -82,13 +84,13 @@ export class QualityController {
     });
   }
 
-  @Roles(...REVIEWER_ROLES)
+  @Roles(...QUALITY_REVIEWER_ROLES)
   @Post('reviews/:registrationId/approve')
   async approve(@Param('registrationId') registrationId: string, @CurrentUser() user: SessionClaims) {
     return this.reviews.approve(optionalUuid(registrationId, 'السجل')!, actorOf(user));
   }
 
-  @Roles(...REVIEWER_ROLES)
+  @Roles(...QUALITY_REVIEWER_ROLES)
   @Post('reviews/:registrationId/return')
   async returnToOfficer(
     @Param('registrationId') registrationId: string,
@@ -99,7 +101,7 @@ export class QualityController {
   }
 
   /** The open return on a citizen's record — shown on its edit form to whoever fixes it. */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...QUALITY_RETURN_READ_ROLES)
   @Get('citizens/:citizenId/open-return')
   async openReturn(@Param('citizenId') citizenId: string) {
     return { openReturn: await this.reviews.openReturnFor(optionalUuid(citizenId, 'المواطن')!) };
@@ -107,7 +109,7 @@ export class QualityController {
 
   // ─────────────────────────────  Findings  ─────────────────────────────
 
-  @Roles(...REVIEWER_ROLES)
+  @Roles(...QUALITY_REVIEWER_ROLES)
   @Get('findings')
   async findings(
     @Query('includeDismissed') includeDismissed?: string,
@@ -119,7 +121,7 @@ export class QualityController {
     });
   }
 
-  @Roles(...REVIEWER_ROLES)
+  @Roles(...QUALITY_REVIEWER_ROLES)
   @Post('findings/dismiss')
   async dismiss(
     @Body(new ZodValidationPipe(dismissFindingSchema)) body: DismissFindingInput,
@@ -128,7 +130,7 @@ export class QualityController {
     return this.dataQuality.dismiss(body, actorOf(user));
   }
 
-  @Roles(...REVIEWER_ROLES)
+  @Roles(...QUALITY_REVIEWER_ROLES)
   @Post('findings/restore')
   async restore(
     @Body(new ZodValidationPipe(restoreSchema)) body: z.infer<typeof restoreSchema>,
@@ -143,7 +145,7 @@ export class QualityController {
    * Every officer's figures for a reviewer; anyone else gets their own and only
    * their own, whatever `officerId` they send.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...WORKING_STAFF_ROLES)
   @Get('officers')
   async officers(
     @CurrentUser() user: SessionClaims,
@@ -151,7 +153,7 @@ export class QualityController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    const reviewer = (REVIEWER_ROLES as readonly string[]).includes(user.role ?? '');
+    const reviewer = (QUALITY_REVIEWER_ROLES as readonly string[]).includes(user.role ?? '');
     return this.dataQuality.officerQuality({
       officerId: reviewer ? optionalUuid(officerId, 'الموظف') : user.sub,
       from: requireDate(from),
@@ -159,7 +161,7 @@ export class QualityController {
     });
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...WORKING_STAFF_ROLES)
   @Get('tasks/mine')
   async myTasks(@CurrentUser() user: SessionClaims) {
     return this.reviews.tasksFor(actorOf(user));
@@ -167,7 +169,7 @@ export class QualityController {
 
   // ─────────────────────────────  Re-check sample  ─────────────────────────────
 
-  @Roles(...REVIEWER_ROLES)
+  @Roles(...QUALITY_REVIEWER_ROLES)
   @Post('checks/sample')
   async drawSample(
     @Body(new ZodValidationPipe(drawSampleSchema)) body: DrawSampleInput,
@@ -176,7 +178,7 @@ export class QualityController {
     return this.reviews.drawSample(body, actorOf(user));
   }
 
-  @Roles(...REVIEWER_ROLES)
+  @Roles(...QUALITY_REVIEWER_ROLES)
   @Get('checks')
   async checks(@Query('status') status?: string, @Query('officerId') officerId?: string) {
     return {
@@ -187,7 +189,7 @@ export class QualityController {
     };
   }
 
-  @Roles(...REVIEWER_ROLES)
+  @Roles(...QUALITY_REVIEWER_ROLES)
   @Patch('checks/:id/assign')
   async assign(
     @Param('id') id: string,

@@ -9,6 +9,7 @@ import {
   logApiError,
 } from './api-client';
 import { loadSession } from './session';
+import { CITIZEN_RECORD_EDIT_ROLES, hasRole } from './staff-roles';
 import {
   dequeue,
   dequeueBuilding,
@@ -68,6 +69,14 @@ export interface QueueState {
    * read.
    */
   authRequired: boolean;
+  /**
+   * There are records waiting, and the session signed in cannot write the
+   * register — «مشاهد فقط», an auditor or the accountant on a device an officer
+   * queued records on. Nothing is sent and nothing is written to the records:
+   * they wait for a session that may deliver them. Recomputed on every drain,
+   * as `authRequired` is.
+   */
+  writerRequired: boolean;
   /** How many records the last completed drain delivered. */
   lastSynced: number;
   online: boolean;
@@ -82,6 +91,7 @@ const EMPTY: QueueState = {
   blocked: 0,
   syncing: false,
   authRequired: false,
+  writerRequired: false,
   lastSynced: 0,
   online: true,
 };
@@ -248,7 +258,19 @@ function isRetryable(caught: unknown): boolean {
   if (!(caught instanceof ApiRequestError)) return true;
   if (caught.status === 0) return true;
   if (caught.status === 401 || caught.status === 408 || caught.status === 429) return true;
+  // A role the route refuses is a fact about the session, not the record: it
+  // stays queued for one that may send it (see `sessionCannotSend`).
+  if (caught.status === 403) return true;
   return caught.status >= 500;
+}
+
+/**
+ * A failure every remaining record would share — no connection, a session
+ * that lapsed, or one whose role the route refuses — so the drain stops rather
+ * than writing the same error onto thirty rows.
+ */
+function sessionCannotSend(caught: unknown): boolean {
+  return caught instanceof ApiRequestError && (caught.status === 0 || caught.status === 401 || caught.status === 403);
 }
 
 /**
@@ -299,7 +321,25 @@ export async function syncQueue(tenant: string): Promise<void> {
         return;
       }
 
-      publish(engine, { authRequired: false });
+      /*
+        A session that cannot write the register sends nothing.
+
+        «مشاهد فقط», an auditor or the accountant, signed in on a device an
+        officer queued records on: every record would come back refused, and a
+        refusal used to mark each one «مرفوض» for good — the officer came back
+        to every filing blocked, by nobody's decision. They wait, untouched.
+      */
+      if (!hasRole(CITIZEN_RECORD_EDIT_ROLES, session.user.role)) {
+        const [submissions, buildings] = await Promise.all([
+          listQueued(tenant),
+          listQueuedBuildings(tenant),
+        ]);
+        const waiting = [...submissions, ...buildings].some((item) => item.status === 'pending');
+        publish(engine, { authRequired: false, writerRequired: waiting });
+        return;
+      }
+
+      publish(engine, { authRequired: false, writerRequired: false });
 
       /*
         Buildings first — see `drainBuildings`. A queued registration may name a
@@ -336,9 +376,7 @@ export async function syncQueue(tenant: string): Promise<void> {
           // An expired session or a dead network will fail every remaining
           // record identically. Stopping leaves the queue readable — thirty
           // rows each carrying the same error explain nothing that one does.
-          if (caught instanceof ApiRequestError && (caught.status === 0 || caught.status === 401)) {
-            break;
-          }
+          if (sessionCannotSend(caught)) break;
         }
       }
     } finally {
@@ -461,9 +499,7 @@ async function drainBuildings(tenant: string): Promise<number> {
         countAttempt: true,
       });
 
-      if (caught instanceof ApiRequestError && (caught.status === 0 || caught.status === 401)) {
-        break;
-      }
+      if (sessionCannotSend(caught)) break;
     }
   }
 

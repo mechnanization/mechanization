@@ -1104,7 +1104,6 @@ export function PropertyCard({
                         token={token}
                         phone={draft.landlordPhone}
                         typedName={draft.landlordName}
-                        locale={locale}
                         agreedCitizenId={draft.landlordCitizenId}
                         /*
                           The id makes the link on save; the registered name is what

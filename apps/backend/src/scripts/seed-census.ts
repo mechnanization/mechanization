@@ -840,16 +840,34 @@ async function seedCensus(
         : d.chance(0.3);
     if (assessed) {
       const level = damageLevelFor(d, plan.lifecycleStatus);
+      /*
+        «صالحة للسكن؟» — the second axis (0071). Restricted use has to be
+        answered; a lightly damaged structure is occasionally stripped of its
+        services. A reading that says nobody can live there is sometimes given
+        a re-inspection day — counted from the real today, because the schema
+        refuses a day already gone — so «بانتظار إعادة الكشف» has work in it.
+      */
+      const habitable =
+        level === 'RESTRICTED_USE' ? d.chance(0.5) : level === 'SAFE_MINOR_DAMAGE' ? !d.chance(0.05) : undefined;
+      const uninhabitable = habitable === false || level === 'UNSAFE_EVACUATE' || level === 'TOTAL_COLLAPSE';
+      const reinspectAt =
+        uninhabitable && plan.lifecycleStatus !== 'DEMOLISHED' && d.chance(0.6)
+          ? new Date(Date.now() + d.int(7, 90) * 24 * HOUR).toISOString().slice(0, 10)
+          : undefined;
       await services.damage.record(
         createDamageAssessmentSchema.parse({
           buildingId: plan.id,
           level,
+          ...(habitable === undefined ? {} : { habitable }),
+          ...(reinspectAt ? { reinspectAt } : {}),
           source: d.weighted([['FIELD_VISIT', 70], ['SATELLITE', 15], ['SELF_REPORTED', 10], ['OFFICIAL_REPORT', 5]]),
           assessedAt: new Date(Math.min(firstVisit.getTime() + d.int(0, 96) * HOUR, SEED_NOW.getTime() - HOUR)),
           observations: ({
             NOT_AFFECTED: 'لا أضرار ظاهرة.',
             SAFE_MINOR_DAMAGE: 'تشققات في الواجهة وزجاج مكسور — صالح للسكن.',
-            RESTRICTED_USE: 'أضرار في الأسقف والجدران — استخدام محدود بانتظار الترميم.',
+            RESTRICTED_USE: habitable === false
+              ? 'النوافذ والمياه مقطوعة والمطبخ مدمَّر — غير صالح للسكن بانتظار الترميم.'
+              : 'أضرار في الأسقف والجدران — استخدام محدود بانتظار الترميم.',
             UNSAFE_EVACUATE: 'أضرار إنشائية في الأعمدة — يُمنع السكن حتى الكشف الهندسي.',
             TOTAL_COLLAPSE: 'انهيار كامل للمبنى.',
             UNCLASSIFIED: 'لم يُصنَّف الضرر بعد — يلزم كشف هندسي.',

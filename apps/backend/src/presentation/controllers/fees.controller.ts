@@ -12,6 +12,11 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import {
+  FEE_ADMIN_ROLES,
+  FEE_ISSUE_ROLES,
+  FEE_READ_ROLES,
+  PAYMENT_REVIEW_MARK_ROLES,
+  PAYMENT_REVIEW_READ_ROLES,
   billBasisReviewSchema,
   chargeCitizenSchema,
   createFeeNoticeSchema,
@@ -84,7 +89,7 @@ export class FeesController {
     return this.fees.getSettings(includeLogo === 'true' && Boolean(user.role));
   }
 
-  @Roles('SUPER_ADMIN', 'ACCOUNTANT')
+  @Roles(...FEE_ADMIN_ROLES)
   @Patch('settings')
   async updateSettings(
     @Body(new ZodValidationPipe(systemSettingsSchema)) body: SystemSettingsInput,
@@ -95,7 +100,7 @@ export class FeesController {
 
   // ──────────────────────────  Fee notices  ──────────────────────────
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...FEE_READ_ROLES)
   @Get('notices')
   async listNotices() {
     return { items: await this.fees.listNotices() };
@@ -106,7 +111,7 @@ export class FeesController {
    * the roles that own the municipality's billing — SUPER_ADMIN, ACCOUNTANT
    * and COLLECTOR. An AUDITOR reads the books, it does not add to them.
    */
-  @Roles('SUPER_ADMIN', 'COLLECTOR', 'ACCOUNTANT')
+  @Roles(...FEE_ISSUE_ROLES)
   @Post('notices')
   async issue(
     @Body(new ZodValidationPipe(createFeeNoticeSchema)) body: CreateFeeNotice,
@@ -115,14 +120,14 @@ export class FeesController {
     return this.fees.issue(body, { id: user.sub, role: user.role ?? '' });
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...FEE_READ_ROLES)
   @Get('summary')
   async summary() {
     return this.fees.summary();
   }
 
   /** Stops or resumes the recurring biller for one notice. */
-  @Roles('SUPER_ADMIN', 'ACCOUNTANT')
+  @Roles(...FEE_ADMIN_ROLES)
   @Patch('notices/:id/active')
   async setNoticeActive(
     @Param('id') id: string,
@@ -155,7 +160,7 @@ export class FeesController {
    * `tenants: 1` is kept in the response so the existing client keeps reading
    * it — and because "one" is now the honest answer.
    */
-  @Roles('SUPER_ADMIN', 'ACCOUNTANT')
+  @Roles(...FEE_ADMIN_ROLES)
   @Post('recurring/run')
   async runRecurring() {
     const result = await this.fees.runRecurringBilling();
@@ -177,7 +182,7 @@ export class FeesController {
   /**
    * Returns distinct fee titles registered across the municipality.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...FEE_READ_ROLES)
   @Get('titles')
   async listTitles() {
     return this.fees.listDistinctTitles();
@@ -189,13 +194,13 @@ export class FeesController {
    * Same roles as the ledger itself: an option the reader cannot then apply
    * is worse than no option.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...FEE_READ_ROLES)
   @Get('filter-options')
   async filterOptions() {
     return this.fees.filterOptions();
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...FEE_READ_ROLES)
   @Get('payments')
   async listPayments(
     @Query('status') status?: string,
@@ -207,26 +212,30 @@ export class FeesController {
     @Query('transactionsOnly') transactionsOnly?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @CurrentUser() user?: SessionClaims,
   ) {
     // `{ items, total }` — the count is what lets the table say "صفحة 2 من 9"
     // rather than counting the rows it happens to be holding.
-    return this.fees.listAllPayments({
-      status,
-      search,
-      feeTitle,
-      citizenId,
-      method,
-      transactionsOnly: transactionsOnly === 'true',
-      limit: limit ? Number(limit) : undefined,
-      offset: offset ? Number(offset) : undefined,
-    });
+    return this.fees.listAllPayments(
+      {
+        status,
+        search,
+        feeTitle,
+        citizenId,
+        method,
+        transactionsOnly: transactionsOnly === 'true',
+        limit: limit ? Number(limit) : undefined,
+        offset: offset ? Number(offset) : undefined,
+      },
+      user ? { role: user.role ?? '' } : undefined,
+    );
   }
 
   /**
    * Raises a one-off charge against one citizen — the counterpart to issuing a
    * notice, for a debt that has no rule behind it.
    */
-  @Roles('SUPER_ADMIN', 'COLLECTOR', 'ACCOUNTANT')
+  @Roles(...FEE_ISSUE_ROLES)
   @Post('payments')
   async charge(
     @Body(new ZodValidationPipe(chargeCitizenSchema)) body: ChargeCitizen,
@@ -244,7 +253,7 @@ export class FeesController {
    * An omitted `amount` settles the whole outstanding balance, which is both
    * the common case and the pre-partial-payment behaviour.
    */
-  @Roles('SUPER_ADMIN', 'COLLECTOR', 'ACCOUNTANT')
+  @Roles(...FEE_ISSUE_ROLES)
   @Patch('payments/:id/settle')
   async settle(
     @Param('id') id: string,
@@ -276,7 +285,7 @@ export class FeesController {
    * settlement was the invoice's running total, so a citizen asking for a copy
    * of March's receipt could be told the balance and nothing else.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...FEE_READ_ROLES)
   @Get('payments/:id/transactions')
   async transactions(@Param('id') id: string) {
     return { items: await this.fees.listTransactions(id) };
@@ -306,28 +315,28 @@ export class FeesController {
 
   // ────────────────────  Staff verification queue  ────────────────────
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'VIEWER')
+  @Roles(...PAYMENT_REVIEW_READ_ROLES)
   @Get('payments/pending')
   async pending(@Query('unseenOnly') unseenOnly?: string) {
     return { items: await this.fees.listPendingReview(unseenOnly === 'true') };
   }
 
   /** Marks a pending payment notification as seen. */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT')
+  @Roles(...PAYMENT_REVIEW_MARK_ROLES)
   @Patch('payments/:id/seen')
   async markAsSeen(@Param('id') id: string) {
     return this.fees.markAsSeen(id);
   }
 
   /** Marks all pending payment notifications as seen. */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT')
+  @Roles(...PAYMENT_REVIEW_MARK_ROLES)
   @Post('payments/pending/mark-all-seen')
   async markAllAsSeen() {
     return this.fees.markAllPendingAsSeen();
   }
 
   /** Confirming money arrived is a financial act — SUPER_ADMIN and ACCOUNTANT. */
-  @Roles('SUPER_ADMIN', 'ACCOUNTANT')
+  @Roles(...FEE_ADMIN_ROLES)
   @Patch('payments/:id/review')
   async review(
     @Param('id') id: string,
@@ -347,7 +356,7 @@ export class FeesController {
    * «فواتير تأثّرت بتصحيحات» — open bills whose basis a correction changed,
    * with today's figure and what was recorded since. Read-only for AUDITOR.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'VIEWER')
+  @Roles(...PAYMENT_REVIEW_READ_ROLES)
   @Get('correction-affected')
   async correctionAffected(
     @Query('includeReviewed') includeReviewed?: string,
@@ -362,7 +371,7 @@ export class FeesController {
   }
 
   /** Recording what was decided about one of them. The bill itself is never changed. */
-  @Roles('SUPER_ADMIN', 'ACCOUNTANT')
+  @Roles(...FEE_ADMIN_ROLES)
   @Post('payments/:id/basis-review')
   async reviewBasis(
     @Param('id') id: string,
@@ -406,7 +415,7 @@ export class FeesController {
    * against real HTTP requests catches and a unit test calling the method
    * directly never would.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...FEE_READ_ROLES)
   @Get('payments/:id')
   async getPayment(@Param('id') id: string) {
     return this.fees.getPaymentById(id);

@@ -561,6 +561,22 @@ export function isOccupiableLifecycle(status: string | null | undefined): boolea
 export const UNSURVEYABLE_SHELL_LIFECYCLE = ['DEMOLISHED'] as const;
 
 /**
+ * The lifecycle states in which there is a structure on the ground — what a
+ * re-inspection after repair can still go and look at («بانتظار إعادة الكشف»).
+ *
+ * Wider than `OCCUPIABLE_LIFECYCLE` on purpose: a war-damaged block nobody lives
+ * in is exactly the structure waiting for its repair to be checked. A permit
+ * with nothing built, a demolished building and one never realised have no
+ * structure left to re-inspect.
+ */
+export const STANDING_LIFECYCLE = [
+  'UNDER_CONSTRUCTION',
+  'IN_USE',
+  'DERELICT',
+  'WAR_DAMAGED_UNINHABITED',
+] as const satisfies readonly BuildingLifecycle[];
+
+/**
  * Whether this structure's interior is beyond surveying — no floor count to
  * ask for, no unit matrix to paint.
  *
@@ -671,12 +687,14 @@ export function occupancyLiftsSurvey(status: string | null | undefined): boolean
  * residents must be out of it tonight. Aid allocation turns on that line, which
  * is why the scale is not collapsed to "damaged / not damaged".
  *
- * **One local addition**, `UNINHABITABLE` «غير قابلة للسكن» (migration 0067):
- * a unit standing and safe to enter but not fit to live in until repaired. The
- * scale has no word for it — «استخدام مقيّد» understates it, «يستوجب الإخلاء»
- * calls the structure unsafe — and it is the one reading that expects a second
- * visit once the repair is done (`reinspectAt`). Exported with the rest, it
- * maps to UN-Habitat's `RESTRICTED_USE` where a dataset needs the scale verbatim.
+ * **Whether anybody can live in it is a separate answer**, `habitable` on the
+ * reading (migration 0071, rules in `damage-rule.ts`), and never a level of its
+ * own (decision, 2026-10-05). A sixth level, `UNINHABITABLE`, was added and
+ * retired before it reached production: it made the scale stop matching the
+ * national datasets. Its value still exists in the database enum (0067) —
+ * removing a stored enum value is destructive DDL — but 0071 converted every
+ * reading that used it to `RESTRICTED_USE` with `habitable = false`, a CHECK
+ * refuses it, and it is not part of this list, so the API refuses it too.
  *
  * `UNDER_CONSTRUCTION` is deliberately absent — it is a lifecycle state, it
  * already exists in `UNIT_STATUS`, and admitting it here would overwrite a
@@ -686,7 +704,6 @@ export const DAMAGE_LEVEL = [
   'NOT_AFFECTED',
   'SAFE_MINOR_DAMAGE',
   'RESTRICTED_USE',
-  'UNINHABITABLE',
   'UNSAFE_EVACUATE',
   'TOTAL_COLLAPSE',
   'UNCLASSIFIED',
@@ -705,7 +722,6 @@ export type DamageLevel = z.infer<typeof damageLevelSchema>;
  */
 export const IMPAIRED_DAMAGE_LEVELS = [
   'RESTRICTED_USE',
-  'UNINHABITABLE',
   'UNSAFE_EVACUATE',
   'TOTAL_COLLAPSE',
 ] as const satisfies readonly DamageLevel[];
@@ -965,7 +981,12 @@ export const STAFF_ROLE = [
   'COLLECTOR',
   'ACCOUNTANT',
   'ADMINISTRATIVE_OFFICER',
-  /** «مشاهد فقط» — reads the register, census, cases and reports; writes nothing (0067). */
+  /**
+   * «مشاهد فقط» — the municipality leader's account (0067): reads the
+   * dashboard, the reports, the register with its citizens' data, the census
+   * and cases; writes nothing and does not export the register (decision,
+   * 2026-10-05; the building census export is an open question).
+   */
   'VIEWER',
 ] as const;
 export const staffRoleSchema = arabicEnum(STAFF_ROLE, 'الصلاحية غير صالحة');

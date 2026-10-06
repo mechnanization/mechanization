@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `feat/error-codes-audit-tiers` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -416,7 +416,11 @@ Spacing, radius and shadow values as defined: [DESIGN.md](../DESIGN.md) "Layout"
   audited server-side. A client-typed figure (a rate, a total) never becomes
   the record unchecked.
 - **FRM-6. Dates** come from `DatePicker`. A date that back-dates a financial
-  or legal record asks for confirmation and states the consequence.
+  or legal record asks for confirmation and states the consequence. A recorded
+  date takes `max` (nothing later than today); a planned one, such as a
+  re-inspection day, takes `min` (nothing before today), and with no `max` its
+  year list runs forward from `min`. "Today" is the municipality's calendar day
+  (`municipalToday`), never `toISOString().slice(0, 10)`.
 
 ---
 
@@ -692,9 +696,9 @@ Code-pattern debt outside the UI rules lives in
   `DataTable` inside `CardContent className="p-6"`.
 - **Page-local table labels, 5** (PRIM-23): `getTableLabels` in the buildings,
   citizens, fees and staff pages, and `getCaseTableLabels`
-  (`components/admin/cases/case-table-labels.ts`). `useTableLabels` has 4 users.
-- **Native date and time inputs, 15 in 7 files** (CTL-1, CTL-2): 14
-  `type="date"` (`building-unit-forms` 9, `charge-citizen-dialog`,
+  (`components/admin/cases/case-table-labels.ts`). `useTableLabels` has 6 users.
+- **Native date and time inputs, 14 in 7 files** (CTL-1, CTL-2): 13
+  `type="date"` (`building-unit-forms` 8, `charge-citizen-dialog`,
   `end-ownership-dialog`, `end-tenancy-dialog`, `issue-fee-dialog`,
   `residence-change-dialog`) and 1 `type="time"` in
   `settings/backup-section.tsx`, which is not rendered.
@@ -717,16 +721,14 @@ Code-pattern debt outside the UI rules lives in
   D-kit: port shadcn's Sheet onto `@radix-ui/react-dialog` (installed), keeping
   the `pressedInside` tap guard.
 - **`DialogContent` defaults `closeLabel` to `'Close'`**, against the Arabic
-  default of every other primitive (KIT-6). 10 of 41 `DialogContent` pass none:
-  `complete-record-dialog`, `duplicate-review-dialog`, `landlord-link-prompt`,
-  `map-export-dialog`, `parcel-roster-dialog`, `settings/security-section` (2),
-  `settings/users-section`, `unverified-fields-dialog`, `zone-info-dialog`.
+  default of every other primitive (KIT-6). 7 of 42 `DialogContent` pass none:
+  `map-export-dialog`, `parcel-roster-dialog`,
+  `settings/security-section` (2), `settings/users-section`,
+  `unverified-fields-dialog`, `zone-info-dialog`.
   `DialogContent`'s close button and `Badge` also use `focus:` rings instead of
   `focus-visible:` (A11Y-1).
 - **`ConfirmDialog`**: `requireText` is compared raw, without `normalizeArabic`
-  (DES-3); `citizens/page.tsx` passes the display name `fullName` as the text
-  to type (DES-3 wants a unique key, as `staff/page.tsx` uses `email`); the
-  default `confirmLabel` «تأكيد» is a gesture label (FRM-3).
+  (DES-3); the default `confirmLabel` «تأكيد» is a gesture label (FRM-3).
 - **`Toast` side stripe** (BAN-3): the toast root in
   `components/ui/toast.tsx` uses `border-s-4`, a coloured side stripe thicker
   than 1px. Replace it with a tinted surface or icon plus text.
@@ -807,16 +809,15 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
 - **Weights without a face** (TYP-7): `font-bold` 156, `font-extrabold` 2,
   `font-black` 5, against Plex loaded at 400, 500 and 600 only.
 - **Letter-spacing** (TYP-5): `PageHeader`'s `h1` and `CardTitle` carry
-  `tracking-tight`. In all: 35 `tracking-tight`, 17 `tracking-wide`/`wider`/`widest`,
-  9 `uppercase`.
-- **`text-[Npx]` below the 12px floor, 8 in 6 files** (BAN-11):
+  `tracking-tight`. In all: 35 `tracking-tight`, 16 `tracking-wide`/`wider`/`widest`,
+  8 `uppercase`.
+- **`text-[Npx]` below the 12px floor, 7 in 5 files** (BAN-11):
   `unit-grid-picker.tsx` (`text-[8px]`, `text-[9px]` twice),
-  `citizen-detail-drawer.tsx` (`text-[9px]`), `building-unit-matrix-view.tsx`
-  and `notifications-bell.tsx` (`text-[10px]`), `possible-duplicates.tsx` and
-  `unit-correction-delete-dialog.tsx` (`text-[11px]`).
+  `building-unit-matrix-view.tsx` and `notifications-bell.tsx` (`text-[10px]`),
+  `possible-duplicates.tsx` and `unit-correction-delete-dialog.tsx` (`text-[11px]`).
 - **Other `-[Npx]` values, 159 in 20 files** (LAY-8), 122 of them in
   `property-illustrations.tsx`, an SVG drawing that LAY-8 allows. `-[Nrem]`: 32.
-- **`shadow-xs`/`shadow-2xs`, 37 in 13 files** (LAY-4, CODE-8), including the
+- **`shadow-xs`/`shadow-2xs`, 34 in 12 files** (LAY-4, CODE-8), including the
   primitives `field.tsx` (1) and `segmented-control.tsx` (2);
   `building-editor.tsx` has 11, `bill-type-select.tsx` 5.
 - **`rounded-xl`/`2xl`/`3xl`, 139 uses** (LAY-3 applies to new cards).
@@ -827,6 +828,10 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   12 (print); `fullscreen-map.tsx` 8 (map); the rest in map components, the
   building diagrams, `zones/page.tsx`, `citizen-form.tsx` (a mobile bar with
   `left-0 right-0`; use `inset-x-0`) and `DialogContent`'s symmetric centring.
+- **Header actions that do not wrap** (LAY-5): at 360px on `/en/` the citizens
+  page's «Import from file» and «Register new citizen» run past the screen edge
+  and the second is cut off; the Arabic labels fit. Seen in the 2026-10-06
+  render check; other pages with two header actions were not measured.
 
 ### 17.5 Motion
 
@@ -844,8 +849,7 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
 
 ### 17.6 Copy, locale and money
 
-- **Arabic-only toasts, 20 calls in 4 pages** (TXT-2): fees 11, staff 5,
-  citizens 3, zones 1.
+- **Arabic-only toasts, 12 calls in 2 pages** (TXT-2): fees 11, zones 1.
 - **Arabic-only literal attributes** (`aria-label`, `title`, `placeholder`,
   `closeLabel`), **14 in 10 files**: `admin-shell.tsx` 3,
   `import-citizens-dialog.tsx` 3, and one each in `citizens/[citizenId]/page.tsx`,
@@ -856,10 +860,15 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   files render `ApiRequestError.message` (`caught.message` or
   `caught.payload.message`); `ErrorState` detects offline by matching
   «تعذّر الاتصال» in its description.
-- **Copy mechanisms** (TXT-1): about 126 files branch inline on the locale (`en ?`,
-  `locale === 'en' ?`, `isAr ?`), 70 of them through `const en = locale === 'en'`;
+- **Copy mechanisms** (TXT-1): about 117 files branch inline on the locale (`en ?`,
+  `locale === 'en' ?`, `isAr ?`), 62 of them through `const en = locale === 'en'`;
   `settingsCopy` serves settings and account; the 13 `messages.nav` keys are
   never read.
+- **Search hints that offer «مشاهد فقط» the reference** (root rule 9): the
+  register, «يتطلب مراجعة», the payments ledger and the fees screen invite a
+  search by «الرقم المرجعي» for every role, but for «مشاهد فقط» the search leaves
+  the reference out (`citizenSearchText`). Role-aware hints are not built
+  (2026-10-06).
 - **Money formatting** (PRIM-11, PRIM-25): `inspector-payout-dialog.tsx` writes
   `$${x.toFixed(2)}` 5 times; `charge-citizen-dialog.tsx` and
   `issue-fee-dialog.tsx` each define a local `formatLbp(value: string)`;

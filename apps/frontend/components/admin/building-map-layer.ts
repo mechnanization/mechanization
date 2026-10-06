@@ -1,6 +1,7 @@
 import type mapboxgl from 'mapbox-gl';
 import type { FeatureCollection, Feature, Point } from 'geojson';
 import type { BuildingMapPin } from '@/lib/api-client';
+import { DAMAGE_SEVERITY, type DamageLevel } from '@mechanization/shared-schemas';
 
 /**
  * The census as three visual channels on one dot (P3-T5).
@@ -78,14 +79,16 @@ const SURVEY_COLORS: Record<string, string> = {
  * grey ring for the same reason: somebody looked and could not classify it,
  * which is a finding.
  */
-const DAMAGE_COLORS: Record<string, string> = {
+const DAMAGE_COLORS = {
   NOT_AFFECTED: '#22c55e',
   SAFE_MINOR_DAMAGE: '#84cc16',
   RESTRICTED_USE: '#f59e0b',
   UNSAFE_EVACUATE: '#ef4444',
   TOTAL_COLLAPSE: '#7f1d1d',
   UNCLASSIFIED: '#64748b',
-};
+  // Every level must have a ring: a level added to the scale and not here fails the typecheck
+  // instead of drawing an assessed building with no ring, which on this map means "nobody looked".
+} as const satisfies Record<DamageLevel, string>;
 
 /** The severity ladder, worst first — mirrors `SURVEY_SEVERITY` on the server. */
 const SURVEY_SEVERITY: readonly string[] = [
@@ -99,15 +102,7 @@ const SURVEY_SEVERITY: readonly string[] = [
   'DEMOLISHED',
 ];
 
-/** Mirrors `damageSeverity` on the server — worst first. */
-const DAMAGE_SEVERITY: readonly string[] = [
-  'TOTAL_COLLAPSE',
-  'UNSAFE_EVACUATE',
-  'RESTRICTED_USE',
-  'SAFE_MINOR_DAMAGE',
-  'NOT_AFFECTED',
-  'UNCLASSIFIED',
-];
+/* Worst first: `DAMAGE_SEVERITY`, the one ladder the server rolls up with too (`@mechanization/shared-schemas`). */
 
 function worstOf(ladder: readonly string[], values: readonly string[]): string | null {
   let best: string | null = null;

@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
-  type CreateCaseInput,
-  type UpdateCaseInput,
+  EVERY_STAFF_ROLE,
+  REGISTER_WRITE_ROLES,
   createCaseSchema,
   updateCaseSchema,
+  type CreateCaseInput,
+  type UpdateCaseInput,
 } from '@mechanization/shared-schemas';
 import { CasesService } from '../../application/features/cases/cases.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
@@ -35,7 +37,7 @@ export class CasesController {
    * the unit matrix's "cases on this flat" panel filter on. Every one is
    * optional and they compose, because the page's controls stack.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get()
   async list(
     @Query('propertyNumber') propertyNumber?: string,
@@ -61,13 +63,13 @@ export class CasesController {
     };
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get(':id')
   async get(@Param('id') id: string) {
     return this.cases.get(id);
   }
 
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Post()
   async create(
     @Body(new ZodValidationPipe(createCaseSchema)) body: CreateCaseInput,
@@ -76,7 +78,7 @@ export class CasesController {
     return this.cases.create(body, { id: user.sub, role: user.role ?? '' });
   }
 
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_WRITE_ROLES)
   @Patch(':id')
   async update(
     @Param('id') id: string,

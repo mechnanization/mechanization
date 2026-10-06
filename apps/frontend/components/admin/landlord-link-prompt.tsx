@@ -1,6 +1,7 @@
 'use client';
 
 import { Link2 } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import type { LandlordLinkOffers } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import {
@@ -37,6 +38,11 @@ import {
  * «لاحقاً» closes the dialog and settles nothing. «لا أحد منهم» on a card is a
  * decision and is recorded as one. Conflating the two would have a tired
  * clerk's dismissal read as a considered rejection forever after.
+ *
+ * `canAnswer` is the caller's, from the signed-in role
+ * (`LANDLORD_LINK_ANSWER_ROLES`, the roles the route admits), and required
+ * like every action a screen offers: the cards read without their buttons
+ * otherwise.
  */
 export function LandlordLinkPrompt({
   tenant,
@@ -45,6 +51,7 @@ export function LandlordLinkPrompt({
   citizenHref,
   onClose,
   locale = 'ar',
+  canAnswer,
 }: {
   tenant: string;
   token: string;
@@ -53,8 +60,10 @@ export function LandlordLinkPrompt({
   citizenHref: (citizenId: string) => string;
   onClose: () => void;
   locale?: string;
+  /** Whether this role may answer a proposal — see above. */
+  canAnswer: boolean;
 }) {
-  const en = locale === 'en';
+  const t = useTranslations('landlordLink.prompt');
   const { resolved, resolve, undo, undoing } = useLandlordResolutions({ tenant, token, locale });
 
   /*
@@ -72,17 +81,13 @@ export function LandlordLinkPrompt({
 
   return (
     <Dialog open onOpenChange={(next) => (next ? undefined : onClose())}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl" closeLabel={t('close')}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Link2 className="size-5 text-primary" aria-hidden />
-            {en ? 'Is this the owner?' : 'هل هذا هو المالك؟'}
+            {t('title')}
           </DialogTitle>
-          <DialogDescription>
-            {en
-              ? 'A number on this record belongs to a registered citizen. A phone is not an identity, so nothing was linked — choose only a person you recognise.'
-              : 'رقم في هذا السجل يعود لمواطن مسجَّل. الرقم ليس هوية، لذلك لم يُربط شيء — اختر فقط شخصاً تعرفه.'}
-          </DialogDescription>
+          <DialogDescription>{t('description')}</DialogDescription>
         </DialogHeader>
 
         <div className="-mx-1 max-h-[60dvh] space-y-3 overflow-y-auto px-1">
@@ -105,6 +110,7 @@ export function LandlordLinkPrompt({
                 citizenHref={citizenHref}
                 onResolved={resolve}
                 locale={locale}
+                canAnswer={canAnswer}
               />
             );
           })}
@@ -116,7 +122,7 @@ export function LandlordLinkPrompt({
               Not «إلغاء». Nothing is being cancelled — the record is saved and
               any unanswered claim stays on the queue.
             */}
-            {open === 0 ? (en ? 'Done' : 'تم') : en ? 'Later' : 'لاحقاً'}
+            {open === 0 ? t('done') : t('later')}
           </Button>
         </DialogFooter>
       </DialogContent>

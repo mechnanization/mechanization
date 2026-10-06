@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية)
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
 
 A registration system for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastre map, fees and payments. Each
@@ -90,7 +90,9 @@ pnpm --filter @mechanization/backend staff:create \
   --first-name <name> --last-name <name>
 ```
 
-`staff:create` creates a `SUPER_ADMIN` unless you pass `--role`. For a
+`staff:create` creates a `SUPER_ADMIN` unless you pass `--role` (any role the
+register knows, `STAFF_ROLE` in the shared schemas: `--role VIEWER` is «مشاهد فقط»,
+the municipality head's read-only account). For a
 `SUPER_ADMIN` it issues an authenticator secret, already confirmed, and prints
 it once with an `otpauth://` URI, so that account needs a code from its first
 sign-in. Hand it to its owner over a channel you trust, then delete it. If it

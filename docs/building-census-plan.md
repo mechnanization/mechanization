@@ -141,7 +141,7 @@ raise it with the user before changing course.
 | D1 | `Building` is a **first-class table anchored to a parcel**, independent of any `Registration` | You cannot colour, count, or filter what has no row. Creating the shell before surveying is the whole point. |
 | D2 | Occupancy is a **join table `UnitOccupancy`**, never scalar `ownerCitizenId`/`occupantCitizenId` columns | Two nullable FKs cannot express co-owners, owner-abroad + tenant, or tenancy history. Lebanese inheritance makes multi-owner the normal case. |
 | D3 | Damage is an **append-only `DamageAssessment` log**, not an overwritten enum | A building damaged Oct 2024 and repaired 2026 needs history, an observer, and a source. |
-| D4 | Damage levels use the **UN-Habitat 5-level scale verbatim** | Already the vocabulary of Beirut Municipality, Bourj Hammoud, UNDP and Balamand-CREEMO. Keeps data aggregatable with national reconstruction datasets. The habitability split (`UNSAFE_EVACUATE` vs `RESTRICTED_USE`) is what aid distribution turns on. |
+| D4 | Damage levels use the **UN-Habitat 5-level scale verbatim** | Already the vocabulary of Beirut Municipality, Bourj Hammoud, UNDP and Balamand-CREEMO. Keeps data aggregatable with national reconstruction datasets. The habitability split (`UNSAFE_EVACUATE` vs `RESTRICTED_USE`) is what aid distribution turns on. **Reaffirmed 2026-10-05:** a sixth level, `UNINHABITABLE` (`0067`), was added and then retired (`0071`) — whether a place can be lived in is its own answer (D25), not a rung on this scale. |
 | D5 | **`UNDER_CONSTRUCTION` is NOT a damage level** | It is a lifecycle state and already exists in `UnitStatus`. Mixing it in would erase damage history. |
 | D6 | **No `WAR_DAMAGE` case type.** A `Case` is a *failed visit*; damage is a *fact about a structure* | Otherwise "resolve" is ambiguous — revisited, or repaired? A `Case` may reference a `DamageAssessment`. |
 | D7 | Building code = **`ZONE-PARCEL-SUFFIX`**, delimited, anchored on رقم العقار | The deed already prints the parcel number; the cadastre validates it; the citizen recognises it. Delimiters remove the `A1B2` ambiguity. |
@@ -161,6 +161,7 @@ raise it with the user before changing course.
 | D21 | The staff map keeps **two layers with two grouping rules**: the census layer is one pin per *building*, the registration layer one dot per *parcel* | They answer different questions. P5-T5 made the second match the first and drew a dot on top of every building pin; P5-T7 reverted it. Before changing a marker's grouping, check which layer already answers the question. See §10.6. |
 | D22 | **Every raw query writes its schema into its SQL.** Never rely on `search_path`, and never on `current_schema()` | The app reaches Postgres through a transaction pooler, where session settings are not guaranteed to follow a statement. It produced a real 42P01 on a table that exists, once, unreproducibly. Enforced by `raw-sql-is-schema-qualified.spec.ts`. See §10.7. |
 | D24 | A registration may **create** the structure it names, but only on an explicit tap, and never without its units | Not selecting a building is evidence of a control below the fold, not of a new building; and a shell with no units links the card while recording no occupancy, which is §10.1's under-billing arriving through the fix for it. See §11. |
+| D25 | **Habitability is a second answer beside the level**, prefilled where the level decides it (decision, 2026-10-05) | A sound building stripped of its windows and services cannot be lived in, and a cracked one can; folding that into the level broke the donors' scale (D4). Collapse and evacuation lock «غير صالحة»; none and minor damage start at «صالحة» and can change; restricted use must be answered. A reading that says nobody can live there may carry a re-inspection day, and holds the occupant-borne fees on the unit until a later reading says otherwise. See §14. |
 | D23 | **Verification builds use their own `distDir`** (`pnpm build:check`) | `next build` and `next dev` share `.next`; building while the dev server runs corrupts it and produces runtime 500s that point at nothing. The frontend twin of the `nest build` EBUSY note in §6. See §10.7. |
 
 ---
@@ -413,6 +414,11 @@ model DamageAssessment {
 
   level  DamageLevel
   source DamageSource @default(FIELD_VISIT)
+
+  /// «صالحة للسكن؟» — beside the level, not a level (D25, 0071). Null: a reading from before the question, or an unclassified one.
+  habitable Boolean?
+  /// The day to come back, on a reading that says nobody can live there (0068, 0071).
+  reinspectAt DateTime?
 
   /// Free text — what was actually seen. "الطابق الرابع مهدوم، الدرج غير سالك".
   observations String?
@@ -2200,3 +2206,78 @@ Typecheck, lint (0 errors) and `pnpm build:check` are clean.
 - **Summer tenants of a flat** (a Beirut family renting for July–August) are
   refused as non-residents. Revisit if it comes up.
 - **Month-by-month billing** for a seasonally closed shop (Art. 11) is not modelled.
+
+## 14. Habitability, re-inspection and the fee hold (2026-10-06)
+
+`PR #88` added a sixth damage level, `UNINHABITABLE`, with a re-inspection day
+that only it could carry. The review found it broke D4 — donors and the national
+datasets read the five UN-Habitat levels, and a sixth is a value nobody else's
+data has — and that nothing surfaced the day once recorded. The product owner
+decided (2026-10-05): keep the scale verbatim, ask habitability separately,
+prefill it where the level decides it, and stop charging the occupant of a home
+nobody can live in until a re-inspection says otherwise.
+
+**The reading.** `damage_assessments.habitable` (`0071`) is the second answer.
+`habitabilityFor(level)` (`damage-rule.ts`) is the prefill and the rule:
+collapse and evacuation are «غير صالحة», locked; none and minor damage start at
+«صالحة»; restricted use must be answered; unclassified asks nothing. `0071`
+rewrote the rows recorded at the retired level to `RESTRICTED_USE` with
+`habitable = false`, and three CHECKs keep the column honest
+([docs/database.md](database.md)). `reinspectAt` is accepted only on a reading
+with `habitable = false`, and only for a day not yet gone on the municipality's
+calendar (`isReinspectDayAhead`).
+
+**Which reading applies.** A unit's current reading is the latest of its own
+and its building's (`currentReadingForUnit`), so a building-level «غير صالحة»
+covers every flat in it and a later building-level reading that answers clears
+it. A reading from before the question, at collapse or evacuation, counts as
+uninhabitable (`isUninhabitableReading`); one at restricted use assumes nothing.
+A «غير مصنّف» reading with no answer judged nothing, so it decides nothing about
+habitability: the hold, both worklists and the notice read the latest reading
+that answers (`answersHabitability`, its SQL twin `answersHabitabilitySql`, and
+`currentReadingForUnit(…, { answering: true })`), and a satellite pass recorded
+as unclassified never ends a hold a field visit started. The history keeps it.
+
+**The worklist.** «بانتظار إعادة الكشف» (`GET buildings/reinspections`) lists the
+units and buildings whose current reading says nobody can live there, overdue
+first, scoped like the other two worklists (`worklistOwnerFilter`). The matrix
+drawer and page show the reading's re-inspection notice; both read the same
+component (`components/admin/damage/`).
+
+**The fee hold.** `assessCitizen` (`fees.service.ts`) holds an occupant-borne fee on such
+a unit (Law 60/1988 Art. 11 and 79 tie the rental-value and maintenance fees to
+actual occupancy). Owner-borne fees follow the deed and are not held. The count
+travels on the bill (`uninhabitableUnitCount`, «وحدة غير صالحة للسكن لم تُحتسب»),
+in the issue summary (`uninhabitableUnits`) and in the recurring run's log, apart
+from the review hold. Nothing is back-billed: the hold is recomputed on every
+(daily) run, so once a re-inspection reads the unit habitable the next run charges
+it — for the period in progress when the citizen has no bill for it yet, otherwise
+from the next period; a period already billed without it stays so. A one-off fee (`ONCE`) has no next
+period, and the recurring run skips it, so its issue toast says to charge such a
+unit with an individual fee once a re-inspection reads it habitable
+(`fees.issue.uninhabitableOnce`).
+
+**The record.** Every reading writes `DAMAGE_RECORDED` to the activity log,
+filed under the building (`AuditService.onDamageRecorded`), with the unit's id
+and code (null for the whole building). It did not before: `damage.recorded` was
+heard only by the dashboard cache. «فواتير تأثّرت بتصحيحات» lists a reading beside
+an open bill of a holder of that flat, or of any flat when it read the whole
+building (`bill-corrections.ts`), as a real change on the day it was recorded —
+which never on its own makes a bill one a correction affected, since the hold
+runs forward.
+
+**Seeds.** `pnpm db:seed:census` records habitability on its readings and puts a
+re-inspection day, always ahead, on some of the uninhabitable ones. It adds to an
+existing local database without rewriting it, so readings seeded before `0071`
+keep `habitable` NULL until the database is reset.
+
+**Verified:** `damage-habitability.spec.ts`, `damage-audit.spec.ts`,
+`assessment.spec.ts` (the hold), `bill-corrections.spec.ts` (the reading on an
+affected bill), `worklist-query.spec.ts` (the worklists' query),
+`buildings.integration.spec.ts` (the worklist, the building-level reading, a
+reading that judged nothing, the CHECKs on Postgres 17) and the frontend's
+`damage-reading.test.ts`.
+
+**Still open:** whether «المحاسب» should see «بانتظار إعادة الكشف» — the role that
+issues fees cannot open the list of units the hold applies to
+([docs/open-decisions.md](open-decisions.md)).

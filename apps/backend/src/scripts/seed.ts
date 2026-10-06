@@ -69,6 +69,8 @@ const STAFF = [
   { key: 'officer', local: 'officer', role: 'ADMINISTRATIVE_OFFICER', firstName: 'موظف', lastName: 'إداري' },
   { key: 'accountant', local: 'accountant', role: 'ACCOUNTANT', firstName: 'محاسب', lastName: 'البلدية' },
   { key: 'collector', local: 'collector', role: 'COLLECTOR', firstName: 'جابي', lastName: 'البلدية' },
+  // «مشاهد فقط» — the municipality leader's read-only account.
+  { key: 'viewer', local: 'viewer', role: 'VIEWER', firstName: 'رئيس', lastName: 'البلدية' },
   { key: 'inspector1', local: 'inspector', role: 'FIELD_INSPECTOR', firstName: 'مفتش', lastName: 'ميداني' },
   { key: 'inspector2', local: 'inspector2', role: 'FIELD_INSPECTOR', firstName: 'حسين', lastName: 'قاسم' },
   { key: 'inspector3', local: 'inspector3', role: 'FIELD_INSPECTOR', firstName: 'زينب', lastName: 'فقيه' },

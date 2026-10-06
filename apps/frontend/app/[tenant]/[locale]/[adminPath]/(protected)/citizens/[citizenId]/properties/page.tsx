@@ -2,6 +2,7 @@
 
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Building,
@@ -615,7 +616,7 @@ function PropertyBlock({
         {!owner && !ended && recordedOwners.length > 0 ? (
           <SummaryRow label={en ? 'Owners in the register' : 'مالكو الوحدة في السجل'}>
             <span className="flex flex-col items-end gap-1">
-              <OwnerList owners={recordedOwners} base={base} en={en} />
+              <OwnerList owners={recordedOwners} base={base} />
               {property.landlordCitizenId && !linkedIsOwner ? (
                 <span className="text-xs text-warning">
                   {en
@@ -882,7 +883,7 @@ function UnitRows({
           ) : null}
           {owners.length > 0 ? (
             <SummaryRow label={owners.length > 1 ? (en ? 'Co-owners' : 'المالكون') : en ? 'Owner' : 'المالك'}>
-              <OwnerList owners={owners} base={base} en={en} />
+              <OwnerList owners={owners} base={base} />
             </SummaryRow>
           ) : null}
           {/*
@@ -915,16 +916,19 @@ function UnitRows({
   );
 }
 
-/** Owners as the register records them: a link to each file, the phone to call, the shares out of 2400. */
+/**
+ * Owners as the register records them: a link to each file, the phone to call
+ * — or, for an owner with none of their own, «لا يملك رقم هاتف» and the
+ * relative's number, said as a relative's — and the shares out of 2400.
+ */
 function OwnerList({
   owners,
   base,
-  en,
 }: {
-  owners: ReadonlyArray<{ citizenId?: string; name: string; phone?: string | null; shares: number | null }>;
+  owners: ReadonlyArray<NonNullable<CitizenProfileUnit['owners']>[number]>;
   base: string;
-  en: boolean;
 }) {
+  const t = useTranslations('citizens');
   return (
     <span className="flex flex-col items-end gap-0.5">
       {owners.map((person) => (
@@ -940,11 +944,17 @@ function OwnerList({
             <a
               href={`tel:${person.phone}`}
               dir="ltr"
-              aria-label={`${en ? 'Call' : 'اتصال'} ${person.name}`}
+              aria-label={t('call', { name: person.name })}
               className="text-xs tabular-nums text-primary hover:underline"
             >
               {formatPhone(person.phone)}
             </a>
+          ) : person.contactPhone ? (
+            <a href={`tel:${person.contactPhone}`} className="text-xs text-primary hover:underline">
+              {t('contactPhone')} <bdi dir="ltr" className="tabular-nums">{formatPhone(person.contactPhone)}</bdi>
+            </a>
+          ) : person.hasNoPhone ? (
+            <span className="text-xs text-muted-foreground">{t('noPhone')}</span>
           ) : null}
           {person.shares ? (
             <bdi dir="ltr" className="text-xs tabular-nums text-muted-foreground">

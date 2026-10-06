@@ -144,10 +144,10 @@ const {
 
 const TENANT = 'zahle';
 
-/** A staff session — the only kind that may deliver anything. */
+/** A staff session that may write the register — the only kind that may deliver anything. */
 const STAFF_SESSION = {
   accessToken: 'token-abc',
-  user: { kind: 'STAFF', name: 'Clerk' },
+  user: { kind: 'STAFF', name: 'Clerk', role: 'FIELD_INSPECTOR' },
 };
 
 function submissionPayload() {
@@ -315,6 +315,27 @@ describe('syncQueue — the session gate', () => {
     expect(createCitizen).not.toHaveBeenCalled();
   });
 
+  it.each(['VIEWER', 'AUDITOR', 'ACCOUNTANT'])(
+    'sends nothing under a %s session, and leaves every record as the officer left it',
+    async (role) => {
+      /*
+        «مشاهد فقط», an auditor or the accountant signed in on a device an
+        officer queued records on. Every record would come back refused, and a
+        refusal used to park each one «مرفوض» for good.
+      */
+      loadSession.mockReturnValue({ accessToken: 't', user: { kind: 'STAFF', name: 'Head', role } });
+      seedSubmission('a');
+      seedBuilding('b');
+
+      await syncQueue(TENANT);
+
+      expect(createCitizen).not.toHaveBeenCalled();
+      expect(createBuilding).not.toHaveBeenCalled();
+      expect(submissions.get('a')).toMatchObject({ status: 'pending', attempts: 0, lastError: null });
+      expect(buildings.get('b')).toMatchObject({ status: 'pending' });
+    },
+  );
+
   it('does nothing at all when offline storage is unavailable', async () => {
     storageAvailable = false;
     seedSubmission('a');
@@ -477,6 +498,18 @@ describe('syncQueue — retry versus park', () => {
     await syncQueue(TENANT);
 
     expect(submissions.get('a')).toMatchObject({ status: 'pending' });
+  });
+
+  it('keeps a record pending after a 403, and stops the drain — the refusal is of the session, not the record', async () => {
+    seedSubmission('a', { savedAt: 1 });
+    seedSubmission('b', { savedAt: 2 });
+    createCitizen.mockRejectedValue(apiError(403, 'غير مسموح'));
+
+    await syncQueue(TENANT);
+
+    expect(createCitizen).toHaveBeenCalledTimes(1);
+    expect(submissions.get('a')).toMatchObject({ status: 'pending' });
+    expect(submissions.get('b')).toMatchObject({ status: 'pending', attempts: 0, lastError: null });
   });
 
   it('treats a non-API error as retryable rather than discarding the record', async () => {

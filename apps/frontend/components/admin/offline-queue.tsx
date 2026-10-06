@@ -1,6 +1,7 @@
 'use client';
 
 import { CloudOff, Loader2, Pencil, RefreshCw, TriangleAlert, Trash2 } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useState } from 'react';
@@ -26,7 +27,6 @@ export function OfflineQueueNotice({
   authRequired,
   onSync,
   href,
-  locale = 'ar',
 }: {
   pending: number;
   blocked: number;
@@ -36,8 +36,8 @@ export function OfflineQueueNotice({
   onSync: () => void;
   /** Where the full queue is listed. */
   href: string;
-  locale?: string;
 }) {
+  const t = useTranslations('offlineQueue');
   return (
     <div
       className={cn(
@@ -54,17 +54,9 @@ export function OfflineQueueNotice({
       )}
 
       <p className="min-w-0 flex-1">
-        {pending > 0
-          ? locale === 'en'
-            ? `${pending} record(s) saved on this device, waiting to sync.`
-            : `${pending} سجل محفوظ على هذا الجهاز بانتظار الإرسال.`
-          : null}
+        {pending > 0 ? t('pending', { count: pending }) : null}
         {blocked > 0 ? (
-          <span className="block font-medium text-destructive">
-            {locale === 'en'
-              ? `${blocked} record(s) were refused by the server and need attention.`
-              : `${blocked} سجل رفضه الخادم ويحتاج إلى مراجعة.`}
-          </span>
+          <span className="block font-medium text-destructive">{t('blocked', { count: blocked })}</span>
         ) : null}
         {/*
           Said here as well as in the panel, because this is the banner on the
@@ -72,11 +64,7 @@ export function OfflineQueueNotice({
           and walk away believing the previous ones went out.
         */}
         {authRequired ? (
-          <span className="block font-medium text-destructive">
-            {locale === 'en'
-              ? 'Your session has ended — sign in again to send these records.'
-              : 'انتهت الجلسة — يرجى تسجيل الدخول مجدداً لإرسال هذه السجلات.'}
-          </span>
+          <span className="block font-medium text-destructive">{t('authRequiredShort')}</span>
         ) : null}
       </p>
 
@@ -84,7 +72,7 @@ export function OfflineQueueNotice({
         href={href}
         className="shrink-0 font-medium text-primary underline-offset-4 hover:underline"
       >
-        {locale === 'en' ? 'View queue' : 'عرض القائمة'}
+        {t('viewQueue')}
       </ShellLink>
 
       <Button
@@ -100,7 +88,7 @@ export function OfflineQueueNotice({
         ) : (
           <RefreshCw className="size-3.5" aria-hidden />
         )}
-        {locale === 'en' ? 'Sync now' : 'مزامنة الآن'}
+        {t('syncNow')}
       </Button>
     </div>
   );
@@ -113,17 +101,25 @@ export function OfflineQueueNotice({
  * records *are* part of the registry as far as the officer is concerned — they
  * are people who have been registered — and putting them anywhere else invites
  * the reading that the table below is complete when it is not.
+ *
+ * `canSend` is false for a session that cannot write the register — «مشاهد
+ * فقط», an auditor, the accountant — signed in on a device an officer queued
+ * records on. The records are listed, so nobody believes the table is complete,
+ * but nothing that would send, change or discard them is offered: they are
+ * another person's work, and the engine sends none of them under this session
+ * either (`writerRequired`).
  */
 export function OfflineQueuePanel({
   tenant,
   base,
-  locale = 'ar',
+  canSend,
 }: {
   tenant: string;
   /** `/{tenant}/{locale}/{adminPath}` — where the «تعديل» link leads. */
   base: string;
-  locale?: string;
+  canSend: boolean;
 }) {
+  const t = useTranslations('offlineQueue');
   const queue = useOfflineQueue(tenant);
   const [discarding, setDiscarding] = useState<string | null>(null);
 
@@ -143,36 +139,28 @@ export function OfflineQueuePanel({
       <header className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <CloudOff className="size-4 shrink-0 text-warning" aria-hidden />
-          {locale === 'en'
-            ? `Saved on this device (${queue.items.length})`
-            : `محفوظ على هذا الجهاز (${queue.items.length})`}
+          {t('title', { count: queue.items.length })}
         </h2>
 
         <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">
-            {queue.online
-              ? locale === 'en'
-                ? 'Connected'
-                : 'متصل'
-              : locale === 'en'
-                ? 'No connection'
-                : 'لا يوجد اتصال'}
-          </span>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={queue.sync}
-            disabled={queue.syncing || queue.pending === 0 || queue.authRequired}
-            className="h-7 gap-1.5 px-2.5 text-xs"
-          >
-            {queue.syncing ? (
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
-            ) : (
-              <RefreshCw className="size-3.5" aria-hidden />
-            )}
-            {locale === 'en' ? 'Sync now' : 'مزامنة الآن'}
-          </Button>
+          <span className="text-xs text-muted-foreground">{queue.online ? t('connected') : t('noConnection')}</span>
+          {canSend ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={queue.sync}
+              disabled={queue.syncing || queue.pending === 0 || queue.authRequired}
+              className="h-7 gap-1.5 px-2.5 text-xs"
+            >
+              {queue.syncing ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw className="size-3.5" aria-hidden />
+              )}
+              {t('syncNow')}
+            </Button>
+          ) : null}
         </div>
       </header>
 
@@ -182,9 +170,14 @@ export function OfflineQueuePanel({
           className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-2 text-xs font-medium text-destructive"
         >
           <TriangleAlert className="size-4 shrink-0" aria-hidden />
-          {locale === 'en'
-            ? 'Your session has ended. These records are safe on this device and will be sent once you sign in again.'
-            : 'انتهت الجلسة. السجلات محفوظة على هذا الجهاز وستُرسل بعد تسجيل الدخول مجدداً.'}
+          {t('authRequired')}
+        </p>
+      ) : null}
+
+      {!canSend ? (
+        <p className="flex items-center gap-2 rounded-lg border border-border/60 bg-background p-2 text-xs text-muted-foreground">
+          <CloudOff className="size-4 shrink-0" aria-hidden />
+          {t('writerRequired')}
         </p>
       ) : null}
 
@@ -198,9 +191,7 @@ export function OfflineQueuePanel({
 
             {item.payload.flags.length > 0 ? (
               <span className="shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">
-                {locale === 'en'
-                  ? `${item.payload.flags.length} unverified`
-                  : `${item.payload.flags.length} غير مؤكَّد`}
+                {t('unverified', { count: item.payload.flags.length })}
               </span>
             ) : null}
 
@@ -221,9 +212,7 @@ export function OfflineQueuePanel({
                 {item.lastError}
               </span>
             ) : (
-              <span className="shrink-0 text-muted-foreground">
-                {locale === 'en' ? 'Waiting to sync' : 'بانتظار الإرسال'}
-              </span>
+              <span className="shrink-0 text-muted-foreground">{t('waiting')}</span>
             )}
 
             {/*
@@ -239,18 +228,20 @@ export function OfflineQueuePanel({
               who spots their own mistake before it was ever attempted should
               not have to wait for a rejection to be allowed to correct it.
             */}
-            <ShellLink
-              href={`${base}/citizens/queue/${item.id}`}
-              className={cn(
-                buttonVariants({ variant: 'outline', size: 'sm' }),
-                'h-7 shrink-0 gap-1 px-2 text-xs',
-              )}
-            >
-              <Pencil className="size-3.5" aria-hidden />
-              {locale === 'en' ? 'Edit' : 'تعديل'}
-            </ShellLink>
+            {canSend ? (
+              <ShellLink
+                href={`${base}/citizens/queue/${item.id}`}
+                className={cn(
+                  buttonVariants({ variant: 'outline', size: 'sm' }),
+                  'h-7 shrink-0 gap-1 px-2 text-xs',
+                )}
+              >
+                <Pencil className="size-3.5" aria-hidden />
+                {t('edit')}
+              </ShellLink>
+            ) : null}
 
-            {item.status === 'blocked' ? (
+            {canSend && item.status === 'blocked' ? (
               <>
                 <Button
                   type="button"
@@ -259,7 +250,7 @@ export function OfflineQueuePanel({
                   onClick={() => queue.retry(item.id)}
                   className="h-7 shrink-0 px-2 text-xs"
                 >
-                  {locale === 'en' ? 'Retry' : 'إعادة المحاولة'}
+                  {t('retry')}
                 </Button>
                 <Button
                   type="button"
@@ -269,7 +260,7 @@ export function OfflineQueuePanel({
                   className="h-7 shrink-0 gap-1 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
                 >
                   <Trash2 className="size-3.5" aria-hidden />
-                  {locale === 'en' ? 'Discard' : 'حذف'}
+                  {t('discard')}
                 </Button>
               </>
             ) : null}
@@ -285,22 +276,12 @@ export function OfflineQueuePanel({
       <ConfirmDialog
         open={discarding !== null}
         onOpenChange={(open) => setDiscarding(open ? discarding : null)}
-        title={locale === 'en' ? 'Discard this record?' : 'حذف هذا السجل؟'}
-        description={
-          locale === 'en' ? (
-            <>
-              <strong>{discardTarget?.displayName}</strong> was never sent to the municipality and
-              is stored only on this device. Discarding it deletes the registration entirely — the
-              household would have to be entered again from the beginning.
-            </>
-          ) : (
-            <>
-              <strong>{discardTarget?.displayName}</strong> لم يصل إلى البلدية وهو محفوظ على هذا
-              الجهاز فقط. حذفه يعني إلغاء التسجيل نهائياً — وسيلزم إدخال بيانات الأسرة من جديد.
-            </>
-          )
-        }
-        confirmLabel={locale === 'en' ? 'Discard record' : 'حذف السجل'}
+        title={t('discardTitle')}
+        description={t.rich('discardBody', {
+          name: discardTarget?.displayName ?? '',
+          strong: (chunks) => <strong>{chunks}</strong>,
+        })}
+        confirmLabel={t('discardConfirm')}
         onConfirm={() => {
           if (discarding) queue.discard(discarding);
           setDiscarding(null);
