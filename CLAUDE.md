@@ -105,6 +105,7 @@ Every command below is a `package.json` script. Run them from the repo root.
 | Something behaves strangely | [docs/gotchas.md](docs/gotchas.md) |
 | Why a rule exists | [docs/incidents.md](docs/incidents.md) |
 | Frontend deployment (Vercel) | [docs/deploy-vercel.md](docs/deploy-vercel.md) |
+| Money: wallets, income, expenses, transfers, the daily count (الخزينة) | [docs/finance.md](docs/finance.md) |
 | Buildings, units, numbering, war damage; duplicate citizens and «دمج ملفين» | [docs/building-census-plan.md](docs/building-census-plan.md); [docs/citizen-duplicates.md](docs/citizen-duplicates.md) |
 | Open product and legal decisions | [docs/open-decisions.md](docs/open-decisions.md) |
 | Who the users are, the staff roles, what the product does | [PRODUCT.md](PRODUCT.md) |
@@ -192,6 +193,7 @@ Docs, tests, lockfiles and generated files never trigger it.
 | A security gap fixed or found | — | [docs/security.md](docs/security.md): remove or add its row in the gaps table |
 | A debt item fixed or found | — | [docs/code-quality.md](docs/code-quality.md), or [docs/ui-ux-standards.md](docs/ui-ux-standards.md) §17 for UI |
 | A new trap found | — | [docs/gotchas.md](docs/gotchas.md) |
+| The treasury: wallets, ledger, vouchers, payment hooks | `apps/backend/src/application/features/treasury/**` | [docs/finance.md](docs/finance.md), [apps/backend/CLAUDE.md](apps/backend/CLAUDE.md) |
 | A staff role, a user kind, or a user-facing capability added or removed | — | [PRODUCT.md](PRODUCT.md) |
 | A canonical doc or heading renamed or moved | — | the section map in [AGENTS.md](AGENTS.md), and every link to it |
 | A rule broken in a way that cost something | — | [docs/incidents.md](docs/incidents.md) |

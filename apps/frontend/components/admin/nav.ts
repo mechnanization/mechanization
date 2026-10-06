@@ -9,6 +9,7 @@ import {
   ScanSearch,
   FileWarning,
   KeyRound,
+  Landmark,
   LayoutDashboard,
   Layers,
   Link2,
@@ -29,6 +30,7 @@ import {
   FEE_READ_ROLES,
   MAP_READ_ROLES,
   PAYMENT_REVIEW_READ_ROLES,
+  TREASURY_READ_ROLES,
   WORKING_STAFF_ROLES,
 } from '@mechanization/shared-schemas';
 import { QUALITY_REVIEWER_ROLES, WORKLIST_ROLES } from '@/lib/staff-roles';
@@ -307,6 +309,36 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'المالية',
     labelEn: 'Finance',
     items: [
+      /*
+        الخزينة — the municipality's wallets and their balances. Held to
+        `TREASURY_READ_ROLES`, the list `TreasuryController` enforces on every
+        read; activating the treasury is narrower still (the manager) and is
+        gated on the page itself. No row, no guard: `canAccessPath` opens a
+        path nobody listed to every role.
+      */
+      {
+        path: '/finance',
+        label: 'الخزينة',
+        labelEn: 'Treasury',
+        icon: Landmark,
+        roles: TREASURY_READ_ROLES,
+        keywords: ['خزينة', 'صندوق', 'رصيد', 'حساب', 'نقد', 'treasury', 'safe', 'balance', 'cash'],
+      },
+      /*
+        Its own row, not a child of /finance: it is where an accountant spends
+        the day, and `activeNavItem` matches the longest path, so this lights up
+        instead of the treasury when the register is open. Reading is the same
+        list as the treasury; recording and cancelling are narrower and are
+        gated on the page and by `ExpensesController`.
+      */
+      {
+        path: '/finance/expenses',
+        label: 'النفقات',
+        labelEn: 'Expenses',
+        icon: Receipt,
+        roles: TREASURY_READ_ROLES,
+        keywords: ['نفقات', 'صرف', 'مصاريف', 'سند صرف', 'فاتورة', 'expense', 'spending', 'voucher', 'payout'],
+      },
       /*
         Beside the registry rather than under settings: a fee is issued
         against the citizens in it, not configured in isolation.

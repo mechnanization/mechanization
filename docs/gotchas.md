@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-06.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -234,6 +234,31 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** match `error.code` structurally.
 - **Where:** `with-connection-retry.ts` `isTransientConnectionError`.
 
+### A Radix Select drops a value set while its list is closed
+
+- **What happens:** setting a controlled `Select`'s value from code — after
+  creating the option the user should land on, say — appears to work for a
+  render or two and then resets to empty, so the trigger falls back to its
+  placeholder even though the option is in the list. A value present when the
+  Select *mounts* is kept; one assigned later, while the content is closed, is
+  not: the item backing it has never mounted, so nothing is registered for it.
+- **Do this:** remount the Select when the option set gains the new value
+  (`key` on a counter of additions), which hands Radix the value at mount time.
+  Passing `SelectValue` children fixes only the visible label, not the value.
+  Refetching the options while the form is open makes it worse, not better.
+- **Where:** `record-expense-form.tsx`, the «بند الصرف» select.
+
+### Two requests creating the same singleton row
+
+- **What happens:** `upsert` on a row that does not exist yet (`system_settings`, keyed by `singleton`)
+  is a read then an insert. Two requests arriving together both read nothing and both insert; the
+  loser fails with a raw unique violation (`P2002`) instead of the domain answer it should give,
+  and inside a transaction the violation aborts the whole transaction.
+- **Do this:** `INSERT … ON CONFLICT DO NOTHING` (raw, schema-qualified), then read and lock the
+  row. `TreasuryService.activate` does; `treasury.integration.spec.ts` pins it with two
+  simultaneous activations.
+- **Where:** `treasury.service.ts`.
+
 ### Append-only triggers fire through cascades
 
 - **What happens:** deleting a `citizen_payments` row cascades into
@@ -242,7 +267,8 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Why:** `payment_transactions_no_delete` rejects every row delete, including
   cascaded ones.
 - **Do this:** treat the abort as the control working. Never `TRUNCATE` or set
-  `session_replication_role` to get round it.
+  `session_replication_role` to get round it. `treasury_entries` (0073) behaves the same way: its
+  foreign keys are RESTRICT, so deleting a staff member or a wallet that moved money is refused.
 - **Where:** `0017_payment_ledger`, the `BackupService` comment above
   `TABLE_ORDER`.
 

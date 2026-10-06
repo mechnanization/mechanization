@@ -6,6 +6,7 @@ import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-cli
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { ConflictError } from '../../common/exceptions';
 import { PaymentLedgerService, type LedgerAudit } from './payment-ledger.service';
+import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { AuditService } from '../audit/audit.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 
@@ -97,6 +98,7 @@ describeIfDb('PaymentLedgerService', () => {
     ledger = new PaymentLedgerService(
       context,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+      new TreasuryLedgerService(context),
     );
   }, SETUP_TIMEOUT_MS);
 

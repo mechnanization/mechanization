@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-06.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -190,7 +190,8 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - Multi-step writes run in `runInTenantTransaction`.
 - **Audit tiers.** Tier 1 MUST write its audit row inside the transaction of the change, so the change
   rolls back if the row cannot be written: payments (declaration, confirmation, refusal, counter and
-  Whish settlement), payment reversals, corrections, ownership changes (ending an ownership, owner links,
+  Whish settlement), payment reversals, activating the treasury (`TREASURY_ACTIVATED`: the opening
+  balances and the go-live stamp, one transaction), recording and cancelling an expense, corrections, ownership changes (ending an ownership, owner links,
   merges), ending a tenancy, review decisions (approve, return, quality check) and citizen status changes
   (archive and restore). Everything else is Tier 2: an event
   after the commit, whose failed write is logged and does not undo the change. How:
@@ -202,12 +203,22 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   last four characters, the usual card and tax-number truncation: the six-character suffix *is* the
   credential, and four of its characters leave 1,024 candidates. The filing's own number
   (`registrations.referenceNumber`) is not a credential and may be written in full.
-- MUST NOT bypass the append-only triggers on `audit_log_entries` and `payment_transactions`
-  (`0001_init`, `0017_payment_ledger`), MUST NOT `SET session_replication_role`, and MUST NOT reach
+- MUST NOT bypass the append-only triggers on `audit_log_entries`, `payment_transactions` and
+  `treasury_entries` (`0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`), MUST NOT `SET session_replication_role`, and MUST NOT reach
   for `TRUNCATE` because a trigger refused a `DELETE`. A refusal is an answer
   ([CLAUDE.md](../CLAUDE.md#how-to-work-here)).
 - Uniqueness is enforced by a database constraint and surfaces as a `ConflictError`, never by a
   check-then-insert alone.
+- **The treasury (الخزينة).** Wallet balances are the sum of append-only entries. An outflow takes row
+  locks on the wallets in id order and refuses to take one below zero (`TREASURY_INSUFFICIENT_FUNDS`);
+  the wallet entries of a citizen payment commit in the payment's own transaction. Reading is
+  `SUPER_ADMIN`, `ACCOUNTANT`, `AUDITOR` and `VIEWER`; activating is `SUPER_ADMIN` only
+  (`TREASURY_*_ROLES` in shared-schemas). A payer or payee name on a voucher is personal data: it
+  stays out of logs, Sentry and audit rows ([finance.md](finance.md)).
+- **Expenses.** Recording an expense is paying it, so the write is guarded on both sides: an
+  in-flight ref and an idempotency key the server honours, and the outflow goes through the same
+  locked, never-negative ledger post as everything else. `payee` is free text that may name a
+  citizen, so the audit row carries the voucher number and the figures, never the name.
 - A money write MUST be safe against double submission on the client (an in-flight guard) and on the
   server (a constraint or idempotent write).
 

@@ -112,6 +112,25 @@ export const ar = {
     COLLECTOR: 'عبر المحصّل',
   },
 
+  /** Where the municipality's money is held (الخزينة). */
+  treasuryAccountType: {
+    CASH_SAFE: 'صندوق النقد',
+    WHISH_ACCOUNT: 'حساب Whish',
+    BANK_ACCOUNT: 'حساب مصرفي',
+    COLLECTOR_CUSTODY: 'عهدة جابٍ',
+    PETTY_CASH: 'سلفة مصاريف نثرية',
+  },
+
+  /** Why a wallet's balance moved. */
+  treasuryEntrySource: {
+    OPENING_BALANCE: 'رصيد افتتاحي',
+    CITIZEN_PAYMENT: 'دفعة مواطن',
+    INCOME_VOUCHER: 'سند قبض',
+    EXPENSE_VOUCHER: 'سند صرف',
+    TRANSFER: 'مناقلة',
+    ADJUSTMENT: 'تسوية',
+  },
+
   /** Staff roles as the municipality names them, not as the enum spells them. */
   staffRole: {
     SUPER_ADMIN: 'مدير النظام',
@@ -480,6 +499,23 @@ export const en = {
     CASH: 'Cash at Municipality',
     WHISH_MONEY: 'Whish Money Transfer',
     COLLECTOR: 'Via Collector',
+  },
+
+  treasuryAccountType: {
+    CASH_SAFE: 'Cash safe',
+    WHISH_ACCOUNT: 'Whish account',
+    BANK_ACCOUNT: 'Bank account',
+    COLLECTOR_CUSTODY: 'Collector custody',
+    PETTY_CASH: 'Petty cash',
+  },
+
+  treasuryEntrySource: {
+    OPENING_BALANCE: 'Opening balance',
+    CITIZEN_PAYMENT: 'Citizen payment',
+    INCOME_VOUCHER: 'Receipt voucher',
+    EXPENSE_VOUCHER: 'Payment voucher',
+    TRANSFER: 'Transfer',
+    ADJUSTMENT: 'Adjustment',
   },
 
   staffRole: {

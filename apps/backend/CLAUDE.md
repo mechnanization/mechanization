@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-06.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -123,6 +123,25 @@ Data access for new code (decided):
   profile: a flat's owners go as an allowlist (name and أسهم), the landlord link's id and reference are
   dropped, and everything else on a property or unit passes through, so decide for each field you add to
   `CitizenProfile` ([docs/gotchas.md](../../docs/gotchas.md)).
+- **Treasury.** `TreasuryService` (overview, statements, `activate`) and `TreasuryLedgerService`
+  (`post`, `creditPayment`, `reversePayment`, `reverseEntriesOf`), under
+  `application/features/treasury/`; routes in `TreasuryController` (`t/:tenantSlug/treasury`). The
+  pure routing rules are `treasury.plan.ts`. `PaymentLedgerService.append` calls the ledger **inside
+  its own transaction** after it writes the payment row, so the payment and its wallet entries commit
+  together; `TreasuryLedgerService` never opens a transaction and takes the client explicitly. Nothing
+  credits a wallet until `system_settings.treasuryGoLiveAt` is set and the payment's `occurredAt` is
+  at or after it. An outflow locks the wallet rows (id order) and is refused below zero. Design and
+  rules: [docs/finance.md](../../docs/finance.md).
+- **Expenses.** `ExpensesService` and `ExpensesController` (`t/:tenantSlug/treasury/expenses`), with
+  the date rules in `expenses.plan.ts`. Recording *is* paying: one transaction writes the voucher,
+  posts the negative ledger entry through `TreasuryLedgerService.post` (which refuses to take a wallet
+  below zero) and writes the Tier 1 audit row. There is no approval step, by product decision. A
+  voucher is never edited: it takes a void stamp and the ledger gets an opposing entry through
+  `reverseEntriesOf`. The voucher's currency is taken from its wallet, never from the request. Three
+  role lists: read, `TREASURY_WORK_ROLES` to record, `TREASURY_ADMIN_ROLES` to void. The municipality
+  names its own bands of spending: `POST`/`PATCH` on `expenses/categories`, manager only. A category
+  is deactivated, never deleted — every voucher ever filed under it still points there, and the
+  foreign key is RESTRICT.
 - **Who is calling.** `@CurrentUser()` yields `SessionClaims` (`application/features/identity/identity.service.ts`);
   `@CurrentTenant()` yields `req.tenant`. Pass the actor to services as `{ id: user.sub, role: user.role ?? '' }`.
 - **Validation.** `@Body(new ZodValidationPipe(schema))`, schema from `@mechanization/shared-schemas`. Put
@@ -191,7 +210,8 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 ([docs/security.md](../../docs/security.md#data-integrity-and-transactions)):
 
 1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
-   settlements), payment reversals, corrections, ownership changes (ending an ownership, making, updating
+   settlements), payment reversals, activating the treasury, recording and cancelling an expense,
+   corrections, ownership changes (ending an ownership, making, updating
    or ending an owner link, a merge or its undo), ending a tenancy, review decisions (approving or returning
    a record, completing a quality check) and citizen status changes (archive and restore; a citizen file
    is never deleted). The row is written in the same transaction as the change; if it fails, the change

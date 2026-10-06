@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-06.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -163,7 +163,7 @@ Counts and files: §17.1.
 | CTL-9 | hand-rolled tabs (`role="tablist"` built by hand) | a `Tabs` primitive | **missing** (`@radix-ui/react-tabs` not installed) | `SegmentedControl` driving plain regions that are not tab panels (A11Y-3) |
 | CTL-10 | hand-rolled switches, `aria-pressed` buttons used as an option group | a `Switch` primitive for on/off; `SegmentedControl` or `ChipGroup` for options | Switch **missing** (`@radix-ui/react-switch` not installed) | a single `aria-pressed` toggle button such as show-password |
 | CTL-11 | hand-rolled popovers and comboboxes | a `Popover` primitive; `DropdownMenu` for menus | Popover **missing** (`@radix-ui/react-popover` not installed) | none |
-| CTL-12 | a hand-rolled inline alert or error banner | an inline `Alert` primitive; `ErrorState` for a failed panel | Alert **missing** (shadcn's Alert has no Radix part) | none |
+| CTL-12 | a hand-rolled inline alert or error banner | `Alert` (`components/ui/alert.tsx`), with `ErrorState` for a failed panel | yes (ported 2026-10-06 per KIT-1: shadcn's Alert has no Radix part, so plain markup with `cva`) | none |
 
 ### 3.2 Adding a missing primitive (decision D-kit)
 
@@ -674,8 +674,9 @@ Code-pattern debt outside the UI rules lives in
 - **Hand-rolled pagers, 3** (PRIM-4): `AuditTrailPage` (`audit/page.tsx`),
   `CorrectionBillsPage` (`fees/corrections/page.tsx`), `AuditDaily`
   (`components/admin/audit-daily.tsx`). `Pager` has 1 user.
-- **Red error banners, 61 copies in 46 files**, with no `Alert` primitive
-  (CTL-12): a className holding `border-destructive…`, `bg-destructive/5` or `/10` and
+- **Red error banners, 61 copies in 46 files** (CTL-12), none of them yet moved
+  to the `Alert` primitive that now exists — the finance screens are its only
+  users. Each is a className holding `border-destructive…`, `bg-destructive/5` or `/10` and
   `text-destructive`. Three each in `import-citizens-dialog`,
   `complete-record-dialog`, `building-unit-forms`; two each in
   `unit-correction-delete-dialog`, `merge-citizens-dialog`, `citizen-form`,

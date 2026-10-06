@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-06.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -19,12 +19,14 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
   [adminPath]/(protected)/layout.tsx    ProtectedAdminLayout + manifest.webmanifest/route.ts
     page.tsx (AdminIndexPage, role landing) · [...unknown] (AdminNotFound)
     dashboard account audit map zones settings staff payments
+    finance (الخزينة) · finance/accounts/[accountId] (كشف حساب)
+    finance/expenses (النفقات) · finance/expenses/new (تسجيل نفقة)
     citizens/** buildings/** cases/** fees/** inspector/profile/** quality/**
 ```
 
-All 49 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
-`components/ui` is the kit (32 files); `components/admin` holds staff screens (feature
-folders `cases/`, `damage/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
+All 53 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
+`components/ui` is the kit (33 files, `alert.tsx` added 2026-10-06); `components/admin` holds staff screens (feature
+folders `cases/`, `damage/`, `finance/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
 form pieces used by staff screens, and only `pay-dialog` serves the portal. `lib` holds the
 API client, session, hooks, formatters and offline queue; `public/sw.js` is the service worker.
 
@@ -227,7 +229,7 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 17 files, 230 cases.
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 19 files, 246 cases.
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
 when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`,

@@ -5,6 +5,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
+import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 
 /** One movement of money, as the caller describes it. */
 export interface LedgerEntryInput {
@@ -104,6 +105,7 @@ export class PaymentLedgerService {
   constructor(
     private readonly tenantContext: TenantContextService,
     private readonly auditTrail: AuditService,
+    private readonly treasury: TreasuryLedgerService,
   ) {}
 
   private get db() {
@@ -517,6 +519,43 @@ export class PaymentLedgerService {
         collectedById: input.collectedById ?? null,
       },
     });
+
+    /*
+      The wallets, in this same transaction: the payment and the money it moved
+      commit together or not at all. Only once the treasury is live and only for
+      a payment taken since (docs/finance.md §3). A reversal opposes the entries
+      of the movement it undoes; a refused outflow (the drawer cannot cover a
+      refund) rolls the reversal back with it.
+    */
+    if (reversalOfId) {
+      await this.treasury.reversePayment(tx, {
+        originalTransactionId: reversalOfId,
+        reversalTransactionId: created.id,
+        method: input.method,
+        invoiceCurrency: invoice.currency,
+        amount: Math.abs(delta),
+        occurredAt: created.occurredAt,
+        actorId: input.recordedById ?? null,
+      });
+    } else {
+      await this.treasury.creditPayment(tx, {
+        paymentTransactionId: created.id,
+        occurredAt: created.occurredAt,
+        actorId: input.recordedById ?? null,
+        method: input.method,
+        invoiceCurrency: invoice.currency,
+        amount: delta,
+        tendered: input.tendered
+          ? {
+              local: input.tendered.local,
+              foreign: input.tendered.foreign,
+              foreignCurrency: input.tendered.foreignCurrency,
+            }
+          : null,
+        changeGiven,
+        collectedById: input.collectedById ?? null,
+      });
+    }
 
     return {
       receiptNumber,

@@ -5780,3 +5780,195 @@ export function unitCorrectionRefusal(
     ? reason
     : null;
 }
+
+// ── الخزينة (stage 1) ───────────────────────────────────────────────────────
+
+import type {
+  ActivateTreasuryInput,
+  ActivateTreasuryResult,
+  TreasuryOverview,
+  TreasuryStatement,
+  CreateExpenseCategoryInput,
+  ExpenseCategoryView,
+  ExpenseListResult,
+  ExpenseVoucherView,
+  RecordExpenseInput,
+  RecordExpenseResult,
+  UpdateExpenseCategoryInput,
+  VoidExpenseInput,
+} from '@mechanization/shared-schemas';
+
+export type {
+  ActivateTreasuryInput,
+  ActivateTreasuryResult,
+  TreasuryAccountView,
+  TreasuryOverview,
+  TreasuryRate,
+  TreasuryStatement,
+  TreasuryStatementEntry,
+  CreateExpenseCategoryInput,
+  ExpenseCategoryView,
+  ExpenseListResult,
+  ExpenseStatus,
+  UpdateExpenseCategoryInput,
+  ExpenseVoucherView,
+  RecordExpenseInput,
+  RecordExpenseResult,
+  VoidExpenseInput,
+} from '@mechanization/shared-schemas';
+
+/** Every wallet with its balance, whether the treasury is live, and the rate to convert with. `GET /treasury`. */
+export function getTreasuryOverview(tenant: string, token: string, _args?: undefined, signal?: AbortSignal) {
+  return apiFetch<TreasuryOverview>(tenant, '/treasury', { token, signal });
+}
+
+/**
+ * One wallet's movements, oldest first, each with the balance after it.
+ * `from` and `to` are dates (`YYYY-MM-DD`); `limit` caps the rows and the answer says when it did.
+ */
+export function getTreasuryStatement(
+  tenant: string,
+  token: string,
+  args: { accountId: string; from?: string; to?: string; limit?: number },
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (args.from) query.set('from', args.from);
+  if (args.to) query.set('to', args.to);
+  if (args.limit !== undefined) query.set('limit', String(args.limit));
+  const suffix = query.toString() ? `?${query}` : '';
+  return apiFetch<TreasuryStatement>(
+    tenant,
+    `/treasury/accounts/${encodeURIComponent(args.accountId)}/statement${suffix}`,
+    { token, signal },
+  );
+}
+
+/** «تفعيل الخزينة» — the counted opening balances, posted once. SUPER_ADMIN only. `POST /treasury/activate`. */
+export function activateTreasury(
+  tenant: string,
+  token: string,
+  args: ActivateTreasuryInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ActivateTreasuryResult>(tenant, '/treasury/activate', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** The bands money may be spent under. `GET /treasury/expenses/categories`. */
+export function getExpenseCategories(
+  tenant: string,
+  token: string,
+  args?: { includeInactive?: boolean },
+  signal?: AbortSignal,
+) {
+  const suffix = args?.includeInactive ? '?includeInactive=true' : '';
+  return apiFetch<ExpenseCategoryView[]>(tenant, `/treasury/expenses/categories${suffix}`, { token, signal });
+}
+
+/** «بند صرف جديد». SUPER_ADMIN only. `POST /treasury/expenses/categories`. */
+export function createExpenseCategory(
+  tenant: string,
+  token: string,
+  args: CreateExpenseCategoryInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ExpenseCategoryView>(tenant, '/treasury/expenses/categories', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/**
+ * Renames a band, re-codes it, or takes it out of use. Never deletes one.
+ * SUPER_ADMIN only. `PATCH /treasury/expenses/categories/:id`.
+ */
+export function updateExpenseCategory(
+  tenant: string,
+  token: string,
+  args: { id: string } & UpdateExpenseCategoryInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<ExpenseCategoryView>(
+    tenant,
+    `/treasury/expenses/categories/${encodeURIComponent(id)}`,
+    { method: 'PATCH', token, body: JSON.stringify(body), signal },
+  );
+}
+
+/**
+ * The expense register, newest first. `GET /treasury/expenses`.
+ *
+ * `totals` covers the whole filtered set rather than the page, so «كم صرفنا على
+ * المحروقات» is answered by the figure beside the table and not by adding up
+ * what happens to be on screen.
+ */
+export function getExpenses(
+  tenant: string,
+  token: string,
+  args: {
+    from?: string;
+    to?: string;
+    categoryId?: string;
+    accountId?: string;
+    includeVoid?: boolean;
+    page?: number;
+    pageSize?: number;
+  } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (args.from) query.set('from', args.from);
+  if (args.to) query.set('to', args.to);
+  if (args.categoryId) query.set('categoryId', args.categoryId);
+  if (args.accountId) query.set('accountId', args.accountId);
+  if (args.includeVoid) query.set('includeVoid', 'true');
+  if (args.page !== undefined) query.set('page', String(args.page));
+  if (args.pageSize !== undefined) query.set('pageSize', String(args.pageSize));
+  const suffix = query.toString() ? `?${query}` : '';
+  return apiFetch<ExpenseListResult>(tenant, `/treasury/expenses${suffix}`, { token, signal });
+}
+
+/** One voucher. `GET /treasury/expenses/:id`. */
+export function getExpense(tenant: string, token: string, args: { id: string }, signal?: AbortSignal) {
+  return apiFetch<ExpenseVoucherView>(tenant, `/treasury/expenses/${encodeURIComponent(args.id)}`, {
+    token,
+    signal,
+  });
+}
+
+/**
+ * «سجّل النفقة» — records the voucher and takes the money out, in one call.
+ * ACCOUNTANT or SUPER_ADMIN. `POST /treasury/expenses`.
+ */
+export function recordExpense(tenant: string, token: string, args: RecordExpenseInput, signal?: AbortSignal) {
+  return apiFetch<RecordExpenseResult>(tenant, '/treasury/expenses', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «إلغاء سند الصرف» — cancels it and puts the money back. SUPER_ADMIN only. `POST /treasury/expenses/:id/void`. */
+export function voidExpense(
+  tenant: string,
+  token: string,
+  args: { id: string } & VoidExpenseInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<ExpenseVoucherView>(tenant, `/treasury/expenses/${encodeURIComponent(id)}/void`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
+    signal,
+  });
+}

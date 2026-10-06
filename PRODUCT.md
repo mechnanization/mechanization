@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-06.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -41,6 +41,16 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - A cadastral map explorer with parcel numbering and sector zones.
   - CSV export with formula-injection-safe cells.
   - An append-only audit log of staff actions.
+  - **The treasury (الخزينة)**: live balances of the municipality's cash safe and Whish account in
+    ليرة and dollars, a statement for each, and what collectors still hold. A citizen payment credits
+    the right wallet automatically. `SUPER_ADMIN` activates it once by entering the counted opening
+    balances; the accountant works it, the auditor and view-only staff read it. Income, transfers and
+    the daily count follow in later stages ([docs/finance.md](docs/finance.md)).
+  - **النفقات**: an expense register and «أمر صرف». The accountant or the manager records what was
+    paid, to whom, from which wallet and against which budget category, and the money leaves the
+    wallet in the same act — there is no approval queue. A mistake is cancelled with a reason, which
+    returns the money and keeps both the voucher and its cancellation on the record. Only the
+    manager may cancel.
 - **The municipality head (`VIEWER`, مشاهد فقط)** reads the dashboard, the reports, the
   register with its citizens' data, the census, the cases and the fees, and changes nothing
   (decision of 2026-10-05). Every mutating route refuses the role and its screens offer no
