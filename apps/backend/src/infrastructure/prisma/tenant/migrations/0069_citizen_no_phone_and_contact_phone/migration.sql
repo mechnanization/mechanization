@@ -1,0 +1,73 @@
+-- 0069_citizen_no_phone_and_contact_phone
+--
+-- «لا يملك رقم هاتف» and «رقم للتواصل» — an elderly citizen with no phone of
+-- their own, and the relative the municipality reaches instead.
+--
+-- == What it is for ======================================================
+--
+-- A great many elderly citizens own no phone. Asked for one at the counter,
+-- officers filed the number of whoever brought them in — a son, a daughter, a
+-- neighbour — into `phone`, because the form required it. That number then
+-- *is* the citizen's, as far as every reader of the column is concerned, and
+-- three of them draw the wrong conclusion from it:
+--
+--  - citizen sign-in offers the father's file to the son as one of «his»
+--    profiles, because `findCitizensByPhone` finds both (identity.service);
+--  - «روابط المالكين» treats the number as one the father answers on, which
+--    is how 2026-09-15 linked a card through «the one number that turned out
+--    to be a relative's» (landlord-link.service);
+--  - «شخص مسجَّل مرتين» scores the father and the son as a possible duplicate
+--    on a phone they never both held.
+--
+-- So the register now says which it is. `hasNoPhone` records that the person
+-- has no number of their own — a fact, not a blank — and `contactPhone` holds
+-- the relative's number as a relative's number, where nothing mistakes it for
+-- the citizen's own.
+--
+-- == What this migration deliberately does NOT add =======================
+--
+-- No unique index on `phone`. The feature request asked for a partial unique
+-- index over citizens with a number, and it is not addable here:
+--
+--  - a household sharing one phone is the designed case, not corruption. The
+--    `users` comment says phone «alone is not unique» and the identity
+--    document is the key *because* of it; `docs/open-decisions.md` §4 records
+--    that v1's `@@unique([phone, lastName])` was removed on purpose;
+--  - `verifyOtp` returns CHOOSE_PROFILE when a phone matches several people,
+--    which is a first-class flow with its own error type and screen. A unique
+--    index makes it unreachable;
+--  - the index would simply fail to create on any tenant where a mother and a
+--    father are already registered on the family phone, which is most of them.
+--
+-- Nothing needed it: there was never a unique constraint or an application
+-- check on `phone`, so the son in the request was never blocked. What blocked
+-- nothing still has to stop *claiming* his number, which is what the two
+-- columns below are for. Confirmed with the user on 2026-10-05.
+--
+-- == Safety ==============================================================
+--
+-- Additive only. One nullable column; one NOT NULL column whose DEFAULT false
+-- is the answer every existing row already gives — a citizen who has a phone,
+-- or whose record predates the question. No row is rewritten, no constraint
+-- gains a new way to refuse a write, so the previous build keeps working
+-- against this schema and a rollback is a redeploy.
+
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "hasNoPhone" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "contactPhone" TEXT;
+
+-- The third number a landlord claim is matched against, beside `phone` and
+-- `whatsapp` (0001, 0045). Those two are indexed on `(kind, …)` for exactly
+-- this lookup; without the same index `candidatesFor`'s third OR branch
+-- degrades the whole query to a sequential scan of every citizen — on a
+-- lookup that runs while an officer stands at the form with a tenant.
+--
+-- **Not CONCURRENTLY, deliberately.** The migrator runs each migration in a
+-- transaction, where CONCURRENTLY is not allowed at all, so the choice is
+-- this or a separate migration of its own (the reasoning in 0061, AGENTS.md
+-- §3). Taken here because this is the same table, the same shape and the same
+-- purpose as `users_kind_whatsapp_idx` in 0045, which shipped this way: a
+-- btree over a municipality's few thousand `users` rows builds in
+-- milliseconds, and the write lock it holds falls inside the deploy window
+-- the migration already runs in. `pnpm db:status:*` will report it as a
+-- lock-risk statement — that report is correct, and this is the answer to it.
+CREATE INDEX IF NOT EXISTS "users_kind_contactPhone_idx" ON "users" ("kind", "contactPhone");
