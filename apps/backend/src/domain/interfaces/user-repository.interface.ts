@@ -88,9 +88,6 @@ export interface UserRepository {
    */
   findCitizenByReference(referenceNumber: string): Promise<User | null>;
 
-  /** Upserts on (identityDocType, identityDocNumber) — the household-safe key. */
-  upsertCitizen(input: CitizenIdentityInput, referenceNumber: string): Promise<string>;
-
   /** Stamps `lastLoginAt`, which the staff list surfaces as dormancy. */
   markLoggedIn(userId: string): Promise<void>;
 
@@ -187,7 +184,8 @@ export interface StaffSummary {
    * Presence is derived from this and not reported as a boolean, deliberately:
    * a server that says «online» has already decided how fresh counts as
    * present, and a client holding the timestamp can show «آخر ظهور» for the
-   * ones that are not. The threshold is `ONLINE_WITHIN_SECONDS`.
+   * ones that are not. The threshold is `STAFF_ONLINE_WITHIN_SECONDS`, and the
+   * rule `isStaffOnline`, both in `@mechanization/shared-schemas`.
    */
   lastSeenAt: string | null;
   /** Set only on a deleted account returned for the earnings roster. */

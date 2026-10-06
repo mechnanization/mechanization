@@ -1,5 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
+  INSPECTOR_PROFILE_ROLES,
+  WORKING_STAFF_ROLES,
   createStaffUserSchema,
   recordInspectorPayoutSchema,
   staffActiveSchema,
@@ -7,6 +9,7 @@ import {
 } from '@mechanization/shared-schemas';
 import type { RecordInspectorPayoutInput } from '@mechanization/shared-schemas';
 import { StaffService } from '../../application/features/staff/staff.service';
+import { StaffPresenceService } from '../../application/features/identity/staff-presence.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
@@ -26,7 +29,10 @@ import type { StaffRole } from '../../domain/entities/user.entity';
 @Roles('SUPER_ADMIN')
 @Controller('t/:tenantSlug/staff')
 export class StaffController {
-  constructor(private readonly staff: StaffService) {}
+  constructor(
+    private readonly staff: StaffService,
+    private readonly presenceService: StaffPresenceService,
+  ) {}
 
   /**
    * Every staff account, including deactivated ones — not deleted ones.
@@ -36,6 +42,18 @@ export class StaffController {
   @Get()
   async list(@Query('include') include?: string) {
     return { items: await this.staff.list({ includeDeletedEarners: include === 'deleted-earners' }) };
+  }
+
+  /**
+   * «متصل الآن» / «آخر ظهور» for every live account, with the server's clock.
+   *
+   * What the staff page polls once a minute. Kept apart from `list` because
+   * the roster computes every inspector's earnings over every filing they
+   * made — not a query to repeat on a timer to learn who is online.
+   */
+  @Get('presence')
+  async presence() {
+    return this.presenceService.presence();
   }
 
   /** The accounts a super admin has deleted, to restore one from. */
@@ -134,7 +152,7 @@ export class StaffController {
    * Field Inspector self-service dashboard: stats, $1 commission earnings,
    * balance breakdown, recent registrations, and payout history.
    */
-  @Roles('FIELD_INSPECTOR', 'SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT')
+  @Roles(...WORKING_STAFF_ROLES)
   @Get('inspector/me/profile')
   async getMyProfile(
     @Param('tenantSlug') tenantSlug: string,
@@ -146,7 +164,7 @@ export class StaffController {
   /**
    * Super Admin (or the Inspector themselves) viewing an inspector's dashboard.
    */
-  @Roles('SUPER_ADMIN', 'FIELD_INSPECTOR')
+  @Roles(...INSPECTOR_PROFILE_ROLES)
   @Get('inspectors/:id/profile')
   async getInspectorProfile(
     @Param('tenantSlug') tenantSlug: string,

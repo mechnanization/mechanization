@@ -20,17 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { STAFF_ROLE } from '@mechanization/shared-schemas';
 
-const ROLES = [
-  'SUPER_ADMIN',
-  'AUDITOR',
-  'FIELD_INSPECTOR',
-  'COLLECTOR',
-  'ACCOUNTANT',
-  'ADMINISTRATIVE_OFFICER',
-  // «مشاهد فقط» — reads the register, census, cases and reports; writes nothing.
-  'VIEWER',
-] as const;
+/** Every staff role, from the one shared list — a role added there is offered here. */
+const ROLES = STAFF_ROLE;
 
 export interface StaffFormValues {
   firstName: string;

@@ -269,6 +269,11 @@ export interface UnsurveyedUnitRow {
   parcelNumber: string;
   /** Who put the building on the census — shown to those who see everyone's. */
   addedByName: string | null;
+  /** Their staff id, so an admin can narrow the list to one officer's buildings. */
+  addedById: string | null;
+  /** The door's open case — a refused or unreachable flat already booked for a revisit. */
+  openCaseType: string | null;
+  scheduledRevisitAt: Date | null;
 }
 
 export interface DamageRow {
@@ -279,7 +284,9 @@ export interface DamageRow {
   source: string;
   observations: string | null;
   assessedAt: Date;
-  /** «موعد إعادة الكشف» — set only on an UNINHABITABLE reading (0068). */
+  /** «صالحة للسكن؟» — the second axis (0071); null on a reading from before the question. */
+  habitable: boolean | null;
+  /** «موعد إعادة الكشف» — set only on a «غير صالحة للسكن» reading (0068, 0071). */
   reinspectAt: Date | null;
   assessedById: string | null;
   assessedByName: string | null;

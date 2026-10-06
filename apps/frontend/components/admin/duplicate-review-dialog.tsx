@@ -2,8 +2,9 @@
 
 import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Ban, ExternalLink, PhoneOff, UsersRound } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { duplicateMatchedOnLabels, getLabels } from '@mechanization/shared-schemas';
 import type {
   ContactNumberField,
   DuplicateReviewAnswer,
@@ -26,27 +27,25 @@ import { cn } from '@/lib/utils';
 /** The same four-character floor every reason in the app has. */
 const MIN_REASON = 4;
 
-/** «٤ دقائق», «دقيقة واحدة», «١١ دقيقة» — the count agrees with its noun. */
-function minutesAr(count: number): string {
-  if (count === 1) return 'دقيقة واحدة';
-  if (count === 2) return 'دقيقتين';
-  if (count >= 3 && count <= 10) return `${count} دقائق`;
-  return `${count} دقيقة`;
-}
-
 /**
  * Save as a new record, with the officer's answer attached — and, for any
  * number that is not this person's, the field to empty and the «غير مؤكَّد»
  * reason to flag it with. The phone and a separate WhatsApp number are cleared
  * independently: only the one that was somebody else's goes.
+ *
+ * `relative` is the other way out for the phone: the number is a relative's
+ * and the person has none of their own. The file is saved «لا يملك رقم هاتف»
+ * with this number as its «رقم للتواصل», and nothing is flagged — the record is
+ * complete, and the number is kept as what it is.
  */
 export interface DuplicateReviewOutcome {
   answer: DuplicateReviewAnswer | undefined;
   clear: Partial<Record<ContactNumberField, string>>;
+  relative?: string;
 }
 
 type PersonAnswer = 'same' | 'different' | null;
-type PhoneAnswer = 'shared' | 'notTheirs' | 'fix';
+type PhoneAnswer = 'shared' | 'notTheirs' | 'relative' | 'fix';
 
 const FIELDS: readonly ContactNumberField[] = ['phone', 'whatsapp'];
 
@@ -72,6 +71,10 @@ const FIELDS: readonly ContactNumberField[] = ['phone', 'whatsapp'];
  * rather than keeping a number that would send the occupant's notices to the
  * landlord's handset.
  *
+ * And for a household record, «رقم أحد أقاربه»: the father whose son's number
+ * was typed into his file because he has no phone. Before it, the only honest
+ * exit threw the number away and sent a finished record to «يتطلب مراجعة».
+ *
  * ## When it does not ask
  *
  * A record the server is certain about (`certain`: the same three names, the
@@ -94,12 +97,18 @@ export function DuplicateReviewDialog({
   citizenHref,
   locale,
   canOverride = false,
+  offerRelative = false,
   onCancel,
   onResolve,
 }: {
   findings: DuplicateReviewFindings;
   /** SUPER_ADMIN: may file past a certain match as a different person, with a reason. */
   canOverride?: boolean;
+  /**
+   * A household record, where «رقم للتواصل» exists. A non-resident owner's
+   * file keeps its own «جهة الاتصال المحلية» instead, so it is not offered there.
+   */
+  offerRelative?: boolean;
   /** The numbers as typed, for each question's wording. */
   numbers: Partial<Record<ContactNumberField, string | null>>;
   citizenHref: (id: string) => string;
@@ -107,8 +116,10 @@ export function DuplicateReviewDialog({
   onCancel: () => void;
   onResolve: (outcome: DuplicateReviewOutcome) => void;
 }) {
-  const en = locale === 'en';
+  const t = useTranslations('duplicateReview');
   const labels = getLabels(locale);
+  // The same words «سجلات مشابهة» uses beside a candidate — one source for what a match agreed on.
+  const agreed = duplicateMatchedOnLabels(locale);
   const duplicates = findings.possibleDuplicates;
   const phoneOwners = findings.phoneOwners;
   const landlordCards = findings.landlordPhoneCards;
@@ -118,7 +129,7 @@ export function DuplicateReviewDialog({
   const stopped = certain.length > 0 && !canOverride;
 
   /** One question per number that matched somebody: the phone, a separate WhatsApp number, or both. */
-  const askedFields = useMemo(
+  const matchedFields = useMemo(
     () =>
       FIELDS.filter(
         (field) =>
@@ -134,6 +145,14 @@ export function DuplicateReviewDialog({
   /** Answered once: a second click would resubmit the same filing. */
   const sentRef = useRef(false);
   const [sent, setSent] = useState(false);
+
+  /*
+    «رقم أحد أقاربه» on the phone answers the WhatsApp question too: a person
+    with no phone has no WhatsApp number, so both of theirs are emptied and the
+    second question is not asked.
+  */
+  const relative = offerRelative && phoneAnswers.phone === 'relative' && Boolean(numbers.phone);
+  const askedFields = relative ? matchedFields.filter((field) => field === 'phone') : matchedFields;
 
   /** Who a number was found on, in one phrase, for its flag reason. */
   const holdersOf = (field: ContactNumberField) =>
@@ -151,9 +170,10 @@ export function DuplicateReviewDialog({
   const minReason = person === 'different' && certain.length > 0 ? 10 : MIN_REASON;
   const reasonOk = !needsReason || reason.trim().length >= minReason;
   const personOk = !asksPerson || person === 'different';
-  const phonesOk = askedFields.every(
-    (field) => phoneAnswers[field] === 'shared' || phoneAnswers[field] === 'notTheirs',
-  );
+  const phonesOk = askedFields.every((field) => {
+    const answer = phoneAnswers[field];
+    return answer === 'shared' || answer === 'notTheirs' || (answer === 'relative' && relative);
+  });
   const canSave = !stopped && personOk && phonesOk && reasonOk;
   const clearsAny = askedFields.some((field) => phoneAnswers[field] === 'notTheirs');
 
@@ -177,46 +197,22 @@ export function DuplicateReviewDialog({
     const clear: DuplicateReviewOutcome['clear'] = {};
     for (const field of askedFields) {
       if (phoneAnswers[field] !== 'notTheirs') continue;
-      const holder = holdersOf(field).join(en ? ', ' : '، ');
-      const what = field === 'phone' ? (en ? 'number' : 'رقم الهاتف') : en ? 'WhatsApp number' : 'رقم الواتساب';
-      clear[field] = (
-        holder
-          ? en
-            ? `The ${what} entered belonged to ${holder} — cleared until the right one is known`
-            : `${what} المُدخل كان رقم ${holder} — أُفرغ بانتظار الرقم الصحيح`
-          : en
-            ? `The ${what} entered belonged to someone else — cleared until the right one is known`
-            : `${what} المُدخل كان لشخص آخر — أُفرغ بانتظار الرقم الصحيح`
-      ).slice(0, 300);
+      const holder = holdersOf(field).join(t('listSeparator'));
+      const what = field === 'phone' ? t('clearReason.phone') : t('clearReason.whatsapp');
+      clear[field] = (holder ? t('clearReason.held', { what, holder }) : t('clearReason.unknown', { what })).slice(0, 300);
     }
-    onResolve({ answer, clear });
+    onResolve({ answer, clear, ...(relative ? { relative: numbers.phone! } : {}) });
   };
-
-  const matchLabel = (key: DuplicateReviewFindings['possibleDuplicates'][number]['matchedOn'][number]) =>
-    ({
-      NAME: en ? 'same name' : 'الاسم نفسه',
-      NAME_SIMILAR: en ? 'similar name' : 'اسم مشابه',
-      NAME_PARTIAL: en ? "same first and father's name" : 'الاسم واسم الأب نفسهما',
-      PHONE: en ? 'same phone' : 'الهاتف نفسه',
-      MOTHER: en ? "same mother's name" : 'اسم الأم نفسه',
-      CIVIL_RECORD: en ? 'same civil record no.' : 'رقم السجل نفسه',
-      RESIDENCY_NUMBER: en ? 'same residency permit' : 'رقم الإقامة نفسه',
-      SAME_UNIT: en ? 'same flat' : 'الوحدة نفسها',
-    })[key];
 
   return (
     <Dialog open onOpenChange={(next) => (next ? undefined : onCancel())}>
-      <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto" closeLabel={t('close')}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UsersRound className="size-5 shrink-0 text-warning" aria-hidden />
-            {en ? 'Before saving' : 'قبل الحفظ'}
+            {t('title')}
           </DialogTitle>
-          <DialogDescription>
-            {en
-              ? 'Nothing has been saved yet. Answer what is below, or go back to the form.'
-              : 'لم يُحفظ شيء بعد. أجب عمّا يلي، أو ارجع إلى النموذج.'}
-          </DialogDescription>
+          <DialogDescription>{t('description')}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5">
@@ -227,27 +223,15 @@ export function DuplicateReviewDialog({
             >
               <Ban className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
               <span>
-                <span className="block font-semibold">
-                  {en ? 'This person is already registered.' : 'هذا الشخص مسجَّل مسبقاً.'}
-                </span>
-                {en
-                  ? 'A second file cannot be created. Open their file below and add the property to it. If you are sure this is someone else, an administrator has to decide.'
-                  : 'لا يُنشأ له ملف ثانٍ. افتح ملفه أدناه وأضف العقار إليه. إن كنت متأكداً أنه شخص آخر فالقرار لمدير النظام.'}
+                <span className="block font-semibold">{t('stopped.title')}</span>
+                {t('stopped.body')}
               </span>
             </p>
           ) : null}
 
           {asksPerson ? (
             <section className="space-y-2.5">
-              <h3 className="text-sm font-semibold">
-                {stopped
-                  ? en
-                    ? 'Already on file'
-                    : 'الملف المسجَّل'
-                  : en
-                    ? 'Is this person already registered?'
-                    : 'هل هذا الشخص مسجَّل مسبقاً؟'}
-              </h3>
+              <h3 className="text-sm font-semibold">{stopped ? t('person.onFile') : t('person.question')}</h3>
               <ul className="space-y-1.5">
                 {duplicates.map((row) => (
                   <li
@@ -259,9 +243,7 @@ export function DuplicateReviewDialog({
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-semibold">{row.fullName}</span>
-                      {row.certain ? (
-                        <Badge variant="soft-destructive">{en ? 'same person' : 'الشخص نفسه'}</Badge>
-                      ) : null}
+                      {row.certain ? <Badge variant="soft-destructive">{t('person.samePerson')}</Badge> : null}
                       {row.referenceNumber ? (
                         <span dir="ltr" className="font-mono text-muted-foreground">
                           {row.referenceNumber}
@@ -276,26 +258,21 @@ export function DuplicateReviewDialog({
                         rel="noopener"
                         className="ms-auto inline-flex items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"
                       >
-                        {en ? 'Open file' : 'فتح ملفه'}
+                        {t('person.openFile')}
                         <ExternalLink className="size-3" aria-hidden />
                       </Link>
                     </div>
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
-                      {row.motherName ? (
-                        <span>{en ? `mother: ${row.motherName}` : `والدته: ${row.motherName}`}</span>
-                      ) : null}
+                      {row.motherName ? <span>{t('person.mother', { name: row.motherName })}</span> : null}
                       {row.phone ? <span dir="ltr">{row.phone}</span> : null}
-                      <span>
-                        {en ? `${row.propertyCount} propert${row.propertyCount === 1 ? 'y' : 'ies'}` : `${row.propertyCount} عقار`}
-                      </span>
-                      {row.registeredBy ? (
-                        <span>{en ? `filed by ${row.registeredBy}` : `سجَّله ${row.registeredBy}`}</span>
-                      ) : null}
+                      <span>{t('person.properties', { count: row.propertyCount })}</span>
+                      {row.registeredBy ? <span>{t('person.filedBy', { name: row.registeredBy })}</span> : null}
                     </div>
-                    <div className="mt-1.5 flex flex-wrap gap-1">
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                      <span className="text-muted-foreground">{t('person.agreesOn')}</span>
                       {row.matchedOn.map((key) => (
                         <Badge key={key} variant="soft-warning" className="text-xs">
-                          {matchLabel(key)}
+                          {agreed[key]}
                         </Badge>
                       ))}
                     </div>
@@ -306,21 +283,8 @@ export function DuplicateReviewDialog({
               {stopped ? null : (
                 <Choice
                   options={[
-                    {
-                      value: 'same',
-                      label: en ? 'Yes — it is the same person' : 'نعم — هو الشخص نفسه',
-                    },
-                    {
-                      value: 'different',
-                      label:
-                        certain.length > 0
-                          ? en
-                            ? 'No — a different person (administrator decision)'
-                            : 'لا — شخص مختلف (قرار مدير النظام)'
-                          : en
-                            ? 'No — a different person'
-                            : 'لا — شخص مختلف',
-                    },
+                    { value: 'same', label: t('person.yes') },
+                    { value: 'different', label: certain.length > 0 ? t('person.noAdmin') : t('person.no') },
                   ]}
                   value={person}
                   onChange={(value) => setPerson(value as PersonAnswer)}
@@ -328,9 +292,7 @@ export function DuplicateReviewDialog({
               )}
               {person === 'same' ? (
                 <p className="rounded-md border border-primary/30 bg-primary/5 p-2.5 text-xs leading-relaxed">
-                  {en
-                    ? 'Do not create a second file. Open theirs, press edit, and add this property to it. Your form stays here if you need to copy from it.'
-                    : 'لا تُنشئ ملفاً ثانياً. افتح ملفه، واضغط تعديل، وأضف هذا العقار إليه. يبقى نموذجك هنا إن احتجت النسخ منه.'}
+                  {t('person.openTheirs')}
                 </p>
               ) : null}
             </section>
@@ -340,13 +302,7 @@ export function DuplicateReviewDialog({
             <section key={field} className="space-y-2.5">
               <h3 className="flex items-center gap-1.5 text-sm font-semibold">
                 <PhoneOff className="size-4 shrink-0 text-warning" aria-hidden />
-                {field === 'phone'
-                  ? en
-                    ? 'Whose phone number is this?'
-                    : 'لمن رقم الهاتف هذا؟'
-                  : en
-                    ? 'Whose WhatsApp number is this?'
-                    : 'لمن رقم الواتساب هذا؟'}
+                {field === 'phone' ? t('phone.questionPhone') : t('phone.questionWhatsapp')}
                 {numbers[field] ? (
                   <span dir="ltr" className="font-mono text-xs font-normal text-muted-foreground">
                     {numbers[field]}
@@ -358,83 +314,62 @@ export function DuplicateReviewDialog({
                   .filter((owner) => owner.fields.includes(field))
                   .map((owner) => (
                     <li key={owner.id} className="rounded-md bg-muted/30 px-2.5 py-1.5">
-                      {en
-                        ? `It is also the number of ${owner.fullName}, whom you registered ${owner.minutesAgo} min ago.`
-                        : `هو أيضاً رقم ${owner.fullName}، الذي سجَّلتَه قبل ${minutesAr(owner.minutesAgo)}.`}
+                      {t('phone.alsoOf', { name: owner.fullName, minutes: owner.minutesAgo })}
                     </li>
                   ))}
                 {landlordCards
                   .filter((card) => card.field === field)
                   .map((card) => (
                     <li key={card.index} className="rounded-md bg-muted/30 px-2.5 py-1.5">
-                      {en
-                        ? `It is also the landlord's number on property ${card.index + 1}${card.landlordName ? ` (${card.landlordName})` : ''}.`
-                        : `وهو أيضاً رقم صاحب الملك على العقار ${card.index + 1}${card.landlordName ? ` (${card.landlordName})` : ''}.`}
+                      {card.landlordName
+                        ? t('phone.alsoLandlordNamed', { index: card.index + 1, name: card.landlordName })
+                        : t('phone.alsoLandlord', { index: card.index + 1 })}
                     </li>
                   ))}
               </ul>
               <Choice
                 options={[
-                  {
-                    value: 'shared',
-                    label: en ? 'They share this line (family phone)' : 'رقم مشترك بينهم (هاتف العائلة)',
-                  },
-                  {
-                    value: 'notTheirs',
-                    label: en
-                      ? 'Not this person’s number — clear it and mark it unverified'
-                      : 'ليس رقمه — أفرغ الحقل وعلِّمه «غير مؤكَّد»',
-                  },
-                  {
-                    value: 'fix',
-                    label: en ? 'I will correct the number' : 'سأصحّح الرقم',
-                  },
+                  { value: 'shared', label: t('phone.shared') },
+                  { value: 'notTheirs', label: t('phone.notTheirs') },
+                  ...(offerRelative && field === 'phone' && numbers.phone
+                    ? [{ value: 'relative', label: t('phone.relative') }]
+                    : []),
+                  { value: 'fix', label: t('phone.fix') },
                 ]}
                 value={phoneAnswers[field] ?? null}
                 onChange={(value) =>
                   setPhoneAnswers((current) => ({ ...current, [field]: value as PhoneAnswer }))
                 }
               />
+              {field === 'phone' && relative ? (
+                <p className="rounded-md border border-primary/30 bg-primary/5 p-2.5 text-xs leading-relaxed">
+                  {t('phone.relativeNote')}
+                </p>
+              ) : null}
             </section>
           ))}
 
           {needsReason ? (
             <div className="space-y-1">
-              <Label htmlFor="duplicate-review-reason">
-                {en ? 'In one sentence, how do you know?' : 'بجملة واحدة، كيف عرفت ذلك؟'}
-              </Label>
+              <Label htmlFor="duplicate-review-reason">{t('reason.label')}</Label>
               <Textarea
                 id="duplicate-review-reason"
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
                 maxLength={300}
                 className="min-h-[64px] text-sm"
-                placeholder={en ? 'e.g. brothers — different first names, same mother' : 'مثال: أخوان — الاسم الأول مختلف والأم نفسها'}
+                placeholder={t('reason.placeholder')}
               />
             </div>
           ) : null}
         </div>
 
         <DialogFooter className="gap-2">
-          <Button
-            variant="outline"
-            onClick={onCancel}
-            className="h-11 sm:h-10"
-          >
-            {en ? 'Back to the form' : 'رجوع إلى النموذج'}
+          <Button variant="outline" onClick={onCancel} className="h-11 sm:h-10">
+            {t('back')}
           </Button>
-          <Button
-            onClick={submit}
-            disabled={!canSave || sent}
-            className="h-11 sm:h-10"
-          >
-            {clearsAny
-              ? en
-                ? 'Clear the number and save'
-                : 'إفراغ الرقم والحفظ'
-              : en
-                ? 'Save as a new record'
-                : 'حفظ كملف جديد'}
+          <Button onClick={submit} disabled={!canSave || sent} className="h-11 sm:h-10">
+            {clearsAny ? t('clearAndSave') : t('saveNew')}
           </Button>
         </DialogFooter>
       </DialogContent>

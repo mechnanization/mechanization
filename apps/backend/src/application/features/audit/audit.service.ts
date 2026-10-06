@@ -42,6 +42,27 @@ export interface BuildingChange {
   alreadyAudited?: boolean;
 }
 
+/**
+ * The `damage.recorded` event: one reading, filed under the building it
+ * belongs to — the unit's own building for a reading on one unit.
+ */
+export interface DamageRecorded {
+  tenantSlug: string;
+  assessmentId: string;
+  buildingId: string;
+  /** Null for a reading on the whole building. */
+  unitId: string | null;
+  /** The unit's code, which is how «فواتير تأثّرت بتصحيحات» finds its holders; null for the whole building. */
+  unitCode: string | null;
+  level: string;
+  habitable: boolean | null;
+  /** The planned «موعد إعادة الكشف», `YYYY-MM-DD`, or null. */
+  reinspectAt: string | null;
+  source: string;
+  actorId: string;
+  actorRole: string;
+}
+
 function citizenEntry(payload: CitizenChange): AuditEntryInput {
   return {
     actorId: payload.actorId ?? payload.citizenId,
@@ -235,6 +256,37 @@ export class AuditService {
   async onBuildingChanged(payload: BuildingChange): Promise<void> {
     if (payload.alreadyAudited) return;
     await this.record(buildingEntry(payload));
+  }
+
+  /**
+   * A damage reading — «تقييم الضرر».
+   *
+   * Emitted since the census began and heard only by the dashboard cache, so a
+   * reading left no row. Since the decision of 2026-10-05 a reading can hold a
+   * flat's occupant-borne fees («غير صالحة للسكن») and a later one resumes
+   * them, which makes who read what, and when, the first thing a resident
+   * disputing a held or a resumed bill asks. Filed under the building, as every
+   * census write is, with the unit named in `after`.
+   */
+  @OnEvent('damage.recorded')
+  async onDamageRecorded(payload: DamageRecorded): Promise<void> {
+    await this.record({
+      actorId: payload.actorId,
+      actorType: 'STAFF',
+      actorRole: payload.actorRole as never,
+      action: 'DAMAGE_RECORDED',
+      entityType: 'Building',
+      entityId: payload.buildingId,
+      after: {
+        assessmentId: payload.assessmentId,
+        unitId: payload.unitId,
+        unitCode: payload.unitCode,
+        level: payload.level,
+        habitable: payload.habitable,
+        reinspectAt: payload.reinspectAt,
+        source: payload.source,
+      },
+    });
   }
 
   /**

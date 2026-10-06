@@ -10,6 +10,7 @@ import {
   SubmitRegistrationResult,
 } from '../../domain/interfaces/registration-repository.interface';
 import { TenantContextService } from '../context/tenant-context.service';
+import { citizenPhoneRuleError } from '../prisma/check-violation';
 import { normalizeSearchText } from '../../application/common/search-terms';
 
 /** Where an identity-document clash is recorded on the new citizen's file. */
@@ -471,6 +472,9 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
    * nothing knows what P2002 is.
    */
   private translate(error: unknown): unknown {
+    // 0072's rules on a citizen's numbers, named rather than sent on as a 500.
+    const phoneRule = citizenPhoneRuleError(error);
+    if (phoneRule) return phoneRule;
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       const target = (error.meta?.target as string[] | undefined)?.join(', ') ?? '';
 

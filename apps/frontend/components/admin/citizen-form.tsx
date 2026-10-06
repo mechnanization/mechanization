@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import {
   ArrowLeft,
   ArrowRight,
@@ -56,6 +57,7 @@ import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
 import { ResidenceChangeDialog } from './residence-change-dialog';
 import { applyResidenceMove, planResidenceMove } from '@/lib/residence-move';
+import { carryHeldPhone } from '@/lib/citizen-contact';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
 
@@ -951,38 +953,15 @@ export function CitizenForm({
   /**
    * The contact section, with one correction made on the officer's behalf:
    * «لا يملك رقم هاتف» carries the number already on the file into «رقم
-   * للتواصل» instead of throwing it away.
+   * للتواصل» instead of throwing it away (`carryHeldPhone`, which says when).
    *
-   * This is the whole point of the flag on an *existing* record. The file
-   * being corrected holds a relative's number in `phone` — that is why it is
-   * being corrected — and that number is the one thing in the record worth
-   * keeping: it is how the municipality reaches this person. Clearing the box
-   * without moving it would lose it, and losing it is what makes an officer
-   * type it back into `phone` next visit.
-   *
-   * Only ever on the tick, only from a number that is there, and never over a
-   * «رقم للتواصل» that already holds something — an officer who has already
-   * named the relative has said more than this rule knows. Unticking does not
-   * move it back: by then nobody can tell whose number it is any more, and
-   * guessing would put a relative's number back in the identity field.
-   *
-   * Lives here rather than in `ContactStep` because it is a correction rule
+   * Called here rather than in `ContactStep` because it is a correction rule
    * rather than a rendering one — the same place the «غير مؤكَّد» flags and
    * the نوع الملف switch are decided — and because it needs the file as it
    * stood, which the step does not own.
    */
   const updateContact = useCallback((next: CitizenFormValues['contact']) => {
-    setValues((current) => {
-      const before = current.contact;
-      const held = typeof before.phone === 'string' ? before.phone.trim() : '';
-      const named = typeof next.contactPhone === 'string' ? next.contactPhone.trim() : '';
-      const justFlagged = next.hasNoPhone === true && before.hasNoPhone !== true;
-
-      return {
-        ...current,
-        contact: justFlagged && held && !named ? { ...next, contactPhone: held } : next,
-      };
-    });
+    setValues((current) => ({ ...current, contact: carryHeldPhone(current.contact, next) }));
   }, []);
 
   /**
@@ -1483,31 +1462,36 @@ export function CitizenForm({
     portal asks for their رقم مرجعي *and* this number. Said under the field, on
     every screen size, while the old number is still on screen to compare —
     not discovered when the citizen calls to say they cannot log in.
+
+    «لا يملك رقم هاتف» is not a new number, and saying «use the new number»
+    there was untrue: the payments portal and the phone-code sign-in both need
+    a number of the citizen's own, and «رقم للتواصل» is never accepted in its
+    place. What is left is the reference-only landing page, and that is what
+    the note says. How such a citizen's family pays online is an open decision
+    (docs/open-decisions.md).
   */
+  const tPhone = useTranslations('citizenForm.phone');
+  const ltr = (chunks: React.ReactNode) => <span dir="ltr">{chunks}</span>;
   const loadedPhone = String(initial.contact.phone ?? '').replace(/\s+/g, '');
   const phoneNow = String(values.contact.phone ?? '').replace(/\s+/g, '');
-  const phoneNote =
-    mode === 'edit' && loadedPhone && phoneNow !== loadedPhone ? (
-      <p
-        role="note"
-        className="mt-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed text-warning"
-      >
-        <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-        <span>
-          {locale === 'en' ? (
-            <>
-              The citizen signs in with their reference number and this phone. After saving, they must use the new
-              number — the old one (<span dir="ltr">{loadedPhone}</span>) will stop working.
-            </>
-          ) : (
-            <>
-              يدخل المواطن إلى حسابه برقمه المرجعي وهذا الهاتف. بعد الحفظ عليه استعمال الرقم الجديد، ولن يعمل الرقم
-              السابق (<span dir="ltr">{loadedPhone}</span>).
-            </>
-          )}
-        </span>
-      </p>
-    ) : null;
+  const noPhoneNow = values.contact.hasNoPhone === true;
+  const phoneNoteText = noPhoneNow ? (
+    <>
+      {tPhone('noPhoneSignIn')}
+      {mode === 'edit' && loadedPhone ? <> {tPhone.rich('oldNumberStops', { number: loadedPhone, ltr })}</> : null}
+    </>
+  ) : mode === 'edit' && loadedPhone && phoneNow !== loadedPhone ? (
+    tPhone.rich('changed', { number: loadedPhone, ltr })
+  ) : null;
+  const phoneNote = phoneNoteText ? (
+    <p
+      role="note"
+      className="mt-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed text-warning"
+    >
+      <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+      <span>{phoneNoteText}</span>
+    </p>
+  ) : null;
 
   /** «دمج» on a match — only for an administrator, only on a saved file. */
   const [mergeWith, setMergeWith] = useState<string | null>(null);

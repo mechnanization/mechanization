@@ -2,6 +2,8 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useTranslations } from 'next-intl';
+import { REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -200,6 +202,7 @@ export default function FeesPage({
   } | null>(null);
 
   const toast = useToast();
+  const tFees = useTranslations('fees');
   const canManage = role === 'SUPER_ADMIN';
 
   useEffect(() => {
@@ -438,6 +441,21 @@ export default function FeesPage({
       if (res.heldUnits) {
         toast.info(
           `${res.heldUnits} وحدة موقوفة للمراجعة (تعارض في حالة الوحدة) — لم يُحتسب عليها رسم الإشغال في هذه الفترة. بعد تسويتها تُحتسب ابتداءً من الفترة التالية؛ ولتحصيل هذه الفترة أصدر رسماً فردياً. تجدها في «جودة البيانات».`,
+        );
+      }
+      /*
+        Held too, for a different reason: flats read «غير صالحة للسكن» are not
+        charged an occupant-borne fee until a re-inspection reads them
+        habitable (decision, 2026-10-05). Its own count, never folded into the
+        review hold — the clerk acts on each in a different place. A one-off
+        fee has no next period for the charge to resume in (the recurring run
+        skips `ONCE`), so it says how to collect it instead.
+      */
+      if (res.uninhabitableUnits) {
+        toast.info(
+          tFees(values.frequency === 'ONCE' ? 'issue.uninhabitableOnce' : 'issue.uninhabitable', {
+            count: res.uninhabitableUnits,
+          }),
         );
       }
       setIssueOpen(false);
@@ -913,6 +931,7 @@ export default function FeesPage({
           }
         }}
         tenant={tenant}
+        canSend={hasRole(REFERENCE_SEND_ROLES, role)}
         citizen={receipt?.citizen ?? ({} as CitizenProfile)}
         payment={receipt?.payment ?? null}
         municipalityName={municipalityName}

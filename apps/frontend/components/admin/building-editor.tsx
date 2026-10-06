@@ -66,6 +66,7 @@ import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { offlineStorageAvailable } from '@/lib/offline-db';
 import { queueBuilding } from '@/lib/offline-sync';
 import { loadSession, clearSession } from '@/lib/session';
+import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -371,6 +372,17 @@ export function BuildingEditor({
 
   const session = useMemo(() => loadSession(tenant), [tenant]);
   const token = session?.accessToken;
+
+  /*
+    A role that cannot survey — «مشاهد فقط», an auditor, the accountant — is
+    sent back to the ledger rather than shown a form every save would refuse.
+    The server is the enforcement (`CENSUS_WRITE_ROLES` on every write).
+  */
+  useEffect(() => {
+    if (session?.user.kind === 'STAFF' && !hasRole(CENSUS_WRITE_ROLES, session.user.role)) {
+      router.replace(`${base}/buildings`);
+    }
+  }, [session, base, router]);
 
   // Wizard state
   const [step, setStep] = useState<0 | 1 | 2>(initialStep);

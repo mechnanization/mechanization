@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/staff-scoping-roles-archive` (on `develop@ec70f68`), 2026-10-05.
+Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -74,11 +74,42 @@ request's tenant (`IdentityService`).
   *person*. It is excluded from `findCitizensByPhone` (citizen sign-in) and
   from duplicate scoring (`possible-duplicates.ts`) on purpose: a relative's
   number is expected to equal that relative's own `phone`, so matching it
-  there would offer a father's file to the son signing in. The one reader is
-  `LandlordLinkService.candidatesFor`, where a human confirms every match.
+  there would offer a father's file to the son signing in. Its readers are
+  the ones a person reads the answer of: `LandlordLinkService` (a match on
+  it is labelled `CONTACT` and never preselected; a human confirms every
+  link), the register search (an exact match, reported as
+  `matchedOnContactPhone`), the citizen's file and parcel roster, and the
+  register export (`contact_phone_relative`).
 - `hasNoPhone` distinguishes "has no phone" from "nobody asked yet". Never
   infer it from `phone IS NULL`: the second is an unfinished record with its
   own «غير مؤكَّد» flag and belongs in «يتطلب مراجعة».
+- Two CHECKs hold the meaning (`0072`): `users_no_phone_means_no_number`
+  (`hasNoPhone` ⇒ `phone` and `whatsapp` are NULL) and
+  `users_contact_phone_not_own` (`contactPhone` is never the row's own `phone`).
+  Every writer goes through them, the merge included.
+
+**A damage reading has two answers** (`0071`). `damage_assessments.level` is the
+UN-Habitat scale, untouched; `habitable` is «صالحة للسكن؟», asked beside it and
+prefilled from the level where the level decides it (decision of 2026-10-05).
+NULL is a reading from before the question, or an unclassified one, which asks nothing. The retired level
+`UNINHABITABLE` stays in the Prisma and SQL enum (removing it is destructive);
+`0071` rewrote its rows to `RESTRICTED_USE` with `habitable = false`, and three
+CHECKs keep the rest:
+
+| CHECK | Rule |
+|---|---|
+| `damage_assessments_level_not_retired` | `level <> 'UNINHABITABLE'` |
+| `damage_assessments_habitable_matches_level` | a collapse or an evacuation is never `habitable` |
+| `damage_assessments_reinspect_needs_uninhabitable` | `reinspectAt` only on a reading with `habitable = false` |
+
+«غير صالحة للسكن» is `habitable = false`, or no answer on a collapse or an
+evacuation (`isUninhabitableReading`, and its SQL twin `uninhabitableSql`). The
+fee assessment holds an occupant-borne fee on a unit whose current reading
+says so — the latest of the unit's and its building's readings *that answers*:
+`UNCLASSIFIED` with `habitable` NULL judged nothing and is passed over
+(`answersHabitability`, its SQL twin `answersHabitabilitySql`, and
+`currentReadingForUnit(…, { answering: true })` in
+`application/features/buildings/habitability.ts`), so it never ends a hold.
 
 **`lastSeenAt` is staff presence, and the one write on the authenticated hot
 path** (`0070`). `StaffPresenceService` stamps it from `JwtAuthGuard` behind a
@@ -393,11 +424,18 @@ reads staging's history from `.env.staging` and nothing else, and
 
 ### Numbering
 
-- The latest tenant migration on `develop` is `0066_payment_tender_controls`.
+- The latest tenant migration on `develop` is `0070_staff_last_seen_at`;
+  `0071_damage_habitable` and `0072_users_no_phone_rules` are on
+  `fix/pr88-review`, waiting for their own PR. `main` stops at `0066` (and
+  `0059`), so `0067`–`0070`, already on `develop`, have not reached
+  production either: all six go to `main` in a migrations-only PR, staging
+  first, before the release that carries the code reading them (root rule 5;
+  the PR #61 and #86 pattern).
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
-  `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of this check the next free number is
-  `0067`.
+  `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of
+  this check (2026-10-06, the four unmerged branches and the two open PRs
+  listed) the next free number is `0073`.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 

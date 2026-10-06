@@ -746,7 +746,12 @@ describeIfDb('A tenant and the owner they rent from', () => {
 
   it('says why a file was deactivated, and from when — it stops being billed', async () => {
     const leaver = await person('غادر البلدة');
-    const body = setCitizenActiveSchema.parse({ isActive: false, reason: 'انتقل للسكن خارج البلدة', movedOn: '2026-09-01' });
+    const body = setCitizenActiveSchema.parse({
+      isActive: false,
+      reason: 'انتقل للسكن خارج البلدة',
+      requestedBy: 'المواطن نفسه',
+      movedOn: '2026-09-01',
+    });
     await within(() =>
       citizens.setActive({ tenantSlug: 'owners', citizenId: leaver.id, ...body, actor: actor() }),
     );
@@ -754,7 +759,11 @@ describeIfDb('A tenant and the owner they rent from', () => {
 
     expect((await db.user.findUniqueOrThrow({ where: { id: leaver.id } })).isActive).toBe(false);
     const row = await db.auditLogEntry.findFirstOrThrow({ where: { entityId: leaver.id, action: 'CITIZEN_DEACTIVATED' } });
-    expect(row.after).toMatchObject({ reason: 'انتقل للسكن خارج البلدة', movedOn: '2026-09-01T00:00:00.000Z' });
+    expect(row.after).toMatchObject({
+      reason: 'انتقل للسكن خارج البلدة',
+      requestedBy: 'المواطن نفسه',
+      movedOn: '2026-09-01T00:00:00.000Z',
+    });
   });
 
   it('reviews an edit without saving it: changes, the login, open bills, and what would refuse it', async () => {

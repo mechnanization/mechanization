@@ -20,9 +20,9 @@ import {
 } from '@/lib/api-client';
 import { formatLbp, formatLbpCompact } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
+import { hasRole, PAYMENT_REVIEW_ROLES } from '@/lib/staff-roles';
 
 const POLL_INTERVAL_MS = 60_000;
-const REVIEW_ROLES = ['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT'];
 const MAX_LISTED = 6;
 
 export function NotificationsBell({
@@ -41,7 +41,7 @@ export function NotificationsBell({
   const router = useRouter();
   const pathname = usePathname();
   const [items, setItems] = useState<PendingPayment[]>([]);
-  const canReview = Boolean(role && REVIEW_ROLES.includes(role));
+  const canReview = hasRole(PAYMENT_REVIEW_ROLES, role);
 
   const locale = propLocale ?? (pathname?.includes('/en/') || pathname?.endsWith('/en') ? 'en' : 'ar');
   const labels = getLabels(locale);
@@ -52,7 +52,12 @@ export function NotificationsBell({
     if (!token || !canReview) return;
     if (document.visibilityState !== 'visible') return;
     try {
-      const result = await getPendingPayments(tenant, token, true);
+      /*
+        A background request: the bell polls on its own, so its reads are not
+        something the person did, and must not keep their account «متصل الآن»
+        on the staff page while the screen sits unattended.
+      */
+      const result = await getPendingPayments(tenant, token, true, { background: true });
       setItems(result.items);
     } catch (caught) {
       logApiError(caught);

@@ -107,8 +107,14 @@ export function formatMonthList(months: readonly number[], locale: string = 'ar'
     .join(locale === 'en' ? ', ' : '، ');
 }
 
-export function formatRelative(value: string | Date, locale: string = 'ar'): string {
-  const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
+/**
+ * «منذ ٥ دقائق» — how long ago, against `now`. Pass the server's clock where
+ * the value came from the server and the browser's may be off (an office PC
+ * set ten minutes fast would put «آخر ظهور» in the future); it defaults to the
+ * browser's own.
+ */
+export function formatRelative(value: string | Date, locale: string = 'ar', now: number = Date.now()): string {
+  const seconds = Math.round((new Date(value).getTime() - now) / 1000);
   const magnitude = Math.abs(seconds);
   const relativeFormatter = new Intl.RelativeTimeFormat(locale === 'en' ? 'en-US' : WORDS, { numeric: 'auto' });
 

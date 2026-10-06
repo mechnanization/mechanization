@@ -77,6 +77,7 @@ import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
+import { DOCUMENT_VIEW_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 
 interface FactItem {
   icon: React.ComponentType<{ className?: string }>;
@@ -459,6 +460,10 @@ export default function CitizenProfilePage({
 
   /** «دمج ملفين» — SUPER_ADMIN's alone; the server is the enforcement. */
   const canMerge = role === 'SUPER_ADMIN';
+  /** The attachments open through the signed-URL route, which refuses «مشاهد فقط». */
+  const canOpenDocuments = hasRole(DOCUMENT_VIEW_ROLES, role);
+  /** The WhatsApp welcome carries the رقم مرجعي, which «مشاهد فقط» is never given. */
+  const canSendReference = hasRole(REFERENCE_SEND_ROLES, role);
   const { merges, reload: reloadMerges } = useCitizenMerges(tenant, token, citizenId);
 
   useEffect(() => {
@@ -567,7 +572,7 @@ export default function CitizenProfilePage({
     referenceNumber: citizen.referenceNumber,
     municipalityName,
   });
-  const waHref = buildWhatsappHref(citizen.whatsapp || citizen.phone, waMessage);
+  const waHref = canSendReference ? buildWhatsappHref(citizen.whatsapp || citizen.phone, waMessage) : null;
 
 
   /*
@@ -660,15 +665,33 @@ export default function CitizenProfilePage({
     {
       icon: Phone,
       label: en ? 'Phone' : 'الهاتف',
-      value: citizen.phone ? <PhoneLink phone={citizen.phone} locale={locale} /> : null,
+      /*
+        «لا يملك رقم هاتف» is an answer, not a gap: said in place of the number,
+        so the row does not vanish as if nobody had asked.
+      */
+      value: citizen.phone ? (
+        <PhoneLink phone={citizen.phone} locale={locale} />
+      ) : citizen.hasNoPhone ? (
+        <span className="text-muted-foreground">{labels.citizenField.hasNoPhone}</span>
+      ) : null,
     },
     {
       icon: MessageCircle,
       label: en ? 'WhatsApp' : 'واتساب',
       value: citizen.whatsapp ? (
-        <WhatsAppPhoneLink phone={citizen.whatsapp} message={waMessage} />
+        <WhatsAppPhoneLink phone={citizen.whatsapp} message={canSendReference ? waMessage : undefined} />
       ) : null,
     },
+    // A relative's number, labelled as a relative's — never read as the citizen's own.
+    ...(!isNonResident && citizen.contactPhone
+      ? [
+          {
+            icon: Phone,
+            label: labels.citizenField.contactPhone,
+            value: <PhoneLink phone={citizen.contactPhone} locale={locale} />,
+          },
+        ]
+      : []),
     // Who holds the keys here, for an owner who is not here.
     ...(isNonResident
       ? [
@@ -1155,6 +1178,7 @@ export default function CitizenProfilePage({
                       base={base}
                       token={token}
                       locale={locale}
+                      canOpen={canOpenDocuments}
                       emptyLabel={
                         locale === 'en' ? 'No attachments for this application.' : 'لا توجد مرفقات لهذا الطلب.'
                       }
@@ -1798,6 +1822,8 @@ function FeesPanel({
           if (!next) setReceipt(null);
         }}
         tenant={tenant}
+        // The receipt opens here only for the money roles (`canManage`), each of them a working role.
+        canSend={canManage}
         citizen={citizen}
         payment={receipt?.payment ?? null}
         receivedAmount={receipt?.received}

@@ -53,6 +53,7 @@ import { useToast } from '@/components/ui/toast';
 import { BuildingQueueNotice } from '@/components/admin/building-queue-notice';
 import { buildCsv, downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/utils';
+import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 
 /**
  * سجل المباني — the census ledger.
@@ -107,8 +108,6 @@ const FILTERS = {
  */
 const EXPORT_CEILING = 10_000;
 
-/** Read-only roles. They see the census; they do not edit it. */
-const READ_ONLY_ROLES = ['AUDITOR', 'ACCOUNTANT', 'VIEWER'];
 
 function getTableLabels(locale: string): DataTableLabels {
   if (locale === 'en') {
@@ -189,7 +188,8 @@ export default function BuildingsPage({
     setRole(session.user.role ?? null);
   }, [tenant, base, router]);
 
-  const canWrite = role !== null && !READ_ONLY_ROLES.includes(role);
+  // An allow-list (`CENSUS_WRITE_ROLES`): every other role sees the census and does not edit it.
+  const canWrite = hasRole(CENSUS_WRITE_ROLES, role);
   const canDelete = role === 'SUPER_ADMIN';
 
   // ── Filters ───────────────────────────────────────────────────────
@@ -807,7 +807,7 @@ export default function BuildingsPage({
         a provisional code an officer is still quoting is the one thing on this
         screen that can be wrong in a way nothing else would reveal.
       */}
-      <BuildingQueueNotice tenant={tenant} locale={locale} />
+      <BuildingQueueNotice tenant={tenant} canSend={canWrite} />
 
       {/*
         ── The dispatch decision, in five numbers ───────────────────

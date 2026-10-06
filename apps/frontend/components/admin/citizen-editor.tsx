@@ -42,6 +42,8 @@ import type {
 import { getOpenReturn, type OpenReturn } from '@/lib/quality-api';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatRelative } from '@/lib/dates';
+import { namesAnotherRelative } from '@/lib/citizen-contact';
+import { LANDLORD_LINK_ANSWER_ROLES, hasRole } from '@/lib/staff-roles';
 import {
   clearCitizenDraft,
   draftWorthKeeping,
@@ -877,6 +879,8 @@ export function CitizenEditor({
   const [token, setToken] = useState<string | null>(null);
   /** «دمج ملفين» is SUPER_ADMIN's alone — mirrored here, enforced by the server. */
   const [canMerge, setCanMerge] = useState(false);
+  // «ربط» / «ليس هو» on the owner question asked after a save.
+  const [canAnswerLinks, setCanAnswerLinks] = useState(false);
   const [config, setConfig] = useState<PublicTenantConfig | null>(null);
   const [initial, setInitial] = useState<CitizenFormValues | null>(null);
   /** The citizen's own reference, and the filing's beside it — two different numbers. */
@@ -999,6 +1003,9 @@ export function CitizenEditor({
     }
     // Read-only roles are bounced rather than shown a form every save would
     // refuse. The server is the enforcement; this keeps it out of their way.
+    // Collectors stay out too, though the save routes admit them: the form's
+    // owner-link controls («نعم، هو», «إلغاء الربط») are not theirs
+    // (`LANDLORD_LINK_ANSWER_ROLES`) — see docs/security.md, Known gaps.
     if (
       session.user.role !== 'SUPER_ADMIN' &&
       session.user.role !== 'FIELD_INSPECTOR' &&
@@ -1009,6 +1016,7 @@ export function CitizenEditor({
     }
     setToken(session.accessToken);
     setCanMerge(session.user.role === 'SUPER_ADMIN');
+    setCanAnswerLinks(hasRole(LANDLORD_LINK_ANSWER_ROLES, session.user.role));
   }, [tenant, base, router]);
 
   useEffect(() => {
@@ -1798,6 +1806,30 @@ export function CitizenEditor({
       setDuplicateReview(null);
       if (!held) return;
 
+      /*
+        «رقم أحد أقاربه — لا يملك رقماً خاصاً»: the typed number is a
+        relative's. Saved as the box on the form would save it — «لا يملك رقم
+        هاتف», both own numbers empty, this one as «رقم للتواصل» — and with no
+        «غير مؤكَّد» flag, because nothing about the record is in doubt.
+      */
+      if (outcome.relative) {
+        const flags = new Map(held.values.flags);
+        flags.delete('contact.phone');
+        flags.delete('contact.whatsapp');
+        // Offered only when «رقم للتواصل» is empty or this same number (`namesAnotherRelative`); what is there stays.
+        const named = typeof held.values.contact.contactPhone === 'string' ? held.values.contact.contactPhone.trim() : '';
+        const contact = {
+          ...held.values.contact,
+          hasNoPhone: true,
+          contactPhone: named || outcome.relative,
+          phone: '',
+          whatsapp: '',
+          whatsappSameAsPhone: true,
+        };
+        void submit({ ...held.values, contact, flags }, true, outcome.answer ?? null);
+        return;
+      }
+
       if (!outcome.clear.phone && !outcome.clear.whatsapp) {
         void submit(held.values, true, outcome.answer ?? null);
         return;
@@ -2003,7 +2035,6 @@ export function CitizenEditor({
           syncing={queue.syncing}
           authRequired={queue.authRequired}
           onSync={queue.sync}
-          locale={locale}
           href={`${base}/citizens`}
         />
       ) : null}
@@ -2249,6 +2280,16 @@ export function CitizenEditor({
           locale={locale}
           // An administrator may file past a certain match, with a reason; nobody else can.
           canOverride={canMerge}
+          /*
+            «رقم للتواصل» is a household record's; a non-resident owner's file
+            has its local contact. And a file holds one: one that already names
+            a different relative keeps it, so the typed phone is not offered as
+            a relative's too.
+          */
+          offerRelative={
+            (duplicateReview.values.residence ?? 'RESIDENT') === 'RESIDENT' &&
+            !namesAnotherRelative(duplicateReview.values.contact)
+          }
           onCancel={() => setDuplicateReview(null)}
           onResolve={resolveDuplicateReview}
         />
@@ -2267,6 +2308,7 @@ export function CitizenEditor({
             router.refresh();
           }}
           locale={locale}
+          canAnswer={canAnswerLinks}
         />
       ) : null}
     </div>

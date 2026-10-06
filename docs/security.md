@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/staff-scoping-roles-archive` (on `develop@ec70f68`), 2026-10-05.
+Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -55,11 +55,41 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   assuming the class-level role applies.
 - `JwtAuthGuard` MUST NOT be given work that can refuse a request for a reason unrelated to
   authentication. It stamps `users.lastSeenAt` (`StaffPresenceService`, `0070`) only after every
-  check has passed, and that call swallows its own errors by contract: a failed presence write must
-  never become a 401 or a 500 on an officer's save. Anything added there follows the same rule, or it
-  does not belong in a guard. Staff presence is readable only through `/staff`, which is
-  `@Roles('SUPER_ADMIN')` — when it is surfaced anywhere else, that is a new decision, because who
-  was at their desk and when is surveillance of staff and not a general-purpose field.
+  check has passed, without awaiting it, and that call swallows its own errors by contract: a failed
+  presence write must never become a 401 or a 500 on an officer's save, nor a delay on it. Anything
+  added there follows the same rule, or it does not belong in a guard. A request carrying
+  `x-background-request` (`BACKGROUND_REQUEST_HEADER`, sent by the portal's own polls) is not stamped:
+  a screen left open is not a person at work. Staff presence is readable only through `/staff` and
+  `GET staff/presence`, both `@Roles('SUPER_ADMIN')` — when it is surfaced anywhere else, that is a
+  new decision, because who was at their desk and when is surveillance of staff and not a
+  general-purpose field.
+- «مشاهد فقط» (`VIEWER`) is the municipality head's account (decision of 2026-10-05): it reads the
+  dashboard, the reports and the register with its citizens' data, and changes nothing. Role sets live
+  in one place, `role-sets.ts` in `@mechanization/shared-schemas`, and VIEWER is in none that writes.
+  It MUST NOT be given a رقم مرجعي: `ViewerCredentialMaskInterceptor` (an `APP_INTERCEPTOR`) masks, in
+  every response to that role, the value of each key known to carry one (`referenceNumber`,
+  `citizenReferenceNumber`, `citizenReference`, `landlordReferenceNumber`) and, by the reference's own
+  pattern, any reference inside any other string (`ReferenceNumber.maskWithin`), so a key nobody listed
+  cannot leak it. Nor can a search confirm one: for VIEWER the register, the review queue and the
+  payments list search a citizen's text with the رقم مرجعي taken out (`citizenSearchText`,
+  `application/common/citizen-search.ts`), so typing a guessed reference finds nobody, while a name or
+  a phone still does. A session that cannot write the register never sends a device's offline queue and is
+  offered no control that sends, changes or discards it, and a write page reached by its address sends
+  it back. It does not export the
+  register (`REGISTER_EXPORT_ROLES`), open identity-document scans (`WORKING_STAFF_ROLES` on the
+  documents routes), or read the audit log (`AuditController`, `AUDIT_READ_ROLES`); it does read a
+  record's own «سجل التعديلات» (`GET citizens/:id/history`, `GET buildings/:id/history`), which shows
+  changes and never who viewed what. `route-inventory.spec.ts` pins all of this over every
+  controller on disk: every non-public route has `@Roles` or is on its reviewed self-service list, no
+  write and no side-effecting GET (`SIDE_EFFECT_GETS`) admits VIEWER, and no route deletes a citizen.
+- A citizen file is never hard-deleted (decision of 2026-10-05). It is archived — `isActive: false`
+  through `PATCH citizens/:id/active` — with a written reason and who asked (`setCitizenActiveSchema`
+  requires both), recorded on the Tier 1 audit row, and restored the same way.
+- What the citizen portal sends about anyone else is named, never passed through: `mySummary` sends a
+  flat's owners as name and أسهم only (an allowlist, pinned by `citizen-portal.spec.ts`) and drops the
+  landlord link's id and رقم مرجعي. Its property and unit fields still pass through by spread, so a
+  field added to the staff profile reaches «ملفّي» unless it is named out
+  ([docs/gotchas.md](gotchas.md#a-field-added-to-the-staff-profile-reaches-the-citizen-portal)).
 - Scope citizen reads and writes by `user.sub` in the WHERE clause: `findFirst({ where: { id, citizenId } })`
   as in `FeesService.declare`. Where a row is fetched first and compared (`FeesService.startWhishCheckout`),
   another citizen's row MUST get exactly the not-found answer, so ids cannot be probed.
@@ -162,7 +192,7 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   rolls back if the row cannot be written: payments (declaration, confirmation, refusal, counter and
   Whish settlement), payment reversals, corrections, ownership changes (ending an ownership, owner links,
   merges), ending a tenancy, review decisions (approve, return, quality check) and citizen status changes
-  (activate, deactivate, delete). Everything else is Tier 2: an event
+  (archive and restore). Everything else is Tier 2: an event
   after the commit, whose failed write is logged and does not undo the change. How:
   [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#events-and-audit).
 - An audit row MUST NOT carry a credential (OWASP Logging Cheat Sheet; NIST SP 800-53 AU-3(3), which
@@ -304,10 +334,10 @@ add a row. Severity is the harm if exploited today.
 | High | SUPER_ADMIN 2FA is not enforced. `User.requiresTotp` has no readers, and a spec asserts an unenrolled SUPER_ADMIN signs in | `domain/entities/user.entity.ts` `requiresTotp`; `IdentityService` `challengeTotp`; `staff-login.spec.ts` | Decide (Undecided below). If mandatory, issue an enrolment-only session until confirmed |
 | High | No `trust proxy`, so `request.ip` is the proxy's address. Throttle buckets are shared by every client per route (5 per minute for staff login across all staff: a lockout), and login audit IPs are wrong. **Unverified:** the nginx side | `presentation/bootstrap.ts` `createApiApp`; `MetricsController` class comment; `AppModule` `ThrottlerModule.forRoot`; `AuthController` (`context: { ip: request.ip }`) | Set `trust proxy` to the exact hop; Redis throttler storage; per-account limits beside per-IP |
 | High | Single-factor citizen login: the رقم مرجعي alone opens a 7-day session that reads phone, mother's name, nationality, resident status and marital status. Distributed guessing needs to hit any one citizen, not a chosen one | `AuthController.openByReference`; `IdentityService.loginByReferenceOnly`; `referenceOnlyLoginSchema` (`fee.schema.ts`); `CitizenController.mySummary` | Product decision (Undecided). Options: a fees-only session unless the phone is also given, a per-tenant failure budget, CAPTCHA after failures, alerting |
-| High | The CSV export carries `reference_number` (a login credential) with `phone` and `resident_status` for every citizen | `ReportingService.exportCsv`; `DashboardController.exportCsv` | Drop the column, or gate it behind its own permission and audit |
+| High | The CSV export carries `reference_number` (a login credential) with `phone`, the relative's `contact_phone_relative` and `resident_status` for every citizen. Narrowed to `SUPER_ADMIN` and `AUDITOR` (`REGISTER_EXPORT_ROLES`; «مشاهد فقط» was admitted until 2026-10-06) | `ReportingService.exportCsv`; `DashboardController.exportCsv` | Drop the column, or gate it behind its own permission and audit |
 | Medium | Audit rows written before the masking change still hold citizens' رقم مرجعي in plaintext (`CITIZEN_MERGED` / `CITIZEN_MERGED_INTO` `after.other.referenceNumber`, `CITIZEN_DELETED` `before.referenceNumber`). The table is append-only, so they cannot be edited, and anyone who can read the audit log can sign in as those citizens | `audit_log_entries`, rows with those actions; the append-only trigger from `0001_init` | **Undecided:** reissue the affected citizens' references (the leaked ones then sign nobody in), and whether a documented data correction may redact the old rows |
 | High | A gitignored age secret-key file sits in a developer machine's working tree | `.gitignore` age-key entries; confirmed with `git check-ignore`, not opened | Move it offline (password manager) and delete the file. Never open it |
-| Medium | Authorisation defaults to allow: a non-public route without `@Roles` admits any authenticated token, citizens included. Each such route self-checks today; forgetting fails open | `RolesGuard.canActivate`; `tenant-isolation.spec.ts` "admits requests to routes without role restrictions"; role-less routes in `AuthController`, `CadastreController`, `CitizenController.mySummary`, `FeesController` (`settings`, `GET payments/mine` and the two `POST payments/mine/:id/…` routes) | Refuse when no metadata is present unless an explicit self-service marker is declared; add a route-inventory test |
+| Medium | Authorisation defaults to allow: a non-public route without `@Roles` admits any authenticated token, citizens included. Each such route self-checks today. `route-inventory.spec.ts` now fails on a new role-less route that is not on its reviewed self-service list, so forgetting is caught in CI, but the guard itself still fails open | `RolesGuard.canActivate`; `tenant-isolation.spec.ts` "admits requests to routes without role restrictions"; `route-inventory.spec.ts` `SELF_SERVICE` (the role-less routes in `AuthController`, `CadastreController`, `CitizenController.mySummary`, `FeesController`) | Refuse when no metadata is present unless an explicit self-service marker is declared |
 | Medium | PII in stdout: every 4xx and 5xx logs `request.originalUrl` with its query string, 5xx logs the raw exception message, mail failures log the recipient, and dev SMS logs phone and body | `DomainExceptionFilter.catch`; `AppLogger` (no redaction); `SmtpEmailSender`; `SmsProviderService.send` | Log `redactUrl` / `redactText` output, or redact in `AppLogger.formatMessage`; mask recipients |
 | Medium | Field-device PII at rest: the offline queue and the citizen draft hold full records in plaintext and survive sign-out | `apps/frontend/lib/offline-db.ts` `QueuedSubmission`; `apps/frontend/lib/citizen-draft.ts` `KEY_PREFIX`; `apps/frontend/lib/session.ts` `clearSession` | Decide (Undecided): encrypt per session, and/or clear on sign-out and on user switch |
 | Medium | No server-side sign-out for citizens: a citizen token lives 7 days and `clearSession` only forgets it locally. (Staff sign-out revokes the refresh family: `AuthController.logoutStaff`.) | `IdentityService.loginByReference`, `loginByReferenceOnly`; `apps/frontend/lib/session.ts` `clearSession` | A citizen logout that bumps `tokenVersion` and calls `SessionRevocationService.forget` |
@@ -322,6 +352,8 @@ add a row. Severity is the harm if exploited today.
 | Medium | `reissue-references` prints `old,new,name,phone` for every citizen to stdout, and its comment expects the run to be redirected to a file: a list of live credentials with phone numbers | `apps/backend/src/scripts/reissue-references.ts` `reissueReferences` | Decide (Undecided below); meanwhile handle the output as a credential dump and delete it once citizens are notified |
 | Low | Anonymous property-number lookup returns `registeredCount` and parcel coordinates, enumerable at the default rate | `RegistrationController.checkPropertyNumber` (`@Public()`); `RegistrationService.checkPropertyNumber` | Staff-only with `@Roles` (Undecided: its comment calls the cadastre a public register) |
 | Low | Raw bodies and ids: `@Body('citizenId')` and `@Body('candidateIds')`, raw `@Body()` on two auth routes, and about 70 id params without `ParseUUIDPipe`. A bad id becomes a 500 and a Sentry event | `CitizenController` `confirmLandlordLink`, `dismissLandlordLink`, `restoreLandlordLink`; `AuthController` `disableTotp`, `sendResetPasswordEmail`; every controller but `CorrectionsController` | Zod body schemas; `ParseUUIDPipe` |
+| Medium | A citizen save applies the owner agreements it carries (`landlordCitizenId` from «نعم، هو» on a card) through `LandlordLinkService.applyAgreements` → `confirm` with no role rule, while the answer routes admit only `LANDLORD_LINK_ANSWER_ROLES`. A collector (`REGISTER_WRITE_ROLES`) can so link an owner — and put flats and owner-borne fees on that file — by calling `POST`/`PATCH citizens` directly; the citizen editor keeps collectors out | `CitizensService` (agreements → `applyAgreements`); `CitizenController` create/update vs `confirmLandlordLink`, `dismissLandlordLink`, `restoreLandlordLink`, `unlinkLandlord`; `LandlordMatchHint` (no permission prop) | Apply agreements only for a role in `LANDLORD_LINK_ANSWER_ROLES` (refuse or ignore the rest), and give `LandlordMatchHint` a required `canAnswer` |
+| Low | Raw query values on several reads: a repeated `?search=` arrives as an array and `normalizeSearchText` calls `.toLowerCase()` on it, a 500 and a Sentry event; `limit` and `offset` are coerced by hand. The collection worklists had the same bug and now go through `worklistQuerySchema` (2026-10-06) | `CitizenController.list`, `CitizenController.history`, `FeesController.listPayments` (`@Query('search')`, `@Query('limit')`, …), `AuditController` (`@Query('action')` into `parseActions`, which calls `.split`) | A zod query schema through `ZodValidationPipe`, as `worklistQuerySchema` |
 | Low | `POST citizen/otp/verify` has no explicit `@Throttle` and falls under the 120-per-minute default | `AuthController.verifyOtp` | An explicit limit from `APP_CONFIG.throttle` |
 | Low | Public routes with no explicit throttle decision ride the default | `HealthController`; `TenantController.getPublicConfig`; `RegistrationController.checkPropertyNumber`; `FeesController.whishCallback` | An explicit `@Throttle`, or `@SkipThrottle()` with a reason |
 | Low | The cron bearer secret is compared with `!==` on `@SkipThrottle()` routes | `InternalCronController` `authorise` | Digest plus `timingSafeEqual`, as in `MetricsController` |
@@ -354,6 +386,8 @@ add a row. Severity is the harm if exploited today.
 - S3: split buckets enforced by `envSchema`, 300 s presigned reads after a `HeadObject`, `IfNoneMatch`
   on writes, and a `document.viewed` audit event.
 - CSV formula-injection guard (`csvCell`) in both apps, and the export is audited (`report.exported`).
+- Who may reach every route is a test, not a convention: `route-inventory.spec.ts` discovers the
+  controllers on disk and checks `@Roles`, the self-service list and the «مشاهد فقط» boundary.
 - Portal: nonce CSP with `strict-dynamic`, an enumerated `connect-src`, `frame-ancestors 'none'`, HSTS,
   sessions in `sessionStorage` by default, and a service worker that never caches the API.
 - Environment safety: `scripts/db/targets.mjs` pins database and role per target, the seed refuses
@@ -375,6 +409,10 @@ These need a human. Long-running product decisions live in [docs/open-decisions.
   or accept the risk because field work must not be lost?
 - **Credentials in exports.** Should `exportCsv` carry `reference_number`? Should `reissue-references`
   print credentials to stdout?
+- **«مشاهد فقط» and identity documents.** The head's account reads citizens and their data (decision of
+  2026-10-05) but is not given the scanned identity documents, which `PR #88` already withheld. Whether
+  "their data" includes the scans is for the product owner
+  ([docs/open-decisions.md](open-decisions.md)).
 - **Credentials at rest.** Hash-index `users.referenceNumber` (receipts need the plaintext)? Encrypt `totpSecret`?
 - **Database privileges.** Split the runtime role from the migration role; per-tenant roles?
 - **Production data in CI.** The pre-migration restore rehearsal loads a plaintext production dump into

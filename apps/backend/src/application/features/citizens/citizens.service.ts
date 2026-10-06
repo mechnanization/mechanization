@@ -22,12 +22,14 @@ import type {
   ImportRow,
   PossibleDuplicatesQuery,
 } from '@mechanization/shared-schemas';
-import { worklistOwner, type WorklistViewer } from '../../common/worklist-viewer';
+import { worklistOwner, worklistOwnerFilter, type WorklistViewer } from '../../common/worklist-viewer';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { Prisma } from '../../../generated/tenant-client';
+import { citizenSearchText } from '../../common/citizen-search';
+import { citizenPhoneRuleError } from '../../../infrastructure/prisma/check-violation';
 import { PropertyEntry, PropertyType } from '../../../domain/entities/property-entry.entity';
 import { ReferenceNumber } from '../../../domain/value-objects/reference-number.vo';
 import { PARCEL_REPOSITORY } from '../../../domain/interfaces/base-repository.interface';
@@ -141,6 +143,12 @@ export interface CitizenListItem {
   fullName: string;
   phone: string | null;
   whatsapp: string | null;
+  /** «لا يملك رقم هاتف» — the empty phone is an answer, not a gap. */
+  hasNoPhone: boolean;
+  /** «رقم للتواصل» — a relative's number, never the citizen's own. */
+  contactPhone: string | null;
+  /** The search found this row by its «رقم للتواصل», not the person's own number. */
+  matchedOnContactPhone: boolean;
   gender: string | null;
   referenceNumber: string | null;
   identityDocType: string | null;
@@ -200,6 +208,9 @@ interface CitizenListRow {
   motherName: string | null;
   phone: string | null;
   whatsapp: string | null;
+  hasNoPhone: boolean;
+  contactPhone: string | null;
+  matchedOnContactPhone: boolean;
   gender: string | null;
   referenceNumber: string | null;
   identityDocType: string | null;
@@ -251,6 +262,8 @@ export interface ReviewQueueItem {
   motherName: string | null;
   referenceNumber: string | null;
   phone: string | null;
+  /** «لا يملك رقم هاتف» — the empty phone is an answer, not a gap. */
+  hasNoPhone: boolean;
   /** The latest registration's status: always `REQUIRES_REVIEW` in this list. */
   status: string;
   /** How many «غير مؤكَّد» fields that registration carries. */
@@ -259,6 +272,8 @@ export interface ReviewQueueItem {
   submittedAt: string;
   /** Who filed it — for the roles that see everyone's queue; null when unrecorded. */
   filedByName: string | null;
+  /** Their staff id, so an admin can narrow the queue to one officer. Null when unrecorded. */
+  filedById: string | null;
 }
 
 interface ReviewQueueRow {
@@ -269,10 +284,12 @@ interface ReviewQueueRow {
   motherName: string | null;
   referenceNumber: string | null;
   phone: string | null;
+  hasNoPhone: boolean;
   status: string;
   openFieldCount: number;
   submittedAt: Date;
   filedByName: string | null;
+  filedById: string | null;
 }
 
 /**
@@ -347,7 +364,14 @@ export class CitizensService {
   ): Promise<{
     items: CitizenListItem[];
     total: number;
-    totals: { outstanding: number; overdue: number; inArrears: number; requiringReview: number };
+    totals: {
+      outstanding: number;
+      overdue: number;
+      inArrears: number;
+      requiringReview: number;
+      /** «إجمالي الأسر» — over the whole register, never the search; see `list`. */
+      families: number;
+    };
   }> {
     const limit = Math.min(filter.limit ?? 100, MAX_LIST_ROWS);
     const offset = Math.max(filter.offset ?? 0, 0);
@@ -367,12 +391,32 @@ export class CitizensService {
     */
     const tokens = searchTokens(filter.search);
 
-    const searchFilter = tokens.length
+    /*
+      «رقم للتواصل» finds the citizen too, by the whole number: counter staff
+      look a family up by the number they were given, and for an elderly
+      citizen with no phone that is a relative's. Matched exactly, normalised
+      as stored, and never by a fragment — it is somebody else's number, so a
+      partial match would surface strangers. The row says when this is why it
+      matched (`matchedOnContactPhone`).
+    */
+    const relativeNumber = filter.search ? internationalPhone.safeParse(filter.search.trim()) : null;
+    const contactNumber = relativeNumber?.success ? relativeNumber.data : null;
+    // Without the رقم مرجعي for «مشاهد فقط», which is shown it masked (`citizenSearchText`).
+    const searchable = citizenSearchText(this.S, viewer?.role);
+    const tokenFilter = tokens.length
       ? Prisma.join(
-          tokens.map((token) => Prisma.sql`AND u."searchText" LIKE ${likePattern(token)}`),
-          ' ',
+          tokens.map((token) => Prisma.sql`${searchable} LIKE ${likePattern(token)}`),
+          ' AND ',
         )
+      : null;
+    const searchFilter = tokenFilter
+      ? contactNumber
+        ? Prisma.sql`AND ((${tokenFilter}) OR u."contactPhone" = ${contactNumber})`
+        : Prisma.sql`AND ${tokenFilter}`
       : Prisma.empty;
+    const contactMatch = contactNumber
+      ? Prisma.sql`(u."contactPhone" IS NOT NULL AND u."contactPhone" = ${contactNumber})`
+      : Prisma.sql`false`;
 
     /*
       "Show me only the records still waiting to be finished."
@@ -425,7 +469,7 @@ export class CitizensService {
       both statements read the same snapshot, so the count above the table
       cannot disagree with the rows in it.
     */
-    const [rows, [aggregate]] = await withConnectionRetry(() =>
+    const [rows, [aggregate], [household]] = await withConnectionRetry(() =>
       this.db.$transaction([
         this.db.$queryRaw<CitizenListRow[]>`
         SELECT
@@ -436,6 +480,9 @@ export class CitizensService {
           u."motherName",
           u.phone,
           u.whatsapp,
+          u."hasNoPhone",
+          u."contactPhone",
+          ${contactMatch} AS "matchedOnContactPhone",
           u.gender::text AS gender,
           u."referenceNumber",
           u."identityDocType"::text  AS "identityDocType",
@@ -546,6 +593,22 @@ export class CitizensService {
         WHERE u.kind = 'CITIZEN'
         ${searchFilter}
       `,
+        /*
+          «إجمالي الأسر» — the households in the town, and nothing else.
+
+          A household file (`residence = 'RESIDENT'`) that is live: not archived
+          and not folded into another by «دمج ملفين» (a merge archives the file
+          it absorbs, so `isActive` covers both). A non-resident owner is on the
+          register to say who owns a unit, not as a family here. Over the whole
+          register, deliberately not narrowed by the search: the tile is a
+          figure the council quotes, and «إجمالي الأسر: ٣» because a name was
+          typed in the box would be a wrong one.
+        */
+        this.db.$queryRaw<Array<{ families: number }>>`
+        SELECT count(*)::int AS families
+        FROM ${this.S}users u
+        WHERE u.kind = 'CITIZEN' AND u.residence::text = 'RESIDENT' AND u."isActive"
+      `,
       ]),
     );
 
@@ -563,6 +626,9 @@ export class CitizensService {
         motherName: row.motherName,
         phone: row.phone,
         whatsapp: row.whatsapp,
+        hasNoPhone: row.hasNoPhone,
+        contactPhone: row.contactPhone,
+        matchedOnContactPhone: row.matchedOnContactPhone,
         gender: row.gender,
         referenceNumber: row.referenceNumber,
         identityDocType: row.identityDocType,
@@ -591,6 +657,7 @@ export class CitizensService {
         overdue: aggregate?.allOverdue ?? 0,
         inArrears: aggregate?.allInArrears ?? 0,
         requiringReview: aggregate?.allRequiringReview ?? 0,
+        families: household?.families ?? 0,
       },
     };
   }
@@ -611,21 +678,23 @@ export class CitizensService {
    * the other.
    */
   async reviewQueue(
-    filter: { search?: string; limit?: number; offset?: number } = {},
+    filter: { search?: string; limit?: number; offset?: number; owner?: string } = {},
     /**
      * Whose queue. Someone who is not an admin (`seesAllStaffWork`) sees only
      * the records they filed — `registrations.createdById`, the officer who
-     * saved it «يتطلب مراجعة». Admins see every officer's.
+     * saved it «يتطلب مراجعة». Admins see every officer's, and may narrow to
+     * one officer or to records whose officer is gone (`filter.owner`,
+     * `worklistOwnerFilter`).
      */
     viewer?: WorklistViewer,
   ): Promise<{ items: ReviewQueueItem[]; total: number }> {
-    const owner = worklistOwner(viewer);
     const limit = Math.min(Math.max(filter.limit ?? 25, 1), MAX_LIST_ROWS);
     const offset = Math.max(filter.offset ?? 0, 0);
     const tokens = searchTokens(filter.search);
+    const searchable = citizenSearchText(this.S, viewer?.role);
     const searchFilter = tokens.length
       ? Prisma.join(
-          tokens.map((token) => Prisma.sql`AND u."searchText" LIKE ${likePattern(token)}`),
+          tokens.map((token) => Prisma.sql`AND ${searchable} LIKE ${likePattern(token)}`),
           ' ',
         )
       : Prisma.empty;
@@ -645,7 +714,7 @@ export class CitizensService {
       ) latest ON true
       WHERE u.kind = 'CITIZEN'
         AND latest.status = 'REQUIRES_REVIEW'
-        ${owner ? Prisma.sql`AND latest."createdById" = ${owner}::uuid` : Prisma.empty}
+        ${worklistOwnerFilter(this.S, Prisma.sql`latest."createdById"`, filter.owner, viewer)}
         ${searchFilter}
     `;
 
@@ -654,11 +723,12 @@ export class CitizensService {
       this.db.$transaction([
         this.db.$queryRaw<ReviewQueueRow[]>`
           SELECT u.id, u."firstName", u."middleName", u."lastName", u."motherName",
-                 u."referenceNumber", u.phone,
+                 u."referenceNumber", u.phone, u."hasNoPhone",
                  latest.status, latest."openFieldCount"::int AS "openFieldCount",
                  latest."submittedAt",
                  (SELECT NULLIF(btrim(concat_ws(' ', s."firstName", s."lastName")), '')
-                    FROM ${this.S}users s WHERE s.id = latest."createdById") AS "filedByName"
+                    FROM ${this.S}users s WHERE s.id = latest."createdById" AND s.kind = 'STAFF') AS "filedByName",
+                 latest."createdById" AS "filedById"
           ${queued}
           ORDER BY latest."submittedAt" ASC, u.id
           LIMIT ${limit} OFFSET ${offset}
@@ -674,10 +744,12 @@ export class CitizensService {
         motherName: row.motherName,
         referenceNumber: row.referenceNumber,
         phone: row.phone,
+        hasNoPhone: row.hasNoPhone,
         status: row.status,
         openFieldCount: row.openFieldCount,
         submittedAt: row.submittedAt.toISOString(),
         filedByName: row.filedByName,
+        filedById: row.filedById,
       })),
       total: count?.total ?? 0,
     };
@@ -1764,8 +1836,10 @@ export class CitizensService {
         id: true,
         referenceNumber: true,
         // Only to tell a cleared passport box from a box that never showed this
-        // number — see `citizenColumnsForEdit`.
+        // number, and a relative's number from one this save makes the person's
+        // own — see `citizenColumnsForEdit`.
         identityDocType: true,
+        contactPhone: true,
         registrations: {
           orderBy: { submittedAt: 'desc' },
           take: 1,
@@ -2112,10 +2186,18 @@ export class CitizensService {
     // below creates a registration where none existed, so "this citizen's
     // newest registration" is not necessarily the row this save just wrote to.
     const registrationId = await this.db.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: citizen.id },
-        data: citizenColumnsForEdit(input.payload, { identityDocType: citizen.identityDocType }),
-      });
+      await tx.user
+        .update({
+          where: { id: citizen.id },
+          data: citizenColumnsForEdit(input.payload, {
+            identityDocType: citizen.identityDocType,
+            contactPhone: citizen.contactPhone,
+          }),
+        })
+        // 0072's rules on the numbers, named rather than sent on as a 500.
+        .catch((error: unknown) => {
+          throw citizenPhoneRuleError(error) ?? error;
+        });
 
       /*
         Re-asked under the person's row lock, which the update above now holds
@@ -2832,117 +2914,24 @@ export class CitizensService {
   }
 
   /**
-   * Erases a citizen row outright — permitted only when nothing else in the
-   * schema still points at them.
+   * «أرشفة الملف» and its undo — the only way a citizen file leaves the register.
    *
-   * Refused whenever the citizen has a registration, a payment of any status,
-   * or a fee notice issued directly to them — and, since a file with "zero
-   * relations" is the only one an admin officer may erase, whenever anything
-   * else still points at them: an occupancy on a census unit (ended ones
-   * too — they are the unit's history), a tenant's card naming them as its
-   * owner, a case resolved by them, a merge in either direction (undone ones
-   * too — their undo record would cascade away), or a Whish checkout. A rejected claim or an unpaid
-   * invoice is still the municipality's own record of what was reviewed and
-   * why; cascading it away with the person would erase that history rather
-   * than the citizen's identity data alone, and an orphaned fee notice would
-   * be a bill with no one left to collect it from. Deactivate instead — hard
-   * delete is left for a citizen row nothing has ever been built on top of.
+   * A citizen is never deleted (decision, 2026-10-05). Archiving sets
+   * `isActive` false and keeps every row the file owns: the biller skips it,
+   * sign-in refuses it, the register shows it as «مؤرشف», and one click brings
+   * it back. Archiving carries a written reason and who asked for it
+   * (`setCitizenActiveSchema` requires both); they go on the Tier 1 audit row,
+   * which is the record of the decision.
    */
-  async remove(input: {
-    tenantSlug: string;
-    citizenId: string;
-    actor: { id: string; role: string };
-  }) {
-    const citizen = await this.db.user.findFirst({
-      where: { id: input.citizenId, kind: 'CITIZEN' },
-      select: { id: true, firstName: true, lastName: true, referenceNumber: true },
-    });
-    if (!citizen) throw new NotFoundError({
-      code: 'CITIZEN_NOT_FOUND',
-      message: `Citizen ${input.citizenId} was not found`,
-    });
-
-    /*
-      A file on either side of a standing merge is not deleted: the delete
-      cascades to `citizen_merges`, taking the record of the merge and its undo
-      with it. The merge is undone first, or the file stays as the record of
-      what was filed.
-    */
-    const merged = await this.db.citizenMerge.count({
-      where: { undoneAt: null, OR: [{ survivorId: citizen.id }, { absorbedId: citizen.id }] },
-    });
-    if (merged > 0) {
-      throw new ConflictError({
-        code: 'CITIZEN_IN_MERGE',
-        message: 'This file is part of an active merge, so it cannot be deleted. Undo the merge first if it must be deleted.',
-        details: { code: 'MERGED' },
-      });
-    }
-
-    const [registrations, payments, feeNotices] = await Promise.all([
-      this.db.registration.count({ where: { citizenId: citizen.id } }),
-      this.db.citizenPayment.count({ where: { citizenId: citizen.id } }),
-      this.db.feeNotice.count({ where: { targetCitizenId: citizen.id } }),
-    ]);
-    if (registrations + payments + feeNotices > 0) {
-      throw new ConflictError({
-        code: 'CITIZEN_HAS_RECORDS',
-        message: 'A citizen with filings, payments or fees cannot be deleted. Disable the account instead.',
-      });
-    }
-
-    /*
-      The links the cascade used to take silently: occupancies were deleted
-      with the person and a landlord link or a case's citizen set to null, so a
-      unit lost its owner and a case its answer without anyone choosing that.
-    */
-    const [occupancies, landlordOf, cases, merges, checkouts] = await Promise.all([
-      this.db.unitOccupancy.count({ where: { citizenId: citizen.id } }),
-      this.db.propertyEntry.count({ where: { landlordCitizenId: citizen.id } }),
-      this.db.case.count({ where: { resolvedCitizenId: citizen.id } }),
-      this.db.citizenMerge.count({ where: { OR: [{ survivorId: citizen.id }, { absorbedId: citizen.id }] } }),
-      this.db.whishCheckout.count({ where: { citizenId: citizen.id } }),
-    ]);
-    const links = occupancies + landlordOf + cases + merges + checkouts;
-    if (links > 0) {
-      throw new ConflictError({
-        code: 'CITIZEN_HAS_LINKS',
-        message: 'This citizen is still linked to other records. Disable the account instead.',
-        params: { count: links },
-      });
-    }
-
-    const deleted: CitizenChange & { tenantSlug: string } = {
-      tenantSlug: input.tenantSlug,
-      citizenId: citizen.id,
-      action: 'CITIZEN_DELETED',
-      before: {
-        name: `${citizen.firstName} ${citizen.lastName}`,
-        // A login credential: the trail keeps only the masked hint, never the key.
-        maskedReference: ReferenceNumber.mask(citizen.referenceNumber),
-      },
-      actorId: input.actor.id,
-      actorRole: input.actor.role,
-    };
-    // Tier 1 (docs/security.md): the deletion and its row commit together.
-    await runInTenantTransaction(this.tenantContext, async () => {
-      await this.db.user.delete({ where: { id: citizen.id } });
-      await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload: deleted });
-    });
-
-    this.events.emit('citizen.changed', { ...deleted, alreadyAudited: true });
-
-    return { deleted: true };
-  }
-
-  /** Soft delete and its undo — the reversible half of `remove`. */
   async setActive(input: {
     tenantSlug: string;
     citizenId: string;
     isActive: boolean;
-    /** Why — the trail's answer to «why did this file stop being billed?». */
+    /** Why — the trail's answer to «why did this file stop being billed?». Required to archive. */
     reason?: string;
-    /** A deactivation because they moved away: the day they left. */
+    /** Who asked for it to be archived — the citizen, a relative, the mukhtar, an officer. Required to archive. */
+    requestedBy?: string;
+    /** An archive because they moved away: the day they left. */
     movedOn?: Date;
     actor: { id: string; role: string };
   }) {
@@ -2966,10 +2955,11 @@ export class CitizensService {
       tenantSlug: input.tenantSlug,
       citizenId: citizen.id,
       action: input.isActive ? 'CITIZEN_REACTIVATED' : 'CITIZEN_DEACTIVATED',
-      ...(input.reason || input.movedOn
+      ...(input.reason || input.requestedBy || input.movedOn
         ? {
             after: {
               ...(input.reason ? { reason: input.reason } : {}),
+              ...(input.requestedBy ? { requestedBy: input.requestedBy } : {}),
               ...(input.movedOn ? { movedOn: input.movedOn.toISOString() } : {}),
             },
           }
@@ -2980,7 +2970,7 @@ export class CitizensService {
     // Tier 1 (docs/security.md): a status change and its row commit together.
     await runInTenantTransaction(this.tenantContext, async () => {
       await this.db.user.update({
-        where: { id: citizen.id },
+        where: { id: citizen.id, kind: 'CITIZEN' },
         data: { isActive: input.isActive },
       });
       await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload: changed });
@@ -3200,7 +3190,7 @@ export class CitizensService {
  */
 export function citizenColumnsForEdit(
   payload: AdminCitizenUpdateSubmission,
-  stored: { identityDocType: string | null } = { identityDocType: null },
+  stored: { identityDocType: string | null; contactPhone?: string | null } = { identityDocType: null },
 ): Prisma.UserUpdateInput {
   const { personal, contact } = payload;
   /*
@@ -3221,12 +3211,21 @@ export function citizenColumnsForEdit(
     hasNoPhone,
     phone: hasNoPhone ? null : (contact.phone || null),
     whatsapp: hasNoPhone ? null : (contact.whatsapp || contact.phone || null),
-    contactPhone: contact.contactPhone || null,
   };
 
   if (payload.residence === 'NON_RESIDENT_OWNER') {
+    /*
+      «رقم للتواصل» is the household file's answer, and the non-resident form
+      has no such field — so it is left as filed, under the same no-data-loss
+      rule the household columns below follow, and comes back if the file is
+      turned back into a household. One exception: the number this save makes
+      the person's *own* phone is no longer a relative's — keeping it in both
+      columns would be the contradiction 0072's CHECK refuses.
+    */
+    const newPhone = shared.phone;
     return {
       ...shared,
+      ...(newPhone && stored.contactPhone === newPhone ? { contactPhone: null } : {}),
       residence: 'NON_RESIDENT_OWNER',
       residencePlace: personal.residencePlace ?? null,
       localContactName: contact.localContactName ?? null,
@@ -3249,6 +3248,7 @@ export function citizenColumnsForEdit(
       في البلدة» keeps whatever was filed rather than erasing it — the same
       no-data-loss rule the household counts above follow.
     */
+    contactPhone: contact.contactPhone || null,
     motherName: personal.motherName || null,
     gender: (personal.gender ?? null) as never,
     nationality: personal.nationality ?? null,

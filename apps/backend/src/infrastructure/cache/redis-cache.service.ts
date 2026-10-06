@@ -138,7 +138,7 @@ export class RedisCacheService implements OnModuleDestroy {
       this.memoryCache.delete(key);
     }
 
-    if (!this.client) return null;
+    if (!this.client || this.offline) return null;
     try {
       const raw = await this.client.get(key);
       if (!raw) return null;
@@ -156,11 +156,36 @@ export class RedisCacheService implements OnModuleDestroy {
     const expiresAt = Date.now() + ttlSeconds * 1000;
     this.memoryCache.set(key, { value, expiresAt });
 
-    if (!this.client) return;
+    if (!this.client || this.offline) return;
     try {
       await this.client.set(key, JSON.stringify(value), 'EX', ttlSeconds);
     } catch (error) {
       this.logger.warn(`SET ${key} failed: ${describeRedisError(error as Error)}`);
+    }
+  }
+
+  /**
+   * Sets the key only if nobody holds it, and says whether this caller did.
+   *
+   * A gate rather than a cache entry: two requests that both read "absent" and
+   * then both `set` would each go on to do the guarded work. The in-process
+   * map answers for this instance; `SET … NX` answers across instances, so two
+   * pm2 workers seeing the same account in the same minute stamp it once.
+   * With Redis unset or down, this instance's own answer stands.
+   */
+  async setIfAbsent(key: string, value: unknown, ttlSeconds: number): Promise<boolean> {
+    const now = Date.now();
+    const mem = this.memoryCache.get(key);
+    if (mem && mem.expiresAt > now) return false;
+    this.memoryCache.set(key, { value, expiresAt: now + ttlSeconds * 1000 });
+
+    if (!this.client || this.offline) return true;
+    try {
+      const won = await this.client.set(key, JSON.stringify(value), 'EX', ttlSeconds, 'NX');
+      return won === 'OK';
+    } catch (error) {
+      this.logger.warn(`SET NX ${key} failed: ${describeRedisError(error as Error)}`);
+      return true;
     }
   }
 

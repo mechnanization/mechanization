@@ -89,11 +89,32 @@ describe('the seeded register', () => {
   it('uses only the seed phone range, so no real subscriber is ever named', () => {
     for (const r of both) {
       const phones = [
-        ...r.users.flatMap((u) => [u.phone, u.whatsapp, u.localContactPhone]),
+        ...r.users.flatMap((u) => [u.phone, u.whatsapp, u.localContactPhone, u.contactPhone]),
         ...r.propertyEntries.map((e) => e.landlordPhone),
       ].filter((p): p is string => typeof p === 'string');
       expect(phones.length).toBeGreaterThan(0);
       for (const phone of phones) expect(phone).toMatch(/^\+96177\d{6}$/);
+    }
+  });
+
+  /*
+    «لا يملك رقم هاتف» (0069) and the two rules 0072 enforces: such a person has
+    no number of their own, and «رقم للتواصل» is never a person's own phone. A
+    seed row that broke either would be refused by the database on insert.
+  */
+  it('includes citizens with no phone of their own, reached on a relative’s number, inside the 0072 rules', () => {
+    for (const r of both) {
+      const citizens = r.users.filter((u) => u.kind === 'CITIZEN');
+      const noPhone = citizens.filter((u) => u.hasNoPhone === true);
+      expect(noPhone.length).toBeGreaterThan(0);
+      for (const u of noPhone) {
+        expect(u.phone).toBeNull();
+        expect(u.whatsapp).toBeNull();
+        expect(typeof u.contactPhone).toBe('string');
+      }
+      for (const u of citizens) {
+        if (u.contactPhone && u.phone) expect(u.contactPhone).not.toBe(u.phone);
+      }
     }
   });
 

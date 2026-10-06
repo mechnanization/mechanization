@@ -22,26 +22,15 @@
  * cannot log in to re-enrol itself.
  */
 import * as bcrypt from 'bcrypt';
+import { STAFF_ROLE, type StaffRole } from '@mechanization/shared-schemas';
 import { authenticator } from 'otplib';
 import { PrismaClient as RegistryPrismaClient } from '../generated/registry-client';
 import { PrismaClient as TenantPrismaClient } from '../generated/tenant-client';
 import { TenantSlug } from '../domain/value-objects/tenant-slug.vo';
 
-type Role =
-  | 'SUPER_ADMIN'
-  | 'AUDITOR'
-  | 'FIELD_INSPECTOR'
-  | 'COLLECTOR'
-  | 'ACCOUNTANT'
-  | 'ADMINISTRATIVE_OFFICER';
-const ROLES: readonly Role[] = [
-  'SUPER_ADMIN',
-  'AUDITOR',
-  'FIELD_INSPECTOR',
-  'COLLECTOR',
-  'ACCOUNTANT',
-  'ADMINISTRATIVE_OFFICER',
-];
+/** Every staff role, from the one shared list — a role added there can be created here. */
+type Role = StaffRole;
+const ROLES: readonly Role[] = STAFF_ROLE;
 
 interface Args {
   slug: string;

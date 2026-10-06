@@ -246,6 +246,17 @@ export const feeAssessmentSchema = z.object({
    * smaller holding. Owner-borne fees are never held: they follow the deed.
    */
   heldUnitCount: z.number().default(0),
+  /**
+   * Flats whose occupancy fee this bill holds because their current damage
+   * reading says nobody can live in them — «غير صالحة للسكن» (the user's
+   * decision, 2026-10-05; `isUninhabitableReading`). Not charged to anybody
+   * until a re-inspection reads them habitable, and counted here so the bill
+   * says so. Law 60/1988 ties the rental-value fee (Art. 11) and the annual
+   * maintenance fee (Art. 79) to actual occupancy; owner-borne fees follow the
+   * deed and are not held. Counted apart from `heldUnitCount`: the clerk
+   * settles a review in the register and an uninhabitable flat in the field.
+   */
+  uninhabitableUnitCount: z.number().default(0),
   lines: z.array(feeAssessmentLineSchema),
 });
 

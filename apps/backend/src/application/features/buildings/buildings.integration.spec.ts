@@ -1,10 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { logVisitSchema, type CreateBuildingInput } from '@mechanization/shared-schemas';
+import {
+  DAMAGE_LEVEL,
+  isUninhabitableReading,
+  logVisitSchema,
+  type CreateBuildingInput,
+} from '@mechanization/shared-schemas';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
+import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
+import { uninhabitableUnitIds } from './habitability';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { CasesService } from '../cases/cases.service';
 import { ConflictError } from '../../common/exceptions';
@@ -1135,38 +1142,381 @@ describeIfDb('BuildingsService', () => {
       other,
     );
 
-    const mineOnly = await buildings.unsurveyedUnits({ search: '910', limit: 100 }, actor());
+    const mineOnly = await buildings.unsurveyedUnits({ search: '910', limit: 100, offset: 0 }, actor());
     expect(mineOnly.items.map((row) => row.unitId)).toEqual([waiting.id]);
     expect(mineOnly.items[0]).toMatchObject({ buildingCode: mine.code, visitCount: 0, addedByName: 'مفتش ميداني' });
 
-    const theirsOnly = await buildings.unsurveyedUnits({ search: '910', limit: 100 }, other);
+    const theirsOnly = await buildings.unsurveyedUnits({ search: '910', limit: 100, offset: 0 }, other);
     expect(theirsOnly.items.map((row) => row.unitId)).toEqual([theirUnits[0]!.id]);
 
-    const admin = await buildings.unsurveyedUnits({ search: '910', limit: 100 }, { id: otherId, role: 'SUPER_ADMIN' });
+    const admin = await buildings.unsurveyedUnits({ search: '910', limit: 100, offset: 0 }, { id: otherId, role: 'SUPER_ADMIN' });
     expect(admin.items.map((row) => row.unitId).sort()).toEqual([waiting.id, theirUnits[0]!.id].sort());
     expect(admin.total).toBe(2);
   });
 
-  it('keeps «غير قابلة للسكن» with its re-inspection day, and the repaired reading after it', async () => {
+  it('leaves off a flat a card names, a structural floor and a flat nobody can live in; shows a refused door with its booked revisit', async () => {
+    const { building } = await createBuilding(
+      { parcelNumber: '9300', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 3 },
+      actor(),
+    );
+    const { units } = await buildings.generateUnits(
+      building.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 5, unitType: 'APARTMENT' },
+      actor(),
+    );
+    await buildings.generateUnits(
+      building.id,
+      { kind: 'uniform', fromFloor: 2, toFloor: 2, unitsPerFloor: 1, unitType: 'PILOTIS' },
+      actor(),
+    );
+    const [claimed, unlivable, vacated, refused, plain] = units.map((unit) => unit.id) as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+
+    // A card line names the flat: the census claim rule's explicit shape.
+    const owner = await citizen('مالك');
+    const registration = await db.registration.create({
+      data: { citizenId: owner, referenceNumber: `REF-${randomUUID()}` },
+    });
+    const card = await db.propertyEntry.create({
+      data: { registrationId: registration.id, occupancyType: 'OWNER', propertyType: 'BUILDING' },
+    });
+    await db.buildingUnit.create({ data: { propertyEntryId: card.id, unitId: claimed, unitType: 'APARTMENT' } });
+
+    // Read «غير صالحة للسكن»: waiting for a re-inspection, not a survey.
+    await damage.record({ unitId: unlivable, level: 'RESTRICTED_USE', habitable: false, source: 'FIELD_VISIT' }, actor());
+
+    // A tenant recorded and gone: the survey answered when they were recorded.
+    const { occupancy } = await buildings.recordOccupancy(
+      { unitId: vacated, citizenId: await citizen('مستأجر'), role: 'TENANT' },
+      actor(),
+    );
+    await buildings.endOccupancy(occupancy.id, { reason: 'MOVED_OUT' }, actor());
+
+    // A refused door, already booked for a revisit.
+    await buildings.updateUnit(refused, { surveyStatus: 'REFUSED' }, actor());
+    const revisit = new Date(Date.UTC(2026, 10, 20));
+    await db.case.create({
+      data: {
+        notes: 'رفض الدخول',
+        unitId: refused,
+        caseType: 'ACCESS_REFUSED',
+        status: 'SCHEDULED',
+        scheduledRevisitAt: revisit,
+      },
+    });
+
+    const page = await buildings.unsurveyedUnits({ search: '9300', limit: 100, offset: 0 }, actor());
+    expect(page.items.map((row) => row.unitId).sort()).toEqual([refused, plain].sort());
+    expect(page.total).toBe(2);
+    expect(page.items.find((row) => row.unitId === refused)).toMatchObject({
+      surveyStatus: 'REFUSED',
+      openCaseType: 'ACCESS_REFUSED',
+      scheduledRevisitAt: revisit,
+    });
+
+    // The same flats come back once the reasons go: the card line ends, the flat is read habitable.
+    await db.buildingUnit.updateMany({ where: { unitId: claimed }, data: { endedAt: new Date() } });
+    await damage.record(
+      { unitId: unlivable, level: 'SAFE_MINOR_DAMAGE', habitable: true, source: 'FIELD_VISIT' },
+      actor(),
+    );
+    const after = await buildings.unsurveyedUnits({ search: '9300', limit: 100, offset: 0 }, actor());
+    expect(after.items.map((row) => row.unitId).sort()).toEqual([claimed, unlivable, refused, plain].sort());
+  });
+
+  it('lets an admin narrow a worklist to work whose officer is gone, and never widens an officer list', async () => {
+    const leaverId = randomUUID();
+    await db.user.create({
+      data: {
+        id: leaverId,
+        kind: 'STAFF',
+        tenantSlug: 'census',
+        email: `leaver-${leaverId}@census.gov.lb`,
+        firstName: 'مفتش',
+        lastName: 'غادر',
+        role: 'FIELD_INSPECTOR',
+      },
+    });
+    const leaver = { id: leaverId, role: 'FIELD_INSPECTOR' };
+    const { building: left } = await createBuilding(
+      { parcelNumber: '9310', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      leaver,
+    );
+    const { units: leftUnits } = await buildings.generateUnits(
+      left.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+      leaver,
+    );
+    const { building: kept } = await createBuilding(
+      { parcelNumber: '9311', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    await buildings.generateUnits(
+      kept.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+      actor(),
+    );
+    // Archived — «الأرشيف»: the account stays, its work has nobody to do it.
+    await db.user.update({ where: { id: leaverId }, data: { isActive: false } });
+
+    const admin = { id: officerId, role: 'ADMINISTRATIVE_OFFICER' };
+    const orphaned = await buildings.unsurveyedUnits(
+      { search: '931', owner: 'UNASSIGNED', limit: 100, offset: 0 },
+      admin,
+    );
+    expect(orphaned.items.map((row) => row.unitId)).toEqual([leftUnits[0]!.id]);
+
+    const byOfficer = await buildings.unsurveyedUnits(
+      { search: '931', owner: leaverId, limit: 100, offset: 0 },
+      admin,
+    );
+    expect(byOfficer.items.map((row) => row.unitId)).toEqual([leftUnits[0]!.id]);
+
+    // An officer asking for someone else's work still gets their own.
+    const officerAsking = await buildings.unsurveyedUnits(
+      { search: '931', owner: leaverId, limit: 100, offset: 0 },
+      actor(),
+    );
+    expect(officerAsking.items.length).toBeGreaterThan(0);
+    expect(officerAsking.items.every((row) => row.buildingId === kept.id)).toBe(true);
+  });
+
+  it('lists what waits for a re-inspection — a structure once, a flat on its own reading — overdue first, until the next reading', async () => {
+    const { building } = await createBuilding(
+      { parcelNumber: '9400', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const { units } = await buildings.generateUnits(
+      building.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 2, unitType: 'APARTMENT' },
+      actor(),
+    );
+    const { building: whole } = await createBuilding(
+      { parcelNumber: '9401', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const soon = new Date(Date.UTC(2036, 0, 10));
+    const later = new Date(Date.UTC(2036, 1, 10));
+    const flat = await damage.record(
+      { unitId: units[0]!.id, level: 'RESTRICTED_USE', habitable: false, source: 'FIELD_VISIT', reinspectAt: later },
+      actor(),
+    );
+    const structure = await damage.record(
+      { buildingId: whole.id, level: 'TOTAL_COLLAPSE', habitable: false, source: 'FIELD_VISIT', reinspectAt: soon },
+      actor(),
+    );
+    // Overdue: a day already gone, written straight to the table (the API refuses a past day).
+    const overdueReading = await damage.record(
+      { unitId: units[1]!.id, level: 'RESTRICTED_USE', habitable: false, source: 'FIELD_VISIT' },
+      actor(),
+    );
+    await db.damageAssessment.update({
+      where: { id: overdueReading.id },
+      data: { reinspectAt: new Date(Date.UTC(2026, 0, 2)) },
+    });
+
+    const page = await buildings.reinspections({ search: '940', limit: 100, offset: 0 }, actor());
+    expect(page.items.map((row) => [row.target, row.assessmentId])).toEqual([
+      ['UNIT', overdueReading.id],
+      ['BUILDING', structure.id],
+      ['UNIT', flat.id],
+    ]);
+    expect(page.total).toBe(3);
+    expect(page.overdue).toBe(1);
+    expect(page.seesAll).toBe(false);
+    expect(page.items[1]).toMatchObject({ buildingId: whole.id, unitId: null, reinspectAt: '2036-01-10' });
+
+    // The next reading of a target that answers habitability takes it off, whatever it finds.
+    await damage.record(
+      { buildingId: whole.id, level: 'TOTAL_COLLAPSE', habitable: false, source: 'FIELD_VISIT' },
+      actor(),
+    );
+    await damage.record(
+      { unitId: units[0]!.id, level: 'NOT_AFFECTED', habitable: true, source: 'FIELD_VISIT' },
+      actor(),
+    );
+    const after = await buildings.reinspections({ search: '940', limit: 100, offset: 0 }, actor());
+    // The structure's new reading still says nobody can live there, with no day set: listed last.
+    expect(after.items.map((row) => row.target)).toEqual(['UNIT', 'BUILDING']);
+    expect(after.items[1]).toMatchObject({ buildingId: whole.id, reinspectAt: null });
+
+    // Another officer's list does not show readings they did not record; an admin's does.
+    const elsewhere = await buildings.reinspections(
+      { search: '940', limit: 100, offset: 0 },
+      { id: randomUUID(), role: 'FIELD_INSPECTOR' },
+    );
+    expect(elsewhere.total).toBe(0);
+    const admin = await buildings.reinspections(
+      { search: '940', limit: 100, offset: 0 },
+      { id: officerId, role: 'SUPER_ADMIN' },
+    );
+    expect(admin.total).toBe(2);
+    expect(admin.seesAll).toBe(true);
+  });
+
+  it('keeps a «غير صالحة للسكن» reading with its re-inspection day, and the repaired reading after it', async () => {
     const { building } = await createBuilding(
       { parcelNumber: '9001', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
     const due = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     const uninhabitable = await damage.record(
-      { buildingId: building.id, level: 'UNINHABITABLE', source: 'FIELD_VISIT', reinspectAt: due },
+      { buildingId: building.id, level: 'RESTRICTED_USE', habitable: false, source: 'FIELD_VISIT', reinspectAt: due },
       actor(),
     );
     expect(uninhabitable.reinspectAt?.toISOString()).toBe(due.toISOString());
-    expect(await damage.currentLevel(building.id)).toBe('UNINHABITABLE');
+    expect(uninhabitable.habitable).toBe(false);
+    // The structural scale is untouched: the level stays UN-Habitat's.
+    expect(await damage.currentLevel(building.id)).toBe('RESTRICTED_USE');
 
     // The revisit after the repair is a new reading; the old one keeps its day.
-    await damage.record({ buildingId: building.id, level: 'NOT_AFFECTED', source: 'FIELD_VISIT' }, actor());
+    await damage.record(
+      { buildingId: building.id, level: 'NOT_AFFECTED', habitable: true, source: 'FIELD_VISIT' },
+      actor(),
+    );
     const history = await damage.history(building.id);
-    expect(history.map((row) => [row.level, row.reinspectAt?.toISOString() ?? null])).toEqual([
-      ['NOT_AFFECTED', null],
-      ['UNINHABITABLE', due.toISOString()],
+    expect(history.map((row) => [row.level, row.habitable, row.reinspectAt?.toISOString() ?? null])).toEqual([
+      ['NOT_AFFECTED', true, null],
+      ['RESTRICTED_USE', false, due.toISOString()],
     ]);
+  });
+
+  it('refuses, in the database, the retired level, a habitable collapse and a re-inspection day on a habitable reading', async () => {
+    const { building } = await createBuilding(
+      { parcelNumber: '9002', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const insert = (level: string, habitable: boolean | null, reinspectAt: Date | null) =>
+      db.$executeRawUnsafe(
+        `INSERT INTO "${SCHEMA}".damage_assessments (id, "buildingId", level, source, habitable, "reinspectAt")
+         VALUES (gen_random_uuid(), $1::uuid, $2::"${SCHEMA}"."DamageLevel", 'FIELD_VISIT', $3, $4)`,
+        building.id,
+        level,
+        habitable,
+        reinspectAt,
+      );
+    const later = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    await expect(insert('UNINHABITABLE', false, null)).rejects.toThrow(/damage_assessments_level_not_retired/);
+    await expect(insert('TOTAL_COLLAPSE', true, null)).rejects.toThrow(/damage_assessments_habitable_matches_level/);
+    await expect(insert('SAFE_MINOR_DAMAGE', true, later)).rejects.toThrow(
+      /damage_assessments_reinspect_needs_uninhabitable/,
+    );
+    await expect(insert('SAFE_MINOR_DAMAGE', false, later)).resolves.toBe(1);
+  });
+
+  it('holds a flat on its own reading or its building’s, whichever is latest', async () => {
+    const { building } = await createBuilding(
+      { parcelNumber: '9003', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const { units } = await buildings.generateUnits(
+      building.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 2, unitType: 'APARTMENT' },
+      actor(),
+    );
+    const [a, b] = [units[0]!.id, units[1]!.id];
+    const S = tenantSchemaRef(SCHEMA);
+    const day = (n: number) => new Date(Date.UTC(2026, 0, n));
+    const held = () => uninhabitableUnitIds(db, S, [a, b]);
+
+    // A whole-building evacuation, recorded before the question existed: both flats.
+    await damage.record(
+      { buildingId: building.id, level: 'UNSAFE_EVACUATE', source: 'FIELD_VISIT', assessedAt: day(1) },
+      actor(),
+    );
+    expect(await held()).toEqual(new Set([a, b]));
+
+    // One flat re-read habitable later speaks for that flat alone.
+    await damage.record(
+      { unitId: a, level: 'SAFE_MINOR_DAMAGE', habitable: true, source: 'FIELD_VISIT', assessedAt: day(2) },
+      actor(),
+    );
+    expect(await held()).toEqual(new Set([b]));
+
+    // A later whole-building reading speaks for both again.
+    await damage.record(
+      { buildingId: building.id, level: 'NOT_AFFECTED', habitable: true, source: 'FIELD_VISIT', assessedAt: day(3) },
+      actor(),
+    );
+    expect(await held()).toEqual(new Set());
+
+    // A reading typed up late, about an earlier visit, does not overturn a newer one.
+    await damage.record(
+      { unitId: b, level: 'RESTRICTED_USE', habitable: false, source: 'FIELD_VISIT', assessedAt: day(2) },
+      actor(),
+    );
+    expect(await held()).toEqual(new Set());
+  });
+
+  it('leaves a hold standing through a reading that judged nothing, until one that answers', async () => {
+    const { building } = await createBuilding(
+      { parcelNumber: '9417', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const { units } = await buildings.generateUnits(
+      building.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+      actor(),
+    );
+    const flat = units[0]!.id;
+    const held = () => uninhabitableUnitIds(db, tenantSchemaRef(SCHEMA), [flat]);
+    const listed = async () =>
+      (await buildings.reinspections({ search: '9417', limit: 100, offset: 0 }, actor())).items.map((row) => row.unitId);
+
+    await damage.record({ unitId: flat, level: 'RESTRICTED_USE', habitable: false, source: 'FIELD_VISIT' }, actor());
+    expect((await held()).has(flat)).toBe(true);
+    expect(await listed()).toContain(flat);
+
+    // A satellite pass over the whole building, unclassified and unanswered: it decides nothing.
+    await damage.record({ buildingId: building.id, level: 'UNCLASSIFIED', source: 'SATELLITE' }, actor());
+    expect((await held()).has(flat)).toBe(true);
+    expect(await listed()).toContain(flat);
+
+    // A re-inspection that reads the flat habitable ends the hold.
+    await damage.record({ unitId: flat, level: 'SAFE_MINOR_DAMAGE', habitable: true, source: 'FIELD_VISIT' }, actor());
+    expect((await held()).has(flat)).toBe(false);
+    expect(await listed()).not.toContain(flat);
+  });
+
+  it('holds by the same rule in SQL as the screens read in TypeScript, for every level and answer', async () => {
+    const combos = DAMAGE_LEVEL.flatMap((level) =>
+      ([true, false, null] as const)
+        // The database refuses a habitable collapse or evacuation; it cannot be stored to test.
+        .filter((habitable) => !(habitable === true && (level === 'UNSAFE_EVACUATE' || level === 'TOTAL_COLLAPSE')))
+        .map((habitable) => ({ level, habitable })),
+    );
+    const { building } = await createBuilding(
+      { parcelNumber: '9004', structureType: 'RESIDENTIAL_BUILDING', floorsCount: combos.length },
+      actor(),
+    );
+    const { units } = await buildings.generateUnits(
+      building.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: combos.length - 1, unitsPerFloor: 1, unitType: 'APARTMENT' },
+      actor(),
+    );
+    expect(units).toHaveLength(combos.length);
+    for (const [index, combo] of combos.entries()) {
+      await damage.record(
+        {
+          unitId: units[index]!.id,
+          level: combo.level,
+          source: 'FIELD_VISIT',
+          ...(combo.habitable === null ? {} : { habitable: combo.habitable }),
+        },
+        actor(),
+      );
+    }
+
+    const held = await uninhabitableUnitIds(db, tenantSchemaRef(SCHEMA), units.map((unit) => unit.id));
+    for (const [index, combo] of combos.entries()) {
+      expect([combo, held.has(units[index]!.id)]).toEqual([combo, isUninhabitableReading(combo)]);
+    }
   });
 
   it('reads a unit’s damage as the building’s', async () => {

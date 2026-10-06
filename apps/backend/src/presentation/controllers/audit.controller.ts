@@ -1,4 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import {
+  AUDIT_READ_ROLES,
+} from '@mechanization/shared-schemas';
 import { AuditService } from '../../application/features/audit/audit.service';
 import { Roles } from '../decorators/roles.decorator';
 import { parseDate } from './query-params';
@@ -44,7 +47,7 @@ export class AuditController {
   constructor(private readonly audit: AuditService) {}
 
   /** The actions, record types and staff the log holds — for the screen's filters. */
-  @Roles('SUPER_ADMIN', 'AUDITOR')
+  @Roles(...AUDIT_READ_ROLES)
   @Get('facets')
   async facets() {
     return this.audit.facets();
@@ -58,7 +61,7 @@ export class AuditController {
    * an hour off is a far smaller problem than a screen that will not open, and
    * `Intl` is the only authority on which strings Postgres will accept.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR')
+  @Roles(...AUDIT_READ_ROLES)
   @Get('daily')
   async daily(
     @Query('actorId') actorId?: string,
@@ -88,7 +91,7 @@ export class AuditController {
     });
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR')
+  @Roles(...AUDIT_READ_ROLES)
   @Get()
   async query(
     @Query('actorId') actorId?: string,

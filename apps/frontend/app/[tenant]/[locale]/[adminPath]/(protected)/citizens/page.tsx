@@ -2,11 +2,12 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
-  Ban,
+  Archive,
   Banknote,
   Building2,
   CheckCircle2,
@@ -19,7 +20,6 @@ import {
   Pencil,
   Phone,
   RotateCcw,
-  Trash2,
   TriangleAlert,
   UserPlus,
   UserRound,
@@ -28,13 +28,14 @@ import {
 } from 'lucide-react';
 import {
   ApiRequestError,
-  deleteCitizen,
   getTenantConfig,
   importCitizens,
   listCitizens,
   logApiError,
   setCitizenActive,
 } from '@/lib/api-client';
+import { CitizenArchiveDialog } from '@/components/admin/citizen-archive-dialog';
+import { CITIZEN_RECORD_EDIT_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 import { ImportCitizensDialog } from '@/components/admin/import-citizens-dialog';
 import { ShellLink } from '@/components/admin/shell-nav';
 import { OfflineQueuePanel } from '@/components/admin/offline-queue';
@@ -46,7 +47,6 @@ import { useTabSearch, useUrlPagination } from '@/lib/use-url-state';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { Money } from '@/components/ui/money';
 import { useToast } from '@/components/ui/toast';
@@ -55,7 +55,6 @@ import { cn } from '@/lib/utils';
 import { ACTION_TINT } from '@/lib/action-tint';
 import { formatDate } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
-import { CITIZEN_DELETE_ROLES, hasRole } from '@/lib/staff-roles';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
 import { getLabels } from '@mechanization/shared-schemas';
 
@@ -159,14 +158,16 @@ export default function CitizensPage({
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  /** The row whose deletion is being confirmed, or null. */
-  const [pendingDelete, setPendingDelete] = useState<CitizenListItem | null>(null);
+  /** The file being archived — «أرشفة الملف», with a reason and who asked; null when none. */
+  const [pendingArchive, setPendingArchive] = useState<CitizenListItem | null>(null);
+  const t = useTranslations('citizens');
   const toast = useToast();
   /** Prefixed with «بلدية» in the WhatsApp reference-number message below. */
   const [municipalityName, setMunicipalityName] = useState('');
 
   const canWrite = role ? CAN_WRITE.includes(role) : false;
-  const canDelete = hasRole(CITIZEN_DELETE_ROLES, role);
+  /** The WhatsApp welcome carries the رقم مرجعي, which «مشاهد فقط» is never given. */
+  const canSendReference = hasRole(REFERENCE_SEND_ROLES, role);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -255,66 +256,30 @@ export default function CitizensPage({
     [queryClient, tenant],
   );
 
-  const toggleActive = useCallback(
+  /*
+    «إعادة من الأرشيف» — one click: bringing a file back takes nothing away, so
+    it asks for nothing. Archiving goes through `CitizenArchiveDialog`, which
+    asks why and who asked (decision, 2026-10-05): a citizen file is archived,
+    never deleted.
+  */
+  const restore = useCallback(
     async (citizen: CitizenListItem) => {
       if (!token) return;
       setBusyId(citizen.id);
-      const reactivating = !citizen.isActive;
       try {
-        await setCitizenActive(tenant, token, citizen.id, reactivating);
+        await setCitizenActive(tenant, token, citizen.id, true);
         await load();
-        toast.success(
-          reactivating ? 'تمت إعادة تفعيل الملف' : 'تم تعطيل الملف',
-          {
-            description: reactivating
-              ? `${citizen.fullName} — يمكن الآن إصدار رسوم جديدة على هذا الملف.`
-              : `${citizen.fullName} — لن تُصدر رسوم جديدة. السجل والفواتير القائمة كما هي.`,
-          },
-        );
+        toast.success(t('restored.title'), { description: t('restored.description', { name: citizen.fullName }) });
       } catch (caught) {
         logApiError(caught);
-        const message =
-          caught instanceof ApiRequestError ? caught.message : 'تعذّر تحديث الحساب.';
+        const message = caught instanceof ApiRequestError ? caught.message : t('restored.failed');
         setActionError(message);
-        toast.error('تعذّر تحديث الحساب', { description: message });
+        toast.error(t('restored.failed'), { description: message });
       } finally {
         setBusyId(null);
       }
     },
-    [tenant, token, load, toast],
-  );
-
-  /*
-   * Deletion is confirmed in a dialog rather than `confirm()`.
-   *
-   * The browser's prompt is unstyled, LTR whatever the page direction, and
-   * renders "\n\n" as literal characters in some browsers — so the sentence
-   * naming what is about to be destroyed arrived as one run-on line. It also
-   * offers a Cancel/OK pair that gives no clue which button is the
-   * irreversible one. This asks for the citizen's own name to be typed, which
-   * is the one confirmation muscle memory cannot dismiss.
-   */
-  const removeCitizen = useCallback(
-    async (citizen: CitizenListItem) => {
-      if (!token) throw new Error('انتهت الجلسة.');
-      setBusyId(citizen.id);
-      try {
-        await deleteCitizen(tenant, token, citizen.id);
-        await load();
-        toast.success('تم حذف الملف نهائياً', { description: citizen.fullName });
-      } catch (caught) {
-        logApiError(caught);
-        const message =
-          caught instanceof ApiRequestError ? caught.message : 'تعذّر حذف الملف.';
-        setActionError(message);
-        // Rethrown so ConfirmDialog stays open and shows the reason in place:
-        // a refusal usually names something the clerk must deal with first.
-        throw new Error(message);
-      } finally {
-        setBusyId(null);
-      }
-    },
-    [tenant, token, load, toast],
+    [tenant, token, load, toast, t],
   );
 
   const labels = getLabels(locale);
@@ -419,8 +384,8 @@ export default function CitizensPage({
                 </Link>
               ) : !citizen.isActive ? (
                 <p className="flex items-center gap-1.5 text-muted-foreground">
-                  <Ban className="size-3.5 shrink-0" aria-hidden />
-                  {locale === 'en' ? 'Disabled' : 'معطّل'}
+                  <Archive className="size-3.5 shrink-0" aria-hidden />
+                  {t('archived')}
                 </p>
               ) : null}
               {nonResident ? (
@@ -434,21 +399,48 @@ export default function CitizensPage({
       },
       {
         accessorKey: 'phone',
-        header: locale === 'en' ? 'Phone' : 'الهاتف',
-        meta: { label: locale === 'en' ? 'Phone' : 'الهاتف' },
+        header: t('phoneColumn'),
+        meta: { label: t('phoneColumn') },
         enableSorting: false,
         cell: ({ row }) => {
-          const { phone } = row.original;
-          if (!phone) return <span className="text-muted-foreground">—</span>;
+          const { phone, hasNoPhone, contactPhone, matchedOnContactPhone } = row.original;
+          /*
+            The relative's number is shown as a relative's — never as the
+            citizen's own: always on a file with no number of its own, and on
+            any row the search found through it, with the tag that says so. A
+            clerk who searched a number then sees it on the row it found,
+            whatever else the file holds.
+          */
+          const relative =
+            contactPhone && (!phone || matchedOnContactPhone) ? (
+              <a href={`tel:${contactPhone}`} className="block text-xs text-primary hover:underline">
+                {t('contactPhone')} <bdi dir="ltr">{formatPhone(contactPhone)}</bdi>
+              </a>
+            ) : null;
+          const found = matchedOnContactPhone ? (
+            <CellTag tone="primary">{t('foundByContactPhone')}</CellTag>
+          ) : null;
+          if (!phone && !hasNoPhone && !relative && !found) {
+            return <span className="text-muted-foreground">—</span>;
+          }
           return (
-            <a
-              href={`tel:${phone}`}
-              dir="ltr"
-              className="inline-flex items-center gap-1.5 font-medium text-primary hover:underline"
-            >
-              <Phone className="size-3.5 shrink-0" aria-hidden />
-              {formatPhone(phone)}
-            </a>
+            <div className="space-y-0.5 text-sm">
+              {phone ? (
+                <a
+                  href={`tel:${phone}`}
+                  dir="ltr"
+                  className="inline-flex items-center gap-1.5 font-medium text-primary hover:underline"
+                >
+                  <Phone className="size-3.5 shrink-0" aria-hidden />
+                  {formatPhone(phone)}
+                </a>
+              ) : (
+                // «لا يملك رقم هاتف» is an answer, not a gap.
+                <p className="text-muted-foreground">{hasNoPhone ? t('noPhone') : '—'}</p>
+              )}
+              {relative}
+              {found}
+            </div>
           );
         },
       },
@@ -663,7 +655,7 @@ export default function CitizensPage({
             referenceNumber: citizen.referenceNumber,
             municipalityName,
           });
-          const waHref = buildWhatsappHref(citizen.whatsapp || citizen.phone, waMessage);
+          const waHref = canSendReference ? buildWhatsappHref(citizen.whatsapp || citizen.phone, waMessage) : null;
 
           return (
             <div className="flex items-center gap-1.5">
@@ -715,44 +707,22 @@ export default function CitizensPage({
 
               {/* A merged file comes back through «التراجع عن الدمج», never by reactivation. */}
               {canWrite && !citizen.mergedIntoId ? (
-                <ActionTooltip
-                  label={
-                    citizen.isActive
-                      ? (locale === 'en' ? 'Disable — halts new fees' : 'تعطيل — يوقف إصدار الرسوم')
-                      : (locale === 'en' ? 'Re-activate' : 'إعادة التفعيل')
-                  }
-                >
+                <ActionTooltip label={citizen.isActive ? t('archiveAction') : t('restoreAction')}>
                   <Button
                     variant="ghost"
                     size="icon-sm"
                     className={citizen.isActive ? ACTION_TINT.disable : ACTION_TINT.enable}
-                    aria-label={citizen.isActive ? (locale === 'en' ? 'Disable' : 'تعطيل') : (locale === 'en' ? 'Re-activate' : 'إعادة التفعيل')}
+                    aria-label={citizen.isActive ? t('archiveLabel', { name: citizen.fullName }) : t('restoreLabel', { name: citizen.fullName })}
                     disabled={busy}
-                    onClick={() => void toggleActive(citizen)}
+                    onClick={() => (citizen.isActive ? setPendingArchive(citizen) : void restore(citizen))}
                   >
                     {busy ? (
                       <Loader2 className="size-4 animate-spin" aria-hidden />
                     ) : citizen.isActive ? (
-                      <Ban className="size-4" aria-hidden />
+                      <Archive className="size-4" aria-hidden />
                     ) : (
                       <RotateCcw className="size-4" aria-hidden />
                     )}
-                  </Button>
-                </ActionTooltip>
-              ) : null}
-
-              {/* A merged file holds no filing, but it is the record of the merge — not deletable. */}
-              {canDelete && citizen.registrationCount === 0 && !citizen.mergedIntoId ? (
-                <ActionTooltip label={locale === 'en' ? 'Permanent delete — no applications on file' : 'حذف نهائي — لا طلبات على هذا الملف'}>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={locale === 'en' ? 'Permanent delete' : 'حذف نهائي'}
-                    className={ACTION_TINT.remove}
-                    disabled={busy}
-                    onClick={() => setPendingDelete(citizen)}
-                  >
-                    <Trash2 className="size-4" aria-hidden />
                   </Button>
                 </ActionTooltip>
               ) : null}
@@ -761,7 +731,7 @@ export default function CitizensPage({
         },
       },
     ],
-    [base, busyId, canWrite, canDelete, toggleActive, locale, labels, municipalityName],
+    [base, busyId, canWrite, canSendReference, restore, locale, labels, municipalityName, t],
   );
 
   if (!token) return null;
@@ -800,9 +770,15 @@ export default function CitizensPage({
       ) : null}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/*
+          «إجمالي الأسر» — live household files over the whole register (the
+          server's `totals.families`): not a non-resident owner's record, not an
+          archived or merged-away file, and not narrowed by the search. A
+          server that predates it sends none, and the matching count stands in.
+        */}
         <MetricCard
-          label={locale === 'en' ? 'Total families' : 'إجمالي الأسر'}
-          value={total.toLocaleString('en-US')}
+          label={t('families')}
+          value={(totals.families ?? total).toLocaleString('en-US')}
           loading={query.loading}
           icon={<Users className="size-6 text-primary" aria-hidden />}
         />
@@ -834,7 +810,7 @@ export default function CitizensPage({
         registered — putting the queue anywhere else invites reading the table
         below as the complete register when it is not yet.
       */}
-      <OfflineQueuePanel tenant={tenant} base={base} locale={locale} />
+      <OfflineQueuePanel tenant={tenant} base={base} canSend={hasRole(CITIZEN_RECORD_EDIT_ROLES, role)} />
 
       {/*
         The review queue, offered only when there is one.
@@ -938,46 +914,17 @@ export default function CitizensPage({
         onDone={() => void load()}
       />
 
-      <ConfirmDialog
-        open={pendingDelete !== null}
+      <CitizenArchiveDialog
+        tenant={tenant}
+        token={token}
+        citizen={pendingArchive}
         onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
+          if (!open) setPendingArchive(null);
         }}
-        title={locale === 'en' ? 'Delete Record Permanently' : 'حذف الملف نهائياً'}
-        description={
-          pendingDelete ? (
-            locale === 'en' ? (
-              <>
-                The record for{' '}
-                <span className="font-semibold text-foreground">{pendingDelete.fullName}</span>{' '}
-                will be deleted permanently. This cannot be undone.
-                <span className="mt-2 block text-muted-foreground">
-                  If the goal is to remove them from active use, &quot;Disable&quot; is sufficient and
-                  reversible.
-                </span>
-              </>
-            ) : (
-              <>
-                سيُحذف ملف <span className="font-semibold text-foreground">{pendingDelete.fullName}</span>{' '}
-                نهائياً. لا يمكن التراجع.
-                <span className="mt-2 block text-muted-foreground">
-                  إن كان الهدف إخراجه من الاستخدام الفعلي فقط، «التعطيل» يكفي ويمكن التراجع عنه.
-                </span>
-              </>
-            )
-          ) : null
-        }
-        confirmLabel={locale === 'en' ? 'Delete Permanently' : 'حذف نهائي'}
-        cancelLabel={locale === 'en' ? 'Cancel' : 'إلغاء'}
-        busyLabel={locale === 'en' ? 'Working…' : 'جارٍ التنفيذ…'}
-        requireText={pendingDelete?.fullName}
-        requireTextHint={
-          locale === 'en'
-            ? 'Type the full citizen name to confirm'
-            : 'اكتب اسم المواطن بالكامل للتأكيد'
-        }
-        onConfirm={async () => {
-          if (pendingDelete) await removeCitizen(pendingDelete);
+        onArchived={(citizen) => {
+          setPendingArchive(null);
+          void load();
+          toast.success(t('archivedToast.title'), { description: t('archivedToast.description', { name: citizen.fullName }) });
         }}
       />
     </div>

@@ -19,6 +19,7 @@ import {
   updateCase,
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
+import { CASE_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Field } from '@/components/ui/field';
@@ -109,6 +110,12 @@ export function CaseEditor({
     const session = loadSession(tenant);
     if (!session || session.user.kind !== 'STAFF') {
       router.replace(`${base}/login`);
+      return;
+    }
+    // A role that cannot write cases is sent back to the list, not shown a
+    // form every save would refuse. The server is the enforcement.
+    if (!hasRole(CASE_WRITE_ROLES, session.user.role)) {
+      router.replace(`${base}/cases`);
       return;
     }
     setToken(session.accessToken);

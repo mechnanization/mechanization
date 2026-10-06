@@ -17,6 +17,8 @@ import { ValidationError } from '../errors/domain-error';
  */
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const PATTERN = /^[A-Z]{3}-\d{4}-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/;
+/** A reference anywhere inside a text, for `maskWithin`. */
+const EMBEDDED = /(?<![A-Za-z0-9])([A-Za-z]{3})[\s-]?(\d{4})[\s-]?[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}(?![A-Za-z0-9])/gi;
 
 export class ReferenceNumber {
   private constructor(readonly value: string) {}
@@ -84,6 +86,17 @@ export class ReferenceNumber {
     const normalised = raw.trim().toUpperCase().replace(/\s/g, '');
     if (!PATTERN.test(normalised)) return '••••••';
     return `${normalised.slice(0, 8)}-••••••`;
+  }
+
+  /**
+   * Every reference inside `text`, masked as `mask` masks one: «إيصال
+   * BZR-2607-4K9QX2» becomes «إيصال BZR-2607-••••••», and the rest of the text
+   * is left as it was. For a response whose fields were not written with the
+   * reader in mind — a note, a reason, a key nobody thought to list.
+   */
+  static maskWithin(text: string): string {
+    // Lower case, spaces or no dashes — as the reference-only sign-in accepts it — masked all the same.
+    return text.replace(EMBEDDED, (_found, prefix: string, year: string) => `${prefix.toUpperCase()}-${year}-••••••`);
   }
 
   toString(): string {

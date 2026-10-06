@@ -2,6 +2,7 @@ import { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { UnauthorizedError } from '../../application/common/exceptions';
+import { BACKGROUND_REQUEST_HEADER } from '@mechanization/shared-schemas';
 import { SessionClaims } from '../../application/features/identity/identity.service';
 import { SessionRevocationService } from '../../application/features/identity/session-revocation.service';
 import { StaffPresenceService } from '../../application/features/identity/staff-presence.service';
@@ -21,9 +22,10 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 const SECRET = 'test-secret-that-is-at-least-32-characters-long';
 const FAMILY = '5b0f6f7e-2f4a-4c55-9d38-0f3c2a8b1e11';
 
-function contextFor(authorization: string) {
+function contextFor(authorization: string, headers: Record<string, string> = {}) {
   const request: { header: (name: string) => string | undefined; tenant: { slug: string }; user?: SessionClaims } = {
-    header: (name: string) => (name.toLowerCase() === 'authorization' ? authorization : undefined),
+    header: (name: string) =>
+      name.toLowerCase() === 'authorization' ? authorization : headers[name.toLowerCase()],
     tenant: { slug: 'albazourieh' },
   };
 
@@ -41,16 +43,23 @@ function contextFor(authorization: string) {
 
 function build(options: { current?: boolean; familyLive?: boolean } = {}) {
   const jwt = new JwtService({ secret: SECRET });
+  const calls: string[] = [];
   const revocation = {
-    isCurrent: jest.fn().mockResolvedValue(options.current ?? true),
-    isFamilyLive: jest.fn().mockResolvedValue(options.familyLive ?? true),
+    isCurrent: jest.fn().mockImplementation(async () => {
+      calls.push('isCurrent');
+      return options.current ?? true;
+    }),
+    isFamilyLive: jest.fn().mockImplementation(async () => {
+      calls.push('isFamilyLive');
+      return options.familyLive ?? true;
+    }),
   };
-  /*
-    Presence is best-effort and nothing in this file asserts on it — but it is
-    handed in as a real stub rather than `undefined` so a guard that stopped
-    awaiting it, or started letting it throw, fails here.
-  */
-  const presence = { touch: jest.fn().mockResolvedValue(undefined) };
+  /** Presence: what the last describe block asserts on. */
+  const presence = {
+    touch: jest.fn().mockImplementation(async () => {
+      calls.push('touch');
+    }),
+  };
   const guard = new JwtAuthGuard(
     jwt,
     new Reflector(),
@@ -68,7 +77,7 @@ function build(options: { current?: boolean; familyLive?: boolean } = {}) {
       ...claims,
     })}`;
 
-  return { guard, revocation, presence, bearer };
+  return { guard, revocation, presence, bearer, calls };
 }
 
 describe('JwtAuthGuard — the sign-in a staff token belongs to', () => {
@@ -117,5 +126,61 @@ describe('JwtAuthGuard — the sign-in a staff token belongs to', () => {
       UnauthorizedError,
     );
     expect(revocation.isFamilyLive).not.toHaveBeenCalled();
+  });
+});
+
+/*
+  «آخر ظهور» — what the guard owes presence: a stamp for a request that passed
+  every check, after those checks, and nothing for anything else.
+*/
+describe('JwtAuthGuard — staff presence', () => {
+  it('stamps a passing staff request with its own account and kind, after the session checks', async () => {
+    const { guard, presence, bearer, calls } = build();
+
+    await expect(guard.canActivate(contextFor(bearer({ sid: FAMILY })).context)).resolves.toBe(true);
+
+    expect(presence.touch).toHaveBeenCalledWith('staff-1', 'STAFF');
+    expect(calls).toEqual(['isCurrent', 'isFamilyLive', 'touch']);
+  });
+
+  it('never stamps a token the version check refused', async () => {
+    const { guard, presence, bearer } = build({ current: false });
+
+    await expect(guard.canActivate(contextFor(bearer({})).context)).rejects.toThrow(UnauthorizedError);
+    expect(presence.touch).not.toHaveBeenCalled();
+  });
+
+  it('never stamps a sign-in whose family has ended', async () => {
+    const { guard, presence, bearer } = build({ familyLive: false });
+
+    await expect(guard.canActivate(contextFor(bearer({ sid: FAMILY })).context)).rejects.toThrow(
+      UnauthorizedError,
+    );
+    expect(presence.touch).not.toHaveBeenCalled();
+  });
+
+  it('never stamps a token for another municipality', async () => {
+    const { guard, presence, bearer } = build();
+
+    await expect(guard.canActivate(contextFor(bearer({ tenantSlug: 'zahle' })).context)).rejects.toThrow();
+    expect(presence.touch).not.toHaveBeenCalled();
+  });
+
+  it('does not stamp a request the screen made by itself', async () => {
+    const { guard, presence, bearer } = build();
+
+    await expect(
+      guard.canActivate(contextFor(bearer({}), { [BACKGROUND_REQUEST_HEADER]: '1' }).context),
+    ).resolves.toBe(true);
+    expect(presence.touch).not.toHaveBeenCalled();
+  });
+
+  it('passes a citizen token to presence as a citizen, which presence ignores', async () => {
+    const { guard, presence, bearer } = build();
+
+    await expect(
+      guard.canActivate(contextFor(bearer({ kind: 'CITIZEN', role: undefined, sub: 'citizen-1' })).context),
+    ).resolves.toBe(true);
+    expect(presence.touch).toHaveBeenCalledWith('citizen-1', 'CITIZEN');
   });
 });

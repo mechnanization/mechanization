@@ -1,6 +1,7 @@
 'use client';
 
 import { CheckCircle2, CloudOff, Loader2, TriangleAlert } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { acknowledgeBuilding, useOfflineQueue } from '@/lib/offline-sync';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -16,15 +17,15 @@ import { cn } from '@/lib/utils';
  * has to be told it became `A-1042-B`. They clear it by reading it — nothing
  * dismisses it for them, because a notice that vanished on the next drain would
  * be a notice nobody read.
+ *
+ * `canSend` is false for a session that cannot survey — «مشاهد فقط», an
+ * auditor, the accountant — on a device an officer queued buildings on. The
+ * strip still says they are there, but offers neither «مزامنة الآن» nor «تم
+ * الاطلاع»: the first would be refused and the second would clear another
+ * officer's message before they read it.
  */
-export function BuildingQueueNotice({
-  tenant,
-  locale = 'ar',
-}: {
-  tenant: string;
-  locale?: string;
-}) {
-  const en = locale === 'en';
+export function BuildingQueueNotice({ tenant, canSend }: { tenant: string; canSend: boolean }) {
+  const t = useTranslations('offlineQueue.buildings');
   const queue = useOfflineQueue(tenant);
 
   const reconciled = queue.buildings.filter((item) => item.status === 'reconciled');
@@ -52,29 +53,25 @@ export function BuildingQueueNotice({
           )}
 
           <div className="min-w-0 flex-1 space-y-0.5">
-            {queue.buildingsPending > 0 ? (
-              <p>
-                {en
-                  ? `${queue.buildingsPending} building(s) saved on this device, waiting to sync. Their codes are provisional until they are delivered.`
-                  : `${queue.buildingsPending} مبنى محفوظ على هذا الجهاز بانتظار الإرسال. رموزها مؤقتة حتى تُرسل.`}
-              </p>
-            ) : null}
+            {queue.buildingsPending > 0 ? <p>{t('pending', { count: queue.buildingsPending })}</p> : null}
             {blocked.map((item) => (
               <p key={item.id} className="font-medium text-destructive">
                 <span dir="ltr" className="font-mono">
                   {item.provisionalCode}
                 </span>
                 {' — '}
-                {item.lastError ??
-                  (en ? 'refused by the server' : 'رفضه الخادم')}
+                {item.lastError ?? t('refused')}
               </p>
             ))}
+            {!canSend ? <p className="text-muted-foreground">{t('writerRequired')}</p> : null}
           </div>
 
-          <Button variant="outline" size="sm" onClick={queue.sync} disabled={queue.syncing}>
-            {queue.syncing ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
-            {en ? 'Sync now' : 'مزامنة الآن'}
-          </Button>
+          {canSend ? (
+            <Button variant="outline" size="sm" onClick={queue.sync} disabled={queue.syncing}>
+              {queue.syncing ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
+              {t('syncNow')}
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -85,47 +82,32 @@ export function BuildingQueueNotice({
         >
           <CheckCircle2 className="size-4 shrink-0 text-primary" aria-hidden />
           <p className="min-w-0 flex-1">
-            {en ? (
-              <>
-                The building you created on parcel{' '}
+            {t.rich('reconciled', {
+              parcel: item.parcelNumber ?? '',
+              code: item.reconciledCode ?? '',
+              provisional: item.provisionalCode,
+              ltr: (chunks) => (
                 <span dir="ltr" className="font-mono">
-                  {item.parcelNumber}
-                </span>{' '}
-                was saved as{' '}
+                  {chunks}
+                </span>
+              ),
+              now: (chunks) => (
                 <strong dir="ltr" className="font-mono">
-                  {item.reconciledCode}
+                  {chunks}
                 </strong>
-                , not{' '}
+              ),
+              was: (chunks) => (
                 <span dir="ltr" className="font-mono line-through">
-                  {item.provisionalCode}
+                  {chunks}
                 </span>
-                . Another building already held that letter on the parcel.
-              </>
-            ) : (
-              <>
-                المبنى الذي أنشأته على العقار{' '}
-                <span dir="ltr" className="font-mono">
-                  {item.parcelNumber}
-                </span>{' '}
-                حُفظ بالرمز{' '}
-                <strong dir="ltr" className="font-mono">
-                  {item.reconciledCode}
-                </strong>{' '}
-                وليس{' '}
-                <span dir="ltr" className="font-mono line-through">
-                  {item.provisionalCode}
-                </span>
-                . كان ذلك الحرف محجوزاً لمبنى آخر على العقار نفسه.
-              </>
-            )}
+              ),
+            })}
           </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void acknowledgeBuilding(tenant, item.id)}
-          >
-            {en ? 'Got it' : 'تم الاطلاع'}
-          </Button>
+          {canSend ? (
+            <Button variant="outline" size="sm" onClick={() => void acknowledgeBuilding(tenant, item.id)}>
+              {t('acknowledge')}
+            </Button>
+          ) : null}
         </div>
       ))}
     </div>

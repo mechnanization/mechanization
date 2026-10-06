@@ -2,6 +2,7 @@
 
 import { use, useMemo } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
 import { ClipboardCheck, FileQuestion, FileText, UserRound, Users } from 'lucide-react';
 import { getLabels, seesAllStaffWork } from '@mechanization/shared-schemas';
@@ -11,13 +12,17 @@ import { CITIZEN_RECORD_EDIT_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
-import { useTabSearch, useUrlPagination } from '@/lib/use-url-state';
+import { useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { cn } from '@/lib/utils';
-import { buttonVariants } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CellTag } from '@/components/ui/cell-tag';
 import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
+import { WORKLIST_OWNER_PARAM, WorklistOwnerFilter } from '@/components/admin/worklist-owner-filter';
+
+/** Whose work, in the URL — see `WorklistOwnerFilter`. */
+const URL_STATE = { owner: WORKLIST_OWNER_PARAM };
 
 /**
  * «يتطلب مراجعة» — the records filed with fields left «غير مؤكَّد», oldest
@@ -31,9 +36,13 @@ import { PageHeader } from '@/components/ui/page-header';
  *
  * Every staff role reaches it, as they reach the register (`nav.ts`); the
  * server's `@Roles` on `review-queue` are the register's. «فحص الملف» is
- * narrower — it reads the record's form, which AUDITOR and ACCOUNTANT are
- * refused (`CITIZEN_RECORD_EDIT_ROLES`, CODE-4) — so those roles get the
+ * narrower — it reads the record's form, which AUDITOR, ACCOUNTANT and VIEWER
+ * are refused (`CITIZEN_RECORD_EDIT_ROLES`, CODE-4) — so those roles get the
  * citizen's file to read instead of a button that can only fail.
+ *
+ * Each officer's queue is their own; the roles that see everyone's work see
+ * who filed each record, and may narrow to one officer or to the records whose
+ * officer is gone (`WorklistOwnerFilter`).
  */
 export default function ReviewQueuePage({
   params,
@@ -41,7 +50,7 @@ export default function ReviewQueuePage({
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
 }) {
   const { tenant, locale, adminPath } = use(params);
-  const en = locale === 'en';
+  const t = useTranslations('reviewQueue');
   const base = `/${tenant}/${locale}/${adminPath}`;
   const labels = getLabels(locale);
   const { token, user } = useStaffSession(tenant, base);
@@ -54,11 +63,6 @@ export default function ReviewQueuePage({
     «فحص الملف» for that frame, and its page says the role cannot review.
   */
   const canReview = user ? hasRole(CITIZEN_RECORD_EDIT_ROLES, user.role) : true;
-  /*
-    Each officer's queue is their own: the server narrows it to the records
-    they filed unless they are an admin (seesAllStaffWork). The page says
-    which, and an admin sees who filed each one.
-  */
   const seesAll = user ? seesAllStaffWork(user.role) : true;
 
   // The page in the URL and the search in tab storage — a search here is a
@@ -66,15 +70,21 @@ export default function ReviewQueuePage({
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
   /** The committed term — set on Enter, not as the clerk types. */
   const [search, setSearch] = useTabSearch(tenant, 'citizens-review');
+  const [{ owner }, setUrl] = useUrlState(URL_STATE);
+  const narrow = (next: string) => {
+    setUrl({ owner: next });
+    setPagination((current) => ({ ...current, pageIndex: 0 }));
+  };
 
   const query = useStaffQuery({
-    queryKey: ['citizens', 'review-queue', tenant, search, pagination.pageIndex, pagination.pageSize],
+    queryKey: ['citizens', tenant, 'review-queue', search, owner, pagination.pageIndex, pagination.pageSize],
     queryFn: (accessToken, signal) =>
       getReviewQueue(
         tenant,
         accessToken,
         {
           search: search || undefined,
+          owner: seesAll && owner ? owner : undefined,
           limit: pagination.pageSize,
           offset: pagination.pageIndex * pagination.pageSize,
         },
@@ -83,35 +93,28 @@ export default function ReviewQueuePage({
     tenant,
     base,
     token,
-    errorMessage: en ? 'Could not load the review queue.' : 'تعذّر تحميل قائمة المراجعة.',
+    errorMessage: t('loadError'),
     keepPrevious: true,
   });
   const items = query.data?.items ?? [];
   const total = query.data?.total ?? 0;
+  const ownerName = owner ? (items.find((row) => row.filedById === owner)?.filedByName ?? null) : null;
 
   /*
     An empty queue is the good outcome, so it says so — not «لا يوجد مواطنون
     مسجّلون بعد», which would be false here.
   */
-  const tableLabels = useTableLabels(
-    en
-      ? {
-          searchPlaceholder: 'Search by name, reference or phone',
-          empty: 'No records are waiting for review.',
-          emptyHint: 'A record saved with fields left to confirm appears here.',
-        }
-      : {
-          searchPlaceholder: 'ابحث بالاسم أو الرقم المرجعي أو الهاتف',
-          empty: 'لا سجلات بانتظار المراجعة.',
-          emptyHint: 'يظهر هنا كل سجل يُحفظ بحقول لم تُؤكَّد بعد.',
-        },
-  );
+  const tableLabels = useTableLabels({
+    searchPlaceholder: t('searchPlaceholder'),
+    empty: t('empty'),
+    emptyHint: t('emptyHint'),
+  });
 
   const columns = useMemo<ColumnDef<ReviewQueueItem>[]>(
     () => [
       {
         id: 'citizen',
-        header: en ? 'Citizen' : 'المواطن',
+        header: t('columns.citizen'),
         meta: { mobile: 'primary' },
         cell: ({ row }) => (
           <div className="min-w-0">
@@ -124,7 +127,7 @@ export default function ReviewQueuePage({
             {/* What tells two «محمد خليل»s apart (UX-4); omitted, not guessed, when never asked. */}
             {row.original.motherName ? (
               <p className="truncate ps-5 text-xs text-muted-foreground" title={row.original.motherName}>
-                {en ? `Mother: ${row.original.motherName}` : `الأم: ${row.original.motherName}`}
+                {t('mother', { name: row.original.motherName })}
               </p>
             ) : null}
           </div>
@@ -132,7 +135,7 @@ export default function ReviewQueuePage({
       },
       {
         id: 'reference',
-        header: en ? 'Reference no.' : 'الرقم المرجعي',
+        header: t('columns.reference'),
         cell: ({ row }) =>
           row.original.referenceNumber ? (
             <CellTag className="font-mono" dir="ltr">
@@ -144,19 +147,11 @@ export default function ReviewQueuePage({
       },
       {
         id: 'status',
-        header: en ? 'Status' : 'الحالة',
+        header: t('columns.status'),
         cell: ({ row }) => {
           const open = row.original.openFieldCount;
           return (
-            <CellTag
-              tone="warning"
-              className="tabular-nums"
-              title={
-                en
-                  ? `${open} field(s) left unconfirmed`
-                  : `عدد الحقول غير المؤكَّدة: ${open}`
-              }
-            >
+            <CellTag tone="warning" className="tabular-nums" title={t('openFields', { count: open })}>
               <FileQuestion className="size-3.5 shrink-0" aria-hidden />
               {`${labels.citizenRecordStatus.REQUIRES_REVIEW} (${open})`}
             </CellTag>
@@ -165,7 +160,7 @@ export default function ReviewQueuePage({
       },
       {
         id: 'phone',
-        header: en ? 'Phone' : 'الهاتف',
+        header: t('columns.phone'),
         cell: ({ row }) =>
           row.original.phone ? (
             <a
@@ -175,6 +170,9 @@ export default function ReviewQueuePage({
             >
               {formatPhone(row.original.phone)}
             </a>
+          ) : row.original.hasNoPhone ? (
+            // An answer, not a gap — this file is not waiting for a number.
+            <CellTag tone="muted">{t('noPhone')}</CellTag>
           ) : (
             <CellTag tone="muted">—</CellTag>
           ),
@@ -183,10 +181,18 @@ export default function ReviewQueuePage({
         ? ([
             {
               id: 'filedBy',
-              header: en ? 'Filed by' : 'سجّله',
+              header: t('columns.filedBy'),
               cell: ({ row }) =>
-                row.original.filedByName ? (
-                  <span className="text-sm">{row.original.filedByName}</span>
+                row.original.filedByName && row.original.filedById ? (
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0 text-sm"
+                    onClick={() => narrow(row.original.filedById!)}
+                    aria-label={t('narrowTo', { name: row.original.filedByName })}
+                  >
+                    {row.original.filedByName}
+                  </Button>
                 ) : (
                   <CellTag tone="muted">—</CellTag>
                 ),
@@ -195,57 +201,57 @@ export default function ReviewQueuePage({
         : []),
       {
         id: 'review',
-        header: canReview ? (en ? 'Review file' : 'فحص الملف') : en ? 'File' : 'الملف',
+        header: canReview ? t('columns.review') : t('columns.file'),
         meta: { align: 'end', mobile: 'actions' },
         cell: ({ row }) =>
           canReview ? (
             <Link
               href={`${base}/citizens/review/${row.original.id}`}
-              aria-label={en ? `Review ${row.original.fullName}'s file` : `فحص ملف ${row.original.fullName}`}
+              aria-label={t('reviewFileOf', { name: row.original.fullName })}
               className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 gap-1.5 text-xs')}
             >
               <ClipboardCheck className="size-3.5" aria-hidden />
-              {en ? 'Review file' : 'فحص الملف'}
+              {t('reviewFile')}
             </Link>
           ) : (
             // Read-only: the citizen's file, which every staff role may open.
             <Link
               href={`${base}/citizens/${row.original.id}`}
-              aria-label={en ? `Open ${row.original.fullName}'s file` : `فتح ملف ${row.original.fullName}`}
+              aria-label={t('openFileOf', { name: row.original.fullName })}
               className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 gap-1.5 text-xs')}
             >
               <FileText className="size-3.5" aria-hidden />
-              {en ? 'Open file' : 'فتح الملف'}
+              {t('openFile')}
             </Link>
           ),
       },
     ],
-    [en, base, labels, canReview, seesAll],
+    // `narrow` closes over setters that never change identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t, base, labels, canReview, seesAll],
   );
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={FileQuestion}
-        title={en ? 'Requires review' : 'يتطلب مراجعة'}
-        subtitle={
-          en
-            ? `${seesAll ? 'Records every officer filed' : 'Records you filed'} with fields that could not be established, oldest first.${canReview ? ' Review a file to complete it.' : ''}`
-            : `${seesAll ? 'سجلات حفظها الموظفون' : 'سجلات حفظتَها أنت'} بحقول لم يُتثبَّت منها، الأقدم أولاً.${canReview ? ' افحص الملف لاستكماله.' : ''}`
-        }
+        title={t('title')}
+        subtitle={t('subtitle', { scope: seesAll ? 'all' : 'mine', review: canReview ? 'yes' : 'no' })}
         actions={
           <Link href={`${base}/citizens`} className={buttonVariants({ variant: 'outline' })}>
             <Users className="size-4" aria-hidden />
-            {en ? 'Whole register' : 'سجل المواطنين كاملاً'}
+            {t('wholeRegister')}
           </Link>
         }
       />
+
+      {seesAll ? <WorklistOwnerFilter value={owner} onChange={narrow} ownerName={ownerName} /> : null}
 
       <Card className="overflow-hidden">
         <CardHeader className="border-b px-4 py-3.5 sm:px-6">
           <CardTitle className="flex items-center gap-2 text-base font-semibold">
             <FileQuestion className="size-5 text-warning" aria-hidden />
-            {en ? 'Waiting for review' : 'بانتظار المراجعة'}
+            {t('waiting')}
             {query.data ? (
               <span className="text-sm font-normal tabular-nums text-muted-foreground">({total})</span>
             ) : null}

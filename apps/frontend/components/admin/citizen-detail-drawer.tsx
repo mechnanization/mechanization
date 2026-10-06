@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import {
   CheckCircle2,
   ChevronLeft,
@@ -14,27 +15,15 @@ import {
   X,
 } from 'lucide-react';
 import type { RegisteredParcel } from '@/lib/api-client';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, normalizeDigits } from '@mechanization/shared-schemas';
 import { formatLbp, formatLbpCompact } from '@/lib/currency';
+import { formatPhone } from '@/lib/phone';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
-/**
- * Arabic counts, which do not inflect the way English ones do.
- *
- * مواطن واحد / مواطنان / ٢ مواطنين / ٢٠ مواطناً — four forms, chosen by
- * the number rather than by whether it is one. Written once because the drawer
- * counts two different things in the same breath and the branching was
- * identical both times; getting it wrong in one place and right in the other
- * is the mistake this prevents.
- */
-function countAr(n: number, forms: { one: string; two: string; few: string; many: string }): string {
-  if (n === 1) return forms.one;
-  if (n === 2) return forms.two;
-  return n <= 10 ? `${n} ${forms.few}` : `${n} ${forms.many}`;
-}
+const ltr = (chunks: ReactNode) => <span dir="ltr">{chunks}</span>;
 
 export function CitizenDetailDrawer({
   parcel,
@@ -48,7 +37,8 @@ export function CitizenDetailDrawer({
   onClose: () => void;
   locale?: string;
 }) {
-  const isEnglish = locale === 'en';
+  const t = useTranslations('parcelDrawer');
+  const tCommon = useTranslations('common');
   const labels = getLabels(locale);
   const [query, setQuery] = useState('');
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -75,10 +65,16 @@ export function CitizenDetailDrawer({
     const list = parcel?.registrants ?? [];
     const needle = query.trim().toLowerCase();
     if (!needle) return list;
+    // A number is matched on its digits, typed either way («03 123 456», «+961 3…») and as shown.
+    const digits = normalizeDigits(needle).replace(/\D/g, '').replace(/^0/, '');
+    const dialled = (value: string | null | undefined) =>
+      digits.length > 0 && (value ?? '').replace(/\D/g, '').includes(digits);
     return list.filter(
       (registrant) =>
         registrant.fullName.toLowerCase().includes(needle) ||
-        (registrant.phone ?? '').includes(needle),
+        dialled(registrant.phone) ||
+        // Everyone here is already listed; the relative's number only narrows the list.
+        dialled(registrant.contactPhone),
     );
   }, [parcel?.registrants, query]);
 
@@ -89,25 +85,10 @@ export function CitizenDetailDrawer({
     parcel.structureCount ??
     registrants.reduce((sum, r) => sum + (r.structures?.length || 1), 0);
 
-  const citizenText = isEnglish
-    ? `${citizenCount} registered citizen${citizenCount === 1 ? '' : 's'}`
-    : countAr(citizenCount, {
-        one: 'مواطن واحد مسجّل',
-        two: 'مواطنان مسجّلان',
-        few: 'مواطنين مسجّلين',
-        many: 'مواطناً مسجّلاً',
-      });
-
-  const structureText = isEnglish
-    ? `${structureCount} structure${structureCount === 1 ? '' : 's'}`
-    : countAr(structureCount, {
-        one: 'عقار واحد',
-        two: 'عقاران',
-        few: 'عقارات',
-        many: 'عقاراً',
-      });
-
-  const headerSubtitle = `${citizenText} • ${structureText}`;
+  const headerSubtitle = t('subtitle', {
+    citizens: t('citizens', { count: citizenCount }),
+    structures: t('structures', { count: structureCount }),
+  });
 
   // Parcel-level financial status helpers
   const totalBilled = financials?.totalBilled ?? 0;
@@ -117,11 +98,7 @@ export function CitizenDetailDrawer({
 
   return (
     <section
-      aria-label={
-        isEnglish
-          ? `Registrants on Parcel ${parcel.propertyNumber}`
-          : `المسجّلون على العقار ${parcel.propertyNumber}`
-      }
+      aria-label={t('region', { number: parcel.propertyNumber })}
       className={cn(
         'absolute z-30 flex flex-col overflow-hidden bg-card shadow-2xl duration-300 animate-in border-border/80',
         'inset-x-0 bottom-0 max-h-[75dvh] rounded-t-2xl border-t slide-in-from-bottom',
@@ -138,7 +115,7 @@ export function CitizenDetailDrawer({
         <div className="flex items-center gap-3 min-w-0">
           <span
             aria-hidden
-            className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary shadow-2xs"
+            className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"
           >
             <MapPin className="size-5" />
           </span>
@@ -150,8 +127,7 @@ export function CitizenDetailDrawer({
                 tabIndex={-1}
                 className="truncate text-base font-bold leading-tight outline-none"
               >
-                {isEnglish ? 'Parcel ' : 'العقار '}
-                <span dir="ltr">#{parcel.propertyNumber}</span>
+                {t.rich('title', { number: parcel.propertyNumber, ltr })}
               </h2>
             </div>
             <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -165,7 +141,7 @@ export function CitizenDetailDrawer({
           variant="ghost"
           size="icon"
           onClick={onClose}
-          aria-label={isEnglish ? 'Close' : 'إغلاق'}
+          aria-label={tCommon('close')}
           className="-me-1 size-8 shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
         >
           <X className="size-4" aria-hidden />
@@ -175,47 +151,43 @@ export function CitizenDetailDrawer({
       {/* Scrollable Content Container */}
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 space-y-3">
         {/* Top Financial Summary Card */}
-        <div className="rounded-xl border border-border/80 bg-gradient-to-br from-card to-muted/30 p-3.5 shadow-xs space-y-2.5">
+        <div className="rounded-xl border border-border/80 bg-gradient-to-br from-card to-muted/30 p-3.5 shadow-sm space-y-2.5">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-xs font-bold text-foreground">
               <Coins className="size-4 text-primary" />
-              {isEnglish ? 'Parcel Fees & Bills' : 'إجمالي الرسوم والمطالبات'}
+              {t('fees')}
             </span>
 
             {status === 'PAID' ? (
               <Badge variant="soft-success" className="gap-1 px-2 py-0.5 text-xs font-semibold">
                 <CheckCircle2 className="size-3" />
-                {isEnglish ? 'Fully Paid' : 'مسدد بالكامل'}
+                {t('status.PAID')}
               </Badge>
             ) : status === 'PARTIALLY_PAID' ? (
               <Badge variant="soft-warning" className="px-2 py-0.5 text-xs font-semibold">
-                {isEnglish ? 'Partially Paid' : 'مسدد جزئياً'}
+                {t('status.PARTIALLY_PAID')}
               </Badge>
             ) : status === 'UNPAID' ? (
               <Badge variant="soft-destructive" className="px-2 py-0.5 text-xs font-semibold">
-                {isEnglish ? 'Unpaid' : 'غير مسدد'}
+                {t('status.UNPAID')}
               </Badge>
             ) : (
               <Badge variant="soft-muted" className="px-2 py-0.5 text-xs">
-                {isEnglish ? 'No Bills' : 'لا توجد رسوم'}
+                {t('status.NO_BILLS')}
               </Badge>
             )}
           </div>
 
           <div className="grid grid-cols-3 gap-2 pt-1 border-t border-border/50 text-center">
             <div className="rounded-lg bg-muted/40 p-2">
-              <p className="text-xs text-muted-foreground">
-                {isEnglish ? 'Total' : 'الإجمالي'}
-              </p>
+              <p className="text-xs text-muted-foreground">{t('total')}</p>
               <p className="mt-0.5 text-xs font-bold text-foreground" title={formatLbp(totalBilled, locale)}>
                 {totalBilled > 0 ? formatLbpCompact(totalBilled, locale) : '—'}
               </p>
             </div>
 
             <div className="rounded-lg bg-success/10 p-2">
-              <p className="text-xs text-success">
-                {isEnglish ? 'Paid' : 'المسدد'}
-              </p>
+              <p className="text-xs text-success">{t('paid')}</p>
               <p className="mt-0.5 text-xs font-bold text-success" title={formatLbp(totalPaid, locale)}>
                 {totalPaid > 0 ? formatLbpCompact(totalPaid, locale) : '0'}
               </p>
@@ -225,9 +197,7 @@ export function CitizenDetailDrawer({
               'rounded-lg p-2',
               totalDue > 0 ? 'bg-destructive/10 text-destructive' : 'bg-muted/40 text-muted-foreground'
             )}>
-              <p className="text-xs">
-                {isEnglish ? 'Remaining' : 'المتبقي'}
-              </p>
+              <p className="text-xs">{t('remaining')}</p>
               <p className="mt-0.5 text-xs font-bold" title={formatLbp(totalDue, locale)}>
                 {totalDue > 0 ? formatLbpCompact(totalDue, locale) : (totalBilled > 0 ? '0' : '—')}
               </p>
@@ -245,30 +215,28 @@ export function CitizenDetailDrawer({
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder={isEnglish ? 'Search by name or phone…' : 'ابحث بالاسم أو الهاتف…'}
+            placeholder={t('search')}
             className="h-8.5 ps-8 text-xs bg-muted/40 rounded-lg border-border/80"
           />
         </div>
 
         {/* Occupants Section Title */}
         <div className="flex items-center justify-between px-1 pt-0.5">
-          <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-            {isEnglish ? 'Registered Citizens' : 'المسجلون على هذا العقار'} ({filtered.length})
+          <span className="text-xs font-bold text-muted-foreground">
+            {t('registered', { count: filtered.length })}
           </span>
         </div>
 
         {/* Occupants List */}
         {filtered.length === 0 ? (
-          <p className="py-6 text-center text-xs text-muted-foreground">
-            {isEnglish ? 'No matching occupants found.' : 'لا نتائج مطابقة للبحث.'}
-          </p>
+          <p className="py-6 text-center text-xs text-muted-foreground">{t('noMatch')}</p>
         ) : (
-          <div className="divide-y divide-border/70 rounded-xl border border-border/80 bg-card overflow-hidden shadow-xs">
+          <div className="divide-y divide-border/70 rounded-xl border border-border/80 bg-card overflow-hidden shadow-sm">
             {filtered.map((registrant, idx) => (
               <Link
                 key={registrant.citizenId || registrant.registrationId || idx}
                 href={citizenHref(registrant.citizenId)}
-                title={isEnglish ? `View profile of ${registrant.fullName}` : `عرض ملف ${registrant.fullName}`}
+                title={t('openProfile', { name: registrant.fullName })}
                 className="group block px-3 py-2.5 transition-colors hover:bg-accent/60 cursor-pointer text-start"
               >
                 <div className="flex items-center justify-between gap-2">
@@ -284,8 +252,11 @@ export function CitizenDetailDrawer({
                     {registrant.phone ? (
                       <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0 ms-auto font-mono" dir="ltr">
                         <Phone className="size-3 shrink-0 text-muted-foreground/70" aria-hidden />
-                        <span>{registrant.phone}</span>
+                        <span>{formatPhone(registrant.phone)}</span>
                       </span>
+                    ) : registrant.hasNoPhone ? (
+                      // «لا يملك رقم هاتف» is an answer, not a gap.
+                      <span className="shrink-0 ms-auto text-xs text-muted-foreground">{t('noPhone')}</span>
                     ) : null}
                   </div>
 
@@ -294,6 +265,13 @@ export function CitizenDetailDrawer({
                     className="size-3.5 shrink-0 text-muted-foreground/60 transition-transform group-hover:-translate-x-0.5 rtl:rotate-180 rtl:group-hover:translate-x-0.5 group-hover:text-foreground"
                   />
                 </div>
+
+                {/* A relative's number, said as a relative's — never as the citizen's own. */}
+                {!registrant.phone && registrant.contactPhone ? (
+                  <p className="mt-1 ps-[2.625rem] text-xs text-muted-foreground">
+                    {t('contactPhone')} <bdi dir="ltr">{formatPhone(registrant.contactPhone)}</bdi>
+                  </p>
+                ) : null}
 
                 {/* Structures registered for this citizen on this parcel */}
                 {registrant.structures && registrant.structures.length > 0 ? (
@@ -305,7 +283,9 @@ export function CitizenDetailDrawer({
                       const occupancyLabel =
                         labels.occupancyType[s.occupancyType as keyof typeof labels.occupancyType] ??
                         s.occupancyType;
-                      const displayName = s.buildingName ? `${typeLabel} (${s.buildingName})` : typeLabel;
+                      const displayName = s.buildingName
+                        ? t('structureInBuilding', { type: typeLabel, building: s.buildingName })
+                        : typeLabel;
 
                       return (
                         <span
@@ -314,11 +294,12 @@ export function CitizenDetailDrawer({
                         >
                           <span>{displayName}</span>
                           {s.unitCount > 0 ? (
-                            <span className="text-muted-foreground font-mono">
-                              • {s.unitCount} {isEnglish ? 'units' : 'وحدات'}
+                            // Words around the count now («وحدتان»), so not monospace: it pulls Arabic letters apart.
+                            <span className="text-muted-foreground tabular-nums">
+                              • {t('units', { count: s.unitCount })}
                             </span>
                           ) : null}
-                          <span className="text-muted-foreground/70 text-[9px]">
+                          <span className="text-muted-foreground/70 text-xs">
                             ({occupancyLabel})
                           </span>
                         </span>

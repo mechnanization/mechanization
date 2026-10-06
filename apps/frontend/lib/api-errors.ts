@@ -19,15 +19,16 @@ import en from '../messages/en.json';
  * `error.message` gets the translated text without changing.
  */
 
-type Locale = 'ar' | 'en';
+export type Locale = 'ar' | 'en';
 
 /**
  * `ar-u-nu-latn`: Arabic plural rules with Latin digits, which is how every
  * figure on the portal is written (`formatLbp` groups with `en-US`). Plain
  * `ar` would print a payment's amount in Arabic-Indic digits in an error and in
- * Latin digits everywhere else on the same screen.
+ * Latin digits everywhere else on the same screen. Every plain-module
+ * translator uses it (`fee-assessment.ts` too).
  */
-const FORMAT_LOCALE: Record<Locale, string> = { ar: 'ar-u-nu-latn', en: 'en' };
+export const FORMAT_LOCALE: Record<Locale, string> = { ar: 'ar-u-nu-latn', en: 'en' };
 
 /** Returned by the translator when a message cannot be produced; never a real message. */
 const NO_MESSAGE = '\u0000';

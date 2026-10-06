@@ -250,3 +250,71 @@ describe('the correction that frees the son’s number', () => {
     expect(columns.contactPhone).toBe(SON);
   });
 });
+
+/*
+  The requirement used to live only in the contact schema's refinement, which
+  zod runs once the rest of the section is valid — so a flag on any other
+  contact field, or «حفظ سريع», let a household file save with no phone, no flag
+  and no answer. These pin that it no longer depends on the rest of the section.
+*/
+describe('the phone requirement stands whatever else in the section is missing', () => {
+  it('still refuses a blank phone when another contact field is flagged', () => {
+    const result = adminCreateCitizenSubmissionSchema.safeParse({
+      ...household({ phone: '', maritalStatus: undefined }),
+      flags: [{ path: 'contact.maritalStatus', reason: 'لم يُسأل', kind: 'UNESTABLISHED' }],
+    });
+    expect(messages(result)).toEqual(['contact.phone: رقم الهاتف مطلوب']);
+  });
+
+  it('reports the phone beside the other gaps, not only after they are fixed', () => {
+    expect(messages(create({ phone: '', maritalStatus: undefined }))).toEqual(
+      expect.arrayContaining(['contact.phone: رقم الهاتف مطلوب']),
+    );
+  });
+
+  it('lets «حفظ سريع» flag a blank phone like any other blank field', () => {
+    const result = adminCreateCitizenSubmissionSchema.safeParse({
+      ...household({ phone: '' }),
+      blanketFlagReason: 'المواطن لم يحضر أوراقه',
+    });
+    expect(messages(result)).toEqual([]);
+    const flags = (result.data as { flags: Array<{ path: string }> }).flags.map((flag) => flag.path);
+    expect(flags).toContain('contact.phone');
+  });
+
+  it('still asks for a WhatsApp number of its own when another field is flagged', () => {
+    const result = adminCreateCitizenSubmissionSchema.safeParse({
+      ...household({ phone: '70123456', whatsappSameAsPhone: false, maritalStatus: undefined }),
+      flags: [{ path: 'contact.maritalStatus', reason: 'لم يُسأل', kind: 'UNESTABLISHED' }],
+    });
+    expect(messages(result)).toEqual(['contact.whatsapp: رقم الواتساب مطلوب']);
+  });
+
+  it('accepts «لا يملك رقم هاتف» with another field flagged', () => {
+    const result = adminCreateCitizenSubmissionSchema.safeParse({
+      ...household({ hasNoPhone: true, phone: '', maritalStatus: undefined }),
+      flags: [{ path: 'contact.maritalStatus', reason: 'لم يُسأل', kind: 'UNESTABLISHED' }],
+    });
+    expect(messages(result)).toEqual([]);
+  });
+});
+
+describe('«لا يملك رقم هاتف» is a complete answer', () => {
+  it('drops a «غير مؤكَّد» flag on the phone or WhatsApp sent beside it', () => {
+    const result = adminCreateCitizenSubmissionSchema.safeParse({
+      ...household({ hasNoPhone: true }),
+      flags: [
+        { path: 'contact.phone', reason: 'مسودة قديمة', kind: 'UNESTABLISHED' },
+        { path: 'contact.whatsapp', reason: 'مسودة قديمة', kind: 'UNESTABLISHED' },
+      ],
+    });
+    expect(messages(result)).toEqual([]);
+    expect((result.data as { flags: unknown[] }).flags).toEqual([]);
+  });
+
+  it('refuses «رقم للتواصل» that is the citizen’s own phone, however it is written', () => {
+    expect(messages(create({ phone: '70 123456', contactPhone: '+96170123456' }))).toEqual([
+      'contact.contactPhone: رقم للتواصل هو رقم المواطن نفسه — اتركه فارغاً أو أدخل رقم أحد أقاربه',
+    ]);
+  });
+});

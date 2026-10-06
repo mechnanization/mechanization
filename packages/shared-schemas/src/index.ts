@@ -1,4 +1,7 @@
 export * from './enums';
+export * from './role-sets';
+export * from './damage-rule';
+export * from './staff-presence';
 export * from './labels';
 export * from './primitives';
 export * from './numbering';

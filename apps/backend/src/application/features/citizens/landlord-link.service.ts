@@ -116,12 +116,22 @@ export class LandlordLinkService {
         isActive: true,
         OR: [{ phone: normalised }, { whatsapp: normalised }, { contactPhone: normalised }],
       },
-      select: CANDIDATE_SELECT,
+      select: { ...CANDIDATE_SELECT, contactPhone: true },
       orderBy: { createdAt: 'asc' },
       take: 10,
     });
 
-    return matches.map(toCandidate);
+    /*
+      Said per candidate, as the queue says it: a number that is the person's
+      own (`PHONE`) is a strong match the form may preselect; one recorded as
+      a relative's «رقم للتواصل» (`CONTACT`) is not theirs, and the form must
+      say so and make the officer choose.
+    */
+    return matches.map((citizen) => ({
+      ...toCandidate(citizen),
+      matchedBy:
+        citizen.phone === normalised || citizen.whatsapp === normalised ? ('PHONE' as const) : ('CONTACT' as const),
+    }));
   }
 
   /**
@@ -172,13 +182,19 @@ export class LandlordLinkService {
    * saved. Read-only; nothing here links.
    */
   async claimsNaming(citizenId: string): Promise<LandlordProposal[]> {
-    const citizen = await this.db.user.findUnique({
-      where: { id: citizenId },
-      select: { kind: true, phone: true, whatsapp: true },
+    const citizen = await this.db.user.findFirst({
+      where: { id: citizenId, kind: 'CITIZEN' },
+      select: { kind: true, phone: true, whatsapp: true, contactPhone: true },
     });
-    if (!citizen || citizen.kind !== 'CITIZEN') return [];
+    if (!citizen) return [];
 
-    const numbers = [citizen.phone, citizen.whatsapp].filter(
+    /*
+      «رقم للتواصل» too: an elderly owner registering after their tenants is
+      named on those tenants' cards by the son's number, the only one the
+      tenant knew. `matchPairs` offers them by it as `CONTACT` — never
+      preselected.
+    */
+    const numbers = [citizen.phone, citizen.whatsapp, citizen.contactPhone].filter(
       (value): value is string => Boolean(value),
     );
 
@@ -289,6 +305,12 @@ export class LandlordLinkService {
       says «مطابقة بالاسم فقط». Name keys are computed once per citizen and
       equi-joined, so Postgres can hash the join as it does the phone one.
 
+      **By a relative's number** (`CONTACT`, 0069): the card's number is one
+      the register has been told is this person's «رقم للتواصل» — an elderly
+      owner reached on a son's phone, whose tenant knew only that number.
+      Offered beside whoever owns the number itself, never preselected, and
+      labelled as a relative's on the card, because it is not the person's own.
+
       **By the property** is for the occupant who does not know the owner's
       number — a free occupant living in a relative's flat, a tenant who pays a
       middleman — and so names nobody the first two can find. Whoever is on the
@@ -386,6 +408,12 @@ export class LandlordLinkService {
         FROM open_claims c
         JOIN ${S}users u ON u.whatsapp = c.phone AND u.kind = 'CITIZEN' AND u."isActive"
         UNION
+        -- A relative's number the register has been told is this person's «رقم للتواصل» (0069).
+        SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
+               u.id AS citizen_id, u."createdAt" AS citizen_created_at, 'CONTACT' AS how, NULL::text
+        FROM open_claims c
+        JOIN ${S}users u ON u."contactPhone" = c.phone AND u.kind = 'CITIZEN' AND u."isActive"
+        UNION
         SELECT c.id, c.created_at, c.dismissed_at, c.dismissed_ids, c.filer_id,
                n.citizen_id, n.citizen_created_at, 'NAME' AS how, NULL::text
         FROM open_claims c
@@ -473,6 +501,7 @@ export class LandlordLinkService {
       SELECT id AS "entryId",
              array_agg(DISTINCT citizen_id) AS "citizenIds",
              coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE how = 'PHONE'), '{}') AS "phoneCitizenIds",
+             coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE how = 'CONTACT'), '{}') AS "contactCitizenIds",
              coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE how = 'NAME'), '{}') AS "nameCitizenIds",
              coalesce(array_agg(DISTINCT citizen_id) FILTER (WHERE how = 'PROPERTY'), '{}') AS "propertyCitizenIds",
              count(*) OVER()::int AS total
@@ -522,7 +551,9 @@ export class LandlordLinkService {
             */
             matchedBy: pair.phoneCitizenIds.includes(citizen.id)
               ? ('PHONE' as const)
-              : pair.nameCitizenIds.includes(citizen.id)
+              : pair.contactCitizenIds.includes(citizen.id)
+                ? ('CONTACT' as const)
+                : pair.nameCitizenIds.includes(citizen.id)
                 ? ('NAME' as const)
                 : ('PROPERTY' as const),
             outcome: plan?.block ? null : (plan?.outcome ?? null),
@@ -963,6 +994,9 @@ export class LandlordLinkService {
       they were shown and nothing wider. Still not invention: the card has to
       say this person, by number or by name.
     */
+    /** Matched only on a relative's number — the weaker kind, said on the audit row. */
+    const matchedByContact =
+      matchedByPhone && claimed !== citizen.phone && claimed !== citizen.whatsapp;
     const matchedByName = !matchedByPhone && landlordNameMatches(entry.landlordName, citizen);
     /*
       Or, on a card with no number, they are on the register as this
@@ -1062,12 +1096,14 @@ export class LandlordLinkService {
         tenantId: entry.registration?.citizen.id ?? null,
         entryId: entry.id,
         footprint: next,
-        // A name-only link is the weaker kind, and the audit row says which it was.
+        // A link on anything but the person's own number is the weaker kind, and the audit row says which it was.
         ...(matchedByName
           ? { detail: { matchedBy: 'NAME' } }
           : matchedByProperty
             ? { detail: { matchedBy: 'PROPERTY' } }
-            : {}),
+            : matchedByContact
+              ? { detail: { matchedBy: 'CONTACT' } }
+              : {}),
         actor: input.actor,
       });
       await this.recordAnnouncement(changes);
@@ -3064,6 +3100,8 @@ interface MatchPair {
   citizenIds: string[];
   /** The subset of `citizenIds` whose number the card names. */
   phoneCitizenIds: string[];
+  /** Whose «رقم للتواصل» — a relative's number — the card names, and not their own. */
+  contactCitizenIds: string[];
   /** Whose name the card names (and not their number). The rest were found by the property. */
   nameCitizenIds: string[];
   /** Who was found by the property — what `confirm` checks a «PROPERTY» link against. */
@@ -3421,7 +3459,18 @@ export interface LandlordCandidate {
   referenceNumber: string | null;
   residence: string;
   registeredAt: string | null;
+  /**
+   * How the form's lookup found them (`candidatesFor`): the number is their
+   * own (`PHONE`), or their recorded «رقم للتواصل» (`CONTACT`).
+   */
+  matchedBy?: LandlordMatch;
 }
+
+/**
+ * How a candidate was found. Only `PHONE` — the number is the person's own —
+ * is ever preselected; every other kind is offered for a person to choose.
+ */
+export type LandlordMatch = 'PHONE' | 'CONTACT' | 'NAME' | 'PROPERTY';
 
 /** One unresolved claim, with whoever its number resolves to. */
 export interface LandlordProposal {
@@ -3453,11 +3502,12 @@ export interface LandlordProposal {
     LandlordCandidate & {
       /**
        * How this person was found: the card's number is theirs (`PHONE`), or
-       * only the typed name is (`NAME`), or — on a card with no number — they
-       * are the property's registered owner (`PROPERTY`). Only `PHONE` is
-       * ever preselected.
+       * is their recorded «رقم للتواصل» — a relative's (`CONTACT`), or only
+       * the typed name is (`NAME`), or — on a card with no number — they are
+       * the property's registered owner (`PROPERTY`). Only `PHONE` is ever
+       * preselected.
        */
-      matchedBy: 'PHONE' | 'NAME' | 'PROPERTY';
+      matchedBy: LandlordMatch;
       outcome: LinkOutcome | null;
       blocked: LinkBlock | null;
     }

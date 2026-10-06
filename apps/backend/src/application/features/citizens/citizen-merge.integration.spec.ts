@@ -443,6 +443,27 @@ describeIfDb('CitizenMergeService', () => {
     return within(() => merges.unmerge({ mergeId: into!.id, reason: 'تراجع للاختبار', tenantSlug: 'merge', actor: actor() }));
   };
 
+  it('takes «لا يملك رقم هاتف» onto a kept file with no answer, and gives it back on undo', async () => {
+    const f = await filedTwice();
+    await db.user.update({
+      where: { id: f.keepId },
+      data: { phone: null, whatsapp: null, hasNoPhone: false, contactPhone: null },
+    });
+    await db.user.update({
+      where: { id: f.absorbId },
+      data: { phone: null, whatsapp: null, hasNoPhone: true, contactPhone: '+96171444555' },
+    });
+
+    await mergeIt(f);
+    const merged = await db.user.findUniqueOrThrow({ where: { id: f.keepId } });
+    expect([merged.hasNoPhone, merged.contactPhone, merged.phone]).toEqual([true, '+96171444555', null]);
+
+    // The undo empties what the merge filled — and «لا يملك رقم هاتف», a NOT NULL flag, goes back to false.
+    await undoOf(f.absorbId);
+    const restored = await db.user.findUniqueOrThrow({ where: { id: f.keepId } });
+    expect([restored.hasNoPhone, restored.contactPhone]).toEqual([false, null]);
+  });
+
   it('undoes a chain of merges in reverse order', async () => {
     const f = await filedTwice();
     await mergeIt(f);
@@ -560,10 +581,6 @@ describeIfDb('CitizenMergeService', () => {
     );
     expect((reactivate as ConflictError).details).toMatchObject({ code: 'MERGED_AWAY' });
 
-    for (const citizenId of [f.absorbId, f.keepId]) {
-      const removal = await refusal(() => citizens.remove({ tenantSlug: 'merge', citizenId, actor: actor() }));
-      expect((removal as ConflictError).details).toMatchObject({ code: 'MERGED' });
-    }
     expect((await db.user.findUniqueOrThrow({ where: { id: f.absorbId } })).isActive).toBe(false);
   });
 

@@ -3,6 +3,7 @@
 import { useCallback, useId, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
+import { useTranslations } from 'next-intl';
 import {
   ArrowUpLeft,
   Building2,
@@ -76,7 +77,7 @@ export function LandlordProposalCard({
   onResolved,
   locale = 'ar',
   variant = 'card',
-  canAnswer = true,
+  canAnswer,
 }: {
   tenant: string;
   token: string;
@@ -88,9 +89,10 @@ export function LandlordProposalCard({
    * Whether the signed-in role may answer — `LANDLORD_LINK_ANSWER_ROLES`.
    * Off, the comparison stays (it is what a reviewer came to read) and the two
    * answers give way to a line naming who gives them, rather than buttons the
-   * server can only refuse. The server stays the enforcement.
+   * server can only refuse. The server stays the enforcement. Required, so a
+   * new caller decides rather than inheriting a default that fails open.
    */
-  canAnswer?: boolean;
+  canAnswer: boolean;
   /**
    * `card` — one claim in a list, saying whose and where in its own header.
    * `panel` — the decision on «فحص الرابط», where the page already says who
@@ -670,6 +672,7 @@ function CandidateRow({
   sayFoundByProperty?: boolean;
 }) {
   const en = locale === 'en';
+  const tLink = useTranslations('landlordLink');
   const inputId = useId();
 
   const details = [
@@ -719,16 +722,22 @@ function CandidateRow({
             {candidate.matchedBy === 'PHONE' ? (
               <Badge variant="soft-success" className="gap-1">
                 <Phone className="size-3" aria-hidden />
-                {en ? 'Number matches' : 'الرقم مطابق'}
+                {tLink('provenance.PHONE')}
+              </Badge>
+            ) : candidate.matchedBy === 'CONTACT' ? (
+              /*
+                The card's number is this citizen's «رقم للتواصل» — a relative's,
+                recorded because they have no phone. Never preselected, and said
+                so on the row: the relative may be the owner instead.
+              */
+              <Badge variant="soft-warning" className="gap-1">
+                <Phone className="size-3" aria-hidden />
+                {tLink('provenance.CONTACT')}
               </Badge>
             ) : candidate.matchedBy === 'NAME' ? (
-              <Badge variant="soft-warning">
-                {en ? 'Matched by name only — check the number' : 'مطابقة بالاسم فقط — تحقَّق من الرقم'}
-              </Badge>
+              <Badge variant="soft-warning">{tLink('provenance.NAME')}</Badge>
             ) : candidate.matchedBy === 'PROPERTY' && sayFoundByProperty ? (
-              <Badge variant="soft-warning">
-                {en ? 'Registered owner of this property' : 'مالك مسجَّل لهذا العقار'}
-              </Badge>
+              <Badge variant="soft-warning">{tLink('provenance.PROPERTY')}</Badge>
             ) : null}
             {candidate.residence === 'NON_RESIDENT_OWNER' ? (
               <Badge variant="soft-info">{en ? 'Lives elsewhere' : 'غير مقيم'}</Badge>
