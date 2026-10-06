@@ -259,6 +259,12 @@ model User {
   createdRegistrations  Registration[]       @relation("RegistrationCreatedBy")
   inspectorPayouts      InspectorPayout[]    @relation("InspectorPayouts")
   recordedInspectorPayouts InspectorPayout[] @relation("RecordedInspectorPayouts")
+  /// A collector's custody accounts, one per currency (0073). Staff only.
+  treasuryAccountsOwned    TreasuryAccount[]    @relation("TreasuryAccountOwner")
+  treasuryEntriesPosted    TreasuryEntry[]      @relation("TreasuryEntryActor")
+  /// Expenses this staff member recorded, and any they cancelled (0074).
+  expensesRecorded         ExpenseVoucher[]     @relation("ExpenseRecordedBy")
+  expensesVoided           ExpenseVoucher[]     @relation("ExpenseVoidedBy")
   createdCases          Case[]               @relation("CaseCreatedBy")
   resolvedCases         Case[]               @relation("CaseResolvedCitizen")
   unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
@@ -1850,6 +1856,12 @@ model SystemSettings {
   /// someone else's document, not a shape this system gets to assert.
   councilDecisionRef String?
 
+  /// When the treasury (الخزينة) went live — stamped once, in the transaction that
+  /// posts the opening balances (0073). NULL until then, and while it is NULL
+  /// nothing credits a wallet. A payment taken before this moment never does:
+  /// the cash it brought in is already in an opening balance.
+  treasuryGoLiveAt DateTime? @db.Timestamptz(3)
+
   updatedAt   DateTime @updatedAt
   updatedById String?  @db.Uuid
 
@@ -2188,6 +2200,186 @@ model InspectorPayout {
 
   @@index([inspectorId, paidAt])
   @@map("inspector_payouts")
+}
+
+// ─────────────────────────  Treasury (migration 0073)  ─────────────────────────
+// Design: docs/finance.md.
+
+enum TreasuryAccountType {
+  CASH_SAFE
+  WHISH_ACCOUNT
+  BANK_ACCOUNT
+  /// The cash a collector holds until he hands it in. Created on his first
+  /// collection, one per currency; never a routing target for other payments.
+  COLLECTOR_CUSTODY
+  PETTY_CASH
+}
+
+enum TreasuryEntrySource {
+  OPENING_BALANCE
+  CITIZEN_PAYMENT
+  INCOME_VOUCHER
+  EXPENSE_VOUCHER
+  TRANSFER
+  ADJUSTMENT
+}
+
+/// A wallet: one place the municipality's money is held, in one currency.
+/// Its balance is the SUM of its entries — there is no balance column.
+model TreasuryAccount {
+  id   String              @id @default(uuid()) @db.Uuid
+  name String
+  type TreasuryAccountType
+  /// ISO 4217, upper case.
+  currency String
+  /// The account a payment of this type and currency is routed to. At most one
+  /// per (type, currency) — a partial unique index in 0073 that Prisma cannot
+  /// express. Never a custody account.
+  isPrimary Boolean @default(false)
+  active    Boolean @default(true)
+  /// The collector, for COLLECTOR_CUSTODY and only then (CHECK in 0073).
+  ownerId String? @db.Uuid
+  owner   User?   @relation("TreasuryAccountOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  entries TreasuryEntry[]
+  expenses ExpenseVoucher[]
+
+  /// The target of the entries' (accountId, currency) foreign key.
+  @@unique([id, currency], map: "treasury_accounts_id_currency_key")
+  @@index([ownerId])
+  @@map("treasury_accounts")
+}
+
+/// One signed movement on one account. Append-only (database trigger): a
+/// correction is an opposing entry that points back through `reversalOfId`.
+model TreasuryEntry {
+  id        String          @id @default(uuid()) @db.Uuid
+  accountId String          @db.Uuid
+  /// Always the account's own currency: the foreign key is the pair.
+  currency  String
+  account   TreasuryAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "treasury_entries_account_currency_fkey")
+
+  /// Positive in, negative out. Never zero (CHECK).
+  amount Decimal @db.Decimal(14, 2)
+  /// The municipality's rate (base currency per one unit of the secondary) when
+  /// this was posted, so a report in ليرة values an old dollar entry at its own
+  /// day's rate. NULL when none was set.
+  exchangeRateAtPosting Decimal? @db.Decimal(18, 6)
+
+  source   TreasuryEntrySource
+  /// The row this came from — a `payment_transactions` id for CITIZEN_PAYMENT.
+  /// No foreign key: the sources live in different tables.
+  sourceId String?             @db.Uuid
+
+  reversalOfId String?        @unique @db.Uuid
+  reversalOf   TreasuryEntry? @relation("TreasuryEntryReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy   TreasuryEntry? @relation("TreasuryEntryReversal")
+
+  /// Null for the system (a Whish callback).
+  actorId String? @db.Uuid
+  actor   User?   @relation("TreasuryEntryActor", fields: [actorId], references: [id], onDelete: Restrict)
+  note    String?
+
+  /// When the money moved, which is not always when the row was written.
+  occurredAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([accountId, occurredAt])
+  @@index([source, sourceId])
+  @@index([occurredAt])
+  @@index([actorId])
+  @@map("treasury_entries")
+}
+
+// ─────────────────────────  Expenses (migration 0074)  ─────────────────────────
+// Design: docs/finance.md §5.
+
+/// What the municipality spends on. Rows rather than an enum: a municipality
+/// adds its own, and an enum value cannot be added and used in one migration.
+model ExpenseCategory {
+  id String @id @default(uuid()) @db.Uuid
+  /// The stable handle for the categories code must find by name — the
+  /// inspector-commission one, the transfer-fee one. NULL for a municipality's own.
+  key         String?
+  name        String
+  description String?
+  /// باب وبند الموازنة — the chapter and article this category is charged to in
+  /// the municipality's own budget. NULL on every seeded row: the codes come
+  /// from the municipality's adopted budget and this system does not invent
+  /// them. Both set or both NULL (CHECK in 0074).
+  chapterCode String?
+  itemCode    String?
+  /// Deactivated, never deleted: vouchers point here for ever.
+  active    Boolean  @default(true)
+  sortOrder Int      @default(100)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  vouchers ExpenseVoucher[]
+
+  @@map("expense_categories")
+}
+
+/// One «أمر صرف»: money that left a wallet, and why.
+///
+/// Recording is paying — there is no approval step (docs/finance.md §5.1) — so
+/// a voucher always has its `TreasuryEntry`, written in the same transaction.
+/// A mistake is voided, never edited: this row takes a cancellation stamp while
+/// the ledger entry it wrote is opposed by a new one.
+model ExpenseVoucher {
+  id String @id @default(uuid()) @db.Uuid
+  /// `PV-000001`, from `expense_voucher_seq`. Printed on the voucher.
+  voucherNumber String @unique
+
+  categoryId String          @db.Uuid
+  category   ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  /// The wallet it left. Paired with the currency, so the foreign key itself
+  /// refuses a ليرة voucher drawn on a dollar safe.
+  accountId String          @db.Uuid
+  currency  String
+  account   TreasuryAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "expense_vouchers_account_currency_fkey")
+
+  /// Positive: what was paid. The ledger entry it writes is the negative one.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// Who was paid. Free text, and it may name a citizen — personal data, kept
+  /// out of logs, Sentry and audit rows.
+  payee       String
+  description String
+
+  /// The day the money left, which is not always the day the row was written.
+  occurredAt DateTime @default(now()) @db.Timestamptz(3)
+  /// Why it is dated before today. Required by the server for any back-dating.
+  adjustmentReason String?
+
+  invoiceNumber      String?
+  /// «الفاتورة الورقية محفوظة في الملف». The scan itself is step 3b.
+  hasPhysicalReceipt Boolean @default(false)
+
+  recordedById String? @db.Uuid
+  recordedBy   User?   @relation("ExpenseRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  /// One id per press of «سجّل النفقة», so a retry finds the first voucher
+  /// instead of paying twice.
+  clientRequestId String? @unique @db.Uuid
+
+  /// The cancellation stamp. All three move together (CHECK in 0074); a voucher
+  /// with `voidedAt` set has an opposing ledger entry against the same wallet.
+  voidedAt   DateTime? @db.Timestamptz(3)
+  voidedById String?   @db.Uuid
+  voidedBy   User?     @relation("ExpenseVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([categoryId, occurredAt(sort: Desc)])
+  @@index([accountId, occurredAt(sort: Desc)])
+  @@index([recordedById])
+  @@map("expense_vouchers")
 }
 
 // ─────────────────────────  Quality review (migration 0049)  ─────────────────────────

@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `chore/migration-0073-0074` (on `develop@4512abf`), 2026-10-06.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -47,10 +47,12 @@ every municipality ([security.md](security.md)).
 | Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions`, `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` | `FeesService`, `PaymentLedgerService`, `CorrectionBillsService`, `StaffService` (payouts) |
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
+| Expenses (0074) | `expense_categories`, `expense_vouchers` | `ExpensesService` |
+| Treasury (0073) | `treasury_accounts`, `treasury_entries`, and `system_settings.treasuryGoLiveAt` | `TreasuryService` (activation, reads), `TreasuryLedgerService` (entries; called from `PaymentLedgerService` inside its transaction) |
 | Ledger | `_tenant_migrations` (no Prisma model) | `migrateTenantSchema` |
 
 Each schema also carries plpgsql functions created by migrations:
-`reject_audit_mutation`, `reject_ledger_mutation`, `search_normalize`,
+`reject_audit_mutation`, `reject_ledger_mutation`, `reject_treasury_mutation`, `search_normalize`,
 `search_compact`, `sync_building_unit_counts`.
 
 ### `users` holds staff AND citizens
@@ -133,7 +135,12 @@ chain, so it reports an officer who worked all morning as last seen at eight.
   `payment_transactions_no_delete` call `reject_ledger_mutation()`
   (`0017_payment_ledger`). Deleting a `citizen_payments` row cascades into it
   and raises.
-- Neither trigger covers `TRUNCATE`. Using `TRUNCATE`, or
+- `treasury_entries`: `treasury_entries_no_update` and `treasury_entries_no_delete` call
+  `reject_treasury_mutation()` (`0073`). A wallet balance is the SUM of its entries; there is no
+  balance column. Its foreign keys to `users` and `treasury_accounts` are RESTRICT, so erasing a staff
+  member or a wallet that has moved money fails instead of cascading into the trigger. An entry's
+  currency equals its account's because the foreign key is the pair `(accountId, currency)`.
+- No trigger covers `TRUNCATE`. Using `TRUNCATE`, or
   `session_replication_role`, to get past them is circumventing a control. If a
   trigger stops you, stop and report it
   ([CLAUDE.md](../CLAUDE.md#how-to-work-here)).
@@ -424,18 +431,19 @@ reads staging's history from `.env.staging` and nothing else, and
 
 ### Numbering
 
-- The latest tenant migration on `develop` is `0070_staff_last_seen_at`;
-  `0071_damage_habitable` and `0072_users_no_phone_rules` are on
-  `fix/pr88-review`, waiting for their own PR. `main` stops at `0066` (and
-  `0059`), so `0067`–`0070`, already on `develop`, have not reached
-  production either: all six go to `main` in a migrations-only PR, staging
-  first, before the release that carries the code reading them (root rule 5;
-  the PR #61 and #86 pattern).
+- The latest tenant migrations are `0073_treasury_ledger` and `0074_expense_vouchers`, added by
+  this branch. `develop` and `main` both end at `0072_users_no_phone_rules`, so `0067`–`0072`
+  have reached production and these two are the only ones outstanding.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
   `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of
-  this check (2026-10-06, the four unmerged branches and the two open PRs
-  listed) the next free number is `0073`.
+  this check (2026-10-06, against `origin/main`, `origin/develop` and every
+  unmerged remote branch) the next free number is `0075`.
+- The treasury migration was first written as `0071` and renumbered to `0073`:
+  `0071_damage_habitable` and `0072_users_no_phone_rules` landed on `develop`
+  while it was in progress. A branch cut before a release is a branch whose
+  numbers can be taken while you work — re-check before you open the PR, not
+  only when you pick.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 
@@ -670,6 +678,11 @@ Rare: only `0001_init` exists.
 - **`BackupService` restore** aborts for any tenant with `payment_transactions`
   rows (the append-only trigger fires through the cascade). Documented in its
   own comment as a design decision.
+- **`BackupService` does not export the treasury tables** (`treasury_accounts`,
+  `treasury_entries`, 0073). They hold no citizen data, but their rows are append-only and
+  RESTRICT-linked to `users`, so a restore (which deletes users) aborts for any tenant that has
+  moved money, exactly as for `payment_transactions`. A backup of such a tenant therefore does not
+  contain its wallets. **Undecided:** how the backup should carry an append-only ledger.
 - **`dump-tenant.js`, the `reissue-references` CSV, the `claude_ro` views**:
   see [Moving data](#moving-data-between-environments).
 - **Database roles.** One role per environment runs both DDL and DML for every
