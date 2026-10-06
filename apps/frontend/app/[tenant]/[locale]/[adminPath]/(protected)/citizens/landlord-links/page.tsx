@@ -69,7 +69,7 @@ function quickLinkRefusal(proposal: LandlordProposal, en: boolean): string | nul
 }
 
 /** The roles `GET landlord-links/summary` answers — asking as anyone else is a 403. */
-const SUMMARY_ROLES = new Set(['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER']);
+const SUMMARY_ROLES = new Set(['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER']);
 
 /**
  * «روابط المالكين» — tenancy cards whose named owner is a registered citizen,

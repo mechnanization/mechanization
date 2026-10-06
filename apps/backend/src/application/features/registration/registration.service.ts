@@ -193,6 +193,13 @@ export class RegistrationService {
       citizen: {
         phone: input.payload.contact.phone,
         whatsapp: input.payload.contact.whatsapp ?? input.payload.contact.phone,
+        /*
+          «لا يملك رقم هاتف» and the relative's number that stands in for it.
+          The schema has already emptied `phone` and `whatsapp` above when the
+          flag is set; the repository nulls them again on the way to the column.
+        */
+        hasNoPhone: input.payload.contact.hasNoPhone,
+        contactPhone: input.payload.contact.contactPhone || undefined,
         firstName: input.payload.personal.firstName,
         middleName: input.payload.personal.middleName || undefined,
         lastName: input.payload.personal.lastName,

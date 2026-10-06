@@ -440,7 +440,10 @@ describeIfDb('billing over the census', () => {
     */
     await expect(
       fees.issue(notice({ basis: 'PER_UNIT', amount: 1000, targetCitizenId: citizenId }), actor()),
-    ).rejects.toThrow(/جرد ميداني/);
+    ).rejects.toMatchObject({
+      code: 'FEE_NOTHING_TO_CHARGE',
+      params: { held: 0, uninhabitable: 0, exempted: 0, unassessable: 1 },
+    });
 
     expect(await db.citizenPayment.count({ where: { citizenId } })).toBe(0);
   });

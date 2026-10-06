@@ -120,6 +120,7 @@ export const ar = {
     COLLECTOR: 'جابي',
     ACCOUNTANT: 'محاسب',
     ADMINISTRATIVE_OFFICER: 'موظف إداري',
+    VIEWER: 'مشاهد فقط',
   } satisfies Record<StaffRole, string>,
 
   residentStatus: {
@@ -379,6 +380,8 @@ export const ar = {
     residencePlace: 'مكان الإقامة',
     localContactName: 'اسم جهة الاتصال المحلية',
     localContactPhone: 'هاتف جهة الاتصال المحلية',
+    hasNoPhone: 'لا يملك رقم هاتف',
+    contactPhone: 'رقم للتواصل (أحد الأقارب)',
     whatsappSameAsPhone: 'واتساب نفس رقم الهاتف',
     totalRegisteredMembers: 'إجمالي المسجلين في القيد',
     actualHouseholdMembers: 'عدد أفراد الأسرة المقيمين في المنزل (دون المتزوجين)',
@@ -486,6 +489,7 @@ export const en = {
     COLLECTOR: 'Collector',
     ACCOUNTANT: 'Accountant',
     ADMINISTRATIVE_OFFICER: 'Administrative Officer',
+    VIEWER: 'View only',
   } satisfies Record<StaffRole, string>,
 
   residentStatus: {
@@ -678,6 +682,8 @@ export const en = {
     residencePlace: 'Place of Residence',
     localContactName: 'Local Contact Name',
     localContactPhone: 'Local Contact Phone',
+    hasNoPhone: 'Has no phone of their own',
+    contactPhone: 'Contact number (a relative)',
     whatsappSameAsPhone: 'WhatsApp Same As Phone',
     totalRegisteredMembers: 'Total Registered (Civil Record)',
     actualHouseholdMembers: 'Family Members Living in House (excl. married)',

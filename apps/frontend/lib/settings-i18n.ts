@@ -367,6 +367,7 @@ export const ROLE_KEYS = [
   'inspector',
   'clerk',
   'auditor',
+  'viewer',
 ] as const;
 export type RoleKey = (typeof ROLE_KEYS)[number];
 
@@ -377,6 +378,7 @@ export const ROLE_BACKEND_VALUE: Record<RoleKey, string | null> = {
   inspector: 'FIELD_INSPECTOR',
   clerk: 'ADMINISTRATIVE_OFFICER',
   auditor: 'AUDITOR',
+  viewer: 'VIEWER',
 };
 
 /** Backend enum value → the catalogue entry that names it. */
@@ -743,6 +745,7 @@ const AR: SettingsCopy = {
       inspector: 'مفتّش ميداني',
       clerk: 'موظف إداري',
       auditor: 'مدقّق',
+      viewer: 'مشاهد فقط',
     },
     roleDuties: {
       admin: 'صلاحية كاملة: الموافقة النهائية، الإعدادات، وإدارة الحسابات.',
@@ -751,6 +754,7 @@ const AR: SettingsCopy = {
       inspector: 'مراجعة الطلبات ميدانياً، دون الاطلاع على سجل النشاطات.',
       clerk: 'إدخال بيانات المواطنين وتحديثها، دون البتّ في الطلبات.',
       auditor: 'الاطلاع والمراجعة وتصدير البيانات، دون الموافقة النهائية.',
+      viewer: 'حساب رئيس البلدية: يطّلع على لوحة التحكم والتقارير وسجل المواطنين وبياناتهم، ولا يعدّل شيئاً ولا يصدّر سجل المواطنين.',
     },
     newAccount: 'إنشاء حساب جديد',
     newAccountHint: 'يستطيع صاحب الحساب الدخول فور إنشائه.',
@@ -1108,6 +1112,7 @@ const EN: SettingsCopy = {
       inspector: 'Field inspector',
       clerk: 'Clerk',
       auditor: 'Auditor',
+      viewer: 'View only',
     },
     roleDuties: {
       admin: 'Full access: final approval, settings, and account management.',
@@ -1116,6 +1121,7 @@ const EN: SettingsCopy = {
       inspector: 'Reviews claims in the field, without access to the activity log.',
       clerk: 'Enters and updates citizen records, without deciding claims.',
       auditor: 'Reads, reviews, and exports data, without final approval.',
+      viewer: 'The mayor’s account: reads the dashboard, the reports and the citizen register with its data; changes nothing and does not export the citizen register.',
     },
     newAccount: 'Create a new account',
     newAccountHint: 'The holder can sign in as soon as it is created.',

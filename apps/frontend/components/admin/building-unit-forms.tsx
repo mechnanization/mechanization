@@ -23,8 +23,6 @@ import {
 import {
   CASE_TYPE,
   contradictsVacancy,
-  DAMAGE_LEVEL,
-  DAMAGE_SOURCE,
   getLabels,
   isOccupiableLifecycle,
   isStructuralUnitType,
@@ -40,7 +38,6 @@ import {
   type CaseType,
   type CitizenResidence,
   type DamageLevel,
-  type DamageSource,
   type OccupancyEndReason,
   type OccupancyRole,
   type StructureType,
@@ -1922,111 +1919,7 @@ export function CaseForm({
   );
 }
 
-/**
- * One observation, appended to the log. There is no edit and no delete: a
- * building that was unsafe in 2024 and repaired in 2026 is two facts (D3).
- */
-export function DamageForm({
-  busy,
-  locale,
-  target,
-  onSubmit,
-}: {
-  busy: boolean;
-  locale: string;
-  /** What is being assessed, named in the button so the two cannot be confused. */
-  target: string;
-  onSubmit: (values: {
-    level: DamageLevel;
-    source: DamageSource;
-    observations: string;
-    assessedAt: string;
-  }) => void;
-}) {
-  const en = locale === 'en';
-  const labels = getLabels(locale);
-
-  const [level, setLevel] = useState<DamageLevel>('SAFE_MINOR_DAMAGE');
-  const [source, setSource] = useState<DamageSource>('FIELD_VISIT');
-  const [observations, setObservations] = useState('');
-  const [assessedAt, setAssessedAt] = useState('');
-
-  return (
-    <div className="space-y-3 rounded-md border bg-background p-3">
-      <div className="grid gap-3">
-        <Field label={en ? 'Damage level' : 'مستوى الضرر'} htmlFor="damage-level" required>
-          <Select value={level} onValueChange={(value) => setLevel(value as DamageLevel)}>
-            <SelectTrigger id="damage-level">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {DAMAGE_LEVEL.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {labels.damageLevel[value]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-
-        <Field label={en ? 'Source' : 'مصدر التقييم'} htmlFor="damage-source" required>
-          <Select value={source} onValueChange={(value) => setSource(value as DamageSource)}>
-            <SelectTrigger id="damage-source">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {DAMAGE_SOURCE.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {labels.damageSource[value]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-
-        {/* Back-dating is allowed and forward-dating is not: an assessment typed
-            up a week late describes the visit, not the paperwork. */}
-        <Field
-          label={en ? 'Inspected on' : 'تاريخ الكشف'}
-          htmlFor="damage-date"
-        >
-          <Input
-            id="damage-date"
-            type="date"
-            max={new Date().toISOString().slice(0, 10)}
-            value={assessedAt}
-            onChange={(event) => setAssessedAt(event.target.value)}
-            dir="ltr"
-            className="text-start"
-          />
-        </Field>
-      </div>
-
-      <Field label={en ? 'What was seen' : 'ما شوهد'} htmlFor="damage-observations">
-        <Textarea
-          id="damage-observations"
-          rows={2}
-          value={observations}
-          onChange={(event) => setObservations(event.target.value)}
-          placeholder={
-            en
-              ? 'The fourth floor is down, the stairwell is impassable'
-              : 'الطابق الرابع مهدوم، الدرج غير سالك'
-          }
-        />
-      </Field>
-
-      <Button
-        size="sm"
-        disabled={busy}
-        onClick={() => onSubmit({ level, source, observations: observations.trim(), assessedAt })}
-      >
-        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-        {en ? `Record for ${target}` : `تسجيل الكشف على ${target}`}
-      </Button>
-    </div>
-  );
-}
+/* The damage form, its notice and its history live in `components/admin/damage/`. */
 
 // ─────────────────────────  Who is, and was, in a unit  ─────────────────────────
 

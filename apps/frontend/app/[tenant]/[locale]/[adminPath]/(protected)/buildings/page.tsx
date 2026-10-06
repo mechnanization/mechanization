@@ -25,7 +25,7 @@ import {
   getLabels,
   STRUCTURE_TYPE,
   SURVEY_STATUS,
-  type DamageLevel,
+  isImpairedDamage,
 } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
@@ -53,6 +53,7 @@ import { useToast } from '@/components/ui/toast';
 import { BuildingQueueNotice } from '@/components/admin/building-queue-notice';
 import { buildCsv, downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/utils';
+import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 
 /**
  * سجل المباني — the census ledger.
@@ -107,8 +108,6 @@ const FILTERS = {
  */
 const EXPORT_CEILING = 10_000;
 
-/** Read-only roles. They see the census; they do not edit it. */
-const READ_ONLY_ROLES = ['AUDITOR', 'ACCOUNTANT'];
 
 function getTableLabels(locale: string): DataTableLabels {
   if (locale === 'en') {
@@ -163,19 +162,6 @@ function getTableLabels(locale: string): DataTableLabels {
   };
 }
 
-/**
- * The three levels that mean a structure's use is impaired.
- *
- * Kept in step with `DAMAGED_LEVELS` on the server, which is what the «متضرر»
- * tile counts: an assessment finding a building undamaged must not make the
- * damaged figure go up.
- */
-const DAMAGED_LEVELS: readonly DamageLevel[] = [
-  'RESTRICTED_USE',
-  'UNSAFE_EVACUATE',
-  'TOTAL_COLLAPSE',
-];
-
 export default function BuildingsPage({
   params,
 }: {
@@ -202,7 +188,8 @@ export default function BuildingsPage({
     setRole(session.user.role ?? null);
   }, [tenant, base, router]);
 
-  const canWrite = role !== null && !READ_ONLY_ROLES.includes(role);
+  // An allow-list (`CENSUS_WRITE_ROLES`): every other role sees the census and does not edit it.
+  const canWrite = hasRole(CENSUS_WRITE_ROLES, role);
   const canDelete = role === 'SUPER_ADMIN';
 
   // ── Filters ───────────────────────────────────────────────────────
@@ -724,7 +711,7 @@ export default function BuildingsPage({
             );
           }
           return (
-            <CellTag tone={DAMAGED_LEVELS.includes(level) ? 'destructive' : 'success'}>
+            <CellTag tone={isImpairedDamage(level) ? 'destructive' : 'success'}>
               {labels.damageLevel[level]}
             </CellTag>
           );
@@ -820,7 +807,7 @@ export default function BuildingsPage({
         a provisional code an officer is still quoting is the one thing on this
         screen that can be wrong in a way nothing else would reveal.
       */}
-      <BuildingQueueNotice tenant={tenant} locale={locale} />
+      <BuildingQueueNotice tenant={tenant} canSend={canWrite} />
 
       {/*
         ── The dispatch decision, in five numbers ───────────────────

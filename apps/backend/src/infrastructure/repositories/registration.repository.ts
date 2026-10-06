@@ -10,6 +10,7 @@ import {
   SubmitRegistrationResult,
 } from '../../domain/interfaces/registration-repository.interface';
 import { TenantContextService } from '../context/tenant-context.service';
+import { citizenPhoneRuleError } from '../prisma/check-violation';
 import { normalizeSearchText } from '../../application/common/search-terms';
 
 /** Where an identity-document clash is recorded on the new citizen's file. */
@@ -87,9 +88,27 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
     const identityDocNumber = input.citizen.identityDocNumber?.trim() || null;
     const identityDocType = identityDocNumber ? (input.citizen.identityDocType ?? null) : null;
 
+    /*
+      «لا يملك رقم هاتف» — written as the absence it describes.
+
+      The two numbers are forced to NULL here as well as cleared by the schema
+      (`contactDetailsSchema`), because this repository is reached by more than
+      one caller and an empty string is not an absence: `''` would satisfy
+      `phone IS NOT NULL`, score as a shared "number" against every other
+      blank record, and be offered to `findCitizensByPhone`. The column has to
+      hold nothing at all.
+    */
+    const hasNoPhone = input.citizen.hasNoPhone === true;
     const shared = {
-      phone: input.citizen.phone ?? null,
-      whatsapp: input.citizen.whatsapp ?? input.citizen.phone ?? null,
+      hasNoPhone,
+      phone: hasNoPhone ? null : (input.citizen.phone || null),
+      whatsapp: hasNoPhone ? null : (input.citizen.whatsapp || input.citizen.phone || null),
+      /*
+        The relative's number, kept whatever the flag says: an officer who
+        records a son's number and then unticks the box has given the register
+        two true facts, not a contradiction.
+      */
+      contactPhone: input.citizen.contactPhone || null,
       firstName: input.citizen.firstName,
       middleName: input.citizen.middleName ?? null,
       lastName: input.citizen.lastName,
@@ -453,6 +472,9 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
    * nothing knows what P2002 is.
    */
   private translate(error: unknown): unknown {
+    // 0072's rules on a citizen's numbers, named rather than sent on as a 500.
+    const phoneRule = citizenPhoneRuleError(error);
+    if (phoneRule) return phoneRule;
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       const target = (error.meta?.target as string[] | undefined)?.join(', ') ?? '';
 

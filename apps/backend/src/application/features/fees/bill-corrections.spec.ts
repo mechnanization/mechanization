@@ -23,6 +23,30 @@ const row = (over: Partial<AuditRow>): AuditRow => ({
 });
 const kinds = (traced: TracedChange[]) => traced.map((change) => change.kind);
 
+describe('traceChanges — a damage reading', () => {
+  const reading = (after: Record<string, unknown>, createdAt = new Date('2026-10-04T10:00:00Z')) =>
+    row({ action: 'DAMAGE_RECORDED', entityType: 'Building', entityId: 'b-1', after, createdAt });
+
+  it('is a real change on the day it was recorded, for the holder of the flat it read', () => {
+    const traced = traceChanges([reading({ unitId: 'u-1', unitCode: 'Z-1-45-A-101', habitable: false })], holder);
+    expect(traced).toEqual([expect.objectContaining({ kind: 'DATED_CHANGE', effectiveOn: new Date('2026-10-04T10:00:00Z') })]);
+  });
+
+  it('speaks for every holder when it read the whole building', () => {
+    expect(kinds(traceChanges([reading({ unitId: null, unitCode: null, habitable: false })], holder))).toEqual(['DATED_CHANGE']);
+  });
+
+  it('is somebody else’s when it read another flat', () => {
+    expect(traceChanges([reading({ unitId: 'u-9', unitCode: 'Z-1-45-A-999', habitable: false })], holder)).toEqual([]);
+  });
+
+  it('never makes a bill raised before it one a correction affected — the hold runs forward', () => {
+    const traced = traceChanges([reading({ unitId: 'u-1', unitCode: 'Z-1-45-A-101', habitable: false })], holder);
+    expect(affectsBill(traced, new Date('2026-10-01T09:00:00Z'))).toBe(false);
+    expect(affectsBill(traced, new Date('2026-10-05T09:00:00Z'))).toBe(true);
+  });
+});
+
 describe('traceChanges — edits to the file', () => {
   it('an edit saved with a reason is a correction', () => {
     expect(kinds(traceChanges([row({ after: { reason: 'خطأ في النسخ', changed: ['residence'] } })], holder))).toEqual(['CORRECTION']);

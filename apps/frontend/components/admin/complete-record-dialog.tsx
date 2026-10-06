@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Check, ClipboardCheck, Loader2, ShieldQuestion, TriangleAlert } from 'lucide-react';
 import {
   ApiRequestError,
@@ -14,6 +15,7 @@ import { controlFor, type FieldControl } from '@/lib/citizen-field-controls';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { adminUpdateCitizenSubmissionSchema } from '@mechanization/shared-schemas';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -179,6 +181,11 @@ export function displayValue(values: CitizenFormValues, path: string, locale: st
   return raw;
 }
 
+/** The two numbers «لا يملك رقم هاتف» answers at once. */
+const NO_PHONE_PATHS = new Set(['contact.phone', 'contact.whatsapp']);
+
+const NO_PHONE_UNANSWERED = { on: false, contactPhone: '' };
+
 function writeAt(values: CitizenFormValues, path: string, raw: string): CitizenFormValues {
   const [section, ...rest] = path.split('.');
   /*
@@ -305,6 +312,13 @@ export function useRecordCompletion({
   const [answers, setAnswers] = useState<Map<string, string>>(new Map());
   /** Reasons amended in this sitting, for gaps still unanswered. */
   const [reasons, setReasons] = useState<Map<string, string>>(new Map());
+  /**
+   * «لا يملك رقم هاتف», given as the answer to the phone's gap — with the
+   * relative's number when there is one. An answer like a typed value: it
+   * closes the phone's gap, and a WhatsApp gap with it (a person with no phone
+   * has neither), and the save writes the record as the form's box does.
+   */
+  const [noPhone, setNoPhoneState] = useState<{ on: boolean; contactPhone: string }>(NO_PHONE_UNANSWERED);
   /** Bumped to read the record again — after a save that left questions open. */
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -336,6 +350,7 @@ export function useRecordCompletion({
     setSaveError(null);
     setAnswers(new Map());
     setReasons(new Map());
+    setNoPhoneState(NO_PHONE_UNANSWERED);
     setFieldErrors({});
 
     void (async () => {
@@ -489,11 +504,14 @@ export function useRecordCompletion({
    * would promise a clerk that the record is about to leave the queue, and then
    * hand it straight back.
    */
+  /** Whether this sitting answered a path: a value typed, or «لا يملك رقم هاتف» for the two numbers. */
+  const answered = useCallback(
+    (path: string): boolean => (answers.get(path) ?? '').trim() !== '' || (noPhone.on && NO_PHONE_PATHS.has(path)),
+    [answers, noPhone],
+  );
+
   const willClear = items.filter(
-    (item) =>
-      item.kind === 'UNESTABLISHED' &&
-      item.answerable &&
-      (answers.get(item.path) ?? '').trim() !== '',
+    (item) => item.kind === 'UNESTABLISHED' && item.answerable && answered(item.path),
   ).length;
 
   const remaining = items.filter((item) => item.kind === 'UNESTABLISHED').length - willClear;
@@ -505,7 +523,15 @@ export function useRecordCompletion({
    * it), nor is one already answered here.
    */
   const stillOpen = (item: OpenItem): boolean =>
-    item.kind === 'UNESTABLISHED' && !(item.answerable && (answers.get(item.path) ?? '').trim() !== '');
+    item.kind === 'UNESTABLISHED' && !(item.answerable && answered(item.path));
+
+  /**
+   * Offered on the phone's own question, on a household record — the only kind
+   * with «رقم للتواصل». A non-resident owner's file keeps its local contact.
+   */
+  const offersNoPhone =
+    (values?.residence ?? 'RESIDENT') === 'RESIDENT' &&
+    items.some((item) => item.path === 'contact.phone' && item.answerable);
 
   /**
    * Complaints from the last refused save that name no row on this screen.
@@ -590,11 +616,30 @@ export function useRecordCompletion({
     */
     let merged = values;
     for (const [path, answer] of answers) merged = writeAt(merged, path, answer);
+    /*
+      «لا يملك رقم هاتف» — written as the form's box writes it: both of the
+      person's own numbers empty, and the relative's, if given, as «رقم
+      للتواصل». A number typed in the phone box first is dropped with them.
+    */
+    if (noPhone.on) {
+      const relative = noPhone.contactPhone.trim();
+      merged = {
+        ...merged,
+        contact: {
+          ...merged.contact,
+          hasNoPhone: true,
+          phone: undefined,
+          whatsapp: undefined,
+          whatsappSameAsPhone: true,
+          ...(relative ? { contactPhone: relative } : {}),
+        },
+      };
+    }
 
     const onScreen = new Set(items.map((item) => item.path));
     const flags = new Map<string, string>();
     for (const [path, reason] of values.flags) {
-      if ((answers.get(path) ?? '').trim() !== '') continue;
+      if (answered(path)) continue;
       /*
         A flag on a field the record no longer has is dropped, not carried.
         It excuses a question nothing asks any more (see `prunedCount`), and
@@ -711,7 +756,19 @@ export function useRecordCompletion({
       inFlight.current = false;
       setSaving(false);
     }
-  }, [values, token, answers, reasons, tenant, citizenId, version, toast, en, onSaved, items, closesReview]);
+  }, [values, token, answers, answered, reasons, noPhone, tenant, citizenId, version, toast, en, onSaved, items, closesReview]);
+
+  const setNoPhone = (next: { on: boolean; contactPhone: string }) => {
+    setNoPhoneState(next);
+    setSaveError(null);
+    setFieldErrors((current) => {
+      const stale = ['contact.phone', 'contact.whatsapp', 'contact.contactPhone'].filter((path) => path in current);
+      if (stale.length === 0) return current;
+      const kept = { ...current };
+      for (const path of stale) delete kept[path];
+      return kept;
+    });
+  };
 
   const setReason = (path: string, value: string) => {
     setReasons((current) => new Map(current).set(path, value));
@@ -740,6 +797,9 @@ export function useRecordCompletion({
     prunedCount,
     setAnswer,
     setReason,
+    noPhone,
+    setNoPhone,
+    offersNoPhone,
     save,
     record,
     closesReview,
@@ -777,12 +837,20 @@ export function OpenQuestionList({
   citizenId: string;
   locale?: string;
 }) {
-  const { answers, reasons, fieldErrors, setAnswer, setReason } = state;
+  const { answers, reasons, fieldErrors, setAnswer, setReason, noPhone, offersNoPhone } = state;
   const rows = items.map((item) => (
     <OpenQuestion
       key={item.path}
       item={item}
       locale={locale}
+      answerDisabled={noPhone.on && NO_PHONE_PATHS.has(item.path)}
+      extra={
+        offersNoPhone && item.path === 'contact.phone' ? (
+          <NoPhoneAnswer state={state} idBase={`complete-${item.path.replace(/\./g, '-')}`} />
+        ) : offersNoPhone && noPhone.on && item.path === 'contact.whatsapp' ? (
+          <ClosedWithNoPhone />
+        ) : null
+      }
       /*
         `has`, not `?? ''`. An UNVERIFIED row opens showing the value the
         record holds, and a clerk who selects it and deletes it must see an
@@ -1032,6 +1100,7 @@ export function CompleteRecordDialog({
   onSaved?: () => void;
 }) {
   const en = locale === 'en';
+  const tCommon = useTranslations('common');
   const state = useRecordCompletion({
     enabled: open,
     tenant,
@@ -1047,7 +1116,7 @@ export function CompleteRecordDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col gap-0 p-0">
+      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col gap-0 p-0" closeLabel={tCommon('close')}>
         <DialogHeader className="border-b border-border/80 p-5">
           <div className="flex items-center gap-2.5">
             <div className="flex size-9 items-center justify-center rounded-lg bg-warning/15 text-warning ring-1 ring-warning/30">
@@ -1119,9 +1188,15 @@ function OpenQuestion({
   variant = 'card',
   label,
   reasonEdited = false,
+  extra = null,
+  answerDisabled = false,
 }: {
   item: OpenItem;
   locale: string;
+  /** Under the box — «لا يملك رقم هاتف» on the phone's row. */
+  extra?: React.ReactNode;
+  /** The box is answered by something else on screen (`extra`), so it takes no value. */
+  answerDisabled?: boolean;
   /**
    * `card` — a bordered card, as the dialog lists them. `inline` — a tinted
    * block in a record's read-back («فحص الملف»), sitting with the facts it
@@ -1159,7 +1234,7 @@ function OpenQuestion({
       /* Greyed once an answer is typed, because the two are
          alternatives: a value clears the flag, and a reason only
          matters while the gap stays a gap. */
-      disabled={touched && answer.trim() !== ''}
+      disabled={answerDisabled || (touched && answer.trim() !== '')}
       className="h-8 text-xs disabled:opacity-50"
     />
   );
@@ -1244,10 +1319,12 @@ function OpenQuestion({
                 id={inputId}
                 control={item.control}
                 locale={locale}
-                value={answer}
+                value={answerDisabled ? '' : answer}
                 onChange={onAnswer}
                 invalid={Boolean(error)}
+                disabled={answerDisabled}
               />
+              {extra}
               {error ? (
                 <p role="alert" className="text-xs text-destructive">
                   {error}
@@ -1308,10 +1385,12 @@ function OpenQuestion({
             id={inputId}
             control={item.control}
             locale={locale}
-            value={answer}
+            value={answerDisabled ? '' : answer}
             onChange={onAnswer}
             invalid={Boolean(error)}
+            disabled={answerDisabled}
           />
+          {extra}
 
           {/* Directly under the control it is about, which is the whole reason
               for routing these per-path rather than printing one message at the
@@ -1371,6 +1450,7 @@ function AnswerControl({
   value,
   onChange,
   invalid,
+  disabled = false,
 }: {
   id: string;
   control: FieldControl;
@@ -1378,12 +1458,13 @@ function AnswerControl({
   value: string;
   onChange: (value: string) => void;
   invalid?: boolean;
+  disabled?: boolean;
 }) {
   const en = locale === 'en';
 
   if (control.kind === 'select') {
     return (
-      <Select value={value} onValueChange={onChange}>
+      <Select value={value} onValueChange={onChange} disabled={disabled}>
         <SelectTrigger
           id={id}
           aria-invalid={invalid || undefined}
@@ -1406,6 +1487,7 @@ function AnswerControl({
     <Input
       id={id}
       value={value}
+      disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
       /* `inputMode` rather than `type="number"`: a number input drops the
          leading zero a رقم عقار can carry and offers spinners nobody wants on
@@ -1426,4 +1508,70 @@ function AnswerControl({
       className={cn('h-9 text-xs', invalid && 'border-destructive')}
     />
   );
+}
+
+/**
+ * «لا يملك رقم هاتف» on the phone's question — the answer the full form's box
+ * gives, so a reviewer filling a flagged phone does not have to open the whole
+ * record to say the person has none. The relative's number is optional, as it
+ * is on the form.
+ */
+function NoPhoneAnswer({ state, idBase }: { state: RecordCompletion; idBase: string }) {
+  const t = useTranslations('citizenForm.noPhone');
+  const { noPhone, setNoPhone, fieldErrors, answers, values } = state;
+  const relativeError = fieldErrors['contact.contactPhone'];
+  /*
+    The tick carries a number over, as the full form's box does
+    (`citizen-form`'s `updateContact`): a «رقم للتواصل» the record already has
+    is shown as the one that stays, and otherwise the number in the phone box —
+    typed here, or on the file — is the relative's being corrected out of it.
+  */
+  const tick = (on: boolean) => {
+    if (!on) return setNoPhone({ ...noPhone, on: false });
+    const existing = String(values?.contact.contactPhone ?? '').trim();
+    const held = (answers.get('contact.phone') ?? String(values?.contact.phone ?? '')).trim();
+    setNoPhone({ on: true, contactPhone: noPhone.contactPhone.trim() || existing || held });
+  };
+  return (
+    <div className="space-y-2 rounded-md border border-border/80 bg-muted/20 p-2.5">
+      <label htmlFor={`${idBase}-none`} className="flex cursor-pointer select-none items-start gap-2 text-xs">
+        <Checkbox
+          id={`${idBase}-none`}
+          className="mt-0.5"
+          checked={noPhone.on}
+          onCheckedChange={(checked) => tick(checked === true)}
+        />
+        <span className="font-medium text-foreground">{t('label')}</span>
+      </label>
+      {noPhone.on ? (
+        <div className="space-y-1">
+          <Label htmlFor={`${idBase}-relative`} className="text-xs font-medium text-muted-foreground">
+            {t('contactPhone')}
+          </Label>
+          <Input
+            id={`${idBase}-relative`}
+            type="tel"
+            inputMode="tel"
+            dir="ltr"
+            value={noPhone.contactPhone}
+            onChange={(event) => setNoPhone({ ...noPhone, contactPhone: event.target.value })}
+            aria-invalid={Boolean(relativeError) || undefined}
+            className={cn('h-9 text-start text-xs', relativeError && 'border-destructive')}
+          />
+          {relativeError ? (
+            <p role="alert" className="text-xs text-destructive">
+              {relativeError}
+            </p>
+          ) : null}
+          <p className="text-xs leading-relaxed text-muted-foreground">{t('completeNote')}</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** The WhatsApp gap, answered by «لا يملك رقم هاتف» on the phone's row. */
+function ClosedWithNoPhone() {
+  const t = useTranslations('citizenForm.noPhone');
+  return <p className="text-xs text-muted-foreground">{t('closedWithNoPhone')}</p>;
 }

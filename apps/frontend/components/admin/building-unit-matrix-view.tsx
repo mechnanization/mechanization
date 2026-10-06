@@ -58,10 +58,8 @@ import {
   type UnitWithOccupants,
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
-import { formatDate } from '@/lib/dates';
 import { BackLink } from '@/components/ui/back-link';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Select,
@@ -87,7 +85,6 @@ import {
   CaseForm,
   cellBadge,
   ConfirmVacancyForm,
-  DamageForm,
   effectiveUnitStatus,
   floorLabel,
   groupUnitsByFloor,
@@ -104,14 +101,12 @@ import {
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
+import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
+import { DamageForm } from './damage/damage-form';
+import { DamageHistory } from './damage/damage-history';
+import { ReinspectNotice } from './damage/reinspect-notice';
+import { damageInput } from '@/lib/damage-reading';
 
-const READ_ONLY_ROLES = ['AUDITOR', 'ACCOUNTANT'];
-
-const DAMAGED_LEVELS: readonly DamageLevel[] = [
-  'RESTRICTED_USE',
-  'UNSAFE_EVACUATE',
-  'TOTAL_COLLAPSE',
-];
 
 type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | 'vacancy' | 'resize' | null;
 
@@ -193,7 +188,8 @@ export function BuildingUnitMatrixView({
     setViewerId(session.user.id);
   }, [tenant, base, router]);
 
-  const canWrite = role !== null && !READ_ONLY_ROLES.includes(role);
+  // An allow-list (`CENSUS_WRITE_ROLES`), never a list of who may not: a role added later starts read-only.
+  const canWrite = hasRole(CENSUS_WRITE_ROLES, role);
 
   const [building, setBuilding] = useState<BuildingDetail | null>(null);
   const [damage, setDamage] = useState<{
@@ -782,6 +778,7 @@ export function BuildingUnitMatrixView({
                   tone="occupant"
                   selected={selectedUnitId}
                   pickAny
+                  stage
                   onSelect={(unitId) => {
                     setSelectedUnitId(unitId === selectedUnitId ? null : unitId);
                     setAction(null);
@@ -1534,18 +1531,12 @@ export function BuildingUnitMatrixView({
                 <DamageForm
                   busy={busy}
                   locale={locale}
-                  target={en ? `unit ${selectedUnit.unitCode}` : `الوحدة ${selectedUnit.unitCode}`}
+                  target={{ kind: 'unit', code: selectedUnit.unitCode }}
                   onSubmit={(values) =>
                     void run(
                       async () => {
                         if (!token) throw new Error('unauthenticated');
-                        await recordDamage(tenant, token, {
-                          unitId: selectedUnit.id,
-                          level: values.level,
-                          source: values.source,
-                          observations: values.observations || undefined,
-                          assessedAt: values.assessedAt || undefined,
-                        });
+                        await recordDamage(tenant, token, damageInput(values, { unitId: selectedUnit.id }));
                         return en ? 'Assessment recorded' : 'تم تسجيل الكشف';
                       },
                       en ? 'Could not record the assessment.' : 'تعذّر تسجيل الكشف.',
@@ -1582,6 +1573,8 @@ export function BuildingUnitMatrixView({
                   {labels.surveyStatus[selectedUnit.surveyStatus]}
                 </SummaryRow>
               </SummaryList>
+
+              <ReinspectNotice history={damage?.history ?? []} target={{ unitId: selectedUnit.id }} />
 
               <OccupantList
                 unit={selectedUnit}
@@ -1622,18 +1615,12 @@ export function BuildingUnitMatrixView({
               <DamageForm
                 busy={busy}
                 locale={locale}
-                target={en ? `building ${building.code}` : `المبنى ${building.code}`}
+                target={{ kind: 'building', code: building.code }}
                 onSubmit={(values) =>
                   void run(
                     async () => {
                       if (!token) throw new Error('unauthenticated');
-                      await recordDamage(tenant, token, {
-                        buildingId: building.id,
-                        level: values.level,
-                        source: values.source,
-                        observations: values.observations || undefined,
-                        assessedAt: values.assessedAt || undefined,
-                      });
+                      await recordDamage(tenant, token, damageInput(values, { buildingId: building.id }));
                       return en ? 'Assessment recorded' : 'تم تسجيل الكشف';
                     },
                     en ? 'Could not record the assessment.' : 'تعذّر تسجيل الكشف.',
@@ -1648,67 +1635,11 @@ export function BuildingUnitMatrixView({
             </div>
           ) : null}
 
-          {damage && damage.history.length > 0 ? (
-            <div className="space-y-2 rounded-lg border">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
-                <p className="flex items-center gap-1.5 text-xs font-semibold">
-                  <ShieldAlert className="size-3.5 text-muted-foreground" aria-hidden />
-                  {en ? 'Damage history' : 'سجل الأضرار'}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {en
-                    ? `${damage.history.length} assessment(s) · current: ${
-                        damage.current ? labels.damageLevel[damage.current] : '—'
-                      }`
-                    : `${damage.history.length} كشف · الحالي: ${
-                        damage.current ? labels.damageLevel[damage.current] : '—'
-                      }`}
-                </p>
-              </div>
-              <ul className="divide-y">
-                {damage.history.map((row, position) => {
-                  const unit = row.unitId
-                    ? building.units.find((candidate) => candidate.id === row.unitId)
-                    : null;
-                  return (
-                    <li key={row.id} className="space-y-1 px-3 py-2 text-xs">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge
-                          variant={
-                            DAMAGED_LEVELS.includes(row.level) ? 'soft-destructive' : 'soft-success'
-                          }
-                        >
-                          {labels.damageLevel[row.level]}
-                        </Badge>
-                        {position === 0 ? (
-                          <Badge variant="soft-default">{en ? 'Current' : 'الحالي'}</Badge>
-                        ) : null}
-                        <span className="text-muted-foreground">{formatDate(row.assessedAt)}</span>
-                        <Badge variant="soft-muted">{labels.damageSource[row.source]}</Badge>
-                        <Badge variant="soft-muted">
-                          {row.unitId
-                            ? en
-                              ? `Unit ${unit?.unitCode ?? '—'}`
-                              : `الوحدة ${unit?.unitCode ?? '—'}`
-                            : en
-                              ? 'Whole building'
-                              : 'المبنى بكامله'}
-                        </Badge>
-                      </div>
-                      {row.observations ? (
-                        <p className="leading-relaxed text-muted-foreground">{row.observations}</p>
-                      ) : null}
-                      {row.assessedByName ? (
-                        <p className="text-xs text-muted-foreground">
-                          {en ? 'Assessed by ' : 'الكاشف: '}
-                          {row.assessedByName}
-                        </p>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
+          {/* The structure's own «غير صالحة للسكن», from a whole-building reading. */}
+          <ReinspectNotice history={damage?.history ?? []} target={{ buildingId: building.id }} />
+
+          {damage ? (
+            <DamageHistory history={damage.history} current={damage.current} units={building.units} locale={locale} />
           ) : null}
 
           {building.notes ? (

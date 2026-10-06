@@ -2,8 +2,10 @@ import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
+import { BACKGROUND_REQUEST_HEADER } from '@mechanization/shared-schemas';
 import { SessionClaims } from '../../application/features/identity/identity.service';
 import { SessionRevocationService } from '../../application/features/identity/session-revocation.service';
+import { StaffPresenceService } from '../../application/features/identity/staff-presence.service';
 import {
   TenantMismatchError,
   UnauthorizedError,
@@ -25,6 +27,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwt: JwtService,
     private readonly reflector: Reflector,
     private readonly revocation: SessionRevocationService,
+    private readonly presence: StaffPresenceService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -96,6 +99,22 @@ export class JwtAuthGuard implements CanActivate {
      */
     if (claims.sid && !(await this.revocation.isFamilyLive(claims.sid))) {
       throw new UnauthorizedError({ code: 'SESSION_INVALID', message: 'Invalid or expired session' });
+    }
+
+    /**
+     * «آخر ظهور» — this account was here, now.
+     *
+     * Stamped after every check has passed, so a rejected token never marks
+     * anybody present. Not for a request the screen made by itself — a poll,
+     * an interval refresh, sent with `BACKGROUND_REQUEST_HEADER`: a tab left
+     * open on a lit screen would otherwise keep its owner «متصل الآن» all day.
+     *
+     * Not awaited: the request does not wait for a label on an admin screen.
+     * `touch` catches every failure itself, so the floating promise can never
+     * reject; it is a no-op for a citizen token.
+     */
+    if (!request.header(BACKGROUND_REQUEST_HEADER)) {
+      void this.presence.touch(claims.sub, claims.kind);
     }
 
     request.user = claims;

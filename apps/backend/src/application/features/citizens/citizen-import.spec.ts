@@ -306,3 +306,23 @@ describe('settlePaymentSchema', () => {
     expect(settlePaymentSchema.safeParse({ method: 'CASH', amount: -1 }).success).toBe(false);
   });
 });
+
+describe('buildCitizenPayload — «لا يملك رقم هاتف» and «رقم للتواصل»', () => {
+  const house = { ...BASE, propertyType: 'منزل', buildingName: 'منزل خليل', unitArea: '180' };
+
+  it('imports an elderly citizen with no number of their own, and the relative’s number as a relative’s', () => {
+    const data = expectAccepted({ ...house, phone: '', hasNoPhone: 'نعم', contactPhone: '70123456' });
+    expect(data.contact).toMatchObject({ hasNoPhone: true, contactPhone: '+96170123456' });
+    expect(data.contact.phone).toBeUndefined();
+  });
+
+  it('still refuses a blank phone on a row that does not say «لا يملك رقم هاتف»', () => {
+    expect(parse({ ...house, phone: '' }).success).toBe(false);
+    expect(parse({ ...house, phone: '', hasNoPhone: 'لا' }).success).toBe(false);
+  });
+
+  it('reads a sheet built before the columns existed exactly as before', () => {
+    const data = expectAccepted(house);
+    expect(data.contact).toMatchObject({ hasNoPhone: false, phone: '+9613123456' });
+  });
+});

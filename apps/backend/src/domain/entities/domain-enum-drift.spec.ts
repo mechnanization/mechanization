@@ -2,11 +2,13 @@ import {
   LAND_TYPE,
   OCCUPANCY_TYPE,
   PROPERTY_TYPE,
+  STAFF_ROLE,
   STRUCTURAL_UNIT_TYPE,
   UNIT_STATUS,
   UNIT_TYPE,
 } from '@mechanization/shared-schemas';
 import { isStructuralBillableType } from './billable-unit';
+import type { StaffRole } from './user.entity';
 import type {
   LandType,
   OccupancyType,
@@ -115,6 +117,28 @@ describe('domain enums do not drift from the register', () => {
     expect(new Set<string>(occupancy)).toEqual(new Set<string>(OCCUPANCY_TYPE));
     expect(new Set<string>(property)).toEqual(new Set<string>(PROPERTY_TYPE));
     expect(new Set<string>(land)).toEqual(new Set<string>(LAND_TYPE));
+  });
+
+  /*
+    The fourth time. «مشاهد فقط» (VIEWER) reached the shared list, the domain
+    union and the Prisma enum by hand, and missed the create-staff script and
+    the settings catalogue, which had no check either. `@Roles` is typed by
+    this union, so a role missing from it is a role no route can name.
+  */
+  it('StaffRole carries every staff role the register can store', () => {
+    const domain = [
+      'SUPER_ADMIN',
+      'AUDITOR',
+      'FIELD_INSPECTOR',
+      'COLLECTOR',
+      'ACCOUNTANT',
+      'ADMINISTRATIVE_OFFICER',
+      'VIEWER',
+    ] as const satisfies readonly StaffRole[];
+    const EXHAUSTIVE: Exact<StaffRole, (typeof domain)[number]> = true;
+
+    expect(EXHAUSTIVE).toBe(true);
+    expect(new Set<string>(domain)).toEqual(new Set<string>(STAFF_ROLE));
   });
 
   /*

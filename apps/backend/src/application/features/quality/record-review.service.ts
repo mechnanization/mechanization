@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
   QUALITY_CHECK_ROLES,
+  QUALITY_REVIEWER_ROLES,
   type AssignCheckInput,
   type CompleteCheckInput,
   type DrawSampleInput,
@@ -36,8 +37,7 @@ export type ReviewState = (typeof REVIEW_STATES)[number];
 /** The tab a supervisor works from: everything that needs their eyes. */
 export const TO_REVIEW: readonly ReviewState[] = ['NEW', 'CORRECTED', 'CHANGED'];
 
-/** Roles that may approve or return a record. */
-export const REVIEWER_ROLES = ['SUPER_ADMIN', 'AUDITOR', 'ADMINISTRATIVE_OFFICER'] as const;
+/* Roles that may approve or return a record: `QUALITY_REVIEWER_ROLES`, in `@mechanization/shared-schemas`. */
 
 /**
  * What this service writes to a citizen's audit trail. None of it changes the
@@ -478,14 +478,15 @@ export class RecordReviewService {
         check that looks like verification and is not. See
         docs/open-decisions.md.
       */
-      const citizen = await this.db.user.findUnique({
-        where: { id: payload.citizenId },
-        select: { motherName: true, phone: true },
+      const citizen = await this.db.user.findFirst({
+        where: { id: payload.citizenId, kind: 'CITIZEN' },
+        select: { motherName: true, phone: true, hasNoPhone: true },
       });
 
       const stillMissing = new Set<string>();
       if (!citizen?.motherName?.trim()) stillMissing.add('MOTHER_NAME');
-      if (!citizen?.phone?.trim()) stillMissing.add('PHONE');
+      // «لا يملك رقم هاتف» answers the phone: the return asked for one, and the answer is that there is none.
+      if (!citizen?.hasNoPhone && !citizen?.phone?.trim()) stillMissing.add('PHONE');
 
       const resolvable = open.filter((review) => !review.fields.some((f) => stillMissing.has(f)));
       if (resolvable.length === 0) return;
@@ -828,7 +829,7 @@ export class RecordReviewService {
     if (
       check.assignedToId &&
       check.assignedToId !== actor.id &&
-      !(REVIEWER_ROLES as readonly string[]).includes(actor.role)
+      !(QUALITY_REVIEWER_ROLES as readonly string[]).includes(actor.role)
     ) {
       throw new ConflictError('هذا التحقق مُسند إلى موظف آخر.');
     }

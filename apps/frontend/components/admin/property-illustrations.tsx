@@ -15,6 +15,7 @@ export type ElevationBuilding = Pick<BuildingDetail, 'structureType' | 'lifecycl
   units: ElevationUnit[];
 };
 import type { CSSProperties } from 'react';
+import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 
 /**
@@ -179,6 +180,7 @@ export function BuildingElevation({
   pickAny = false,
   marker = 'fill',
   locale = 'ar',
+  stage = false,
 }: {
   building: ElevationBuilding;
   highlight: ReadonlySet<string>;
@@ -201,6 +203,11 @@ export function BuildingElevation({
    * where any unit can be picked and the lit one is the one picked.
    */
   pickAny?: boolean;
+  /**
+   * Drawn on a full stage (the matrix page and drawer) rather than in a
+   * property card: a camp's tents are drawn large enough to read and press.
+   */
+  stage?: boolean;
 }) {
   const unitFloors = building.units.map((unit) => unit.floor);
   /*
@@ -253,10 +260,10 @@ export function BuildingElevation({
         highlight={highlight}
         marker={marker}
         tone={tone}
-        locale={locale}
         selected={selected}
         onSelect={onSelect}
         pickAny={pickAny}
+        stage={stage}
       />
     );
   }
@@ -780,6 +787,21 @@ function faceFor(kind: UnitKind, look: StructureLook): FaceKind {
   return kind;
 }
 
+/** A tent's size in a card, and on a stage once the camp is too big for the tiers below. */
+const CARD_TENT_SIZE = 'h-[30px] w-[38px]';
+
+/**
+ * How big a tent is drawn on the matrix stage, by how many the camp has: big
+ * enough to read and press when there are few, smaller as the camp grows, so a
+ * large camp still wraps inside the stage's frame instead of spilling out of
+ * it. Past the last tier a tent is card-sized, which still leaves a 30-pixel
+ * target to press.
+ */
+const STAGE_TENT_SIZES: ReadonlyArray<{ upTo: number; className: string }> = [
+  { upTo: 6, className: 'h-[72px] w-[90px] sm:h-[96px] sm:w-[120px]' },
+  { upTo: 16, className: 'h-[48px] w-[60px]' },
+];
+
 /**
  * «تجمّع خيم / مأوى» — not a building: tents pitched in a row on the ground,
  * one per unit, in the order the census numbers them. The citizen's own are in
@@ -793,26 +815,31 @@ function TentCamp({
   onSelect,
   pickAny = false,
   marker = 'fill',
-  locale,
+  stage = false,
 }: {
   building: ElevationBuilding;
   highlight: ReadonlySet<string>;
   tone: PropertyTone;
   marker?: 'fill' | 'outline';
-  locale: string;
   selected: string | null;
   onSelect?: (unitId: string) => void;
   pickAny?: boolean;
+  stage?: boolean;
 }) {
+  const t = useTranslations('illustrations');
   const tents = [...building.units].sort((a, b) => a.floor - b.floor || a.sequence - b.sequence);
+  // In a card the tents stay card-sized; on a stage they grow to fill it (`STAGE_TENT_SIZES`).
+  const tentSize = stage
+    ? (STAGE_TENT_SIZES.find((tier) => tents.length <= tier.upTo)?.className ?? CARD_TENT_SIZE)
+    : CARD_TENT_SIZE;
   return (
     <div dir="ltr" className="flex h-full w-full items-center justify-center">
       <div
-        className="flex w-full max-w-[260px] flex-col"
+        className={cn('flex w-full flex-col', stage ? 'max-w-[720px]' : 'max-w-[260px]')}
         role={onSelect ? 'group' : 'img'}
-        aria-label={locale === 'en' ? `${tents.length} tents` : `${tents.length} خيم`}
+        aria-label={t('tents', { count: tents.length })}
       >
-        <div className="flex flex-wrap items-end justify-center gap-x-1.5 gap-y-1">
+        <div className={cn('flex flex-wrap items-end justify-center', stage ? 'gap-x-3 gap-y-2' : 'gap-x-1.5 gap-y-1')}>
           {tents.map((tent) => {
             const lit = highlight.has(tent.id);
             const filled = lit && marker === 'fill';
@@ -824,7 +851,8 @@ function TentCamp({
               </svg>
             );
             const className = cn(
-              'h-[30px] w-[38px] rounded-sm',
+              tentSize,
+              'rounded-sm',
               filled ? TONE_TEXT[tone] : 'text-foreground',
               lit && marker === 'outline' && cn('ring-2 ring-offset-1 ring-offset-background', TONE_RING[tone]),
               (lit || pickAny) && onSelect && 'cursor-pointer hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',

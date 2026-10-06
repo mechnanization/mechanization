@@ -1,6 +1,27 @@
-import { getLabels, qualityLabels } from '@mechanization/shared-schemas';
+import { createTranslator } from 'next-intl';
+import { calendarDayOf, getLabels, qualityLabels } from '@mechanization/shared-schemas';
+import ar from '../messages/ar.json';
+import en from '../messages/en.json';
 import type { AuditEntry } from './api-client';
-import { formatDateTime } from './dates';
+import { FORMAT_LOCALE, type Locale } from './api-errors';
+import { formatDate, formatDateTime } from './dates';
+
+/*
+  The words, from `messages/{ar,en}.json` under `audit`. A plain module rather
+  than a hook, as `api-errors.ts` is: `describeAudit` is called once per entry
+  with the page's locale, and `AUDIT_FAMILIES` is read at module scope.
+*/
+const AR = ar.audit;
+const EN = en.audit;
+const translators = {
+  ar: createTranslator({ locale: FORMAT_LOCALE.ar, messages: { audit: AR }, namespace: 'audit' }),
+  en: createTranslator({ locale: FORMAT_LOCALE.en, messages: { audit: EN }, namespace: 'audit' }),
+};
+type AuditTranslator = (typeof translators)['ar'];
+
+function localeOf(locale: string): Locale {
+  return locale === 'en' ? 'en' : 'ar';
+}
 
 /**
  * An audit row turned into what a person reads: which family it belongs to, the
@@ -30,19 +51,19 @@ export interface AuditFamily {
 export const AUDIT_FAMILIES: AuditFamily[] = [
   {
     key: 'corrections',
-    label: ['التصحيحات اليدوية', 'Manual corrections'],
+    label: [AR.families.corrections, EN.families.corrections],
     tone: 'correction',
     match: (action) => action.startsWith('DATA_'),
   },
   {
     key: 'quality',
-    label: ['مراجعة الجودة', 'Quality review'],
+    label: [AR.families.quality, EN.families.quality],
     tone: 'review',
     match: (action) => action.startsWith('RECORD_') || action.startsWith('QUALITY_'),
   },
   {
     key: 'register',
-    label: ['السجل والمواطنون', 'Register & citizens'],
+    label: [AR.families.register, EN.families.register],
     tone: 'change',
     match: (action) =>
       action.startsWith('CITIZEN_') ||
@@ -56,7 +77,7 @@ export const AUDIT_FAMILIES: AuditFamily[] = [
   },
   {
     key: 'census',
-    label: ['المباني والوحدات والحالات', 'Buildings, units & cases'],
+    label: [AR.families.census, EN.families.census],
     tone: 'change',
     match: (action) =>
       action.startsWith('BUILDING_') ||
@@ -66,19 +87,19 @@ export const AUDIT_FAMILIES: AuditFamily[] = [
   },
   {
     key: 'money',
-    label: ['الرسوم والدفعات', 'Fees & payments'],
+    label: [AR.families.money, EN.families.money],
     tone: 'money',
     match: (action) => action.startsWith('FEE_') || action.startsWith('PAYMENT_') || action.startsWith('BILL_') || action.includes('PAYOUT'),
   },
   {
     key: 'land',
-    label: ['القطاعات والمسح', 'Sectors & cadastre'],
+    label: [AR.families.land, EN.families.land],
     tone: 'change',
     match: (action) => action.startsWith('ZONE_') || action === 'CADASTRE_IMPORT',
   },
   {
     key: 'access',
-    label: ['الحسابات والأمان والنظام', 'Accounts, security & system'],
+    label: [AR.families.access, EN.families.access],
     tone: 'access',
     match: () => true,
   },
@@ -163,6 +184,8 @@ const SPECIAL_KEYS = new Set([
   'acknowledgedRepeat',
   'kind',
   'cards',
+  'requestedBy',
+  'reinspectAt',
 ]);
 
 /**
@@ -176,112 +199,20 @@ const SENSITIVE_FIELDS = new Set([
   'residentStatus',
   'phone',
   'whatsapp',
+  // «رقم للتواصل» — a relative's number, never written on the server either (0069).
+  'contactPhone',
   'localContactPhone',
   'landlordPhone',
 ]);
 
-function fieldLabels(en: boolean): Record<string, string> {
-  const pairs: Record<string, [string, string]> = {
-    name: ['الاسم', 'Name'],
-    code: ['الرمز', 'Code'],
-    title: ['العنوان', 'Title'],
-    email: ['البريد الإلكتروني', 'Email'],
-    role: ['الصفة', 'Role'],
-    status: ['الحالة', 'Status'],
-    nextStatus: ['حالة السجل بعد الحفظ', 'Record status after save'],
-    afterStatus: ['الحالة بعدها', 'Status after'],
-    unitStatus: ['حالة الوحدة', 'Unit status'],
-    surveyStatus: ['حالة المسح', 'Survey status'],
-    outcome: ['النتيجة', 'Outcome'],
-    structureType: ['نوع المنشأة', 'Structure type'],
-    lifecycleStatus: ['وضع المنشأة', 'Lifecycle'],
-    postedNumber: ['الرقم المكتوب على المبنى', 'Posted number'],
-    isPartitioned: ['مفروزة', 'Partitioned'],
-    partitionNumbers: ['أرقام الأقسام', 'Partition numbers'],
-    sharedParcelNumbers: ['العقارات المشتركة', 'Shared parcels'],
-    latitude: ['خط العرض', 'Latitude'],
-    longitude: ['خط الطول', 'Longitude'],
-    floorsCount: ['عدد الطوابق', 'Floors'],
-    basementsCount: ['عدد الطوابق السفلية', 'Basements'],
-    notes: ['الملاحظات', 'Notes'],
-    parcelNumber: ['رقم العقار', 'Parcel'],
-    propertyNumber: ['رقم العقار', 'Parcel'],
-    parcelCount: ['عدد العقارات', 'Parcels'],
-    unitCode: ['الوحدة', 'Unit'],
-    unitCodes: ['الوحدات', 'Units'],
-    unitArea: ['مساحة الوحدة (م²)', 'Unit area (m²)'],
-    floor: ['الطابق', 'Floor'],
-    sequence: ['الترتيب', 'Sequence'],
-    units: ['الوحدات', 'Units'],
-    total: ['المجموع', 'Total'],
-    skipped: ['المتروك', 'Skipped'],
-    referenceNumber: ['الرقم المرجعي', 'Reference'],
-    maskedReference: ['الرقم المرجعي (مخفي)', 'Reference (masked)'],
-    keptReference: ['الرقم المرجعي المُبقى', 'Kept reference'],
-    removedReference: ['الرقم المرجعي المحذوف', 'Removed reference'],
-    propertyCount: ['عدد العقارات', 'Properties'],
-    propertiesRemoved: ['عقارات حُذفت من الملف', 'Properties removed'],
-    unestablishedFields: ['حقول غير مؤكَّدة', 'Unverified fields'],
-    residence: ['نوع الملف', 'File type'],
-    identity: ['رقم الوثيقة', 'Document number'],
-    casesResolved: ['حالات أُغلقت', 'Cases closed'],
-    toDate: ['تاريخ الانتهاء', 'End date'],
-    endedAt: ['انتهى في', 'Ended at'],
-    observedAt: ['تاريخ المعاينة', 'Observed on'],
-    basis: ['الأساس', 'Basis'],
-    attempts: ['عدد المحاولات', 'Attempts'],
-    visitCount: ['عدد الزيارات', 'Visits'],
-    vacancyStands: ['الشغور المؤكَّد باقٍ', 'Vacancy stands'],
-    via: ['عبر', 'Via'],
-    unitsClaimed: ['وحدات أُضيفت للمالك', 'Units put on the owner'],
-    occupanciesRecorded: ['إشغالات سُجِّلت', 'Occupancies recorded'],
-    occupanciesEnded: ['إشغالات أُنهيت', 'Occupancies ended'],
-    rowsAdded: ['أسطر أُضيفت', 'Rows added'],
-    cardsCreated: ['بطاقات أُنشئت', 'Cards created'],
-    cardsEnded: ['بطاقات أُنهيت', 'Cards ended'],
-    recordedAfterTenant: ['سُجِّل المالك بعد المستأجر', 'Owner recorded after tenant'],
-    split: ['نُقلت الوحدة إلى بطاقة مستقلة', 'Moved onto its own card'],
-    kept: ['أُبقي', 'Kept'],
-    documentType: ['نوع المرفق', 'Document type'],
-    parcelsImported: ['عقارات استوردت', 'Parcels imported'],
-    parcelsSkipped: ['عقارات تُركت', 'Parcels skipped'],
-    linesImported: ['خطوط استوردت', 'Lines imported'],
-    amount: ['المبلغ', 'Amount'],
-    amountNow: ['المبلغ لو صدرت اليوم', 'Amount if raised today'],
-    movedOn: ['تاريخ الانتقال', 'Moved on'],
-    targetType: ['الجهة المستهدفة', 'Target'],
-    issuedCount: ['عدد الإشعارات', 'Notices issued'],
-    periodKey: ['الفترة', 'Period'],
-    confirmed: ['مؤكَّدة', 'Confirmed'],
-    method: ['طريقة الدفع', 'Method'],
-    snapshotCreatedAt: ['تاريخ النسخة الاحتياطية', 'Snapshot date'],
-    rowCount: ['عدد الصفوف', 'Rows'],
-    provisionalSuffix: ['الحرف المؤقت', 'Provisional suffix'],
-    codeSuffix: ['حرف المبنى', 'Building suffix'],
-    zoneCode: ['القطاع', 'Sector'],
-    buildingCode: ['رمز المبنى', 'Building code'],
-    cardsCorrected: ['بطاقات صُحِّحت', 'Cards corrected'],
-    casesCorrected: ['حالات صُحِّحت', 'Cases corrected'],
-    pinInsideNewParcel: ['الدبوس داخل العقار الجديد', 'Pin inside the new parcel'],
-    reclaimedOwnCode: ['استعاد رمزه السابق', 'Took its own old code back'],
-    keptOldAsShared: ['أُبقي العقار القديم مشتركاً', 'Old parcel kept as shared'],
-    acknowledgedNeighbours: ['مبانٍ تحقّق منها الموظف', 'Neighbours checked'],
-    from: ['من', 'From'],
-    to: ['إلى', 'To'],
-    percent: ['النسبة ٪', 'Percent'],
-    sampled: ['سُحب للتحقق', 'Sampled'],
-    officers: ['عدد الموظفين', 'Officers'],
-    parcels: ['العقارات', 'Parcels'],
-    created: ['أُنشئ', 'Created'],
-  };
-  return Object.fromEntries(Object.entries(pairs).map(([key, [ar, enLabel]]) => [key, en ? enLabel : ar]));
-}
 
 export function describeAudit(entry: AuditEntry, locale: string): AuditDescription {
-  const en = locale === 'en';
+  const loc = localeOf(locale);
+  const t = translators[loc];
   const labels = getLabels(locale);
   const quality = qualityLabels(locale);
-  const names = fieldLabels(en);
+  const names: Record<string, string> = (loc === 'en' ? EN : AR).fields;
+  const separator = t('text.listSeparator');
   const before = asObject(entry.before);
   const after = asObject(entry.after);
 
@@ -315,6 +246,8 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
       they reach the screen as `AREA، UNIT_STATUS`, which is the register
       talking to itself in front of an auditor.
     */
+    level: [labels.damageLevel],
+    source: [labels.damageSource],
     fields: [quality.reviewField],
     differences: [quality.checkDifference],
     result: [quality.checkResult],
@@ -322,9 +255,10 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
 
   const format = (key: string, value: unknown): string => {
     if (value === null || value === undefined || value === '') return '—';
-    if (value === REDACTED) return en ? 'hidden to protect personal data' : 'مخفي لحماية البيانات';
-    if (typeof value === 'boolean') return value ? (en ? 'Yes' : 'نعم') : en ? 'No' : 'لا';
-    if (typeof value === 'number') return value.toLocaleString(en ? 'en' : 'ar');
+    if (value === REDACTED) return t('text.redacted');
+    if (typeof value === 'boolean') return value ? t('text.yes') : t('text.no');
+    // Latin digits on the Arabic page too, as every figure on the portal is written.
+    if (typeof value === 'number') return value.toLocaleString(FORMAT_LOCALE[loc]);
     if (typeof value === 'string') {
       for (const map of enumMaps[key] ?? []) {
         if (map[value]) return map[value]!;
@@ -338,10 +272,10 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
     }
     if (Array.isArray(value)) {
       if (value.length === 0) return '—';
-      const shown = value.slice(0, 6).map((item) => (typeof item === 'object' ? summarize(item, en) : format(key, item)));
-      return value.length > 6 ? `${shown.join('، ')} +${value.length - 6}` : shown.join('، ');
+      const shown = value.slice(0, 6).map((item) => (typeof item === 'object' ? summarize(item, t) : format(key, item)));
+      return value.length > 6 ? `${shown.join(separator)} +${value.length - 6}` : shown.join(separator);
     }
-    return summarize(value, en);
+    return summarize(value, t);
   };
 
   const result: AuditDescription = { changes: [], facts: [], quotes: [], details: [] };
@@ -350,22 +284,30 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
   // ── sentences somebody wrote ──
   const note = after?.note ?? before?.note;
   if (typeof note === 'string' && note) {
-    result.quotes.push({ label: en ? 'Note' : 'ملاحظة', value: note });
+    result.quotes.push({ label: t('text.note'), value: note });
   }
   const reason = after?.reason ?? before?.reason;
   if (typeof reason === 'string' && reason) {
     const reasonLabel =
       entry.action === 'RECORD_RETURNED'
-        ? en ? 'What to correct' : 'المطلوب تصحيحه'
+        ? t('text.whatToCorrect')
         : entry.action.startsWith('QUALITY_FINDING')
-          ? en ? 'Why it is not a problem' : 'سبب اعتبارها ليست مشكلة'
-          : en ? 'Reason' : 'السبب';
+          ? t('text.whyNotAProblem')
+          : t('text.reason');
     // An ending's reason is a code («سُجّل خطأً», «انتقال الملكية»); a person's is prose.
     result.quotes.push({ label: reasonLabel, value: format('reason', reason) });
   }
+  /*
+    Who asked for a citizen file to be archived — the citizen, a relative, the
+    mukhtar (decision, 2026-10-05). Written by a person, so quoted as written.
+  */
+  const requestedBy = after?.requestedBy;
+  if (typeof requestedBy === 'string' && requestedBy) {
+    result.quotes.push({ label: t('text.requestedBy'), value: requestedBy });
+  }
   if (typeof after?.duplicateReason === 'string' && after.duplicateReason) {
     result.quotes.push({
-      label: en ? 'Why it is a separate structure' : 'لماذا هي منشأة منفصلة',
+      label: t('text.whySeparateStructure'),
       value: after.duplicateReason,
     });
   }
@@ -375,78 +317,82 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
     if (value) result.facts.push({ label, value });
   };
   if (typeof after?.noPinReason === 'string') {
-    fact(en ? 'No entrance pin — why' : 'بلا دبوس مدخل — السبب', after.noPinReason);
+    fact(t('text.noPinWhy'), after.noPinReason);
   }
   if (typeof after?.unitAreaNotMeasured === 'string') {
-    fact(en ? 'Area not measured — why' : 'المساحة غير مُقاسة — السبب', after.unitAreaNotMeasured);
+    fact(t('text.areaNotMeasuredWhy'), after.unitAreaNotMeasured);
   }
   if (typeof after?.unitStatusNotEstablished === 'string') {
-    fact(en ? 'Occupant not known — why' : 'لم يُعرف من يشغلها — السبب', after.unitStatusNotEstablished);
+    fact(t('text.occupantNotKnownWhy'), after.unitStatusNotEstablished);
   }
   if (Array.isArray(after?.acknowledgedNeighbours)) {
     fact(
-      en ? 'Structures already on the parcel' : 'منشآت قائمة على العقار أُقرَّ بها',
+      t('text.neighboursAcknowledged'),
       (after.acknowledgedNeighbours as Json[])
         .map((row) =>
           row.distanceMetres != null
-            ? `${String(row.code)} (${en ? `${row.distanceMetres} m` : `على بُعد ${row.distanceMetres} م`})`
+            ? t('text.neighbourDistance', { code: String(row.code), metres: String(row.distanceMetres) })
             : String(row.code),
         )
-        .join('، '),
+        .join(separator),
     );
   }
   const review = asObject(after?.duplicateReview);
   if (review) {
-    fact(en ? 'Confirmed a different person from' : 'أُكِّد أنه شخص مختلف عن', listOf(review.differentFrom));
-    fact(en ? 'Confirmed sharing a phone with' : 'أُكِّد أنه يتشارك الهاتف مع', listOf(review.sharedPhoneWith));
+    fact(t('text.differentPersonFrom'), listOf(review.differentFrom, separator));
+    fact(t('text.sharesPhoneWith'), listOf(review.sharedPhoneWith, separator));
     if (review.sharedPhoneWithLandlord === true) {
-      fact(en ? 'Shares a phone with the landlord' : 'يتشارك الهاتف مع المالك', en ? 'Yes' : 'نعم');
+      fact(t('text.sharesPhoneWithLandlord'), t('text.yes'));
     }
     if (typeof review.reason === 'string') {
-      result.quotes.push({ label: en ? 'How the officer knew' : 'كيف تحقَّق الموظف', value: review.reason });
+      result.quotes.push({ label: t('text.howOfficerKnew'), value: review.reason });
     }
   }
-  fact(en ? 'Held for review — may already be' : 'مُعلَّق للمراجعة — قد يكون', listOf(after?.heldAsPossibleDuplicateOf));
+  fact(t('text.heldAsDuplicateOf'), listOf(after?.heldAsPossibleDuplicateOf, separator));
   const reviewed = asObject(after?.possibleDuplicateReviewed);
   if (reviewed) {
-    fact(en ? 'Resolved note' : 'التنبيه الذي حُلّ', typeof reviewed.was === 'string' ? reviewed.was : null);
+    fact(t('text.resolvedNote'), typeof reviewed.was === 'string' ? reviewed.was : null);
     if (typeof reviewed.reason === 'string') {
-      result.quotes.push({ label: en ? 'Why it is a different person' : 'لماذا هو شخص مختلف', value: reviewed.reason });
+      result.quotes.push({ label: t('text.whyDifferentPerson'), value: reviewed.reason });
     }
   }
   if (Array.isArray(after?.fields)) {
     fact(
-      en ? 'Parts to correct' : 'أجزاء تحتاج تصحيحاً',
-      (after.fields as string[]).map((code) => quality.reviewField[code as never] ?? code).join('، '),
+      t('text.partsToCorrect'),
+      (after.fields as string[]).map((code) => quality.reviewField[code as never] ?? code).join(separator),
     );
   }
   if (after?.result === 'MATCHES' || after?.result === 'DIFFERS') {
     fact(
-      en ? 'Re-check result' : 'نتيجة التحقق',
-      after.result === 'MATCHES' ? (en ? 'Matches the record' : 'مطابق للسجل') : en ? 'Differs' : 'مختلف عن السجل',
+      t('text.recheckResult'),
+      after.result === 'MATCHES' ? t('text.recheckMatches') : t('text.recheckDiffers'),
     );
   }
   if (Array.isArray(after?.differences) && (after.differences as string[]).length) {
     fact(
-      en ? 'Found different' : 'ما وُجد مختلفاً',
-      (after.differences as string[]).map((code) => quality.checkDifference[code as never] ?? code).join('، '),
+      t('text.foundDifferent'),
+      (after.differences as string[]).map((code) => quality.checkDifference[code as never] ?? code).join(separator),
     );
   }
-  if (after?.matchedBy === 'NAME') {
-    fact(en ? 'Matched' : 'طريقة المطابقة', en ? 'By name only' : 'بالاسم فقط');
-  }
-  if (after?.matchedBy === 'PROPERTY') {
-    fact(
-      en ? 'Matched' : 'طريقة المطابقة',
-      en ? 'Registered owner of the property — no number given' : 'مالك العقار المسجَّل — دون رقم',
-    );
-  }
+  if (after?.matchedBy === 'NAME') fact(t('text.matched'), t('text.matchedByName'));
+  if (after?.matchedBy === 'PROPERTY') fact(t('text.matched'), t('text.matchedByProperty'));
+  // The card's number was the owner's «رقم للتواصل» — a relative's, recorded because they have no phone.
+  if (after?.matchedBy === 'CONTACT') fact(t('text.matched'), t('text.matchedByContact'));
   if (after?.acknowledgedRepeat === true) {
-    fact(en ? 'Second visit today' : 'زيارة ثانية في اليوم نفسه', en ? 'Confirmed by the officer' : 'أكَّدها الموظف');
+    fact(t('text.secondVisitToday'), t('text.confirmedByOfficer'));
   }
   const kind = after?.kind ?? before?.kind;
   if (typeof kind === 'string' && entry.action.startsWith('QUALITY_FINDING')) {
-    fact(en ? 'Finding' : 'الملاحظة', quality.findingKind[kind as never] ?? kind);
+    fact(t('text.finding'), quality.findingKind[kind as never] ?? kind);
+  }
+  /*
+    A planned day, `YYYY-MM-DD` or midnight UTC: the calendar day the inspector
+    picked, never a moment — read as a timestamp it would print a time of day,
+    and in Beirut the evening before.
+  */
+  const reinspectAt = after?.reinspectAt;
+  if (typeof reinspectAt === 'string' && reinspectAt) {
+    fact(t('text.reinspectAt'), formatDate(`${calendarDayOf(reinspectAt)}T12:00:00.000Z`));
   }
   /*
     `changed` names every field a save moved. The ones whose values the entry
@@ -460,13 +406,8 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
     const unvalued = (changedNames as string[]).filter((key) => !valued(key));
     const sensitive = unvalued.filter((key) => SENSITIVE_FIELDS.has(key));
     const plain = unvalued.filter((key) => !SENSITIVE_FIELDS.has(key));
-    if (plain.length) fact(en ? 'Fields changed' : 'الحقول المعدَّلة', plain.map(labelOf).join('، '));
-    if (sensitive.length) {
-      fact(
-        en ? 'Changed — value not kept, to protect personal data' : 'عُدِّلت — لا تُحفظ القيمة حمايةً للبيانات',
-        sensitive.map(labelOf).join('، '),
-      );
-    }
+    if (plain.length) fact(t('text.fieldsChanged'), plain.map(labelOf).join(separator));
+    if (sensitive.length) fact(t('text.changedValueNotKept'), sensitive.map(labelOf).join(separator));
   }
 
   // ── a citizen's cards, one line per change ──
@@ -474,16 +415,16 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
     for (const card of after.cards as Json[]) {
       const name = [
         typeof card.propertyType === 'string' ? format('propertyType', card.propertyType) : null,
-        card.propertyNumber ? `${en ? 'parcel' : 'عقار'} ${String(card.propertyNumber)}` : null,
+        card.propertyNumber ? t('text.parcel', { number: String(card.propertyNumber) }) : null,
         typeof card.occupancyType === 'string'
           ? ((labels.occupancyType as Record<string, string>)[card.occupancyType] ?? card.occupancyType)
           : null,
       ]
         .filter(Boolean)
         .join(' · ');
-      const cardLabel = `${en ? 'Card' : 'بطاقة'} ${name}`;
-      if (card.kind === 'added') fact(en ? 'Card added' : 'أُضيفت بطاقة', name);
-      if (card.kind === 'removed') fact(en ? 'Card removed' : 'حُذفت بطاقة', name);
+      const cardLabel = t('text.card', { name });
+      if (card.kind === 'added') fact(t('text.cardAdded'), name);
+      if (card.kind === 'removed') fact(t('text.cardRemoved'), name);
       for (const field of (Array.isArray(card.fields) ? card.fields : []) as Json[]) {
         const key = String(field.field);
         result.changes.push({
@@ -493,19 +434,16 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
         });
       }
       if (Array.isArray(card.sensitive) && card.sensitive.length) {
-        fact(
-          `${cardLabel} — ${en ? 'changed, value not kept' : 'عُدِّل دون حفظ القيمة'}`,
-          (card.sensitive as string[]).map(labelOf).join('، '),
-        );
+        fact(t('text.cardChangedValueNotKept', { card: cardLabel }), (card.sensitive as string[]).map(labelOf).join(separator));
       }
       const rows = asObject(card.rows);
       if (rows) {
         const parts = [
-          Number(rows.added) ? (en ? `${rows.added} added` : `أُضيفت ${rows.added}`) : null,
-          Number(rows.removed) ? (en ? `${rows.removed} removed` : `حُذفت ${rows.removed}`) : null,
-          Number(rows.changed) ? (en ? `${rows.changed} changed` : `عُدِّلت ${rows.changed}`) : null,
+          Number(rows.added) ? t('text.rowsAdded', { count: String(rows.added) }) : null,
+          Number(rows.removed) ? t('text.rowsRemoved', { count: String(rows.removed) }) : null,
+          Number(rows.changed) ? t('text.rowsChanged', { count: String(rows.changed) }) : null,
         ].filter(Boolean);
-        if (parts.length) fact(`${cardLabel} — ${en ? 'units' : 'الوحدات'}`, parts.join('، '));
+        if (parts.length) fact(t('text.cardUnits', { card: cardLabel }), parts.join(separator));
       }
     }
   }
@@ -546,14 +484,13 @@ function asObject(value: unknown): Json | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : null;
 }
 
-function listOf(value: unknown): string | null {
-  return Array.isArray(value) && value.length ? (value as unknown[]).map(String).join('، ') : null;
+function listOf(value: unknown, separator: string): string | null {
+  return Array.isArray(value) && value.length ? (value as unknown[]).map(String).join(separator) : null;
 }
 
-function summarize(value: unknown, en: boolean): string {
+function summarize(value: unknown, t: AuditTranslator): string {
   if (!value || typeof value !== 'object') return String(value ?? '—');
-  const count = Object.keys(value as Json).length;
-  return en ? `${count} recorded field(s)` : `${count} حقلاً مسجَّلاً`;
+  return t('text.recordedFields', { count: String(Object.keys(value as Json).length) });
 }
 
 /** `unitLinksCleared` → «unit links cleared» — a readable last resort for a key with no label yet. */

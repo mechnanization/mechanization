@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import {
   ArrowLeft,
   ArrowRight,
@@ -56,6 +57,7 @@ import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
 import { ResidenceChangeDialog } from './residence-change-dialog';
 import { applyResidenceMove, planResidenceMove } from '@/lib/residence-move';
+import { carryHeldPhone } from '@/lib/citizen-contact';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
 
@@ -146,7 +148,7 @@ export function emptyCitizen(): CitizenFormValues {
   return {
     residence: 'RESIDENT',
     personal: { isLebanese: true },
-    contact: { whatsappSameAsPhone: true },
+    contact: { whatsappSameAsPhone: true, hasNoPhone: false },
     // Empty, not one blank card — a citizen who owns nothing and only rents
     // has no property to file, and that is the common case this form should
     // not stand in the way of. Staff add a card only for someone who owns.
@@ -360,14 +362,26 @@ export function askableFields(values: CitizenFormValues): AskableField[] {
   }
 
   fields.push(
-    { path: 'contact.phone', field: 'phone', section: 'contact' },
     { path: 'contact.maritalStatus', field: 'maritalStatus', section: 'contact' },
     { path: 'contact.totalRegisteredMembers', field: 'totalRegisteredMembers', section: 'contact' },
     { path: 'contact.actualHouseholdMembers', field: 'actualHouseholdMembers', section: 'contact' },
   );
 
-  if (values.contact.whatsappSameAsPhone === false) {
-    fields.push({ path: 'contact.whatsapp', field: 'whatsapp', section: 'contact' });
+  /*
+    «لا يملك رقم هاتف» answers the phone question, so neither number is
+    offered a «غير مؤكَّد» flag any more.
+
+    A flag is an excuse for an answer the register still needs — the same
+    reason «فئة الدم» is absent above. Leaving the phone flaggable here would
+    put a finished record in «يتطلب مراجعة» over a field whose answer is
+    «there is no number», and ask a reviewer to find one that does not exist.
+  */
+  if (values.contact.hasNoPhone !== true) {
+    fields.push({ path: 'contact.phone', field: 'phone', section: 'contact' });
+
+    if (values.contact.whatsappSameAsPhone === false) {
+      fields.push({ path: 'contact.whatsapp', field: 'whatsapp', section: 'contact' });
+    }
   }
 
   fields.push(...propertyAskableFields(values));
@@ -937,6 +951,20 @@ export function CitizenForm({
   }, []);
 
   /**
+   * The contact section, with one correction made on the officer's behalf:
+   * «لا يملك رقم هاتف» carries the number already on the file into «رقم
+   * للتواصل» instead of throwing it away (`carryHeldPhone`, which says when).
+   *
+   * Called here rather than in `ContactStep` because it is a correction rule
+   * rather than a rendering one — the same place the «غير مؤكَّد» flags and
+   * the نوع الملف switch are decided — and because it needs the file as it
+   * stood, which the step does not own.
+   */
+  const updateContact = useCallback((next: CitizenFormValues['contact']) => {
+    setValues((current) => ({ ...current, contact: carryHeldPhone(current.contact, next) }));
+  }, []);
+
+  /**
    * Raise or amend a «غير مؤكَّد» flag — and empty the field it covers.
    *
    * Clearing the value is the substantive half. A flag says the value was
@@ -1434,31 +1462,36 @@ export function CitizenForm({
     portal asks for their رقم مرجعي *and* this number. Said under the field, on
     every screen size, while the old number is still on screen to compare —
     not discovered when the citizen calls to say they cannot log in.
+
+    «لا يملك رقم هاتف» is not a new number, and saying «use the new number»
+    there was untrue: the payments portal and the phone-code sign-in both need
+    a number of the citizen's own, and «رقم للتواصل» is never accepted in its
+    place. What is left is the reference-only landing page, and that is what
+    the note says. How such a citizen's family pays online is an open decision
+    (docs/open-decisions.md).
   */
+  const tPhone = useTranslations('citizenForm.phone');
+  const ltr = (chunks: React.ReactNode) => <span dir="ltr">{chunks}</span>;
   const loadedPhone = String(initial.contact.phone ?? '').replace(/\s+/g, '');
   const phoneNow = String(values.contact.phone ?? '').replace(/\s+/g, '');
-  const phoneNote =
-    mode === 'edit' && loadedPhone && phoneNow !== loadedPhone ? (
-      <p
-        role="note"
-        className="mt-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed text-warning"
-      >
-        <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-        <span>
-          {locale === 'en' ? (
-            <>
-              The citizen signs in with their reference number and this phone. After saving, they must use the new
-              number — the old one (<span dir="ltr">{loadedPhone}</span>) will stop working.
-            </>
-          ) : (
-            <>
-              يدخل المواطن إلى حسابه برقمه المرجعي وهذا الهاتف. بعد الحفظ عليه استعمال الرقم الجديد، ولن يعمل الرقم
-              السابق (<span dir="ltr">{loadedPhone}</span>).
-            </>
-          )}
-        </span>
-      </p>
-    ) : null;
+  const noPhoneNow = values.contact.hasNoPhone === true;
+  const phoneNoteText = noPhoneNow ? (
+    <>
+      {tPhone('noPhoneSignIn')}
+      {mode === 'edit' && loadedPhone ? <> {tPhone.rich('oldNumberStops', { number: loadedPhone, ltr })}</> : null}
+    </>
+  ) : mode === 'edit' && loadedPhone && phoneNow !== loadedPhone ? (
+    tPhone.rich('changed', { number: loadedPhone, ltr })
+  ) : null;
+  const phoneNote = phoneNoteText ? (
+    <p
+      role="note"
+      className="mt-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed text-warning"
+    >
+      <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+      <span>{phoneNoteText}</span>
+    </p>
+  ) : null;
 
   /** «دمج» on a match — only for an administrator, only on a saved file. */
   const [mergeWith, setMergeWith] = useState<string | null>(null);
@@ -1882,7 +1915,7 @@ export function CitizenForm({
             {isNonResident ? (
               <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={phoneNote} />
             ) : (
-              <ContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={phoneNote} />
+              <ContactStep value={values.contact} errors={shown} onChange={updateContact} locale={locale} afterPhone={phoneNote} />
             )}
           </FormSection>
       </div>

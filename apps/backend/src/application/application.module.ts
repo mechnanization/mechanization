@@ -22,6 +22,7 @@ import { DocumentService } from './features/documents/document.service';
 import { IdentityService } from './features/identity/identity.service';
 import { OtpService } from './features/identity/otp.service';
 import { SessionRevocationService } from './features/identity/session-revocation.service';
+import { StaffPresenceService } from './features/identity/staff-presence.service';
 import { StaffRefreshTokenService } from './features/identity/staff-refresh-token.service';
 import { RegistrationService } from './features/registration/registration.service';
 import { ReportingService } from './features/reporting/reporting.service';
@@ -55,6 +56,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     IdentityService,
     OtpService,
     SessionRevocationService,
+    StaffPresenceService,
     StaffRefreshTokenService,
     RegistrationService,
     DocumentService,
@@ -90,6 +92,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     IdentityService,
     OtpService,
     SessionRevocationService,
+    StaffPresenceService,
     RegistrationService,
     DocumentService,
     AuditService,

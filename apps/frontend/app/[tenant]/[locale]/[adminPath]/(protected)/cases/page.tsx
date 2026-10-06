@@ -32,6 +32,7 @@ import { useCaseColumns } from '@/components/admin/cases/use-case-columns';
 import { useCaseLinking } from '@/components/admin/cases/use-case-linking';
 import { CaseLinkDialog, CaseUnlinkDialog } from '@/components/admin/cases/case-link-dialogs';
 import { CaseQueueTabs } from '@/components/admin/cases/case-queue-tabs';
+import { CASE_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 
 /**
  * حالات — field visits that could not become a citizen registration.
@@ -135,7 +136,8 @@ export default function CasesPage({
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
   const [search, setSearch] = useTabSearch(tenant, 'cases');
 
-  const canWrite = role !== 'AUDITOR' && role !== 'ACCOUNTANT';
+  // An allow-list (`CASE_WRITE_ROLES`, as `CasesController` writes): an undefined role on first paint writes nothing.
+  const canWrite = hasRole(CASE_WRITE_ROLES, role);
   const canDelete = role === 'SUPER_ADMIN';
 
   const query = useStaffQuery({

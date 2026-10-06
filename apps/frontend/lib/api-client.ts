@@ -1,4 +1,10 @@
-import { IMPORT_BATCH_SIZE, type ErrorParams } from '@mechanization/shared-schemas';
+import {
+  BACKGROUND_REQUEST_HEADER,
+  IMPORT_BATCH_SIZE,
+  type ErrorParams,
+  type ReinspectionsPage,
+  type StaffPresenceResponse,
+} from '@mechanization/shared-schemas';
 import { localizeApiError } from './api-errors';
 import { cachedRequest, invalidateRequests, peekCachedRequest } from './request-cache';
 import type {
@@ -698,7 +704,16 @@ async function exchangeStaffToken(
  */
 const SESSION_ROUTES = ['/auth/staff/login', '/auth/staff/refresh', '/auth/staff/logout'];
 
-type ApiFetchInit = RequestInit & { token?: string; skipTokenRefresh?: boolean };
+type ApiFetchInit = RequestInit & {
+  token?: string;
+  skipTokenRefresh?: boolean;
+  /**
+   * A request the screen makes by itself — a poll, an interval refresh — not
+   * because somebody did something. Sent with `BACKGROUND_REQUEST_HEADER`, so
+   * the API does not count it as the account being at the system («متصل الآن»).
+   */
+  background?: boolean;
+};
 
 /**
  * Every call is tenant-scoped by construction: the municipality slug is part of
@@ -716,7 +731,7 @@ async function send<T>(
   init: ApiFetchInit,
   exchangesLeft: number,
 ): Promise<T> {
-  const { token, headers, skipTokenRefresh, ...rest } = init;
+  const { token, headers, skipTokenRefresh, background, ...rest } = init;
 
   let response: Response;
   try {
@@ -727,6 +742,7 @@ async function send<T>(
         // here silently breaks every file upload.
         ...(rest.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(background ? { [BACKGROUND_REQUEST_HEADER]: '1' } : {}),
         ...headers,
       },
     });
@@ -1165,6 +1181,10 @@ export interface ParcelRegistrant {
   registrationId: string;
   fullName: string;
   phone: string | null;
+  /** «لا يملك رقم هاتف» — absent from an older backend. */
+  hasNoPhone?: boolean;
+  /** «رقم للتواصل» — a relative's number. */
+  contactPhone?: string | null;
   occupancyType: string;
   propertyType: string;
   buildingName: string | null;
@@ -1717,6 +1737,14 @@ export interface DamageAssessmentRow {
   observations: string | null;
   /** When the visit happened, not when it was typed up — see the schema. */
   assessedAt: string;
+  /**
+   * «صالحة للسكن؟» — the second axis beside the level (0071): true / false as
+   * answered, null on a reading from before the question. Optional for an
+   * older server. Read it with `isUninhabitableReading`.
+   */
+  habitable?: boolean | null;
+  /** «موعد إعادة الكشف» — only on a «غير صالحة للسكن» reading. Optional for an older server. */
+  reinspectAt?: string | null;
   assessedById: string | null;
   assessedByName: string | null;
   createdAt: string;
@@ -2051,6 +2079,10 @@ export interface RecordDamageInput {
   source?: DamageSource;
   observations?: string;
   assessedAt?: string;
+  /** «صالحة للسكن؟» — see `habitabilityFor` for what the level decides and what it leaves to the inspector. */
+  habitable?: boolean;
+  /** «موعد إعادة الكشف», "YYYY-MM-DD" — only on a «غير صالحة للسكن» reading; refused otherwise. */
+  reinspectAt?: string;
 }
 
 /**
@@ -3086,10 +3118,19 @@ export interface CitizenProfileUnit {
   /**
    * Everyone سجل المباني records as a current owner of the linked flat, with
    * their أسهم. On a tenancy card: the flat's whole ownership beside the one
-   * co-owner the card is linked to. `citizenId` is absent on the citizen's own
-   * portal view.
+   * co-owner the card is linked to. `citizenId` and every number are absent on
+   * the citizen's own portal view.
    */
-  owners?: Array<{ citizenId?: string; name: string; phone?: string | null; shares: number | null }>;
+  owners?: Array<{
+    citizenId?: string;
+    name: string;
+    phone?: string | null;
+    /** «لا يملك رقم هاتف». */
+    hasNoPhone?: boolean;
+    /** «رقم للتواصل» — a relative's number. */
+    contactPhone?: string | null;
+    shares: number | null;
+  }>;
 }
 
 export interface CitizenProfileProperty {
@@ -3256,6 +3297,10 @@ export interface CitizenProfile {
   motherName?: string | null;
   phone: string | null;
   whatsapp: string | null;
+  /** «لا يملك رقم هاتف» — a finished answer, not a gap. Absent from an older backend. */
+  hasNoPhone?: boolean;
+  /** «رقم للتواصل» — a relative's number, never the citizen's own. */
+  contactPhone?: string | null;
   gender: string | null;
   nationality: string | null;
   isLebanese: boolean | null;
@@ -3384,6 +3429,12 @@ export interface CitizenListItem {
   motherName?: string | null;
   phone: string | null;
   whatsapp: string | null;
+  /** «لا يملك رقم هاتف» — the empty phone is an answer. Absent from an older server. */
+  hasNoPhone?: boolean;
+  /** «رقم للتواصل» — a relative's number, never the citizen's own. */
+  contactPhone?: string | null;
+  /** The search found this row by its «رقم للتواصل». */
+  matchedOnContactPhone?: boolean;
   gender: string | null;
   referenceNumber: string | null;
   identityDocType: string | null;
@@ -3465,6 +3516,11 @@ export function listCitizens(
       overdue: number;
       inArrears: number;
       requiringReview: number;
+      /**
+       * «إجمالي الأسر» — live household files over the whole register, never
+       * narrowed by the search. Absent from an older server.
+       */
+      families?: number;
     };
   }>(tenant, `/citizens?${query}`, { token, signal });
 }
@@ -3480,11 +3536,17 @@ export interface ReviewQueueItem {
   motherName: string | null;
   referenceNumber: string | null;
   phone: string | null;
+  /** «لا يملك رقم هاتف» — absent from an older server. */
+  hasNoPhone?: boolean;
   /** Always `REQUIRES_REVIEW` in this list. */
   status: CitizenRecordStatus;
   /** How many «غير مؤكَّد» fields the latest registration carries. */
   openFieldCount: number;
   submittedAt: string;
+  /** Who filed it. Optional for an older server; null when unrecorded. */
+  filedByName?: string | null;
+  /** Their staff id — pressing the name narrows an admin's queue to that officer. */
+  filedById?: string | null;
 }
 
 /**
@@ -3495,11 +3557,12 @@ export interface ReviewQueueItem {
 export function getReviewQueue(
   tenant: string,
   token: string,
-  filter: { search?: string; limit?: number; offset?: number } = {},
+  filter: WorklistFilter = {},
   signal?: AbortSignal,
 ) {
   const query = new URLSearchParams();
   if (filter.search) query.set('search', filter.search);
+  if (filter.owner) query.set('owner', filter.owner);
   query.set('limit', String(filter.limit ?? 25));
   query.set('offset', String(filter.offset ?? 0));
   return apiFetch<{ items: ReviewQueueItem[]; total: number }>(
@@ -3507,6 +3570,85 @@ export function getReviewQueue(
     `/citizens/review-queue?${query}`,
     { token, signal },
   );
+}
+
+/**
+ * What a collection worklist is asked for. `owner` — a staff id, or
+ * `WORKLIST_UNASSIGNED` for work whose officer is gone — is honoured only for a
+ * role that sees everyone's work; an officer's list is always their own.
+ */
+export interface WorklistFilter {
+  search?: string;
+  owner?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** One row of «وحدات غير ممسوحة» — `GET /buildings/unsurveyed-units`. */
+export interface UnsurveyedUnitRow {
+  unitId: string;
+  unitCode: string;
+  floor: number;
+  unitType: UnitType;
+  surveyStatus: SurveyStatus;
+  /** Attempts so far — three unanswered doors are a different visit from none. */
+  visitCount: number;
+  lastVisitAt: string | null;
+  buildingId: string;
+  buildingCode: string;
+  buildingName: string | null;
+  parcelNumber: string;
+  /** Who put the building on the census — shown to the roles that see everyone's. */
+  addedByName: string | null;
+  /** Their staff id — pressing the name narrows an admin's list to that officer. */
+  addedById?: string | null;
+  /** The door's open case, if any — a refused or unreachable flat already booked for a revisit. */
+  openCaseType?: string | null;
+  scheduledRevisitAt?: string | null;
+}
+
+/**
+ * «وحدات غير ممسوحة» — units with no survey answer and nobody recorded on
+ * them, in the buildings the viewer added; the roles that see all staff work
+ * (`seesAllStaffWork`) get everyone's. Narrowed and paged on the server.
+ */
+export function getUnsurveyedUnits(
+  tenant: string,
+  token: string,
+  filter: WorklistFilter = {},
+  signal?: AbortSignal,
+) {
+  return apiFetch<{ items: UnsurveyedUnitRow[]; total: number }>(
+    tenant,
+    `/buildings/unsurveyed-units?${worklistQuery(filter)}`,
+    { token, signal },
+  );
+}
+
+/**
+ * «بانتظار إعادة الكشف» — flats and structures read «غير صالحة للسكن»,
+ * waiting for the visit after repair that releases their fee hold. Planned
+ * days first, the most overdue at the top. Narrowed and paged on the server.
+ */
+export function getReinspections(
+  tenant: string,
+  token: string,
+  filter: WorklistFilter = {},
+  signal?: AbortSignal,
+) {
+  return apiFetch<ReinspectionsPage>(tenant, `/buildings/reinspections?${worklistQuery(filter)}`, {
+    token,
+    signal,
+  });
+}
+
+function worklistQuery(filter: WorklistFilter): URLSearchParams {
+  const query = new URLSearchParams();
+  if (filter.search) query.set('search', filter.search);
+  if (filter.owner) query.set('owner', filter.owner);
+  query.set('limit', String(filter.limit ?? 25));
+  query.set('offset', String(filter.offset ?? 0));
+  return query;
 }
 
 /**
@@ -4006,7 +4148,16 @@ export interface LandlordCandidate {
   referenceNumber: string | null;
   residence: string;
   registeredAt: string | null;
+  /**
+   * How the form's lookup found them: the number is their own (`PHONE`), or
+   * their recorded «رقم للتواصل» — a relative's (`CONTACT`), which is never
+   * preselected. Absent from an older server.
+   */
+  matchedBy?: LandlordMatch;
 }
+
+/** How a candidate was found. Only `PHONE` — the person's own number — is ever preselected. */
+export type LandlordMatch = 'PHONE' | 'CONTACT' | 'NAME' | 'PROPERTY';
 
 /**
  * Why a link cannot be made yet. Each code names the step that unblocks it,
@@ -4034,12 +4185,13 @@ export type LinkOutcome = 'NEW_CARD' | 'ADDED_TO_CARD' | 'ALREADY_ON_FILE' | 'OC
 
 export interface LandlordProposalCandidate extends LandlordCandidate {
   /**
-   * `PHONE` — the card's number is theirs. `NAME` — only the name the tenant
-   * typed is theirs; never preselected, and the card says so. `PROPERTY` —
-   * the occupant gave no number, and this person is on the register as the
-   * property's owner; never preselected either.
+   * `PHONE` — the card's number is theirs. `CONTACT` — the number is their
+   * recorded «رقم للتواصل», a relative's; never preselected, and the card
+   * says whose. `NAME` — only the name the tenant typed is theirs; never
+   * preselected. `PROPERTY` — the occupant gave no number, and this person is
+   * on the register as the property's owner; never preselected either.
    */
-  matchedBy: 'PHONE' | 'NAME' | 'PROPERTY';
+  matchedBy: LandlordMatch;
   outcome: LinkOutcome | null;
   blocked: LinkBlock | null;
 }
@@ -4270,33 +4422,23 @@ export async function unlinkLandlord(tenant: string, token: string, propertyEntr
 }
 
 /**
- * Soft delete and its undo — a deactivated citizen is skipped by the biller.
- * `why` goes on the audit row: the reason, and the day they moved away when
- * that is why («تغيير الإقامة»).
+ * «أرشفة الملف» and its undo — the only way a citizen file leaves the register;
+ * nothing deletes one (decision, 2026-10-05). An archived citizen is skipped by
+ * the biller and by sign-in and keeps every row. Archiving requires `why.reason`
+ * and `why.requestedBy` (who asked for it); both go on the audit row, with the
+ * day they moved away when that is why («تغيير الإقامة»).
  */
 export function setCitizenActive(
   tenant: string,
   token: string,
   citizenId: string,
   isActive: boolean,
-  why: { reason?: string; movedOn?: string } = {},
+  why: { reason?: string; requestedBy?: string; movedOn?: string } = {},
 ) {
   return apiFetch<{ isActive: boolean }>(
     tenant,
     `/citizens/${encodeURIComponent(citizenId)}/active`,
     { token, method: 'PATCH', body: JSON.stringify({ isActive, ...why }) },
-  );
-}
-
-/**
- * Permanent, cascading to registrations, properties, documents and invoices.
- * SUPER_ADMIN only, and the server refuses it for anyone with a settled payment.
- */
-export function deleteCitizen(tenant: string, token: string, citizenId: string) {
-  return apiFetch<{ deleted: boolean }>(
-    tenant,
-    `/citizens/${encodeURIComponent(citizenId)}`,
-    { token, method: 'DELETE' },
   );
 }
 
@@ -4330,8 +4472,33 @@ export interface StaffSummary {
   overpaidBalance?: number;
   createdAt: string;
   lastLoginAt: string | null;
+  /**
+   * «آخر ظهور» — when this account last made a request, null if not since
+   * migration 0070.
+   *
+   * A timestamp and not an `online` boolean, deliberately: the staff page
+   * needs «آخر ظهور» for whoever is *not* here, and a server that answered
+   * only yes/no would have thrown that away. `isStaffOnline` applies the
+   * threshold. Older accounts and a backend before 0070 send null, which
+   * reads as offline with nothing to say about when.
+   */
+  lastSeenAt?: string | null;
   /** Set only on a deleted account the earnings roster asked for. */
   deletedAt?: string | null;
+}
+
+/**
+ * «متصل الآن» / «آخر ظهور» for every live staff account, with the server's own
+ * clock (`now`) to compare against — `isStaffOnline` in
+ * `@mechanization/shared-schemas` is the rule, and the browser's clock is never
+ * used, so an office PC whose clock is off cannot flip the label.
+ *
+ * What the staff page polls once a minute, so it is light (no earnings
+ * roster) and a background request: the poll itself must not keep the admin
+ * reading it «متصل».
+ */
+export function getStaffPresence(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<StaffPresenceResponse>(tenant, '/staff/presence', { token, signal, background: true });
 }
 
 /**
@@ -4924,6 +5091,13 @@ export async function issueFeeNotice(
      * period itself is a manual charge.
      */
     heldUnits?: number;
+    /**
+     * Flats whose occupancy fee this notice held because their current damage
+     * reading says nobody can live in them — see
+     * `FeeAssessment.uninhabitableUnitCount`. Charged again from the first
+     * period after a re-inspection reads them habitable.
+     */
+    uninhabitableUnits?: number;
   }>(tenant, '/fees/notices', {
     token,
     method: 'POST',
@@ -4963,9 +5137,17 @@ export interface PendingPayment {
 }
 
 /** The clerk's queue: money claimed but not yet confirmed. */
-export function getPendingPayments(tenant: string, token: string, unseenOnly?: boolean) {
+export function getPendingPayments(
+  tenant: string,
+  token: string,
+  unseenOnly?: boolean,
+  options: { background?: boolean } = {},
+) {
   const query = unseenOnly ? '?unseenOnly=true' : '';
-  return apiFetch<{ items: PendingPayment[] }>(tenant, `/fees/payments/pending${query}`, { token });
+  return apiFetch<{ items: PendingPayment[] }>(tenant, `/fees/payments/pending${query}`, {
+    token,
+    background: options.background,
+  });
 }
 
 /** Mark a pending payment notification as seen. */

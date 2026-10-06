@@ -561,6 +561,22 @@ export function isOccupiableLifecycle(status: string | null | undefined): boolea
 export const UNSURVEYABLE_SHELL_LIFECYCLE = ['DEMOLISHED'] as const;
 
 /**
+ * The lifecycle states in which there is a structure on the ground — what a
+ * re-inspection after repair can still go and look at («بانتظار إعادة الكشف»).
+ *
+ * Wider than `OCCUPIABLE_LIFECYCLE` on purpose: a war-damaged block nobody lives
+ * in is exactly the structure waiting for its repair to be checked. A permit
+ * with nothing built, a demolished building and one never realised have no
+ * structure left to re-inspect.
+ */
+export const STANDING_LIFECYCLE = [
+  'UNDER_CONSTRUCTION',
+  'IN_USE',
+  'DERELICT',
+  'WAR_DAMAGED_UNINHABITED',
+] as const satisfies readonly BuildingLifecycle[];
+
+/**
  * Whether this structure's interior is beyond surveying — no floor count to
  * ask for, no unit matrix to paint.
  *
@@ -671,6 +687,15 @@ export function occupancyLiftsSurvey(status: string | null | undefined): boolean
  * residents must be out of it tonight. Aid allocation turns on that line, which
  * is why the scale is not collapsed to "damaged / not damaged".
  *
+ * **Whether anybody can live in it is a separate answer**, `habitable` on the
+ * reading (migration 0071, rules in `damage-rule.ts`), and never a level of its
+ * own (decision, 2026-10-05). A sixth level, `UNINHABITABLE`, was added and
+ * retired before it reached production: it made the scale stop matching the
+ * national datasets. Its value still exists in the database enum (0067) —
+ * removing a stored enum value is destructive DDL — but 0071 converted every
+ * reading that used it to `RESTRICTED_USE` with `habitable = false`, a CHECK
+ * refuses it, and it is not part of this list, so the API refuses it too.
+ *
  * `UNDER_CONSTRUCTION` is deliberately absent — it is a lifecycle state, it
  * already exists in `UNIT_STATUS`, and admitting it here would overwrite a
  * building's damage history with a fact about its building permit.
@@ -685,6 +710,26 @@ export const DAMAGE_LEVEL = [
 ] as const;
 export const damageLevelSchema = arabicEnum(DAMAGE_LEVEL, 'مستوى الضرر مطلوب');
 export type DamageLevel = z.infer<typeof damageLevelSchema>;
+
+/**
+ * The levels that mean a structure's use is impaired — what the «متضرر» tile
+ * counts and what the history colours as damage. An assessment finding a
+ * building undamaged is still an assessment, and counting it would make the
+ * figure rise every time an officer confirmed one was fine.
+ *
+ * One list for the server's count and every screen that colours a reading;
+ * it was four copies, which is how a new level reaches one and not the rest.
+ */
+export const IMPAIRED_DAMAGE_LEVELS = [
+  'RESTRICTED_USE',
+  'UNSAFE_EVACUATE',
+  'TOTAL_COLLAPSE',
+] as const satisfies readonly DamageLevel[];
+
+/** Whether a reading at this level means the structure's use is impaired. */
+export function isImpairedDamage(level: string | null | undefined): boolean {
+  return level != null && (IMPAIRED_DAMAGE_LEVELS as readonly string[]).includes(level);
+}
 
 /**
  * Where a damage reading came from, and therefore how far to trust it.
@@ -936,9 +981,37 @@ export const STAFF_ROLE = [
   'COLLECTOR',
   'ACCOUNTANT',
   'ADMINISTRATIVE_OFFICER',
+  /**
+   * «مشاهد فقط» — the municipality leader's account (0067): reads the
+   * dashboard, the reports, the register with its citizens' data, the census
+   * and cases; writes nothing and does not export the register (decision,
+   * 2026-10-05; the building census export is an open question).
+   */
+  'VIEWER',
 ] as const;
 export const staffRoleSchema = arabicEnum(STAFF_ROLE, 'الصلاحية غير صالحة');
 export type StaffRole = z.infer<typeof staffRoleSchema>;
+
+/**
+ * The roles that see every staff member's work in the collection worklists —
+ * «يتطلب مراجعة» and «وحدات غير ممسوحة». Everyone else sees only their own:
+ * the records they filed, the buildings they put on the census.
+ *
+ * The admins, plus the two roles whose job is to look across everyone's work
+ * (AUDITOR reviews it, VIEWER reads it). A field inspector's queue is the
+ * work in front of *them*; a colleague's open records are not theirs to finish.
+ */
+export const SEES_ALL_STAFF_WORK = [
+  'SUPER_ADMIN',
+  'ADMINISTRATIVE_OFFICER',
+  'AUDITOR',
+  'VIEWER',
+] as const satisfies readonly StaffRole[];
+
+/** Whether this role sees every staff member's worklist, not only its own. */
+export function seesAllStaffWork(role: string | null | undefined): boolean {
+  return role != null && (SEES_ALL_STAFF_WORK as readonly string[]).includes(role);
+}
 
 export const DOCUMENT_TYPE = [
   'IDENTITY',

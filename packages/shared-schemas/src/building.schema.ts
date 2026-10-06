@@ -12,6 +12,7 @@ import {
   vacancyBasisSchema,
   vacancyEndReasonSchema,
 } from './enums';
+import { habitabilityFor, isReinspectDayAhead } from './damage-rule';
 import { areaField, propertyNumberField } from './property.schema';
 import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
 
@@ -736,8 +737,64 @@ export const createDamageAssessmentSchema = z
       .date({ invalid_type_error: 'تاريخ الكشف غير صالح' })
       .refine(notAfterNow, 'تاريخ الكشف في المستقبل')
       .optional(),
+    /**
+     * «صالحة للسكن؟» — the second axis, beside the structural level (0071).
+     *
+     * Optional on the wire because the level often decides it (see
+     * `habitabilityFor`): absent on a collapse or an evacuation it reads
+     * «غير صالحة», absent on no or minor damage «صالحة». Restricted use is the
+     * one level where either is ordinary, so it must be stated there.
+     */
+    habitable: z.boolean({ invalid_type_error: 'جواب «صالحة للسكن» غير صالح' }).optional(),
+    /**
+     * «موعد إعادة الكشف» — when a target read «غير صالحة للسكن» is to be
+     * visited again, once it is repaired. Only on such a reading: it is the
+     * one that expects a second visit. A planned day — today or later on the
+     * municipality's calendar.
+     */
+    reinspectAt: z.coerce.date({ invalid_type_error: 'موعد إعادة الكشف غير صالح' }).optional(),
+  })
+  /*
+    The level's own answer fills an absent one, on the server as on the form, so
+    an API client that leaves it out records what the inspector's screen would
+    have shown — never a blank that reads as "nobody asked".
+  */
+  .transform((value): typeof value => {
+    const prefill = habitabilityFor(value.level);
+    return { ...value, habitable: value.habitable ?? prefill.value ?? undefined };
   })
   .superRefine((value, ctx) => {
+    const prefill = habitabilityFor(value.level);
+    if (prefill.locked && value.habitable !== prefill.value) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['habitable'],
+        message: 'المبنى المنهار أو الواجب إخلاؤه لا يكون صالحاً للسكن',
+      });
+    }
+    if (prefill.required && value.habitable === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['habitable'],
+        message: 'حدِّد هل هي صالحة للسكن',
+      });
+    }
+    if (value.reinspectAt) {
+      if (value.habitable !== false) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['reinspectAt'],
+          message: 'موعد إعادة الكشف يُحدَّد لما هو غير صالح للسكن فقط',
+        });
+      }
+      if (!isReinspectDayAhead(value.reinspectAt)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['reinspectAt'],
+          message: 'موعد إعادة الكشف في الماضي',
+        });
+      }
+    }
     /*
       Exactly one target, mirroring the CHECK constraint in migration 0030.
 
@@ -1299,3 +1356,60 @@ export const buildingFilterSchema = z.object({
 });
 
 export type BuildingFilter = z.infer<typeof buildingFilterSchema>;
+
+/**
+ * The query of a collection worklist — «يتطلب مراجعة», «وحدات غير ممسوحة»,
+ * «بانتظار إعادة الكشف».
+ *
+ * Validated like every other query (root rule 6): Express hands a repeated
+ * `?search=` over as an array, and an unvalidated `.trim()` on it was a 500.
+ * The search is capped because it feeds several `ILIKE` predicates.
+ *
+ * `owner` is an admin's filter over whose work it is: a staff id, or
+ * `UNASSIGNED` for work whose officer is gone — never recorded, or archived.
+ * It is honoured only for a role that sees everyone's work; an officer's list
+ * is narrowed to their own whatever is sent.
+ */
+export const WORKLIST_UNASSIGNED = 'UNASSIGNED';
+
+export const worklistQuerySchema = z.object({
+  search: z.string().trim().max(120).optional(),
+  owner: z.union([uuid, z.literal(WORKLIST_UNASSIGNED)]).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export type WorklistQuery = z.infer<typeof worklistQuerySchema>;
+
+/**
+ * One row of «بانتظار إعادة الكشف»: a structure or a flat whose current
+ * reading says nobody can live in it, waiting for the visit after repair.
+ */
+export interface ReinspectionRow {
+  assessmentId: string;
+  /** What the reading is about. A building-level reading stands for every flat in it. */
+  target: 'BUILDING' | 'UNIT';
+  buildingId: string;
+  buildingCode: string;
+  buildingName: string | null;
+  parcelNumber: string | null;
+  unitId: string | null;
+  unitCode: string | null;
+  level: string;
+  /** Explicitly «غير صالحة» (false), or null on a reading from before the question. */
+  habitable: boolean | null;
+  /** The planned day, `YYYY-MM-DD`, or null when none was set. */
+  reinspectAt: string | null;
+  assessedAt: string;
+  assessedById: string | null;
+  assessedByName: string | null;
+}
+
+export interface ReinspectionsPage {
+  items: ReinspectionRow[];
+  total: number;
+  /** Of `total`, the ones whose planned day has passed. */
+  overdue: number;
+  /** Whether the caller sees everyone's readings, not only their own. */
+  seesAll: boolean;
+}

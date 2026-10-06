@@ -47,7 +47,6 @@ import {
   type UnitOccupant,
   type UnitWithOccupants,
 } from '@/lib/api-client';
-import { formatDate } from '@/lib/dates';
 import { loadSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -73,7 +72,6 @@ import {
   CaseForm,
   cellBadge,
   ConfirmVacancyForm,
-  DamageForm,
   effectiveUnitStatus,
   floorLabel,
   groupUnitsByFloor,
@@ -89,6 +87,10 @@ import {
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
+import { DamageForm } from './damage/damage-form';
+import { DamageHistory } from './damage/damage-history';
+import { ReinspectNotice } from './damage/reinspect-notice';
+import { damageInput } from '@/lib/damage-reading';
 
 /**
  * One building's units, floor by floor, with the things an officer standing in
@@ -108,20 +110,6 @@ import {
  * something learned at the door and lost by the time a form is found: who
  * answered, why nobody did, that the flat is empty, that the ceiling is down.
  */
-
-/**
- * The three levels that mean a structure's use is impaired.
- *
- * The same set the server's `DAMAGED_LEVELS` counts and the ledger's tile
- * shows: an assessment finding a building *undamaged* is still an assessment,
- * and colouring it as damage would make the figure rise every time an officer
- * confirmed one was fine.
- */
-const DAMAGED_LEVELS: readonly DamageLevel[] = [
-  'RESTRICTED_USE',
-  'UNSAFE_EVACUATE',
-  'TOTAL_COLLAPSE',
-];
 
 /** Which unit action is open, if any. `null` = just the matrix. */
 type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | 'vacancy' | null;
@@ -689,6 +677,7 @@ export function BuildingUnitMatrixDrawer({
                     tone="occupant"
                     selected={selectedUnitId}
                     pickAny
+                    stage
                     onSelect={(unitId) => {
                       setSelectedUnitId(unitId === selectedUnitId ? null : unitId);
                       setAction(null);
@@ -1006,6 +995,8 @@ export function BuildingUnitMatrixDrawer({
               </header>
               <div className="space-y-4 p-4">
 
+              <ReinspectNotice history={damage?.history ?? []} target={{ unitId: selectedUnit.id }} />
+
               <OccupantList
                 unit={selectedUnit}
                 compact
@@ -1290,17 +1281,11 @@ export function BuildingUnitMatrixDrawer({
                 <DamageForm
                   busy={busy}
                   locale={locale}
-                  target={en ? `unit ${selectedUnit.unitCode}` : `الوحدة ${selectedUnit.unitCode}`}
+                  target={{ kind: 'unit', code: selectedUnit.unitCode }}
                   onSubmit={(values) =>
                     void run(
                       async () => {
-                        await recordDamage(tenant, token, {
-                          unitId: selectedUnit.id,
-                          level: values.level,
-                          source: values.source,
-                          observations: values.observations || undefined,
-                          assessedAt: values.assessedAt || undefined,
-                        });
+                        await recordDamage(tenant, token, damageInput(values, { unitId: selectedUnit.id }));
                         return en ? 'Assessment recorded' : 'تم تسجيل الكشف';
                       },
                       en ? 'Could not record the assessment.' : 'تعذّر تسجيل الكشف.',
@@ -1340,17 +1325,11 @@ export function BuildingUnitMatrixDrawer({
               <DamageForm
                 busy={busy}
                 locale={locale}
-                target={en ? `building ${building.code}` : `المبنى ${building.code}`}
+                target={{ kind: 'building', code: building.code }}
                 onSubmit={(values) =>
                   void run(
                     async () => {
-                      await recordDamage(tenant, token, {
-                        buildingId: building.id,
-                        level: values.level,
-                        source: values.source,
-                        observations: values.observations || undefined,
-                        assessedAt: values.assessedAt || undefined,
-                      });
+                      await recordDamage(tenant, token, damageInput(values, { buildingId: building.id }));
                       return en ? 'Assessment recorded' : 'تم تسجيل الكشف';
                     },
                     en ? 'Could not record the assessment.' : 'تعذّر تسجيل الكشف.',
@@ -1369,87 +1348,11 @@ export function BuildingUnitMatrixDrawer({
           </div>
 
           {/* ── The damage history panel (P4-T2) ──────────────────── */}
-          {damage && damage.history.length > 0 ? (
-            <div className="space-y-2 rounded-lg border">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
-                <p className="flex items-center gap-1.5 text-xs font-semibold">
-                  <ShieldAlert className="size-3.5 text-muted-foreground" aria-hidden />
-                  {en ? 'Damage history' : 'سجل الأضرار'}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {en
-                    ? `${damage.history.length} assessment(s) · current: ${
-                        damage.current ? labels.damageLevel[damage.current] : '—'
-                      }`
-                    : `${damage.history.length} كشف · الحالي: ${
-                        damage.current ? labels.damageLevel[damage.current] : '—'
-                      }`}
-                </p>
-              </div>
+          {/* The structure's own «غير صالحة للسكن», from a whole-building reading. */}
+          <ReinspectNotice history={damage?.history ?? []} target={{ buildingId: building.id }} />
 
-              {/*
-                Append-only, newest first, and the first row is labelled as the
-                current one (D3).
-
-                A building assessed unsafe in 2024 and repaired in 2026 keeps
-                both rows, and that is the entire point of the table: the 2024
-                row is what a compensation claim rests on, while the 2026 row is
-                what decides whether anyone may enter today. Showing only the
-                latest would answer the second question and destroy the first.
-              */}
-              <ul className="divide-y">
-                {damage.history.map((row, position) => {
-                  const unit = row.unitId
-                    ? building.units.find((candidate) => candidate.id === row.unitId)
-                    : null;
-                  return (
-                    <li key={row.id} className="space-y-1 px-3 py-2 text-xs">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge
-                          variant={
-                            DAMAGED_LEVELS.includes(row.level) ? 'soft-destructive' : 'soft-success'
-                          }
-                        >
-                          {labels.damageLevel[row.level]}
-                        </Badge>
-                        {position === 0 ? (
-                          <Badge variant="soft-default">{en ? 'Current' : 'الحالي'}</Badge>
-                        ) : null}
-                        <span className="text-muted-foreground">{formatDate(row.assessedAt)}</span>
-                        <Badge variant="soft-muted">{labels.damageSource[row.source]}</Badge>
-                        {/*
-                          Which part of the structure this reading is about.
-                          "Top three floors gone, ground floor shop still
-                          trading" is two rows on one building, and a panel that
-                          did not say which was which would read as a
-                          contradiction.
-                        */}
-                        <Badge variant="soft-muted">
-                          {row.unitId
-                            ? en
-                              ? `Unit ${unit?.unitCode ?? '—'}`
-                              : `الوحدة ${unit?.unitCode ?? '—'}`
-                            : en
-                              ? 'Whole building'
-                              : 'المبنى بكامله'}
-                        </Badge>
-                      </div>
-
-                      {row.observations ? (
-                        <p className="leading-relaxed text-muted-foreground">{row.observations}</p>
-                      ) : null}
-
-                      {row.assessedByName ? (
-                        <p className="text-xs text-muted-foreground">
-                          {en ? 'Assessed by ' : 'الكاشف: '}
-                          {row.assessedByName}
-                        </p>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
+          {damage ? (
+            <DamageHistory history={damage.history} current={damage.current} units={building.units} locale={locale} />
           ) : null}
 
           {building.notes ? (

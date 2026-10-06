@@ -33,6 +33,9 @@ const REDACTED_KEYS = new Set([
   'phone',
   // The local contact is somebody else, and their number is theirs.
   'localcontactphone',
+  // «رقم للتواصل» — the same rule, for the relative an elderly citizen with no
+  // phone of their own is reached through (0069).
+  'contactphone',
   'whatsapp',
   'landlordphone',
   'token',

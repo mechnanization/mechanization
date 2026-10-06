@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Home, Info, Loader2, MoveRight, UserX } from 'lucide-react';
 import { getLabels, type CitizenResidence, type UnitStatus } from '@mechanization/shared-schemas';
 import type { CitizenFormValues } from '@/components/admin/citizen-form';
@@ -77,7 +78,8 @@ export function ResidenceChangeDialog({
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
-  const ids = { date: useId(), place: useId(), reason: useId() };
+  const ids = { date: useId(), place: useId(), reason: useId(), requestedBy: useId() };
+  const tArchive = useTranslations('citizenArchive');
   const leaving = to === 'NON_RESIDENT_OWNER';
   const plan = useMemo(() => planResidenceMove(values, to), [values, to]);
 
@@ -89,6 +91,8 @@ export function ResidenceChangeDialog({
   const [reasonTouched, setReasonTouched] = useState(false);
   const [ending, setEnding] = useState<number | null>(null);
   const [deactivating, setDeactivating] = useState(false);
+  /** «بطلب من» — who asked for the file to be archived; required with the reason (decision, 2026-10-05). */
+  const [requestedBy, setRequestedBy] = useState('');
   const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
@@ -99,6 +103,7 @@ export function ResidenceChangeDialog({
     setLivesIn(null);
     setReason('');
     setReasonTouched(false);
+    setRequestedBy('');
     setEnding(null);
     setFailure(null);
     // Only on opening: the form below changes as tenancies end, and the answers must survive it.
@@ -145,11 +150,15 @@ export function ResidenceChangeDialog({
     setFailure(null);
     try {
       // Why the file stopped being billed, and from when — on the audit row.
-      await setCitizenActive(tenant, token, citizenId, false, { reason: reasonText.trim(), movedOn });
+      await setCitizenActive(tenant, token, citizenId, false, {
+        reason: reasonText.trim(),
+        requestedBy: requestedBy.trim(),
+        movedOn,
+      });
       onDeactivated();
     } catch (caught) {
       logApiError(caught);
-      setFailure(caught instanceof ApiRequestError ? caught.message : en ? 'Could not deactivate the file.' : 'تعذّر تعطيل الملف.');
+      setFailure(caught instanceof ApiRequestError ? caught.message : tArchive('failed'));
     } finally {
       setDeactivating(false);
     }
@@ -230,28 +239,39 @@ export function ResidenceChangeDialog({
               </p>
             ) : null}
 
-            {/* ── Moving out with nothing left: deactivate ── */}
+            {/* ── Moving out with nothing left: archive — never delete (decision, 2026-10-05) ── */}
             {leaving && plan.nothingLeft ? (
               <section className="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-3">
                 <h3 className="flex items-center gap-1.5 text-sm font-semibold">
                   <UserX className="size-4" aria-hidden />
-                  {en ? 'Nothing is left here' : 'لا يبقى له شيء في البلدة'}
+                  {tArchive('nothingLeft.title')}
                 </h3>
-                <p className="text-sm text-muted-foreground">
-                  {en
-                    ? 'Once these rentals end they neither own nor rent anything here, so the file does not become a non-resident record: it is deactivated, kept, and can be reactivated if they come back.'
-                    : 'بعد انتهاء هذه الإيجارات لا يملك ولا يستأجر شيئاً هنا، فلا يُحوَّل ملفه إلى «غير مقيم»: يُعطَّل ويبقى محفوظاً، ويُعاد تفعيله إن عاد.'}
-                </p>
+                <p className="text-sm text-muted-foreground">{tArchive('nothingLeft.body')}</p>
+                <Field label={tArchive('requestedBy')} htmlFor={ids.requestedBy} required>
+                  <Input
+                    id={ids.requestedBy}
+                    value={requestedBy}
+                    maxLength={200}
+                    placeholder={tArchive('requestedByPlaceholder')}
+                    onChange={(event) => setRequestedBy(event.target.value)}
+                    className="h-10"
+                  />
+                </Field>
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={plan.tenancies.length > 0 || !movedOn || !reasonOk || deactivating || !token}
+                  disabled={
+                    plan.tenancies.length > 0 ||
+                    !movedOn ||
+                    !reasonOk ||
+                    requestedBy.trim().length < 2 ||
+                    deactivating ||
+                    !token
+                  }
                   onClick={() => void deactivate()}
                 >
                   {deactivating ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <UserX className="size-4" aria-hidden />}
-                  {plan.tenancies.length > 0
-                    ? en ? 'Deactivate — end the rentals first' : 'تعطيل الملف — أنهِ الإيجارات أولاً'
-                    : en ? 'Deactivate the file' : 'تعطيل الملف'}
+                  {plan.tenancies.length > 0 ? tArchive('nothingLeft.endRentalsFirst') : tArchive('confirm')}
                 </Button>
               </section>
             ) : null}

@@ -135,6 +135,10 @@ export interface ParcelRegistrant {
   registrationId: string;
   fullName: string;
   phone: string | null;
+  /** «لا يملك رقم هاتف» — the empty phone is an answer, not a gap. */
+  hasNoPhone: boolean;
+  /** «رقم للتواصل» — a relative's number, for reaching a citizen with none of their own. */
+  contactPhone: string | null;
   /** مالك / مستأجر — the primary role. */
   occupancyType: string;
   propertyType: string;
@@ -254,8 +258,19 @@ export interface CitizenProfileUnit {
    * the card is linked to: among co-owners the link names whoever the tenant
    * deals with, and the rest are read from here rather than hidden. Empty when
    * the line is not linked to a flat, or nobody is recorded owning it.
+   *
+   * `hasNoPhone` and `contactPhone` say how to reach an owner with no number
+   * of their own («لا يملك رقم هاتف», «رقم للتواصل»). Staff only: the
+   * citizen portal sends a co-owner's name and أسهم, nothing else.
    */
-  owners: Array<{ citizenId: string; name: string; phone: string | null; shares: number | null }>;
+  owners: Array<{
+    citizenId: string;
+    name: string;
+    phone: string | null;
+    hasNoPhone: boolean;
+    contactPhone: string | null;
+    shares: number | null;
+  }>;
 }
 
 /**
@@ -480,6 +495,10 @@ export interface CitizenProfile {
   motherName: string | null;
   phone: string | null;
   whatsapp: string | null;
+  /** «لا يملك رقم هاتف» — a finished answer, not a gap (0069). */
+  hasNoPhone: boolean;
+  /** «رقم للتواصل» — a relative's number, never the citizen's own (0069). */
+  contactPhone: string | null;
   gender: string | null;
   nationality: string | null;
   isLebanese: boolean | null;
@@ -891,6 +910,8 @@ export class ReportingService {
         motherName: true,
         phone: true,
         whatsapp: true,
+        hasNoPhone: true,
+        contactPhone: true,
         gender: true,
         nationality: true,
         isLebanese: true,
@@ -1086,7 +1107,14 @@ export class ReportingService {
                             citizenId: true,
                             shares: true,
                             citizen: {
-                              select: { firstName: true, middleName: true, lastName: true, phone: true },
+                              select: {
+                                firstName: true,
+                                middleName: true,
+                                lastName: true,
+                                phone: true,
+                                hasNoPhone: true,
+                                contactPhone: true,
+                              },
                             },
                           },
                         },
@@ -1161,6 +1189,8 @@ export class ReportingService {
       motherName: citizen.motherName,
       phone: citizen.phone,
       whatsapp: citizen.whatsapp,
+      hasNoPhone: citizen.hasNoPhone,
+      contactPhone: citizen.contactPhone,
       gender: citizen.gender,
       nationality: citizen.nationality,
       isLebanese: citizen.isLebanese,
@@ -1308,6 +1338,8 @@ export class ReportingService {
                 citizenId: owner.citizenId,
                 name: personName(owner.citizen),
                 phone: owner.citizen.phone,
+                hasNoPhone: owner.citizen.hasNoPhone,
+                contactPhone: owner.citizen.contactPhone,
                 shares: owner.shares,
               })),
             };
@@ -1382,6 +1414,8 @@ export class ReportingService {
                   middleName: true,
                   lastName: true,
                   phone: true,
+                  hasNoPhone: true,
+                  contactPhone: true,
                 },
               },
             },
@@ -1536,6 +1570,8 @@ export class ReportingService {
             .filter(Boolean)
             .join(' '),
           phone: row.registration.citizen.phone,
+          hasNoPhone: row.registration.citizen.hasNoPhone,
+          contactPhone: row.registration.citizen.contactPhone,
           occupancyType: row.occupancyType,
           propertyType: row.propertyType,
           buildingName: row.buildingName,
@@ -1618,6 +1654,11 @@ export class ReportingService {
       // When the tenancy on this line ended (migration 0046). Blank is current;
       // a line with a date is history and holds nothing today.
       'ended_at',
+      // «لا يملك رقم هاتف» and «رقم للتواصل» (0069), last so no column moves:
+      // a blank `phone` with `has_no_phone` true is an answer, and the contact
+      // number is a relative's, never the citizen's own.
+      'has_no_phone',
+      'contact_phone_relative',
     ];
 
     const lines = [header.join(',')];
@@ -1636,6 +1677,8 @@ export class ReportingService {
               middleName: true,
               lastName: true,
               phone: true,
+              hasNoPhone: true,
+              contactPhone: true,
               residentStatus: true,
               totalRegisteredMembers: true,
               actualHouseholdMembers: true,
@@ -1702,6 +1745,8 @@ export class ReportingService {
                 // Same split, same reason — a building states it per unit.
                 unit?.unitStatus ?? property?.unitStatus ?? '',
                 (unit?.endedAt ?? property?.endedAt)?.toISOString() ?? '',
+                row.citizen.hasNoPhone ? 'true' : 'false',
+                row.citizen.contactPhone ?? '',
               ]
                 .map(csvCell)
                 .join(','),

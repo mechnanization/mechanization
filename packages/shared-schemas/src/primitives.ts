@@ -90,6 +90,27 @@ export const internationalPhone = z
     return `+961${v.replace(/^0/, '')}`;
   });
 
+/**
+ * A phone number that may simply not be there — an empty box read as absent.
+ *
+ * `internationalPhone.optional().or(z.literal(''))` is the obvious spelling
+ * and the wrong one: when the number is malformed every branch of that union
+ * fails, and Zod reports the *union's* failure as «Invalid input» — English,
+ * on a form that is Arabic-first, for the commonest typo there is. A
+ * preprocessor instead means there is only ever one branch, so a bad number
+ * keeps `internationalPhone`'s own «رقم الهاتف غير صالح».
+ *
+ * An empty string becomes `undefined` rather than surviving as `''`: a blank
+ * box is an unanswered question, and `''` is a value — one that satisfies
+ * `IS NOT NULL` and matches every other blank record if it reaches a column.
+ * Required-ness is then the caller's to add, which is what lets «لا يملك رقم
+ * هاتف» waive it (`contactDetailsSchema`).
+ */
+export const optionalInternationalPhone = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+  internationalPhone.optional(),
+);
+
 export const arabicOrLatinName = z
   .string({ required_error: 'الاسم مطلوب' })
   .trim()

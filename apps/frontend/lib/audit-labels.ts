@@ -1,3 +1,15 @@
+import ar from '../messages/ar.json';
+import en from '../messages/en.json';
+
+/*
+  The words live in `messages/{ar,en}.json`, under `auditActions` and
+  `auditEntities`. They are plain labels with no placeholders, so these are
+  lookups, not translators. A new audit action gets its label there, in both
+  files (apps/backend/CLAUDE.md, «Events and audit»).
+*/
+const ACTIONS: Record<'ar' | 'en', Record<string, string>> = { ar: ar.auditActions, en: en.auditActions };
+const ENTITIES: Record<'ar' | 'en', Record<string, string>> = { ar: ar.auditEntities, en: en.auditEntities };
+
 /**
  * What an audit action is called, in words a clerk recognises.
  *
@@ -16,115 +28,7 @@
  * that tells them nothing.
  */
 export function auditActionLabel(action: string, locale: string): string {
-  const en = locale === 'en';
-  const map: Record<string, [ar: string, en: string]> = {
-    // ── the register ──
-    REGISTRATION_SUBMITTED: ['تقديم طلب', 'Submission'],
-    REGISTRATION_RESUBMITTED: ['إعادة تقديم بعد التصحيح', 'Resubmission'],
-    STATUS_CHANGE: ['تغيير حالة', 'Status change'],
-    CITIZEN_CREATED: ['تسجيل مواطن', 'Citizen registered'],
-    CITIZEN_UPDATED: ['تعديل بيانات مواطن', 'Citizen updated'],
-    CITIZEN_DELETED: ['حذف مواطن', 'Citizen deleted'],
-    CITIZEN_DEACTIVATED: ['إلغاء تفعيل مواطن', 'Citizen deactivated'],
-    CITIZEN_REACTIVATED: ['إعادة تفعيل مواطن', 'Citizen reactivated'],
-    CITIZEN_MERGED: ['دمج ملف في هذا الملف', 'File merged into this one'],
-    CITIZEN_MERGED_INTO: ['دمج هذا الملف في ملف آخر', 'File merged into another'],
-    CITIZEN_MERGE_UNDONE: ['التراجع عن دمج ملفين', 'Merge undone'],
-    HOUSEHOLD_LINKED: ['ربط أسرة', 'Household linked'],
-    LANDLORD_LINKED: ['ربط مالك بمستأجر', 'Owner linked'],
-    LANDLORD_UNLINKED: ['إلغاء ربط مالك', 'Owner unlinked'],
-    LANDLORD_LINK_UPDATED: ['تحديث ربط مالك', 'Owner link updated'],
-    LANDLORD_MATCH_DISMISSED: ['رفض مطابقة مالك', 'Owner match dismissed'],
-    LANDLORD_MATCH_RESTORED: ['استعادة مطابقة مالك', 'Owner match restored'],
-    LANDLORD_TENANCY_ENDED: ['إنهاء إيجار لدى المالك', 'Tenancy ended on owner'],
-    TENANCY_ENDED: ['إنهاء إيجار', 'Tenancy ended'],
-    OWNERSHIP_ENDED: ['إنهاء ملكية', 'Ownership ended'],
-    LANDLORD_LINK_RELEASED_BY_SALE: ['فكّ ربط المالك بعد البيع', 'Owner link released by a sale'],
-    PROPERTY_NUMBER_CORRECTED: ['تصحيح رقم العقار في البطاقة', 'Card parcel number corrected'],
-
-    // ── quality review ──
-    RECORD_APPROVED: ['اعتماد سجل', 'Record approved'],
-    RECORD_RETURNED: ['إعادة سجل للموظف', 'Record returned'],
-    RECORD_CORRECTED: ['تصحيح سجل مُعاد', 'Returned record corrected'],
-    QUALITY_CHECK_DONE: ['تحقق ميداني من سجل', 'Field re-check done'],
-    QUALITY_CHECK_ASSIGNED: ['إسناد تحقق ميداني', 'Re-check assigned'],
-    QUALITY_SAMPLE_DRAWN: ['سحب عيّنة للتحقق', 'Re-check sample drawn'],
-    QUALITY_FINDING_DISMISSED: ['ملاحظة جودة: ليست مشكلة', 'Finding dismissed'],
-    QUALITY_FINDING_RESTORED: ['إعادة فتح ملاحظة جودة', 'Finding restored'],
-
-    // ── hand corrections ──
-    DATA_CORRECTION: ['تصحيح يدوي للبيانات', 'Manual data correction'],
-    DATA_CORRECTION_DELETE: ['حذف يدوي ضمن تصحيح', 'Manual deletion (correction)'],
-    // «حذف تصحيحي» from the matrix, by a SUPER_ADMIN (UnitCorrectionService).
-    UNIT_CORRECTION_DELETED: ['حذف تصحيحي لوحدة (المدير)', 'Unit removed by admin correction'],
-    UNIT_CORRECTION_FILE_ENDED: ['إغلاق بنود بحذف تصحيحي لوحدة', 'File lines closed by a unit correction'],
-
-    // ── buildings and their units ──
-    BUILDING_CREATED: ['إنشاء مبنى', 'Building created'],
-    BUILDING_UPDATED: ['تعديل مبنى', 'Building updated'],
-    BUILDING_DELETED: ['حذف مبنى', 'Building deleted'],
-    BUILDING_UNITS_GENERATED: ['إنشاء وحدات المبنى', 'Units generated'],
-    BUILDING_CODE_RECOMPUTED: ['إعادة احتساب رمز المبنى', 'Building code recomputed'],
-    BUILDING_PARCEL_CORRECTED: ['تصحيح رقم العقار', 'Parcel number corrected'],
-    UNIT_ADDED: ['إضافة وحدة', 'Unit added'],
-    UNIT_UPDATED: ['تعديل وحدة', 'Unit updated'],
-    UNIT_DELETED: ['حذف وحدة', 'Unit deleted'],
-    UNIT_VISIT_LOGGED: ['تسجيل زيارة وحدة', 'Unit visit logged'],
-    UNIT_VACANCY_CONFIRMED: ['تأكيد شغور وحدة', 'Vacancy confirmed'],
-    UNIT_VACANCY_ENDED: ['إلغاء تأكيد الشغور', 'Vacancy lifted'],
-    CASE_CREATED: ['فتح حالة', 'Case opened'],
-    CASE_UPDATED: ['تعديل حالة', 'Case updated'],
-    CASE_RESOLVED: ['حل حالة', 'Case resolved'],
-    CASE_RESOLVED_WITH_CITIZEN: ['حل حالة بتسجيل مواطن', 'Case resolved with a citizen'],
-    CASE_DELETED: ['حذف حالة', 'Case deleted'],
-    UNIT_STATUS_AFTER_TENANCY: ['حالة الوحدة بعد الإيجار', 'Unit status after tenancy'],
-    OCCUPANCY_RECORDED: ['تسجيل إشغال', 'Occupancy recorded'],
-    OCCUPANCY_ENDED: ['إنهاء إشغال', 'Occupancy ended'],
-
-    // ── land ──
-    ZONE_CREATED: ['إنشاء قطاع', 'Create sector'],
-    ZONE_UPDATED: ['تعديل قطاع', 'Update sector'],
-    ZONE_DELETED: ['حذف قطاع', 'Delete sector'],
-    CADASTRE_IMPORT: ['استيراد خريطة', 'Cadastre import'],
-
-    // ── money ──
-    FEE_ISSUED: ['إصدار رسم', 'Fee issued'],
-    FEE_RECURRING_ISSUED: ['إصدار رسم دوري', 'Recurring fee issued'],
-    PAYMENT_DECLARED: ['تصريح بدفعة', 'Payment declared'],
-    PAYMENT_CONFIRMED: ['تأكيد دفعة', 'Payment confirmed'],
-    PAYMENT_REJECTED: ['رفض دفعة', 'Payment rejected'],
-    PAYMENT_REVERSED: ['عكس حركة دفع', 'Payment reversed'],
-    BILL_BASIS_REVIEWED: ['مراجعة فاتورة تأثّرت بتصحيح', 'Bill affected by a correction reviewed'],
-    INSPECTOR_PAYOUT_RECORDED: ['تسجيل دفعة لمفتش', 'Inspector payout recorded'],
-
-    // ── the portal itself ──
-    LOGIN: ['تسجيل دخول', 'Login'],
-    STAFF_LOGOUT: ['تسجيل خروج', 'Signed out'],
-    STAFF_SESSION_REUSE_DETECTED: [
-      'إنهاء جلسة: إعادة استخدام رمز التجديد',
-      'Session ended: refresh token reused',
-    ],
-    REGISTER_RESTORED: ['استعادة سجل البلدية من نسخة احتياطية', 'Register restored from backup'],
-    STAFF_EMAIL_CHANGED: ['تغيير بريد موظف', 'Staff email changed'],
-    STAFF_PASSWORD_CHANGED: ['تغيير كلمة مرور موظف', 'Staff password changed'],
-    TOTP_DISABLED: ['إيقاف التحقق الثنائي', '2FA disabled'],
-    DOCUMENT_VIEW: ['فتح مرفق', 'View document'],
-    CSV_EXPORT: ['تصدير CSV', 'Export CSV'],
-    SETTINGS_UPDATED: ['تعديل إعدادات البلدية', 'Settings updated'],
-    STAFF_CREATED: ['إنشاء حساب موظف', 'Create staff'],
-    STAFF_UPDATED: ['تعديل حساب موظف', 'Update staff'],
-    STAFF_DEACTIVATED: ['إلغاء تفعيل موظف', 'Deactivate staff'],
-    STAFF_REACTIVATED: ['إعادة تفعيل موظف', 'Reactivate staff'],
-    STAFF_DELETED: ['حذف حساب موظف', 'Delete staff'],
-    STAFF_RESTORED: ['استعادة حساب موظف محذوف', 'Restore deleted staff'],
-    TOTP_ENROLLED: ['تسجيل تحقق ثنائي', '2FA enrollment'],
-    TOTP_CONFIRMED: ['تأكيد التحقق الثنائي', '2FA confirmed'],
-    DATA_REPAIR: ['إصلاح بيانات', 'Data repair'],
-  };
-
-  const pair = map[action];
-  if (!pair) return action;
-  return en ? pair[1] : pair[0];
+  return ACTIONS[locale === 'en' ? 'en' : 'ar'][action] ?? action;
 }
 
 /**
@@ -145,22 +49,5 @@ export const AUDIT_ENTITY = {
 
 /** What kind of record an entry is about, in words — for the filter and the fallback target. */
 export function auditEntityLabel(entityType: string, locale: string): string {
-  const en = locale === 'en';
-  const map: Record<string, [ar: string, en: string]> = {
-    User: ['مواطن أو موظف', 'Citizen or staff'],
-    Building: ['مبنى', 'Building'],
-    Registration: ['طلب تسجيل', 'Registration'],
-    Case: ['حالة ميدانية', 'Field case'],
-    Zone: ['قطاع', 'Sector'],
-    Parcel: ['المسح العقاري', 'Cadastre'],
-    Document: ['مرفق', 'Document'],
-    FeeNotice: ['رسم', 'Fee notice'],
-    Payment: ['دفعة', 'Payment'],
-    PaymentTransaction: ['حركة دفع', 'Payment movement'],
-    SystemSettings: ['إعدادات البلدية', 'Settings'],
-    Tenant: ['سجل البلدية', 'Register'],
-    DataQuality: ['مراجعة الجودة', 'Quality review'],
-  };
-  const pair = map[entityType];
-  return pair ? (en ? pair[1] : pair[0]) : entityType;
+  return ENTITIES[locale === 'en' ? 'en' : 'ar'][entityType] ?? entityType;
 }

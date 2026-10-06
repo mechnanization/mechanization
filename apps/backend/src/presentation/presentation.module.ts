@@ -1,5 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { ApplicationModule } from '../application/application.module';
 import { AuditController } from './controllers/audit.controller';
@@ -22,6 +22,7 @@ import { QualityController } from './controllers/quality.controller';
 import { DomainExceptionFilter } from './filters/domain-exception.filter';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
+import { ViewerCredentialMaskInterceptor } from './interceptors/viewer-credential-mask.interceptor';
 import { CorrelationIdMiddleware } from './middleware/correlation-id.middleware';
 import { TenantMiddleware } from './middleware/tenant.middleware';
 import { MetricsModule } from './metrics.module';
@@ -77,6 +78,12 @@ import { MetricsModule } from './metrics.module';
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    /**
+     * «مشاهد فقط» reads every citizen's data and never their login
+     * credential: each response to a VIEWER token carries the رقم مرجعي
+     * masked (`ViewerCredentialMaskInterceptor`).
+     */
+    { provide: APP_INTERCEPTOR, useClass: ViewerCredentialMaskInterceptor },
   ],
 })
 export class PresentationModule implements NestModule {

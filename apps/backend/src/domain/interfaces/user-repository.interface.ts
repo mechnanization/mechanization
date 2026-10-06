@@ -18,6 +18,17 @@ import { StaffRole, User } from '../entities/user.entity';
 export interface CitizenIdentityInput {
   phone?: string;
   whatsapp?: string;
+  /**
+   * «لا يملك رقم هاتف» — the person owns no phone, so the absence of `phone`
+   * above is an answer rather than a gap. True forces both numbers to NULL on
+   * the way in; see migration 0069 and `RegistrationRepository`.
+   */
+  hasNoPhone?: boolean;
+  /**
+   * «رقم للتواصل» — a relative's number, for a citizen with none of their own.
+   * Not an identity and not unique: see `User.contactPhone`.
+   */
+  contactPhone?: string;
   firstName: string;
   middleName?: string;
   lastName: string;
@@ -76,9 +87,6 @@ export interface UserRepository {
    * will issue a session.
    */
   findCitizenByReference(referenceNumber: string): Promise<User | null>;
-
-  /** Upserts on (identityDocType, identityDocNumber) — the household-safe key. */
-  upsertCitizen(input: CitizenIdentityInput, referenceNumber: string): Promise<string>;
 
   /** Stamps `lastLoginAt`, which the staff list surfaces as dormancy. */
   markLoggedIn(userId: string): Promise<void>;
@@ -169,6 +177,17 @@ export interface StaffSummary {
   overpaidBalance?: number;
   createdAt: string;
   lastLoginAt: string | null;
+  /**
+   * «آخر ظهور» — when this account last made a request, or null if it has not
+   * since migration 0070 shipped.
+   *
+   * Presence is derived from this and not reported as a boolean, deliberately:
+   * a server that says «online» has already decided how fresh counts as
+   * present, and a client holding the timestamp can show «آخر ظهور» for the
+   * ones that are not. The threshold is `STAFF_ONLINE_WITHIN_SECONDS`, and the
+   * rule `isStaffOnline`, both in `@mechanization/shared-schemas`.
+   */
+  lastSeenAt: string | null;
   /** Set only on a deleted account returned for the earnings roster. */
   deletedAt?: string | null;
 }

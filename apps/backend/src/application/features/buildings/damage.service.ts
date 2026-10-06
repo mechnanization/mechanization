@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { DAMAGE_LEVEL, type CreateDamageAssessmentInput } from '@mechanization/shared-schemas';
+import { DAMAGE_LEVEL, calendarDayOf, type CreateDamageAssessmentInput } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { NotFoundError } from '../../common/exceptions';
+import type { DamageRecorded } from '../audit/audit.service';
 import type { DamageRow } from './building.types';
 
 /**
@@ -21,36 +22,13 @@ import type { DamageRow } from './building.types';
  * the latest row; `history` reads all of them.
  */
 
-/**
- * The scale ordered worst-first, which is the order a rollup needs.
- *
- * `UNCLASSIFIED` sits at the bottom deliberately and is not a severity at all —
- * it means nobody has judged this building yet. Ranking it as "least damaged"
- * would let an unassessed building outrank a `NOT_AFFECTED` one in a
- * worst-case rollup, which reads on the map as "we checked and it is fine".
+/*
+ * The severity ladder (`DAMAGE_SEVERITY`, `damageSeverity`, `worstDamage`) and
+ * the habitability rules live in `@mechanization/shared-schemas`
+ * (`damage-rule.ts`): the map draws its rings from the same ladder the server
+ * rolls up with, and the biller holds a fee on the same predicate the screens
+ * show.
  */
-const SEVERITY: readonly string[] = [
-  'TOTAL_COLLAPSE',
-  'UNSAFE_EVACUATE',
-  'RESTRICTED_USE',
-  'SAFE_MINOR_DAMAGE',
-  'NOT_AFFECTED',
-  'UNCLASSIFIED',
-];
-
-/** Lower is worse. Unknown labels sort last rather than throwing. */
-export function damageSeverity(level: string | null | undefined): number {
-  if (!level) return SEVERITY.length + 1;
-  const index = SEVERITY.indexOf(level);
-  return index === -1 ? SEVERITY.length : index;
-}
-
-/** The worse of two levels, for a building rolling up its units. */
-export function worstDamage(a: string | null, b: string | null): string | null {
-  if (!a) return b;
-  if (!b) return a;
-  return damageSeverity(a) <= damageSeverity(b) ? a : b;
-}
 
 @Injectable()
 export class DamageService {
@@ -75,42 +53,63 @@ export class DamageService {
     input: CreateDamageAssessmentInput,
     actor: { id: string; role: string },
   ): Promise<DamageRow> {
+    // The building the reading is filed under in the trail: its own, or the unit's.
+    let buildingId = input.buildingId ?? null;
+    let unitCode: string | null = null;
     if (input.buildingId) {
       const building = await this.db.building.findUnique({
         where: { id: input.buildingId },
         select: { id: true },
       });
-      if (!building) throw new NotFoundError('المبنى غير موجود');
+      if (!building) {
+        throw new NotFoundError({ code: 'BUILDING_NOT_FOUND', message: `Building ${input.buildingId} was not found` });
+      }
     } else if (input.unitId) {
       const unit = await this.db.unit.findUnique({
         where: { id: input.unitId },
-        select: { id: true },
+        select: { id: true, buildingId: true, unitCode: true },
       });
-      if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+      if (!unit) {
+        throw new NotFoundError({ code: 'UNIT_NOT_FOUND', message: `Unit ${input.unitId} was not found` });
+      }
+      buildingId = unit.buildingId;
+      unitCode = unit.unitCode;
     }
 
     const created = await this.db.damageAssessment.create({
       data: {
         buildingId: input.buildingId ?? null,
         unitId: input.unitId ?? null,
-        level: input.level as never,
-        source: input.source as never,
+        level: input.level,
+        source: input.source,
         observations: input.observations?.trim() || null,
         ...(input.assessedAt ? { assessedAt: input.assessedAt } : {}),
+        // The schema has already filled it from the level where the level decides it.
+        habitable: input.habitable ?? null,
+        // Only on a «غير صالحة للسكن» reading — the schema and a CHECK refuse it on any other.
+        reinspectAt: input.reinspectAt ?? null,
         assessedById: actor.id,
       },
       include: { assessedBy: { select: { firstName: true, lastName: true } } },
     });
 
+    /*
+      Heard by the dashboard cache, and by the audit trail: a reading can hold
+      or resume a flat's fees, so it is a row a resident can be shown.
+    */
     this.events.emit('damage.recorded', {
       tenantSlug: this.tenantContext.tenantSlug,
       assessmentId: created.id,
-      buildingId: created.buildingId,
+      buildingId: buildingId!,
       unitId: created.unitId,
+      unitCode,
       level: created.level,
+      habitable: created.habitable,
+      reinspectAt: created.reinspectAt ? calendarDayOf(created.reinspectAt) : null,
+      source: created.source,
       actorId: actor.id,
       actorRole: actor.role,
-    });
+    } satisfies DamageRecorded);
 
     return toDamageRow(created);
   }
@@ -177,6 +176,8 @@ function toDamageRow(row: {
   source: string;
   observations: string | null;
   assessedAt: Date;
+  habitable: boolean | null;
+  reinspectAt: Date | null;
   assessedById: string | null;
   assessedBy?: { firstName: string; lastName: string } | null;
   createdAt: Date;
@@ -189,6 +190,8 @@ function toDamageRow(row: {
     source: row.source,
     observations: row.observations,
     assessedAt: row.assessedAt,
+    habitable: row.habitable,
+    reinspectAt: row.reinspectAt,
     assessedById: row.assessedById,
     assessedByName: row.assessedBy
       ? `${row.assessedBy.firstName} ${row.assessedBy.lastName}`

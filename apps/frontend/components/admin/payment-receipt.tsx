@@ -85,9 +85,17 @@ export function PaymentReceipt({
   receivedAmount,
   recorded,
   councilDecisionRef,
+  canSend,
   locale = 'ar',
 }: {
   open: boolean;
+  /**
+   * Whether «إرسال عبر واتساب» is offered. The message carries the citizen's
+   * رقم مرجعي, which «مشاهد فقط» is never given (`REFERENCE_SEND_ROLES`): that
+   * account reads and prints a receipt, and sends nothing. Required, so a new
+   * caller decides rather than inheriting a default that fails open.
+   */
+  canSend: boolean;
   onOpenChange: (open: boolean) => void;
   /** Tenant slug — decides which facsimile renders. See `IMAGE_TEMPLATE_TENANT`. */
   tenant?: string;
@@ -305,18 +313,20 @@ export function PaymentReceipt({
                 )}
                 {locale === 'en' ? 'Download PDF' : 'تنزيل PDF'}
               </Button>
-              <Button
-                size="sm"
-                onClick={() => void handlePdf('share')}
-                disabled={busy !== null || !wa}
-              >
-                {busy === 'share' ? (
-                  <Loader2 className="size-4 animate-spin rtl:ml-1.5 ltr:mr-1.5" />
-                ) : (
-                  <MessageCircle className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
-                )}
-                {locale === 'en' ? 'Send via WhatsApp' : 'إرسال عبر واتساب'}
-              </Button>
+              {canSend ? (
+                <Button
+                  size="sm"
+                  onClick={() => void handlePdf('share')}
+                  disabled={busy !== null || !wa}
+                >
+                  {busy === 'share' ? (
+                    <Loader2 className="size-4 animate-spin rtl:ml-1.5 ltr:mr-1.5" />
+                  ) : (
+                    <MessageCircle className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
+                  )}
+                  {locale === 'en' ? 'Send via WhatsApp' : 'إرسال عبر واتساب'}
+                </Button>
+              ) : null}
             </div>
           </div>
         </footer>

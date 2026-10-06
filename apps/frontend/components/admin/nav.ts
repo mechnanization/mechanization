@@ -2,9 +2,11 @@ import {
   ArrowLeftRight,
   BadgeDollarSign,
   Building2,
+  CalendarClock,
   ClipboardCheck,
   ClipboardList,
   FileQuestion,
+  ScanSearch,
   FileWarning,
   KeyRound,
   LayoutDashboard,
@@ -20,11 +22,24 @@ import {
   UsersRound,
   type LucideIcon,
 } from 'lucide-react';
-import { STAFF_ROLE } from '@mechanization/shared-schemas';
-import { QUALITY_REVIEWER_ROLES } from '@/components/admin/quality/quality-screen';
+import {
+  AUDIT_READ_ROLES,
+  DASHBOARD_READ_ROLES,
+  EVERY_STAFF_ROLE,
+  FEE_READ_ROLES,
+  MAP_READ_ROLES,
+  PAYMENT_REVIEW_READ_ROLES,
+  WORKING_STAFF_ROLES,
+} from '@mechanization/shared-schemas';
+import { QUALITY_REVIEWER_ROLES, WORKLIST_ROLES } from '@/lib/staff-roles';
 
-/**
- * Every staff role there is — spelled out rather than left implicit.
+/*
+ * Every row's roles come from the shared role sets the API's `@Roles` are
+ * built from (`@mechanization/shared-schemas`, `role-sets.ts`), so a row and
+ * the route it opens change together.
+ *
+ * `EVERY_STAFF_ROLE` — every staff role there is, spelled out rather than left
+ * implicit.
  *
  * `roles` used to be optional, and an omitted list meant "everyone". That reads
  * as a decision but is indistinguishable from an oversight, and the two had
@@ -38,7 +53,6 @@ import { QUALITY_REVIEWER_ROLES } from '@/components/admin/quality/quality-scree
  * has to be placed deliberately on each row instead of silently inheriting the
  * whole sidebar.
  */
-const EVERY_STAFF_ROLE: readonly string[] = STAFF_ROLE;
 
 /**
  * The admin section list, and the rules for reading it.
@@ -135,18 +149,19 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'لوحة التحكم',
         labelEn: 'Dashboard',
         icon: LayoutDashboard,
-        roles: ['SUPER_ADMIN', 'AUDITOR'],
+        roles: DASHBOARD_READ_ROLES,
         keywords: ['مؤشرات', 'تحليلات', 'إحصاءات', 'dashboard', 'analytics'],
       },
       // Self-service: `StaffController.getMyProfile` answers for whoever is
       // asking, so every role has a page here and none of them can see another
-      // person's.
+      // person's. Every role but «مشاهد فقط», who surveys nothing and earns
+      // nothing — and whom that route does not admit.
       {
         path: '/inspector/profile',
         label: 'أرباحي والمسح الميداني',
         labelEn: 'Inspector Earnings',
         icon: BadgeDollarSign,
-        roles: EVERY_STAFF_ROLE,
+        roles: WORKING_STAFF_ROLES,
         keywords: ['أرباح', 'عمولة', 'مفتش', 'مسح', 'عقارات', 'inspector', 'earnings'],
       },
     ],
@@ -259,6 +274,33 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: EVERY_STAFF_ROLE,
         keywords: ['زيارة', 'لا أحد في المنزل', 'متابعة', 'cases', 'follow-up', 'visit'],
       },
+      /*
+        Units nobody has surveyed or registered anyone in yet — each officer's
+        own (the buildings they added), everyone's for the admins. The roles
+        that put work on the census, plus the ones that see everyone's
+        (`CENSUS_WORKLIST_ROLES`); an accountant's list would always be empty.
+      */
+      {
+        path: '/buildings/unsurveyed',
+        label: 'وحدات غير ممسوحة',
+        labelEn: 'Unsurveyed units',
+        icon: ScanSearch,
+        roles: WORKLIST_ROLES,
+        keywords: ['مسح', 'غير ممسوحة', 'وحدة', 'زيارة', 'ميداني', 'unsurveyed', 'survey', 'unit'],
+      },
+      /*
+        Flats and structures read «غير صالحة للسكن», waiting for the visit after
+        repair that releases their fee hold — each officer's own readings,
+        everyone's for the admins.
+      */
+      {
+        path: '/buildings/reinspections',
+        label: 'بانتظار إعادة الكشف',
+        labelEn: 'Awaiting re-inspection',
+        icon: CalendarClock,
+        roles: WORKLIST_ROLES,
+        keywords: ['إعادة الكشف', 'غير صالحة للسكن', 'ترميم', 'ضرر', 'reinspection', 'uninhabitable', 'repair'],
+      },
     ],
   },
   {
@@ -278,7 +320,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'الرسوم والمدفوعات',
         labelEn: 'Fees & Billing',
         icon: Receipt,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER'],
+        roles: FEE_READ_ROLES,
         keywords: ['رسم', 'مطالبة', 'فاتورة', 'دفع', 'fees', 'billing'],
       },
       /*
@@ -291,7 +333,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'فواتير تأثّرت بتصحيحات',
         labelEn: 'Bills affected by corrections',
         icon: FileWarning,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT'],
+        roles: PAYMENT_REVIEW_READ_ROLES,
         keywords: ['تصحيح', 'فاتورة', 'فرق', 'مراجعة', 'corrections', 'bills', 'difference'],
       },
       // Read-only: the ledger above answers "who owes what", this answers
@@ -301,7 +343,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'سجل العمليات',
         labelEn: 'Payment Operations',
         icon: ArrowLeftRight,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT'],
+        roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'VIEWER'],
         keywords: ['قبض', 'إيصال', 'محصّل', 'نقد', 'payments', 'transactions'],
       },
     ],
@@ -315,7 +357,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'الخريطة',
         labelEn: 'Cadastral Map',
         icon: MapIcon,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER'],
+        roles: MAP_READ_ROLES,
         keywords: ['عقارات', 'مواقع', 'مسح', 'map', 'cadastre'],
       },
       // Between the map and the sectors on purpose: the census is what the map
@@ -327,14 +369,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'سجل المباني',
         labelEn: 'Building Census',
         icon: Building2,
-        roles: [
-          'SUPER_ADMIN',
-          'AUDITOR',
-          'FIELD_INSPECTOR',
-          'COLLECTOR',
-          'ACCOUNTANT',
-          'ADMINISTRATIVE_OFFICER',
-        ],
+        roles: EVERY_STAFF_ROLE,
         keywords: ['مبنى', 'مباني', 'وحدات', 'شقق', 'مسح', 'ضرر', 'إحصاء', 'buildings', 'units', 'census', 'damage'],
       },
       {
@@ -342,7 +377,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'القطاعات',
         labelEn: 'Zones',
         icon: Layers,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER'],
+        roles: EVERY_STAFF_ROLE,
         keywords: ['قطاع', 'منطقة', 'حدود', 'zones', 'districts'],
       },
     ],
@@ -364,7 +399,7 @@ export const NAV_GROUPS: NavGroup[] = [
     settings and accounts.
 
     Every row is held to the roles `QualityController` enforces with
-    `REVIEWER_ROLES`. An officer's own returned records and the re-checks they
+    `QUALITY_REVIEWER_ROLES`. An officer's own returned records and the re-checks they
     may do are on «أرباحي والمسح الميداني» instead, so nobody is offered a
     screen that would only tell them their work is being watched.
   */
@@ -410,7 +445,7 @@ export const NAV_GROUPS: NavGroup[] = [
         labelEn: 'Audit Log',
         icon: ShieldCheck,
         // The two roles `AuditController` serves — the auditor is who the log is for.
-        roles: ['SUPER_ADMIN', 'AUDITOR'],
+        roles: AUDIT_READ_ROLES,
         keywords: ['تدقيق', 'تاريخ', 'تغييرات', 'audit', 'logs'],
       },
     ],

@@ -43,6 +43,8 @@ enum StaffRole {
   COLLECTOR
   ACCOUNTANT
   ADMINISTRATIVE_OFFICER
+  /// «مشاهد فقط» — reads the register, census, cases and reports; writes nothing. 0067.
+  VIEWER
 }
 
 enum Gender {
@@ -113,6 +115,33 @@ model User {
   phone    String?
   whatsapp String?
 
+  /// «لا يملك رقم هاتف» — this person owns no phone (migration 0069).
+  ///
+  /// A fact, not a blank. `phone IS NULL` alone cannot tell "has no phone"
+  /// from "nobody asked yet", and the two want opposite things from an
+  /// officer: the first is a finished answer, the second is «يتطلب مراجعة».
+  /// True here waives the form's phone requirement and is the one state in
+  /// which a household file is complete without a number.
+  hasNoPhone Boolean @default(false)
+  // CHECK users_no_phone_means_no_number (0072): hasNoPhone ⇒ phone IS NULL AND whatsapp IS NULL.
+
+  /// «رقم للتواصل» — a son's, a daughter's or a neighbour's number, for a
+  /// citizen the municipality cannot reach directly (migration 0069).
+  ///
+  /// **Not this person's number, and never treated as one.** It is excluded
+  /// from citizen sign-in (`findCitizensByPhone`) and from duplicate scoring
+  /// on purpose: a relative's number is *expected* to equal that relative's
+  /// own `phone`, so matching on it there would offer the father's file to
+  /// the son signing in and score the two as one person. Deliberately not
+  /// unique for the same reason — a father, a mother and a grandmother are
+  /// commonly reached on one son's phone.
+  ///
+  /// Read as a weaker, human-confirmed signal by `LandlordLinkService`
+  /// (`candidatesFor`), where an elderly owner whose tenant knows only the
+  /// son's number would otherwise be unreachable by any match.
+  contactPhone String?
+  // CHECK users_contact_phone_not_own (0072): contactPhone is never this person's own phone.
+
   firstName  String
   middleName String?
   lastName   String
@@ -157,6 +186,19 @@ model User {
 
   isActive    Boolean   @default(true)
   lastLoginAt DateTime?
+
+  /// «آخر ظهور» — when this staff account last made a request (0070).
+  ///
+  /// Presence, which `lastLoginAt` cannot give: that is stamped once at
+  /// sign-in, and a staff token lasts fifteen minutes behind a refresh chain
+  /// that runs for a week, so it reports an officer who has worked all morning
+  /// as last seen at eight and one who shut their laptop as present.
+  ///
+  /// Written by `StaffPresenceService` from the revocation check that already
+  /// runs on every authenticated request, throttled through Redis to at most
+  /// one write a minute per account. **Staff only** — a citizen row stays NULL
+  /// for ever, so the citizen portal keeps no write on its hot path.
+  lastSeenAt DateTime?
 
   /// Bumped to revoke every session this account holds, at once.
   ///
@@ -256,6 +298,8 @@ model User {
   /// The other half of the owner match — a landlord's number is as often the
   /// one they answer on WhatsApp as the one they registered with (0045).
   @@index([kind, whatsapp])
+  /// And the third: the relative's number an elderly owner is reached on (0069).
+  @@index([kind, contactPhone])
   @@index([kind, role])
   @@map("users")
 }
@@ -961,6 +1005,12 @@ enum DamageLevel {
   NOT_AFFECTED
   SAFE_MINOR_DAMAGE
   RESTRICTED_USE
+  /// RETIRED before release — never written (0071). Added by 0067 as «غير قابلة للسكن»; habitability
+  /// became its own answer (`DamageAssessment.habitable`) so the scale stays UN-Habitat's verbatim (D4).
+  /// 0071 converted its readings to RESTRICTED_USE + habitable = false, and the CHECK
+  /// `damage_assessments_level_not_retired` refuses it. Kept only because removing a stored enum value
+  /// is destructive DDL; it is absent from the shared `DAMAGE_LEVEL`, so the API refuses it too.
+  UNINHABITABLE
   UNSAFE_EVACUATE
   TOTAL_COLLAPSE
   UNCLASSIFIED
@@ -1495,6 +1545,16 @@ model DamageAssessment {
   observations String?
 
   assessedAt DateTime @default(now())
+
+  /// «صالحة للسكن؟» — the second axis beside the structural level (0071). True / false as answered,
+  /// NULL on a reading from before the question or an unclassified one. The level prefills it (`habitabilityFor`): a collapse or
+  /// an evacuation is never habitable (CHECK `damage_assessments_habitable_matches_level`). A unit whose
+  /// current reading says it cannot be lived in has its occupancy fee held (`isUninhabitableReading`).
+  habitable Boolean?
+
+  /// «موعد إعادة الكشف» — when a target read «غير صالحة للسكن» is due to be inspected again after repair
+  /// (0068). Only on such a reading: CHECK `damage_assessments_reinspect_needs_uninhabitable`.
+  reinspectAt DateTime?
 
   assessedById String? @db.Uuid
   assessedBy   User?   @relation("DamageAssessedBy", fields: [assessedById], references: [id])

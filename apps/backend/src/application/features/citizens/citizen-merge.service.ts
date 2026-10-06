@@ -23,6 +23,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { AuditService, type BuildingChange, type CitizenChange } from '../audit/audit.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError } from '../../common/exceptions';
+import { citizenPhoneRuleError } from '../../../infrastructure/prisma/check-violation';
 import { readFootprint } from './landlord-link.service';
 import {
   filedOn,
@@ -117,6 +118,8 @@ const PERSON_SELECT = {
   motherName: true,
   phone: true,
   whatsapp: true,
+  hasNoPhone: true,
+  contactPhone: true,
   gender: true,
   nationality: true,
   isLebanese: true,
@@ -1067,10 +1070,15 @@ export class CitizenMergeService {
       });
     }
     if (plan.fills.length > 0) {
-      await db.user.update({
-        where: { id: keep.id },
-        data: Object.fromEntries(plan.fills.map((fill) => [fill.field, fill.value])) as Prisma.UserUpdateInput,
-      });
+      await db.user
+        .update({
+          where: { id: keep.id },
+          data: Object.fromEntries(plan.fills.map((fill) => [fill.field, fill.value])) as Prisma.UserUpdateInput,
+        })
+        // `planFields` keeps both of 0072's rules; should a fill ever break one, it is named, not a 500.
+        .catch((error: unknown) => {
+          throw citizenPhoneRuleError(error) ?? error;
+        });
     }
     await db.user.update({
       where: { id: absorb.id },
@@ -1184,7 +1192,11 @@ export class CitizenMergeService {
     if (fills.length > 0) {
       await db.user.update({
         where: { id: keepId },
-        data: Object.fromEntries(fills.map((field) => [field, null])) as Prisma.UserUpdateInput,
+        // Every fill went onto an empty column, so undoing it empties it again —
+        // except «لا يملك رقم هاتف», a NOT NULL flag whose empty answer is false.
+        data: Object.fromEntries(
+          fills.map((field) => [field, field === 'hasNoPhone' ? false : null]),
+        ) as Prisma.UserUpdateInput,
       });
     }
     if (footprint.identityMoved) {

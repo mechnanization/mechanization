@@ -1,6 +1,6 @@
 # Database environments
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
 
 Three databases, three targets, and a set of checks whose only job is to make
 "I ran it against the wrong one" impossible rather than unlikely. This is the
@@ -185,6 +185,15 @@ and write its database.
 | `accountant@` | ACCOUNTANT: fees and payment review |
 | `collector@` | COLLECTOR |
 | `inspector@`, `inspector2@` to `inspector4@` | FIELD_INSPECTOR, who filed most of the register |
+| `viewer@` | VIEWER («مشاهد فقط»): the head's read-only account. Reads the dashboard, the reports and the register, changes nothing, and is never shown a رقم مرجعي |
+
+The synthetic register includes the cases the screens have to handle: every
+47th citizen has no phone of their own and is reached on the previous person's
+number («رقم للتواصل»), and `pnpm db:seed:census` records some damage readings
+«غير صالحة للسكن», some with a re-inspection day (always ahead: the schema
+refuses a day already gone), so the fee hold and «بانتظار إعادة الكشف» have
+something to show. The seeds add to what is there and never rewrite it, so a
+database seeded before 2026-10-06 shows neither until it starts over (§0.4).
 
 The seed prints the `admin@` TOTP secret: add it to an authenticator app to get
 the 6-digit code. It is random and generated per machine, so yours differs from

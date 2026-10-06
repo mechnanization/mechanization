@@ -253,6 +253,29 @@ export interface VacancyRow {
   createdAt: Date;
 }
 
+/** One row of «وحدات غير ممسوحة» — see `BuildingsService.unsurveyedUnits`. */
+export interface UnsurveyedUnitRow {
+  unitId: string;
+  unitCode: string;
+  floor: number;
+  unitType: string;
+  surveyStatus: string;
+  /** Attempts so far — three unanswered doors are a different visit from none. */
+  visitCount: number;
+  lastVisitAt: Date | null;
+  buildingId: string;
+  buildingCode: string;
+  buildingName: string | null;
+  parcelNumber: string;
+  /** Who put the building on the census — shown to those who see everyone's. */
+  addedByName: string | null;
+  /** Their staff id, so an admin can narrow the list to one officer's buildings. */
+  addedById: string | null;
+  /** The door's open case — a refused or unreachable flat already booked for a revisit. */
+  openCaseType: string | null;
+  scheduledRevisitAt: Date | null;
+}
+
 export interface DamageRow {
   id: string;
   buildingId: string | null;
@@ -261,6 +284,10 @@ export interface DamageRow {
   source: string;
   observations: string | null;
   assessedAt: Date;
+  /** «صالحة للسكن؟» — the second axis (0071); null on a reading from before the question. */
+  habitable: boolean | null;
+  /** «موعد إعادة الكشف» — set only on a «غير صالحة للسكن» reading (0068, 0071). */
+  reinspectAt: Date | null;
   assessedById: string | null;
   assessedByName: string | null;
   createdAt: Date;

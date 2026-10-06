@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `feat/staff-refresh-tokens-rebased` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,
@@ -8,14 +8,14 @@ used on both sides of the wire. Repo-wide rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## What it exports
 
-`src/index.ts` re-exports 26 modules. Everything is imported from the package
+`src/index.ts` re-exports 29 modules. Everything is imported from the package
 root (`from '@mechanization/shared-schemas'`); there are no deep imports.
 
 | Kind | Modules |
 |---|---|
-| Vocabulary | `enums` (the `as const` value lists, their zod schemas and types), `error-codes` (`ERROR_KINDS`, `ERROR_CODES`, `ErrorCode`, `ErrorParams`, `ApiErrorBody`, `isSpecificErrorCode`), `labels` (`ar`, `en`, `getLabels`), `primitives` (`lebanesePhone`, `internationalPhone`, `arabicOrLatinName`, `documentNumber`, `civilRecordNumber`, `tenantSlug`, `uuid`, `normalizeDigits`) |
+| Vocabulary | `enums` (the `as const` value lists, their zod schemas and types), `error-codes` (`ERROR_KINDS`, `ERROR_CODES`, `ErrorCode`, `ErrorParams`, `ApiErrorBody`, `isSpecificErrorCode`), `labels` (`ar`, `en`, `getLabels`), `primitives` (`lebanesePhone`, `internationalPhone`, `optionalInternationalPhone`, `arabicOrLatinName`, `documentNumber`, `civilRecordNumber`, `tenantSlug`, `uuid`, `normalizeDigits`), `role-sets` (who may call what: `EVERY_STAFF_ROLE`, `WORKING_STAFF_ROLES`, `REGISTER_WRITE_ROLES`, `CENSUS_WORKLIST_ROLES`, `FEE_ISSUE_ROLES`, `REGISTER_EXPORT_ROLES` and the rest, `hasStaffRole`) |
 | Contracts (`*.schema.ts`) | `citizen`, `field-flag`, `property`, `registration`, `admin-citizen`, `citizen-import`, `fee`, `auth`, `tenant`, `zone`, `building`, `unit-correction`, `staff`, `case`, `quality`, `citizen-merge` |
-| Pure rules | `numbering`, `unit-layout`, `cash-policy`, `payout-policy`, `inspector-earnings`, `unit-status-rule` |
+| Pure rules | `numbering`, `unit-layout`, `cash-policy`, `payout-policy`, `inspector-earnings`, `unit-status-rule`, `damage-rule` (the severity ladder, `habitabilityFor`, `isUninhabitableReading`, the re-inspection day on the municipality's calendar), `staff-presence` (the stamp interval, the online threshold, `isStaffOnline`, `BACKGROUND_REQUEST_HEADER`) |
 
 The code is plain TypeScript with no I/O and no Node or browser APIs
 (`tsconfig.base.json` sets `lib` to ES2022). Keep it that way: both apps run
@@ -90,12 +90,14 @@ An enum lives in up to five places, and they MUST change together:
 What checks the copies:
 
 - `domain-enum-drift.spec.ts` compares the shared lists with the domain unions
-  for unit type, unit status, occupancy, property and land type only.
+  for unit type, unit status, occupancy, property, land type and staff role.
 - Nothing compares the shared lists with the Prisma or SQL enums. Writes cross
   into Prisma through `as never`, so a mismatch compiles and fails at runtime.
-- `StaffRole` exists in the shared `STAFF_ROLE`, the domain `StaffRole`, the
-  Prisma `enum StaffRole`, and the `Role` type in `src/scripts/create-staff.ts`,
-  with no drift test.
+- `StaffRole` exists in the shared `STAFF_ROLE`, the domain `StaffRole` and the
+  Prisma `enum StaffRole`. `src/scripts/create-staff.ts` reads `STAFF_ROLE`.
+- A value retired from use stays in the Prisma and SQL enum (removing it is
+  destructive DDL) and leaves the shared list; a CHECK refuses it from then on.
+  `DamageLevel.UNINHABITABLE` is the model (`0071`).
 
 Never rename or remove a stored value: that is destructive DDL. Change the
 label instead (see the `NON_RESIDENT_OWNER` comment in `enums.ts`).
@@ -139,6 +141,45 @@ package. Other new UI copy goes in next-intl messages
   `node_modules/zod` before you rely on an API you remember.
 - The output is CommonJS (`module: commonjs` in `tsconfig.base.json`), with
   `strict` and `noUncheckedIndexedAccess`.
+- **An optional phone is `optionalInternationalPhone`, never
+  `internationalPhone.optional().or(z.literal(''))`.** The union looks right
+  and leaks English: when the number is malformed every branch fails and zod
+  reports the union's own «Invalid input» instead of «رقم الهاتف غير صالح», on
+  an Arabic-first form, for the commonest typo there is (TXT-2, TXT-4). The
+  primitive preprocesses an empty string to `undefined` so there is only ever
+  one branch.
+- A field whose requirement depends on another answer — «لا يملك رقم هاتف»
+  waiving `phone` — is optional on the *object* and required again in
+  `superRefine`. A field cannot waive a requirement its own type has already
+  failed. Keep the refinement's path and message identical to what the strict
+  primitive would have raised, or the standard record's errors move. A
+  refinement behind a transform runs only once the rest of the object parsed,
+  so a submission that is a whole record checks the requirement on what was
+  sent as well: `householdPhoneIssues` (`admin-citizen.schema.ts`) raises the
+  phone, WhatsApp and «رقم للتواصل هو رقم المواطن نفسه» issues on the raw
+  contact section, so a blank phone is refused even when another field of the
+  section is flagged or missing. The refinement stays for direct users of
+  `contactDetailsSchema`.
+- An answer shown for a human to compare keeps its type: the merge preview's
+  `CitizenMergeFieldConflict` and `CitizenMergeFieldFill` carry a yes-or-no as
+  a boolean and an enum as its code (`string | boolean | null`), and the dialog
+  says them in the page's language. A server that wrote «نعم» put Arabic on
+  the English page.
+- A value one field decides for another — the habitability a damage level
+  implies — is filled in a `.transform()` placed before the `.superRefine()`
+  that checks it (`createDamageAssessmentSchema`). Annotate the transform's
+  return as `(value): typeof value`, or the output type gains a required key
+  every caller must now send. A refinement behind a transform runs only once
+  the object itself parsed, so a missing field is reported first, as itself.
+- Who may call a route is a named set in `role-sets.ts`, imported by both apps
+  (`@Roles(...SET)` on the server, `lib/staff-roles.ts` in the portal). A new
+  audience is a new set there, never a re-typed list.
+- `.partial()` drops a `.default()`. `shapeSubmission` parses the citizen
+  sections through the partial schemas, so a boolean flag with
+  `.default(false)` arrives **absent**, not `false`, when the client omits it.
+  Read such a flag as `=== true` and never `!== false` — that is what keeps an
+  older build, the offline queue and an import writing what they wrote before
+  (`no-phone.spec.ts` pins it).
 
 ## Tests
 

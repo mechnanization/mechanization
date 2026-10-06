@@ -6,20 +6,9 @@ import { useRouter } from 'next/navigation';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QUALITY_REVIEWER_ROLES } from '@/lib/staff-roles';
 
-/**
- * Who may open any of the four «مراجعة الجودة» screens.
- *
- * The same list `QualityController` enforces with `REVIEWER_ROLES`. Stated here
- * as well because the sidebar and the route guard have to agree with the
- * server — a row offered to a role the endpoint refuses is a link the portal
- * hands somebody so it can 403 them.
- */
-export const QUALITY_REVIEWER_ROLES: readonly string[] = [
-  'SUPER_ADMIN',
-  'AUDITOR',
-  'ADMINISTRATIVE_OFFICER',
-];
+/* Who reaches the quality screens: `QUALITY_REVIEWER_ROLES`, in `lib/staff-roles.ts` (shared with `QualityController`). */
 
 /**
  * The chrome every quality screen shares: the session, the role gate, and a

@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Header, Param, Post, Put } from '@nestjs/common';
 import {
-  type CreateZoneInput,
-  type UpdateZoneInput,
+  EVERY_STAFF_ROLE,
+  REGISTER_ADMIN_ROLES,
   createZoneSchema,
   updateZoneSchema,
+  type CreateZoneInput,
+  type UpdateZoneInput,
 } from '@mechanization/shared-schemas';
 import { ZonesService } from '../../application/features/zones/zones.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
@@ -24,7 +26,7 @@ export class ZonesController {
    * Every sector with its parcel count. Reading sectors is part of reading
    * the map, so every staff role may.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get()
   async list() {
     return { zones: await this.zones.list() };
@@ -39,14 +41,14 @@ export class ZonesController {
    * sector expects to see it on the map immediately, and the expensive part
    * (dissolving member parcels) is already memoised per zone in the service.
    */
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get('geojson')
   @Header('Cache-Control', 'no-store')
   async geojson(@Param('tenantSlug') tenantSlug: string) {
     return this.zones.buildGeoJson(tenantSlug);
   }
 
-  @Roles('SUPER_ADMIN', 'AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...EVERY_STAFF_ROLE)
   @Get(':id')
   async get(@Param('id') id: string) {
     return this.zones.get(id);
@@ -60,7 +62,7 @@ export class ZonesController {
    * inspector's. Deletion stays SUPER_ADMIN only: it is the one write that
    * cannot be corrected by drawing the boundary again.
    */
-  @Roles('SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_ADMIN_ROLES)
   @Post()
   async create(
     @Param('tenantSlug') tenantSlug: string,
@@ -70,7 +72,7 @@ export class ZonesController {
     return this.zones.create(tenantSlug, body, { id: user.sub, role: user.role ?? '' });
   }
 
-  @Roles('SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER')
+  @Roles(...REGISTER_ADMIN_ROLES)
   @Put(':id')
   async update(
     @Param('tenantSlug') tenantSlug: string,

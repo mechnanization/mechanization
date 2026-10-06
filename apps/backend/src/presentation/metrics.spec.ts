@@ -21,6 +21,7 @@ import { AddressInfo } from 'node:net';
 import { register } from 'prom-client';
 import request from 'supertest';
 import { SessionRevocationService } from '../application/features/identity/session-revocation.service';
+import { StaffPresenceService } from '../application/features/identity/staff-presence.service';
 import { createApiApp } from './bootstrap';
 import { APP_CONFIG } from './config/app.config';
 import { Public } from './decorators/public.decorator';
@@ -132,6 +133,16 @@ class RejectingTenantMiddleware implements NestMiddleware {
     {
       provide: SessionRevocationService,
       useValue: { isCurrent: jest.fn().mockResolvedValue(true) },
+    },
+    /*
+      Presence is stamped by `JwtAuthGuard` on every authenticated request, so
+      the guard cannot be constructed without it. Stubbed rather than real
+      here: this suite is about metrics and the throttler, and the real service
+      wants a tenant client and the cache.
+    */
+    {
+      provide: StaffPresenceService,
+      useValue: { touch: jest.fn().mockResolvedValue(undefined) },
     },
     { provide: APP_FILTER, useClass: DomainExceptionFilter },
     { provide: APP_GUARD, useClass: ThrottlerGuard },

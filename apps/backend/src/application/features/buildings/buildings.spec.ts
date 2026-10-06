@@ -16,7 +16,7 @@ import {
   sharedParcelsExcluding,
   sortByDistance,
 } from './buildings.service';
-import { damageSeverity, worstDamage } from './damage.service';
+import { damageSeverity, worstDamage } from '@mechanization/shared-schemas';
 
 /**
  * The census's rules that are decidable without a database.
@@ -562,7 +562,8 @@ describe('createDamageAssessmentSchema', () => {
     // offline — back-dating is the difference between a history that
     // reconstructs what happened and one that records when the paperwork got
     // typed. The future is the direction that is only ever a typo.
-    const base = { level: 'RESTRICTED_USE', buildingId: '3f2504e0-4f89-11d3-9a0c-0305e82c3301' };
+    // Restricted use must say whether it can be lived in (0071); the date is what is under test.
+    const base = { level: 'RESTRICTED_USE', habitable: true, buildingId: '3f2504e0-4f89-11d3-9a0c-0305e82c3301' };
     const lastWeek = new Date(Date.now() - 7 * 86_400_000).toISOString();
     const nextWeek = new Date(Date.now() + 7 * 86_400_000).toISOString();
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import {
   BLOOD_TYPE,
   GENDER,
@@ -419,8 +420,12 @@ export function ContactStep({
   afterPhone?: ReactNode;
 }) {
   const labels = getLabels(locale);
+  const t = useTranslations('citizenForm.contact');
+  const tNoPhone = useTranslations('citizenForm.noPhone');
   const set = (patch: Values) => onChange({ ...value, ...patch });
   const sameAsPhone = value.whatsappSameAsPhone !== false;
+  /** «لا يملك رقم هاتف» — the person owns no number of their own. */
+  const hasNoPhone = value.hasNoPhone === true;
   const sameAsPhoneToggle = (
     <label
       htmlFor="whatsappSameAsPhone"
@@ -431,9 +436,7 @@ export function ContactStep({
         checked={sameAsPhone}
         onCheckedChange={(checked) => set({ whatsappSameAsPhone: checked === true })}
       />
-      <span className="whitespace-nowrap font-medium">
-        {locale === 'en' ? 'Same as phone' : 'نفس رقم الهاتف'}
-      </span>
+      <span className="whitespace-nowrap font-medium">{t('sameAsPhone')}</span>
     </label>
   );
 
@@ -445,13 +448,60 @@ export function ContactStep({
       are made on (see `afterPhone`).
     */
     <div className="review-body space-y-4 sm:space-y-5">
+      {/*
+        «لا يملك رقم هاتف» — the switch, above the fields it governs.
+
+        Above and not beside: it decides whether the two boxes below are
+        asked at all, and a mode switch placed after the field it disables is
+        read only once the officer has already typed into it. Which is the
+        habit this exists to break — asked for a number the person does not
+        have, an officer fills in whoever drove them to the hall.
+      */}
+      <div className="review-group rounded-lg border border-border/80 bg-muted/20 p-3">
+        <label
+          htmlFor="hasNoPhone"
+          className="flex cursor-pointer select-none items-start gap-2.5 text-sm"
+        >
+          <Checkbox
+            id="hasNoPhone"
+            className="mt-0.5"
+            checked={hasNoPhone}
+            onCheckedChange={(checked) =>
+              /*
+                Ticking it empties the person's own two numbers in the same
+                update, so what is on screen is what will be saved. The
+                server clears them again (`contactDetailsSchema`) — this is
+                the form telling the truth, not the enforcement.
+
+                `contactPhone` is deliberately untouched here. Carrying a
+                number that was already on the file into it is a correction
+                policy, not a rendering rule, and it belongs with the form
+                that owns the record's history and its «غير مؤكَّد» flags —
+                `citizen-form`'s `updateContact`. This step only ever reports
+                what the officer just typed.
+              */
+              checked === true
+                ? set({ hasNoPhone: true, phone: '', whatsapp: '', whatsappSameAsPhone: true })
+                : set({ hasNoPhone: false })
+            }
+          />
+          <span className="min-w-0">
+            <span className="font-medium text-foreground">{tNoPhone('label')}</span>
+            {hasNoPhone ? (
+              <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{tNoPhone('note')}</span>
+            ) : null}
+          </span>
+        </label>
+      </div>
+
       {/* Row 1 — the numbers */}
       <div className="review-body grid grid-cols-1 items-start gap-3.5 md:grid-cols-2">
         <Field
-          label={locale === 'en' ? 'Primary Phone Number' : 'رقم الهاتف الأساسي'}
+          label={t('primaryPhone')}
           htmlFor="phone"
           path="contact.phone"
-          required
+          required={!hasNoPhone}
+          optionalLabel={tNoPhone('optional')}
           error={errors['contact.phone']}
         >
           <Input
@@ -460,10 +510,11 @@ export function ContactStep({
             inputMode="tel"
             autoComplete="tel"
             dir="ltr"
-            placeholder="03 123456 / +33 6 12 34 56 78"
+            placeholder={hasNoPhone ? '' : '03 123456 / +33 6 12 34 56 78'}
             className="text-start"
+            disabled={hasNoPhone}
             invalid={Boolean(errors['contact.phone'])}
-            value={str(value.phone)}
+            value={hasNoPhone ? '' : str(value.phone)}
             onChange={(e) => set({ phone: e.target.value })}
           />
         </Field>
@@ -477,23 +528,36 @@ export function ContactStep({
           «نفس رقم الهاتف» on the same line as the box, in both states — it is
           the switch between the two, so it belongs beside what it switches.
         */}
-        {sameAsPhone ? (
+        {/*
+          With no phone there is nothing for WhatsApp to be the same as, so
+          the switch itself is gone rather than disabled: «نفس رقم الهاتف»
+          over two empty boxes is a question about a number that does not
+          exist. The box says the state instead.
+        */}
+        {hasNoPhone ? (
+          <div className="space-y-1.5">
+            <Label htmlFor="whatsapp" className="text-xs font-medium text-foreground/90">
+              {t('whatsappNumber')}
+            </Label>
+            <div className="flex h-10 min-w-0 items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-3 text-xs text-muted-foreground coarse:h-12">
+              <span className="truncate">{tNoPhone('noNumber')}</span>
+            </div>
+          </div>
+        ) : sameAsPhone ? (
           <div className="space-y-1.5">
             <Label htmlFor="whatsappSameAsPhone" className="text-xs font-medium text-foreground/90">
-              {locale === 'en' ? 'WhatsApp Number' : 'رقم الواتساب'}
+              {t('whatsappNumber')}
             </Label>
             <div className="flex items-center gap-3">
               <div className="flex h-10 min-w-0 flex-1 items-center rounded-md border border-dashed border-border/80 bg-muted/20 px-3 text-xs text-muted-foreground coarse:h-12">
-                <span className="truncate">
-                  {locale === 'en' ? '✓ Using primary phone for WhatsApp' : '✓ يتم استخدام رقم الهاتف الأساسي للواتساب'}
-                </span>
+                <span className="truncate">{t('usingPrimaryForWhatsapp')}</span>
               </div>
               {sameAsPhoneToggle}
             </div>
           </div>
         ) : (
           <Field
-            label={locale === 'en' ? 'WhatsApp Number' : 'رقم الواتساب'}
+            label={t('whatsappNumber')}
             htmlFor="whatsapp"
             path="contact.whatsapp"
             required
@@ -516,6 +580,36 @@ export function ContactStep({
             </div>
           </Field>
         )}
+
+        {/*
+          «رقم للتواصل» — somebody else's number, recorded as somebody
+          else's.
+
+          Shown whether or not the box above is ticked: a household with a
+          phone can still want a son's number on the file, and only one of
+          the two fields is ever an identity. This one never is — it is
+          excluded from citizen sign-in and from «شخص مسجَّل مرتين» on
+          purpose, so a father, a mother and a grandmother reached on one
+          son's phone collide with nothing (0069).
+        */}
+        <Field
+          label={tNoPhone('contactPhone')}
+          htmlFor="contactPhone"
+          path="contact.contactPhone"
+          error={errors['contact.contactPhone']}
+        >
+          <Input
+            id="contactPhone"
+            type="tel"
+            inputMode="tel"
+            dir="ltr"
+            placeholder="03 123456 / +33 6 12 34 56 78"
+            className="text-start"
+            invalid={Boolean(errors['contact.contactPhone'])}
+            value={str(value.contactPhone)}
+            onChange={(e) => set({ contactPhone: e.target.value })}
+          />
+        </Field>
       </div>
 
       {afterPhone}
@@ -523,7 +617,7 @@ export function ContactStep({
       {/* Row 2 — the household */}
       <div className="grid grid-cols-1 items-start gap-3.5 lg:grid-cols-2">
         <Field
-          label={locale === 'en' ? 'Marital Status' : 'الحالة الاجتماعية'}
+          label={t('maritalStatus')}
           htmlFor="maritalStatus"
           path="contact.maritalStatus"
           required
@@ -542,11 +636,7 @@ export function ContactStep({
         </Field>
 
         <Field
-          label={
-            locale === 'en'
-              ? 'Family Members Living in the House (without married children)'
-              : 'عدد أفراد الأسرة المقيمين في المنزل (دون المتزوجين)'
-          }
+          label={t('householdMembers')}
           htmlFor="actualHouseholdMembers"
           path="contact.actualHouseholdMembers"
           required
@@ -556,7 +646,7 @@ export function ContactStep({
             id="actualHouseholdMembers"
             inputMode="numeric"
             dir="ltr"
-            placeholder={locale === 'en' ? 'e.g. 4' : 'مثال: ٤'}
+            placeholder={t('householdMembersPlaceholder')}
             className="text-start"
             invalid={Boolean(errors['contact.actualHouseholdMembers'])}
             value={str(value.actualHouseholdMembers)}

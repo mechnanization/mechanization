@@ -31,7 +31,12 @@ import {
   type UpdateUnitInput,
   type UpsertOccupancyInput,
   type UpsertUnitInput,
+  type WorklistQuery,
+  type ReinspectionsPage,
+  IMPAIRED_DAMAGE_LEVELS,
 } from '@mechanization/shared-schemas';
+import { worklistOwner, type WorklistViewer } from '../../common/worklist-viewer';
+import { reinspections, unsurveyedUnits } from './census-worklists';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
@@ -52,6 +57,7 @@ import type {
   OccupancyOwnerLink,
   OccupancyRow,
   UnitRow,
+  UnsurveyedUnitRow,
   VacancyRow,
   VisitRow,
 } from './building.types';
@@ -225,11 +231,6 @@ const MAX_VISITS_RETURNED = 10;
  */
 const MAX_VACANCIES_RETURNED = 5;
 
-const DAMAGED_LEVELS: readonly string[] = [
-  'RESTRICTED_USE',
-  'UNSAFE_EVACUATE',
-  'TOTAL_COLLAPSE',
-];
 
 /**
  * A building with its units, as the matrix drawer reads it.
@@ -291,6 +292,10 @@ export class BuildingsService {
 
   private get db() {
     return this.tenantContext.prisma;
+  }
+
+  private get S() {
+    return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
   private record(input: {
@@ -409,6 +414,27 @@ export class BuildingsService {
   // ───────────────────────────────  Reads  ───────────────────────────────
 
   /**
+   * «وحدات غير ممسوحة» — see `unsurveyedUnits` in `census-worklists.ts`.
+   * Two plain reads, not a transaction: a worklist is read-only, and a door
+   * recorded between the page and its count moves one number by one.
+   */
+  async unsurveyedUnits(
+    query: WorklistQuery,
+    viewer?: WorklistViewer,
+  ): Promise<{ items: UnsurveyedUnitRow[]; total: number }> {
+    return withConnectionRetry(() => unsurveyedUnits(this.db, this.S, query, viewer));
+  }
+
+  /**
+   * «بانتظار إعادة الكشف» — see `reinspections` in `census-worklists.ts`.
+   * `seesAll` tells the screen whether it is showing everyone's readings.
+   */
+  async reinspections(query: WorklistQuery, viewer?: WorklistViewer): Promise<ReinspectionsPage> {
+    const page = await withConnectionRetry(() => reinspections(this.db, this.S, query, viewer));
+    return { ...page, seesAll: worklistOwner(viewer) === null };
+  }
+
+  /**
    * The census ledger.
    *
    * `damageLevel` filters on the *current* level — the latest assessment — not
@@ -495,7 +521,7 @@ export class BuildingsService {
     const allTotals = await withConnectionRetry(() =>
       this.db.building.aggregate({ where, _sum: { unitsTotal: true } }),
     );
-    const damaged = await this.countAtDamageLevels(where, DAMAGED_LEVELS);
+    const damaged = await this.countAtDamageLevels(where, IMPAIRED_DAMAGE_LEVELS);
     /*
       Counted over the filtered predicate, like every other tile — never
       over the page. A tile that quietly described the first twenty-five

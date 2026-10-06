@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/staff-refresh-tokens-rebased` (on `develop@8742c5b`), 2026-10-04.
+Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -22,9 +22,9 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
     citizens/** buildings/** cases/** fees/** inspector/profile/** quality/**
 ```
 
-All 47 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
+All 49 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
 `components/ui` is the kit (32 files); `components/admin` holds staff screens (feature
-folders `cases/`, `quality/`, `settings/`); `components/citizen` is mostly citizen-record
+folders `cases/`, `damage/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
 form pieces used by staff screens, and only `pay-dialog` serves the portal. `lib` holds the
 API client, session, hooks, formatters and offline queue; `public/sw.js` is the service worker.
 
@@ -54,8 +54,7 @@ API client, session, hooks, formatters and offline queue; `public/sw.js` is the 
 Deviations ([docs/code-quality.md](../../docs/code-quality.md)): `lib/citizen-field-controls.ts`
 imports the value `BUILDING_UNIT_TYPES` from `components/citizen/unit-fields`; four `lib`
 modules (`citizen-draft`, `building-draft`, `residence-move`, `use-table-labels`) import
-component types; `components/admin/nav.ts` imports `QUALITY_REVIEWER_ROLES` from a screen
-(`quality-screen`) instead of `lib/staff-roles.ts`.
+component types.
 
 ## Data fetching
 
@@ -67,7 +66,18 @@ component types; `components/admin/nav.ts` imports `QUALITY_REVIEWER_ROLES` from
 - **Reads** MUST use `useStaffQuery` (`lib/use-staff-query.ts`) with key
   `[resource, tenant, ...every param that changes the answer]`. It waits for the token,
   clears the session on a 401, and returns `{data, loading, fetching, error, refetch}`.
-  `keepPrevious` for server-paged tables, `reference` for lookup lists.
+  `keepPrevious` for server-paged tables, `reference` for lookup lists, `refreshMs`
+  for the few reads whose answer goes stale with nothing on the page to invalidate it
+  (today only the staff presence read, `lib/use-staff-presence.ts`, at 60 s — the same
+  minute the server's presence stamp is written on; the heavy `/staff` roster is read once).
+  TanStack pauses the interval while the tab is hidden. It is not a way to make an ordinary
+  table feel live; invalidating the key after a write is. A relative label («آخر ظهور»)
+  needs the re-render as much as the data does, and the server's clock: the presence read
+  carries `now`, and `useStaffPresence` judges «متصل الآن» against it, not the browser's clock.
+- **A poll is a background request.** Anything that re-reads on a timer MUST pass
+  `background: true` to `apiFetch` (it sends `x-background-request`), as `getStaffPresence`
+  and the notifications bell's `getPendingPayments` do. The server skips the presence stamp
+  for it; without it, an unattended open tab keeps its user «متصل الآن» all day.
 - **Writes** are imperative: an `inFlight` ref and a `busy` state, `await apiFn()`, then
   `queryClient.invalidateQueries` on the key prefix (STA-3, STA-4). Model:
   `components/admin/landlord-proposal-card.tsx`.
@@ -75,8 +85,9 @@ component types; `components/admin/nav.ts` imports `QUALITY_REVIEWER_ROLES` from
   cache inside api-client (tenant config, zones, census, fee summary, settings). Legacy for
   new reads. **Undecided:** retire it for `reference: true` reads, or keep it for non-React callers.
 - Deviations: 16 `(protected)` pages and 7 components (besides `AdminShell` and
-  `StaffRouteGuard`) still call `loadSession` directly, most of them to fetch in effects (UI §17.1). `['citizens', 'review-queue', tenant, …]` puts the tenant third and
-  `['landlord-links']` has none, so a `[resource, tenant]` prefix misses or over-invalidates.
+  `StaffRouteGuard`) still call `loadSession` directly, most of them to fetch in effects (UI §17.1).
+  The landlord-links screens invalidate `['landlord-links']`, with no tenant, so the prefix
+  over-invalidates.
 
 ## Session
 
@@ -100,9 +111,18 @@ component types; `components/admin/nav.ts` imports `QUALITY_REVIEWER_ROLES` from
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (188 each today; nothing checks parity). Read it with `useTranslations`.
+  the same keys in both (928 each today). Read it with `useTranslations`.
+  `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
+  placeholders and the same rich-text tags, and that no Arabic message outside `errors`
+  writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
+  with the page's locale and plain `ar` prints Arabic-Indic digits on some engines.
+- A plain module that needs copy (no React context: a formatter, a table-cell helper) builds
+  a translator over its own slice of the message files with `createTranslator` and
+  `FORMAT_LOCALE` (`ar-u-nu-latn`, Latin digits) from `lib/api-errors.ts`, as `api-errors.ts`,
+  `fee-assessment.ts` and `audit-describe.ts` do. Plain labels with no placeholders are a lookup
+  (`audit-labels.ts` reads `auditActions` and `auditEntities`).
 - Enum and status labels MUST come from `getLabels(locale)` (shared-schemas).
-- Legacy, convert when you touch a file: inline `en ? '…' : '…'` (about 126 files; 70 declare
+- Legacy, convert when you touch a file: inline `en ? '…' : '…'` (about 117 files; 62 declare
   `const en = locale === 'en'`), `lib/settings-i18n.ts` `settingsCopy`, and `labelEn` in
   `components/admin/nav.ts`. The 13 `messages.nav` keys are never read.
 - `i18n/routing.ts` `defaultLocale` is `'en'` while `middleware.ts` `DEFAULT_LOCALE` is
@@ -137,6 +157,12 @@ component types; `components/admin/nav.ts` imports `QUALITY_REVIEWER_ROLES` from
   network-first navigations with `/offline.html`. `useServiceWorker` registers it (staff
   side) and unregisters it in development.
 - Drafts: `lib/citizen-draft.ts` (localStorage), `lib/building-draft.ts` (sessionStorage).
+- A session that cannot write the register (`CITIZEN_RECORD_EDIT_ROLES`: «مشاهد فقط», an
+  auditor, the accountant, on a device an officer queued records on) never drains:
+  `syncQueue` reports `writerRequired` and leaves every record as it was, and a 403 leaves a
+  record pending, because the refusal is the session's, not the record's. The queue panels
+  (`OfflineQueuePanel`, `BuildingQueueNotice`, prop `canSend`) list the records for such a
+  session and offer nothing that sends, edits, retries, discards or acknowledges them.
 
 ## URL and list state
 
@@ -151,8 +177,14 @@ Model: `app/[tenant]/[locale]/[adminPath]/(protected)/citizens/review/page.tsx` 
 1. **API function** in `lib/api-client.ts` beside its feature, shaped like `getReviewQueue`.
 2. **Route** `app/[tenant]/[locale]/[adminPath]/(protected)/<section>/page.tsx`: `'use client'`,
    `use(params)`, `base = /<tenant>/<locale>/<adminPath>`.
-3. **Roles**: a `NAV_GROUPS` row with `roles` mirroring the controller's `@Roles`; gate
-   controls with a list in `lib/staff-roles.ts` and `hasRole`.
+3. **Roles**: a `NAV_GROUPS` row with `roles` from the same shared set as the controller's
+   `@Roles` (`role-sets.ts` in shared-schemas); gate controls with an allow-list in
+   `lib/staff-roles.ts` and `hasRole`. Never a deny-list: the next read-only role, or an
+   undefined role on first paint, would get the write controls. A write page that a role
+   can reach by its address sends a role that cannot write back to the read page, as
+   `case-editor`, `building-editor` and the settle page do, and a component that offers an
+   action takes the permission as a required prop (`canSend`, `canAnswer`, `canOpen`)
+   rather than a default that fails open.
 4. **Messages**: a namespace in both message files, including `aria-label`, `title`,
    toasts, units and error texts (TXT-2).
 5. **Read**: `useStaffSession`, then `useStaffQuery`; list state from `useUrlPagination`,
@@ -195,17 +227,17 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 9 files, about 139 cases.
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 17 files, 230 cases.
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
 when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`,
-`lib/currency.ts`, `lib/dates.ts`, `canAccessPath`.
+`lib/currency.ts`, `canAccessPath`.
 
 ## Current state and known issues
 
 - UI debt with counts and files, including the contrast failures:
   [docs/ui-ux-standards.md](../../docs/ui-ux-standards.md) §17.
-- Code debt (40 `.tsx` files over 600 lines, `lib/api-client.ts` at 5,145 lines, dead
+- Code debt (40 `.tsx` files over 600 lines, `lib/api-client.ts` at 5,782 lines, dead
   modules, the tenant config fetched three times, UTC "today"): [docs/code-quality.md](../../docs/code-quality.md).
 - Traps (tailwind-merge 3 on Tailwind 3, the two default locales, missing providers on the
   citizen side, null token on first paint, `sw.js` `VERSION`, the CSP nonce, `[adminPath]` is not a control):

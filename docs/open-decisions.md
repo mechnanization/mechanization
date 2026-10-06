@@ -653,3 +653,105 @@ None of this is urgent while the provider is unimplemented —
 `whish-gateway.service.ts` throws unconditionally and both environments hold
 zero payments — which is exactly why it is cheap to decide now and expensive to
 decide after the first live checkout.
+
+---
+
+## 16. The head's account, habitability, the fee hold and archiving (decided 2026-10-05)
+
+**Status:** decided by the product owner on 2026-10-05, in the review of
+`PR #88`; built on `fix/pr88-review`.
+
+1. **«مشاهد فقط» (`VIEWER`) is the municipality head's account.** It reads the
+   dashboard, the reports and the register with its citizens' data, and does
+   nothing else.
+2. **An automatic fee hold** on any unit read «غير صالحة للسكن», until a
+   re-inspection reads it habitable.
+3. **A citizen file is never hard-deleted.** It is archived, with a written
+   reason and who asked for it.
+4. **The UN-Habitat scale stays verbatim**, and habitability is a separate
+   yes/no answer, prefilled where the level decides it (a collapse is never
+   habitable).
+
+What the code chose inside those decisions, for the owner to confirm or undo:
+
+- **The hold covers the fees the occupant bears**: the rental-value fee and the
+  annual maintenance fee, which Law 60/1988 (Art. 11, Art. 79) ties to actual
+  occupancy. A fee the owner bears follows the deed and is still charged.
+- **Nothing is back-billed.** The hold is recomputed on every daily run, so a
+  unit read habitable again is charged from the next run: for the period in
+  progress when the citizen has no bill for it yet, otherwise from the next
+  period; periods already billed without it stay uncharged. A one-off fee has no next
+  period: a held unit is not charged it unless a clerk issues it an individual
+  fee after the re-inspection, which the issue toast says.
+- **A reading that judged nothing leaves the hold standing.** A later «غير مصنّف»
+  reading with no habitability answer — a satellite pass, say — does not end a
+  hold a field visit started; only a reading that answers does.
+- **Older readings count.** A reading from before the question, at collapse or
+  evacuation, is read as uninhabitable from the day this deploys, so units
+  already recorded that way stop being charged occupant-borne fees from the
+  next issuance. Their number on production was not counted (no access during
+  the change). Before the release, count the readings that can do it on each
+  tenant, by target: `SELECT ("unitId" IS NULL) AS whole_building, count(*)
+  FROM damage_assessments WHERE level IN ('TOTAL_COLLAPSE', 'UNSAFE_EVACUATE')
+  AND habitable IS NULL GROUP BY 1`. It counts readings, not units: a
+  whole-building reading holds every flat in that building, and a later reading
+  that answers releases one, so it bounds the impact in neither direction —
+  read the whole-building rows building by building.
+- **The head's account is never shown a رقم مرجعي.** The reference is a sign-in
+  credential, not citizen data, so it is masked for that role in every response,
+  and its searches leave the reference out, so typing one finds nobody. It also
+  cannot export the register or read the activity log (`AuditController`); it
+  does read each file's own «سجل التعديلات», which shows changes, not views.
+- **The archive adds no column.** It is `isActive = false`, with the reason and
+  the requester on the Tier 1 audit row; the archive dialog stays with the roles
+  that edit the register screen today, which leaves out «جابي».
+
+## 17. Questions the 2026-10-05 review left open
+
+### 17.1 How a citizen with no phone of their own pays online
+
+**What the code does:** «لا يملك رقم هاتف» is a complete record (0069). Such a
+citizen opens their page with the reference number alone
+(`POST citizen/reference/open`). The payments portal asks for the reference
+*and* the phone on file (`loginByReference`), and the code sent to a phone looks
+up the citizen's own number (`verifyOtp`), so neither works for them. «رقم
+للتواصل» is never accepted in place of their phone: it is somebody else's
+number, and accepting it would make a relative's phone a credential for this
+file.
+
+**Options:**
+
+1. **Accept it.** They pay at the counter or to a collector, as they would
+   without a phone today.
+2. **Let the reference-only session pay.** It already reads the bills; paying
+   is a smaller step than reading, but widens what a guessed reference can do
+   ([docs/security.md](security.md#known-gaps)).
+3. **A counter-issued one-time code** for the family, handed over in person.
+
+### 17.2 Whether the head's account sees scanned identity documents
+
+Decision 1 says the head "can view citizens and their data". The scans
+(`GET documents/:id/url`) were withheld from «مشاهد فقط» in `PR #88` and still
+are: the role sees which documents a file holds, not the documents. Whether
+"their data" includes the scans is the owner's call. Opening them is one role
+added to the documents routes, and every view is already audited
+(`document.viewed`).
+
+### 17.3 Whether «المحاسب» sees «بانتظار إعادة الكشف»
+
+The accountant issues fees and reads how many units the hold kept off a notice,
+but the re-inspection list is a census worklist (`CENSUS_WORKLIST_ROLES`) and
+does not admit the role. The issue summary therefore names no page to go to.
+Adding the role to the read is small; whether billing staff should read census
+work is a question of who does what in the office.
+
+### 17.4 Whether the head's account exports the building census
+
+«تصدير CSV» on «سجل المباني» builds the file in the browser from the same read
+as the table (`buildings/page.tsx` `exportCsv`), so every role that opens the
+page has it, «مشاهد فقط» included. It carries no citizen: codes, parcels,
+sectors, structure and damage, coordinates, and the officers' free-text notes.
+The register's own export (citizens, `REGISTER_EXPORT_ROLES`) was taken from the
+head's account in `PR #88`. Whether "does nothing else" also means no building
+export, or only no register export, is the owner's call; hiding the button for
+the role is one allow-list in `lib/staff-roles.ts`.

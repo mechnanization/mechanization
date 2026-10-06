@@ -88,6 +88,14 @@ export const UNIT_ACTIONS = [
   'UNIT_VACANCY_ENDED',
   'UNIT_STATUS_AFTER_TENANCY',
   'UNIT_CORRECTION_DELETED',
+  /*
+    A damage reading can hold a flat's occupant-borne fees («غير صالحة للسكن»)
+    or end a hold. Today's figure already reflects it (`assessCitizen`), so the
+    reading is listed beside it — as a real change on the day it was recorded,
+    which never makes a bill one a correction affected on its own: the hold
+    runs forward, never back (decision, 2026-10-05).
+  */
+  'DAMAGE_RECORDED',
 ] as const;
 
 /** The unit fields `assessCitizen` reads. A rename or a floor move bills nothing. */
@@ -229,7 +237,9 @@ export function traceChanges(
         [before.citizenId, after.citizenId, after.tenantId].includes(holder.citizenId) ||
         (Array.isArray(after.citizens) && after.citizens.includes(holder.citizenId));
       const unitCode = text(after.unitCode) ?? text(before.unitCode);
-      if (!named && !(unitCode && holder.unitCodes.has(unitCode))) continue;
+      // A reading of the whole building speaks for every flat in it, so for every holder.
+      const wholeBuilding = row.action === 'DAMAGE_RECORDED' && !text(after.unitId);
+      if (!named && !wholeBuilding && !(unitCode && holder.unitCodes.has(unitCode))) continue;
 
       switch (row.action) {
         case 'OCCUPANCY_ENDED':
@@ -242,6 +252,9 @@ export function traceChanges(
         case 'UNIT_CORRECTION_DELETED':
           // The unit never existed: everything billed on it was a correction.
           change = { kind: 'CORRECTION', effectiveOn: null };
+          break;
+        case 'DAMAGE_RECORDED':
+          change = { kind: 'DATED_CHANGE', effectiveOn: row.createdAt };
           break;
         case 'UNIT_VACANCY_ENDED':
           change = after.reason === 'RECORDED_IN_ERROR'

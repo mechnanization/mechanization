@@ -2,10 +2,11 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
-  ArchiveRestore,
+  Archive,
   BadgeDollarSign,
   Ban,
   Check,
@@ -25,22 +26,18 @@ import {
   ApiRequestError,
   createStaff,
   deleteStaff,
-  getDeletedStaff,
   getStaff,
-  restoreStaff,
   logApiError,
   setStaffActive,
   updateStaff,
 } from '@/lib/api-client';
-import type { DeletedStaffSummary, StaffSummary } from '@/lib/api-client';
+import type { StaffSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatDate } from '@/lib/dates';
 import { formatForeign } from '@/lib/currency';
 import { CellTag } from '@/components/ui/cell-tag';
-import { CollapsibleSection } from '@/components/ui/collapsible-section';
-import { ErrorState, LoadingState } from '@/components/ui/states';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -53,13 +50,22 @@ import {
 } from '@/components/ui/dialog';
 import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
-import { ChipGroup } from '@/components/ui/segmented-control';
+import { ChipGroup, SegmentedControl } from '@/components/ui/segmented-control';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { StaffForm, type StaffFormValues } from '@/components/admin/staff-form';
+import { PresenceCell } from '@/components/admin/staff/presence-cell';
+import { DeletedStaffSection } from '@/components/admin/staff/deleted-staff-section';
+import { useStaffPresence } from '@/lib/use-staff-presence';
 
+/**
+ * The directory's table labels. The archive overrides two of them from the
+ * `staff.archive` messages: an empty table means "nobody has been added yet"
+ * in the directory and "nobody has been disabled" in the archive, and saying
+ * the first in the second told an admin their staff had vanished (STA-1).
+ */
 function getTableLabels(locale: string): DataTableLabels {
   if (locale === 'en') {
     return {
@@ -112,8 +118,22 @@ function getTableLabels(locale: string): DataTableLabels {
 /** The role chips: «all», or one of the roles the server knows. */
 const ROLE_FILTERS = ['all', ...STAFF_ROLE] as const;
 
-/** `?role=` — which role the directory is narrowed to. Module scope: `useUrlState` memoises on it. */
-const FILTERS = { role: param.oneOf(ROLE_FILTERS, 'all') };
+/**
+ * The two halves of the directory. An account that is disabled keeps its row,
+ * its details and everything it did; what the archive changes is where that
+ * row is read, so the list of people who can sign in today is only those
+ * people. «الأرشيف» is the place, «معطّل» is still the state (TXT-3).
+ */
+const VIEWS = ['active', 'archived'] as const;
+
+/**
+ * `?view=` — the active directory or the archive; `?role=` — which role either
+ * is narrowed to. Module scope: `useUrlState` memoises on it.
+ */
+const FILTERS = {
+  view: param.oneOf(VIEWS, 'active'),
+  role: param.oneOf(ROLE_FILTERS, 'all'),
+};
 
 /**
  * Staff account administration — SUPER_ADMIN only.
@@ -177,6 +197,14 @@ export default function StaffPage({
     token,
     errorMessage: 'تعذّر تحميل الموظفين.',
   });
+  /*
+    «متصل الآن» stops being true on its own, with nothing on this page to
+    invalidate it — so presence is its own light read, polled once a minute on
+    the server's clock (`useStaffPresence`), and the roster above, which
+    computes every inspector's earnings, is read once.
+  */
+  const tStaff = useTranslations('staff');
+  const presence = useStaffPresence({ tenant, base, token, errorMessage: tStaff('presence.loadError') });
 
   const items = useMemo(() => query.data?.items ?? [], [query.data]);
   /*
@@ -196,44 +224,6 @@ export default function StaffPage({
   const load = useCallback(
     () => queryClient.invalidateQueries({ queryKey: ['staff', tenant] }),
     [queryClient, tenant],
-  );
-
-  /*
-    «الموظفون المحذوفون» — deleted accounts, kept with their history and
-    restorable. Read beside the list and refreshed with it, folded shut below
-    the directory: rarely wanted, but the only way back for an account (and
-    for its email) once it has been deleted.
-  */
-  const deletedQuery = useStaffQuery({
-    queryKey: ['staff', tenant, 'deleted'],
-    queryFn: (accessToken, signal) => getDeletedStaff(tenant, accessToken, signal),
-    tenant,
-    base,
-    token,
-    errorMessage: 'تعذّر تحميل الموظفين المحذوفين.',
-  });
-  const deletedStaff: DeletedStaffSummary[] = deletedQuery.data?.items ?? [];
-
-  const restore = useCallback(
-    async (staff: DeletedStaffSummary) => {
-      if (!token) return;
-      setBusyId(staff.id);
-      try {
-        await restoreStaff(tenant, token, staff.id);
-        await load();
-        toast.success('تمت استعادة الحساب', {
-          description: `${staff.fullName} — عاد إلى القائمة معطّلاً؛ فعّله ليتمكّن من الدخول.`,
-        });
-      } catch (caught) {
-        logApiError(caught);
-        const message = caught instanceof ApiRequestError ? caught.message : 'تعذّر استعادة الحساب.';
-        setActionError(message);
-        toast.error('تعذّر استعادة الحساب', { description: message });
-      } finally {
-        setBusyId(null);
-      }
-    },
-    [tenant, token, load, toast],
   );
 
   const [createdTotp, setCreatedTotp] = useState<{
@@ -301,22 +291,21 @@ export default function StaffPage({
       try {
         await setStaffActive(tenant, token, staff.id, reactivating);
         await load();
-        toast.success(reactivating ? 'تمت إعادة تفعيل الحساب' : 'تم تعطيل الحساب', {
+        toast.success(reactivating ? tStaff('toast.reactivated') : tStaff('toast.disabled'), {
           description: reactivating
-            ? `${staff.fullName} — يستطيع تسجيل الدخول من جديد.`
-            : `${staff.fullName} — لن يستطيع تسجيل الدخول. الحساب وسجل نشاطه محفوظان.`,
+            ? tStaff('toast.reactivatedDescription', { name: staff.fullName })
+            : tStaff('toast.disabledDescription', { name: staff.fullName }),
         });
       } catch (caught) {
         logApiError(caught);
-        const message =
-          caught instanceof ApiRequestError ? caught.message : 'تعذّر تحديث الحساب.';
+        const message = caught instanceof ApiRequestError ? caught.message : tStaff('toast.updateFailed');
         setActionError(message);
-        toast.error('تعذّر تحديث الحساب', { description: message });
+        toast.error(tStaff('toast.updateFailed'), { description: message });
       } finally {
         setBusyId(null);
       }
     },
-    [tenant, token, load, toast],
+    [tenant, token, load, toast, tStaff],
   );
 
   const removeStaff = useCallback(
@@ -326,13 +315,12 @@ export default function StaffPage({
       try {
         await deleteStaff(tenant, token, staff.id);
         await load();
-        toast.success('تم حذف الموظف', {
-          description: `${staff.fullName} — أُزيل من القائمة، وبقي سجلّه محفوظاً. يمكن استعادته من «الموظفون المحذوفون».`,
+        toast.success(tStaff('toast.deleted'), {
+          description: tStaff('toast.deletedDescription', { name: staff.fullName }),
         });
       } catch (caught) {
         logApiError(caught);
-        const message =
-          caught instanceof ApiRequestError ? caught.message : 'تعذّر حذف الحساب.';
+        const message = caught instanceof ApiRequestError ? caught.message : tStaff('toast.deleteFailed');
         setActionError(message);
         // Rethrown so the dialog stays open with the reason in place — the
         // server refuses the last SUPER_ADMIN, and that is worth reading.
@@ -341,7 +329,7 @@ export default function StaffPage({
         setBusyId(null);
       }
     },
-    [tenant, token, load, toast],
+    [tenant, token, load, toast, tStaff],
   );
 
   const labels = getLabels(locale);
@@ -360,25 +348,48 @@ export default function StaffPage({
   const [search, setSearch] = useTabSearch(tenant, 'staff');
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
 
+  const archived = filters.view === 'archived';
+  /*
+    The directory is the accounts that can sign in; the archive is the ones
+    that cannot. Both are read from the same request — the server returns
+    every account that has not been deleted — so switching views costs nothing
+    and the counts on the switch are always in step with the rows under it.
+  */
+  const activeStaff = useMemo(() => items.filter((staff) => staff.isActive), [items]);
+  const archivedStaff = useMemo(() => items.filter((staff) => !staff.isActive), [items]);
+  const pool = archived ? archivedStaff : activeStaff;
+
   const roles = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const staff of items) counts.set(staff.role, (counts.get(staff.role) ?? 0) + 1);
+    for (const staff of pool) counts.set(staff.role, (counts.get(staff.role) ?? 0) + 1);
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [items]);
+  }, [pool]);
   /**
-   * Which role the list is narrowed to; «all» is everyone.
+   * Which role the list is narrowed to; «all» is everyone in this view.
    *
-   * A role nobody holds — a stale link, or the last such account deleted —
-   * reads as «all» once the accounts are in, rather than an empty table under
-   * a chip row with nothing selected.
+   * A role nobody holds — a stale link, the last such account deleted, or a
+   * role held only in the other view — reads as «all» once the accounts are
+   * in, rather than an empty table under a chip row with nothing selected.
    */
   const roleFilter =
     filters.role !== 'all' && roles.some(([role]) => role === filters.role) ? filters.role : 'all';
   const shown = useMemo(
-    () => (roleFilter === 'all' ? items : items.filter((staff) => staff.role === roleFilter)),
-    [items, roleFilter],
+    () => (roleFilter === 'all' ? pool : pool.filter((staff) => staff.role === roleFilter)),
+    [pool, roleFilter],
   );
-  const activeCount = items.filter((staff) => staff.isActive).length;
+  const activeCount = activeStaff.length;
+  /*
+    Counted off the active half only, for the same reason the column refuses to
+    call a disabled account present: a revoked session cannot be making
+    requests. On the server's clock, recomputed on each render — which the
+    presence read's one-minute poll is what drives.
+  */
+  const onlineCount = activeStaff.filter((staff) => presence.isOnline(staff.id)).length;
+  /*
+    Every field inspector, disabled ones included. This section is a payout
+    ledger, not a roster: an inspector is archived still owed what they
+    earned, and hiding the card would hide the balance (STA-6).
+  */
   const inspectors = items.filter((staff) => staff.role === 'FIELD_INSPECTOR');
 
   const columns = useMemo<ColumnDef<StaffSummary>[]>(
@@ -454,6 +465,35 @@ export default function StaffPage({
         ),
       },
       {
+        /*
+          «الحضور» — here now, or when they last were.
+
+          Its own column rather than another tag in «الحالة», because the two
+          answer different questions: «الحالة» is whether this account *may*
+          sign in, «الحضور» is whether somebody is using it. An account can be
+          فعّال and away for a week, which is the normal state of most of them.
+
+          Sorted on the raw timestamp, so «متصل الآن» sorts above «منذ ٥
+          دقائق» above «لم يظهر بعد» — an administrator asking "who is on right
+          now" gets them at one end of one sort.
+        */
+        id: 'presence',
+        // The presence read's stamp, fresher than the roster's; the roster's until it arrives.
+        accessorFn: (row) => {
+          const seen = presence.lastSeen(row.id) ?? row.lastSeenAt ?? null;
+          return seen ? new Date(seen).getTime() : 0;
+        },
+        header: tStaff('presence.header'),
+        cell: ({ row }) => (
+          <PresenceCell
+            online={row.original.isActive && presence.isOnline(row.original.id)}
+            lastSeenAt={presence.lastSeen(row.original.id) ?? row.original.lastSeenAt ?? null}
+            now={presence.now()}
+            locale={locale}
+          />
+        ),
+      },
+      {
         accessorKey: 'lastLoginAt',
         header: en ? 'Last login' : 'آخر دخول',
         cell: ({ row }) =>
@@ -506,19 +546,13 @@ export default function StaffPage({
               {!isSelf ? (
                 <ActionTooltip
                   label={
-                    staff.isActive
-                      ? en
-                        ? 'Disable — blocks sign-in, reversible'
-                        : 'تعطيل — يمنع الدخول ويمكن التراجع'
-                      : en
-                        ? 'Re-activate'
-                        : 'إعادة التفعيل'
+                    staff.isActive ? tStaff('toggle.disableHint') : tStaff('toggle.reactivateHint')
                   }
                 >
                   <Button
                     variant="outline"
                     size="icon-sm"
-                    aria-label={staff.isActive ? (en ? 'Disable' : 'تعطيل') : en ? 'Re-activate' : 'إعادة التفعيل'}
+                    aria-label={staff.isActive ? tStaff('toggle.disable') : tStaff('toggle.reactivate')}
                     disabled={busy}
                     onClick={() => void toggleActive(staff)}
                   >
@@ -552,12 +586,15 @@ export default function StaffPage({
         },
       },
     ],
-    [selfId, busyId, toggleActive, en, roleLabel, base, router],
+    [selfId, busyId, toggleActive, en, locale, roleLabel, base, router, presence, tStaff],
   );
 
   if (!token) return null;
 
-  const tableLabels = getTableLabels(locale);
+  const tableLabels: DataTableLabels = {
+    ...getTableLabels(locale),
+    ...(archived ? { searchAriaLabel: tStaff('archive.search'), empty: tStaff('archive.empty') } : {}),
+  };
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -587,14 +624,43 @@ export default function StaffPage({
 
       {/* ── At a glance ─────────────────────────────────────────────── */}
       <StatStrip>
-        <StatItem value={items.length} label={en ? 'Staff' : 'الموظفون'} />
-        <StatItem value={activeCount} label={en ? 'Active' : 'فعّالون'} className="text-success" />
-        <StatItem value={items.length - activeCount} label={en ? 'Disabled' : 'معطّلون'} />
-        <StatItem value={inspectors.length} label={en ? 'Field inspectors' : 'مفتشون ميدانيون'} />
+        <StatItem value={items.length} label={tStaff('stats.staff')} />
+        <StatItem value={activeCount} label={tStaff('stats.active')} />
+        <StatItem value={onlineCount} label={tStaff('stats.onlineNow')} className="text-success" />
+        <StatItem value={archivedStaff.length} label={tStaff('stats.inArchive')} />
+        <StatItem value={inspectors.length} label={tStaff('stats.inspectors')} />
       </StatStrip>
 
-      {/* ── The directory ───────────────────────────────────────────── */}
+      {/* ── The directory, and the archive beside it ────────────────── */}
       <section className="space-y-3">
+        {/*
+          Always rendered, both counts on it, so an archived account is always
+          one press away and an empty archive says so itself rather than
+          leaving an admin to wonder where a disabled account went.
+        */}
+        <SegmentedControl
+          aria-label={tStaff('views.label')}
+          value={filters.view}
+          size="sm"
+          fullWidth={false}
+          // A role chosen in one view rarely exists in the other, and page 3
+          // of the directory is not page 3 of the archive.
+          onChange={(view) =>
+            setFilters({ view: view as (typeof VIEWS)[number] }, { clear: ['page', 'role'] })
+          }
+          options={[
+            {
+              value: 'active',
+              label: tStaff('views.active', { count: activeStaff.length }),
+              icon: UsersRound,
+            },
+            {
+              value: 'archived',
+              label: tStaff('views.archived', { count: archivedStaff.length }),
+              icon: Archive,
+            },
+          ]}
+        />
         {roles.length > 1 ? (
           <ChipGroup
             aria-label={en ? 'Role' : 'الصلاحية'}
@@ -604,7 +670,7 @@ export default function StaffPage({
               setFilters({ role: role as (typeof ROLE_FILTERS)[number] }, { clear: ['page'] })
             }
             options={[
-              { value: 'all', label: `${en ? 'All' : 'الكل'} (${items.length})` },
+              { value: 'all', label: `${en ? 'All' : 'الكل'} (${pool.length})` },
               ...roles.map(([role, count]) => ({ value: role, label: `${roleLabel(role)} (${count})` })),
             ]}
           />
@@ -625,63 +691,19 @@ export default function StaffPage({
           onSearchChange={setSearch}
         />
         <p className="text-xs leading-relaxed text-muted-foreground">
-          {en
-            ? 'Disabling blocks sign-in and can be undone. Deleting hides the account from this list and blocks sign-in; their details and everything they did stay on record, and it can be restored from «Deleted staff».'
-            : 'التعطيل يمنع الدخول ويمكن التراجع عنه. الحذف يُخفي الحساب من هذه القائمة ويمنع الدخول، وتبقى بياناته وكل ما قام به محفوظة في السجلات، ويمكن استعادته من «الموظفون المحذوفون».'}
+          {archived ? tStaff('captions.archived') : tStaff('captions.active')}
         </p>
       </section>
 
-      {/*
-        ── Deleted staff, restorable ───────────────────────────────
-        Shown whenever there is something to say — accounts to restore, a read
-        still loading, or a read that failed — because a failed read here hides
-        the only way back for a deleted account (STA-1).
-      */}
-      {deletedStaff.length > 0 || deletedQuery.loading || deletedQuery.error ? (
-        <CollapsibleSection
-          title={en ? 'Deleted staff' : 'الموظفون المحذوفون'}
-          icon={Trash2}
-          summary={deletedStaff.length > 0 ? <span className="tabular-nums">({deletedStaff.length})</span> : undefined}
-          defaultOpen={false}
-        >
-          {deletedQuery.loading ? (
-            <LoadingState compact label={en ? 'Loading deleted staff…' : 'جارٍ تحميل الموظفين المحذوفين…'} />
-          ) : deletedQuery.error ? (
-            <ErrorState
-              compact
-              description={deletedQuery.error}
-              onRetry={() => void deletedQuery.refetch()}
-              retryLabel={en ? 'Try again' : 'إعادة المحاولة'}
-            />
-          ) : (
-            <ul className="divide-y">
-              {deletedStaff.map((staff) => (
-                <li key={staff.id} className="flex flex-wrap items-center gap-3 py-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">{staff.fullName}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      <bdi dir="ltr">{staff.email}</bdi>
-                      {' · '}
-                      {roleLabel(staff.role)}
-                      {' · '}
-                      {en ? 'deleted ' : 'حُذف '}
-                      {formatDate(staff.deletedAt)}
-                    </p>
-                  </div>
-                  <Button variant="outline" size="sm" disabled={busyId === staff.id} onClick={() => void restore(staff)}>
-                    {busyId === staff.id ? (
-                      <Loader2 className="size-4 animate-spin" aria-hidden />
-                    ) : (
-                      <ArchiveRestore className="size-4" aria-hidden />
-                    )}
-                    {en ? 'Restore' : 'استعادة'}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CollapsibleSection>
-      ) : null}
+      {/* ── Deleted staff, restorable ─────────────────────────────── */}
+      <DeletedStaffSection
+        tenant={tenant}
+        base={base}
+        token={token}
+        locale={locale}
+        onRestored={load}
+        onError={setActionError}
+      />
 
       {/* ── Field inspectors ────────────────────────────────────────── */}
       {inspectors.length > 0 ? (
@@ -772,29 +794,21 @@ export default function StaffPage({
         onOpenChange={(open) => {
           if (!open) setPendingDelete(null);
         }}
-        title={en ? 'Delete staff member' : 'حذف الموظف'}
+        title={tStaff('delete.title')}
         description={
           pendingDelete ? (
-            en ? (
-              <>
-                <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> will be hidden from
-                the staff list and cannot sign in. Their details and everything they did stay on record, and the
-                account can be restored from «Deleted staff» — it comes back disabled.
-                <span className="mt-2 block text-muted-foreground">To block sign-in for a while instead, use «Disable».</span>
-              </>
-            ) : (
-              <>
-                سيُخفى <span className="font-semibold text-foreground">{pendingDelete.fullName}</span> من قائمة
-                الموظفين ولن يستطيع الدخول. تبقى بياناته وكل ما قام به محفوظة في السجلات، ويمكن استعادته من
-                «الموظفون المحذوفون» — يعود معطّلاً.
-                <span className="mt-2 block text-muted-foreground">لمنع الدخول مؤقتاً فقط، استخدم «التعطيل».</span>
-              </>
-            )
+            <>
+              {tStaff.rich('delete.body', {
+                name: pendingDelete.fullName,
+                strong: (chunks) => <span className="font-semibold text-foreground">{chunks}</span>,
+              })}
+              <span className="mt-2 block text-muted-foreground">{tStaff('delete.hint')}</span>
+            </>
           ) : null
         }
-        confirmLabel={en ? 'Delete account' : 'احذف الحساب'}
+        confirmLabel={tStaff('delete.confirm')}
         requireText={pendingDelete?.email}
-        requireTextHint={en ? "Type the account's email to confirm" : 'اكتب البريد الإلكتروني للحساب للتأكيد'}
+        requireTextHint={tStaff('delete.requireTextHint')}
         onConfirm={async () => {
           if (pendingDelete) await removeStaff(pendingDelete);
         }}

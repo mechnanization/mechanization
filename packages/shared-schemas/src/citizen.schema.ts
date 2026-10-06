@@ -11,6 +11,7 @@ import {
   civilRecordNumber,
   documentNumber,
   internationalPhone,
+  optionalInternationalPhone,
 } from './primitives';
 
 /**
@@ -174,9 +175,38 @@ export type PartialPersonalDetails = z.infer<typeof partialPersonalDetailsSchema
  */
 export const contactDetailsObject = z.object({
   maritalStatus: maritalStatusSchema,
-  phone: internationalPhone,
+  /**
+   * «لا يملك رقم هاتف (حالات خاصة / كبار السن)».
+   *
+   * The one answer that makes a household file complete without a number.
+   * Everything below keys off it: `phone` is optional *in the object* so this
+   * flag can waive it, and required again by the refinement when it is false —
+   * which keeps the standard record's validation exactly where it was.
+   */
+  hasNoPhone: z.boolean().default(false),
+  /**
+   * Optional here and required by `superRefine` below, not optional in effect.
+   *
+   * Declaring it `internationalPhone` outright would refuse the elderly
+   * record before the flag could be read: a schema cannot waive a requirement
+   * its own field has already failed. `optionalInternationalPhone` also reads
+   * the empty box the form just disabled as absent, while still giving a
+   * malformed number its Arabic message.
+   */
+  phone: optionalInternationalPhone,
   whatsappSameAsPhone: z.boolean().default(true),
   whatsapp: internationalPhone.optional(),
+  /**
+   * «رقم للتواصل» — رقم الابن، الابنة، أو أحد الأقارب.
+   *
+   * Never unique and never an identity: a father, a mother and a grandmother
+   * reached on one son's phone all hold the same value here, which is the
+   * point. Optional even when `hasNoPhone` is true — an elderly citizen with
+   * nobody to name is a real record, and refusing to save it would send the
+   * officer back to typing a relative's number into `phone`, which is the
+   * habit this field exists to end.
+   */
+  contactPhone: optionalInternationalPhone,
   actualHouseholdMembers: z.coerce
     .number({
       required_error: 'عدد أفراد الأسرة المقيمين في المنزل مطلوب',
@@ -213,12 +243,55 @@ export const contactDetailsSchema = contactDetailsObject
       whatsapp: data.whatsappSameAsPhone ? data.phone : data.whatsapp,
     };
   })
+  /*
+    «لا يملك رقم هاتف» clears both of the person's own numbers.
+
+    Last of the transforms, deliberately. Run first, the WhatsApp copy above
+    would put the cleared phone straight back into `whatsapp` — the two rules
+    would disagree and the later one would win, which is the sort of ordering
+    bug that leaves one empty string in a column and not the other.
+
+    Cleared on the server rather than trusted from the client: the form
+    disables the two boxes, but a record queued offline on an inspector's
+    phone before this shipped, a replayed submission, or simply a stale draft
+    can still arrive with the flag set *and* a number in the field. Dropping
+    it here is what makes «has no phone» true in the database rather than
+    merely requested.
+  */
+  .transform((data) =>
+    data.hasNoPhone ? { ...data, phone: undefined, whatsapp: undefined } : data,
+  )
   .superRefine((data, ctx) => {
-    if (!data.whatsappSameAsPhone && !data.whatsapp) {
+    /*
+      The phone requirement, which the object above could not express on its
+      own. Unflagged records validate exactly as they always did — same path,
+      same Arabic message `internationalPhone` would have raised — so a
+      standard registration cannot tell this release from the last one.
+    */
+    if (!data.hasNoPhone && !data.phone) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['phone'],
+        message: 'رقم الهاتف مطلوب',
+      });
+    }
+    /*
+      Only reachable when the person has a phone: the first transform emptied
+      `whatsapp` and `phone` together, so a flagged record never asks for a
+      WhatsApp number it has nowhere to put.
+    */
+    if (!data.hasNoPhone && !data.whatsappSameAsPhone && !data.whatsapp) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['whatsapp'],
         message: 'رقم الواتساب مطلوب',
+      });
+    }
+    if (data.contactPhone && data.phone && data.contactPhone === data.phone) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['contactPhone'],
+        message: 'رقم للتواصل هو رقم المواطن نفسه — اتركه فارغاً أو أدخل رقم أحد أقاربه',
       });
     }
     if (
@@ -261,7 +334,21 @@ export const partialContactDetailsSchema = contactDetailsObject
       totalRegisteredMembers: data.totalRegisteredMembers ?? actual,
       whatsapp: data.whatsappSameAsPhone === false ? data.whatsapp : (data.phone ?? data.whatsapp),
     };
-  });
+  })
+  /*
+    The same clearing rule, in the same last position and for the same reason:
+    it is normalisation, not validation, so it belongs on this schema too. A
+    «حفظ سريع» that ticks the box must drop the numbers exactly as a full save
+    does — otherwise the one path that exists to park an unfinished record is
+    the one path that leaves a relative's number sitting in `phone`.
+
+    `hasNoPhone` is optional here, and only an explicit `true` clears: absent
+    means "this submission says nothing about it", which must leave a phone
+    already on file alone.
+  */
+  .transform((data) =>
+    data.hasNoPhone === true ? { ...data, phone: undefined, whatsapp: undefined } : data,
+  );
 
 export type PartialContactDetails = z.infer<typeof partialContactDetailsSchema>;
 
@@ -318,7 +405,7 @@ const nonResidentOwnerContactObject = z.object({
   whatsappSameAsPhone: z.boolean().default(true),
   whatsapp: internationalPhone.optional(),
   localContactName: z.string().trim().max(120, 'الاسم طويل جداً').optional(),
-  localContactPhone: internationalPhone.optional().or(z.literal('')),
+  localContactPhone: optionalInternationalPhone,
 });
 
 export const nonResidentOwnerContactSchema = nonResidentOwnerContactObject

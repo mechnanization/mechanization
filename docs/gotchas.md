@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
+Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -44,6 +44,20 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   `dev` watch running ([packages/shared-schemas/CLAUDE.md](../packages/shared-schemas/CLAUDE.md)).
 - **Where:** `packages/shared-schemas/package.json`, root `package.json`
   `dev`, `scripts/start.mjs`.
+
+### A git worktree has no env files, and its Prisma clients do not look for one
+
+- **What happens:** in a fresh worktree, `pnpm db:check` reports every env
+  file "not present", and after `apps/backend/.env` is put in place,
+  `pnpm db:seed` still fails with «DATABASE_URL is not set».
+- **Why:** env files are gitignored, so a worktree starts without them. The
+  seed relies on the generated Prisma client to load `apps/backend/.env`, and
+  `prisma generate` records that path only if the file existed when it ran.
+- **Do this:** copy the main checkout's `apps/backend/.env` into the worktree
+  (never open or print it; it names the local database only), then run
+  `pnpm db:generate` again before seeding. Delete the copy when done.
+- **Where:** `apps/backend/src/scripts/seed.ts` `runSeed`; the generated
+  clients' `relativeEnvPaths` under `apps/backend/src/generated/`.
 
 ### `next build` breaks a running `next dev`
 
@@ -283,6 +297,36 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 
 ## Backend runtime
 
+### An optional phone built with `.or(z.literal(''))` answers in English
+
+- **What happens:** a malformed optional phone number is refused with «Invalid
+  input» instead of «رقم الهاتف غير صالح», on an Arabic-first form.
+- **Why:** `internationalPhone.optional().or(z.literal(''))` is a union. A bad
+  number fails all three branches, so zod reports the *union's* error rather
+  than any branch's. Nothing is wrong with `internationalPhone`.
+- **Do this:** use `optionalInternationalPhone`, which preprocesses the empty
+  string to `undefined` so one branch remains.
+- **Where:** `primitives.ts`. `phone` and `contactPhone` (`contactDetailsSchema`) and
+  `localContactPhone` (`nonResidentOwnerContactSchema`, since 2026-10-06) use it.
+  `whatsapp` and `landlordPhone` are still `internationalPhone.optional()`: no union, so a
+  bad number keeps its Arabic message, but an empty string is refused as a malformed number
+  rather than read as absent.
+
+### A `.default()` on a citizen form flag arrives absent, not defaulted
+
+- **What happens:** `contact.hasNoPhone` is `undefined` on a parsed submission
+  that did not send it, although the schema declares `.default(false)`. Code
+  written as `!== false` then reads a plain household record as having no phone.
+- **Why:** `shapeSubmission` parses the sections through
+  `partialContactDetailsSchema` / `partialPersonalDetailsSchema`, and zod's
+  `.partial()` strips the default along with the requirement. The strict
+  schemas are used for *reporting* issues, not for the shape that is written.
+- **Do this:** read such a flag as `=== true`. Put normalisation that must
+  reach the database on the partial schema too — `contactDetailsSchema` alone
+  does not run on the save path.
+- **Where:** `admin-citizen.schema.ts` `shapeSubmission`; pinned by
+  `no-phone.spec.ts`.
+
 ### The tenant middleware path must stay `t/:tenantSlug/*`
 
 - **What happens:** with a named wildcard (`*path`) the middleware matches
@@ -357,6 +401,21 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   may be written in full.
 - **Where:** `domain/value-objects/reference-number.vo.ts`;
   `RegistrationService.submit` (`citizenReference`, `registrationReference`).
+
+### A field added to the staff profile reaches the citizen portal
+
+- **What happens:** a field added to `ReportingService.getCitizenProfile` for a staff
+  screen shows up in «ملفّي», the citizen's own portal page, unless someone thinks to
+  take it out. `hasNoPhone` and `contactPhone` added to a flat's owners (2026-10-06) would
+  have sent a co-owner's relative's number to the tenant.
+- **Why:** `CitizenController.mySummary` builds the portal's properties and units by
+  destructuring the named fields out (`landlordCitizenId`, `landlordReferenceNumber`) and
+  spreading the rest, so everything not named passes through.
+- **Do this:** when you add a field to the profile, decide whether the citizen sees it
+  and say so in `mySummary`. A flat's owners are an allowlist there (name and أسهم);
+  `citizen-portal.spec.ts` pins it.
+- **Where:** `presentation/controllers/citizen.controller.ts` `mySummary`;
+  `reporting.service.ts` `CitizenProfile`.
 
 ### Events are synchronous strings
 
@@ -531,11 +590,12 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 
 - **What happens:** a record dated "today" between 00:00 and 03:00 Beirut time
   gets yesterday's date.
-- **Why:** `toISOString` is UTC. Nine call sites in seven files do this
+- **Why:** `toISOString` is UTC. Eight call sites in seven files do this
   (`audit-daily.tsx` subtracts the timezone offset first, so its call is
   local and correct).
-- **Do this:** use the local `todayIso` (today in
-  `components/admin/inspector-payout-dialog.tsx`; it belongs in `lib/dates.ts`).
+- **Do this:** use `municipalToday` from `@mechanization/shared-schemas`, the
+  municipality's calendar day whatever the browser's zone, as the damage form
+  does (`lib/damage-reading.ts` `today`).
 - **Where:** for example `building-unit-forms.tsx`, `end-tenancy-dialog.tsx`,
   `quality/checks-panel.tsx` `isoDaysAgo`; the full list is in
   [code-quality.md](code-quality.md#frontend-code-level).
@@ -664,3 +724,28 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   stored meanwhile.
 - **Where:** `lib/session.ts` `clearSession`, `lib/citizen-draft.ts`,
   `lib/offline-db.ts`.
+
+### `#` in a plural branch can print Arabic-Indic digits
+
+- **What happens:** «٣ محاولات» on one machine and «3 محاولات» on another, in
+  the same message, beside figures that are Latin everywhere else.
+- **Why:** inside an ICU plural, `#` is the count formatted with the page's
+  locale. The provider's locale is plain `ar`, and whether `ar` formats with
+  Arabic-Indic digits depends on the engine's locale data (Node 26 gives Latin
+  for `ar` and Arabic-Indic for `ar-LB`). A plain `{count}` is inserted as
+  written.
+- **Do this:** write `{count}` inside the branches, never `#`. A plain-module
+  translator uses `FORMAT_LOCALE` (`ar-u-nu-latn`) from `lib/api-errors.ts`.
+- **Where:** `apps/frontend/messages/ar.json`; `lib/messages-parity.test.ts`
+  refuses a `#` in any Arabic message outside `errors`.
+
+### A poll keeps its user «متصل الآن»
+
+- **What happens:** an officer who left the dashboard open and went home reads
+  «متصل الآن» on the staff screen all evening.
+- **Why:** every authenticated request stamps `users.lastSeenAt`, and a timer
+  that re-reads something is a request the person did not make.
+- **Do this:** pass `background: true` to `apiFetch` for anything that runs on a
+  timer; it sends `x-background-request`, and `JwtAuthGuard` skips the stamp.
+- **Where:** `lib/api-client.ts` `apiFetch`; `getStaffPresence` and the
+  notifications bell's `getPendingPayments` are the callers today.

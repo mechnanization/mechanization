@@ -127,6 +127,12 @@ interface DatePickerProps {
   onChange: (value: string) => void;
   /** Latest selectable day, "YYYY-MM-DD" (inclusive). */
   max?: string;
+  /**
+   * Earliest selectable day, "YYYY-MM-DD" (inclusive) — for a date that is
+   * planned rather than recorded, such as a re-inspection. With no `max`, the
+   * year list then runs forward from it instead of back from this year.
+   */
+  min?: string;
   placeholder?: string;
   disabled?: boolean;
   locale: 'ar' | 'en';
@@ -154,6 +160,7 @@ export function DatePicker({
   value,
   onChange,
   max,
+  min,
   placeholder,
   disabled = false,
   locale,
@@ -219,10 +226,16 @@ export function DatePicker({
     value: index,
     label: monthNameFormatter.format(new Date(2024, index, 1)),
   }));
-  // Jump-to-year dropdown: a 100-year window ending at `max`'s year (or
-  // this year, if no max was given), newest first.
-  const maxYear = max ? (parseIsoDay(max)?.year ?? today.getFullYear()) : today.getFullYear();
-  const minYear = maxYear - 100;
+  // Jump-to-year dropdown, newest first: a 100-year window ending at `max`'s
+  // year (or this year, if no max was given) — or, for a planned date with a
+  // `min` and no `max`, from `min`'s year five years forward.
+  const minDayYear = min ? (parseIsoDay(min)?.year ?? today.getFullYear()) : null;
+  const maxYear = max
+    ? (parseIsoDay(max)?.year ?? today.getFullYear())
+    : minDayYear !== null
+      ? minDayYear + 5
+      : today.getFullYear();
+  const minYear = minDayYear ?? maxYear - 100;
   const yearOptions: JumpOption[] = Array.from(
     { length: maxYear - minYear + 1 },
     (_, index) => ({ value: maxYear - index, label: String(maxYear - index) }),
@@ -241,8 +254,8 @@ export function DatePicker({
   const leadingBlanks = (firstOfMonth.getDay() - WEEK_START + 7) % 7;
 
   const isDisabledDay = (day: number): boolean => {
-    if (!max) return false;
-    return toIsoDay(viewYear, viewMonth, day) > max;
+    const iso = toIsoDay(viewYear, viewMonth, day);
+    return Boolean((max && iso > max) || (min && iso < min));
   };
 
   const isSelectedDay = (day: number): boolean =>

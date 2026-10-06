@@ -55,6 +55,8 @@ export const IMPORT_COLUMN_KEYS = [
   'maritalStatus',
   'phone',
   'whatsapp',
+  'hasNoPhone',
+  'contactPhone',
   'totalRegisteredMembers',
   'actualHouseholdMembers',
   'occupancyType',
@@ -159,8 +161,16 @@ export const IMPORT_COLUMNS: readonly ImportColumn[] = [
     hint: Object.values(ar.maritalStatus).join(' / '),
     always: true,
   },
-  { key: 'phone', header: 'رقم الهاتف', hint: 'مثال: 03123456', always: true },
+  /*
+    The column must be in the sheet; its cell may be blank on a row that says
+    «لا يملك رقم هاتف» = نعم — an elderly citizen with no number of their own,
+    whom the paper register is full of. The relative's number goes in «رقم
+    للتواصل», never here: in `phone` it would be read as the citizen's own.
+  */
+  { key: 'phone', header: 'رقم الهاتف', hint: 'مثال: 03123456 — فارغ إن كان «لا يملك رقم هاتف» = نعم', always: true },
   { key: 'whatsapp', header: 'رقم الواتساب', hint: 'اتركه فارغاً إن كان نفس الهاتف' },
+  { key: 'hasNoPhone', header: 'لا يملك رقم هاتف', hint: 'نعم / لا — اختياري (كبار السن وحالات خاصة)' },
+  { key: 'contactPhone', header: 'رقم للتواصل', hint: 'رقم أحد الأقارب — اختياري، ليس رقم المواطن نفسه' },
   {
     key: 'totalRegisteredMembers',
     header: 'عدد أفراد الأسرة الإجمالي',
@@ -399,6 +409,9 @@ export function buildCitizenPayload(row: ImportRow): unknown {
     },
     contact: {
       maritalStatus: toEnum(MARITAL_STATUS, ar.maritalStatus, row.maritalStatus ?? ''),
+      // «نعم» waives the phone; absent or «لا» is a citizen who has one, as before.
+      hasNoPhone: toBoolean(row.hasNoPhone ?? '') === true,
+      contactPhone: text(row.contactPhone),
       phone: text(row.phone),
       // A blank الواتساب column means "same as the phone" rather than "no
       // WhatsApp": the contact schema copies the phone across when this is on.

@@ -30,6 +30,7 @@ import type {
   CitizenProfilePayment,
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
+import { REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatLbp } from '@/lib/currency';
@@ -213,6 +214,7 @@ export default function PaymentsPage({
   const labels = getLabels(locale);
 
   const [token, setToken] = useState<string | null>(null);
+  const [role, setRole] = useState<string | undefined>();
   const [{ method }, setUrlState] = useUrlState(PAYMENTS_URL_STATE);
   /**
    * The committed term — set when the clerk presses Enter, not as they type.
@@ -246,6 +248,7 @@ export default function PaymentsPage({
       return;
     }
     setToken(session.accessToken);
+    setRole(session.user.role);
   }, [tenant, base, router]);
 
   /*
@@ -733,6 +736,7 @@ export default function PaymentsPage({
             if (!next) setReceipt(null);
           }}
           tenant={tenant}
+          canSend={hasRole(REFERENCE_SEND_ROLES, role)}
           citizen={receipt.citizen}
           payment={receipt.payment}
           receivedAmount={receipt.received}

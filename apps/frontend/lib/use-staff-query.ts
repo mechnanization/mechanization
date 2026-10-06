@@ -47,6 +47,7 @@ export function useStaffQuery<T>({
   errorMessage,
   keepPrevious = false,
   reference = false,
+  refreshMs,
 }: {
   /**
    * Must contain the tenant and every parameter that changes the response.
@@ -96,6 +97,22 @@ export function useStaffQuery<T>({
    * the behaviour this exists to remove.
    */
   reference?: boolean;
+  /**
+   * Re-reads this many milliseconds apart while the screen is open.
+   *
+   * For the handful of reads whose answer goes stale on its own, with nothing
+   * on the page to invalidate them — «متصل الآن» on the staff directory is
+   * the first: nobody edits it, it simply stops being true. The default policy
+   * (thirty seconds stale, re-read on focus) covers a table whose rows change
+   * when somebody changes them, and leaves a presence label reading «متصل» for
+   * as long as an administrator leaves the tab sitting there.
+   *
+   * TanStack pauses the interval while the tab is hidden —
+   * `refetchIntervalInBackground` defaults to false — so this does not poll a
+   * background tab for hours. Do not reach for it to make an ordinary table
+   * feel live: that is what invalidating the key after a write is for.
+   */
+  refreshMs?: number;
 }): StaffQueryResult<T> {
   const router = useRouter();
 
@@ -106,6 +123,7 @@ export function useStaffQuery<T>({
     // run until it is set.
     enabled: Boolean(token),
     placeholderData: keepPrevious ? keepPreviousData : undefined,
+    ...(refreshMs ? { refetchInterval: refreshMs } : {}),
     ...(reference
       ? {
           staleTime: Infinity,

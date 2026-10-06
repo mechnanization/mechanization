@@ -29,6 +29,7 @@ import type {
   StaffSummary,
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
+import { PAYMENT_SETTLE_ROLES, hasRole } from '@/lib/staff-roles';
 import { formatLbp } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
 import { tafqeet } from '@/lib/tafqeet';
@@ -110,6 +111,15 @@ export default function SettlePaymentPage({
     const session = loadSession(tenant);
     if (!session || session.user.kind !== 'STAFF') {
       router.replace(`${base}/login`);
+      return;
+    }
+    /*
+      Settling is the money roles' (`PAYMENT_SETTLE_ROLES`, as the route):
+      anyone else reaching this address — «مشاهد فقط» typing it in — is sent
+      back to the fees screen rather than shown a form the server refuses.
+    */
+    if (!hasRole(PAYMENT_SETTLE_ROLES, session.user.role)) {
+      router.replace(`${base}/fees`);
       return;
     }
     const accessToken = session.accessToken;
@@ -507,6 +517,8 @@ export default function SettlePaymentPage({
           }
         }}
         tenant={tenant}
+        // Only the money roles reach this page (`PAYMENT_SETTLE_ROLES`), each of them a working role.
+        canSend
         citizen={receipt?.citizen ?? ({} as CitizenProfile)}
         payment={receipt?.payment ?? null}
         municipalityName={municipalityName}
