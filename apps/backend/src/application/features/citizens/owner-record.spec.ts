@@ -119,6 +119,29 @@ describe('«غير مقيم في البلدة»', () => {
     expect(failures(input)).toEqual(['personal.residencePlace']);
   });
 
+  it('reads a WhatsApp box emptied and hidden again by «نفس الرقم» as absent, not as a malformed number', () => {
+    // Type a WhatsApp number, clear it, tick «واتساب على الرقم نفسه»: the box is gone and still holds ''.
+    const input = owner();
+    input.contact.whatsapp = '';
+
+    const result = adminCreateCitizenSubmissionSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.contact.whatsapp).toBe(result.data.contact.phone);
+  });
+
+  it('asks for the WhatsApp number, not «رقم الهاتف غير صالح», when its own box is open and empty', () => {
+    const input = owner();
+    Object.assign(input.contact, { whatsappSameAsPhone: false, whatsapp: '' });
+
+    const result = adminCreateCitizenSubmissionSchema.safeParse(input);
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`)).toEqual([
+      'contact.whatsapp: رقم الواتساب مطلوب',
+    ]);
+  });
+
   it('may rent agricultural land — and is not asked for أسهم it does not hold', () => {
     const input = owner();
     Object.assign(input.properties[0]!, {

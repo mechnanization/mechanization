@@ -195,7 +195,18 @@ export const contactDetailsObject = z.object({
    */
   phone: optionalInternationalPhone,
   whatsappSameAsPhone: z.boolean().default(true),
-  whatsapp: internationalPhone.optional(),
+  /**
+   * An empty box is absent, exactly as it is for `phone` above.
+   *
+   * `internationalPhone.optional()` takes `undefined` and nothing else, so the
+   * `''` a cleared text box holds failed as «رقم الهاتف غير صالح» — on a field
+   * the form does not render. Ticking «لا يملك رقم هاتف» writes `''` here
+   * (`ContactStep`) and hides the WhatsApp box with it: the officer saw a red
+   * step with no message and could not save a citizen who has no phone.
+   * Typing a WhatsApp number, clearing it and re-ticking «نفس رقم الهاتف» did
+   * the same. A malformed number still gets `internationalPhone`'s own message.
+   */
+  whatsapp: optionalInternationalPhone,
   /**
    * «رقم للتواصل» — رقم الابن، الابنة، أو أحد الأقارب.
    *
@@ -403,7 +414,8 @@ export const partialNonResidentOwnerPersonalSchema = nonResidentOwnerPersonalSch
 const nonResidentOwnerContactObject = z.object({
   phone: internationalPhone,
   whatsappSameAsPhone: z.boolean().default(true),
-  whatsapp: internationalPhone.optional(),
+  // An empty box is absent, as on a household file (`contactDetailsObject.whatsapp`).
+  whatsapp: optionalInternationalPhone,
   localContactName: z.string().trim().max(120, 'الاسم طويل جداً').optional(),
   localContactPhone: optionalInternationalPhone,
 });

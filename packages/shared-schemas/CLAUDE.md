@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `develop@4512abf`, 2026-10-06.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,
@@ -142,12 +142,17 @@ package. Other new UI copy goes in next-intl messages
 - The output is CommonJS (`module: commonjs` in `tsconfig.base.json`), with
   `strict` and `noUncheckedIndexedAccess`.
 - **An optional phone is `optionalInternationalPhone`, never
-  `internationalPhone.optional().or(z.literal(''))`.** The union looks right
-  and leaks English: when the number is malformed every branch fails and zod
-  reports the union's own «Invalid input» instead of «رقم الهاتف غير صالح», on
-  an Arabic-first form, for the commonest typo there is (TXT-2, TXT-4). The
-  primitive preprocesses an empty string to `undefined` so there is only ever
-  one branch.
+  `internationalPhone.optional().or(z.literal(''))` and never a bare
+  `internationalPhone.optional()`.** The union looks right and leaks English:
+  when the number is malformed every branch fails and zod reports the union's
+  own «Invalid input» instead of «رقم الهاتف غير صالح», on an Arabic-first form,
+  for the commonest typo there is (TXT-2, TXT-4). The bare `.optional()` takes
+  `undefined` and nothing else, so the `''` a cleared box holds is refused as a
+  malformed number, on a field the form may have hidden: `whatsapp` under
+  «لا يملك رقم هاتف» turned the step red with no message. The primitive
+  preprocesses an empty string to `undefined` so there is only ever one
+  branch. A test of a form's payload sends the empty strings the form sends,
+  not an absent key.
 - A field whose requirement depends on another answer — «لا يملك رقم هاتف»
   waiving `phone` — is optional on the *object* and required again in
   `superRefine`. A field cannot waive a requirement its own type has already
