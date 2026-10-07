@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import {
   CENSUS_WORKLIST_ROLES,
   EVERY_STAFF_ROLE,
@@ -15,6 +15,7 @@ import {
   logVisitSchema,
   resizeUnitSpanSchema,
   saveBuildingMatrixSchema,
+  setOwnerBillingSchema,
   unitBlueprintSchema,
   updateBuildingSchema,
   updateUnitSchema,
@@ -32,6 +33,7 @@ import {
   type LogVisitInput,
   type ResizeUnitSpanInput,
   type SaveBuildingMatrixInput,
+  type SetOwnerBillingInput,
   type UnitBlueprint,
   type UpdateBuildingInput,
   type UpdateUnitInput,
@@ -41,6 +43,7 @@ import {
 import { BuildingsService } from '../../application/features/buildings/buildings.service';
 import { DamageService } from '../../application/features/buildings/damage.service';
 import { ParcelCorrectionService } from '../../application/features/buildings/parcel-correction.service';
+import { OwnerBillingService } from '../../application/features/buildings/owner-billing.service';
 import { AuditService } from '../../application/features/audit/audit.service';
 import { TenancyService } from '../../application/features/citizens/tenancy.service';
 import { OwnershipService } from '../../application/features/citizens/ownership.service';
@@ -84,6 +87,7 @@ export class BuildingsController {
     private readonly tenancy: TenancyService,
     private readonly ownership: OwnershipService,
     private readonly audit: AuditService,
+    private readonly ownerBilling: OwnerBillingService,
   ) {}
 
   /**
@@ -361,6 +365,27 @@ export class BuildingsController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.buildings.endVacancy(unitId, body, this.actor(user));
+  }
+
+  // ─────────────────────  «توزيع الرسم على المالكين»  ─────────────────────
+
+  /**
+   * How a flat with several owners is billed: split equally (the default), by
+   * أسهم, or by one responsible owner (migration 0075; the user's decision,
+   * 2026-10-07). A write, so the field roles — the officer who recorded the
+   * owners is the one who hears which of them pays.
+   *
+   * `PUT`: the body is the whole choice, and saving the same one twice writes
+   * nothing. `mode: null` withdraws a choice, back to the equal split.
+   */
+  @Roles(...REGISTER_WRITE_ROLES)
+  @Put('units/:unitId/owner-billing')
+  async setOwnerBilling(
+    @Param('unitId', new ParseUUIDPipe()) unitId: string,
+    @Body(new ZodValidationPipe(setOwnerBillingSchema)) body: SetOwnerBillingInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.ownerBilling.set(unitId, body, this.actor(user));
   }
 
   // ────────────────────────────  Occupancy  ────────────────────────────

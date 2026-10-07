@@ -1780,7 +1780,10 @@ webpack's own output.
   occupancy whose shares do not sum to 2400 are a detectable conflict and nothing
   detects them. Cheap to add, and the only automated ownership-dispute detector
   the system could have — but it is only meaningful once §10.5 lands, because
-  before إفراز the 2400 is over the whole building rather than the flat.
+  before إفراز the 2400 is over the whole building rather than the flat. Billing
+  does read أسهم now (`0075`, 2026-10-07): a flat billed «حسب الأسهم» divides by
+  the sum of its owners' أسهم, not by 2400, for exactly that reason
+  (`ownerShareOf`).
 - **Still no test runner in `apps/frontend`.** The Phase 5 frontend work ships
   verified by `tsc`, `eslint` and a production build only.
 - **The offline round trip is still unexercised end to end** (P3-T8's note).

@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-07.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -89,6 +89,13 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   and the annual maintenance fee follow actual occupancy (Law 60/1988, Art. 11 and 79) —
   until a re-inspection reads it habitable. Fees the owner bears follow the deed and are
   charged as before. The bill and the issue summary both say how many units were held.
+- **A flat several people own is billed once, divided between them.** Each co-owner's file
+  claims the flat, and each used to be billed for all of it. Now what the owners owe is split
+  equally by default, and an officer can choose instead to divide it by the owners' أسهم or to
+  name one owner who pays for everyone (the user's decision of 2026-10-07). The unit panel shows
+  each owner's part before saving, the owner's file and the citizen's own «ملفّي» show it after,
+  and a bill says when a co-owned flat was charged at a part or paid by another owner. A tenant
+  still pays the whole occupancy fee: only what the owners bear is divided.
 - **Staff accounts have three states, and none of them loses history.** An account is
   active, disabled, or deleted. Disabling blocks sign-in and moves the account out of the
   staff directory into «الأرشيف», where a system administrator reads it and can bring it

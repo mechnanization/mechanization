@@ -22,6 +22,7 @@ import {
   isOccupiedByOthers,
   isUnoccupied,
   municipalToday,
+  ownerShareOf,
   roundRate,
 } from '@mechanization/shared-schemas';
 import {
@@ -35,6 +36,7 @@ import { withConnectionRetry } from '../../../infrastructure/prisma/with-connect
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
+import { ownerBillingRules } from '../buildings/owner-billing';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { likePattern, searchTokens } from '../../common/search-terms';
@@ -278,6 +280,8 @@ export function assessCitizen(
         excludedUnitCount: 0,
         heldUnitCount: 0,
         uninhabitableUnitCount: 0,
+        sharedUnitCount: 0,
+        coOwnerPaidUnitCount: 0,
         lines: [],
       },
     };
@@ -350,8 +354,40 @@ export function assessCitizen(
     bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview && unit.uninhabitable) : [];
   const decided =
     bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview && !unit.uninhabitable) : held;
-  const units = decided.filter((unit) => bearsFee(unit, bearer));
-  const excludedUnitCount = decided.length - units.length;
+  const owed = decided.filter((unit) => bearsFee(unit, bearer));
+  const excludedUnitCount = decided.length - owed.length;
+  /*
+    A flat several people own is divided between them, not billed to each in
+    full («توزيع الرسم على المالكين», the user's decision, 2026-10-07).
+
+    Every co-owner's own file claims the flat, and this function sees one
+    citizen at a time — so before this, each was billed for the whole of it:
+    four brothers, one shop, four bills for it. `holdingsOf` attaches this
+    owner's part (`ownerShareOf`): 1/N by default, their أسهم over everyone's
+    under «حسب الأسهم», all or nothing under «مالك مسؤول». Only an owner's
+    unit carries one — a tenant pays for what they occupy whatever the deed
+    says — and only a unit this owner already owes for reaches here, so the
+    bearer rule has decided first that the owners pay at all.
+
+    «حسب الأسهم» with an owner whose أسهم nobody recorded cannot be divided.
+    Refused rather than guessed, as a flat with no area is: the officer
+    records the أسهم, or chooses another method.
+  */
+  const undecidable = owed.find((unit) => unit.occupancyType === 'OWNER' && unit.ownerShareUndecidable);
+  if (undecidable) {
+    return {
+      kind: 'unassessable',
+      reason: `وحدة ${undecidable.unitCode ?? ''} على العقار ${undecidable.propertyNumber ?? '—'} يتوزّع رسمها «حسب الأسهم» وأسهم أحد مالكيها غير مسجّلة`,
+    };
+  }
+  const weightOf = (unit: BillableUnit): number =>
+    unit.occupancyType === 'OWNER' && unit.ownerShare
+      ? unit.ownerShare.numerator / unit.ownerShare.denominator
+      : 1;
+  // Paid by the responsible owner named on the flat — not this person's to pay.
+  const paidByCoOwner = owed.filter((unit) => weightOf(unit) === 0);
+  const units = owed.filter((unit) => weightOf(unit) > 0);
+  const shared = units.filter((unit) => unit.occupancyType === 'OWNER' && unit.ownerShare);
   const heldUnitCount = reviewing.length;
   const uninhabitableUnitCount = unlivable.length;
   // Which flats, so a run can count each once — an owner and a tenant hold the same one.
@@ -378,10 +414,12 @@ export function assessCitizen(
     }
   }
 
-  const totalArea = units.reduce((sum, unit) => sum + (unit.unitArea ?? 0), 0);
+  // A co-owned flat counts for this owner's part of its area, or of one unit.
+  const totalArea = units.reduce((sum, unit) => sum + (unit.unitArea ?? 0) * weightOf(unit), 0);
+  const chargedUnits = units.reduce((sum, unit) => sum + weightOf(unit), 0);
 
   // Only the two rate bases reach here; FLAT returned above.
-  const multiplier = notice.basis === 'PER_AREA' ? totalArea : units.length;
+  const multiplier = notice.basis === 'PER_AREA' ? totalArea : chargedUnits;
 
   return {
     kind: 'assessed',
@@ -402,11 +440,24 @@ export function assessCitizen(
       excludedUnitCount,
       heldUnitCount,
       uninhabitableUnitCount,
+      sharedUnitCount: shared.length,
+      coOwnerPaidUnitCount: paidByCoOwner.length,
+      ...(shared.length > 0 && notice.basis === 'PER_UNIT' ? { chargedUnits } : {}),
       lines: units.map((unit) => ({
         propertyNumber: unit.propertyNumber,
         propertyType: unit.propertyType,
         unitType: unit.unitType,
         unitArea: notice.basis === 'PER_AREA' ? unit.unitArea : null,
+        ...(unit.unitCode ? { unitCode: unit.unitCode } : {}),
+        ...(unit.occupancyType === 'OWNER' && unit.ownerShare
+          ? {
+              ownerShare: {
+                mode: unit.ownerShare.mode as 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER',
+                numerator: unit.ownerShare.numerator,
+                denominator: unit.ownerShare.denominator,
+              },
+            }
+          : {}),
       })),
     },
   };
@@ -1662,7 +1713,7 @@ export class FeesService {
         for (const occupancy of row.unitOccupancies) heldHere.add(occupancy.unit.id);
       }
       /** The one flat of each structure a منزل card here names — what the card bills. */
-      const soleUnits = new Map<string, { id: string; unitStatus: string | null }>();
+      const soleUnits = new Map<string, { id: string; unitStatus: string | null; unitCode: string }>();
       const houseBuildings = [
         ...new Set(
           rows.flatMap((row) =>
@@ -1676,7 +1727,7 @@ export class FeesService {
         const houseUnits = await withConnectionRetry(() =>
           this.db.unit.findMany({
             where: { buildingId: { in: houseBuildings } },
-            select: { id: true, buildingId: true, unitStatus: true },
+            select: { id: true, buildingId: true, unitStatus: true, unitCode: true },
           }),
         );
         const perBuilding = new Map<string, typeof houseUnits>();
@@ -1713,6 +1764,27 @@ export class FeesService {
       */
       const settledStatus = (unitId: string | undefined | null, stored: string | null) =>
         unitId && review.has(unitId) ? review.get(unitId)!.status : stored;
+      /*
+        «توزيع الرسم على المالكين» for the co-owned flats among them — every
+        current owner of each, not just this batch's, because one owner's part
+        depends on how many others there are and what أسهم they hold.
+      */
+      const coOwnership =
+        heldHere.size === 0
+          ? new Map()
+          : await withConnectionRetry(() => ownerBillingRules(this.db, [...heldHere]));
+      /** This owner's part of a flat others own too; nothing for a flat they own alone. */
+      const ownerShareFor = (
+        unitId: string | undefined | null,
+        citizenId: string,
+      ): { ownerShare?: { mode: string; numerator: number; denominator: number }; ownerShareUndecidable?: boolean } => {
+        const rule = unitId ? coOwnership.get(unitId) : undefined;
+        if (!rule) return {};
+        const outcome = ownerShareOf(rule, citizenId);
+        if (outcome.kind === 'SHARE') return { ownerShare: outcome.share };
+        if (outcome.kind === 'UNDECIDABLE') return { ownerShareUndecidable: true };
+        return {};
+      };
       const reviewedSoleUnit = new Set(
         [...review.values()]
           .filter((fact) => fact.soleUnitOfBuilding && fact.conflicts.length > 0)
@@ -1736,6 +1808,9 @@ export class FeesService {
           underReview: boolean;
           uninhabitable: boolean;
           unitId: string;
+          unitCode: string;
+          ownerShare?: { mode: string; numerator: number; denominator: number };
+          ownerShareUndecidable?: boolean;
         }>>();
         for (const occupancy of row.unitOccupancies) {
           const buildingId = occupancy.unit.buildingId;
@@ -1748,6 +1823,8 @@ export class FeesService {
             unitStatus: settledStatus(occupancy.unit.id, occupancy.unit.unitStatus),
             underReview: underReview(occupancy.unit.id),
             uninhabitable: uninhabitable(occupancy.unit.id),
+            unitCode: occupancy.unit.unitCode,
+            ...(occupancy.role === 'OWNER' ? ownerShareFor(occupancy.unit.id, row.id) : {}),
           });
           occupanciesByBuilding.set(buildingId, list);
         }
@@ -1787,6 +1864,8 @@ export class FeesService {
                   const sole = soleUnits.get(card.buildingId!)!;
                   return {
                     soleUnitId: sole.id,
+                    soleUnitCode: sole.unitCode,
+                    ...(card.occupancyType === 'OWNER' ? ownerShareFor(sole.id, row.id) : {}),
                     uninhabitable: uninhabitable(sole.id),
                     /*
                       A منزل card that states nothing bills by its flat's answer —
@@ -1807,6 +1886,7 @@ export class FeesService {
                     unitStatus: settledStatus(line.unit.id, line.unit.unitStatus) as never,
                     underReview: underReview(line.unit.id),
                     uninhabitable: uninhabitable(line.unit.id),
+                    ...(card.occupancyType === 'OWNER' ? ownerShareFor(line.unit.id, row.id) : {}),
                   }
                 : line.unit,
             })),

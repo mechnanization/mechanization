@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import type { FeeAssessment } from '@mechanization/shared-schemas';
+import { effectiveOwnerBilling, isCoOwned, ownerShareOf } from '@mechanization/shared-schemas';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
@@ -271,6 +272,20 @@ export interface CitizenProfileUnit {
     contactPhone: string | null;
     shares: number | null;
   }>;
+  /**
+   * «توزيع الرسم على المالكين» (migration 0075), when the linked flat has
+   * several current owners; null otherwise. `share` is this file's owner's
+   * part — what an owner-borne charge on the flat bills them for — or null
+   * when it cannot be computed («حسب الأسهم» with أسهم missing), or when this
+   * person is not among the owners (a tenancy card).
+   */
+  ownerBilling: {
+    mode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
+    effectiveMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER';
+    responsibleOwnerId: string | null;
+    fallback: 'RESPONSIBLE_NOT_OWNER' | null;
+    share: { numerator: number; denominator: number } | null;
+  } | null;
 }
 
 /**
@@ -1083,6 +1098,8 @@ export class ReportingService {
                         unitCode: true,
                         postedNumber: true,
                         unitStatus: true,
+                        ownerBillingMode: true,
+                        responsibleOwnerId: true,
                         presenceMonths: true,
                         ownerLastStayAt: true,
                         vacancyDeclaredAt: true,
@@ -1342,6 +1359,7 @@ export class ReportingService {
                 contactPhone: owner.citizen.contactPhone,
                 shares: owner.shares,
               })),
+              ownerBilling: profileOwnerBilling(unit.unit, citizenId),
             };
           }),
         })),
@@ -1852,4 +1870,38 @@ function csvCell(value: unknown): string {
   const text = String(value ?? '');
   const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
   return `"${safe.replace(/"/g, '""')}"`;
+}
+
+/** The co-ownership billing of a flat as the citizen's file shows it — see `CitizenProfileUnit.ownerBilling`. */
+function profileOwnerBilling(
+  unit:
+    | {
+        ownerBillingMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
+        responsibleOwnerId: string | null;
+        occupancies: ReadonlyArray<{ citizenId: string; shares: number | null }>;
+      }
+    | null
+    | undefined,
+  citizenId: string,
+): CitizenProfileUnit['ownerBilling'] {
+  if (!unit) return null;
+  const rule = {
+    mode: unit.ownerBillingMode,
+    responsibleOwnerId: unit.responsibleOwnerId,
+    owners: unit.occupancies.map((owner) => ({ citizenId: owner.citizenId, shares: owner.shares })),
+  };
+  if (!isCoOwned(rule)) return null;
+  const effective = effectiveOwnerBilling(rule);
+  const outcome = ownerShareOf(rule, citizenId);
+  const isOwner = rule.owners.some((owner) => owner.citizenId === citizenId);
+  return {
+    mode: rule.mode,
+    effectiveMode: effective.mode,
+    responsibleOwnerId: rule.responsibleOwnerId,
+    fallback: effective.fallback,
+    share:
+      isOwner && outcome.kind === 'SHARE'
+        ? { numerator: outcome.share.numerator, denominator: outcome.share.denominator }
+        : null,
+  };
 }

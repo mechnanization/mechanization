@@ -39,6 +39,7 @@ import { ChipGroup, SegmentedControl } from '@/components/ui/segmented-control';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { SummaryRow } from '@/components/ui/summary-list';
 import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
+import { OwnerBillingSummary } from '@/components/admin/owner-billing-panel';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { PropertyScene, type PropertyTone } from '@/components/admin/property-illustrations';
@@ -815,6 +816,7 @@ function UnitRows({
   const status = unit.censusUnitStatus ?? unit.unitStatus;
   const disagree = Boolean(unit.censusUnitStatus && unit.unitStatus && unit.censusUnitStatus !== unit.unitStatus);
   const owners = unit.owners ?? [];
+  const tOwnerBilling = useTranslations('ownerBilling');
   const seasonal = unit.unitStatus === 'SEASONAL' || unit.censusUnitStatus === 'SEASONAL';
   const billedHint = ownerBilledHint(status, en);
 
@@ -884,6 +886,12 @@ function UnitRows({
           {owners.length > 0 ? (
             <SummaryRow label={owners.length > 1 ? (en ? 'Co-owners' : 'المالكون') : en ? 'Owner' : 'المالك'}>
               <OwnerList owners={owners} base={base} />
+            </SummaryRow>
+          ) : null}
+          {/* «توزيع الرسم على المالكين» (0075): how this co-owned flat is billed, and this owner's part. */}
+          {unit.ownerBilling && tone === 'owner' ? (
+            <SummaryRow label={tOwnerBilling('fileLabel')}>
+              <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} perspective="file" />
             </SummaryRow>
           ) : null}
           {/*

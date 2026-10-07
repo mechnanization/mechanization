@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   BadgeCheck,
   Building2,
@@ -26,6 +27,7 @@ import {
   MessageSquareWarning,
   Phone,
   Ruler,
+  Scale,
   Sun,
   User,
   Users,
@@ -790,6 +792,17 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
   */
   const status = unit.censusUnitStatus ?? unit.unitStatus;
   const months = unit.presenceMonths?.length ? formatMonthList(unit.presenceMonths, locale) : null;
+  const tOwnerBilling = useTranslations('ownerBilling');
+  /** «توزيع الرسم على المالكين», worded to the owner reading it. */
+  const ownerBillingLine = (billing: NonNullable<CitizenProfileUnit['ownerBilling']>): string => {
+    const method = billing.mode ? labels.ownerBillingMode[billing.effectiveMode] : tOwnerBilling('fileDefault');
+    if (!billing.share) return `${method} — ${tOwnerBilling('fileUnknown')}`;
+    const { numerator, denominator } = billing.share;
+    if (billing.effectiveMode === 'RESPONSIBLE_OWNER') {
+      return `${method} — ${billing.paysForAll ? tOwnerBilling('minePaysAll') : tOwnerBilling('minePaysNone')}`;
+    }
+    return `${method} — ${tOwnerBilling('mineShare', { numerator, denominator })}`;
+  };
 
   return (
     <li className="space-y-1 px-3 py-2 text-xs">
@@ -864,6 +877,17 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
               {months}
             </span>
           ) : null}
+        </p>
+      ) : null}
+
+      {/*
+        A flat this person owns with others: how its owner-borne fees are
+        divided, and their own part (migration 0075) — never who else pays.
+      */}
+      {unit.ownerBilling ? (
+        <p className="flex flex-wrap items-center gap-x-2 px-2 text-muted-foreground">
+          <Scale className="size-3 shrink-0" aria-hidden />
+          <span>{ownerBillingLine(unit.ownerBilling)}</span>
         </p>
       ) : null}
     </li>

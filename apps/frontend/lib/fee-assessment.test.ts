@@ -11,6 +11,8 @@ function assessment(overrides: Partial<FeeAssessment> = {}): FeeAssessment {
     excludedUnitCount: 0,
     heldUnitCount: 0,
     uninhabitableUnitCount: 0,
+    sharedUnitCount: 0,
+    coOwnerPaidUnitCount: 0,
     lines: [{ propertyNumber: '12', propertyType: 'COMMERCIAL', unitType: 'SHOP', unitArea: null }],
     ...overrides,
   };
@@ -59,5 +61,17 @@ describe('describeAssessment', () => {
 
   it('writes counts in Latin digits on the Arabic page, as every figure on the portal is', () => {
     expect(describeAssessment(assessment({ unitCount: 1234, excludedUnitCount: 12 }), 'ar')).not.toMatch(/[٠-٩]/);
+  });
+
+  it('says when a co-owned flat is charged at this owner’s part, or paid by another owner', () => {
+    const shared = assessment({ unitCount: 3, chargedUnits: 2.25, sharedUnitCount: 1 });
+    expect(describeAssessment(shared, 'ar')).toBe(
+      '2.25 محل تجاري × 100,000 ل.ل (1 وحدة بملكية مشتركة احتُسبت بحصّة المكلَّف منها)',
+    );
+    expect(describeAssessment(shared, 'en')).toBe(
+      '2.25 Commercial Shop × 100,000 LBP (1 co-owned, charged at this owner’s part)',
+    );
+    const paidByOther = assessment({ unitCount: 0, coOwnerPaidUnitCount: 1, lines: [] });
+    expect(describeAssessment(paidByOther, 'ar')).toBe('0 وحدة × 100,000 ل.ل (1 وحدة يدفع رسمها مالك آخر)');
   });
 });

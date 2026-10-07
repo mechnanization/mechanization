@@ -55,7 +55,14 @@ export function describeAssessment(
     return withLeftOut(t('perArea', { area, rate }), assessment, locale);
   }
 
-  const counted = t('perUnit', { count: assessment.unitCount, thing: countedThing(assessment, locale), rate });
+  /*
+    A co-owned flat charged at this owner's part counts as that part — two
+    whole shops and a quarter of a third are 2.25, the figure the rate was
+    multiplied by (`chargedUnits`, migration 0075).
+  */
+  const units = assessment.chargedUnits ?? assessment.unitCount;
+  const count = Number.isInteger(units) ? units : Math.round(units * 100) / 100;
+  const counted = t('perUnit', { count, thing: countedThing(assessment, locale), rate });
 
   /*
     What was left out, said out loud.
@@ -80,7 +87,8 @@ export function describeAssessment(
  * whose occupancy fee is held while their records are under review
  * («تعارض في حالة الوحدة»), and the flats read «غير صالحة للسكن», whose
  * occupant-borne fees are held until a re-inspection reads them habitable. A
- * held flat is not exempt, but it is not charged on this invoice either.
+ * held flat is not exempt, but it is not charged on this invoice either. And a
+ * flat several people own: charged at this owner's part, or paid by another.
  */
 function withLeftOut(line: string, assessment: FeeAssessment, locale: string): string {
   const t = translatorFor(locale);
@@ -90,6 +98,9 @@ function withLeftOut(line: string, assessment: FeeAssessment, locale: string): s
   if (assessment.uninhabitableUnitCount) {
     notes.push(t('uninhabitable', { count: assessment.uninhabitableUnitCount }));
   }
+  // «توزيع الرسم على المالكين»: a flat several people own, charged at this owner's part or not at all.
+  if (assessment.sharedUnitCount) notes.push(t('coOwnedShare', { count: assessment.sharedUnitCount }));
+  if (assessment.coOwnerPaidUnitCount) notes.push(t('coOwnerPays', { count: assessment.coOwnerPaidUnitCount }));
   return notes.length === 0 ? line : t('withNotes', { line, notes: notes.join(t('notesSeparator')) });
 }
 

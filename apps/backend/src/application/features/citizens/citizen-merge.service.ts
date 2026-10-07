@@ -79,6 +79,12 @@ interface MergeFootprint {
   /** Owner cards a link minted on the absorbed file, whose mint named them. */
   mints: string[];
   /**
+   * Flats on which the absorbed person was «المالك المسؤول» (migration 0075),
+   * now naming the kept one. Absent on a merge recorded before co-owner
+   * billing existed, which re-pointed none.
+   */
+  responsibleUnits?: string[];
+  /**
    * Cards on which somebody had said «ليس هذا المالك» about the absorbed
    * person. The undo maps the kept person back to the absorbed one on these —
    * never overwrites the list, which may have gained answers since.
@@ -177,6 +183,8 @@ interface Loaded {
   tenantLinks: Array<{ id: string; landlordLinkFootprint: Prisma.JsonValue }>;
   mints: Array<{ id: string; landlordLinkMint: Prisma.JsonValue }>;
   dismissals: Array<{ id: string; landlordLinkDismissedIds: string[] }>;
+  /** Flats that name the absorbed person as the owner who pays for all (0075). */
+  responsibleUnits: string[];
   unitCodes: Map<string, string>;
   /** The building each spell's unit stands in — for the census trail of a spell with no card. */
   unitBuilding: Map<string, string>;
@@ -617,7 +625,7 @@ export class CitizenMergeService {
       },
     };
 
-    const [payments, checkouts, cases, feeNotices, tenantLinks, dismissals] = await Promise.all([
+    const [payments, checkouts, cases, feeNotices, tenantLinks, dismissals, responsibleUnits] = await Promise.all([
       this.db.citizenPayment.findMany({
         where: { citizenId: { in: people } },
         select: {
@@ -642,6 +650,7 @@ export class CitizenMergeService {
         where: { landlordLinkDismissedIds: { has: absorbId } },
         select: { id: true, landlordLinkDismissedIds: true },
       }),
+      this.db.unit.findMany({ where: { responsibleOwnerId: absorbId }, select: { id: true } }),
     ]);
     const mints = cardRows
       .filter((card) => {
@@ -670,6 +679,7 @@ export class CitizenMergeService {
       tenantLinks,
       mints,
       dismissals,
+      responsibleUnits: responsibleUnits.map((row) => row.id),
       unitCodes,
       unitBuilding,
       officers: new Map(officerRows.map((row) => [row.id, `${row.firstName} ${row.lastName}`])),
@@ -1052,6 +1062,19 @@ export class CitizenMergeService {
         data: { landlordLinkMint: { ...(card.landlordLinkMint as object), ownerId: keep.id } as never },
       });
     }
+    /*
+      A flat on which the absorbed person was «المالك المسؤول» keeps its
+      choice, now naming the kept person — who holds the absorbed person's
+      spell on it after this merge. Left pointing at the absorbed file, the
+      flat would fall back to the equal split and the bill would change on its
+      own (`effectiveOwnerBilling`).
+    */
+    if (loaded.responsibleUnits.length > 0) {
+      await db.unit.updateMany({
+        where: { id: { in: loaded.responsibleUnits } },
+        data: { responsibleOwnerId: keep.id },
+      });
+    }
     const dismissals: MergeFootprint['dismissals'] = [];
     for (const card of loaded.dismissals) {
       const next = [...new Set(card.landlordLinkDismissedIds.map((id) => (id === absorb.id ? keep.id : id)))];
@@ -1109,6 +1132,7 @@ export class CitizenMergeService {
       feeNotices: loaded.feeNotices,
       tenantLinks,
       mints: loaded.mints.map((card) => card.id),
+      responsibleUnits: loaded.responsibleUnits,
       dismissals,
       reviewMoves,
       fills: plan.fills.map((fill) => fill.field),
@@ -1167,17 +1191,22 @@ export class CitizenMergeService {
 
   /** Whether a row the merge re-pointed outside the two files has moved since. */
   private async outsideRowsMoved(footprint: MergeFootprint): Promise<boolean> {
-    const [links, cases, notices] = await Promise.all([
+    const responsibleUnits = footprint.responsibleUnits ?? [];
+    const [links, cases, notices, responsible] = await Promise.all([
       this.db.propertyEntry.count({
         where: { id: { in: footprint.tenantLinks.map((link) => link.cardId) }, landlordCitizenId: footprint.keepId },
       }),
       this.db.case.count({ where: { id: { in: footprint.cases }, resolvedCitizenId: footprint.keepId } }),
       this.db.feeNotice.count({ where: { id: { in: footprint.feeNotices }, targetCitizenId: footprint.keepId } }),
+      responsibleUnits.length === 0
+        ? Promise.resolve(0)
+        : this.db.unit.count({ where: { id: { in: responsibleUnits }, responsibleOwnerId: footprint.keepId } }),
     ]);
     return (
       links !== footprint.tenantLinks.length ||
       cases !== footprint.cases.length ||
-      notices !== footprint.feeNotices.length
+      notices !== footprint.feeNotices.length ||
+      responsible !== responsibleUnits.length
     );
   }
 
@@ -1251,6 +1280,12 @@ export class CitizenMergeService {
 
     if (footprint.feeNotices.length > 0) {
       await db.feeNotice.updateMany({ where: { id: { in: footprint.feeNotices } }, data: { targetCitizenId: absorbId } });
+    }
+    if ((footprint.responsibleUnits ?? []).length > 0) {
+      await db.unit.updateMany({
+        where: { id: { in: footprint.responsibleUnits } },
+        data: { responsibleOwnerId: absorbId },
+      });
     }
     if (footprint.cases.length > 0) {
       await db.case.updateMany({ where: { id: { in: footprint.cases } }, data: { resolvedCitizenId: absorbId } });

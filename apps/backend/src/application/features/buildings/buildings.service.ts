@@ -3578,7 +3578,13 @@ export class BuildingsService {
           where: { id: current.id },
           data: {
             role: input.role as never,
-            shares: input.shares ?? null,
+            /*
+              أسهم are an owner's only, and a re-record with the box left empty
+              keeps the ones on file. The drawer sends nothing for an empty box,
+              and «تعديل» on an owner used to wipe the أسهم a «حسب الأسهم» flat
+              is billed by (migration 0075) — the flat then refused to bill.
+            */
+            shares: input.role === 'OWNER' ? (input.shares ?? current.shares ?? null) : null,
             ...(input.fromDate ? { fromDate: input.fromDate } : {}),
             ...(input.toDate !== undefined ? { toDate: input.toDate } : {}),
           },
@@ -5318,6 +5324,8 @@ function toUnitRow(row: {
   presenceMonths?: number[];
   ownerLastStayAt?: Date | null;
   vacancyDeclaredAt?: Date | null;
+  ownerBillingMode?: UnitRow['ownerBillingMode'];
+  responsibleOwnerId?: string | null;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -5341,6 +5349,8 @@ function toUnitRow(row: {
     presenceMonths: row.presenceMonths ?? [],
     ownerLastStayAt: row.ownerLastStayAt ?? null,
     vacancyDeclaredAt: row.vacancyDeclaredAt ?? null,
+    ownerBillingMode: row.ownerBillingMode ?? null,
+    responsibleOwnerId: row.responsibleOwnerId ?? null,
     notes: row.notes,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

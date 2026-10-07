@@ -96,6 +96,13 @@ export const UNIT_ACTIONS = [
     runs forward, never back (decision, 2026-10-05).
   */
   'DAMAGE_RECORDED',
+  /*
+    «توزيع الرسم على المالكين» (migration 0075): which part of a co-owned flat
+    each owner is billed for. A choice the office makes going forward, like a
+    damage reading — listed as a real change on the day it was made, so a bill
+    raised before it stays as it was raised.
+  */
+  'UNIT_OWNER_BILLING_SET',
 ] as const;
 
 /** The unit fields `assessCitizen` reads. A rename or a floor move bills nothing. */
@@ -254,6 +261,7 @@ export function traceChanges(
           change = { kind: 'CORRECTION', effectiveOn: null };
           break;
         case 'DAMAGE_RECORDED':
+        case 'UNIT_OWNER_BILLING_SET':
           change = { kind: 'DATED_CHANGE', effectiveOn: row.createdAt };
           break;
         case 'UNIT_VACANCY_ENDED':
@@ -300,8 +308,15 @@ export function linesDiff(
   billed: readonly FeeAssessmentLine[],
   now: readonly FeeAssessmentLine[],
 ): { removed: FeeAssessmentLine[]; added: FeeAssessmentLine[] } {
+  // The owner's part is part of the line: a quarter of a shop is not the shop.
   const key = (line: FeeAssessmentLine) =>
-    [line.propertyNumber ?? '', line.propertyType, line.unitType ?? '', line.unitArea ?? ''].join('|');
+    [
+      line.propertyNumber ?? '',
+      line.propertyType,
+      line.unitType ?? '',
+      line.unitArea ?? '',
+      line.ownerShare ? `${line.ownerShare.numerator}/${line.ownerShare.denominator}` : '',
+    ].join('|');
   const remaining = new Map<string, FeeAssessmentLine[]>();
   for (const line of now) {
     const list = remaining.get(key(line)) ?? [];

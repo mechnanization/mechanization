@@ -34,12 +34,15 @@ import type {
   NumberingSequence,
   OccupancyEndReason,
   OccupancyRole,
+  OwnerBillingMode,
+  OwnerBillingState,
   PaymentMethod,
   PossibleDuplicateMatch,
   PossibleDuplicatesQuery,
   PaymentStatus,
   RecordInspectorPayoutInput,
   SequenceKey,
+  SetOwnerBillingInput,
   SettlePayment,
   BuildingLifecycle,
   StructureType,
@@ -1654,6 +1657,14 @@ export interface UnitRow {
   presenceMonths?: number[];
   ownerLastStayAt?: string | null;
   vacancyDeclaredAt?: string | null;
+  /**
+   * «توزيع الرسم على المالكين» (migration 0075): how a flat with several
+   * owners is billed. Null means nobody chose — split equally. Optional on the
+   * wire for responses from before it existed. Each owner's part is computed
+   * with the shared `ownerSharesPreview`, the rule billing applies.
+   */
+  ownerBillingMode?: OwnerBillingMode | null;
+  responsibleOwnerId?: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -2904,6 +2915,26 @@ export async function logUnitVisit(tenant: string, token: string, input: LogVisi
  * is a مسكن موسمي, and while another confirmation is already standing. Each
  * refusal names its own remedy, so callers should surface it verbatim.
  */
+/**
+ * «توزيع الرسم على المالكين» — saves how a co-owned flat is billed, and the
+ * owners' أسهم with it. `mode: null` withdraws a choice (back to the equal split).
+ */
+export async function setOwnerBilling(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: SetOwnerBillingInput,
+  signal?: AbortSignal,
+): Promise<OwnerBillingState> {
+  const result = await apiFetch<OwnerBillingState>(
+    tenant,
+    `/buildings/units/${encodeURIComponent(unitId)}/owner-billing`,
+    { token, method: 'PUT', body: JSON.stringify(input), signal },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
 export async function confirmVacancy(
   tenant: string,
   token: string,
@@ -3131,6 +3162,20 @@ export interface CitizenProfileUnit {
     contactPhone?: string | null;
     shares: number | null;
   }>;
+  /**
+   * «توزيع الرسم على المالكين» (0075) when the linked flat has several current
+   * owners; null otherwise. `share` is this file's owner's part. On the
+   * citizen's own portal view `responsibleOwnerId` and `fallback` are absent
+   * and `paysForAll` says whether they are the one paying for everyone.
+   */
+  ownerBilling?: {
+    mode: OwnerBillingMode | null;
+    effectiveMode: OwnerBillingMode;
+    responsibleOwnerId?: string | null;
+    fallback?: 'RESPONSIBLE_NOT_OWNER' | null;
+    share: { numerator: number; denominator: number } | null;
+    paysForAll?: boolean;
+  } | null;
 }
 
 export interface CitizenProfileProperty {

@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/no-phone-follow-ups` (on `develop@4512abf`), 2026-10-06.
+Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-07.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -170,6 +170,18 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** `ADD VALUE` alone in one migration, its use in the next.
 - **Where:** `0062_status_conflict_case`, `0063_status_conflict_one_open`,
   `tenant-migrator.ts` `migrateTenantSchema`.
+
+### A CHECK passes on NULL, so `=` against a nullable column lets the row in
+
+- **What happens:** `CHECK ("responsibleOwnerId" IS NULL OR "ownerBillingMode" = 'RESPONSIBLE_OWNER')`
+  accepted a responsible owner on a flat with no method chosen. The first draft of
+  `0075` did exactly this, and only exercising the CHECK on a seeded row caught it.
+- **Why:** with `ownerBillingMode` NULL, `NULL = 'RESPONSIBLE_OWNER'` is NULL, `false
+  OR NULL` is NULL, and a CHECK fails only on false.
+- **Do this:** compare a nullable column with `IS NOT DISTINCT FROM` (or test `IS NOT
+  NULL` first), and prove every CHECK refuses the row it exists for before shipping.
+- **Where:** `0075_unit_owner_billing` (`units_responsible_owner_needs_mode`), `0077`'s
+  `units_fee_exemption_other_note` (`IS DISTINCT FROM`).
 
 ### No `CREATE INDEX CONCURRENTLY`
 
@@ -446,6 +458,18 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   `citizen-portal.spec.ts` pins it.
 - **Where:** `presentation/controllers/citizen.controller.ts` `mySummary`;
   `reporting.service.ts` `CitizenProfile`.
+
+### Re-recording an owner from the drawer used to wipe their أسهم
+
+- **What happens:** «تعديل» on an owner in the unit drawer, with the أسهم box left
+  empty, wrote `shares: null` over the أسهم on file. Harmless while nothing read
+  them; since `0075` a flat billed «حسب الأسهم» then refuses to bill.
+- **Why:** the drawer sends no `shares` for an empty box, and `recordOccupancy`'s
+  update wrote `input.shares ?? null`.
+- **Do this:** an absent value keeps what is on file (`input.shares ?? current.shares`);
+  أسهم are recorded or corrected beside the billing method, in «توزيع الرسم على المالكين».
+- **Where:** `BuildingsService.recordOccupancy`; pinned by
+  `co-owner-billing.integration.spec.ts`.
 
 ### Events are synchronous strings
 

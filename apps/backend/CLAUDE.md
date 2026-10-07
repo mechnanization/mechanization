@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-07.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -114,6 +114,16 @@ Data access for new code (decided):
   the review hold. Only a reading that answers decides: «غير مصنّف» with no answer judged nothing, so
   the hold, both census worklists and the panels skip it (`answersHabitability` and its SQL twin
   `answersHabitabilitySql`, `currentReadingForUnit(…, { answering: true })`) and it never ends a hold.
+- **Co-owner billing.** A flat with several current OWNER spells is divided between them, never billed
+  to each in full (`0075`; decision of 2026-10-07). The rule is `ownerShareOf` in
+  `@mechanization/shared-schemas` (`owner-share.ts`): equal by default (`units.ownerBillingMode` NULL),
+  by أسهم over their sum, or one responsible owner. `holdingsOf` loads every owner of each flat in the
+  batch (`buildings/owner-billing.ts`) and attaches this owner's part; `assessCitizen` multiplies area or
+  units by it, only for what an owner bears, and refuses («unassessable») «حسب الأسهم» with أسهم
+  missing. The choice is saved by `OwnerBillingService` (`PUT buildings/units/:unitId/owner-billing`,
+  `REGISTER_WRITE_ROLES`), Tier 1, refusing a responsible owner whose own file billing would not charge
+  (asked through `holdingsOf`). A responsible owner who stops being an owner falls back to the equal
+  split at read time; a merge re-points `units.responsibleOwnerId` and its undo puts it back.
 - **Searching citizens as «مشاهد فقط».** The register, the review queue and the payments list match a
   citizen through `citizenSearchText(S, role)` (`application/common/citizen-search.ts`) rather than
   `u."searchText"` directly: for VIEWER it removes the رقم مرجعي (folded and compact) from the searched

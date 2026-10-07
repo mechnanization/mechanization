@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { uuid } from './primitives';
+import { OWNER_BILLING_MODE } from './enums';
 import { ADJUSTMENT_REASON_MIN, municipalToday } from './cash-policy';
 
 /**
@@ -208,6 +209,24 @@ export const feeAssessmentLineSchema = z.object({
   unitType: z.string().nullable(),
   /** Square metres, when established. Null under a PER_UNIT basis. */
   unitArea: z.number().nullable(),
+  /**
+   * The census unit's code («0201»), when the line is a flat the census
+   * holds. Absent on every bill raised before co-owner billing (0075).
+   */
+  unitCode: z.string().nullable().optional(),
+  /**
+   * The part of a co-owned flat this bill charges («توزيع الرسم على
+   * المالكين», `ownerShareOf`): the line's area, or its one unit, is
+   * multiplied by numerator/denominator. Absent on a flat billed whole.
+   */
+  ownerShare: z
+    .object({
+      mode: z.enum(OWNER_BILLING_MODE),
+      numerator: z.number().int().min(0),
+      denominator: z.number().int().min(1),
+    })
+    .nullable()
+    .optional(),
 });
 
 export const feeAssessmentSchema = z.object({
@@ -257,6 +276,25 @@ export const feeAssessmentSchema = z.object({
    * settles a review in the register and an uninhabitable flat in the field.
    */
   uninhabitableUnitCount: z.number().default(0),
+  /**
+   * Co-owned flats charged on this bill at this owner's part rather than whole
+   * («توزيع الرسم على المالكين», migration 0075). Their lines carry the
+   * fraction; `totalArea` (PER_AREA) and `chargedUnits` (PER_UNIT) are already
+   * the shared figures the rate multiplies.
+   */
+  sharedUnitCount: z.number().default(0),
+  /**
+   * Co-owned flats this owner holds but another owner pays for — the
+   * responsible owner named on the flat. Not charged here, and counted so the
+   * bill says so rather than reading as a smaller holding.
+   */
+  coOwnerPaidUnitCount: z.number().default(0),
+  /**
+   * The unit count the rate multiplies under PER_UNIT when a co-owned flat is
+   * charged at a part — 2.25 for two whole shops and a quarter of a third.
+   * Absent when every charged flat is whole, where it equals `unitCount`.
+   */
+  chargedUnits: z.number().optional(),
   lines: z.array(feeAssessmentLineSchema),
 });
 
