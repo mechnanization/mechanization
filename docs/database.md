@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `chore/migration-0075-0077` (on `develop@f10a1b7`), 2026-10-07.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -87,6 +87,22 @@ request's tenant (`IdentityService`).
   (`hasNoPhone` ⇒ `phone` and `whatsapp` are NULL) and
   `users_contact_phone_not_own` (`contactPhone` is never the row's own `phone`).
   Every writer goes through them, the merge included.
+
+**`users.residence` names owners that are not a living person** (`0076`).
+Besides `RESIDENT` and `NON_RESIDENT_OWNER`, `CitizenResidence` holds `ESTATE`
+«تركة (ورثة المرحوم …)», the file of an owner who died, converted in place so
+his cards, flats and bills stay on it, and `INSTITUTION` «جهة / وقف», a waqf,
+council or public body. Neither is a household: no mother's name, gender or
+residency is asked of either, and every population count that filters
+`residence = 'RESIDENT'` already leaves both out.
+
+**A flat's billing facts live on `units`** (`0075`, `0077`), beside its status:
+
+| Column | What it means |
+|---|---|
+| `ownerBillingMode` | «توزيع الرسم على المالكين» when the flat has several current owners: `EQUAL`, `BY_SHARES` (each owner's `unit_occupancies.shares` over the sum of all of them) or `RESPONSIBLE_OWNER`. NULL means nobody chose, and is billed as `EQUAL` (decision of 2026-10-07). |
+| `responsibleOwnerId` | The owner who pays the whole under `RESPONSIBLE_OWNER`, and only then. `units_responsible_owner_needs_mode` uses `IS NOT DISTINCT FROM`: with `=`, a CHECK passes on the NULL that `NULL = 'RESPONSIBLE_OWNER'` yields. |
+| `feeExemption`, `feeExemptionNote`, `feeExemptedById`, `feeExemptedAt` | «معفاة من الرسوم»: `PLACE_OF_WORSHIP`, `PUBLIC_FACILITY` or `OTHER` (which needs the note). Set and lifted together (`units_fee_exemption_fields`). An exempt unit is charged nothing by a rate-based notice; a rented waqf shop is not exempt, its tenant pays. |
 
 **A damage reading has two answers** (`0071`). `damage_assessments.level` is the
 UN-Habitat scale, untouched; `habitable` is «صالحة للسكن؟», asked beside it and
@@ -424,18 +440,22 @@ reads staging's history from `.env.staging` and nothing else, and
 
 ### Numbering
 
-- The latest tenant migration on `develop` is `0070_staff_last_seen_at`;
-  `0071_damage_habitable` and `0072_users_no_phone_rules` are on
-  `fix/pr88-review`, waiting for their own PR. `main` stops at `0066` (and
-  `0059`), so `0067`–`0070`, already on `develop`, have not reached
-  production either: all six go to `main` in a migrations-only PR, staging
-  first, before the release that carries the code reading them (root rule 5;
-  the PR #61 and #86 pattern).
+- The latest tenant migration on `develop` and on `main` is
+  `0072_users_no_phone_rules`: `0067`–`0072` went to `main` in their own
+  migrations-only PR, ahead of the release that carries the code reading them
+  (root rule 5; the PR #61 and #86 pattern). `0075`–`0077` follow the same
+  path: their own PR into `develop`, then to `main` alone, before any release
+  that writes the new columns or values.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
   `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of
-  this check (2026-10-06, the four unmerged branches and the two open PRs
-  listed) the next free number is `0073`.
+  2026-10-07, `0073_treasury_ledger` and `0074_expense_vouchers` are taken by
+  `chore/migration-0073-0074` and `feat/finance-treasury-expenses` (unmerged),
+  and `0075`–`0077` by `chore/migration-0075-0077` (co-owner billing, the
+  estate and institution record types, the unit fee exemption). The next free
+  number is `0078`. Whichever of `0073`/`0074` and `0075`–`0077` merges second
+  lands out of order on a database that already has the other, which
+  `deploy.mjs` warns about and applies; the two sets touch different tables.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 
