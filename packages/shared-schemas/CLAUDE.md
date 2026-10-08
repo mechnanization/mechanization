@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-07.
+Last verified against the code: `feat/unit-fee-exemptions` (on `develop@f10a1b7`), 2026-10-08.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,

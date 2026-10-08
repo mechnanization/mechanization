@@ -92,10 +92,11 @@ export function describeAssessment(
  * The units left out, said out loud: those the bearer rule did not charge this
  * person for, and — separately, because each is a different fact — the flats
  * whose occupancy fee is held while their records are under review
- * («تعارض في حالة الوحدة»), and the flats read «غير صالحة للسكن», whose
- * occupant-borne fees are held until a re-inspection reads them habitable. A
- * held flat is not exempt, but it is not charged on this invoice either. And a
- * flat several people own: charged at this owner's part, or paid by another.
+ * («تعارض في حالة الوحدة»), the flats read «غير صالحة للسكن», exempt from
+ * every fee until a re-inspection reads them habitable, and units «معفاة من
+ * الرسوم». A held flat is not exempt, but it is not charged on this invoice
+ * either. And a flat several people own: charged at this owner's part, or paid
+ * by another.
  */
 function withLeftOut(line: string, assessment: FeeAssessment, locale: string): string {
   const t = translatorFor(locale);
@@ -105,6 +106,8 @@ function withLeftOut(line: string, assessment: FeeAssessment, locale: string): s
   if (assessment.uninhabitableUnitCount) {
     notes.push(t('uninhabitable', { count: assessment.uninhabitableUnitCount }));
   }
+  // «معفاة من الرسوم» (0077): the mosque on a waqf parcel, a public building.
+  if (assessment.exemptUnitCount) notes.push(t('exempt', { count: assessment.exemptUnitCount }));
   // «توزيع الرسم على المالكين»: a flat several people own, charged at this owner's part or not at all.
   if (assessment.sharedUnitCount) {
     // Each part as the fraction it is, so «1/24 من محل» is checkable where «0.04» is not.

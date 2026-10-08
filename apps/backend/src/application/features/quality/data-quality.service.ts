@@ -6,6 +6,7 @@ import {
   describeUnitStatusConflict,
   duplicateMatchedOnLabels,
   POSSIBLE_DUPLICATE_FLAG_PATH,
+  UNINHABITABLE_LIFECYCLE,
   type DismissFindingInput,
   type FieldFlag,
   type QualityFindingKind,
@@ -18,6 +19,7 @@ import { ConflictError, NotFoundError } from '../../common/exceptions';
 import { metresBetween } from '../buildings/buildings.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
 import { unitsUnderReview } from '../buildings/unit-status';
+import { currentReadingForUnit, uninhabitableSql } from '../buildings/habitability';
 import {
   duplicateSignals,
   foldNamePart,
@@ -119,7 +121,7 @@ export class DataQualityService {
   }
 
   /**
-   * The eight scans, and only the eight scans.
+   * The ten scans, and only the ten scans.
    *
    * This is the whole cost of «مراجعة الجودة»: `duplicateCitizens` alone reads
    * every active citizen and compares them pairwise inside each name and phone
@@ -153,6 +155,7 @@ export class DataQualityService {
       this.buildingsWithoutPin(),
       this.unitsWithoutArea(),
       this.unlinkedLandlords(),
+      this.uninhabitedWithoutReading(),
     ]);
 
     const computed = groups
@@ -796,6 +799,62 @@ export class DataQualityService {
         },
       ];
     });
+  }
+
+  /**
+   * Buildings labelled uninhabited or demolished (`UNINHABITABLE_LIFECYCLE`)
+   * with units somebody is still recorded on and no «غير صالحة للسكن» reading
+   * standing over them — the units billing still charges. The label exempts
+   * nothing (decision of 2026-10-07); a damage reading on the building, or on
+   * each unit, does. Clears itself once the reading is recorded, or the holders
+   * are ended, or the label is corrected.
+   */
+  private async uninhabitedWithoutReading(): Promise<RawFinding[]> {
+    const rows = await this.db.$queryRaw<
+      Array<{
+        id: string;
+        code: string;
+        name: string | null;
+        parcelNumber: string;
+        lifecycleStatus: string;
+        createdById: string | null;
+        updatedAt: Date;
+        billedUnits: number;
+        unitCodes: string[];
+      }>
+    >`
+      SELECT b.id, b.code, b.name, b."parcelNumber", b."lifecycleStatus"::text AS "lifecycleStatus",
+             b."createdById", b."updatedAt",
+             COUNT(u.id)::int AS "billedUnits",
+             ARRAY_AGG(u."unitCode" ORDER BY u.floor, u.sequence) AS "unitCodes"
+        FROM ${this.S}buildings b
+        JOIN ${this.S}units u ON u."buildingId" = b.id
+        LEFT JOIN LATERAL (${currentReadingForUnit(this.S, Prisma.sql`u.id`, Prisma.sql`u."buildingId"`, { answering: true })}) cur ON true
+       WHERE b."lifecycleStatus"::text = ANY(${[...UNINHABITABLE_LIFECYCLE]}::text[])
+         AND u."feeExemption" IS NULL
+         AND EXISTS (
+           SELECT 1 FROM ${this.S}unit_occupancies o WHERE o."unitId" = u.id AND o."toDate" IS NULL
+         )
+         AND NOT (cur.id IS NOT NULL AND ${uninhabitableSql(Prisma.sql`cur.level`, Prisma.sql`cur.habitable`)})
+       GROUP BY b.id
+    `;
+    return rows.map((row) => ({
+      kind: 'UNINHABITED_WITHOUT_READING' as const,
+      subjectKey: row.id,
+      severity: 'HIGH' as const,
+      detail: `مصنَّف «${(ar.buildingLifecycle as Record<string, string>)[row.lifecycleStatus] ?? row.lifecycleStatus}» وما زالت ${row.billedUnits} وحدة فيه تُفوتر (${row.unitCodes.slice(0, 6).join('، ')}${row.unitCodes.length > 6 ? '…' : ''}) — سجّل تقييم ضرر «غير صالحة للسكن» على المبنى ليُعفى، أو صحّح وضع المنشأة إن كان مسكوناً`,
+      subjects: [
+        {
+          kind: 'building' as const,
+          id: row.id,
+          label: row.name ? `${row.code} — ${row.name}` : row.code,
+          secondary: `عقار ${row.parcelNumber}`,
+        },
+      ],
+      officerIds: row.createdById ? [row.createdById] : [],
+      at: row.updatedAt.toISOString(),
+      dismissable: true,
+    }));
   }
 
   /** Structures with no entrance — the duplicate prompt cannot measure from them. */

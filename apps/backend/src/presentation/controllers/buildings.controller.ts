@@ -16,6 +16,7 @@ import {
   resizeUnitSpanSchema,
   saveBuildingMatrixSchema,
   setOwnerBillingSchema,
+  setUnitFeeExemptionSchema,
   unitBlueprintSchema,
   updateBuildingSchema,
   updateUnitSchema,
@@ -34,6 +35,7 @@ import {
   type ResizeUnitSpanInput,
   type SaveBuildingMatrixInput,
   type SetOwnerBillingInput,
+  type SetUnitFeeExemptionInput,
   type UnitBlueprint,
   type UpdateBuildingInput,
   type UpdateUnitInput,
@@ -44,6 +46,7 @@ import { BuildingsService } from '../../application/features/buildings/buildings
 import { DamageService } from '../../application/features/buildings/damage.service';
 import { ParcelCorrectionService } from '../../application/features/buildings/parcel-correction.service';
 import { OwnerBillingService } from '../../application/features/buildings/owner-billing.service';
+import { FeeExemptionService } from '../../application/features/buildings/fee-exemption.service';
 import { AuditService } from '../../application/features/audit/audit.service';
 import { TenancyService } from '../../application/features/citizens/tenancy.service';
 import { OwnershipService } from '../../application/features/citizens/ownership.service';
@@ -88,6 +91,7 @@ export class BuildingsController {
     private readonly ownership: OwnershipService,
     private readonly audit: AuditService,
     private readonly ownerBilling: OwnerBillingService,
+    private readonly feeExemption: FeeExemptionService,
   ) {}
 
   /**
@@ -386,6 +390,22 @@ export class BuildingsController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.ownerBilling.set(unitId, body, this.actor(user));
+  }
+
+  /**
+   * «معفاة من الرسوم» — grants (`reason` set) or lifts (`reason` null) a unit's
+   * exemption from every fee (migration 0077): the mosque on a waqf parcel, a
+   * public building. SUPER_ADMIN only — it takes the unit off every bill, for
+   * everyone who holds it, which is an office decision and not a survey one.
+   */
+  @Roles('SUPER_ADMIN')
+  @Put('units/:unitId/fee-exemption')
+  async setFeeExemption(
+    @Param('unitId', new ParseUUIDPipe()) unitId: string,
+    @Body(new ZodValidationPipe(setUnitFeeExemptionSchema)) body: SetUnitFeeExemptionInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.feeExemption.set(unitId, body, this.actor(user));
   }
 
   // ────────────────────────────  Occupancy  ────────────────────────────

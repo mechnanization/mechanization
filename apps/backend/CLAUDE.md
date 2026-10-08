@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-07.
+Last verified against the code: `feat/unit-fee-exemptions` (on `develop@f10a1b7`), 2026-10-08.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -110,7 +110,8 @@ Data access for new code (decided):
   `@mechanization/shared-schemas` (`damage-rule.ts`) and `uninhabitableSql` in
   `buildings/habitability.ts`: the same predicate, once in TypeScript and once in SQL, so change them
   together. A unit's reading is the latest of its own and its building's (`currentReadingForUnit`). The
-  fee assessment holds an occupant-borne fee on such a unit (`uninhabitableUnitIds`), counted apart from
+  fee assessment charges no fee at all on such a unit, owner-borne included (decision of 2026-10-07:
+  not habitable → exempt) (`uninhabitableUnitIds`), counted apart from
   the review hold. Only a reading that answers decides: «غير مصنّف» with no answer judged nothing, so
   the hold, both census worklists and the panels skip it (`answersHabitability` and its SQL twin
   `answersHabitabilitySql`, `currentReadingForUnit(…, { answering: true })`) and it never ends a hold.
@@ -128,6 +129,12 @@ Data access for new code (decided):
   merge re-points `units.responsibleOwnerId` (only rows still naming the absorbed person) and its
   undo puts it back. Each owner's amount is rounded on its own, so a flat's parts can differ from
   the whole by under a pound per owner.
+- **Units exempt from fees.** `units.feeExemption` (`0077`) takes a unit off every rate-based bill, whoever
+  bears the fee: `holdingsOf` reads it, `assessCitizen` removes the unit before the review hold and the
+  bearer rule and counts it (`exemptUnitCount`). Granted and lifted by `FeeExemptionService`
+  (`PUT buildings/units/:unitId/fee-exemption`, `@Roles('SUPER_ADMIN')`), Tier 1, naming everyone on the
+  unit. A building's lifecycle exempts nothing: `UNINHABITABLE_LIFECYCLE` buildings still billed are a
+  «مراجعة الجودة» finding (`UNINHABITED_WITHOUT_READING`) until a «غير صالحة للسكن» reading is recorded.
 - **Searching citizens as «مشاهد فقط».** The register, the review queue and the payments list match a
   citizen through `citizenSearchText(S, role)` (`application/common/citizen-search.ts`) rather than
   `u."searchText"` directly: for VIEWER it removes the رقم مرجعي (folded and compact) from the searched

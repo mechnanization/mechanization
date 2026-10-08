@@ -230,9 +230,11 @@ export function fixHref(finding: QualityFinding, base: string): string | null {
       return citizen ? `${base}/citizens/${encodeURIComponent(citizen.id)}/edit` : null;
     case 'BUILDING_WITHOUT_PIN':
       return building ? `${base}/buildings/${encodeURIComponent(building.id)}/edit` : null;
+    // UNINHABITED_WITHOUT_READING: the reading is recorded from the matrix («تقييم الضرر» on the building).
     case 'UNITS_WITHOUT_AREA':
     case 'UNIT_STATUS_CONTRADICTION':
     case 'UNIT_UNDER_REVIEW':
+    case 'UNINHABITED_WITHOUT_READING':
       return building ? `${base}/buildings/${encodeURIComponent(building.id)}/matrix` : null;
     default:
       return citizen ? subjectHref(citizen, base) : building ? subjectHref(building, base) : null;

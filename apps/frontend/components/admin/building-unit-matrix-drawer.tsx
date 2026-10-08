@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import type { SetOwnerBillingInput } from '@mechanization/shared-schemas';
+import type { SetOwnerBillingInput, SetUnitFeeExemptionInput } from '@mechanization/shared-schemas';
 import {
   AlertTriangle,
   Building2,
@@ -44,6 +44,7 @@ import {
   recordDamage,
   recordOccupancy,
   setOwnerBilling,
+  setUnitFeeExemption,
   updateUnit,
   type BuildingDetail,
   type DamageAssessmentRow,
@@ -91,6 +92,7 @@ import {
   withDeclaredBasements,
 } from './building-unit-forms';
 import { OwnerBillingPanel, showsOwnerBilling } from './owner-billing-panel';
+import { FeeExemptionPanel } from './fee-exemption-panel';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
 import { ReinspectNotice } from './damage/reinspect-notice';
@@ -179,6 +181,7 @@ export function BuildingUnitMatrixDrawer({
 }) {
   const en = locale === 'en';
   const tOwnerBilling = useTranslations('ownerBilling');
+  const tFeeExemption = useTranslations('feeExemption');
   const labels = getLabels(locale);
   const toast = useToast();
   /** The signed-in officer — lets the visit form recognise their own visit from earlier today. */
@@ -563,6 +566,16 @@ export function BuildingUnitMatrixDrawer({
         return en ? 'Seasonal details saved' : 'تم حفظ بيانات السكن الموسمي';
       },
       en ? 'Could not save the seasonal details.' : 'تعذّر حفظ بيانات السكن الموسمي.',
+    );
+
+  /** «معفاة من الرسوم» — granted or lifted by a SUPER_ADMIN (0077). */
+  const saveFeeExemption = (unit: UnitWithOccupants, input: SetUnitFeeExemptionInput) =>
+    run(
+      async () => {
+        await setUnitFeeExemption(tenant, token, unit.id, input);
+        return input.reason ? tFeeExemption('granted') : tFeeExemption('lifted');
+      },
+      tFeeExemption('failed'),
     );
 
   /** «توزيع الرسم على المالكين» — the officer's choice for a co-owned flat (0075). */
@@ -1036,6 +1049,15 @@ export function BuildingUnitMatrixDrawer({
                 busy={busy}
                 canWrite={canWrite}
                 onEnd={(values) => liftVacancy(selectedUnit, values)}
+              />
+
+              {/* «معفاة من الرسوم» — shown to all; granted and lifted by a SUPER_ADMIN. */}
+              <FeeExemptionPanel
+                unit={selectedUnit}
+                locale={locale}
+                busy={busy}
+                canGrant={role === 'SUPER_ADMIN'}
+                onSave={(input) => void saveFeeExemption(selectedUnit, input)}
               />
 
               {/* «توزيع الرسم على المالكين» — a flat several people own. */}

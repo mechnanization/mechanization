@@ -67,6 +67,8 @@ export interface CitizenAssessment {
   heldUnitIds?: string[];
   /** The flats held as «غير صالحة للسكن» on this bill, for the same reason. Not stored. */
   uninhabitableUnitIds?: string[];
+  /** The units «معفاة من الرسوم» on this bill, for the same reason. Not stored. */
+  exemptUnitIds?: string[];
 }
 
 /** What one citizen holds today, as billing reads it. See `FeesService.holdingsOf`. */
@@ -148,6 +150,7 @@ function bearsFee(unit: BillableUnit, bearer: FeeBearer): boolean {
 type HeldEntry = {
   heldUnitIds?: readonly string[];
   uninhabitableUnitIds?: readonly string[];
+  exemptUnitIds?: readonly string[];
   assessment?: FeeAssessment | null;
 };
 
@@ -170,6 +173,15 @@ function distinctUnits(
 /** Flats held under review across a run (`assessCitizen`). */
 function distinctHeld(assessed: readonly HeldEntry[]): number {
   return distinctUnits(assessed, (entry) => entry.heldUnitIds, (assessment) => assessment.heldUnitCount);
+}
+
+/** Units «معفاة من الرسوم» across a run (`assessCitizen`). */
+function distinctExempt(assessed: readonly HeldEntry[]): number {
+  return distinctUnits(
+    assessed,
+    (entry) => entry.exemptUnitIds,
+    (assessment) => assessment.exemptUnitCount,
+  );
 }
 
 /** Flats held as «غير صالحة للسكن» across a run (`assessCitizen`). */
@@ -256,6 +268,7 @@ export function assessCitizen(
       assessment: FeeAssessment;
       heldUnitIds?: string[];
       uninhabitableUnitIds?: string[];
+      exemptUnitIds?: string[];
     }
   | { kind: 'unassessable'; reason: string } {
   /*
@@ -282,6 +295,7 @@ export function assessCitizen(
         uninhabitableUnitCount: 0,
         sharedUnitCount: 0,
         coOwnerPaidUnitCount: 0,
+        exemptUnitCount: 0,
         lines: [],
       },
     };
@@ -297,9 +311,18 @@ export function assessCitizen(
     };
   }
 
-  const held = entries
+  const matching = entries
     .flatMap(billableUnits)
     .filter((unit) => unitMatches(unit, notice.targetCategory));
+  /*
+    «معفاة من الرسوم» comes off first, under every notice and whoever bears it
+    (migration 0077; the user's decision, 2026-10-07): the mosque on a waqf
+    parcel, a public building. Before the review hold and the bearer rule, so
+    an exempt unit is reported as exempt and nothing else. Counted, so the bill
+    says so rather than reading as a smaller holding.
+  */
+  const exemptUnits = matching.filter((unit) => unit.exempt);
+  const held = matching.filter((unit) => !unit.exempt);
 
   /*
     Split rather than filtered, so the ones left out can be counted.
@@ -334,26 +357,28 @@ export function assessCitizen(
     counting it as an exemption would report as settled what is not.
   */
   const reviewing = bearer === 'OCCUPANT' ? held.filter((unit) => unit.underReview) : [];
+  /** Held under review for this notice — the occupancy fee only, as above. */
+  const inReview = (unit: BillableUnit) => bearer === 'OCCUPANT' && unit.underReview;
   /*
-    A flat nobody can live in is not charged its occupancy fee — to anybody —
-    until a re-inspection reads it habitable (the user's decision, 2026-10-05).
+    A flat nobody can live in is charged nothing — to anybody, under any
+    rate-based notice — until a re-inspection reads it habitable (the user's
+    decisions of 2026-10-05 and 2026-10-07: «غير صالحة للسكن» exempts).
 
     The rental-value fee is due only for actual occupancy (Law 60/1988 Art.
     11), and the annual maintenance fee follows it (Art. 79); a flat whose
     current damage reading says «غير صالحة للسكن» cannot be occupied in the
-    sense either article means. Held rather than dropped, and counted apart
-    from the review hold: the clerk settles a review in the register and an
-    uninhabitable flat with a visit. A flat that is both is counted as under
+    sense either article means. Since 2026-10-07 the owner-borne fees are not
+    charged on it either: the user decided «not habitable → exempt», not
+    «occupancy fee held». Counted apart from the review hold: the clerk
+    settles a review in the register and an uninhabitable flat with a visit.
+    A flat that is both, under an occupancy notice, is counted as under
     review — that is the hold someone in the office can lift.
 
-    Only the occupancy fee, for the reason the review hold gives: an
-    owner-borne fee follows the deed, and the deed does not depend on whether
-    the roof is on.
+    Not back-billed: a period's invoice is written once, so the months a flat
+    was uninhabitable are simply not charged.
   */
-  const unlivable =
-    bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview && unit.uninhabitable) : [];
-  const decided =
-    bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview && !unit.uninhabitable) : held;
+  const unlivable = held.filter((unit) => !inReview(unit) && unit.uninhabitable);
+  const decided = held.filter((unit) => !inReview(unit) && !unit.uninhabitable);
   const owed = decided.filter((unit) => bearsFee(unit, bearer));
   const excludedUnitCount = decided.length - owed.length;
   /*
@@ -395,6 +420,7 @@ export function assessCitizen(
   const uninhabitableUnitIds = unlivable
     .map((unit) => unit.unitId)
     .filter((id): id is string => Boolean(id));
+  const exemptUnitIds = exemptUnits.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
 
   if (notice.basis === 'PER_AREA') {
     /*
@@ -432,6 +458,7 @@ export function assessCitizen(
     amount: Math.round(notice.amount * multiplier),
     heldUnitIds,
     uninhabitableUnitIds,
+    exemptUnitIds,
     assessment: {
       basis: notice.basis,
       rate: notice.amount,
@@ -442,6 +469,7 @@ export function assessCitizen(
       uninhabitableUnitCount,
       sharedUnitCount: shared.length,
       coOwnerPaidUnitCount: paidByCoOwner.length,
+      exemptUnitCount: exemptUnits.length,
       ...(shared.length > 0 && notice.basis === 'PER_UNIT' ? { chargedUnits } : {}),
       lines: units.map((unit) => ({
         propertyNumber: unit.propertyNumber,
@@ -988,8 +1016,10 @@ export class FeesService {
     );
     /** Flats whose occupancy fee is held under review — see `assessCitizen`. Each flat once. */
     const heldUnits = distinctHeld(assessed);
-    /** Flats whose occupancy fee is held as «غير صالحة للسكن» — see `assessCitizen`. Each flat once. */
+    /** Flats held as «غير صالحة للسكن» — exempt from every fee; see `assessCitizen`. Each flat once. */
     const uninhabitableUnits = distinctUninhabitable(assessed);
+    /** Units «معفاة من الرسوم» (0077) — see `assessCitizen`. Each unit once. */
+    const feeExemptUnits = distinctExempt(assessed);
 
     if (billable.length === 0) {
       /*
@@ -1005,7 +1035,7 @@ export class FeesService {
         flats and exempted five was reported as "everything held", and the
         clerk went looking for the wrong thing.
       */
-      if (heldUnits + uninhabitableUnits + exemptedUnits + unassessable.length === 0) {
+      if (heldUnits + uninhabitableUnits + exemptedUnits + feeExemptUnits + unassessable.length === 0) {
         throw new ConflictError({
           code: 'FEE_NO_MATCHING_CITIZENS',
           message: 'No citizen matches this notice, so nothing was issued',
@@ -1018,6 +1048,7 @@ export class FeesService {
           held: heldUnits,
           uninhabitable: uninhabitableUnits,
           exempted: exemptedUnits,
+          feeExempt: feeExemptUnits,
           unassessable: unassessable.length,
         },
       });
@@ -1109,6 +1140,7 @@ export class FeesService {
       exemptedUnitCount: exemptedUnits,
       heldUnitCount: heldUnits,
       uninhabitableUnitCount: uninhabitableUnits,
+      feeExemptUnitCount: feeExemptUnits,
       actorId: actor.id,
       actorRole: actor.role,
     });
@@ -1130,11 +1162,14 @@ export class FeesService {
     }
     if (uninhabitableUnits > 0) {
       this.logger.log(
-        `Fee "${input.title}": ${uninhabitableUnits} unit(s) held as uninhabitable (غير صالحة للسكن)`,
+        `Fee "${input.title}": ${uninhabitableUnits} unit(s) not charged as uninhabitable (غير صالحة للسكن)`,
       );
     }
+    if (feeExemptUnits > 0) {
+      this.logger.log(`Fee "${input.title}": ${feeExemptUnits} unit(s) exempt from fees (معفاة من الرسوم)`);
+    }
 
-    return { ...result, unassessable, exemptedUnits, heldUnits, uninhabitableUnits };
+    return { ...result, unassessable, exemptedUnits, heldUnits, uninhabitableUnits, feeExemptUnits };
   }
 
   /**
@@ -1554,6 +1589,7 @@ export class FeesService {
           assessment: outcome.assessment,
           heldUnitIds: outcome.heldUnitIds,
           uninhabitableUnitIds: outcome.uninhabitableUnitIds,
+          exemptUnitIds: outcome.exemptUnitIds,
         });
       }
     }
@@ -1654,7 +1690,15 @@ export class FeesService {
                         unitArea: true,
                         unitStatus: true,
                         unit: {
-                          select: { id: true, unitType: true, unitArea: true, unitStatus: true, unitCode: true },
+                          select: {
+                            id: true,
+                            unitType: true,
+                            unitArea: true,
+                            unitStatus: true,
+                            unitCode: true,
+                            // «معفاة من الرسوم» (0077) — charged nothing, whoever bears the fee.
+                            feeExemption: true,
+                          },
                         },
                       },
                     },
@@ -1688,6 +1732,7 @@ export class FeesService {
                     unitArea: true,
                     unitStatus: true,
                     unitCode: true,
+                    feeExemption: true,
                   },
                 },
               },
@@ -1713,7 +1758,10 @@ export class FeesService {
         for (const occupancy of row.unitOccupancies) heldHere.add(occupancy.unit.id);
       }
       /** The one flat of each structure a منزل card here names — what the card bills. */
-      const soleUnits = new Map<string, { id: string; unitStatus: string | null; unitCode: string }>();
+      const soleUnits = new Map<
+        string,
+        { id: string; unitStatus: string | null; unitCode: string; feeExemption: string | null }
+      >();
       const houseBuildings = [
         ...new Set(
           rows.flatMap((row) =>
@@ -1727,7 +1775,7 @@ export class FeesService {
         const houseUnits = await withConnectionRetry(() =>
           this.db.unit.findMany({
             where: { buildingId: { in: houseBuildings } },
-            select: { id: true, buildingId: true, unitStatus: true, unitCode: true },
+            select: { id: true, buildingId: true, unitStatus: true, unitCode: true, feeExemption: true },
           }),
         );
         const perBuilding = new Map<string, typeof houseUnits>();
@@ -1811,6 +1859,7 @@ export class FeesService {
           unitCode: string;
           ownerShare?: { mode: string; numerator: number; denominator: number };
           ownerShareUndecidable?: boolean;
+          exempt: boolean;
         }>>();
         for (const occupancy of row.unitOccupancies) {
           const buildingId = occupancy.unit.buildingId;
@@ -1824,6 +1873,7 @@ export class FeesService {
             underReview: underReview(occupancy.unit.id),
             uninhabitable: uninhabitable(occupancy.unit.id),
             unitCode: occupancy.unit.unitCode,
+            exempt: occupancy.unit.feeExemption !== null,
             ...(occupancy.role === 'OWNER' ? ownerShareFor(occupancy.unit.id, row.id) : {}),
           });
           occupanciesByBuilding.set(buildingId, list);
@@ -1865,6 +1915,7 @@ export class FeesService {
                   return {
                     soleUnitId: sole.id,
                     soleUnitCode: sole.unitCode,
+                    exempt: sole.feeExemption !== null,
                     ...(card.occupancyType === 'OWNER' ? ownerShareFor(sole.id, row.id) : {}),
                     uninhabitable: uninhabitable(sole.id),
                     /*
@@ -1886,6 +1937,7 @@ export class FeesService {
                     unitStatus: settledStatus(line.unit.id, line.unit.unitStatus) as never,
                     underReview: underReview(line.unit.id),
                     uninhabitable: uninhabitable(line.unit.id),
+                    exempt: line.unit.feeExemption !== null,
                     ...(card.occupancyType === 'OWNER' ? ownerShareFor(line.unit.id, row.id) : {}),
                   }
                 : line.unit,

@@ -561,6 +561,28 @@ export function isOccupiableLifecycle(status: string | null | undefined): boolea
 export const UNSURVEYABLE_SHELL_LIFECYCLE = ['DEMOLISHED'] as const;
 
 /**
+ * The lifecycle states that say nobody can live in the building — «متضررة من
+ * الحرب وغير مسكونة» and «مهدوم».
+ *
+ * A lifecycle is a label on the structure, set from the building editor with no
+ * finding behind it, and billing does not read it. What exempts a unit from
+ * fees is a damage reading that answers «غير صالحة للسكن» (the user's decision,
+ * 2026-10-07): it records who judged it, when and on what, and a later reading
+ * ends it. So these states are where the two can disagree — a building labelled
+ * uninhabited whose units are still billed — and the editor asks for the
+ * reading and «مراجعة الجودة» lists the building until it is recorded
+ * (`UNINHABITED_WITHOUT_READING`).
+ */
+export const UNINHABITABLE_LIFECYCLE = [
+  'WAR_DAMAGED_UNINHABITED',
+  'DEMOLISHED',
+] as const satisfies readonly BuildingLifecycle[];
+
+export function isUninhabitableLifecycle(status: string | null | undefined): boolean {
+  return status != null && (UNINHABITABLE_LIFECYCLE as readonly string[]).includes(status);
+}
+
+/**
  * The lifecycle states in which there is a structure on the ground — what a
  * re-inspection after repair can still go and look at («بانتظار إعادة الكشف»).
  *
@@ -838,6 +860,27 @@ export type OccupancyEndReason = z.infer<typeof occupancyEndReasonSchema>;
 export const OWNER_BILLING_MODE = ['EQUAL', 'BY_SHARES', 'RESPONSIBLE_OWNER'] as const;
 export const ownerBillingModeSchema = arabicEnum(OWNER_BILLING_MODE, 'اختر طريقة توزيع الرسم');
 export type OwnerBillingMode = z.infer<typeof ownerBillingModeSchema>;
+
+/**
+ * «معفاة من الرسوم» — why a unit is charged nothing at all (migration 0077).
+ *
+ * The exemption belongs to the unit, not to its owner and not to its status:
+ * a waqf that owns the mosque and a shop it rents out is exempt on the first
+ * and must still see its tenant billed on the second (the user's decision,
+ * 2026-10-07), and «مؤجرة» has to stay «مؤجرة» for that tenant to be billed.
+ *
+ *  - `PLACE_OF_WORSHIP` «دار عبادة» — a mosque, a church, a husseiniya.
+ *  - `PUBLIC_FACILITY` «مرفق عام» — the municipality's own buildings, a
+ *    public school.
+ *  - `OTHER` «سبب آخر» — with the reason in words (CHECK
+ *    units_fee_exemption_other_note).
+ *
+ * Granted and lifted by a SUPER_ADMIN only, with an audit row: it takes a unit
+ * off every bill.
+ */
+export const FEE_EXEMPTION_REASON = ['PLACE_OF_WORSHIP', 'PUBLIC_FACILITY', 'OTHER'] as const;
+export const feeExemptionReasonSchema = arabicEnum(FEE_EXEMPTION_REASON, 'اختر سبب الإعفاء');
+export type FeeExemptionReason = z.infer<typeof feeExemptionReasonSchema>;
 
 /**
  * What a «تأكيد الشغور» rests on — asked every time one is recorded.

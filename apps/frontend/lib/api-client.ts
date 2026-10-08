@@ -25,6 +25,7 @@ import type {
   FeeAssessment,
   FeeAssessmentLine,
   FeeBasis,
+  FeeExemptionReason,
   FeeBearer,
   FeeFrequency,
   FieldFlag,
@@ -43,6 +44,7 @@ import type {
   RecordInspectorPayoutInput,
   SequenceKey,
   SetOwnerBillingInput,
+  SetUnitFeeExemptionInput,
   SettlePayment,
   BuildingLifecycle,
   StructureType,
@@ -1671,6 +1673,14 @@ export interface UnitRow {
    */
   ownerBillingMode?: OwnerBillingMode | null;
   responsibleOwnerId?: string | null;
+  /**
+   * «معفاة من الرسوم» (0077): why the unit is charged nothing, the reason in
+   * words, when and who granted it. Optional on the wire for older responses.
+   */
+  feeExemption?: FeeExemptionReason | null;
+  feeExemptionNote?: string | null;
+  feeExemptedAt?: string | null;
+  feeExemptedByName?: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -2922,6 +2932,26 @@ export async function logUnitVisit(tenant: string, token: string, input: LogVisi
  * refusal names its own remedy, so callers should surface it verbatim.
  */
 /**
+ * «معفاة من الرسوم» — grants (`reason` set) or lifts (`reason` null) a unit's
+ * exemption from every fee. SUPER_ADMIN only.
+ */
+export async function setUnitFeeExemption(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: SetUnitFeeExemptionInput,
+  signal?: AbortSignal,
+): Promise<{ unitId: string; feeExemption: FeeExemptionReason | null }> {
+  const result = await apiFetch<{ unitId: string; feeExemption: FeeExemptionReason | null }>(
+    tenant,
+    `/buildings/units/${encodeURIComponent(unitId)}/fee-exemption`,
+    { token, method: 'PUT', body: JSON.stringify(input), signal },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
  * «توزيع الرسم على المالكين» — saves how a co-owned flat is billed, and the
  * owners' أسهم with it. `mode: null` withdraws a choice (back to the equal split).
  */
@@ -3168,6 +3198,8 @@ export interface CitizenProfileUnit {
     contactPhone?: string | null;
     shares: number | null;
   }>;
+  /** «معفاة من الرسوم» (0077): why the linked unit is charged nothing, or null. */
+  feeExemption?: FeeExemptionReason | null;
   /**
    * «توزيع الرسم على المالكين» (0075) when the linked flat has several current
    * owners; null otherwise. `share` is this file's owner's part. On the
@@ -5143,12 +5175,15 @@ export async function issueFeeNotice(
      */
     heldUnits?: number;
     /**
-     * Flats whose occupancy fee this notice held because their current damage
-     * reading says nobody can live in them — see
-     * `FeeAssessment.uninhabitableUnitCount`. Charged again from the first
-     * period after a re-inspection reads them habitable.
+     * Flats this notice did not charge because their current damage reading
+     * says nobody can live in them — exempt from every fee (decisions of
+     * 2026-10-05 and 2026-10-07); see `FeeAssessment.uninhabitableUnitCount`.
+     * Charged again from the first period after a re-inspection reads them
+     * habitable.
      */
     uninhabitableUnits?: number;
+    /** Units «معفاة من الرسوم» this notice did not charge (0077). */
+    feeExemptUnits?: number;
   }>(tenant, '/fees/notices', {
     token,
     method: 'POST',

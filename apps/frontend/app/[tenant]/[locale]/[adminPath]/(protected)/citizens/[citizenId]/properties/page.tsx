@@ -817,6 +817,7 @@ function UnitRows({
   const disagree = Boolean(unit.censusUnitStatus && unit.unitStatus && unit.censusUnitStatus !== unit.unitStatus);
   const owners = unit.owners ?? [];
   const tOwnerBilling = useTranslations('ownerBilling');
+  const tFeeExemption = useTranslations('feeExemption');
   const seasonal = unit.unitStatus === 'SEASONAL' || unit.censusUnitStatus === 'SEASONAL';
   const billedHint = ownerBilledHint(status, en);
 
@@ -886,6 +887,12 @@ function UnitRows({
           {owners.length > 0 ? (
             <SummaryRow label={owners.length > 1 ? (en ? 'Co-owners' : 'المالكون') : en ? 'Owner' : 'المالك'}>
               <OwnerList owners={owners} base={base} />
+            </SummaryRow>
+          ) : null}
+          {/* «معفاة من الرسوم» (0077): nothing is charged on this unit, whoever holds it. */}
+          {unit.feeExemption ? (
+            <SummaryRow label={tFeeExemption('fileLabel')} className="text-success">
+              {tFeeExemption('fileValue', { reason: labels.feeExemptionReason[unit.feeExemption] })}
             </SummaryRow>
           ) : null}
           {/* «توزيع الرسم على المالكين» (0075): how this co-owned flat is billed, and this owner's part. */}

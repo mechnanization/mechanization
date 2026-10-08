@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { FeatureCollection, Geometry } from 'geojson';
@@ -27,6 +28,7 @@ import {
   formatBuildingCode,
   getLabels,
   isOccupiableLifecycle,
+  isUninhabitableLifecycle,
   isUnsurveyableShell,
   nextBuildingSuffix,
   STRUCTURE_TYPE,
@@ -366,6 +368,7 @@ export function BuildingEditor({
   const router = useRouter();
   const toast = useToast();
   const en = locale === 'en';
+  const tFeeExemption = useTranslations('feeExemption');
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const editing = Boolean(buildingId);
@@ -2609,6 +2612,20 @@ export function BuildingEditor({
                   </Select>
                 </Field>
               </div>
+
+              {/*
+                «متضررة من الحرب وغير مسكونة» or «مهدوم» exempts nothing by itself
+                (decision of 2026-10-07): a damage reading «غير صالحة للسكن» does,
+                because it records who judged it, when and on what, and a later
+                reading ends it. Said here, where the label is chosen; «مراجعة
+                الجودة» lists the building until the reading is recorded.
+              */}
+              {isUninhabitableLifecycle(lifecycleStatus) ? (
+                <div role="note" className="flex items-start gap-2 rounded-xl border border-info/40 bg-info/10 p-3.5 text-xs leading-relaxed text-info">
+                  <Info className="size-4 shrink-0 mt-0.5" aria-hidden />
+                  <p>{tFeeExemption('lifecycleNote')}</p>
+                </div>
+              ) : null}
 
               {/*
                 A building leaving «قائم ومستعمل» with people still recorded in it.

@@ -946,6 +946,8 @@ export class BuildingsService {
                 },
               },
               _count: { select: { visits: true } },
+              // Who granted «معفاة من الرسوم», shown beside it.
+              feeExemptedBy: { select: { firstName: true, lastName: true } },
             },
           },
         },
@@ -5326,6 +5328,10 @@ function toUnitRow(row: {
   vacancyDeclaredAt?: Date | null;
   ownerBillingMode?: UnitRow['ownerBillingMode'];
   responsibleOwnerId?: string | null;
+  feeExemption?: UnitRow['feeExemption'];
+  feeExemptionNote?: string | null;
+  feeExemptedAt?: Date | null;
+  feeExemptedBy?: { firstName: string; lastName: string } | null;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -5351,6 +5357,10 @@ function toUnitRow(row: {
     vacancyDeclaredAt: row.vacancyDeclaredAt ?? null,
     ownerBillingMode: row.ownerBillingMode ?? null,
     responsibleOwnerId: row.responsibleOwnerId ?? null,
+    feeExemption: row.feeExemption ?? null,
+    feeExemptionNote: row.feeExemptionNote ?? null,
+    feeExemptedAt: row.feeExemptedAt ?? null,
+    feeExemptedByName: row.feeExemptedBy ? `${row.feeExemptedBy.firstName} ${row.feeExemptedBy.lastName}` : null,
     notes: row.notes,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

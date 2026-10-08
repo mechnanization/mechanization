@@ -335,7 +335,7 @@
     "SESSION_ENDED": "Your session has ended. Sign in again.",
     "ORIGIN_NOT_ALLOWED": "This request did not come from the municipality’s portal.",
     "SESSION_REFRESH_UNAVAILABLE": "The session could not be renewed. Check the connection and try again.",
-    "FEE_NOTHING_TO_CHARGE": "Nothing to charge — no notice was issued.{held, plural, =0 {} one { 1 unit is held for review (unit status conflict).} other { # units are held for review (unit status conflict).}}{uninhabitable, plural, =0 {} one { 1 unit is uninhabitable — its occupancy fee is held until re-inspection.} other { # units are uninhabitable — their occupancy fee is held until re-inspection.}}{exempted, plural, =0 {} one { 1 unit is vacant, under construction or exempt by bearer.} other { # units are vacant, under construction or exempt by bearer.}}{unassessable, plural, =0 {} one { 1 citizen's records need a field survey first.} other { # citizens' records need a field survey first.}}",
+    "FEE_NOTHING_TO_CHARGE": "Nothing to charge — no notice was issued.{held, plural, =0 {} one { 1 unit is held for review (unit status conflict).} other { # units are held for review (unit status conflict).}}{uninhabitable, plural, =0 {} one { 1 unit is uninhabitable — it is exempt from fees until re-inspection.} other { # units are uninhabitable — they are exempt from fees until re-inspection.}}{exempted, plural, =0 {} one { 1 unit is vacant, under construction or exempt by bearer.} other { # units are vacant, under construction or exempt by bearer.}}{feeExempt, plural, =0 {} one { 1 unit is exempt from fees.} other { # units are exempt from fees.}}{unassessable, plural, =0 {} one { 1 citizen's records need a field survey first.} other { # citizens' records need a field survey first.}}",
     "CITIZEN_NO_PHONE_HAS_NUMBER": "The file is marked «has no phone» but holds a number of the citizen's own — clear the phone and WhatsApp, or untick «Does not have a phone number».",
     "CITIZEN_CONTACT_PHONE_IS_OWN": "The contact number is a relative's, so it cannot be the citizen's own phone — correct one of them.",
     "OWNER_BILLING_NOT_CO_OWNED": "Unit {unitCode} does not have more than one current owner, so there is no fee to divide between owners.",
@@ -343,7 +343,8 @@
     "OWNER_BILLING_RESPONSIBLE_NOT_OWNER": "The responsible owner must be one of the current owners of unit {unitCode}.",
     "OWNER_BILLING_RESPONSIBLE_NOT_BILLED": "This owner’s file does not claim unit {unitCode} as its owner, so they cannot be billed for it. Add it to their file first, or choose another owner.",
     "OWNER_BILLING_SHARES_NOT_OWNER": "Shares can only be recorded for the current owners of unit {unitCode}.",
-    "OWNER_BILLING_SHARES_MISSING": "Record every owner’s shares for unit {unitCode} before choosing “By shares” (owners without shares: {missing})."
+    "OWNER_BILLING_SHARES_MISSING": "Record every owner’s shares for unit {unitCode} before choosing “By shares” (owners without shares: {missing}).",
+    "FEE_EXEMPTION_STRUCTURAL_UNIT": "Unit {unitCode} is a structural floor that is never billed, so there is nothing to exempt it from."
   },
   "damage": {
     "level": "Damage level",
@@ -359,7 +360,7 @@
       "label": "Re-inspect after repair on",
       "optional": "(optional)",
       "placeholder": "Pick a day",
-      "feeHeld": "The occupancy fee is held on anything not habitable until a re-inspection reads it habitable."
+      "feeHeld": "No fee is charged on anything not habitable until a re-inspection reads it habitable."
     },
     "inspectedOn": "Inspected on",
     "inspectedOnToday": "(today if left empty)",
@@ -374,7 +375,7 @@
       "overdue": "was due {date}",
       "noDate": "no date set",
       "wholeBuilding": "from a whole-building reading",
-      "feeHeld": "The occupancy fee is held until the re-inspection."
+      "feeHeld": "Exempt from fees until the re-inspection."
     },
     "history": {
       "title": "Damage history",
@@ -588,15 +589,17 @@
     "notesSeparator": "; ",
     "notCharged": "{count} not charged",
     "heldForReview": "{count} held for review",
-    "uninhabitable": "{count} uninhabitable, not charged",
+    "uninhabitable": "{count} uninhabitable, exempt",
     "coOwnedShare": "{count} co-owned, charged at this owner’s part",
     "coOwnerPays": "{count} paid by another owner",
-    "coOwnedShareParts": "{count} co-owned, charged at this owner’s part ({parts})"
+    "coOwnedShareParts": "{count} co-owned, charged at this owner’s part ({parts})",
+    "exempt": "{count} exempt from fees"
   },
   "fees": {
     "issue": {
       "uninhabitable": "Uninhabitable units: {count} — not charged this fee. Charging resumes at the first billing run after a re-inspection reads a unit habitable: for the current period if the person has no bill for it yet, otherwise from the next period.",
-      "uninhabitableOnce": "Uninhabitable units: {count} — not charged this fee. It is a one-off fee, so nothing charges them later by itself; to collect it once a re-inspection reads a unit habitable, issue an individual charge."
+      "uninhabitableOnce": "Uninhabitable units: {count} — not charged this fee. It is a one-off fee, so nothing charges them later by itself; to collect it once a re-inspection reads a unit habitable, issue an individual charge.",
+      "feeExempt": "Units exempt from fees (place of worship, public facility…): {count} — not charged this fee."
     }
   },
   "parcelDrawer": {
@@ -799,7 +802,9 @@
     "TOTP_CONFIRMED": "2FA confirmed",
     "DATA_REPAIR": "Data repair",
     "DAMAGE_RECORDED": "Damage assessment recorded",
-    "UNIT_OWNER_BILLING_SET": "Co-owner billing set on a unit"
+    "UNIT_OWNER_BILLING_SET": "Co-owner billing set on a unit",
+    "UNIT_FEE_EXEMPTION_SET": "Unit exempted from fees",
+    "UNIT_FEE_EXEMPTION_LIFTED": "Unit fee exemption lifted"
   },
   "auditEntities": {
     "User": "Citizen or staff",
@@ -922,7 +927,8 @@
       "level": "Damage level",
       "source": "Source",
       "ownerBillingMode": "How the owners are billed",
-      "shares": "Shares"
+      "shares": "Shares",
+      "feeExemption": "Fee exemption"
     },
     "text": {
       "redacted": "hidden to protect personal data",
@@ -1117,5 +1123,30 @@
     "minePaysNone": "Another owner pays for you",
     "archivedOwners": "{names}: their file is archived, so they are left out and their part falls to the other owners.",
     "mineUnknown": "Your part is unknown — the owners’ shares are incomplete"
+  },
+  "feeExemption": {
+    "title": "Exempt this unit from fees",
+    "intro": "An exempt unit is charged no fee at all, whoever bears it. For the mosque itself or a public facility — not for a shop a waqf rents out.",
+    "occupiedWarning": "A tenant or free occupant is recorded on this unit — exempting it exempts them too. A shop a waqf rents out is billed to its tenant as usual, not exempted.",
+    "open": "Exempt this unit from fees…",
+    "reason": "Reason",
+    "reasonPlaceholder": "Choose the reason",
+    "note": "Reason in words",
+    "notePlaceholder": "e.g. the main mosque — council decision no. …",
+    "noteRequired": "Write the reason for the exemption",
+    "grant": "Exempt the unit",
+    "cancel": "Cancel",
+    "standing": "Exempt from fees — {reason}",
+    "grantedBy": "Since {date}, decided by {name}",
+    "unknownGrantor": "a staff member no longer on record",
+    "lift": "Lift the exemption",
+    "liftTitle": "Lift the fee exemption on unit {code}?",
+    "liftBody": "Fees are charged on the unit from the first billing run after the exemption is lifted. The exemption and its lifting both stay in the activity log.",
+    "granted": "Unit exempted from fees",
+    "lifted": "Exemption lifted",
+    "failed": "Could not save the exemption",
+    "fileLabel": "Fee exemption",
+    "fileValue": "Exempt — {reason}",
+    "lifecycleNote": "The building’s status alone exempts nothing from fees. If it cannot be lived in, record a damage assessment of “Not habitable” from the unit matrix — everything in it is then exempt from fees until a re-inspection."
   }
 }

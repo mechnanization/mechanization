@@ -103,6 +103,12 @@ export const UNIT_ACTIONS = [
     raised before it stays as it was raised.
   */
   'UNIT_OWNER_BILLING_SET',
+  /*
+    «معفاة من الرسوم» (migration 0077), granted or lifted by the office. Forward
+    from the day, like the billing method above.
+  */
+  'UNIT_FEE_EXEMPTION_SET',
+  'UNIT_FEE_EXEMPTION_LIFTED',
 ] as const;
 
 /** The unit fields `assessCitizen` reads. A rename or a floor move bills nothing. */
@@ -262,6 +268,8 @@ export function traceChanges(
           break;
         case 'DAMAGE_RECORDED':
         case 'UNIT_OWNER_BILLING_SET':
+        case 'UNIT_FEE_EXEMPTION_SET':
+        case 'UNIT_FEE_EXEMPTION_LIFTED':
           change = { kind: 'DATED_CHANGE', effectiveOn: row.createdAt };
           break;
         case 'UNIT_VACANCY_ENDED':

@@ -279,6 +279,12 @@ export interface CitizenProfileUnit {
    * when it cannot be computed («حسب الأسهم» with أسهم missing), or when this
    * person is not among the owners (a tenancy card).
    */
+  /**
+   * «معفاة من الرسوم» (0077): why the linked unit is charged nothing, or null.
+   * The reason only — the officer's note stays on the staff screens, because
+   * this object reaches the citizen portal by spread.
+   */
+  feeExemption: 'PLACE_OF_WORSHIP' | 'PUBLIC_FACILITY' | 'OTHER' | null;
   ownerBilling: {
     mode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
     effectiveMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER';
@@ -1100,6 +1106,7 @@ export class ReportingService {
                         unitStatus: true,
                         ownerBillingMode: true,
                         responsibleOwnerId: true,
+                        feeExemption: true,
                         presenceMonths: true,
                         ownerLastStayAt: true,
                         vacancyDeclaredAt: true,
@@ -1361,6 +1368,7 @@ export class ReportingService {
                 contactPhone: owner.citizen.contactPhone,
                 shares: owner.shares,
               })),
+              feeExemption: unit.unit?.feeExemption ?? null,
               ownerBilling: profileOwnerBilling(unit.unit, citizenId),
             };
           }),

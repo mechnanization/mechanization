@@ -4,6 +4,7 @@ import {
   damageLevelSchema,
   damageSourceSchema,
   occupancyEndReasonSchema,
+  feeExemptionReasonSchema,
   occupancyRoleSchema,
   ownerBillingModeSchema,
   structureTypeSchema,
@@ -1366,6 +1367,25 @@ export const setOwnerBillingSchema = z
   });
 
 export type SetOwnerBillingInput = z.infer<typeof setOwnerBillingSchema>;
+
+/**
+ * «معفاة من الرسوم» — granting (`reason` set) or lifting (`reason` null) a
+ * unit's exemption from every fee (migration 0077). SUPER_ADMIN only. «سبب
+ * آخر» needs its reason in words; a lift takes no note — the audit row records
+ * who lifted it and when, and the exemption it ended.
+ */
+export const setUnitFeeExemptionSchema = z
+  .object({
+    reason: feeExemptionReasonSchema.nullable(),
+    note: z.string().trim().max(500, 'السبب طويل جداً').optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.reason === 'OTHER' && (value.note ?? '').length < 3) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['note'], message: 'اكتب سبب الإعفاء' });
+    }
+  });
+
+export type SetUnitFeeExemptionInput = z.infer<typeof setUnitFeeExemptionSchema>;
 
 /** A flat's «توزيع الرسم على المالكين» as the drawer shows it, after a save or on demand. */
 export interface OwnerBillingState {

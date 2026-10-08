@@ -793,6 +793,7 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
   const status = unit.censusUnitStatus ?? unit.unitStatus;
   const months = unit.presenceMonths?.length ? formatMonthList(unit.presenceMonths, locale) : null;
   const tOwnerBilling = useTranslations('ownerBilling');
+  const tFeeExemption = useTranslations('feeExemption');
   /** «توزيع الرسم على المالكين», worded to the owner reading it. */
   const ownerBillingLine = (billing: NonNullable<CitizenProfileUnit['ownerBilling']>): string => {
     const method = billing.mode ? labels.ownerBillingMode[billing.effectiveMode] : tOwnerBilling('fileDefault');
@@ -877,6 +878,14 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
               {months}
             </span>
           ) : null}
+        </p>
+      ) : null}
+
+      {/* «معفاة من الرسوم» (0077): the municipality charges nothing on this unit. */}
+      {unit.feeExemption ? (
+        <p className="flex flex-wrap items-center gap-x-2 px-2 text-success">
+          <BadgeCheck className="size-3 shrink-0" aria-hidden />
+          <span>{tFeeExemption('fileValue', { reason: labels.feeExemptionReason[unit.feeExemption] })}</span>
         </p>
       ) : null}
 

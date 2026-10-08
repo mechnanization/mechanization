@@ -117,6 +117,13 @@ export const QUALITY_FINDING_KIND = [
   'BUILDING_WITHOUT_PIN',
   'UNITS_WITHOUT_AREA',
   'UNLINKED_LANDLORDS',
+  /**
+   * A building labelled «متضررة من الحرب وغير مسكونة» or «مهدوم» whose units
+   * are still billed, because no damage reading says «غير صالحة للسكن». The
+   * label exempts nothing; the reading does (decision of 2026-10-07). HIGH:
+   * someone is billed for a home the register itself calls uninhabitable.
+   */
+  'UNINHABITED_WITHOUT_READING',
 ] as const;
 export type QualityFindingKind = (typeof QUALITY_FINDING_KIND)[number];
 
@@ -167,6 +174,9 @@ export function qualityLabels(locale: string) {
       BUILDING_WITHOUT_PIN: en ? 'Building with no entrance pin' : 'مبنى بلا مدخل مُثبت',
       UNITS_WITHOUT_AREA: en ? 'Occupied units with no area' : 'وحدات مشغولة بلا مساحة',
       UNLINKED_LANDLORDS: en ? 'Owners named but not linked' : 'مالكون مذكورون غير مربوطين',
+      UNINHABITED_WITHOUT_READING: en
+        ? 'Labelled uninhabited, still billed'
+        : 'مبنى مصنَّف غير مسكون وما زال يُفوتر',
     } satisfies Record<QualityFindingKind, string>,
     /**
      * What the re-check found, as one word.

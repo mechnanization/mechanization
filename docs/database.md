@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `chore/migration-0075-0077` (on `develop@f10a1b7`), 2026-10-07.
+Last verified against the code: `feat/unit-fee-exemptions` (on `develop@f10a1b7`), 2026-10-08.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -120,8 +120,8 @@ CHECKs keep the rest:
 
 «غير صالحة للسكن» is `habitable = false`, or no answer on a collapse or an
 evacuation (`isUninhabitableReading`, and its SQL twin `uninhabitableSql`). The
-fee assessment holds an occupant-borne fee on a unit whose current reading
-says so — the latest of the unit's and its building's readings *that answers*:
+fee assessment charges no fee at all — occupant-borne or owner-borne (decision
+of 2026-10-07) — on a unit whose current reading says so — the latest of the unit's and its building's readings *that answers*:
 `UNCLASSIFIED` with `habitable` NULL judged nothing and is passed over
 (`answersHabitability`, its SQL twin `answersHabitabilitySql`, and
 `currentReadingForUnit(…, { answering: true })` in

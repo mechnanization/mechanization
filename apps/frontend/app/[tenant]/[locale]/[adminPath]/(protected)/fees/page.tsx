@@ -444,9 +444,9 @@ export default function FeesPage({
         );
       }
       /*
-        Held too, for a different reason: flats read «غير صالحة للسكن» are not
-        charged an occupant-borne fee until a re-inspection reads them
-        habitable (decision, 2026-10-05). Its own count, never folded into the
+        Not charged either, for a different reason: flats read «غير صالحة
+        للسكن» are charged no fee at all until a re-inspection reads them
+        habitable (decisions of 2026-10-05 and 2026-10-07). Its own count, never folded into the
         review hold — the clerk acts on each in a different place. A one-off
         fee has no next period for the charge to resume in (the recurring run
         skips `ONCE`), so it says how to collect it instead.
@@ -457,6 +457,10 @@ export default function FeesPage({
             count: res.uninhabitableUnits,
           }),
         );
+      }
+      // «معفاة من الرسوم» (0077): the mosque on a waqf parcel, a public building.
+      if (res.feeExemptUnits) {
+        toast.info(tFees('issue.feeExempt', { count: res.feeExemptUnits }));
       }
       setIssueOpen(false);
       void load();

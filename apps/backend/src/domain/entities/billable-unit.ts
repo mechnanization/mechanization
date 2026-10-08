@@ -84,6 +84,12 @@ export interface BillableUnit {
   uninhabitable: boolean;
   /** The canonical unit, when there is one — so a held flat is counted once, however many cards bill it. */
   unitId?: string | null;
+  /**
+   * «معفاة من الرسوم» (migration 0077): the mosque on a waqf parcel, a public
+   * building. Charged nothing by any rate-based notice, whoever bears it.
+   * Only ever true for a flat the census holds — the exemption is on the unit.
+   */
+  exempt?: boolean;
   /** The census code of that unit («0201»), for the bill's line. */
   unitCode?: string | null;
   /**
@@ -105,6 +111,7 @@ export interface BillableUnit {
 interface OwnerShareFields {
   ownerShare?: BillableOwnerShare | null;
   ownerShareUndecidable?: boolean;
+  exempt?: boolean;
 }
 
 /**
@@ -136,6 +143,8 @@ export interface LinkedUnit {
   ownerShare?: BillableOwnerShare | null;
   /** See `BillableUnit.ownerShareUndecidable`. */
   ownerShareUndecidable?: boolean;
+  /** See `BillableUnit.exempt`. */
+  exempt?: boolean;
 }
 
 /** The stored shape this reads — a property card and its unit rows. */
@@ -162,6 +171,8 @@ export interface BillablePropertyEntry {
   ownerShare?: BillableOwnerShare | null;
   /** The card-level twin of `LinkedUnit.ownerShareUndecidable`. */
   ownerShareUndecidable?: boolean;
+  /** A منزل whose one flat is «معفاة من الرسوم» — the card-level twin of `LinkedUnit.exempt`. */
+  exempt?: boolean;
   /**
    * `unitType` is nullable here for the same reason `unitArea` always was: a
    * per-unit «غير مؤكَّد» flag blanks the field it excuses (migration 0031), so
@@ -203,14 +214,16 @@ export interface BillablePropertyEntry {
     /** Set on an OWNER spell of a co-owned flat. See `BillableUnit.ownerShare`. */
     ownerShare?: BillableOwnerShare | null;
     ownerShareUndecidable?: boolean;
+    exempt?: boolean;
   }>;
 }
 
-/** The co-ownership facts, copied across without inventing any. */
+/** The co-ownership and exemption facts, copied across without inventing any. */
 function shareFields(source: OwnerShareFields | null | undefined): OwnerShareFields {
   return {
     ...(source?.ownerShare ? { ownerShare: source.ownerShare } : {}),
     ...(source?.ownerShareUndecidable ? { ownerShareUndecidable: true } : {}),
+    ...(source?.exempt ? { exempt: true } : {}),
   };
 }
 
