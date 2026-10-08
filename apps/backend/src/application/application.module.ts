@@ -11,6 +11,8 @@ import { BuildingsService } from './features/buildings/buildings.service';
 import { CensusSyncService } from './features/buildings/census-sync.service';
 import { DamageService } from './features/buildings/damage.service';
 import { ParcelCorrectionService } from './features/buildings/parcel-correction.service';
+import { OwnerBillingService } from './features/buildings/owner-billing.service';
+import { FeeExemptionService } from './features/buildings/fee-exemption.service';
 import { UnitCorrectionService } from './features/corrections/unit-correction.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
@@ -29,6 +31,7 @@ import { ReportingService } from './features/reporting/reporting.service';
 import { TenantService } from './features/tenant/tenant.service';
 import { FeesService } from './features/fees/fees.service';
 import { CorrectionBillsService } from './features/fees/correction-bills.service';
+import { ParcelDuesService } from './features/fees/parcel-dues.service';
 import { PaymentLedgerService } from './features/fees/payment-ledger.service';
 import { StaffService } from './features/staff/staff.service';
 import { ZonesService } from './features/zones/zones.service';
@@ -71,6 +74,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CitizenMergeService,
     FeesService,
     CorrectionBillsService,
+    ParcelDuesService,
     PaymentLedgerService,
     StaffService,
     ZonesService,
@@ -79,6 +83,8 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CensusSyncService,
     DamageService,
     ParcelCorrectionService,
+    OwnerBillingService,
+    FeeExemptionService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,
@@ -106,6 +112,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CitizenMergeService,
     FeesService,
     CorrectionBillsService,
+    ParcelDuesService,
     PaymentLedgerService,
     StaffService,
     ZonesService,
@@ -114,6 +121,8 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CensusSyncService,
     DamageService,
     ParcelCorrectionService,
+    OwnerBillingService,
+    FeeExemptionService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,

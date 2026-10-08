@@ -78,9 +78,15 @@ enum IdentityDocType {
 /// elsewhere and is recorded only so the register can say who owns a unit and
 /// how to reach them. Added by migration 0040. See `CITIZEN_RESIDENCE` in
 /// shared-schemas.
+///
+/// ESTATE and INSTITUTION (migration 0076) are owners of record that are not a
+/// living person: «تركة (ورثة المرحوم …)», the file of an owner who died,
+/// converted in place; and «جهة / وقف», a waqf, council or public body.
 enum CitizenResidence {
   RESIDENT
   NON_RESIDENT_OWNER
+  ESTATE
+  INSTITUTION
 }
 
 model User {
@@ -287,6 +293,10 @@ model User {
   /// Staff only: the refresh tokens behind this account's sessions (0059).
   /// Cascades, so removing the account ends every session it holds.
   staffRefreshTokens    StaffRefreshToken[]
+  /// Flats this owner pays for in full on behalf of the other owners (0075).
+  unitsPaidAsResponsibleOwner Unit[] @relation("UnitResponsibleOwner")
+  /// Unit fee exemptions this staff member granted (0077).
+  unitFeeExemptionsGranted    Unit[] @relation("UnitFeeExemptedBy")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -1298,6 +1308,28 @@ model CitizenMerge {
   @@map("citizen_merges")
 }
 
+/// «توزيع الرسم على المالكين» — how a flat with several owners is billed
+/// (migration 0075). See `OWNER_BILLING_MODE` in shared-schemas.
+enum OwnerBillingMode {
+  /// Each of N current owners pays 1/N.
+  EQUAL
+  /// Each owner pays their أسهم over the sum of every current owner's أسهم.
+  BY_SHARES
+  /// `Unit.responsibleOwnerId` pays the whole; the others are not charged.
+  RESPONSIBLE_OWNER
+}
+
+/// Why a unit is charged no fee at all (migration 0077). See
+/// `FEE_EXEMPTION_REASON` in shared-schemas.
+enum FeeExemptionReason {
+  /// «دار عبادة» — a mosque, a church, a husseiniya.
+  PLACE_OF_WORSHIP
+  /// «مرفق عام» — the municipality's own buildings, a public school.
+  PUBLIC_FACILITY
+  /// «سبب آخر» — with the reason in `Unit.feeExemptionNote`.
+  OTHER
+}
+
 /// One canonical unit inside a building — شقة, محل, عيادة.
 ///
 /// The unit exists whether or not anyone has been surveyed in it, and that is
@@ -1363,6 +1395,27 @@ model Unit {
 
   notes String?
 
+  /// «توزيع الرسم على المالكين» (migration 0075): how a flat with several
+  /// current owners is billed. NULL means nobody chose, and is billed as EQUAL
+  /// (the user's decision, 2026-10-07). See `ownerShareOf` in shared-schemas.
+  ownerBillingMode   OwnerBillingMode?
+  /// The owner who pays the whole under RESPONSIBLE_OWNER, and only then
+  /// (CHECK units_responsible_owner_needs_mode). Billing re-checks that this
+  /// person is still a current owner and falls back to EQUAL if not.
+  responsibleOwnerId String?           @db.Uuid
+  responsibleOwner   User?             @relation("UnitResponsibleOwner", fields: [responsibleOwnerId], references: [id], onDelete: SetNull)
+
+  /// «معفاة من الرسوم» (migration 0077): why this unit is charged nothing by
+  /// any rate-based notice — the mosque on a waqf parcel, a public building.
+  /// NULL on every unit billed normally. Reason, grantor and date are set and
+  /// lifted together (CHECK units_fee_exemption_fields); OTHER carries its
+  /// reason in words (CHECK units_fee_exemption_other_note).
+  feeExemption     FeeExemptionReason?
+  feeExemptionNote String?
+  feeExemptedById  String?             @db.Uuid
+  feeExemptedBy    User?               @relation("UnitFeeExemptedBy", fields: [feeExemptedById], references: [id], onDelete: SetNull)
+  feeExemptedAt    DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1376,6 +1429,7 @@ model Unit {
   @@unique([buildingId, floor, sequence])
   @@index([buildingId])
   @@index([surveyStatus])
+  @@index([responsibleOwnerId])
   @@map("units")
 }
 
@@ -1549,7 +1603,7 @@ model DamageAssessment {
   /// «صالحة للسكن؟» — the second axis beside the structural level (0071). True / false as answered,
   /// NULL on a reading from before the question or an unclassified one. The level prefills it (`habitabilityFor`): a collapse or
   /// an evacuation is never habitable (CHECK `damage_assessments_habitable_matches_level`). A unit whose
-  /// current reading says it cannot be lived in has its occupancy fee held (`isUninhabitableReading`).
+  /// current reading says it cannot be lived in is charged no fee at all until a later reading says habitable (`isUninhabitableReading`).
   habitable Boolean?
 
   /// «موعد إعادة الكشف» — when a target read «غير صالحة للسكن» is due to be inspected again after repair

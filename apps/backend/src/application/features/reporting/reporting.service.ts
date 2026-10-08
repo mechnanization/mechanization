@@ -1,11 +1,14 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import type { FeeAssessment } from '@mechanization/shared-schemas';
+import { effectiveOwnerBilling, isCoOwned, ownerShareOf } from '@mechanization/shared-schemas';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
+import { attachOccupancies } from '../fees/fees.service';
 
 export interface DashboardCounters {
   total: number;
@@ -271,6 +274,26 @@ export interface CitizenProfileUnit {
     contactPhone: string | null;
     shares: number | null;
   }>;
+  /**
+   * «معفاة من الرسوم» (0077): why the linked unit is charged nothing, or null.
+   * The reason only — the officer's note stays on the staff screens, because
+   * this object reaches the citizen portal by spread.
+   */
+  feeExemption: 'PLACE_OF_WORSHIP' | 'PUBLIC_FACILITY' | 'OTHER' | null;
+  /**
+   * «توزيع الرسم على المالكين» (migration 0075), when the linked flat has
+   * several current owners; null otherwise. `share` is this file's owner's
+   * part — what an owner-borne charge on the flat bills them for — or null
+   * when it cannot be computed («حسب الأسهم» with أسهم missing), or when this
+   * person is not among the owners (a tenancy card).
+   */
+  ownerBilling: {
+    mode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
+    effectiveMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER';
+    responsibleOwnerId: string | null;
+    fallback: 'RESPONSIBLE_NOT_OWNER' | null;
+    share: { numerator: number; denominator: number } | null;
+  } | null;
 }
 
 /**
@@ -377,6 +400,65 @@ export interface CitizenProfileProperty {
   buildingLifecycleStatus: string | null;
   unitCount: number;
   units: CitizenProfileUnit[];
+  /**
+   * The census flats a card with no unit lines is billed through, read as
+   * `holdingsOf` reads them: a منزل's one flat, or the flats this person is
+   * recorded on in the building a مبنى card names. Only what changes the bill
+   * — «معفاة من الرسوم» and the owners' split — since a line on `units`
+   * carries both and these cards have none. Empty for every other card.
+   */
+  heldUnits: CitizenProfileHeldUnit[];
+}
+
+/** What `billedBareCards` reads of a card on the profile. */
+export interface ProfileBillingCard {
+  id: string;
+  endedAt: Date | null;
+  propertyType: string | null;
+  buildingId: string | null;
+  units: ReadonlyArray<{ endedAt: Date | null }>;
+}
+
+/**
+ * The cards with no current unit lines that billing bills through the census,
+ * chosen exactly as `holdingsOf` chooses them, so the file shows «معفاة» and
+ * the owners' split on the cards a bill is actually raised from:
+ *
+ *  - the latest registration only (`registrations` comes latest first, as
+ *    `holdingsOf` reads `take: 1` by `submittedAt desc`);
+ *  - current cards only, and a line counts only while current — a card whose
+ *    every line has ended has none (`endedAt: null` on both, in billing);
+ *  - a منزل card with a building bills that building's one flat;
+ *  - a مبنى card with a building is the one `attachOccupancies` lets claim
+ *    the person's recorded flats there: the first such card, and none when any
+ *    other non-مبنى card names the same building.
+ *
+ * Shares `attachOccupancies` rather than restating it, so the file and the
+ * bill cannot pick different cards.
+ */
+export function billedBareCards<C extends ProfileBillingCard>(
+  registrations: ReadonlyArray<{ properties: readonly C[] }>,
+): { houses: C[]; blocks: C[] } {
+  const current = (registrations[0]?.properties ?? [])
+    .filter((card) => !card.endedAt)
+    .map((card) => ({ card, buildingId: card.buildingId, propertyType: card.propertyType, units: card.units.filter((line) => !line.endedAt) }));
+  const houses = current
+    .filter((entry) => entry.propertyType === 'HOUSE' && entry.buildingId && entry.units.length === 0)
+    .map((entry) => entry.card);
+  // Every building marked, so a claiming card comes back with a list and every other card without one.
+  const marked = new Map(current.filter((entry) => entry.buildingId).map((entry) => [entry.buildingId!, [] as never[]]));
+  const blocks = attachOccupancies(current, marked)
+    .filter((entry) => entry.occupiedUnits !== undefined)
+    .map((entry) => entry.card);
+  return { houses, blocks };
+}
+
+/** A census flat a card bills through without a unit line — see `CitizenProfileProperty.heldUnits`. */
+export interface CitizenProfileHeldUnit {
+  unitId: string;
+  unitCode: string;
+  feeExemption: CitizenProfileUnit['feeExemption'];
+  ownerBilling: CitizenProfileUnit['ownerBilling'];
 }
 
 export interface CitizenProfileDocument {
@@ -949,6 +1031,7 @@ export class ReportingService {
                     firstName: true,
                     middleName: true,
                     lastName: true,
+                    residence: true,
                     referenceNumber: true,
                   },
                 },
@@ -1013,7 +1096,7 @@ export class ReportingService {
                 // so the card can link to their file instead of naming them.
                 landlordCitizenId: true,
                 landlordCitizen: {
-                  select: { firstName: true, middleName: true, lastName: true, referenceNumber: true },
+                  select: { firstName: true, middleName: true, lastName: true, residence: true, referenceNumber: true },
                 },
                 unitStatus: true,
                 buildingName: true,
@@ -1083,6 +1166,9 @@ export class ReportingService {
                         unitCode: true,
                         postedNumber: true,
                         unitStatus: true,
+                        ownerBillingMode: true,
+                        responsibleOwnerId: true,
+                        feeExemption: true,
                         presenceMonths: true,
                         ownerLastStayAt: true,
                         vacancyDeclaredAt: true,
@@ -1111,9 +1197,12 @@ export class ReportingService {
                                 firstName: true,
                                 middleName: true,
                                 lastName: true,
+                                residence: true,
                                 phone: true,
                                 hasNoPhone: true,
                                 contactPhone: true,
+                                // Billing divides a flat between open files only (0075).
+                                isActive: true,
                               },
                             },
                           },
@@ -1180,12 +1269,12 @@ export class ReportingService {
     const sum = (rows: typeof payments, field: 'amount' | 'paidAmount' | 'remaining') =>
       rows.reduce((total, payment) => total + payment[field], 0);
     const overdue = payments.filter((payment) => payment.paymentStatus === 'OVERDUE');
+    const heldUnits = await this.profileHeldUnits(citizen.id, citizen.registrations);
 
     return {
       id: citizen.id,
-      fullName: [citizen.firstName, citizen.middleName, citizen.lastName]
-        .filter(Boolean)
-        .join(' '),
+      // «ورثة المرحوم …» for an estate (0076).
+      fullName: citizenDisplayName(citizen),
       motherName: citizen.motherName,
       phone: citizen.phone,
       whatsapp: citizen.whatsapp,
@@ -1307,6 +1396,7 @@ export class ReportingService {
           buildingPostedNumber: property.building?.postedNumber ?? null,
           buildingLifecycleStatus: property.building?.lifecycleStatus ?? null,
           unitCount: property.units.filter((unit) => !unit.endedAt).length,
+          heldUnits: heldUnits.get(property.id) ?? [],
           units: property.units.map((unit) => {
             // At most one by the partial unique index; see the select above.
             const vacancy = unit.unit?.vacancies[0];
@@ -1342,6 +1432,8 @@ export class ReportingService {
                 contactPhone: owner.citizen.contactPhone,
                 shares: owner.shares,
               })),
+              feeExemption: unit.unit?.feeExemption ?? null,
+              ownerBilling: profileOwnerBilling(unit.unit, citizenId),
             };
           }),
         })),
@@ -1355,6 +1447,66 @@ export class ReportingService {
         })),
       })),
     };
+  }
+
+  /**
+   * The census flats each card with no unit lines is billed through — see
+   * `CitizenProfileProperty.heldUnits`. Which cards, as `billedBareCards`
+   * chooses them; which flats, as `holdingsOf` reads them: a منزل bills its
+   * building's one flat, a مبنى card the flats this person is recorded on there.
+   */
+  private async profileHeldUnits(
+    citizenId: string,
+    registrations: ReadonlyArray<{ properties: readonly ProfileBillingCard[] }>,
+  ): Promise<Map<string, CitizenProfileHeldUnit[]>> {
+    const { houses, blocks } = billedBareCards(registrations);
+    const held = new Map<string, CitizenProfileHeldUnit[]>();
+    if (houses.length + blocks.length === 0) return held;
+
+    const houseBuildings = [...new Set(houses.map((card) => card.buildingId!))];
+    const blockBuildings = [...new Set(blocks.map((card) => card.buildingId!))];
+    const units = await withConnectionRetry(() =>
+      this.db.unit.findMany({
+        where: {
+          OR: [
+            { buildingId: { in: houseBuildings } },
+            { buildingId: { in: blockBuildings }, occupancies: { some: { citizenId, toDate: null } } },
+          ],
+        },
+        orderBy: [{ floor: 'asc' }, { sequence: 'asc' }],
+        select: {
+          id: true,
+          buildingId: true,
+          unitCode: true,
+          feeExemption: true,
+          ownerBillingMode: true,
+          responsibleOwnerId: true,
+          occupancies: {
+            where: { toDate: null, role: 'OWNER' },
+            select: { citizenId: true, shares: true, citizen: { select: { isActive: true } } },
+          },
+        },
+      }),
+    );
+    const toHeld = (unit: (typeof units)[number]): CitizenProfileHeldUnit => ({
+      unitId: unit.id,
+      unitCode: unit.unitCode,
+      feeExemption: unit.feeExemption,
+      ownerBilling: profileOwnerBilling(unit, citizenId),
+    });
+
+    for (const card of houses) {
+      const inBuilding = units.filter((unit) => unit.buildingId === card.buildingId);
+      if (inBuilding.length === 1) held.set(card.id, [toHeld(inBuilding[0]!)]);
+    }
+    // `billedBareCards` never hands a building both a منزل and a مبنى card: the منزل suppresses it.
+    for (const card of blocks) {
+      held.set(
+        card.id,
+        units.filter((unit) => unit.buildingId === card.buildingId).map(toHeld),
+      );
+    }
+    return held;
   }
 
   /**
@@ -1413,6 +1565,7 @@ export class ReportingService {
                   firstName: true,
                   middleName: true,
                   lastName: true,
+                  residence: true,
                   phone: true,
                   hasNoPhone: true,
                   contactPhone: true,
@@ -1562,13 +1715,7 @@ export class ReportingService {
         const registrant: ParcelRegistrant = {
           citizenId,
           registrationId: row.registration.id,
-          fullName: [
-            row.registration.citizen.firstName,
-            row.registration.citizen.middleName,
-            row.registration.citizen.lastName,
-          ]
-            .filter(Boolean)
-            .join(' '),
+          fullName: citizenDisplayName(row.registration.citizen),
           phone: row.registration.citizen.phone,
           hasNoPhone: row.registration.citizen.hasNoPhone,
           contactPhone: row.registration.citizen.contactPhone,
@@ -1676,6 +1823,7 @@ export class ReportingService {
               firstName: true,
               middleName: true,
               lastName: true,
+              residence: true,
               phone: true,
               hasNoPhone: true,
               contactPhone: true,
@@ -1706,9 +1854,8 @@ export class ReportingService {
       totalProcessed += rows.length;
 
       for (const row of rows) {
-        const name = [row.citizen.firstName, row.citizen.middleName, row.citizen.lastName]
-          .filter(Boolean)
-          .join(' ');
+        // «ورثة المرحوم …» for an estate (0076), as on every screen.
+        const name = citizenDisplayName(row.citizen);
 
         // One line per property, so a citizen with three properties produces three
         // rows — municipality staff filter by property, not by person. A building
@@ -1837,8 +1984,10 @@ function personName(person: {
   firstName: string;
   middleName: string | null;
   lastName: string;
+  residence?: string | null;
 }): string {
-  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ');
+  // «ورثة المرحوم …» for an estate (0076).
+  return citizenDisplayName(person);
 }
 
 /**
@@ -1852,4 +2001,44 @@ function csvCell(value: unknown): string {
   const text = String(value ?? '');
   const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
   return `"${safe.replace(/"/g, '""')}"`;
+}
+
+/** The co-ownership billing of a flat as the citizen's file shows it — see `CitizenProfileUnit.ownerBilling`. Exported for its tests. */
+export function profileOwnerBilling(
+  unit:
+    | {
+        ownerBillingMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
+        responsibleOwnerId: string | null;
+        occupancies: ReadonlyArray<{ citizenId: string; shares: number | null; citizen: { isActive: boolean } }>;
+      }
+    | null
+    | undefined,
+  citizenId: string,
+): CitizenProfileUnit['ownerBilling'] {
+  if (!unit) return null;
+  // The owners billing divides between — open files only, as `ownerBillingRules` reads them.
+  const rule = {
+    mode: unit.ownerBillingMode,
+    responsibleOwnerId: unit.responsibleOwnerId,
+    owners: unit.occupancies
+      .filter((owner) => owner.citizen.isActive)
+      .map((owner) => ({ citizenId: owner.citizenId, shares: owner.shares })),
+  };
+  if (!isCoOwned(rule)) return null;
+  // A tenant's line: how the owners divide their bill is not this person's business.
+  if (!rule.owners.some((owner) => owner.citizenId === citizenId)) return null;
+  const effective = effectiveOwnerBilling(rule);
+  const outcome = ownerShareOf(rule, citizenId);
+  return {
+    mode: rule.mode,
+    effectiveMode: effective.mode,
+    responsibleOwnerId: rule.responsibleOwnerId,
+    fallback: effective.fallback,
+    share:
+      outcome.kind === 'SHARE'
+        ? { numerator: outcome.share.numerator, denominator: outcome.share.denominator }
+        : outcome.kind === 'WHOLE'
+          ? { numerator: 1, denominator: 1 }
+          : null,
+  };
 }

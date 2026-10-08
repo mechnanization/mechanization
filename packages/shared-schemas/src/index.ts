@@ -26,4 +26,6 @@ export * from './payout-policy';
 export * from './inspector-earnings';
 export * from './citizen-merge.schema';
 export * from './unit-status-rule';
+export * from './owner-share';
+export * from './citizen-name';
 export * from './error-codes';

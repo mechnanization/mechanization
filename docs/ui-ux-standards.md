@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-08.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -856,10 +856,16 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   `confirm-cash-payment-dialog.tsx`, `fullscreen-map.tsx`, `payment-receipt.tsx`,
   `settings/profile-section.tsx`, `theme-toggle.tsx`, and the primitives
   `field.tsx` and `toast.tsx`. `ThemeToggle`'s labels are Arabic only.
-- **Server text shown as the message** (TXT-6): about 90 catch blocks in 51
-  files render `ApiRequestError.message` (`caught.message` or
-  `caught.payload.message`); `ErrorState` detects offline by matching
-  «تعذّر الاتصال» in its description.
+- **Server text shown as the message** (TXT-6): 24 catch blocks in 13 files
+  render `caught.payload.message`, the server's English log text for a
+  converted code, instead of `caught.message` (the `errors.<CODE>` text):
+  `building-editor` 3, `landlord-proposal-card` 3, two each in `citizen-editor`,
+  `end-ownership-dialog`, `end-tenancy-dialog`, `parcel-correction-dialog`,
+  `unit-correction-delete-dialog`, the buildings and zones pages, one each in
+  `building-unit-picker`, `landlord-unlink-dialog`, `settings/cadastre-section`
+  and the landlord-links page (counted 2026-10-08; the matrix drawer's six were
+  fixed then). `ErrorState` detects offline by matching «تعذّر الاتصال» in its
+  description.
 - **Copy mechanisms** (TXT-1): about 117 files branch inline on the locale (`en ?`,
   `locale === 'en' ?`, `isAr ?`), 62 of them through `const en = locale === 'en'`;
   `settingsCopy` serves settings and account; the 13 `messages.nav` keys are

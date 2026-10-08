@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/no-phone-follow-ups` (on `develop@4512abf`), 2026-10-06.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -170,6 +170,18 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** `ADD VALUE` alone in one migration, its use in the next.
 - **Where:** `0062_status_conflict_case`, `0063_status_conflict_one_open`,
   `tenant-migrator.ts` `migrateTenantSchema`.
+
+### A CHECK passes on NULL, so `=` against a nullable column lets the row in
+
+- **What happens:** `CHECK ("responsibleOwnerId" IS NULL OR "ownerBillingMode" = 'RESPONSIBLE_OWNER')`
+  accepted a responsible owner on a flat with no method chosen. The first draft of
+  `0075` did exactly this, and only exercising the CHECK on a seeded row caught it.
+- **Why:** with `ownerBillingMode` NULL, `NULL = 'RESPONSIBLE_OWNER'` is NULL, `false
+  OR NULL` is NULL, and a CHECK fails only on false.
+- **Do this:** compare a nullable column with `IS NOT DISTINCT FROM` (or test `IS NOT
+  NULL` first), and prove every CHECK refuses the row it exists for before shipping.
+- **Where:** `0075_unit_owner_billing` (`units_responsible_owner_needs_mode`), `0077`'s
+  `units_fee_exemption_other_note` (`IS DISTINCT FROM`).
 
 ### No `CREATE INDEX CONCURRENTLY`
 
@@ -447,6 +459,49 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Where:** `presentation/controllers/citizen.controller.ts` `mySummary`;
   `reporting.service.ts` `CitizenProfile`.
 
+### Re-recording an owner from the drawer used to wipe their أسهم
+
+- **What happens:** «تعديل» on an owner in the unit drawer, with the أسهم box left
+  empty, wrote `shares: null` over the أسهم on file. Harmless while nothing read
+  them; since `0075` a flat billed «حسب الأسهم» then refuses to bill.
+- **Why:** the drawer sends no `shares` for an empty box, and `recordOccupancy`'s
+  update wrote `input.shares ?? null`.
+- **Do this:** an absent value keeps what is on file (`input.shares ?? current.shares`);
+  أسهم are recorded or corrected beside the billing method, in «توزيع الرسم على المالكين».
+- **Where:** `BuildingsService.recordOccupancy`; pinned by
+  `co-owner-billing.integration.spec.ts`.
+
+### Granting an exemption reaches back; lifting one does not
+
+- **What happens:** «معفاة من الرسوم» granted on a unit lists, in «فواتير تأثّرت بتصحيحات»,
+  every open bill on it whose figure now differs — raised last week or last year. Lifting the
+  same exemption lists none of the bills raised before the lift.
+- **Why:** `traceChanges` reads `UNIT_FEE_EXEMPTION_SET` as a CORRECTION (the mosque was a
+  mosque before anyone ticked the box, so a bill raised on it was raised on a wrong register)
+  and `UNIT_FEE_EXEMPTION_LIFTED` as a DATED_CHANGE on its day, like a damage reading or a
+  co-owner billing method (the user's decision, 2026-10-08). A change of reason on a standing
+  exemption is also a SET, but leaves the figure as it was, so it lists nothing.
+- **Do this:** do not "fix" the asymmetry. The listing never changes a bill; the accountant decides.
+- **Where:** `fees/bill-corrections.ts` `traceChanges`; pinned in `bill-corrections.spec.ts`.
+
+### Archiving a co-owner re-divides the flat from then on, and no raised bill is listed for it
+
+- **What happens:** «أرشفة الملف» on one owner of a co-owned flat changes every other owner's part
+  from the next bill: four brothers at 1/4 become three at 1/3, and an archived «مالك مسؤول» falls
+  back to the equal split. Restoring the file divides it by four again. «فواتير تأثّرت بتصحيحات»
+  lists none of the bills already raised at the old part.
+- **Why:** billing divides a flat between open files only (`activeOwnerSpells`), so the archive
+  moves the division; but the archive is one `CITIZEN_DEACTIVATED` / `CITIZEN_REACTIVATED` row on
+  the archived person's own file, which `traceChanges` reads for that person alone and which is not
+  in `FILE_ACTIONS`. Deliberately: an archive runs forward, like a sale or a damage reading, and a
+  bill raised before it was right when it was raised.
+- **Do this:** treat it as a forward change. If a file was archived in error and the other owners
+  were billed more in the meantime, that is a manual correction of those bills, not something the
+  correction screen will find. «ملاحظات الجودة» flags an archived responsible owner
+  (`OWNER_BILLING_BLOCKED`).
+- **Where:** `buildings/owner-billing.ts` `activeOwnerSpells`; `fees/bill-corrections.ts`
+  `FILE_ACTIONS`, `traceChanges`.
+
 ### Events are synchronous strings
 
 - **What happens:** a misspelt event name is dropped silently; a listener on
@@ -538,6 +593,41 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   local `.env` and your shell. `pnpm db:seed` scrubs them for its own run.
 - **Where:** `src/scripts/import-parcels.ts`, `clearRemoteCredentials` in
   `src/scripts/seed.ts`.
+
+### A name joined by hand drops «ورثة المرحوم»
+
+- **What happens:** an estate's bill, roster row or tenant card reads «حسن
+  واكد سرور», as if the man who died were the one being billed, while every
+  other screen says «ورثة المرحوم حسن واكد سرور».
+- **Why:** an estate (`0076`) keeps the deceased's own name in the row; the
+  prefix is added when it is shown. `[firstName, lastName].join(' ')` shows the
+  row.
+- **Do this:** name a citizen through `citizenDisplayName` (shared-schemas),
+  with `residence` in the select. It also reads an institution's name, which
+  is one line stored across `firstName`/`lastName` (`splitInstitutionName`), so
+  a search or a sort on `lastName` alone does not find «وقف مسجد البلدة».
+  The opposite holds when a name is **written** into another row (a tenancy
+  card's owner name): use `citizenStoredName`, never the display name — the
+  heirs' sale once wrote «ورثة المرحوم …» onto a tenant's card. Text someone
+  typed is matched through `withoutEstatePrefix` (SQL: `ESTATE_PREFIX_PATTERN`).
+  A card's `landlordName` **as submitted** goes through `storedLandlordName`
+  on the server, at every write: the owner lookup and the unit matrix answer
+  with display names, «نعم، هو المالك» and the sole-owner prefill copy them
+  into the card, and a queued offline save carries whatever the form held.
+  The form strips it too (`landlordNameToSend`), and `landlordLink` carries
+  `name` (stored, the one sent) apart from `displayName` (the one shown).
+- **Where:** `fees.service.ts`, `reporting.service.ts`, `citizens.service.ts`,
+  `buildings.service.ts` (`toOccupancyRow`), `parcel-dues.service.ts`.
+
+### «ليس مقيماً» is not one value any more
+
+- **What happens:** an estate or a waqf is asked for a mother's name, offered
+  «مشغولة من المالك», or billed a per-head flat amount.
+- **Why:** «not a household» used to be `residence === 'NON_RESIDENT_OWNER'`,
+  and `0076` added `ESTATE` and `INSTITUTION`, which are not households either.
+- **Do this:** ask `isOwnerRecord` (not a household) or `isNonPersonRecord`
+  (not a living person). A new check against the one value misses two kinds.
+- **Where:** `packages/shared-schemas/src/enums.ts`.
 
 ## Auth
 
@@ -754,6 +844,20 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   stored meanwhile.
 - **Where:** `lib/session.ts` `clearSession`, `lib/citizen-draft.ts`,
   `lib/offline-db.ts`.
+
+### A رقم العقار typed in Arabic digits misses its Latin twin
+
+- **What happens:** «ما المستحق على العقار» for 420 answers «لا شيء مستحق»
+  although a card and its bill lines say «٤٢٠».
+- **Why:** `propertyNumber` is stored as typed, and the fee lines copy it.
+  The query is normalised to Latin digits (`parcelDuesQuerySchema`), the rows
+  are not.
+- **Do this:** compare digit-normalised values on both sides — `normalizeDigits`
+  in TypeScript, `translate(btrim(x), '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹',
+  '01234567890123456789')` in SQL. Over a jsonb array, guard with
+  `CASE WHEN jsonb_typeof(…) = 'array' THEN … END`, not `AND`/`OR`: Postgres
+  does not promise the order it evaluates them in.
+- **Where:** `parcel-dues.service.ts`, `parcel-dues.ts` (`parcelShareOf`).
 
 ### `#` in a plural branch can print Arabic-Indic digits
 

@@ -7,6 +7,7 @@ import {
   type UnitCorrectionDeleteInput,
   type UnitCorrectionPreview,
   type UnitCorrectionResult,
+  citizenDisplayName,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
@@ -30,8 +31,8 @@ type Actor = { id: string; role: string };
 export const UNIT_CORRECTION_DELETED = 'UNIT_CORRECTION_DELETED';
 export const UNIT_CORRECTION_FILE_ENDED = 'UNIT_CORRECTION_FILE_ENDED';
 
-const fullName = (row: { firstName: string; middleName?: string | null; lastName: string } | null) =>
-  row ? [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' ') : null;
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+const fullName = (row: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null } | null) => (row ? citizenDisplayName(row) : null);
 
 /** Prisma rows (Decimal, Date) as the plain JSON an audit column stores. */
 const json = <T>(value: T): Record<string, unknown> => JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
@@ -403,7 +404,7 @@ export class UnitCorrectionService {
           toDate: true,
           endReason: true,
           updatedAt: true,
-          citizen: { select: { firstName: true, middleName: true, lastName: true } },
+          citizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
         },
       }),
       this.db.unitVisit.findMany({
@@ -453,7 +454,7 @@ export class UnitCorrectionService {
                 select: {
                   citizenId: true,
                   createdById: true,
-                  citizen: { select: { firstName: true, middleName: true, lastName: true } },
+                  citizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
                   createdBy: { select: { firstName: true, middleName: true, lastName: true } },
                 },
               },
@@ -516,8 +517,8 @@ export class UnitCorrectionService {
               survivorId: true,
               absorbedId: true,
               mergedAt: true,
-              survivor: { select: { firstName: true, middleName: true, lastName: true } },
-              absorbed: { select: { firstName: true, middleName: true, lastName: true } },
+              survivor: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
+              absorbed: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
             },
           });
 

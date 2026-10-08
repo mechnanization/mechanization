@@ -13,6 +13,8 @@ import type {
   OccupancyEndReason,
   OccupancyRole,
   OccupancyType,
+  OwnerBillingMode,
+  FeeExemptionReason,
   PropertyType,
   ResidentStatus,
   StaffRole,
@@ -307,6 +309,20 @@ export const ar = {
     RECORDED_IN_ERROR: 'سُجِّل بالخطأ',
   } satisfies Record<OccupancyEndReason, string>,
 
+  /** «معفاة من الرسوم» — why a unit is charged nothing. See `FEE_EXEMPTION_REASON`. */
+  feeExemptionReason: {
+    PLACE_OF_WORSHIP: 'دار عبادة',
+    PUBLIC_FACILITY: 'مرفق عام',
+    OTHER: 'سبب آخر',
+  } satisfies Record<FeeExemptionReason, string>,
+
+  /** «توزيع الرسم على المالكين» on a flat with several owners. See `OWNER_BILLING_MODE`. */
+  ownerBillingMode: {
+    EQUAL: 'بالتساوي بين المالكين',
+    BY_SHARES: 'حسب الأسهم',
+    RESPONSIBLE_OWNER: 'مالك مسؤول يدفع عن الجميع',
+  } satisfies Record<OwnerBillingMode, string>,
+
   /** ما يستند إليه «تأكيد الشغور». See `VACANCY_BASIS`. */
   vacancyBasis: {
     FIELD_INSPECTION: 'معاينة ميدانية — وُجدت خالية',
@@ -330,6 +346,8 @@ export const ar = {
   citizenResidence: {
     RESIDENT: 'أسرة مقيمة في البلدة',
     NON_RESIDENT_OWNER: 'غير مقيم في البلدة',
+    ESTATE: 'تركة (ورثة المرحوم)',
+    INSTITUTION: 'جهة أو وقف',
   } satisfies Record<CitizenResidence, string>,
 
   documentType: {
@@ -631,6 +649,18 @@ export const en = {
     RECORDED_IN_ERROR: 'Recorded in error',
   } satisfies Record<OccupancyEndReason, string>,
 
+  feeExemptionReason: {
+    PLACE_OF_WORSHIP: 'Place of worship',
+    PUBLIC_FACILITY: 'Public facility',
+    OTHER: 'Other reason',
+  } satisfies Record<FeeExemptionReason, string>,
+
+  ownerBillingMode: {
+    EQUAL: 'Split equally between the owners',
+    BY_SHARES: 'By shares',
+    RESPONSIBLE_OWNER: 'One responsible owner pays for all',
+  } satisfies Record<OwnerBillingMode, string>,
+
   vacancyBasis: {
     FIELD_INSPECTION: 'Field inspection — found empty',
     OWNER_STATEMENT: 'The owner says so',
@@ -646,6 +676,8 @@ export const en = {
   citizenResidence: {
     RESIDENT: 'Household living in the town',
     NON_RESIDENT_OWNER: 'Lives outside the town',
+    ESTATE: 'Estate (heirs of the late)',
+    INSTITUTION: 'Institution or waqf',
   } satisfies Record<CitizenResidence, string>,
 
   documentType: {

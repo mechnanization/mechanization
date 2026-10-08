@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -50,7 +50,8 @@ Data access for new code (decided):
   `PresentationModule`. A fifth import means something escaped its layer.
 - `InfrastructureModule` is `@Global()` and binds each port symbol in use to its adapter
   (`SUPABASE_AUTH_SERVICE` is declared but unbound). `ApplicationModule`
-  registers `JwtModule` (`JWT_SECRET`) and every service and job. In both, a new entry goes in `providers` AND `exports`.
+  registers `JwtModule` (`JWT_SECRET`) and every service and job (`ParcelDuesService` among the fee
+  services). In both, a new entry goes in `providers` AND `exports`.
 - `PresentationModule` registers the controllers, `APP_FILTER` = `DomainExceptionFilter`,
   `APP_INTERCEPTOR` = `ViewerCredentialMaskInterceptor` (masks a رقم مرجعي in every response to
   «مشاهد فقط»; [docs/security.md](../../docs/security.md#authentication-and-authorisation)), and
@@ -110,10 +111,66 @@ Data access for new code (decided):
   `@mechanization/shared-schemas` (`damage-rule.ts`) and `uninhabitableSql` in
   `buildings/habitability.ts`: the same predicate, once in TypeScript and once in SQL, so change them
   together. A unit's reading is the latest of its own and its building's (`currentReadingForUnit`). The
-  fee assessment holds an occupant-borne fee on such a unit (`uninhabitableUnitIds`), counted apart from
+  fee assessment charges no fee at all on such a unit, owner-borne included (decision of 2026-10-07:
+  not habitable → exempt) (`uninhabitableUnitIds`), counted apart from
   the review hold. Only a reading that answers decides: «غير مصنّف» with no answer judged nothing, so
   the hold, both census worklists and the panels skip it (`answersHabitability` and its SQL twin
   `answersHabitabilitySql`, `currentReadingForUnit(…, { answering: true })`) and it never ends a hold.
+- **Co-owner billing.** A flat with several current OWNER spells is divided between them, never billed
+  to each in full (`0075`; decision of 2026-10-07). The rule is `ownerShareOf` in
+  `@mechanization/shared-schemas` (`owner-share.ts`): equal by default (`units.ownerBillingMode` NULL),
+  by أسهم over their sum, or one responsible owner. `holdingsOf` loads every owner of each flat in the
+  batch (`buildings/owner-billing.ts`) and attaches this owner's part; `assessCitizen` multiplies area or
+  units by it, only for what an owner bears, and refuses («unassessable») «حسب الأسهم» with أسهم
+  missing. The choice is saved by `OwnerBillingService` (`PUT buildings/units/:unitId/owner-billing`,
+  `REGISTER_WRITE_ROLES`), Tier 1, refusing a responsible owner whose own file billing would not charge
+  (asked through `holdingsOf`). Owners are the flat's current OWNER spells held by an **open** file
+  (`activeOwnerSpells`): an archived file is never billed, so its part falls to the others, and a
+  responsible owner who is archived or stops owning falls back to the equal split at read time. A
+  merge re-points `units.responsibleOwnerId` (only rows still naming the absorbed person) and its
+  undo puts it back. Each owner's amount is rounded on its own, so a flat's parts can differ from
+  the whole by under a pound per owner. «ملاحظات الجودة» warns of a saved method billing cannot carry
+  out (`OWNER_BILLING_BLOCKED`, `DataQualityService.ownerBillingBlocked`, verdict `ownerBillingBlock` in
+  `owner-billing.ts`): «حسب الأسهم» with an owner's أسهم missing (HIGH, every co-owner's bill refused) or a
+  responsible owner no longer among the open owners (MEDIUM, split equally). A notice that bills nobody
+  because «مالك مسؤول» pays refuses with `FEE_NOTHING_TO_CHARGE` (`coOwnerPaid`), not
+  `FEE_NO_MATCHING_CITIZENS`. The portal gets this owner's part and never the responsible owner's id;
+  under «مالك مسؤول» the part (1/1 or 0/1) says who pays, read the same way on both sides.
+- **Units exempt from fees.** `units.feeExemption` (`0077`) takes a unit off every rate-based bill, whoever
+  bears the fee: `holdingsOf` reads it, `assessCitizen` removes the unit before the review hold and the
+  bearer rule and counts it (`exemptUnitCount`). Granted and lifted by `FeeExemptionService`
+  (`PUT buildings/units/:unitId/fee-exemption`, `@Roles('SUPER_ADMIN')`), Tier 1, naming everyone on the
+  unit. A building's lifecycle exempts nothing: `UNINHABITABLE_LIFECYCLE` buildings still billed are a
+  «مراجعة الجودة» finding (`UNINHABITED_WITHOUT_READING`, archived files ignored, cleared on
+  `damage.recorded`) until a «غير صالحة للسكن» reading is recorded. A FLAT notice to a category reads the
+  register too: `flatCategoryCharge` lets off a holder every one of whose units of that category is exempt,
+  uninhabitable, or paid by another co-owner under «مالك مسؤول» (their part 0, counted as
+  `coOwnerPaidUnitCount`; decision 2026-10-08) — never the review hold or the bearer rule — and
+  `CorrectionBillsService` uses the same function for today's figure. Under EQUAL and BY_SHARES every
+  co-owner still pays a FLAT amount once; FLAT to ALL_CITIZENS stays a per-person charge. In «فواتير
+  تأثّرت بتصحيحات» (`bill-corrections.ts`) granting an exemption (`UNIT_FEE_EXEMPTION_SET`) is a
+  CORRECTION, so it reaches bills raised before it; lifting (`UNIT_FEE_EXEMPTION_LIFTED`) is a
+  DATED_CHANGE, forward only. Neither changes a bill. The profile carries `heldUnits` for cards with no
+  current unit lines (a منزل's flat, a مبنى card's census flats), the cards chosen by `billedBareCards`
+  (latest registration, current cards and lines, `attachOccupancies`), so the exemption and the owners'
+  split show on exactly the cards a bill is raised from.
+- **Owners that are not a person** (`0076`). `CitizenResidence` adds `ESTATE` «تركة (ورثة المرحوم)» and
+  `INSTITUTION` «جهة أو وقف». "Not a household" is `isOwnerRecord(residence)` (non-resident, estate,
+  institution) and "not a living person" is `isNonPersonRecord`; never compare to `'NON_RESIDENT_OWNER'`
+  for either. A name goes through `citizenDisplayName` wherever it is shown (an estate is «ورثة المرحوم …»),
+  and an institution's one-line name is split on write (`splitInstitutionName`, in
+  `RegistrationService` and `citizenColumnsForEdit`) and joined back in `getEditable`. A name copied into
+  another row goes through `citizenStoredName` (never the display form), and a typed owner name is matched
+  through `withoutEstatePrefix` / `ESTATE_PREFIX_PATTERN`. An estate owns and nothing else:
+  `nonResidentCardIssues` (`ESTATE_OWNS_ONLY`) and `assertNonResidentOccupancy` (coded `ESTATE_OWNS_ONLY`)
+  refuse a tenancy on it, and refuse «مسكن موسمي» on its homes as well as «مشغولة من المالك». A filing whose
+  document number an estate or a body holds is a CONFLICT, never attached to it. `planMerge` blocks a person with a body, or an estate with
+  an institution (`RESIDENCE_CONFLICT`); duplicate detection and the quality scan skip both kinds; a FLAT
+  notice to ALL_CITIZENS skips both (`resolveTargets` with `basis`).
+- **«المستحق على عقار».** `ParcelDuesService` (`GET fees/parcel-dues?propertyNumber=`, `FEE_READ_ROLES`,
+  `parcelDuesQuerySchema`) finds open bills by a JSONB containment on `assessment.lines` and gives each the
+  parcel's part by its own lines (`parcelShareOf`), then lists apart the open bills with no lines of the
+  people on the parcel today. Read-only; no certificate.
 - **Searching citizens as «مشاهد فقط».** The register, the review queue and the payments list match a
   citizen through `citizenSearchText(S, role)` (`application/common/citizen-search.ts`) rather than
   `u."searchText"` directly: for VIEWER it removes the رقم مرجعي (folded and compact) from the searched
@@ -277,7 +334,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 114 specs, 26 of them `*.integration.spec.ts`.
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 119 specs, 27 of them `*.integration.spec.ts`.
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

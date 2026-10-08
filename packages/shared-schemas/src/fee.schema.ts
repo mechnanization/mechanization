@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { uuid } from './primitives';
+import { normalizeDigits, uuid } from './primitives';
+import { OWNER_BILLING_MODE } from './enums';
 import { ADJUSTMENT_REASON_MIN, municipalToday } from './cash-policy';
 
 /**
@@ -208,6 +209,24 @@ export const feeAssessmentLineSchema = z.object({
   unitType: z.string().nullable(),
   /** Square metres, when established. Null under a PER_UNIT basis. */
   unitArea: z.number().nullable(),
+  /**
+   * The census unit's code («0201»), when the line is a flat the census
+   * holds. Absent on every bill raised before co-owner billing (0075).
+   */
+  unitCode: z.string().nullable().optional(),
+  /**
+   * The part of a co-owned flat this bill charges («توزيع الرسم على
+   * المالكين», `ownerShareOf`): the line's area, or its one unit, is
+   * multiplied by numerator/denominator. Absent on a flat billed whole.
+   */
+  ownerShare: z
+    .object({
+      mode: z.enum(OWNER_BILLING_MODE),
+      numerator: z.number().int().min(0),
+      denominator: z.number().int().min(1),
+    })
+    .nullable()
+    .optional(),
 });
 
 export const feeAssessmentSchema = z.object({
@@ -247,16 +266,40 @@ export const feeAssessmentSchema = z.object({
    */
   heldUnitCount: z.number().default(0),
   /**
-   * Flats whose occupancy fee this bill holds because their current damage
-   * reading says nobody can live in them — «غير صالحة للسكن» (the user's
-   * decision, 2026-10-05; `isUninhabitableReading`). Not charged to anybody
-   * until a re-inspection reads them habitable, and counted here so the bill
-   * says so. Law 60/1988 ties the rental-value fee (Art. 11) and the annual
-   * maintenance fee (Art. 79) to actual occupancy; owner-borne fees follow the
-   * deed and are not held. Counted apart from `heldUnitCount`: the clerk
-   * settles a review in the register and an uninhabitable flat in the field.
+   * Flats this bill charges nothing for because their current damage reading
+   * says nobody can live in them — «غير صالحة للسكن» (`isUninhabitableReading`).
+   * Exempt from every rate-based fee, owner-borne ones included, until a
+   * re-inspection reads them habitable (the user's decisions of 2026-10-05 and
+   * 2026-10-07: «not habitable → exempt»), and counted here so the bill says
+   * so. Counted apart from `heldUnitCount`: the clerk settles a review in the
+   * register and an uninhabitable flat in the field.
    */
   uninhabitableUnitCount: z.number().default(0),
+  /**
+   * Co-owned flats charged on this bill at this owner's part rather than whole
+   * («توزيع الرسم على المالكين», migration 0075). Their lines carry the
+   * fraction; `totalArea` (PER_AREA) and `chargedUnits` (PER_UNIT) are already
+   * the shared figures the rate multiplies.
+   */
+  sharedUnitCount: z.number().default(0),
+  /**
+   * Co-owned flats this owner holds but another owner pays for — the
+   * responsible owner named on the flat. Not charged here, and counted so the
+   * bill says so rather than reading as a smaller holding.
+   */
+  coOwnerPaidUnitCount: z.number().default(0),
+  /**
+   * Units this bill charges nothing for because they are «معفاة من الرسوم» —
+   * the mosque on a waqf parcel, a public building (migration 0077). Every
+   * rate-based fee, whoever bears it, and counted so the bill says so.
+   */
+  exemptUnitCount: z.number().default(0),
+  /**
+   * The unit count the rate multiplies under PER_UNIT when a co-owned flat is
+   * charged at a part — 2.25 for two whole shops and a quarter of a third.
+   * Absent when every charged flat is whole, where it equals `unitCount`.
+   */
+  chargedUnits: z.number().optional(),
   lines: z.array(feeAssessmentLineSchema),
 });
 
@@ -784,3 +827,57 @@ export const referenceOnlyLoginSchema = z.object({
 });
 
 export type ReferenceOnlyLogin = z.infer<typeof referenceOnlyLoginSchema>;
+
+/**
+ * «ما المستحق على العقار» — what is still owed on one رقم العقار, before a
+ * براءة ذمّة (the user's guidance of 2026-10-07: a debt attaches to the
+ * property, whoever the owner of record is now). Read-only; it issues no
+ * certificate.
+ */
+export const parcelDuesQuerySchema = z.object({
+  /*
+    Latin digits whatever was typed: an Arabic keyboard gives «٤٢٠», and the
+    bill lines hold «420» — read as typed, the answer would be a false «لا شيء
+    مستحق» on the one check a clearance rests on.
+  */
+  propertyNumber: z
+    .string({ required_error: 'رقم العقار مطلوب' })
+    .trim()
+    .min(1, 'رقم العقار مطلوب')
+    .max(40)
+    .transform((value) => normalizeDigits(value)),
+});
+export type ParcelDuesQuery = z.infer<typeof parcelDuesQuerySchema>;
+
+/** One open bill, and the part of what remains on it that is this parcel's. */
+export interface ParcelDuesBill {
+  paymentId: string;
+  citizenId: string;
+  /** «ورثة المرحوم …» for an estate. */
+  citizenName: string;
+  title: string;
+  dueDate: string;
+  paymentStatus: 'UNPAID' | 'OVERDUE' | 'PENDING_REVIEW';
+  /** What is still unpaid on the whole bill. */
+  remaining: number;
+  /** This parcel's part of `remaining`, by the bill's own lines (area or units, and owners' parts). */
+  onParcel: number;
+  /** The census units on this parcel the bill charged for, where it names them. */
+  unitCodes: string[];
+  /** Every line on the bill is on this parcel. */
+  wholeBill: boolean;
+}
+
+export interface ParcelDues {
+  propertyNumber: string;
+  /** Sum of `onParcel` — what is owed on the parcel by its bills' own lines. */
+  total: number;
+  bills: ParcelDuesBill[];
+  /**
+   * Open bills of the people on this parcel that name no unit — a flat amount,
+   * or a bill from before itemised billing. Shown apart: they are the holders'
+   * debts, not demonstrably the parcel's.
+   */
+  unlinked: Array<Omit<ParcelDuesBill, 'onParcel' | 'unitCodes' | 'wholeBill'>>;
+  unlinkedTotal: number;
+}

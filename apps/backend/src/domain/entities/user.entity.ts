@@ -1,3 +1,4 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { AggregateRoot } from './aggregate-root.base';
 import { ForbiddenError, ValidationError } from '../errors/domain-error';
 
@@ -39,6 +40,8 @@ export interface CitizenProps {
   identityDocNumber: string;
   isActive: boolean;
   tokenVersion?: number;
+  /** نوع الملف — an estate is named «ورثة المرحوم …» (0076). Absent reads as a household. */
+  residence?: string | null;
 }
 
 /**
@@ -110,10 +113,14 @@ export class User extends AggregateRoot {
     return (this.attrs.totpSecret as string | null | undefined) ?? undefined;
   }
 
+  /** As every screen names the file — «ورثة المرحوم …» for an estate (0076). */
   get fullName(): string {
-    return [this.attrs.firstName, this.attrs.middleName, this.attrs.lastName]
-      .filter(Boolean)
-      .join(' ');
+    return citizenDisplayName({
+      firstName: (this.attrs.firstName as string | null) ?? null,
+      middleName: (this.attrs.middleName as string | null) ?? null,
+      lastName: (this.attrs.lastName as string | null) ?? null,
+      residence: (this.attrs.residence as string | null) ?? null,
+    });
   }
 
   /**
