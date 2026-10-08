@@ -76,9 +76,9 @@ export interface BillableUnit {
    */
   underReview: boolean;
   /**
-   * The flat's current damage reading says nobody can live in it — its
-   * occupancy fee is held until a re-inspection says otherwise (decision,
-   * 2026-10-05; `assessCitizen`). Like `underReview`, only ever true for a
+   * The flat's current damage reading says nobody can live in it — it is
+   * charged no fee at all until a re-inspection says otherwise (decisions of
+   * 2026-10-05 and 2026-10-07; `assessCitizen`). Like `underReview`, only ever true for a
    * flat the census holds: a reading is about a census unit or building.
    */
   uninhabitable: boolean;

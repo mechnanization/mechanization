@@ -2621,8 +2621,9 @@ export function BuildingEditor({
                 الجودة» lists the building until the reading is recorded.
               */}
               {isUninhabitableLifecycle(lifecycleStatus) ? (
-                <div role="note" className="flex items-start gap-2 rounded-xl border border-info/40 bg-info/10 p-3.5 text-xs leading-relaxed text-info">
-                  <Info className="size-4 shrink-0 mt-0.5" aria-hidden />
+                <div role="note" className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/5 p-3.5 text-xs leading-relaxed text-foreground">
+                  {/* The icon carries the tone; the text stays foreground (COL-4: text-info on a tint is 4.11:1). */}
+                  <Info className="mt-0.5 size-4 shrink-0 text-info" aria-hidden />
                   <p>{tFeeExemption('lifecycleNote')}</p>
                 </div>
               ) : null}

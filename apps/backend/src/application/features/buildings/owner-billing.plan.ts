@@ -2,6 +2,7 @@ import {
   effectiveOwnerBilling,
   isCoOwned,
   ownerSharesPreview,
+  usableShares,
   type OwnerBillingMode,
   type OwnerBillingRule,
   type SetOwnerBillingInput,
@@ -101,7 +102,7 @@ export function planOwnerBilling(
   if (input.mode === 'BY_SHARES' && isCoOwned(rule)) {
     const preview = ownerSharesPreview(rule);
     if (preview.owners.some((owner) => owner.outcome.kind === 'UNDECIDABLE')) {
-      const missing = preview.owners.filter((owner) => !(owner.shares && owner.shares > 0)).length;
+      const missing = preview.owners.filter((owner) => !usableShares(owner.shares)).length;
       return {
         ok: false,
         refusal: { code: 'OWNER_BILLING_SHARES_MISSING', params: { unitCode, missing } },

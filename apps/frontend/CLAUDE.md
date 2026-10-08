@@ -119,7 +119,7 @@ component types.
 - A plain module that needs copy (no React context: a formatter, a table-cell helper) builds
   a translator over its own slice of the message files with `createTranslator` and
   `FORMAT_LOCALE` (`ar-u-nu-latn`, Latin digits) from `lib/api-errors.ts`, as `api-errors.ts`,
-  `fee-assessment.ts` and `audit-describe.ts` do. Plain labels with no placeholders are a lookup
+  `fee-assessment.ts`, `owner-billing.ts` and `audit-describe.ts` do. Plain labels with no placeholders are a lookup
   (`audit-labels.ts` reads `auditActions` and `auditEntities`).
 - Enum and status labels MUST come from `getLabels(locale)` (shared-schemas).
 - Legacy, convert when you touch a file: inline `en ? '…' : '…'` (about 117 files; 62 declare
@@ -240,7 +240,7 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 17 files, 230 cases.
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 18 files, 253 cases.
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
 when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`,

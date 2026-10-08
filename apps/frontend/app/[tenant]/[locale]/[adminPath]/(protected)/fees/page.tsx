@@ -462,6 +462,13 @@ export default function FeesPage({
       if (res.feeExemptUnits) {
         toast.info(tFees('issue.feeExempt', { count: res.feeExemptUnits }));
       }
+      /*
+        Not held and not exempt: a co-owned flat «مالك مسؤول» pays for in full.
+        Said so the other owners' bills do not read as missing a unit.
+      */
+      if (res.coOwnerPaidUnits) {
+        toast.info(tFees('issue.coOwnerPaid', { count: res.coOwnerPaidUnits }));
+      }
       setIssueOpen(false);
       void load();
     } catch (caught) {

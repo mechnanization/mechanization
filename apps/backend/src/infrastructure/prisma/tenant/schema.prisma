@@ -1603,7 +1603,7 @@ model DamageAssessment {
   /// «صالحة للسكن؟» — the second axis beside the structural level (0071). True / false as answered,
   /// NULL on a reading from before the question or an unclassified one. The level prefills it (`habitabilityFor`): a collapse or
   /// an evacuation is never habitable (CHECK `damage_assessments_habitable_matches_level`). A unit whose
-  /// current reading says it cannot be lived in has its occupancy fee held (`isUninhabitableReading`).
+  /// current reading says it cannot be lived in is charged no fee at all until a later reading says habitable (`isUninhabitableReading`).
   habitable Boolean?
 
   /// «موعد إعادة الكشف» — when a target read «غير صالحة للسكن» is due to be inspected again after repair

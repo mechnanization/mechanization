@@ -8,6 +8,7 @@ import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.ser
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
+import { attachOccupancies } from '../fees/fees.service';
 
 export interface DashboardCounters {
   total: number;
@@ -407,6 +408,49 @@ export interface CitizenProfileProperty {
    * carries both and these cards have none. Empty for every other card.
    */
   heldUnits: CitizenProfileHeldUnit[];
+}
+
+/** What `billedBareCards` reads of a card on the profile. */
+export interface ProfileBillingCard {
+  id: string;
+  endedAt: Date | null;
+  propertyType: string | null;
+  buildingId: string | null;
+  units: ReadonlyArray<{ endedAt: Date | null }>;
+}
+
+/**
+ * The cards with no current unit lines that billing bills through the census,
+ * chosen exactly as `holdingsOf` chooses them, so the file shows «معفاة» and
+ * the owners' split on the cards a bill is actually raised from:
+ *
+ *  - the latest registration only (`registrations` comes latest first, as
+ *    `holdingsOf` reads `take: 1` by `submittedAt desc`);
+ *  - current cards only, and a line counts only while current — a card whose
+ *    every line has ended has none (`endedAt: null` on both, in billing);
+ *  - a منزل card with a building bills that building's one flat;
+ *  - a مبنى card with a building is the one `attachOccupancies` lets claim
+ *    the person's recorded flats there: the first such card, and none when any
+ *    other non-مبنى card names the same building.
+ *
+ * Shares `attachOccupancies` rather than restating it, so the file and the
+ * bill cannot pick different cards.
+ */
+export function billedBareCards<C extends ProfileBillingCard>(
+  registrations: ReadonlyArray<{ properties: readonly C[] }>,
+): { houses: C[]; blocks: C[] } {
+  const current = (registrations[0]?.properties ?? [])
+    .filter((card) => !card.endedAt)
+    .map((card) => ({ card, buildingId: card.buildingId, propertyType: card.propertyType, units: card.units.filter((line) => !line.endedAt) }));
+  const houses = current
+    .filter((entry) => entry.propertyType === 'HOUSE' && entry.buildingId && entry.units.length === 0)
+    .map((entry) => entry.card);
+  // Every building marked, so a claiming card comes back with a list and every other card without one.
+  const marked = new Map(current.filter((entry) => entry.buildingId).map((entry) => [entry.buildingId!, [] as never[]]));
+  const blocks = attachOccupancies(current, marked)
+    .filter((entry) => entry.occupiedUnits !== undefined)
+    .map((entry) => entry.card);
+  return { houses, blocks };
 }
 
 /** A census flat a card bills through without a unit line — see `CitizenProfileProperty.heldUnits`. */
@@ -1225,10 +1269,7 @@ export class ReportingService {
     const sum = (rows: typeof payments, field: 'amount' | 'paidAmount' | 'remaining') =>
       rows.reduce((total, payment) => total + payment[field], 0);
     const overdue = payments.filter((payment) => payment.paymentStatus === 'OVERDUE');
-    const heldUnits = await this.profileHeldUnits(
-      citizen.id,
-      citizen.registrations.flatMap((registration) => registration.properties),
-    );
+    const heldUnits = await this.profileHeldUnits(citizen.id, citizen.registrations);
 
     return {
       id: citizen.id,
@@ -1410,33 +1451,20 @@ export class ReportingService {
 
   /**
    * The census flats each card with no unit lines is billed through — see
-   * `CitizenProfileProperty.heldUnits`. The same reading as `holdingsOf`: a
-   * منزل bills its building's one flat; a مبنى card with no lines bills the
-   * flats this person is recorded on there, once — by the first such card, and
-   * by none when a منزل card names the same building.
+   * `CitizenProfileProperty.heldUnits`. Which cards, as `billedBareCards`
+   * chooses them; which flats, as `holdingsOf` reads them: a منزل bills its
+   * building's one flat, a مبنى card the flats this person is recorded on there.
    */
   private async profileHeldUnits(
     citizenId: string,
-    cards: ReadonlyArray<{
-      id: string;
-      endedAt: Date | null;
-      propertyType: string | null;
-      buildingId: string | null;
-      units: readonly unknown[];
-    }>,
+    registrations: ReadonlyArray<{ properties: readonly ProfileBillingCard[] }>,
   ): Promise<Map<string, CitizenProfileHeldUnit[]>> {
-    const bare = cards.filter(
-      (card) =>
-        !card.endedAt &&
-        card.buildingId &&
-        card.units.length === 0 &&
-        (card.propertyType === 'HOUSE' || card.propertyType === 'BUILDING'),
-    );
+    const { houses, blocks } = billedBareCards(registrations);
     const held = new Map<string, CitizenProfileHeldUnit[]>();
-    if (bare.length === 0) return held;
+    if (houses.length + blocks.length === 0) return held;
 
-    const houseBuildings = [...new Set(bare.filter((card) => card.propertyType === 'HOUSE').map((card) => card.buildingId!))];
-    const blockBuildings = [...new Set(bare.filter((card) => card.propertyType === 'BUILDING').map((card) => card.buildingId!))];
+    const houseBuildings = [...new Set(houses.map((card) => card.buildingId!))];
+    const blockBuildings = [...new Set(blocks.map((card) => card.buildingId!))];
     const units = await withConnectionRetry(() =>
       this.db.unit.findMany({
         where: {
@@ -1467,19 +1495,15 @@ export class ReportingService {
       ownerBilling: profileOwnerBilling(unit, citizenId),
     });
 
-    for (const card of bare.filter((entry) => entry.propertyType === 'HOUSE')) {
+    for (const card of houses) {
       const inBuilding = units.filter((unit) => unit.buildingId === card.buildingId);
       if (inBuilding.length === 1) held.set(card.id, [toHeld(inBuilding[0]!)]);
     }
-    const spent = new Set(houseBuildings);
-    for (const card of bare.filter((entry) => entry.propertyType === 'BUILDING')) {
-      if (spent.has(card.buildingId!)) continue;
-      spent.add(card.buildingId!);
+    // `billedBareCards` never hands a building both a منزل and a مبنى card: the منزل suppresses it.
+    for (const card of blocks) {
       held.set(
         card.id,
-        units
-          .filter((unit) => unit.buildingId === card.buildingId && !houseBuildings.includes(unit.buildingId))
-          .map(toHeld),
+        units.filter((unit) => unit.buildingId === card.buildingId).map(toHeld),
       );
     }
     return held;

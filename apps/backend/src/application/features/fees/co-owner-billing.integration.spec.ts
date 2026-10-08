@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
+import type { CreateFeeNotice } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
@@ -207,6 +208,83 @@ describeIfDb('co-owner billing', () => {
     expect(rows).toHaveLength(1);
     expect((rows[0]!.after as { citizens: string[] }).citizens.sort()).toEqual([...brothers].sort());
     expect(events.emit).toHaveBeenCalledWith('building.changed', expect.objectContaining({ alreadyAudited: true }));
+  });
+
+  it('tells a clerk who bills a brother the responsible owner pays for why nothing was issued', async () => {
+    /*
+      He is matched — he owns the shop — and owes nothing for it: the notice
+      bills nobody because another owner pays, not because nobody matched.
+      «لا يوجد مواطنون مطابقون لهذه الفئة» sent the clerk to the wrong place.
+    */
+    const { shop, brothers } = await seed();
+    await within(() => ownerBilling.set(shop.id, { mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: brothers[0]! }, actor));
+    const issuing = within(() =>
+      fees.issue(
+        {
+          title: `رسم الأرصفة ${randomUUID().slice(0, 8)}`,
+          amount: 10_000,
+          basis: 'PER_AREA',
+          bearer: 'OWNER',
+          frequency: 'ONCE',
+          targetType: 'INDIVIDUAL_CITIZEN',
+          targetCitizenId: brothers[1]!,
+          dueDate: '2026-12-31',
+        } as CreateFeeNotice,
+        actor,
+      ),
+    );
+    await expect(issuing).rejects.toMatchObject({
+      code: 'FEE_NOTHING_TO_CHARGE',
+      params: { held: 0, uninhabitable: 0, exempted: 0, coOwnerPaid: 1, unassessable: 0 },
+    });
+    expect(await db.citizenPayment.count({ where: { citizenId: brothers[1]! } })).toBe(0);
+  });
+
+  /*
+    «رسم المحلات»: one amount per shop holder, not divided (the user's decision,
+    2026-10-08). Every co-owner is a holder under the equal split; under
+    «مالك مسؤول» the brothers علي pays for hold nothing they pay for, and are
+    not charged — counted, as an exempt shop is.
+  */
+  async function issueShopFee() {
+    const title = `رسم المحلات ${randomUUID().slice(0, 8)}`;
+    const outcome = await within(() =>
+      fees.issue(
+        {
+          title,
+          amount: 50_000,
+          basis: 'FLAT',
+          frequency: 'ONCE',
+          targetType: 'BUILDING_CATEGORY',
+          targetCategory: 'SHOP',
+          dueDate: '2026-12-31',
+        } as CreateFeeNotice,
+        actor,
+      ),
+    );
+    return { title, outcome };
+  }
+  async function shopFeeOf(brothers: string[], title: string) {
+    const bills = await db.citizenPayment.findMany({
+      where: { citizenId: { in: brothers }, feeNotice: { title } },
+      select: { citizenId: true, amount: true },
+    });
+    return brothers.map((id) => bills.filter((bill) => bill.citizenId === id).map((bill) => Number(bill.amount)));
+  }
+
+  it('charges each co-owner a FLAT shop fee once under the equal split', async () => {
+    const { brothers } = await seed();
+    const { title } = await issueShopFee();
+    expect(await shopFeeOf(brothers, title)).toEqual([[50_000], [50_000], [50_000], [50_000]]);
+  });
+
+  it('charges only the responsible owner a FLAT shop fee, and counts the shop his brothers do not pay for', async () => {
+    const { shop, brothers } = await seed();
+    await within(() => ownerBilling.set(shop.id, { mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: brothers[0]! }, actor));
+    const { title, outcome } = await issueShopFee();
+    expect(await shopFeeOf(brothers, title)).toEqual([[50_000], [], [], []]);
+    // The shop once, not three times — and at least it: other tests' shops are holders too.
+    expect(outcome.coOwnerPaidUnits).toBeGreaterThanOrEqual(1);
   });
 
   it('divides by أسهم recorded in the same save', async () => {

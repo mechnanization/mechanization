@@ -127,6 +127,45 @@ describe('a FLAT notice aimed at a category (`flatCategoryCharge`)', () => {
     });
   });
 
+  describe('a co-owned shop (the user’s decision, 2026-10-08)', () => {
+    const coOwned = (mode: string, numerator: number, denominator: number) =>
+      shop({ ownerShare: { mode, numerator, denominator } }, 'shop-1');
+
+    it('lets off a co-owner the responsible owner pays for, and counts the shop', () => {
+      expect(flatCategoryCharge([coOwned('RESPONSIBLE_OWNER', 0, 1)], notice)).toMatchObject({
+        amount: 0,
+        coOwnerPaidUnitIds: ['shop-1'],
+        assessment: { basis: 'FLAT', coOwnerPaidUnitCount: 1, exemptUnitCount: 0, uninhabitableUnitCount: 0 },
+      });
+    });
+
+    it('charges the responsible owner the flat amount, whole', () => {
+      expect(flatCategoryCharge([coOwned('RESPONSIBLE_OWNER', 1, 1)], notice)).toEqual({
+        amount: 50_000,
+        assessment: null,
+      });
+    });
+
+    it('charges every owner the flat amount once under «بالتساوي» and «حسب الأسهم» — a flat amount is not divided', () => {
+      expect(flatCategoryCharge([coOwned('EQUAL', 1, 4)], notice).amount).toBe(50_000);
+      expect(flatCategoryCharge([coOwned('BY_SHARES', 1, 3)], notice).amount).toBe(50_000);
+    });
+
+    it('still charges a co-owner the brothers pay for when they hold a shop of their own beside it', () => {
+      expect(flatCategoryCharge([coOwned('RESPONSIBLE_OWNER', 0, 1), shop({}, 'shop-2')], notice).amount).toBe(50_000);
+    });
+
+    it('lets off a holder whose shops are each exempt or another owner’s to pay, counting each reason once', () => {
+      const outcome = flatCategoryCharge([shop({ exempt: true }, 'shop-2'), coOwned('RESPONSIBLE_OWNER', 0, 1)], notice);
+      expect(outcome).toMatchObject({ amount: 0, exemptUnitIds: ['shop-2'], coOwnerPaidUnitIds: ['shop-1'] });
+    });
+
+    it('ignores the share on a tenant’s card — a tenant pays for what they occupy', () => {
+      const tenant = { ...coOwned('RESPONSIBLE_OWNER', 0, 1), occupancyType: 'TENANT' };
+      expect(flatCategoryCharge([tenant], notice).amount).toBe(50_000);
+    });
+  });
+
   it('charges a holder the register shows nothing of the category for — targeting decides that, not this', () => {
     expect(flatCategoryCharge([card({})], notice)).toEqual({ amount: 50_000, assessment: null });
   });

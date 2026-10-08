@@ -195,6 +195,9 @@ describe('assessCitizen — a co-owned flat on one owner’s bill', () => {
     expect(brother.assessment.coOwnerPaidUnitCount).toBe(1);
     expect(brother.assessment.lines).toHaveLength(0);
     expect(brother.assessment.excludedUnitCount).toBe(0);
+    // Named by flat, so a run counts the shop once however many brothers it skipped.
+    expect(brother.coOwnerPaidUnitIds).toEqual(['shop-0005']);
+    expect(ali.kind === 'assessed' && ali.coOwnerPaidUnitIds).toEqual([]);
   });
 
   it('does not ask for the area of a flat another owner pays for', () => {

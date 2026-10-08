@@ -357,6 +357,56 @@ describeIfDb('units charged nothing', () => {
     expect(await bill(deceased, 'OWNER')).toMatchObject({ kind: 'assessed', amount: 30_000 });
   });
 
+  it('shows them on the cards billing reads: the latest file only, and a card whose every line has ended', async () => {
+    /*
+      The file used to choose its own cards: every registration, a line counted
+      whether or not it had ended. Billing reads the latest registration and
+      current lines (`holdingsOf`), so the file showed the shop on a card no
+      bill is raised from, and not on the one a bill is.
+    */
+    const parcel = await waqfParcel();
+    await within(() => exemptions.set(parcel.shop.id, { reason: 'PUBLIC_FACILITY' }, admin));
+    const tag = randomUUID().slice(0, 8);
+    const citizenId = randomUUID();
+    await db.user.create({ data: { id: citizenId, kind: 'CITIZEN', tenantSlug: 'fx', firstName: 'مواطن', lastName: tag } });
+    const older = await db.registration.create({
+      data: { citizenId, referenceNumber: `FX-${randomUUID()}`, createdById: adminId, submittedAt: new Date('2026-01-01T00:00:00Z') },
+    });
+    const latest = await db.registration.create({
+      data: { citizenId, referenceNumber: `FX-${randomUUID()}`, createdById: adminId, submittedAt: new Date('2026-06-01T00:00:00Z') },
+    });
+    const block = (registrationId: string) =>
+      db.propertyEntry.create({
+        data: { registrationId, occupancyType: 'OWNER' as never, propertyType: 'BUILDING' as never, buildingId: parcel.building.id, propertyNumber: '19' },
+      });
+    const oldCard = await block(older.id);
+    const card = await block(latest.id);
+    // Its one line ended: no current line, so billing bills the shop through the occupancy below.
+    await db.buildingUnit.create({
+      data: { propertyEntryId: card.id, unitId: parcel.shop.id, unitType: 'SHOP' as never, unitArea: 30, endedAt: new Date('2026-07-01T00:00:00Z') },
+    });
+    await db.unitOccupancy.create({ data: { unitId: parcel.shop.id, citizenId, role: 'OWNER' as never, registrationId: latest.id } });
+
+    const billed = await within(async () => {
+      for await (const batch of fees.holdingsOf([citizenId])) return assessCitizen(batch[0]!.entries, { amount: 1000, basis: 'PER_UNIT', bearer: 'OWNER' });
+      throw new Error('no holdings');
+    });
+    expect(billed).toMatchObject({ kind: 'assessed', exemptUnitIds: [parcel.shop.id] });
+
+    const reporting = new ReportingService(
+      context,
+      new EventEmitter2(),
+      { get: async () => null, set: async () => undefined } as never,
+      { get: () => undefined } as never,
+    );
+    const profile = await within(() => reporting.getCitizenProfile(citizenId));
+    const cards = new Map(profile!.registrations.flatMap((registration) => registration.properties).map((entry) => [entry.id, entry]));
+    expect(cards.get(card.id)!.heldUnits).toEqual([
+      expect.objectContaining({ unitId: parcel.shop.id, feeExemption: 'PUBLIC_FACILITY' }),
+    ]);
+    expect(cards.get(oldCard.id)!.heldUnits).toEqual([]);
+  });
+
   describe('a building labelled uninhabited', () => {
     it('is listed in «مراجعة الجودة» while its units are billed, and exempt — and cleared — once read «غير صالحة للسكن»', async () => {
       const parcel = await waqfParcel('WAR_DAMAGED_UNINHABITED');

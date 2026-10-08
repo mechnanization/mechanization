@@ -70,6 +70,8 @@ export interface CitizenAssessment {
   uninhabitableUnitIds?: string[];
   /** The units «معفاة من الرسوم» on this bill, for the same reason. Not stored. */
   exemptUnitIds?: string[];
+  /** The co-owned flats another owner pays for, for the same reason. Not stored. */
+  coOwnerPaidUnitIds?: string[];
 }
 
 /** What one citizen holds today, as billing reads it. See `FeesService.holdingsOf`. */
@@ -148,10 +150,22 @@ function bearsFee(unit: BillableUnit, bearer: FeeBearer): boolean {
   return !isOccupiedByOthers(unit.unitStatus) && !isUnoccupied(unit.unitStatus);
 }
 
+/**
+ * The part of a unit this person is billed for: their share of a co-owned
+ * flat on an owner's card (`ownerShareOf`), else the whole of it. 0 means
+ * another co-owner — the responsible one under «مالك مسؤول» — pays for it.
+ */
+function ownerWeight(unit: BillableUnit): number {
+  return unit.occupancyType === 'OWNER' && unit.ownerShare
+    ? unit.ownerShare.numerator / unit.ownerShare.denominator
+    : 1;
+}
+
 type HeldEntry = {
   heldUnitIds?: readonly string[];
   uninhabitableUnitIds?: readonly string[];
   exemptUnitIds?: readonly string[];
+  coOwnerPaidUnitIds?: readonly string[];
   assessment?: FeeAssessment | null;
 };
 
@@ -191,6 +205,19 @@ function distinctUninhabitable(assessed: readonly HeldEntry[]): number {
     assessed,
     (entry) => entry.uninhabitableUnitIds,
     (assessment) => assessment.uninhabitableUnitCount,
+  );
+}
+
+/**
+ * Co-owned flats another owner — the responsible one — pays for, across a run
+ * (`assessCitizen`). Each flat once: three brothers who pay nothing for one shop
+ * are one shop paid by the fourth, not three.
+ */
+function distinctCoOwnerPaid(assessed: readonly HeldEntry[]): number {
+  return distinctUnits(
+    assessed,
+    (entry) => entry.coOwnerPaidUnitIds,
+    (assessment) => assessment.coOwnerPaidUnitCount,
   );
 }
 
@@ -270,6 +297,7 @@ export function assessCitizen(
       heldUnitIds?: string[];
       uninhabitableUnitIds?: string[];
       exemptUnitIds?: string[];
+      coOwnerPaidUnitIds?: string[];
     }
   | { kind: 'unassessable'; reason: string } {
   /*
@@ -406,13 +434,9 @@ export function assessCitizen(
       reason: `وحدة ${undecidable.unitCode ?? ''} على العقار ${undecidable.propertyNumber ?? '—'} يتوزّع رسمها «حسب الأسهم» وأسهم أحد مالكيها غير مسجّلة`,
     };
   }
-  const weightOf = (unit: BillableUnit): number =>
-    unit.occupancyType === 'OWNER' && unit.ownerShare
-      ? unit.ownerShare.numerator / unit.ownerShare.denominator
-      : 1;
   // Paid by the responsible owner named on the flat — not this person's to pay.
-  const paidByCoOwner = owed.filter((unit) => weightOf(unit) === 0);
-  const units = owed.filter((unit) => weightOf(unit) > 0);
+  const paidByCoOwner = owed.filter((unit) => ownerWeight(unit) === 0);
+  const units = owed.filter((unit) => ownerWeight(unit) > 0);
   const shared = units.filter((unit) => unit.occupancyType === 'OWNER' && unit.ownerShare);
   const heldUnitCount = reviewing.length;
   const uninhabitableUnitCount = unlivable.length;
@@ -422,6 +446,9 @@ export function assessCitizen(
     .map((unit) => unit.unitId)
     .filter((id): id is string => Boolean(id));
   const exemptUnitIds = exemptUnits.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+  const coOwnerPaidUnitIds = paidByCoOwner
+    .map((unit) => unit.unitId)
+    .filter((id): id is string => Boolean(id));
 
   if (notice.basis === 'PER_AREA') {
     /*
@@ -442,8 +469,8 @@ export function assessCitizen(
   }
 
   // A co-owned flat counts for this owner's part of its area, or of one unit.
-  const totalArea = units.reduce((sum, unit) => sum + (unit.unitArea ?? 0) * weightOf(unit), 0);
-  const chargedUnits = units.reduce((sum, unit) => sum + weightOf(unit), 0);
+  const totalArea = units.reduce((sum, unit) => sum + (unit.unitArea ?? 0) * ownerWeight(unit), 0);
+  const chargedUnits = units.reduce((sum, unit) => sum + ownerWeight(unit), 0);
 
   // Only the two rate bases reach here; FLAT returned above.
   const multiplier = notice.basis === 'PER_AREA' ? totalArea : chargedUnits;
@@ -460,6 +487,7 @@ export function assessCitizen(
     heldUnitIds,
     uninhabitableUnitIds,
     exemptUnitIds,
+    coOwnerPaidUnitIds,
     assessment: {
       basis: notice.basis,
       rate: notice.amount,
@@ -498,10 +526,14 @@ export function assessCitizen(
  *
  * The notice's own amount, as every FLAT notice charges — per holder, whatever
  * they hold of it — except a holder every one of whose units of that category
- * is charged nothing: «معفاة من الرسوم» (0077) or «غير صالحة للسكن». The waqf
- * whose one office is the mosque is not a holder of offices for this notice,
- * and a family whose one shop is a ruin is not a shop holder (the user's
- * decisions of 2026-10-07: «not habitable → exempt», and the mosque exempt).
+ * is charged nothing: «معفاة من الرسوم» (0077), «غير صالحة للسكن», or paid by
+ * another co-owner under «مالك مسؤول» (this owner's part is 0). The waqf whose
+ * one office is the mosque is not a holder of offices for this notice, a family
+ * whose one shop is a ruin is not a shop holder (the user's decisions of
+ * 2026-10-07: «not habitable → exempt», and the mosque exempt), and of four
+ * brothers whose one shop the eldest pays for, only the eldest is (the user's
+ * decision, 2026-10-08). Under «بالتساوي» and «حسب الأسهم» every co-owner is
+ * still a holder and pays the amount once: a flat amount is not divided.
  *
  * Only that. The review hold and the bearer rule stay out of FLAT, as they
  * always have: a flat amount is a person's charge, not a flat's. A notice to
@@ -516,14 +548,22 @@ export function assessCitizen(
 export function flatCategoryCharge(
   entries: readonly BillablePropertyEntry[],
   notice: { amount: number; targetCategory: string },
-): { amount: number; assessment: FeeAssessment | null; uninhabitableUnitIds?: string[]; exemptUnitIds?: string[] } {
+): {
+  amount: number;
+  assessment: FeeAssessment | null;
+  uninhabitableUnitIds?: string[];
+  exemptUnitIds?: string[];
+  coOwnerPaidUnitIds?: string[];
+} {
   const matching = entries
     .flatMap(billableUnits)
     .filter((unit) => unitMatches(unit, notice.targetCategory));
   const exempt = matching.filter((unit) => unit.exempt);
   const unlivable = matching.filter((unit) => !unit.exempt && unit.uninhabitable);
+  // In the order `assessCitizen` reports them: exempt, then uninhabitable, then another owner's to pay.
+  const paidByCoOwner = matching.filter((unit) => !unit.exempt && !unit.uninhabitable && ownerWeight(unit) === 0);
 
-  if (matching.length === 0 || exempt.length + unlivable.length < matching.length) {
+  if (matching.length === 0 || exempt.length + unlivable.length + paidByCoOwner.length < matching.length) {
     return { amount: notice.amount, assessment: null };
   }
 
@@ -533,6 +573,7 @@ export function flatCategoryCharge(
     amount: 0,
     uninhabitableUnitIds: ids(unlivable),
     exemptUnitIds: ids(exempt),
+    coOwnerPaidUnitIds: ids(paidByCoOwner),
     assessment: {
       basis: 'FLAT',
       rate: notice.amount,
@@ -542,7 +583,7 @@ export function flatCategoryCharge(
       heldUnitCount: 0,
       uninhabitableUnitCount: unlivable.length,
       sharedUnitCount: 0,
-      coOwnerPaidUnitCount: 0,
+      coOwnerPaidUnitCount: paidByCoOwner.length,
       exemptUnitCount: exempt.length,
       lines: [],
     },
@@ -1076,6 +1117,8 @@ export class FeesService {
     const uninhabitableUnits = distinctUninhabitable(assessed);
     /** Units «معفاة من الرسوم» (0077) — see `assessCitizen`. Each unit once. */
     const feeExemptUnits = distinctExempt(assessed);
+    /** Co-owned flats the responsible owner pays for, not the person assessed — see `assessCitizen`. Each flat once. */
+    const coOwnerPaidUnits = distinctCoOwnerPaid(assessed);
 
     if (billable.length === 0) {
       /*
@@ -1089,9 +1132,14 @@ export class FeesService {
       /*
         Every reason that applies, not the first one: a notice that held three
         flats and exempted five was reported as "everything held", and the
-        clerk went looking for the wrong thing.
+        clerk went looking for the wrong thing. A flat «مالك مسؤول» pays for is
+        a reason too: a notice aimed at the brother who pays nothing matched
+        him, and «لا يوجد مواطنون مطابقون» sent the clerk to the wrong place.
       */
-      if (heldUnits + uninhabitableUnits + exemptedUnits + feeExemptUnits + unassessable.length === 0) {
+      if (
+        heldUnits + uninhabitableUnits + exemptedUnits + feeExemptUnits + coOwnerPaidUnits + unassessable.length ===
+        0
+      ) {
         throw new ConflictError({
           code: 'FEE_NO_MATCHING_CITIZENS',
           message: 'No citizen matches this notice, so nothing was issued',
@@ -1099,12 +1147,14 @@ export class FeesService {
       }
       throw new ConflictError({
         code: 'FEE_NOTHING_TO_CHARGE',
-        message: 'Every unit this notice targets is held, exempted or unassessable, so nothing was issued',
+        message:
+          'Every unit this notice targets is held, exempted, paid by another co-owner or unassessable, so nothing was issued',
         params: {
           held: heldUnits,
           uninhabitable: uninhabitableUnits,
           exempted: exemptedUnits,
           feeExempt: feeExemptUnits,
+          coOwnerPaid: coOwnerPaidUnits,
           unassessable: unassessable.length,
         },
       });
@@ -1197,6 +1247,7 @@ export class FeesService {
       heldUnitCount: heldUnits,
       uninhabitableUnitCount: uninhabitableUnits,
       feeExemptUnitCount: feeExemptUnits,
+      coOwnerPaidUnitCount: coOwnerPaidUnits,
       actorId: actor.id,
       actorRole: actor.role,
     });
@@ -1225,7 +1276,21 @@ export class FeesService {
       this.logger.log(`Fee "${input.title}": ${feeExemptUnits} unit(s) exempt from fees (معفاة من الرسوم)`);
     }
 
-    return { ...result, unassessable, exemptedUnits, heldUnits, uninhabitableUnits, feeExemptUnits };
+    if (coOwnerPaidUnits > 0) {
+      this.logger.log(
+        `Fee "${input.title}": ${coOwnerPaidUnits} co-owned unit(s) paid by their responsible owner (مالك مسؤول)`,
+      );
+    }
+
+    return {
+      ...result,
+      unassessable,
+      exemptedUnits,
+      heldUnits,
+      uninhabitableUnits,
+      feeExemptUnits,
+      coOwnerPaidUnits,
+    };
   }
 
   /**
@@ -1352,6 +1417,13 @@ export class FeesService {
           `Recurring "${notice.title}" (${periodKey}): ${feeExemptUnits} unit(s) exempt from fees (معفاة من الرسوم)`,
         );
       }
+      // Paid in full by their responsible owner — a choice, not a hold, so logged rather than warned.
+      const coOwnerPaidUnits = distinctCoOwnerPaid(assessed);
+      if (coOwnerPaidUnits > 0) {
+        this.logger.log(
+          `Recurring "${notice.title}" (${periodKey}): ${coOwnerPaidUnits} co-owned unit(s) paid by their responsible owner (مالك مسؤول)`,
+        );
+      }
       if (billable.length === 0) {
         await this.recordBillingRun(notice.id, periodKey, startedAt, {
           outcome: 'SKIPPED',
@@ -1397,6 +1469,7 @@ export class FeesService {
           heldUnitCount: heldUnits,
           uninhabitableUnitCount: uninhabitableUnits,
           feeExemptUnitCount: feeExemptUnits,
+          coOwnerPaidUnitCount: coOwnerPaidUnits,
         });
       }
 
@@ -1689,6 +1762,7 @@ export class FeesService {
           heldUnitIds: outcome.heldUnitIds,
           uninhabitableUnitIds: outcome.uninhabitableUnitIds,
           exemptUnitIds: outcome.exemptUnitIds,
+          coOwnerPaidUnitIds: outcome.coOwnerPaidUnitIds,
         });
       }
     }

@@ -129,7 +129,13 @@ Data access for new code (decided):
   responsible owner who is archived or stops owning falls back to the equal split at read time. A
   merge re-points `units.responsibleOwnerId` (only rows still naming the absorbed person) and its
   undo puts it back. Each owner's amount is rounded on its own, so a flat's parts can differ from
-  the whole by under a pound per owner.
+  the whole by under a pound per owner. «ملاحظات الجودة» warns of a saved method billing cannot carry
+  out (`OWNER_BILLING_BLOCKED`, `DataQualityService.ownerBillingBlocked`, verdict `ownerBillingBlock` in
+  `owner-billing.ts`): «حسب الأسهم» with an owner's أسهم missing (HIGH, every co-owner's bill refused) or a
+  responsible owner no longer among the open owners (MEDIUM, split equally). A notice that bills nobody
+  because «مالك مسؤول» pays refuses with `FEE_NOTHING_TO_CHARGE` (`coOwnerPaid`), not
+  `FEE_NO_MATCHING_CITIZENS`. The portal gets this owner's part and never the responsible owner's id;
+  under «مالك مسؤول» the part (1/1 or 0/1) says who pays, read the same way on both sides.
 - **Units exempt from fees.** `units.feeExemption` (`0077`) takes a unit off every rate-based bill, whoever
   bears the fee: `holdingsOf` reads it, `assessCitizen` removes the unit before the review hold and the
   bearer rule and counts it (`exemptUnitCount`). Granted and lifted by `FeeExemptionService`
@@ -137,11 +143,17 @@ Data access for new code (decided):
   unit. A building's lifecycle exempts nothing: `UNINHABITABLE_LIFECYCLE` buildings still billed are a
   «مراجعة الجودة» finding (`UNINHABITED_WITHOUT_READING`, archived files ignored, cleared on
   `damage.recorded`) until a «غير صالحة للسكن» reading is recorded. A FLAT notice to a category reads the
-  register too: `flatCategoryCharge` lets off a holder every one of whose units of that category is exempt
-  or uninhabitable (never the review hold or the bearer rule), and `CorrectionBillsService` uses the same
-  function for today's figure. FLAT to ALL_CITIZENS stays a per-person charge. The profile carries
-  `heldUnits` for cards with no unit lines (a منزل's flat, a مبنى card's census flats), read like
-  `holdingsOf`, so the exemption and the owners' split show there too.
+  register too: `flatCategoryCharge` lets off a holder every one of whose units of that category is exempt,
+  uninhabitable, or paid by another co-owner under «مالك مسؤول» (their part 0, counted as
+  `coOwnerPaidUnitCount`; decision 2026-10-08) — never the review hold or the bearer rule — and
+  `CorrectionBillsService` uses the same function for today's figure. Under EQUAL and BY_SHARES every
+  co-owner still pays a FLAT amount once; FLAT to ALL_CITIZENS stays a per-person charge. In «فواتير
+  تأثّرت بتصحيحات» (`bill-corrections.ts`) granting an exemption (`UNIT_FEE_EXEMPTION_SET`) is a
+  CORRECTION, so it reaches bills raised before it; lifting (`UNIT_FEE_EXEMPTION_LIFTED`) is a
+  DATED_CHANGE, forward only. Neither changes a bill. The profile carries `heldUnits` for cards with no
+  current unit lines (a منزل's flat, a مبنى card's census flats), the cards chosen by `billedBareCards`
+  (latest registration, current cards and lines, `attachOccupancies`), so the exemption and the owners'
+  split show on exactly the cards a bill is raised from.
 - **Owners that are not a person** (`0076`). `CitizenResidence` adds `ESTATE` «تركة (ورثة المرحوم)» and
   `INSTITUTION` «جهة أو وقف». "Not a household" is `isOwnerRecord(residence)` (non-resident, estate,
   institution) and "not a living person" is `isNonPersonRecord`; never compare to `'NON_RESIDENT_OWNER'`
@@ -322,7 +334,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 114 specs, 26 of them `*.integration.spec.ts`.
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 119 specs, 27 of them `*.integration.spec.ts`.
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

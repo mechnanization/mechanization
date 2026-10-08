@@ -84,8 +84,12 @@ function fraction(mode: OwnerBillingMode, numerator: number, denominator: number
   return { mode, numerator: numerator / divisor, denominator: denominator / divisor };
 }
 
-/** A recorded أسهم figure billing can divide by — a positive whole number. */
-function usableShares(shares: number | null | undefined): shares is number {
+/**
+ * A recorded أسهم figure billing can divide by — a positive whole number.
+ * Exported so a reader that counts the owners «حسب الأسهم» is waiting on
+ * (the plan's refusal, «ملاحظات الجودة») asks exactly what `ownerShareOf` asks.
+ */
+export function usableShares(shares: number | null | undefined): shares is number {
   return typeof shares === 'number' && Number.isInteger(shares) && shares > 0;
 }
 

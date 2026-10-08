@@ -40,6 +40,7 @@ import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { SummaryRow } from '@/components/ui/summary-list';
 import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
 import { OwnerBillingSummary } from '@/components/admin/owner-billing-panel';
+import { ownerBillingApplies } from '@/lib/owner-billing';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { PropertyScene, type PropertyTone } from '@/components/admin/property-illustrations';
@@ -574,21 +575,24 @@ function PropertyBlock({
                 <UnitStatusLine status={property.unitStatus} locale={locale} />
               </SummaryRow>
             ) : null}
-            {/* The census flats this card bills through: a house's one flat, or a block's flats this person is on. */}
-            {!property.endedAt
-              ? (property.heldUnits ?? []).map((unit) => (
-                  <HeldUnitBilling
-                    key={unit.unitId}
-                    unit={unit}
-                    labels={labels}
-                    en={en}
-                    tone={tone}
-                    showCode={(property.heldUnits ?? []).length > 1}
-                  />
-                ))
-              : null}
           </>
         ) : null}
+        {/*
+          The census flats this card bills through: a house's one flat, or a
+          block's flats this person is on. The server chooses the cards as
+          billing does (`billedBareCards`) — one whose every line has ended
+          included — so this shows whatever it sends.
+        */}
+        {(property.heldUnits ?? []).map((unit) => (
+          <HeldUnitBilling
+            key={unit.unitId}
+            unit={unit}
+            labels={labels}
+            en={en}
+            tone={tone}
+            showCode={(property.heldUnits ?? []).length > 1}
+          />
+        ))}
         {!owner && property.landlordName ? (
           <SummaryRow label={en ? 'Landlord' : 'المالك'}>
             {property.landlordCitizenId ? (
@@ -798,13 +802,6 @@ function PropertyBlock({
   );
 }
 
-
-/**
- * One unit: a door plate with its code and its type's icon, then every fact
- * about it on its own line. The census's status is read first, as billing
- * reads it; where the card says something else, both are shown, since that
- * disagreement is a vacancy to lift or a card to correct.
- */
 /**
  * «معفاة من الرسوم» and «توزيع الرسم على المالكين» for a flat a card bills
  * through without a unit line (`heldUnits`) — the two rows `UnitRows` shows
@@ -841,9 +838,10 @@ function HeldUnitBilling({
           {suffix}
         </SummaryRow>
       ) : null}
-      {unit.ownerBilling && tone === 'owner' ? (
+      {/* An exempt unit is billed to no owner: no part to show (`ownerBillingApplies`). */}
+      {unit.ownerBilling && tone === 'owner' && ownerBillingApplies(unit) ? (
         <SummaryRow label={tOwnerBilling('fileLabel')}>
-          <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} perspective="file" />
+          <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} />
           {suffix}
         </SummaryRow>
       ) : null}
@@ -851,6 +849,12 @@ function HeldUnitBilling({
   );
 }
 
+/**
+ * One unit: a door plate with its code and its type's icon, then every fact
+ * about it on its own line. The census's status is read first, as billing
+ * reads it; where the card says something else, both are shown, since that
+ * disagreement is a vacancy to lift or a card to correct.
+ */
 function UnitRows({
   unit,
   labels,
@@ -954,10 +958,13 @@ function UnitRows({
               {tFeeExemption('fileValue', { reason: labels.feeExemptionReason[unit.feeExemption] })}
             </SummaryRow>
           ) : null}
-          {/* «توزيع الرسم على المالكين» (0075): how this co-owned flat is billed, and this owner's part. */}
-          {unit.ownerBilling && tone === 'owner' ? (
+          {/*
+            «توزيع الرسم على المالكين» (0075): how this co-owned flat is billed,
+            and this owner's part — while it is billed at all (`ownerBillingApplies`).
+          */}
+          {unit.ownerBilling && tone === 'owner' && ownerBillingApplies(unit) ? (
             <SummaryRow label={tOwnerBilling('fileLabel')}>
-              <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} perspective="file" />
+              <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} />
             </SummaryRow>
           ) : null}
           {/*
