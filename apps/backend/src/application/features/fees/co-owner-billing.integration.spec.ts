@@ -292,4 +292,23 @@ describeIfDb('co-owner billing', () => {
     );
     expect(outcomes.map((outcome) => outcome.kind === 'assessed' && outcome.amount)).toEqual([0, 0, 0, 0]);
   });
+
+  it('leaves an archived owner out: the open files carry the flat, and an archived responsible owner falls back', async () => {
+    const { shop, brothers } = await seed();
+    await within(() => ownerBilling.set(shop.id, { mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: brothers[0]! }, actor));
+    // «أرشفة الملف» on the responsible owner: billing targets open files only, so he would pay nothing.
+    await db.user.update({ where: { id: brothers[0]! }, data: { isActive: false } });
+    expect(await amounts(brothers.slice(1))).toEqual([1_000_000, 1_000_000, 1_000_000]);
+
+    // And he cannot be named again while his file is archived.
+    await expect(
+      within(() => ownerBilling.set(shop.id, { mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: brothers[0]! }, actor)),
+    ).rejects.toMatchObject({ code: 'OWNER_BILLING_RESPONSIBLE_NOT_OWNER' });
+  });
+
+  it('divides between the open files when a co-owner is archived under the default split', async () => {
+    const { brothers } = await seed();
+    await db.user.update({ where: { id: brothers[3]! }, data: { isActive: false } });
+    expect(await amounts(brothers.slice(0, 3))).toEqual([1_000_000, 1_000_000, 1_000_000]);
+  });
 });

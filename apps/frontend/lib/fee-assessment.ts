@@ -51,7 +51,14 @@ export function describeAssessment(
   const rate = formatLbp(assessment.rate, locale);
 
   if (assessment.basis === 'PER_AREA') {
-    const area = Math.round(assessment.totalArea).toLocaleString('en-US');
+    /*
+      Whole square metres, as always — except where a co-owned flat was
+      charged at a part, which makes the area a fraction the amount was
+      computed from: «33.33 م²», not «33», so the line multiplies out.
+    */
+    const area = (
+      assessment.sharedUnitCount ? Math.round(assessment.totalArea * 100) / 100 : Math.round(assessment.totalArea)
+    ).toLocaleString('en-US');
     return withLeftOut(t('perArea', { area, rate }), assessment, locale);
   }
 
@@ -99,7 +106,21 @@ function withLeftOut(line: string, assessment: FeeAssessment, locale: string): s
     notes.push(t('uninhabitable', { count: assessment.uninhabitableUnitCount }));
   }
   // «توزيع الرسم على المالكين»: a flat several people own, charged at this owner's part or not at all.
-  if (assessment.sharedUnitCount) notes.push(t('coOwnedShare', { count: assessment.sharedUnitCount }));
+  if (assessment.sharedUnitCount) {
+    // Each part as the fraction it is, so «1/24 من محل» is checkable where «0.04» is not.
+    const parts = [
+      ...new Set(
+        assessment.lines
+          .filter((line) => line.ownerShare && line.ownerShare.numerator < line.ownerShare.denominator)
+          .map((line) => `${line.ownerShare!.numerator}/${line.ownerShare!.denominator}`),
+      ),
+    ];
+    notes.push(
+      parts.length > 0
+        ? t('coOwnedShareParts', { count: assessment.sharedUnitCount, parts: parts.join(t('notesSeparator')) })
+        : t('coOwnedShare', { count: assessment.sharedUnitCount }),
+    );
+  }
   if (assessment.coOwnerPaidUnitCount) notes.push(t('coOwnerPays', { count: assessment.coOwnerPaidUnitCount }));
   return notes.length === 0 ? line : t('withNotes', { line, notes: notes.join(t('notesSeparator')) });
 }

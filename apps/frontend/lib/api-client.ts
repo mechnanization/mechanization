@@ -1581,6 +1581,12 @@ export interface UnitOccupant {
   citizenName: string | null;
   /** Their phone, shown on the unit. Optional for a server from before it. */
   citizenPhone?: string | null;
+  /**
+   * Whether their file is open. An archived owner is never billed, so co-owner
+   * billing leaves them out of the division. Optional on the wire: absent reads
+   * as open.
+   */
+  citizenActive?: boolean;
   role: OccupancyRole;
   /** أسهم out of 2400 — owners only. */
   shares: number | null;

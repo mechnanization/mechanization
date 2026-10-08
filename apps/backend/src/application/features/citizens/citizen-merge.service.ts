@@ -1070,8 +1070,9 @@ export class CitizenMergeService {
       own (`effectiveOwnerBilling`).
     */
     if (loaded.responsibleUnits.length > 0) {
+      // Still naming the absorbed person: a choice saved since the load is left as it was saved.
       await db.unit.updateMany({
-        where: { id: { in: loaded.responsibleUnits } },
+        where: { id: { in: loaded.responsibleUnits }, responsibleOwnerId: absorb.id },
         data: { responsibleOwnerId: keep.id },
       });
     }
@@ -1283,7 +1284,7 @@ export class CitizenMergeService {
     }
     if ((footprint.responsibleUnits ?? []).length > 0) {
       await db.unit.updateMany({
-        where: { id: { in: footprint.responsibleUnits } },
+        where: { id: { in: footprint.responsibleUnits }, responsibleOwnerId: keepId },
         data: { responsibleOwnerId: absorbId },
       });
     }

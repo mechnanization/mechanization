@@ -6,6 +6,7 @@ import {
   type OwnerBillingRule,
 } from '@mechanization/shared-schemas';
 import { assessCitizen } from './fees.service';
+import { profileOwnerBilling } from '../reporting/reporting.service';
 import type { BillablePropertyEntry, LinkedUnit } from '../../../domain/entities/billable-unit';
 
 /**
@@ -296,5 +297,34 @@ describe('assessCitizen — a co-owned flat on one owner’s bill', () => {
     expect(result.kind === 'assessed' && result.amount).toBe(3_000_000);
     expect(result.kind === 'assessed' && result.assessment.sharedUnitCount).toBe(0);
     expect(result.kind === 'assessed' && 'chargedUnits' in result.assessment).toBe(false);
+  });
+});
+
+describe('profileOwnerBilling — the co-owned flat on a citizen’s own file', () => {
+  const unit = (overrides: { active?: Record<string, boolean>; mode?: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null } = {}) => ({
+    ownerBillingMode: overrides.mode ?? null,
+    responsibleOwnerId: null,
+    occupancies: BROTHERS.map((citizenId) => ({
+      citizenId,
+      shares: null,
+      citizen: { isActive: overrides.active?.[citizenId] ?? true },
+    })),
+  });
+
+  it('says nothing about the owners’ split on a tenant’s line', () => {
+    expect(profileOwnerBilling(unit(), 'a-tenant')).toBeNull();
+  });
+
+  it('gives an owner their part, counting open files only', () => {
+    expect(profileOwnerBilling(unit({ active: { hussein: false } }), 'ali')).toMatchObject({
+      effectiveMode: 'EQUAL',
+      share: { numerator: 1, denominator: 3 },
+    });
+  });
+
+  it('is absent once only one open file owns the flat', () => {
+    expect(
+      profileOwnerBilling(unit({ active: { maarouf: false, aref: false, hussein: false } }), 'ali'),
+    ).toBeNull();
   });
 });

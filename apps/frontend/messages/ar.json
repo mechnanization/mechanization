@@ -590,7 +590,8 @@
     "heldForReview": "{count} وحدة موقوفة للمراجعة",
     "uninhabitable": "{count} وحدة غير صالحة للسكن لم تُحتسب",
     "coOwnedShare": "{count} وحدة بملكية مشتركة احتُسبت بحصّة المكلَّف منها",
-    "coOwnerPays": "{count} وحدة يدفع رسمها مالك آخر"
+    "coOwnerPays": "{count} وحدة يدفع رسمها مالك آخر",
+    "coOwnedShareParts": "{count} وحدة بملكية مشتركة احتُسبت بحصّة المكلَّف منها ({parts})"
   },
   "fees": {
     "issue": {
@@ -1113,6 +1114,8 @@
     "fileDefault": "بالتساوي (لم تُختر طريقة)",
     "mineShare": "حصّتك {numerator}/{denominator} من الرسم",
     "minePaysAll": "تدفع الرسم عن جميع المالكين",
-    "minePaysNone": "يدفع عنك مالك آخر"
+    "minePaysNone": "يدفع عنك مالك آخر",
+    "archivedOwners": "{names}: ملفّه مؤرشف، فلا يُحتسب في التوزيع ويقع نصيبه على باقي المالكين.",
+    "mineUnknown": "حصّتك غير محدَّدة — أسهم المالكين غير مكتملة"
   }
 }

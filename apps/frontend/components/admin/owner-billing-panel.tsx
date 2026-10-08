@@ -24,13 +24,22 @@ function parseShares(value: string): number | null {
   return shares >= 1 && shares <= 2400 ? shares : null;
 }
 
-/** The flat's current owners, one per person, oldest record first. */
-export function currentOwners(unit: UnitWithOccupants): UnitOccupant[] {
+/** Current OWNER spells, one per person, oldest record first — open and archived files alike. */
+function ownerSpells(unit: UnitWithOccupants): UnitOccupant[] {
   const seen = new Set<string>();
   return unit.occupants
     .filter((occupant) => occupant.toDate === null && occupant.role === 'OWNER')
     .sort((a, b) => ((a.recordedAt ?? a.fromDate) < (b.recordedAt ?? b.fromDate) ? -1 : 1))
     .filter((occupant) => (seen.has(occupant.citizenId) ? false : (seen.add(occupant.citizenId), true)));
+}
+
+/**
+ * The owners billing divides the flat between — those whose file is open. An
+ * archived file is never billed, so its part falls to the others (the server's
+ * `activeOwnerSpells`, the same rule).
+ */
+export function currentOwners(unit: UnitWithOccupants): UnitOccupant[] {
+  return ownerSpells(unit).filter((occupant) => occupant.citizenActive !== false);
 }
 
 /**
@@ -84,6 +93,7 @@ export function OwnerBillingPanel({
   }, [unit.id, unit.ownerBillingMode, unit.responsibleOwnerId, ownersKey]);
 
   const nameOf = (owner: UnitOccupant) => owner.citizenName ?? t('unnamed');
+  const archived = ownerSpells(unit).filter((occupant) => occupant.citizenActive === false);
 
   const draftShares = (citizenId: string, stored: number | null) =>
     mode === 'BY_SHARES' ? parseShares(shares[citizenId] ?? '') : stored;
@@ -118,8 +128,9 @@ export function OwnerBillingPanel({
 
   const missingShares = mode === 'BY_SHARES' && owners.some((owner) => parseShares(shares[owner.citizenId] ?? '') === null);
   const missingResponsible = mode === 'RESPONSIBLE_OWNER' && !owners.some((owner) => owner.citizenId === responsible);
+  // No choice saved bills as «بالتساوي»; saving that explicitly would change no bill.
   const unchanged =
-    unit.ownerBillingMode === mode &&
+    (unit.ownerBillingMode ?? 'EQUAL') === mode &&
     (mode !== 'RESPONSIBLE_OWNER' || unit.responsibleOwnerId === responsible) &&
     (mode !== 'BY_SHARES' ||
       owners.every((owner) => parseShares(shares[owner.citizenId] ?? '') === owner.shares));
@@ -156,6 +167,9 @@ export function OwnerBillingPanel({
         {!unit.ownerBillingMode ? <p className="text-xs text-muted-foreground">{t('defaultNote')}</p> : null}
         {preview.effective.fallback === 'RESPONSIBLE_NOT_OWNER' && mode === unit.ownerBillingMode ? (
           <p className="text-xs text-warning">{t('fallback')}</p>
+        ) : null}
+        {archived.length > 0 ? (
+          <p className="text-xs text-warning">{t('archivedOwners', { names: archived.map(nameOf).join('، ') })}</p>
         ) : null}
       </div>
 
@@ -278,7 +292,7 @@ export function OwnerBillingSummary({
   const labels = getLabels(locale);
   const mine = perspective === 'mine';
   const part = (() => {
-    if (!billing.share) return t('fileUnknown');
+    if (!billing.share) return mine ? t('mineUnknown') : t('fileUnknown');
     const { numerator, denominator } = billing.share;
     if (billing.effectiveMode === 'RESPONSIBLE_OWNER') {
       if (numerator === 0) return mine ? t('minePaysNone') : t('filePaysNone');

@@ -590,7 +590,8 @@
     "heldForReview": "{count} held for review",
     "uninhabitable": "{count} uninhabitable, not charged",
     "coOwnedShare": "{count} co-owned, charged at this owner’s part",
-    "coOwnerPays": "{count} paid by another owner"
+    "coOwnerPays": "{count} paid by another owner",
+    "coOwnedShareParts": "{count} co-owned, charged at this owner’s part ({parts})"
   },
   "fees": {
     "issue": {
@@ -1113,6 +1114,8 @@
     "fileDefault": "Split equally (no method chosen)",
     "mineShare": "Your part: {numerator}/{denominator} of the fee",
     "minePaysAll": "You pay the fee for all the owners",
-    "minePaysNone": "Another owner pays for you"
+    "minePaysNone": "Another owner pays for you",
+    "archivedOwners": "{names}: their file is archived, so they are left out and their part falls to the other owners.",
+    "mineUnknown": "Your part is unknown — the owners’ shares are incomplete"
   }
 }

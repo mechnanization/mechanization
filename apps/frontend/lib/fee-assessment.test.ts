@@ -71,6 +71,24 @@ describe('describeAssessment', () => {
     expect(describeAssessment(shared, 'en')).toBe(
       '2.25 Commercial Shop × 100,000 LBP (1 co-owned, charged at this owner’s part)',
     );
+    const parts = assessment({
+      basis: 'PER_AREA',
+      unitCount: 1,
+      totalArea: 100 / 3,
+      sharedUnitCount: 1,
+      lines: [
+        {
+          propertyNumber: '12',
+          propertyType: 'BUILDING',
+          unitType: 'SHOP',
+          unitArea: 100,
+          ownerShare: { mode: 'EQUAL', numerator: 1, denominator: 3 },
+        },
+      ],
+    });
+    expect(describeAssessment(parts, 'ar')).toBe(
+      '33.33 م² × 100,000 ل.ل (1 وحدة بملكية مشتركة احتُسبت بحصّة المكلَّف منها (1/3))',
+    );
     const paidByOther = assessment({ unitCount: 0, coOwnerPaidUnitCount: 1, lines: [] });
     expect(describeAssessment(paidByOther, 'ar')).toBe('0 وحدة × 100,000 ل.ل (1 وحدة يدفع رسمها مالك آخر)');
   });

@@ -14,6 +14,7 @@ import { NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService, type BuildingChange } from '../audit/audit.service';
 import { FeesService } from '../fees/fees.service';
 import { describeOwnerBilling, planOwnerBilling, type OwnerBillingRefusal } from './owner-billing.plan';
+import { activeOwnerSpells } from './owner-billing';
 
 /** The audit action, and the name «فواتير تأثّرت بتصحيحات» traces it by. */
 export const UNIT_OWNER_BILLING_SET = 'UNIT_OWNER_BILLING_SET';
@@ -143,11 +144,8 @@ export class OwnerBillingService {
         unitType: true,
         ownerBillingMode: true,
         responsibleOwnerId: true,
-        occupancies: {
-          where: { toDate: null, role: 'OWNER' },
-          orderBy: [{ fromDate: 'asc' }, { createdAt: 'asc' }],
-          select: { id: true, citizenId: true, shares: true },
-        },
+        // Owners with an open file only: an archived owner is never billed (see `ownerBillingRules`).
+        occupancies: activeOwnerSpells({ id: true, citizenId: true, shares: true }),
       },
     });
     if (!unit) {

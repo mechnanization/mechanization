@@ -912,7 +912,7 @@ export class BuildingsService {
                 // matrix cell shows who is in the flat now, and the drawer
                 // below it shows who was.
                 orderBy: [{ toDate: 'asc' }, { fromDate: 'desc' }],
-                include: { citizen: { select: { firstName: true, lastName: true, phone: true } } },
+                include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true } } },
               },
               /*
                 The attempts behind the status (D10).
@@ -3588,7 +3588,7 @@ export class BuildingsService {
             ...(input.fromDate ? { fromDate: input.fromDate } : {}),
             ...(input.toDate !== undefined ? { toDate: input.toDate } : {}),
           },
-          include: { citizen: { select: { firstName: true, lastName: true, phone: true } } },
+          include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true } } },
         })
       : await this.db.unitOccupancy.create({
           data: {
@@ -3599,7 +3599,7 @@ export class BuildingsService {
             ...(input.fromDate ? { fromDate: input.fromDate } : {}),
             ...(input.toDate ? { toDate: input.toDate } : {}),
           },
-          include: { citizen: { select: { firstName: true, lastName: true, phone: true } } },
+          include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true } } },
         });
 
     /*
@@ -4353,7 +4353,7 @@ export class BuildingsService {
     const updated = await this.db.unitOccupancy.update({
       where: { id: occupancyId },
       data: { toDate, endReason: input.reason as never },
-      include: { citizen: { select: { firstName: true, lastName: true, phone: true } } },
+      include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true } } },
     });
 
     const released = await this.releaseCensusClaim({
@@ -5384,7 +5384,7 @@ function toOccupancyRow(
     id: string;
     unitId: string;
     citizenId: string;
-    citizen?: { firstName: string; lastName: string; phone?: string | null } | null;
+    citizen?: { firstName: string; lastName: string; phone?: string | null; isActive?: boolean } | null;
     role: string;
     shares: number | null;
     fromDate: Date;
@@ -5408,6 +5408,7 @@ function toOccupancyRow(
     citizenId: row.citizenId,
     citizenName: row.citizen ? `${row.citizen.firstName} ${row.citizen.lastName}` : null,
     citizenPhone: row.citizen?.phone ?? null,
+    citizenActive: row.citizen?.isActive ?? true,
     role: row.role,
     shares: row.shares,
     fromDate: row.fromDate,

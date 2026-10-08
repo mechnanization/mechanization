@@ -796,7 +796,7 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
   /** «توزيع الرسم على المالكين», worded to the owner reading it. */
   const ownerBillingLine = (billing: NonNullable<CitizenProfileUnit['ownerBilling']>): string => {
     const method = billing.mode ? labels.ownerBillingMode[billing.effectiveMode] : tOwnerBilling('fileDefault');
-    if (!billing.share) return `${method} — ${tOwnerBilling('fileUnknown')}`;
+    if (!billing.share) return `${method} — ${tOwnerBilling('mineUnknown')}`;
     const { numerator, denominator } = billing.share;
     if (billing.effectiveMode === 'RESPONSIBLE_OWNER') {
       return `${method} — ${billing.paysForAll ? tOwnerBilling('minePaysAll') : tOwnerBilling('minePaysNone')}`;

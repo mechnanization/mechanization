@@ -101,6 +101,11 @@ export interface OccupancyRow {
    * tenant or شاغل بتسامح recorded there without opening each file.
    */
   citizenPhone: string | null;
+  /**
+   * Whether the occupant's file is open. An archived file («أرشفة الملف») is
+   * never billed, so co-owner billing leaves it out of the division (0075).
+   */
+  citizenActive: boolean;
   role: string;
   shares: number | null;
   fromDate: Date;

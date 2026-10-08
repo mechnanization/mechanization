@@ -1131,6 +1131,8 @@ export class ReportingService {
                                 phone: true,
                                 hasNoPhone: true,
                                 contactPhone: true,
+                                // Billing divides a flat between open files only (0075).
+                                isActive: true,
                               },
                             },
                           },
@@ -1872,36 +1874,42 @@ function csvCell(value: unknown): string {
   return `"${safe.replace(/"/g, '""')}"`;
 }
 
-/** The co-ownership billing of a flat as the citizen's file shows it — see `CitizenProfileUnit.ownerBilling`. */
-function profileOwnerBilling(
+/** The co-ownership billing of a flat as the citizen's file shows it — see `CitizenProfileUnit.ownerBilling`. Exported for its tests. */
+export function profileOwnerBilling(
   unit:
     | {
         ownerBillingMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
         responsibleOwnerId: string | null;
-        occupancies: ReadonlyArray<{ citizenId: string; shares: number | null }>;
+        occupancies: ReadonlyArray<{ citizenId: string; shares: number | null; citizen: { isActive: boolean } }>;
       }
     | null
     | undefined,
   citizenId: string,
 ): CitizenProfileUnit['ownerBilling'] {
   if (!unit) return null;
+  // The owners billing divides between — open files only, as `ownerBillingRules` reads them.
   const rule = {
     mode: unit.ownerBillingMode,
     responsibleOwnerId: unit.responsibleOwnerId,
-    owners: unit.occupancies.map((owner) => ({ citizenId: owner.citizenId, shares: owner.shares })),
+    owners: unit.occupancies
+      .filter((owner) => owner.citizen.isActive)
+      .map((owner) => ({ citizenId: owner.citizenId, shares: owner.shares })),
   };
   if (!isCoOwned(rule)) return null;
+  // A tenant's line: how the owners divide their bill is not this person's business.
+  if (!rule.owners.some((owner) => owner.citizenId === citizenId)) return null;
   const effective = effectiveOwnerBilling(rule);
   const outcome = ownerShareOf(rule, citizenId);
-  const isOwner = rule.owners.some((owner) => owner.citizenId === citizenId);
   return {
     mode: rule.mode,
     effectiveMode: effective.mode,
     responsibleOwnerId: rule.responsibleOwnerId,
     fallback: effective.fallback,
     share:
-      isOwner && outcome.kind === 'SHARE'
+      outcome.kind === 'SHARE'
         ? { numerator: outcome.share.numerator, denominator: outcome.share.denominator }
-        : null,
+        : outcome.kind === 'WHOLE'
+          ? { numerator: 1, denominator: 1 }
+          : null,
   };
 }

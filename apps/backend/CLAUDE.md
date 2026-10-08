@@ -122,8 +122,12 @@ Data access for new code (decided):
   units by it, only for what an owner bears, and refuses («unassessable») «حسب الأسهم» with أسهم
   missing. The choice is saved by `OwnerBillingService` (`PUT buildings/units/:unitId/owner-billing`,
   `REGISTER_WRITE_ROLES`), Tier 1, refusing a responsible owner whose own file billing would not charge
-  (asked through `holdingsOf`). A responsible owner who stops being an owner falls back to the equal
-  split at read time; a merge re-points `units.responsibleOwnerId` and its undo puts it back.
+  (asked through `holdingsOf`). Owners are the flat's current OWNER spells held by an **open** file
+  (`activeOwnerSpells`): an archived file is never billed, so its part falls to the others, and a
+  responsible owner who is archived or stops owning falls back to the equal split at read time. A
+  merge re-points `units.responsibleOwnerId` (only rows still naming the absorbed person) and its
+  undo puts it back. Each owner's amount is rounded on its own, so a flat's parts can differ from
+  the whole by under a pound per owner.
 - **Searching citizens as «مشاهد فقط».** The register, the review queue and the payments list match a
   citizen through `citizenSearchText(S, role)` (`application/common/citizen-search.ts`) rather than
   `u."searchText"` directly: for VIEWER it removes the رقم مرجعي (folded and compact) from the searched
