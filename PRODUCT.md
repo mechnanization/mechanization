@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/living-floors` (on `develop@f10a1b7`), 2026-10-08.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -78,6 +78,12 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   asks for the reason and who asked for it, both written to the activity log; an archived
   file is billed nothing new and keeps everything it holds, and «إعادة من الأرشيف» brings it
   back.
+- **A building's height counts its built floors, never its roof** (the user's decision of
+  2026-10-07). «الطوابق المسقوفة» is every level under a roof, the ground floor and a
+  «طابق أعمدة» included. The building editor says so, gives the two ways to record a duplex
+  (two flats, or one flat with both levels' area), and warns when the top rows of the
+  matrix hold nothing, offering to lower the count; it never lowers it by itself, and says
+  nothing for a house or a building still going up.
 - **War damage has two answers.** Each reading keeps the UN-Habitat level, the scale donors
   and the reconstruction file read, and asks beside it whether anyone can live there
   («صالحة للسكن؟»). The level answers it where it can: a collapse or an evacuation is «لا»,

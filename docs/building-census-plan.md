@@ -162,6 +162,8 @@ raise it with the user before changing course.
 | D22 | **Every raw query writes its schema into its SQL.** Never rely on `search_path`, and never on `current_schema()` | The app reaches Postgres through a transaction pooler, where session settings are not guaranteed to follow a statement. It produced a real 42P01 on a table that exists, once, unreproducibly. Enforced by `raw-sql-is-schema-qualified.spec.ts`. See §10.7. |
 | D24 | A registration may **create** the structure it names, but only on an explicit tap, and never without its units | Not selecting a building is evidence of a control below the fold, not of a new building; and a shell with no units links the card while recording no occupancy, which is §10.1's under-billing arriving through the fix for it. See §11. |
 | D25 | **Habitability is a second answer beside the level**, prefilled where the level decides it (decision, 2026-10-05) | A sound building stripped of its windows and services cannot be lived in, and a cracked one can; folding that into the level broke the donors' scale (D4). Collapse and evacuation lock «غير صالحة»; none and minor damage start at «صالحة» and can change; restricted use must be answered. A reading that says nobody can live there may carry a re-inspection day, and holds the occupant-borne fees on the unit until a later reading says otherwise. See §14. |
+| D26 | **عدد الطوابق counts built levels under a roof — the ground floor and a «طابق أعمدة» included, the roof never** (decision, 2026-10-07) | The matrix is a picture of the structure, so a pilotis row stays a row; the roof is not a floor. The audit of 2026-10-07 found 75 buildings whose top row was empty — the roof counted, or the old default of 3 left standing. The editor says what is counted, and warns when the top rows hold nothing (`emptyTopFloors`, never for a house or a building still going up) with a one-click lowering; existing buildings are lowered only by a guarded correction the municipality approves. |
+| D27 | **A duplex is two flats, or one flat on the entrance level with both levels' area** (decision, 2026-10-07) | Both bill correctly with no new code. A unit has one floor, so the one-flat form leaves the upper row undrawn, with a «دوبلكس» note on the flat; the empty-top warning names the duplex as a reason to leave the count alone. |
 | D23 | **Verification builds use their own `distDir`** (`pnpm build:check`) | `next build` and `next dev` share `.next`; building while the dev server runs corrupts it and produces runtime 500s that point at nothing. The frontend twin of the `nest build` EBUSY note in §6. See §10.7. |
 
 ---
@@ -566,8 +568,9 @@ single transaction because of the `@unique` constraint.
 | −1 (basement) | 2 | `B102` |
 
 **Floors are 0-indexed, and `Building.floorsCount` counts what stands above
-ground.** So an N-storey building's top floor is `N-1`, and a قبو is a negative
-floor that does not move the count. Phase 7 (§12.4) makes that a rule rather
+ground** — every built level under a roof, the ground floor and a «طابق أعمدة»
+included, never the roof (D26). So an N-storey building's top floor is `N-1`,
+and a قبو is a negative floor that does not move the count. Phase 7 (§12.4) makes that a rule rather
 than a coincidence: a blueprint may not name a floor above `floorsCount - 1`,
 and where only one of the two numbers is stated the other is derived from it.
 
