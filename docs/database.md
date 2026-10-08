@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -100,6 +100,12 @@ rest; `splitInstitutionName`), so any screen that joins the parts reads it
 whole. An estate keeps the deceased's own name: «ورثة المرحوم …» is added when
 it is shown (`citizenDisplayName`), never written into the row — nor into
 another row: a name copied onto a tenancy card is `citizenStoredName`.
+
+**A card's `propertyNumber` is stored as typed**, «٤٢٠» as well as «420», and
+so are the fee lines copied from it. A lookup by رقم العقار compares
+digit-normalised values on both sides (`normalizeDigits`; in SQL,
+`translate(…, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')`, as
+`parcel-dues.service.ts` does).
 
 **A flat's billing facts live on `units`** (`0075`, `0077`), beside its status:
 

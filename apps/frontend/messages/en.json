@@ -1229,7 +1229,6 @@
     "due": "Due",
     "unlinkedTitle": "Bills of the parcel's people that name no unit",
     "unlinkedHint": "Flat amounts, or bills from before itemised billing, on whoever owns or lives on the parcel today. Their own debts — not shown to be the parcel's.",
-    "unlinkedTotal": "Total: {amount}",
-    "openFile": "Open the file"
+    "unlinkedTotal": "Their total"
   }
 }

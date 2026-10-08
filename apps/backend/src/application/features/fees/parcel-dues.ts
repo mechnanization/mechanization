@@ -1,4 +1,4 @@
-import type { FeeAssessment } from '@mechanization/shared-schemas';
+import { normalizeDigits, type FeeAssessment } from '@mechanization/shared-schemas';
 
 /**
  * The part of a bill that is one parcel's, by the bill's own lines.
@@ -15,7 +15,9 @@ export function parcelShareOf(
   propertyNumber: string,
 ): { share: number; unitCodes: string[]; wholeBill: boolean } | null {
   const lines = assessment?.lines ?? [];
-  const here = lines.filter((line) => line.propertyNumber === propertyNumber);
+  // A line holds the رقم العقار as it was typed: «٤٢٠» is 420.
+  const parcel = normalizeDigits(propertyNumber.trim());
+  const here = lines.filter((line) => normalizeDigits((line.propertyNumber ?? '').trim()) === parcel);
   if (here.length === 0) return null;
 
   const weight = (line: (typeof lines)[number]) =>

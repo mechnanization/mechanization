@@ -2,20 +2,20 @@
 
 import { use, useEffect, useId, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Landmark, Search } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import { getParcelDues, type ParcelDuesBill } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { param, useUrlState } from '@/lib/use-url-state';
-import { formatLbp } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { FactCell, FactRow } from '@/components/ui/facts';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { Money } from '@/components/ui/money';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 
@@ -36,23 +36,13 @@ export default function ParcelDuesPage({
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
 }) {
   const { tenant, locale, adminPath } = use(params);
-  const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
   const t = useTranslations('parcelDues');
   const inputId = useId();
 
-  const [token, setToken] = useState<string | null>(null);
+  const { token } = useStaffSession(tenant, base);
   const [{ parcel }, setUrlState] = useUrlState(PARCEL_URL_STATE);
   const [typed, setTyped] = useState(parcel);
-
-  useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setToken(session.accessToken);
-  }, [tenant, base, router]);
 
   useEffect(() => setTyped(parcel), [parcel]);
 
@@ -75,10 +65,13 @@ export default function ParcelDuesPage({
         className="flex flex-col gap-2 sm:flex-row sm:items-end"
         onSubmit={(event) => {
           event.preventDefault();
-          setUrlState({ parcel: typed.trim() });
+          const next = typed.trim();
+          // Asked again about the same parcel: the URL does not change, so ask the server again.
+          if (next === parcel) void duesQuery.refetch();
+          else setUrlState({ parcel: next });
         }}
       >
-        <Field label={t('propertyNumber')} htmlFor={inputId} className="sm:w-64">
+        <Field label={t('propertyNumber')} htmlFor={inputId} required className="sm:w-64">
           <Input
             id={inputId}
             dir="ltr"
@@ -106,7 +99,9 @@ export default function ParcelDuesPage({
         <div className="space-y-6">
           <section className="rounded-lg border bg-card p-4">
             <p className="text-sm text-muted-foreground">{t('total')}</p>
-            <p className="text-2xl font-semibold tabular-nums">{formatLbp(data.total, locale)}</p>
+            <p className="text-2xl font-semibold">
+              <Money amount={data.total} locale={locale} exact />
+            </p>
             <p className="mt-1 text-xs text-muted-foreground">{t('totalHint')}</p>
           </section>
 
@@ -130,9 +125,13 @@ export default function ParcelDuesPage({
                   <DuesRow key={bill.paymentId} bill={bill} base={base} locale={locale} />
                 ))}
               </ul>
-              <p className="text-sm text-muted-foreground">
-                {t('unlinkedTotal', { amount: formatLbp(data.unlinkedTotal, locale) })}
-              </p>
+              <FactRow className="sm:ms-auto sm:w-72">
+                <FactCell
+                  label={t('unlinkedTotal')}
+                  value={<Money amount={data.unlinkedTotal} locale={locale} exact />}
+                  className="font-semibold"
+                />
+              </FactRow>
             </section>
           ) : null}
         </div>
@@ -175,22 +174,22 @@ function DuesRow({
         </p>
         {bill.wholeBill === false ? <p className="text-xs text-warning">{t('partOfBill')}</p> : null}
       </div>
-      <dl className="shrink-0 space-y-0.5 text-end tabular-nums">
+      <FactRow className="shrink-0 sm:w-60">
         {bill.onParcel !== undefined ? (
-          <div>
-            <dt className="text-xs text-muted-foreground">{t('onParcel')}</dt>
-            <dd className="font-semibold">{formatLbp(bill.onParcel, locale)}</dd>
-          </div>
+          <FactCell
+            label={t('onParcel')}
+            value={<Money amount={bill.onParcel} locale={locale} exact />}
+            className="font-semibold"
+          />
         ) : null}
         {bill.onParcel === undefined || bill.wholeBill === false ? (
-          <div>
-            <dt className="text-xs text-muted-foreground">{t('remaining')}</dt>
-            <dd className={bill.onParcel === undefined ? 'font-semibold' : undefined}>
-              {formatLbp(bill.remaining, locale)}
-            </dd>
-          </div>
+          <FactCell
+            label={t('remaining')}
+            value={<Money amount={bill.remaining} locale={locale} exact />}
+            className={bill.onParcel === undefined ? 'font-semibold' : undefined}
+          />
         ) : null}
-      </dl>
+      </FactRow>
     </li>
   );
 }

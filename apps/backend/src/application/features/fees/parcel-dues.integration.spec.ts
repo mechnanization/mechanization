@@ -122,4 +122,23 @@ describeIfDb('what is owed on a parcel', () => {
     expect(result.unlinked).toEqual([expect.objectContaining({ paymentId: flat.id, remaining: 30_000 })]);
     expect(result.unlinkedTotal).toBe(30_000);
   });
+
+  it('finds a parcel typed in Arabic digits on the card and its bill lines, asked in Latin digits', async () => {
+    const latin = String(10_000 + Math.floor(Math.random() * 80_000));
+    const arabic = latin.replace(/[0-9]/g, (d) => String.fromCharCode(0x0660 + Number(d)));
+    const owner = await person('منى', 'تجربة');
+    const registration = await db.registration.create({
+      data: { citizenId: owner, referenceNumber: `PD-${randomUUID()}` },
+    });
+    await db.propertyEntry.create({
+      data: { registrationId: registration.id, occupancyType: 'OWNER', propertyType: 'LAND', propertyNumber: arabic },
+    });
+    const onLine = await bill(owner, 40_000, lines([arabic, 40, '0101']));
+    const flat = await bill(owner, 10_000, null);
+
+    // The schema has already turned «٤٢٠» into 420 by the time the service is asked.
+    const result = await within(() => dues.dues(latin));
+    expect(result.bills).toEqual([expect.objectContaining({ paymentId: onLine.id, onParcel: 40_000, unitCodes: ['0101'] })]);
+    expect(result.unlinked).toEqual([expect.objectContaining({ paymentId: flat.id })]);
+  });
 });

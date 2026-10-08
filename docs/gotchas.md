@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -838,6 +838,20 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   stored meanwhile.
 - **Where:** `lib/session.ts` `clearSession`, `lib/citizen-draft.ts`,
   `lib/offline-db.ts`.
+
+### A رقم العقار typed in Arabic digits misses its Latin twin
+
+- **What happens:** «ما المستحق على العقار» for 420 answers «لا شيء مستحق»
+  although a card and its bill lines say «٤٢٠».
+- **Why:** `propertyNumber` is stored as typed, and the fee lines copy it.
+  The query is normalised to Latin digits (`parcelDuesQuerySchema`), the rows
+  are not.
+- **Do this:** compare digit-normalised values on both sides — `normalizeDigits`
+  in TypeScript, `translate(btrim(x), '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹',
+  '01234567890123456789')` in SQL. Over a jsonb array, guard with
+  `CASE WHEN jsonb_typeof(…) = 'array' THEN … END`, not `AND`/`OR`: Postgres
+  does not promise the order it evaluates them in.
+- **Where:** `parcel-dues.service.ts`, `parcel-dues.ts` (`parcelShareOf`).
 
 ### `#` in a plural branch can print Arabic-Indic digits
 
