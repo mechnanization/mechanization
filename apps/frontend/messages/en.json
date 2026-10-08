@@ -1234,5 +1234,15 @@
     "unlinkedTitle": "Bills of the parcel's people that name no unit",
     "unlinkedHint": "Flat amounts, or bills from before itemised billing, on whoever owns or lives on the parcel today. Their own debts — not shown to be the parcel's.",
     "unlinkedTotal": "Their total"
+  },
+  "floorCount": {
+    "label": "Roofed floors",
+    "aria": "Number of roofed floors",
+    "fewer": "Fewer floors",
+    "more": "More floors",
+    "help": "Every built level under a roof, the ground floor and a pilotis level included. The roof is not a floor.",
+    "duplexHelp": "Duplex: record it as two flats (one per level), or as one flat on the entrance level with both levels' area and a «duplex» note on it.",
+    "emptyTop": "{count, plural, one {The top row of the matrix holds no unit} other {The top {count} rows of the matrix hold no unit}}. The roof is not a floor: if nothing is built there, lower the count. If it is a built floor not yet divided, draw an «Empty floor» on it; if it is the upper level of a duplex, leave it.",
+    "trimTo": "Lower to {count}"
   }
 }
