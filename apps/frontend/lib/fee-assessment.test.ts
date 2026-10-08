@@ -25,6 +25,14 @@ describe('describeAssessment', () => {
     expect(describeAssessment(null)).toBeNull();
   });
 
+  it('says why a flat charge to a category was not owed — every unit of it exempt or uninhabitable', () => {
+    const letOff = assessment({ basis: 'FLAT', unitCount: 0, lines: [], exemptUnitCount: 1, uninhabitableUnitCount: 1 });
+    expect(describeAssessment(letOff, 'ar')).toBe(
+      'مبلغ مقطوع غير مستحق: 1 وحدة غير صالحة للسكن معفاة، 1 وحدة معفاة من الرسوم',
+    );
+    expect(describeAssessment(letOff, 'en')).toBe('Flat charge, not owed: 1 uninhabitable, exempt; 1 exempt from fees');
+  });
+
   it('writes the same line as before the copy moved to messages', () => {
     expect(describeAssessment(assessment(), 'ar')).toBe('6 محل تجاري × 100,000 ل.ل');
     expect(describeAssessment(assessment({ basis: 'PER_AREA', totalArea: 120.4 }), 'ar')).toBe('120 م² × 100,000 ل.ل');

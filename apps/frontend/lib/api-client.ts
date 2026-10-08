@@ -3285,6 +3285,14 @@ export interface CitizenProfileProperty {
   buildingLifecycleStatus?: string | null;
   unitCount: number;
   units: CitizenProfileUnit[];
+  /**
+   * The census flats a card with no unit lines is billed through — a منزل's
+   * one flat, or the flats a مبنى card's holder is recorded on — with what
+   * changes their bill. Optional on the wire for a profile cached before it.
+   */
+  heldUnits?: Array<
+    { unitId: string; unitCode: string } & Pick<CitizenProfileUnit, 'feeExemption' | 'ownerBilling'>
+  >;
 }
 
 export interface CitizenProfileDocument {

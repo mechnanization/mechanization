@@ -212,6 +212,8 @@ export class DataQualityService {
   @OnEvent('building.changed')
   @OnEvent('registration.submitted')
   @OnEvent('quality.changed')
+  // A «غير صالحة للسكن» reading clears UNINHABITED_WITHOUT_READING.
+  @OnEvent('damage.recorded')
   async onRegisterChanged(): Promise<void> {
     try {
       await this.invalidate();
@@ -833,7 +835,10 @@ export class DataQualityService {
        WHERE b."lifecycleStatus"::text = ANY(${[...UNINHABITABLE_LIFECYCLE]}::text[])
          AND u."feeExemption" IS NULL
          AND EXISTS (
-           SELECT 1 FROM ${this.S}unit_occupancies o WHERE o."unitId" = u.id AND o."toDate" IS NULL
+           -- An archived file is never billed (resolveTargets reads active files only).
+           SELECT 1 FROM ${this.S}unit_occupancies o
+             JOIN ${this.S}users c ON c.id = o."citizenId" AND c."isActive"
+            WHERE o."unitId" = u.id AND o."toDate" IS NULL
          )
          AND NOT (cur.id IS NOT NULL AND ${uninhabitableSql(Prisma.sql`cur.level`, Prisma.sql`cur.habitable`)})
        GROUP BY b.id

@@ -10,6 +10,7 @@ import { AuditService } from '../audit/audit.service';
 import { DamageService } from '../buildings/damage.service';
 import { FeeExemptionService } from '../buildings/fee-exemption.service';
 import { DataQualityService } from '../quality/data-quality.service';
+import { ReportingService } from '../reporting/reporting.service';
 import { assessCitizen, FeesService } from './fees.service';
 
 /**
@@ -244,6 +245,89 @@ describeIfDb('units charged nothing', () => {
     ).rejects.toMatchObject({ code: 'FEE_EXEMPTION_STRUCTURAL_UNIT' });
   });
 
+  it('lets a holder off a FLAT notice aimed at a category when all they hold of it is exempt — and bills them once lifted', async () => {
+    const parcel = await waqfParcel();
+    const store = await db.unit.create({
+      data: { buildingId: parcel.building.id, unitCode: '0004', floor: 0, sequence: 4, unitType: 'WAREHOUSE' as never, unitArea: 100 },
+    });
+    const owner = await holder(parcel.building.id, store.id, 'OWNER', 100, 'WAREHOUSE');
+    await within(() => exemptions.set(store.id, { reason: 'PUBLIC_FACILITY' }, admin));
+
+    const notice = {
+      title: `رسم المستودعات ${randomUUID().slice(0, 6)}`,
+      amount: 50_000,
+      basis: 'FLAT',
+      bearer: 'OWNER',
+      frequency: 'ONCE',
+      targetType: 'BUILDING_CATEGORY',
+      targetCategory: 'WAREHOUSE',
+      dueDate: '2026-12-31',
+    } as never;
+    await expect(within(() => fees.issue(notice, admin))).rejects.toMatchObject({
+      code: 'FEE_NOTHING_TO_CHARGE',
+      params: expect.objectContaining({ feeExempt: 1 }),
+    });
+
+    await within(() => exemptions.set(store.id, { reason: null }, admin));
+    await within(() => fees.issue(notice, admin));
+    const bills = await db.citizenPayment.findMany({ where: { citizenId: owner } });
+    expect(bills.map((bill) => Number(bill.amount))).toEqual([50_000]);
+  });
+
+  it("shows «معفاة» on the file for a منزل's flat and a census flat, which have no unit line", async () => {
+    const tag = randomUUID().slice(0, 8);
+    const house = await db.building.create({
+      data: {
+        parcelNumber: `20${tag}`,
+        codeSuffix: 'A',
+        code: `Z-2-20-${tag}`,
+        structureType: 'INDEPENDENT_HOUSE' as never,
+        floorsCount: 1,
+        createdById: adminId,
+      },
+    });
+    const flat = await db.unit.create({
+      data: { buildingId: house.id, unitCode: '0001', floor: 0, sequence: 1, unitType: 'INDEPENDENT_HOUSE' as never },
+    });
+    const parcel = await waqfParcel();
+    const citizenId = randomUUID();
+    await db.user.create({
+      data: { id: citizenId, kind: 'CITIZEN', tenantSlug: 'fx', firstName: 'مواطن', lastName: tag },
+    });
+    const registration = await db.registration.create({
+      data: { citizenId, referenceNumber: `FX-${randomUUID()}`, createdById: adminId },
+    });
+    const houseCard = await db.propertyEntry.create({
+      data: { registrationId: registration.id, occupancyType: 'OWNER' as never, propertyType: 'HOUSE' as never, buildingId: house.id, propertyNumber: '20' },
+    });
+    // A مبنى card with no lines: the census recorded this person on the shop.
+    const blockCard = await db.propertyEntry.create({
+      data: { registrationId: registration.id, occupancyType: 'OWNER' as never, propertyType: 'BUILDING' as never, buildingId: parcel.building.id, propertyNumber: '19' },
+    });
+    await db.unitOccupancy.create({ data: { unitId: parcel.shop.id, citizenId, role: 'OWNER' as never, registrationId: registration.id } });
+    await within(() => exemptions.set(flat.id, { reason: 'OTHER', note: 'سكن الناطور البلدي' }, admin));
+    await within(() => exemptions.set(parcel.shop.id, { reason: 'PUBLIC_FACILITY' }, admin));
+
+    const reporting = new ReportingService(
+      context,
+      new EventEmitter2(),
+      { get: async () => null, set: async () => undefined } as never,
+      { get: () => undefined } as never,
+    );
+    const profile = await within(() => reporting.getCitizenProfile(citizenId));
+    const cards = new Map(profile!.registrations[0]!.properties.map((card) => [card.id, card]));
+
+    expect(cards.get(houseCard.id)!.heldUnits).toEqual([
+      { unitId: flat.id, unitCode: '0001', feeExemption: 'OTHER', ownerBilling: null },
+    ]);
+    // The shop and nothing else of the building: the mosque is not this person's.
+    expect(cards.get(blockCard.id)!.heldUnits).toEqual([
+      expect.objectContaining({ unitId: parcel.shop.id, feeExemption: 'PUBLIC_FACILITY' }),
+    ]);
+    // Its only owner on record (the other spell is a tenant's): nothing to divide.
+    expect(cards.get(blockCard.id)!.heldUnits[0]!.ownerBilling).toBeNull();
+  });
+
   describe('a building labelled uninhabited', () => {
     it('is listed in «مراجعة الجودة» while its units are billed, and exempt — and cleared — once read «غير صالحة للسكن»', async () => {
       const parcel = await waqfParcel('WAR_DAMAGED_UNINHABITED');
@@ -273,6 +357,21 @@ describeIfDb('units charged nothing', () => {
         amount: 0,
         assessment: { uninhabitableUnitCount: 1 },
       });
+      expect(await listed()).toHaveLength(0);
+    });
+
+    it('is not listed for a unit only an archived file is still recorded on — nobody is billed for it', async () => {
+      const parcel = await waqfParcel('WAR_DAMAGED_UNINHABITED');
+      const listed = async () =>
+        (await within(() => quality.findings())).items.filter(
+          (finding) =>
+            finding.kind === 'UNINHABITED_WITHOUT_READING' && finding.subjects.some((s) => s.id === parcel.building.id),
+        );
+      expect(await listed()).toHaveLength(1);
+
+      // Archiving a file leaves its spells open; billing reads active files only.
+      await db.user.updateMany({ where: { id: { in: [parcel.waqf, parcel.tenant] } }, data: { isActive: false } });
+
       expect(await listed()).toHaveLength(0);
     });
   });

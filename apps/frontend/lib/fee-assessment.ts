@@ -45,7 +45,20 @@ export function describeAssessment(
   assessment: FeeAssessment | null | undefined,
   locale: string = 'ar',
 ): string | null {
-  if (!assessment || assessment.basis === 'FLAT') return null;
+  if (!assessment) return null;
+  if (assessment.basis === 'FLAT') {
+    /*
+      A flat charge explains itself — except one a holder was let off because
+      every unit of the category they hold is exempt or uninhabitable
+      (`flatCategoryCharge` on the API). Say which.
+    */
+    const t = translatorFor(locale);
+    const notes = [
+      ...(assessment.uninhabitableUnitCount ? [t('uninhabitable', { count: assessment.uninhabitableUnitCount })] : []),
+      ...(assessment.exemptUnitCount ? [t('exempt', { count: assessment.exemptUnitCount })] : []),
+    ];
+    return notes.length === 0 ? null : t('flatNotOwed', { notes: notes.join(t('notesSeparator')) });
+  }
 
   const t = translatorFor(locale);
   const rate = formatLbp(assessment.rate, locale);

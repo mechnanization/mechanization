@@ -91,12 +91,17 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   building's status alone («متضررة من الحرب وغير مسكونة», «مهدوم») exempts nothing: the
   editor asks for the reading, and «مراجعة الجودة» lists any such building whose units are
   still billed. The bill and the issue summary both say how many units were not charged.
+- **A flat amount aimed at a kind of unit follows the same rule.** A notice of one amount
+  per holder of, say, shops is not charged to someone all of whose shops are exempt or
+  cannot be lived in; one usable shop beside them and the amount is due as usual. A flat
+  amount sent to every citizen is a charge on the person and is not affected.
 - **A unit can be exempt from fees.** A system administrator can mark a unit «معفاة من
   الرسوم» — a place of worship, a public facility, or another reason written out — and no
   fee is charged on it, whoever owns or uses it. It is for the mosque itself or the
   municipality's own building, not for a shop a waqf rents out: that shop's tenant is billed
   as usual. Granting and lifting are on the activity log; the unit, the owner's file and the
-  citizen's «ملفّي» show it.
+  citizen's «ملفّي» show it — on a house's own flat and on a flat the census recorded the
+  person on as well as on an itemised unit.
 - **A flat several people own is billed once, divided between them.** Each co-owner's file
   claims the flat, and each used to be billed for all of it. Now what the owners owe is split
   equally by default, and an officer can choose instead to divide it by the owners' أسهم or to

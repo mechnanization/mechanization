@@ -1,5 +1,5 @@
 import { setUnitFeeExemptionSchema } from '@mechanization/shared-schemas';
-import { assessCitizen } from './fees.service';
+import { assessCitizen, flatCategoryCharge } from './fees.service';
 import type { BillablePropertyEntry, LinkedUnit } from '../../../domain/entities/billable-unit';
 
 /**
@@ -76,5 +76,58 @@ describe('setUnitFeeExemptionSchema', () => {
     expect(setUnitFeeExemptionSchema.safeParse({ reason: 'PLACE_OF_WORSHIP' }).success).toBe(true);
     expect(setUnitFeeExemptionSchema.safeParse({ reason: null }).success).toBe(true);
     expect(setUnitFeeExemptionSchema.safeParse({ reason: 'CHARITY' }).success).toBe(false);
+  });
+});
+
+describe('a FLAT notice aimed at a category (`flatCategoryCharge`)', () => {
+  const shop = (unit: Partial<LinkedUnit>, id: string): BillablePropertyEntry => ({
+    propertyType: 'BUILDING',
+    propertyNumber: '19',
+    occupancyType: 'OWNER',
+    unitType: null,
+    unitArea: null,
+    units: [
+      {
+        unitType: 'SHOP',
+        unitArea: 30,
+        unitStatus: 'OWNER_OCCUPIED',
+        unit: { id, unitType: 'SHOP', unitArea: 30, unitStatus: 'OWNER_OCCUPIED', unitCode: id, ...unit },
+      },
+    ],
+  });
+  const notice = { amount: 50_000, targetCategory: 'SHOP' };
+
+  it('charges a holder the flat amount, as every FLAT notice does', () => {
+    expect(flatCategoryCharge([shop({}, 'shop-1')], notice)).toEqual({ amount: 50_000, assessment: null });
+  });
+
+  it('lets off a holder whose every unit of the category is exempt or uninhabitable, and counts them', () => {
+    const outcome = flatCategoryCharge([shop({ exempt: true }, 'shop-1'), shop({ uninhabitable: true }, 'shop-2')], notice);
+    expect(outcome).toMatchObject({
+      amount: 0,
+      exemptUnitIds: ['shop-1'],
+      uninhabitableUnitIds: ['shop-2'],
+      assessment: { basis: 'FLAT', exemptUnitCount: 1, uninhabitableUnitCount: 1, unitCount: 0 },
+    });
+  });
+
+  it('still charges a holder with one chargeable unit of the category beside an exempt one', () => {
+    expect(flatCategoryCharge([shop({ exempt: true }, 'shop-1'), shop({}, 'shop-2')], notice)).toEqual({
+      amount: 50_000,
+      assessment: null,
+    });
+  });
+
+  it('ignores units of another category, and the review hold — a flat amount is a person’s charge', () => {
+    // The exempt mosque is an office: it does not make a shop holder exempt from «رسم المحلات».
+    const mosque = card({ exempt: true });
+    expect(flatCategoryCharge([mosque, shop({ underReview: true }, 'shop-1')], notice)).toEqual({
+      amount: 50_000,
+      assessment: null,
+    });
+  });
+
+  it('charges a holder the register shows nothing of the category for — targeting decides that, not this', () => {
+    expect(flatCategoryCharge([card({})], notice)).toEqual({ amount: 50_000, assessment: null });
   });
 });

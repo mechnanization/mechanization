@@ -754,6 +754,21 @@ function PropertyRow({
         </ul>
       ) : null}
 
+      {/* A house's flat, or the census flats this card bills through: the same notes, by code when several. */}
+      {(property.heldUnits ?? []).length > 0 ? (
+        <div className="space-y-1 text-xs">
+          {(property.heldUnits ?? []).map((unit) => (
+            <UnitBillingNotes
+              key={unit.unitId}
+              feeExemption={unit.feeExemption}
+              ownerBilling={unit.ownerBilling}
+              unitCode={(property.heldUnits ?? []).length > 1 ? unit.unitCode : undefined}
+              locale={locale}
+            />
+          ))}
+        </div>
+      ) : null}
+
       {property.landlordName ? (
         <p className="text-xs text-muted-foreground">
           {en ? 'Owner: ' : 'المالك: '}
@@ -792,18 +807,6 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
   */
   const status = unit.censusUnitStatus ?? unit.unitStatus;
   const months = unit.presenceMonths?.length ? formatMonthList(unit.presenceMonths, locale) : null;
-  const tOwnerBilling = useTranslations('ownerBilling');
-  const tFeeExemption = useTranslations('feeExemption');
-  /** «توزيع الرسم على المالكين», worded to the owner reading it. */
-  const ownerBillingLine = (billing: NonNullable<CitizenProfileUnit['ownerBilling']>): string => {
-    const method = billing.mode ? labels.ownerBillingMode[billing.effectiveMode] : tOwnerBilling('fileDefault');
-    if (!billing.share) return `${method} — ${tOwnerBilling('mineUnknown')}`;
-    const { numerator, denominator } = billing.share;
-    if (billing.effectiveMode === 'RESPONSIBLE_OWNER') {
-      return `${method} — ${billing.paysForAll ? tOwnerBilling('minePaysAll') : tOwnerBilling('minePaysNone')}`;
-    }
-    return `${method} — ${tOwnerBilling('mineShare', { numerator, denominator })}`;
-  };
 
   return (
     <li className="space-y-1 px-3 py-2 text-xs">
@@ -881,25 +884,59 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
         </p>
       ) : null}
 
-      {/* «معفاة من الرسوم» (0077): the municipality charges nothing on this unit. */}
-      {unit.feeExemption ? (
+      <UnitBillingNotes feeExemption={unit.feeExemption} ownerBilling={unit.ownerBilling} locale={locale} />
+    </li>
+  );
+}
+
+/**
+ * What changes a unit's bill beyond its status: «معفاة من الرسوم» (0077), and
+ * how a flat this person owns with others is divided (0075) — their own part,
+ * never who else pays. On a unit line, and on a house or a census flat whose
+ * card has no unit lines (`heldUnits`).
+ */
+function UnitBillingNotes({
+  feeExemption,
+  ownerBilling,
+  unitCode,
+  locale,
+}: Pick<CitizenProfileUnit, 'feeExemption' | 'ownerBilling'> & { unitCode?: string; locale: string }) {
+  const labels = getLabels(locale);
+  const tOwnerBilling = useTranslations('ownerBilling');
+  const tFeeExemption = useTranslations('feeExemption');
+  /** «توزيع الرسم على المالكين», worded to the owner reading it. */
+  const ownerBillingLine = (billing: NonNullable<CitizenProfileUnit['ownerBilling']>): string => {
+    const method = billing.mode ? labels.ownerBillingMode[billing.effectiveMode] : tOwnerBilling('fileDefault');
+    if (!billing.share) return `${method} — ${tOwnerBilling('mineUnknown')}`;
+    const { numerator, denominator } = billing.share;
+    if (billing.effectiveMode === 'RESPONSIBLE_OWNER') {
+      return `${method} — ${billing.paysForAll ? tOwnerBilling('minePaysAll') : tOwnerBilling('minePaysNone')}`;
+    }
+    return `${method} — ${tOwnerBilling('mineShare', { numerator, denominator })}`;
+  };
+  const code = unitCode ? (
+    <bdi dir="ltr" className="font-mono">
+      {unitCode}
+    </bdi>
+  ) : null;
+
+  return (
+    <>
+      {feeExemption ? (
         <p className="flex flex-wrap items-center gap-x-2 px-2 text-success">
           <BadgeCheck className="size-3 shrink-0" aria-hidden />
-          <span>{tFeeExemption('fileValue', { reason: labels.feeExemptionReason[unit.feeExemption] })}</span>
+          {code}
+          <span>{tFeeExemption('fileValue', { reason: labels.feeExemptionReason[feeExemption] })}</span>
         </p>
       ) : null}
-
-      {/*
-        A flat this person owns with others: how its owner-borne fees are
-        divided, and their own part (migration 0075) — never who else pays.
-      */}
-      {unit.ownerBilling ? (
+      {ownerBilling ? (
         <p className="flex flex-wrap items-center gap-x-2 px-2 text-muted-foreground">
           <Scale className="size-3 shrink-0" aria-hidden />
-          <span>{ownerBillingLine(unit.ownerBilling)}</span>
+          {code}
+          <span>{ownerBillingLine(ownerBilling)}</span>
         </p>
       ) : null}
-    </li>
+    </>
   );
 }
 

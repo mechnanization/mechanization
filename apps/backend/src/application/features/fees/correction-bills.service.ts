@@ -18,7 +18,7 @@ import {
   type BillFigure,
   type ChangeKind,
 } from './bill-corrections';
-import { assessCitizen, FeesService, type CitizenHoldings } from './fees.service';
+import { assessCitizen, FeesService, flatCategoryCharge, type CitizenHoldings } from './fees.service';
 
 /** Owed and not yet settled. PENDING_REVIEW is money claimed, not money received. */
 const OPEN_STATUSES = ['UNPAID', 'OVERDUE', 'PENDING_REVIEW'] as const;
@@ -331,7 +331,15 @@ export class CorrectionBillsService {
     const flat = bills.filter((bill) => bill.feeNotice && bill.feeNotice.basis === 'FLAT');
     const figures = new Map<string, BillFigure>();
 
-    const holdings = await this.holdings([...new Set(rated.map((bill) => bill.citizenId))]);
+    /*
+      A FLAT bill aimed at a category reads the register too since 0077: a
+      holder whose every unit of the category became exempt or uninhabitable
+      owes nothing for it (`flatCategoryCharge`).
+    */
+    const flatByCategory = flat.filter((bill) => bill.feeNotice!.targetCategory);
+    const holdings = await this.holdings([
+      ...new Set([...rated, ...flatByCategory].map((bill) => bill.citizenId)),
+    ]);
     for (const bill of rated) {
       const holding = holdings.get(bill.citizenId);
       if (!holding) continue;
@@ -356,12 +364,18 @@ export class CorrectionBillsService {
     for (const bill of flat) {
       const notice = bill.feeNotice!;
       if (!notice.targetCategory) continue;
-      figures.set(
-        bill.id,
-        holders.get(notice.targetCategory)?.has(bill.citizenId)
-          ? { kind: 'ASSESSED', amount: Math.round(Number(notice.amount)), assessment: null }
-          : { kind: 'NOT_TARGETED' },
-      );
+      if (!holders.get(notice.targetCategory)?.has(bill.citizenId)) {
+        figures.set(bill.id, { kind: 'NOT_TARGETED' });
+        continue;
+      }
+      const holding = holdings.get(bill.citizenId);
+      const charge = holding
+        ? flatCategoryCharge(holding.entries, {
+            amount: Math.round(Number(notice.amount)),
+            targetCategory: notice.targetCategory,
+          })
+        : { amount: Math.round(Number(notice.amount)), assessment: null };
+      figures.set(bill.id, { kind: 'ASSESSED', amount: charge.amount, assessment: charge.assessment });
     }
     return { figures, holdings };
   }

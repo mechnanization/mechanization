@@ -574,6 +574,19 @@ function PropertyBlock({
                 <UnitStatusLine status={property.unitStatus} locale={locale} />
               </SummaryRow>
             ) : null}
+            {/* The census flats this card bills through: a house's one flat, or a block's flats this person is on. */}
+            {!property.endedAt
+              ? (property.heldUnits ?? []).map((unit) => (
+                  <HeldUnitBilling
+                    key={unit.unitId}
+                    unit={unit}
+                    labels={labels}
+                    en={en}
+                    tone={tone}
+                    showCode={(property.heldUnits ?? []).length > 1}
+                  />
+                ))
+              : null}
           </>
         ) : null}
         {!owner && property.landlordName ? (
@@ -792,6 +805,52 @@ function PropertyBlock({
  * reads it; where the card says something else, both are shown, since that
  * disagreement is a vacancy to lift or a card to correct.
  */
+/**
+ * «معفاة من الرسوم» and «توزيع الرسم على المالكين» for a flat a card bills
+ * through without a unit line (`heldUnits`) — the two rows `UnitRows` shows
+ * for a line, by unit code when the card holds several.
+ */
+function HeldUnitBilling({
+  unit,
+  labels,
+  en,
+  tone,
+  showCode,
+}: {
+  unit: NonNullable<CitizenProfileProperty['heldUnits']>[number];
+  labels: Labels;
+  en: boolean;
+  tone: PropertyTone;
+  showCode: boolean;
+}) {
+  const tOwnerBilling = useTranslations('ownerBilling');
+  const tFeeExemption = useTranslations('feeExemption');
+  const suffix = showCode ? (
+    <>
+      {' · '}
+      <bdi dir="ltr" className="font-mono">
+        {unit.unitCode}
+      </bdi>
+    </>
+  ) : null;
+  return (
+    <>
+      {unit.feeExemption ? (
+        <SummaryRow label={tFeeExemption('fileLabel')} className="text-success">
+          {tFeeExemption('fileValue', { reason: labels.feeExemptionReason[unit.feeExemption] })}
+          {suffix}
+        </SummaryRow>
+      ) : null}
+      {unit.ownerBilling && tone === 'owner' ? (
+        <SummaryRow label={tOwnerBilling('fileLabel')}>
+          <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} perspective="file" />
+          {suffix}
+        </SummaryRow>
+      ) : null}
+    </>
+  );
+}
+
 function UnitRows({
   unit,
   labels,

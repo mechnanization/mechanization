@@ -492,6 +492,63 @@ export function assessCitizen(
 }
 
 /**
+ * A FLAT notice aimed at a category («رسم المحلات», one amount per shop
+ * holder), for one holder.
+ *
+ * The notice's own amount, as every FLAT notice charges — per holder, whatever
+ * they hold of it — except a holder every one of whose units of that category
+ * is charged nothing: «معفاة من الرسوم» (0077) or «غير صالحة للسكن». The waqf
+ * whose one office is the mosque is not a holder of offices for this notice,
+ * and a family whose one shop is a ruin is not a shop holder (the user's
+ * decisions of 2026-10-07: «not habitable → exempt», and the mosque exempt).
+ *
+ * Only that. The review hold and the bearer rule stay out of FLAT, as they
+ * always have: a flat amount is a person's charge, not a flat's. A notice to
+ * every citizen names no category and never reaches here. A holder with no
+ * matching unit at all — `resolveTargets` is a superset — is charged, as
+ * before: this decides exemption, not targeting.
+ *
+ * Counted when it lets someone off, so the issue summary says how many units
+ * the notice was not charged for; a unit without a register row has no id to
+ * count once by, so the assessment carries the counts too.
+ */
+export function flatCategoryCharge(
+  entries: readonly BillablePropertyEntry[],
+  notice: { amount: number; targetCategory: string },
+): { amount: number; assessment: FeeAssessment | null; uninhabitableUnitIds?: string[]; exemptUnitIds?: string[] } {
+  const matching = entries
+    .flatMap(billableUnits)
+    .filter((unit) => unitMatches(unit, notice.targetCategory));
+  const exempt = matching.filter((unit) => unit.exempt);
+  const unlivable = matching.filter((unit) => !unit.exempt && unit.uninhabitable);
+
+  if (matching.length === 0 || exempt.length + unlivable.length < matching.length) {
+    return { amount: notice.amount, assessment: null };
+  }
+
+  const ids = (units: readonly BillableUnit[]) =>
+    units.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+  return {
+    amount: 0,
+    uninhabitableUnitIds: ids(unlivable),
+    exemptUnitIds: ids(exempt),
+    assessment: {
+      basis: 'FLAT',
+      rate: notice.amount,
+      unitCount: 0,
+      totalArea: 0,
+      excludedUnitCount: 0,
+      heldUnitCount: 0,
+      uninhabitableUnitCount: unlivable.length,
+      sharedUnitCount: 0,
+      coOwnerPaidUnitCount: 0,
+      exemptUnitCount: exempt.length,
+      lines: [],
+    },
+  };
+}
+
+/**
  * Five minutes. Contact details and office hours change a few times a year,
  * and a write drops the entry outright, so the TTL only bounds how long a
  * change made *outside* this service could go unseen.
@@ -1278,11 +1335,21 @@ export class FeesService {
           `Recurring "${notice.title}" (${periodKey}): ${heldUnits} unit(s) held under review (تعارض في حالة الوحدة) — not charged this period`,
         );
       }
-      // Flats nobody can live in this period — logged as the review hold is, never silent.
+      /*
+        Units charged nothing this period — logged, never silent, as `issue`
+        logs them. Not a hold: an uninhabitable unit and an exempt one are
+        settled decisions, and nothing is owed for the period afterwards.
+      */
       const uninhabitableUnits = distinctUninhabitable(assessed);
       if (uninhabitableUnits > 0) {
-        this.logger.warn(
-          `Recurring "${notice.title}" (${periodKey}): ${uninhabitableUnits} unit(s) held as uninhabitable (غير صالحة للسكن) — not charged this period`,
+        this.logger.log(
+          `Recurring "${notice.title}" (${periodKey}): ${uninhabitableUnits} unit(s) not charged as uninhabitable (غير صالحة للسكن)`,
+        );
+      }
+      const feeExemptUnits = distinctExempt(assessed);
+      if (feeExemptUnits > 0) {
+        this.logger.log(
+          `Recurring "${notice.title}" (${periodKey}): ${feeExemptUnits} unit(s) exempt from fees (معفاة من الرسوم)`,
         );
       }
       if (billable.length === 0) {
@@ -1329,6 +1396,7 @@ export class FeesService {
           periodKey,
           heldUnitCount: heldUnits,
           uninhabitableUnitCount: uninhabitableUnits,
+          feeExemptUnitCount: feeExemptUnits,
         });
       }
 
@@ -1560,7 +1628,7 @@ export class FeesService {
       bearer?: FeeBearer;
     },
   ): Promise<{ assessed: CitizenAssessment[]; unassessable: UnassessableCitizen[] }> {
-    if (notice.basis === 'FLAT') {
+    if (notice.basis === 'FLAT' && !notice.targetCategory) {
       return {
         assessed: citizenIds.map((citizenId) => ({
           citizenId,
@@ -1569,6 +1637,25 @@ export class FeesService {
         })),
         unassessable: [],
       };
+    }
+
+    if (notice.basis === 'FLAT') {
+      // Per holder — unless all they hold of the category is charged nothing (`flatCategoryCharge`).
+      const targetCategory = notice.targetCategory!;
+      const assessed: CitizenAssessment[] = [];
+      const seen = new Set<string>();
+      for await (const batch of this.holdingsOf(citizenIds)) {
+        for (const holding of batch) {
+          seen.add(holding.citizenId);
+          const charge = flatCategoryCharge(holding.entries, { amount: notice.amount, targetCategory });
+          assessed.push({ citizenId: holding.citizenId, ...charge });
+        }
+      }
+      // Never fewer bills than before: a target the register read did not return is charged as one.
+      for (const citizenId of citizenIds) {
+        if (!seen.has(citizenId)) assessed.push({ citizenId, amount: notice.amount, assessment: null });
+      }
+      return { assessed, unassessable: [] };
     }
 
     const assessed: CitizenAssessment[] = [];

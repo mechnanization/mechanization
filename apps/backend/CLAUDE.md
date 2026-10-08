@@ -134,7 +134,13 @@ Data access for new code (decided):
   bearer rule and counts it (`exemptUnitCount`). Granted and lifted by `FeeExemptionService`
   (`PUT buildings/units/:unitId/fee-exemption`, `@Roles('SUPER_ADMIN')`), Tier 1, naming everyone on the
   unit. A building's lifecycle exempts nothing: `UNINHABITABLE_LIFECYCLE` buildings still billed are a
-  «مراجعة الجودة» finding (`UNINHABITED_WITHOUT_READING`) until a «غير صالحة للسكن» reading is recorded.
+  «مراجعة الجودة» finding (`UNINHABITED_WITHOUT_READING`, archived files ignored, cleared on
+  `damage.recorded`) until a «غير صالحة للسكن» reading is recorded. A FLAT notice to a category reads the
+  register too: `flatCategoryCharge` lets off a holder every one of whose units of that category is exempt
+  or uninhabitable (never the review hold or the bearer rule), and `CorrectionBillsService` uses the same
+  function for today's figure. FLAT to ALL_CITIZENS stays a per-person charge. The profile carries
+  `heldUnits` for cards with no unit lines (a منزل's flat, a مبنى card's census flats), read like
+  `holdingsOf`, so the exemption and the owners' split show there too.
 - **Searching citizens as «مشاهد فقط».** The register, the review queue and the payments list match a
   citizen through `citizenSearchText(S, role)` (`application/common/citizen-search.ts`) rather than
   `u."searchText"` directly: for VIEWER it removes the رقم مرجعي (folded and compact) from the searched

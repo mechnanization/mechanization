@@ -428,8 +428,8 @@
   },
   "reinspections": {
     "title": "Awaiting re-inspection",
-    "subtitleAll": "Units and buildings read not habitable, waiting for the visit after repair — their occupancy fee is held until then. Overdue first.",
-    "subtitleMine": "What you read not habitable, waiting for the visit after repair — its occupancy fee is held until then. Overdue first.",
+    "subtitleAll": "Units and buildings read not habitable, waiting for the visit after repair — they are charged no fee until then. Overdue first.",
+    "subtitleMine": "What you read not habitable, waiting for the visit after repair — it is charged no fee until then. Overdue first.",
     "waiting": "Waiting for re-inspection",
     "loadError": "Could not load the re-inspection list.",
     "searchPlaceholder": "Search by building code, name, parcel or unit",
@@ -593,7 +593,8 @@
     "coOwnedShare": "{count} co-owned, charged at this owner’s part",
     "coOwnerPays": "{count} paid by another owner",
     "coOwnedShareParts": "{count} co-owned, charged at this owner’s part ({parts})",
-    "exempt": "{count} exempt from fees"
+    "exempt": "{count} exempt from fees",
+    "flatNotOwed": "Flat charge, not owed: {notes}"
   },
   "fees": {
     "issue": {

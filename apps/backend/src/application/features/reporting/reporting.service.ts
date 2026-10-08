@@ -273,18 +273,18 @@ export interface CitizenProfileUnit {
     shares: number | null;
   }>;
   /**
+   * «معفاة من الرسوم» (0077): why the linked unit is charged nothing, or null.
+   * The reason only — the officer's note stays on the staff screens, because
+   * this object reaches the citizen portal by spread.
+   */
+  feeExemption: 'PLACE_OF_WORSHIP' | 'PUBLIC_FACILITY' | 'OTHER' | null;
+  /**
    * «توزيع الرسم على المالكين» (migration 0075), when the linked flat has
    * several current owners; null otherwise. `share` is this file's owner's
    * part — what an owner-borne charge on the flat bills them for — or null
    * when it cannot be computed («حسب الأسهم» with أسهم missing), or when this
    * person is not among the owners (a tenancy card).
    */
-  /**
-   * «معفاة من الرسوم» (0077): why the linked unit is charged nothing, or null.
-   * The reason only — the officer's note stays on the staff screens, because
-   * this object reaches the citizen portal by spread.
-   */
-  feeExemption: 'PLACE_OF_WORSHIP' | 'PUBLIC_FACILITY' | 'OTHER' | null;
   ownerBilling: {
     mode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
     effectiveMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER';
@@ -398,6 +398,22 @@ export interface CitizenProfileProperty {
   buildingLifecycleStatus: string | null;
   unitCount: number;
   units: CitizenProfileUnit[];
+  /**
+   * The census flats a card with no unit lines is billed through, read as
+   * `holdingsOf` reads them: a منزل's one flat, or the flats this person is
+   * recorded on in the building a مبنى card names. Only what changes the bill
+   * — «معفاة من الرسوم» and the owners' split — since a line on `units`
+   * carries both and these cards have none. Empty for every other card.
+   */
+  heldUnits: CitizenProfileHeldUnit[];
+}
+
+/** A census flat a card bills through without a unit line — see `CitizenProfileProperty.heldUnits`. */
+export interface CitizenProfileHeldUnit {
+  unitId: string;
+  unitCode: string;
+  feeExemption: CitizenProfileUnit['feeExemption'];
+  ownerBilling: CitizenProfileUnit['ownerBilling'];
 }
 
 export interface CitizenProfileDocument {
@@ -1206,6 +1222,10 @@ export class ReportingService {
     const sum = (rows: typeof payments, field: 'amount' | 'paidAmount' | 'remaining') =>
       rows.reduce((total, payment) => total + payment[field], 0);
     const overdue = payments.filter((payment) => payment.paymentStatus === 'OVERDUE');
+    const heldUnits = await this.profileHeldUnits(
+      citizen.id,
+      citizen.registrations.flatMap((registration) => registration.properties),
+    );
 
     return {
       id: citizen.id,
@@ -1333,6 +1353,7 @@ export class ReportingService {
           buildingPostedNumber: property.building?.postedNumber ?? null,
           buildingLifecycleStatus: property.building?.lifecycleStatus ?? null,
           unitCount: property.units.filter((unit) => !unit.endedAt).length,
+          heldUnits: heldUnits.get(property.id) ?? [],
           units: property.units.map((unit) => {
             // At most one by the partial unique index; see the select above.
             const vacancy = unit.unit?.vacancies[0];
@@ -1383,6 +1404,83 @@ export class ReportingService {
         })),
       })),
     };
+  }
+
+  /**
+   * The census flats each card with no unit lines is billed through — see
+   * `CitizenProfileProperty.heldUnits`. The same reading as `holdingsOf`: a
+   * منزل bills its building's one flat; a مبنى card with no lines bills the
+   * flats this person is recorded on there, once — by the first such card, and
+   * by none when a منزل card names the same building.
+   */
+  private async profileHeldUnits(
+    citizenId: string,
+    cards: ReadonlyArray<{
+      id: string;
+      endedAt: Date | null;
+      propertyType: string | null;
+      buildingId: string | null;
+      units: readonly unknown[];
+    }>,
+  ): Promise<Map<string, CitizenProfileHeldUnit[]>> {
+    const bare = cards.filter(
+      (card) =>
+        !card.endedAt &&
+        card.buildingId &&
+        card.units.length === 0 &&
+        (card.propertyType === 'HOUSE' || card.propertyType === 'BUILDING'),
+    );
+    const held = new Map<string, CitizenProfileHeldUnit[]>();
+    if (bare.length === 0) return held;
+
+    const houseBuildings = [...new Set(bare.filter((card) => card.propertyType === 'HOUSE').map((card) => card.buildingId!))];
+    const blockBuildings = [...new Set(bare.filter((card) => card.propertyType === 'BUILDING').map((card) => card.buildingId!))];
+    const units = await withConnectionRetry(() =>
+      this.db.unit.findMany({
+        where: {
+          OR: [
+            { buildingId: { in: houseBuildings } },
+            { buildingId: { in: blockBuildings }, occupancies: { some: { citizenId, toDate: null } } },
+          ],
+        },
+        orderBy: [{ floor: 'asc' }, { sequence: 'asc' }],
+        select: {
+          id: true,
+          buildingId: true,
+          unitCode: true,
+          feeExemption: true,
+          ownerBillingMode: true,
+          responsibleOwnerId: true,
+          occupancies: {
+            where: { toDate: null, role: 'OWNER' },
+            select: { citizenId: true, shares: true, citizen: { select: { isActive: true } } },
+          },
+        },
+      }),
+    );
+    const toHeld = (unit: (typeof units)[number]): CitizenProfileHeldUnit => ({
+      unitId: unit.id,
+      unitCode: unit.unitCode,
+      feeExemption: unit.feeExemption,
+      ownerBilling: profileOwnerBilling(unit, citizenId),
+    });
+
+    for (const card of bare.filter((entry) => entry.propertyType === 'HOUSE')) {
+      const inBuilding = units.filter((unit) => unit.buildingId === card.buildingId);
+      if (inBuilding.length === 1) held.set(card.id, [toHeld(inBuilding[0]!)]);
+    }
+    const spent = new Set(houseBuildings);
+    for (const card of bare.filter((entry) => entry.propertyType === 'BUILDING')) {
+      if (spent.has(card.buildingId!)) continue;
+      spent.add(card.buildingId!);
+      held.set(
+        card.id,
+        units
+          .filter((unit) => unit.buildingId === card.buildingId && !houseBuildings.includes(unit.buildingId))
+          .map(toHeld),
+      );
+    }
+    return held;
   }
 
   /**
