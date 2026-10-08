@@ -161,7 +161,7 @@ raise it with the user before changing course.
 | D21 | The staff map keeps **two layers with two grouping rules**: the census layer is one pin per *building*, the registration layer one dot per *parcel* | They answer different questions. P5-T5 made the second match the first and drew a dot on top of every building pin; P5-T7 reverted it. Before changing a marker's grouping, check which layer already answers the question. See §10.6. |
 | D22 | **Every raw query writes its schema into its SQL.** Never rely on `search_path`, and never on `current_schema()` | The app reaches Postgres through a transaction pooler, where session settings are not guaranteed to follow a statement. It produced a real 42P01 on a table that exists, once, unreproducibly. Enforced by `raw-sql-is-schema-qualified.spec.ts`. See §10.7. |
 | D24 | A registration may **create** the structure it names, but only on an explicit tap, and never without its units | Not selecting a building is evidence of a control below the fold, not of a new building; and a shell with no units links the card while recording no occupancy, which is §10.1's under-billing arriving through the fix for it. See §11. |
-| D25 | **Habitability is a second answer beside the level**, prefilled where the level decides it (decision, 2026-10-05) | A sound building stripped of its windows and services cannot be lived in, and a cracked one can; folding that into the level broke the donors' scale (D4). Collapse and evacuation lock «غير صالحة»; none and minor damage start at «صالحة» and can change; restricted use must be answered. A reading that says nobody can live there may carry a re-inspection day, and holds the occupant-borne fees on the unit until a later reading says otherwise. See §14. |
+| D25 | **Habitability is a second answer beside the level**, prefilled where the level decides it (decision, 2026-10-05) | A sound building stripped of its windows and services cannot be lived in, and a cracked one can; folding that into the level broke the donors' scale (D4). Collapse and evacuation lock «غير صالحة»; none and minor damage start at «صالحة» and can change; restricted use must be answered. A reading that says nobody can live there may carry a re-inspection day, and exempts the unit from every fee until a later reading says otherwise (owner-borne fees too since 2026-10-07). See §14. |
 | D23 | **Verification builds use their own `distDir`** (`pnpm build:check`) | `next build` and `next dev` share `.next`; building while the dev server runs corrupts it and produces runtime 500s that point at nothing. The frontend twin of the `nest build` EBUSY note in §6. See §10.7. |
 
 ---
@@ -2247,10 +2247,11 @@ first, scoped like the other two worklists (`worklistOwnerFilter`). The matrix
 drawer and page show the reading's re-inspection notice; both read the same
 component (`components/admin/damage/`).
 
-**The fee hold.** `assessCitizen` (`fees.service.ts`) holds an occupant-borne fee on such
-a unit (Law 60/1988 Art. 11 and 79 tie the rental-value and maintenance fees to
-actual occupancy). Owner-borne fees follow the deed and are not held. The count
-travels on the bill (`uninhabitableUnitCount`, «وحدة غير صالحة للسكن لم تُحتسب»),
+**The fee hold.** `assessCitizen` (`fees.service.ts`) charges no fee on such a unit
+(Law 60/1988 Art. 11 and 79 tie the rental-value and maintenance fees to actual
+occupancy). Since 2026-10-07 owner-borne fees are not charged on it either — the
+user decided «not habitable → exempt». The count travels on the bill
+(`uninhabitableUnitCount`, «وحدة غير صالحة للسكن معفاة»),
 in the issue summary (`uninhabitableUnits`) and in the recurring run's log, apart
 from the review hold. Nothing is back-billed: the hold is recomputed on every
 (daily) run, so once a re-inspection reads the unit habitable the next run charges

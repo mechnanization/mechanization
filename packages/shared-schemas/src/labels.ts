@@ -14,6 +14,7 @@ import type {
   OccupancyRole,
   OccupancyType,
   OwnerBillingMode,
+  FeeExemptionReason,
   PropertyType,
   ResidentStatus,
   StaffRole,
@@ -307,6 +308,13 @@ export const ar = {
     OWNERSHIP_TRANSFERRED: 'بيع أو نقل ملكية',
     RECORDED_IN_ERROR: 'سُجِّل بالخطأ',
   } satisfies Record<OccupancyEndReason, string>,
+
+  /** «معفاة من الرسوم» — why a unit is charged nothing. See `FEE_EXEMPTION_REASON`. */
+  feeExemptionReason: {
+    PLACE_OF_WORSHIP: 'دار عبادة',
+    PUBLIC_FACILITY: 'مرفق عام',
+    OTHER: 'سبب آخر',
+  } satisfies Record<FeeExemptionReason, string>,
 
   /** «توزيع الرسم على المالكين» on a flat with several owners. See `OWNER_BILLING_MODE`. */
   ownerBillingMode: {
@@ -638,6 +646,12 @@ export const en = {
     OWNERSHIP_TRANSFERRED: 'Sold or ownership transferred',
     RECORDED_IN_ERROR: 'Recorded in error',
   } satisfies Record<OccupancyEndReason, string>,
+
+  feeExemptionReason: {
+    PLACE_OF_WORSHIP: 'Place of worship',
+    PUBLIC_FACILITY: 'Public facility',
+    OTHER: 'Other reason',
+  } satisfies Record<FeeExemptionReason, string>,
 
   ownerBillingMode: {
     EQUAL: 'Split equally between the owners',

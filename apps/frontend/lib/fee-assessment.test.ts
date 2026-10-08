@@ -13,6 +13,7 @@ function assessment(overrides: Partial<FeeAssessment> = {}): FeeAssessment {
     uninhabitableUnitCount: 0,
     sharedUnitCount: 0,
     coOwnerPaidUnitCount: 0,
+    exemptUnitCount: 0,
     lines: [{ propertyNumber: '12', propertyType: 'COMMERCIAL', unitType: 'SHOP', unitArea: null }],
     ...overrides,
   };
@@ -22,6 +23,14 @@ describe('describeAssessment', () => {
   it('says nothing for a flat charge or an invoice from before per-unit billing', () => {
     expect(describeAssessment(assessment({ basis: 'FLAT' }))).toBeNull();
     expect(describeAssessment(null)).toBeNull();
+  });
+
+  it('says why a flat charge to a category was not owed — every unit of it exempt or uninhabitable', () => {
+    const letOff = assessment({ basis: 'FLAT', unitCount: 0, lines: [], exemptUnitCount: 1, uninhabitableUnitCount: 1 });
+    expect(describeAssessment(letOff, 'ar')).toBe(
+      'مبلغ مقطوع غير مستحق: 1 وحدة غير صالحة للسكن معفاة، 1 وحدة معفاة من الرسوم',
+    );
+    expect(describeAssessment(letOff, 'en')).toBe('Flat charge, not owed: 1 uninhabitable, exempt; 1 exempt from fees');
   });
 
   it('writes the same line as before the copy moved to messages', () => {
@@ -47,15 +56,15 @@ describe('describeAssessment', () => {
   });
 
   /*
-    Decision 2 (2026-10-05): a flat read «غير صالحة للسكن» is held, and the bill
-    says so in its own words — not folded into "not charged" or "held for review".
+    Decisions of 2026-10-05 and 2026-10-07: a flat read «غير صالحة للسكن» is exempt,
+    and the bill says so in its own words — not folded into "not charged" or "held for review".
   */
   it('says how many uninhabitable flats the bill held, apart from the other two counts', () => {
     expect(describeAssessment(assessment({ uninhabitableUnitCount: 2 }), 'ar')).toBe(
-      '6 محل تجاري × 100,000 ل.ل (2 وحدة غير صالحة للسكن لم تُحتسب)',
+      '6 محل تجاري × 100,000 ل.ل (2 وحدة غير صالحة للسكن معفاة)',
     );
     expect(describeAssessment(assessment({ heldUnitCount: 1, uninhabitableUnitCount: 2 }), 'en')).toBe(
-      '6 Commercial Shop × 100,000 LBP (1 held for review; 2 uninhabitable, not charged)',
+      '6 Commercial Shop × 100,000 LBP (1 held for review; 2 uninhabitable, exempt)',
     );
   });
 
@@ -91,5 +100,14 @@ describe('describeAssessment', () => {
     );
     const paidByOther = assessment({ unitCount: 0, coOwnerPaidUnitCount: 1, lines: [] });
     expect(describeAssessment(paidByOther, 'ar')).toBe('0 وحدة × 100,000 ل.ل (1 وحدة يدفع رسمها مالك آخر)');
+  });
+
+  it('says when a unit is exempt from fees (a mosque, a public building)', () => {
+    expect(describeAssessment(assessment({ unitCount: 2, exemptUnitCount: 1 }), 'ar')).toBe(
+      '2 محل تجاري × 100,000 ل.ل (1 وحدة معفاة من الرسوم)',
+    );
+    expect(describeAssessment(assessment({ unitCount: 2, exemptUnitCount: 1 }), 'en')).toBe(
+      '2 Commercial Shop × 100,000 LBP (1 exempt from fees)',
+    );
   });
 });

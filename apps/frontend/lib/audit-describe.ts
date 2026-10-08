@@ -241,6 +241,7 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
     caseType: [labels.caseType],
     basis: [labels.vacancyBasis],
     ownerBillingMode: [labels.ownerBillingMode],
+    feeExemption: [labels.feeExemptionReason],
     residence: [labels.citizenResidence],
     documentType: [labels.documentType],
     method: [labels.paymentMethod],

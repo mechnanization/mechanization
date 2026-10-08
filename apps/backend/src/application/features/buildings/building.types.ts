@@ -86,6 +86,14 @@ export interface UnitRow {
    */
   ownerBillingMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
   responsibleOwnerId: string | null;
+  /**
+   * «معفاة من الرسوم» (0077): why the unit is charged nothing, with the reason
+   * in words, when and by whom. All null on a unit billed normally.
+   */
+  feeExemption: 'PLACE_OF_WORSHIP' | 'PUBLIC_FACILITY' | 'OTHER' | null;
+  feeExemptionNote: string | null;
+  feeExemptedAt: Date | null;
+  feeExemptedByName: string | null;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;

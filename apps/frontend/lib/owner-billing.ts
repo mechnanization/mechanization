@@ -74,6 +74,21 @@ export function showsOwnerBilling(
   return currentOwners(unit).length > 1 || Boolean(unit.ownerBillingMode);
 }
 
+/**
+ * Whether a co-owned flat's division reaches anybody's bill. A unit «معفاة من
+ * الرسوم», or one whose current reading says «غير صالحة للسكن», is charged to
+ * no owner at all (`assessCitizen`), so a part shown beside it would tell its
+ * owners they pay what no bill charges. One decision for the unit panel, the
+ * staff file and «ملفّي»; a screen without the damage reading passes only the
+ * exemption.
+ */
+export function ownerBillingApplies(unit: {
+  feeExemption?: string | null;
+  uninhabitable?: boolean;
+}): boolean {
+  return !unit.feeExemption && !unit.uninhabitable;
+}
+
 /** A co-owned flat's billing as an owner's file or «ملفّي» carries it. */
 export type OwnerBillingView = NonNullable<CitizenProfileUnit['ownerBilling']>;
 

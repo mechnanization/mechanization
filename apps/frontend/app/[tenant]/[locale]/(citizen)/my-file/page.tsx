@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   BadgeCheck,
   Building2,
@@ -50,7 +51,7 @@ import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { formatDate, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
-import { ownerBillingWording } from '@/lib/owner-billing';
+import { ownerBillingApplies, ownerBillingWording } from '@/lib/owner-billing';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -754,6 +755,21 @@ function PropertyRow({
         </ul>
       ) : null}
 
+      {/* A house's flat, or the census flats this card bills through: the same notes, by code when several. */}
+      {(property.heldUnits ?? []).length > 0 ? (
+        <div className="space-y-1 text-xs">
+          {(property.heldUnits ?? []).map((unit) => (
+            <UnitBillingNotes
+              key={unit.unitId}
+              feeExemption={unit.feeExemption}
+              ownerBilling={unit.ownerBilling}
+              unitCode={(property.heldUnits ?? []).length > 1 ? unit.unitCode : undefined}
+              locale={locale}
+            />
+          ))}
+        </div>
+      ) : null}
+
       {property.landlordName ? (
         <p className="text-xs text-muted-foreground">
           {en ? 'Owner: ' : 'المالك: '}
@@ -869,18 +885,50 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
         </p>
       ) : null}
 
-      {/*
-        A flat this person owns with others: how its owner-borne fees are
-        divided, and their own part (migration 0075) — never who else pays.
-      */}
-      {unit.ownerBilling ? (
-        <p className="flex flex-wrap items-center gap-x-2 px-2 text-muted-foreground">
-          <Scale className="size-3 shrink-0" aria-hidden />
-          {/* Worded to the owner reading it, the way the staff file words it (`ownerBillingWording`). */}
-          <span>{ownerBillingWording(unit.ownerBilling, locale, 'mine').line}</span>
+      <UnitBillingNotes feeExemption={unit.feeExemption} ownerBilling={unit.ownerBilling} locale={locale} />
+    </li>
+  );
+}
+
+/**
+ * What changes a unit's bill beyond its status: «معفاة من الرسوم» (0077), and
+ * how a flat this person owns with others is divided (0075) — their own part,
+ * never who else pays, and only while the unit is billed at all. On a unit
+ * line, and on a house or a census flat whose card has no unit lines (`heldUnits`).
+ */
+function UnitBillingNotes({
+  feeExemption,
+  ownerBilling,
+  unitCode,
+  locale,
+}: Pick<CitizenProfileUnit, 'feeExemption' | 'ownerBilling'> & { unitCode?: string; locale: string }) {
+  const labels = getLabels(locale);
+  const tFeeExemption = useTranslations('feeExemption');
+  const code = unitCode ? (
+    <bdi dir="ltr" className="font-mono">
+      {unitCode}
+    </bdi>
+  ) : null;
+
+  return (
+    <>
+      {feeExemption ? (
+        <p className="flex flex-wrap items-center gap-x-2 px-2 text-success">
+          <BadgeCheck className="size-3 shrink-0" aria-hidden />
+          {code}
+          <span>{tFeeExemption('fileValue', { reason: labels.feeExemptionReason[feeExemption] })}</span>
         </p>
       ) : null}
-    </li>
+      {/* An exempt unit is billed to no owner: no part to tell them (`ownerBillingApplies`). */}
+      {ownerBilling && ownerBillingApplies({ feeExemption }) ? (
+        <p className="flex flex-wrap items-center gap-x-2 px-2 text-muted-foreground">
+          <Scale className="size-3 shrink-0" aria-hidden />
+          {code}
+          {/* Worded to the owner reading it, the way the staff file words it (`ownerBillingWording`). */}
+          <span>{ownerBillingWording(ownerBilling, locale, 'mine').line}</span>
+        </p>
+      ) : null}
+    </>
   );
 }
 

@@ -95,4 +95,53 @@ describe('the citizen portal summary', () => {
     expect(other!.units[0]!.ownerBilling).not.toHaveProperty('responsibleOwnerId');
     expect(other!.units[0]!.ownerBilling).not.toHaveProperty('fallback');
   });
+
+  it("says the same of a house's flat, which has no unit line — and survives a profile cached before it", async () => {
+    const summary = await controller({
+      fullName: 'علي سرور',
+      registrations: [
+        {
+          flags: [],
+          properties: [
+            {
+              endedAt: null,
+              units: [],
+              heldUnits: [
+                {
+                  unitId: 'unit-1',
+                  unitCode: '0001',
+                  feeExemption: 'PLACE_OF_WORSHIP',
+                  ownerBilling: {
+                    mode: 'RESPONSIBLE_OWNER',
+                    effectiveMode: 'RESPONSIBLE_OWNER',
+                    responsibleOwnerId: OWNER.citizenId,
+                    fallback: null,
+                    share: { numerator: 0, denominator: 1 },
+                  },
+                },
+              ],
+            },
+            { endedAt: null, units: [] },
+          ],
+        },
+      ],
+      payments: [],
+      fees: [],
+    }).mySummary({ sub: 'citizen-1' } as SessionClaims);
+
+    const [house, cached] = summary.properties as Array<{ heldUnits: Array<Record<string, unknown>> }>;
+    expect(house!.heldUnits).toEqual([
+      {
+        unitId: 'unit-1',
+        unitCode: '0001',
+        feeExemption: 'PLACE_OF_WORSHIP',
+        ownerBilling: {
+          mode: 'RESPONSIBLE_OWNER',
+          effectiveMode: 'RESPONSIBLE_OWNER',
+          share: { numerator: 0, denominator: 1 },
+        },
+      },
+    ]);
+    expect(cached!.heldUnits).toEqual([]);
+  });
 });

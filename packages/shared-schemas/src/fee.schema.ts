@@ -266,14 +266,13 @@ export const feeAssessmentSchema = z.object({
    */
   heldUnitCount: z.number().default(0),
   /**
-   * Flats whose occupancy fee this bill holds because their current damage
-   * reading says nobody can live in them — «غير صالحة للسكن» (the user's
-   * decision, 2026-10-05; `isUninhabitableReading`). Not charged to anybody
-   * until a re-inspection reads them habitable, and counted here so the bill
-   * says so. Law 60/1988 ties the rental-value fee (Art. 11) and the annual
-   * maintenance fee (Art. 79) to actual occupancy; owner-borne fees follow the
-   * deed and are not held. Counted apart from `heldUnitCount`: the clerk
-   * settles a review in the register and an uninhabitable flat in the field.
+   * Flats this bill charges nothing for because their current damage reading
+   * says nobody can live in them — «غير صالحة للسكن» (`isUninhabitableReading`).
+   * Exempt from every rate-based fee, owner-borne ones included, until a
+   * re-inspection reads them habitable (the user's decisions of 2026-10-05 and
+   * 2026-10-07: «not habitable → exempt»), and counted here so the bill says
+   * so. Counted apart from `heldUnitCount`: the clerk settles a review in the
+   * register and an uninhabitable flat in the field.
    */
   uninhabitableUnitCount: z.number().default(0),
   /**
@@ -289,6 +288,12 @@ export const feeAssessmentSchema = z.object({
    * bill says so rather than reading as a smaller holding.
    */
   coOwnerPaidUnitCount: z.number().default(0),
+  /**
+   * Units this bill charges nothing for because they are «معفاة من الرسوم» —
+   * the mosque on a waqf parcel, a public building (migration 0077). Every
+   * rate-based fee, whoever bears it, and counted so the bill says so.
+   */
+  exemptUnitCount: z.number().default(0),
   /**
    * The unit count the rate multiplies under PER_UNIT when a co-owned flat is
    * charged at a part — 2.25 for two whole shops and a quarter of a third.

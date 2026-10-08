@@ -40,7 +40,7 @@ describe('traceChanges — a damage reading', () => {
     expect(traceChanges([reading({ unitId: 'u-9', unitCode: 'Z-1-45-A-999', habitable: false })], holder)).toEqual([]);
   });
 
-  it('never makes a bill raised before it one a correction affected — the hold runs forward', () => {
+  it('never makes a bill raised before it one a correction affected — the exemption runs forward', () => {
     const traced = traceChanges([reading({ unitId: 'u-1', unitCode: 'Z-1-45-A-101', habitable: false })], holder);
     expect(affectsBill(traced, new Date('2026-10-01T09:00:00Z'))).toBe(false);
     expect(affectsBill(traced, new Date('2026-10-05T09:00:00Z'))).toBe(true);
@@ -232,6 +232,41 @@ describe('traceChanges — «توزيع الرسم على المالكين» (UN
     expect(affectsBill(traced, new Date('2026-10-01T09:00:00Z'))).toBe(false);
     // Raised a day after it, the bill had the choice to read — a figure that now differs is one to look at.
     expect(affectsBill(traced, new Date('2026-10-08T09:00:00Z'))).toBe(true);
+  });
+});
+
+describe('traceChanges — «معفاة من الرسوم» (the user’s decision, 2026-10-08)', () => {
+  const exemption = (action: string, feeExemption: string | null, createdAt = new Date('2026-10-08T10:00:00Z')) =>
+    row({
+      action,
+      entityType: 'Building',
+      entityId: 'b-1',
+      before: { unitId: 'u-1', unitCode: 'Z-1-45-A-101', feeExemption: feeExemption ? null : 'PLACE_OF_WORSHIP' },
+      after: { unitId: 'u-1', unitCode: 'Z-1-45-A-101', feeExemption },
+      createdAt,
+    });
+
+  it('reads a granted exemption as a correction: a bill raised before it, on any day, is one to look at', () => {
+    const traced = traceChanges([exemption('UNIT_FEE_EXEMPTION_SET', 'PLACE_OF_WORSHIP')], holder);
+    expect(kinds(traced)).toEqual(['CORRECTION']);
+    expect(affectsBill(traced, new Date('2026-09-01T09:00:00Z'))).toBe(true);
+    expect(affectsBill(traced, new Date('2026-10-01T09:00:00Z'))).toBe(true);
+  });
+
+  it('reads a lifted exemption as a real change on its day: a bill raised before it stays as raised', () => {
+    const traced = traceChanges([exemption('UNIT_FEE_EXEMPTION_LIFTED', null)], holder);
+    expect(traced).toEqual([expect.objectContaining({ kind: 'DATED_CHANGE', effectiveOn: new Date('2026-10-08T10:00:00Z') })]);
+    expect(affectsBill(traced, new Date('2026-10-01T09:00:00Z'))).toBe(false);
+  });
+
+  it('is somebody else’s when it is on another unit', () => {
+    const other = row({
+      action: 'UNIT_FEE_EXEMPTION_SET',
+      entityType: 'Building',
+      entityId: 'b-1',
+      after: { unitId: 'u-9', unitCode: 'Z-1-45-A-999', feeExemption: 'PUBLIC_FACILITY' },
+    });
+    expect(traceChanges([other], holder)).toEqual([]);
   });
 });
 

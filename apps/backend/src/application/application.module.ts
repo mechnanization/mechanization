@@ -12,6 +12,7 @@ import { CensusSyncService } from './features/buildings/census-sync.service';
 import { DamageService } from './features/buildings/damage.service';
 import { ParcelCorrectionService } from './features/buildings/parcel-correction.service';
 import { OwnerBillingService } from './features/buildings/owner-billing.service';
+import { FeeExemptionService } from './features/buildings/fee-exemption.service';
 import { UnitCorrectionService } from './features/corrections/unit-correction.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
@@ -81,6 +82,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     DamageService,
     ParcelCorrectionService,
     OwnerBillingService,
+    FeeExemptionService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,
@@ -117,6 +119,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     DamageService,
     ParcelCorrectionService,
     OwnerBillingService,
+    FeeExemptionService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,

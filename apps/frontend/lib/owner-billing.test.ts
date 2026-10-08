@@ -3,6 +3,7 @@ import type { UnitOccupant, UnitWithOccupants } from './api-client';
 import {
   archivedOwners,
   currentOwners,
+  ownerBillingApplies,
   ownerBillingWording,
   ownerSpells,
   parseShares,
@@ -109,5 +110,20 @@ describe('ownerBillingWording — one wording for the staff file and «ملفّ�
     const fallen = billing({ effectiveMode: 'EQUAL', fallback: 'RESPONSIBLE_NOT_OWNER', share: { numerator: 1, denominator: 3 } });
     expect(ownerBillingWording(fallen, 'en', 'file').fallback).toMatch(/split equally/);
     expect(ownerBillingWording(billing({}), 'en', 'file').fallback).toBeNull();
+  });
+});
+
+describe('ownerBillingApplies — a split nobody is billed is not shown as one', () => {
+  it('applies to a flat that is billed', () => {
+    expect(ownerBillingApplies({ feeExemption: null })).toBe(true);
+    expect(ownerBillingApplies({ feeExemption: null, uninhabitable: false })).toBe(true);
+  });
+
+  it('does not apply while the unit is «معفاة من الرسوم» — no owner is billed for it', () => {
+    expect(ownerBillingApplies({ feeExemption: 'PLACE_OF_WORSHIP' })).toBe(false);
+  });
+
+  it('does not apply while its reading says «غير صالحة للسكن»', () => {
+    expect(ownerBillingApplies({ feeExemption: null, uninhabitable: true })).toBe(false);
   });
 });

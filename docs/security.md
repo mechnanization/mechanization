@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/unit-fee-exemptions` (on `develop@f10a1b7`), 2026-10-08.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -89,7 +89,9 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   flat's owners as name and أسهم only (an allowlist, pinned by `citizen-portal.spec.ts`) and drops the
   landlord link's id and رقم مرجعي. A co-owned flat's billing goes as the method and this citizen's own
   part (under «مالك مسؤول», 1/1 or 0/1 says whether they pay for all), never the responsible owner's
-  register id (same spec). Its property and unit fields still pass through by spread, so a
+  register id (same spec). A unit's fee exemption goes as its reason only; the officer's note stays on the
+  staff screens, and `heldUnits` (a house's flat, a card's census flats) go through the same
+  `portalOwnerBilling` mapper. Its property and unit fields still pass through by spread, so a
   field added to the staff profile reaches «ملفّي» unless it is named out
   ([docs/gotchas.md](gotchas.md#a-field-added-to-the-staff-profile-reaches-the-citizen-portal)).
 - Scope citizen reads and writes by `user.sub` in the WHERE clause: `findFirst({ where: { id, citizenId } })`
@@ -194,8 +196,9 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   rolls back if the row cannot be written: payments (declaration, confirmation, refusal, counter and
   Whish settlement), payment reversals, corrections, ownership changes (ending an ownership, owner links,
   merges), ending a tenancy, review decisions (approve, return, quality check), citizen status changes
-  (archive and restore), and how a co-owned flat is billed (`UNIT_OWNER_BILLING_SET`, `OwnerBillingService`,
-  which moves every co-owner's bill). Everything else is Tier 2: an event
+  (archive and restore), how a co-owned flat is billed (`UNIT_OWNER_BILLING_SET`, `OwnerBillingService`,
+  which moves every co-owner's bill), and a unit's fee exemption (`UNIT_FEE_EXEMPTION_SET` / `_LIFTED`,
+  `FeeExemptionService`, SUPER_ADMIN only). Everything else is Tier 2: an event
   after the commit, whose failed write is logged and does not undo the change. How:
   [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#events-and-audit).
 - An audit row MUST NOT carry a credential (OWASP Logging Cheat Sheet; NIST SP 800-53 AU-3(3), which
