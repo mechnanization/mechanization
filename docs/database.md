@@ -466,9 +466,11 @@ reads staging's history from `.env.staging` and nothing else, and
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
   `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of
-  2026-10-07, `0073_treasury_ledger` and `0074_expense_vouchers` are taken by
-  `chore/migration-0073-0074` and `feat/finance-treasury-expenses` (unmerged),
-  and `0075`–`0077` by `chore/migration-0075-0077` (co-owner billing, the
+  2026-10-08, `0073_treasury_ledger` and `0074_expense_vouchers` are taken by
+  `chore/migration-0073-0074` and `feat/finance-treasury-expenses`: their PRs
+  (#94, #93) were closed unmerged on 2026-10-08, but both branches are still on
+  `origin`, so the two numbers stay reserved and are never reused for anything
+  else. `0075`–`0077` are taken by `chore/migration-0075-0077` (co-owner billing, the
   estate and institution record types, the unit fee exemption). The next free
   number is `0078`. Whichever of `0073`/`0074` and `0075`–`0077` merges second
   lands out of order on a database that already has the other, which
