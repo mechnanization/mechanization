@@ -54,4 +54,45 @@ describe('the citizen portal summary', () => {
     expect(property).not.toHaveProperty('landlordReferenceNumber');
     expect(property!.units[0]!.owners).toEqual([{ name: OWNER.name, shares: OWNER.shares }]);
   });
+
+  it('says how a co-owned flat is divided and this person’s own part — never who else pays', async () => {
+    const billing = (responsibleOwnerId: string) => ({
+      mode: 'RESPONSIBLE_OWNER',
+      effectiveMode: 'RESPONSIBLE_OWNER',
+      responsibleOwnerId,
+      fallback: null,
+      share: { numerator: responsibleOwnerId === 'citizen-1' ? 1 : 0, denominator: 1 },
+    });
+    const summaryFor = (responsibleOwnerId: string) =>
+      controller({
+        fullName: 'علي سرور',
+        registrations: [
+          {
+            flags: [],
+            properties: [{ endedAt: null, units: [{ id: 'line-1', owners: [OWNER], ownerBilling: billing(responsibleOwnerId) }] }],
+          },
+        ],
+        payments: [],
+        fees: [],
+      }).mySummary({ sub: 'citizen-1' } as SessionClaims);
+
+    const mine = await summaryFor('citizen-1');
+    const [property] = mine.properties as Array<{ units: Array<{ ownerBilling: Record<string, unknown> }> }>;
+    // Their part says they pay for all — the same fact the staff file reads it from.
+    expect(property!.units[0]!.ownerBilling).toEqual({
+      mode: 'RESPONSIBLE_OWNER',
+      effectiveMode: 'RESPONSIBLE_OWNER',
+      share: { numerator: 1, denominator: 1 },
+    });
+
+    const brothers = await summaryFor(OWNER.citizenId);
+    const [other] = brothers.properties as Array<{ units: Array<{ ownerBilling: Record<string, unknown> }> }>;
+    expect(other!.units[0]!.ownerBilling).toEqual({
+      mode: 'RESPONSIBLE_OWNER',
+      effectiveMode: 'RESPONSIBLE_OWNER',
+      share: { numerator: 0, denominator: 1 },
+    });
+    expect(other!.units[0]!.ownerBilling).not.toHaveProperty('responsibleOwnerId');
+    expect(other!.units[0]!.ownerBilling).not.toHaveProperty('fallback');
+  });
 });

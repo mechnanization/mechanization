@@ -34,12 +34,15 @@ import type {
   NumberingSequence,
   OccupancyEndReason,
   OccupancyRole,
+  OwnerBillingMode,
+  OwnerBillingState,
   PaymentMethod,
   PossibleDuplicateMatch,
   PossibleDuplicatesQuery,
   PaymentStatus,
   RecordInspectorPayoutInput,
   SequenceKey,
+  SetOwnerBillingInput,
   SettlePayment,
   BuildingLifecycle,
   StructureType,
@@ -1578,6 +1581,12 @@ export interface UnitOccupant {
   citizenName: string | null;
   /** Their phone, shown on the unit. Optional for a server from before it. */
   citizenPhone?: string | null;
+  /**
+   * Whether their file is open. An archived owner is never billed, so co-owner
+   * billing leaves them out of the division. Optional on the wire: absent reads
+   * as open.
+   */
+  citizenActive?: boolean;
   role: OccupancyRole;
   /** أسهم out of 2400 — owners only. */
   shares: number | null;
@@ -1654,6 +1663,14 @@ export interface UnitRow {
   presenceMonths?: number[];
   ownerLastStayAt?: string | null;
   vacancyDeclaredAt?: string | null;
+  /**
+   * «توزيع الرسم على المالكين» (migration 0075): how a flat with several
+   * owners is billed. Null means nobody chose — split equally. Optional on the
+   * wire for responses from before it existed. Each owner's part is computed
+   * with the shared `ownerSharesPreview`, the rule billing applies.
+   */
+  ownerBillingMode?: OwnerBillingMode | null;
+  responsibleOwnerId?: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -2892,6 +2909,26 @@ export async function logUnitVisit(tenant: string, token: string, input: LogVisi
 }
 
 /**
+ * «توزيع الرسم على المالكين» — saves how a co-owned flat is billed, and the
+ * owners' أسهم with it. `mode: null` withdraws a choice (back to the equal split).
+ */
+export async function setOwnerBilling(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: SetOwnerBillingInput,
+  signal?: AbortSignal,
+): Promise<OwnerBillingState> {
+  const result = await apiFetch<OwnerBillingState>(
+    tenant,
+    `/buildings/units/${encodeURIComponent(unitId)}/owner-billing`,
+    { token, method: 'PUT', body: JSON.stringify(input), signal },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
  * Records that a unit was found empty, with what says so.
  *
  * Its own call rather than a `updateUnit({ unitStatus: 'VACANT', surveyStatus:
@@ -3131,6 +3168,20 @@ export interface CitizenProfileUnit {
     contactPhone?: string | null;
     shares: number | null;
   }>;
+  /**
+   * «توزيع الرسم على المالكين» (0075) when the linked flat has several current
+   * owners; null otherwise. `share` is this file's owner's part — under «مالك
+   * مسؤول», 1/1 for the owner who pays for all and 0/1 for the others. On the
+   * citizen's own portal view `responsibleOwnerId` and `fallback` are absent.
+   * Worded by `ownerBillingWording` (`lib/owner-billing.ts`).
+   */
+  ownerBilling?: {
+    mode: OwnerBillingMode | null;
+    effectiveMode: OwnerBillingMode;
+    responsibleOwnerId?: string | null;
+    fallback?: 'RESPONSIBLE_NOT_OWNER' | null;
+    share: { numerator: number; denominator: number } | null;
+  } | null;
 }
 
 export interface CitizenProfileProperty {
@@ -5098,6 +5149,12 @@ export async function issueFeeNotice(
      * period after a re-inspection reads them habitable.
      */
     uninhabitableUnits?: number;
+    /**
+     * Co-owned flats this notice reached whose responsible owner («مالك مسؤول»)
+     * pays for them in full, so the other owners were charged nothing for them —
+     * see `FeeAssessment.coOwnerPaidUnitCount`. Each flat once.
+     */
+    coOwnerPaidUnits?: number;
   }>(tenant, '/fees/notices', {
     token,
     method: 'POST',

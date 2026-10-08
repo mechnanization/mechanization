@@ -13,6 +13,7 @@ import type {
   OccupancyEndReason,
   OccupancyRole,
   OccupancyType,
+  OwnerBillingMode,
   PropertyType,
   ResidentStatus,
   StaffRole,
@@ -306,6 +307,13 @@ export const ar = {
     OWNERSHIP_TRANSFERRED: 'بيع أو نقل ملكية',
     RECORDED_IN_ERROR: 'سُجِّل بالخطأ',
   } satisfies Record<OccupancyEndReason, string>,
+
+  /** «توزيع الرسم على المالكين» on a flat with several owners. See `OWNER_BILLING_MODE`. */
+  ownerBillingMode: {
+    EQUAL: 'بالتساوي بين المالكين',
+    BY_SHARES: 'حسب الأسهم',
+    RESPONSIBLE_OWNER: 'مالك مسؤول يدفع عن الجميع',
+  } satisfies Record<OwnerBillingMode, string>,
 
   /** ما يستند إليه «تأكيد الشغور». See `VACANCY_BASIS`. */
   vacancyBasis: {
@@ -630,6 +638,12 @@ export const en = {
     OWNERSHIP_TRANSFERRED: 'Sold or ownership transferred',
     RECORDED_IN_ERROR: 'Recorded in error',
   } satisfies Record<OccupancyEndReason, string>,
+
+  ownerBillingMode: {
+    EQUAL: 'Split equally between the owners',
+    BY_SHARES: 'By shares',
+    RESPONSIBLE_OWNER: 'One responsible owner pays for all',
+  } satisfies Record<OwnerBillingMode, string>,
 
   vacancyBasis: {
     FIELD_INSPECTION: 'Field inspection — found empty',

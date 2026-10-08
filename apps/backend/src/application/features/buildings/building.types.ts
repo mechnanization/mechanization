@@ -78,6 +78,14 @@ export interface UnitRow {
   ownerLastStayAt: Date | null;
   /** When a تصريح بالشغور was filed for the months they are away. */
   vacancyDeclaredAt: Date | null;
+  /**
+   * «توزيع الرسم على المالكين» (0075): the officer's choice for a flat with
+   * several owners; null means nobody chose and it is split equally. The drawer
+   * computes each owner's part from this and the occupants' أسهم with the
+   * shared `ownerSharesPreview`, the rule billing applies.
+   */
+  ownerBillingMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
+  responsibleOwnerId: string | null;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -93,6 +101,11 @@ export interface OccupancyRow {
    * tenant or شاغل بتسامح recorded there without opening each file.
    */
   citizenPhone: string | null;
+  /**
+   * Whether the occupant's file is open. An archived file («أرشفة الملف») is
+   * never billed, so co-owner billing leaves it out of the division (0075).
+   */
+  citizenActive: boolean;
   role: string;
   shares: number | null;
   fromDate: Date;

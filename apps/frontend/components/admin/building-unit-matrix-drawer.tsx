@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import type { SetOwnerBillingInput } from '@mechanization/shared-schemas';
 import {
   AlertTriangle,
   Building2,
@@ -41,6 +43,7 @@ import {
   logApiError,
   recordDamage,
   recordOccupancy,
+  setOwnerBilling,
   updateUnit,
   type BuildingDetail,
   type DamageAssessmentRow,
@@ -87,6 +90,8 @@ import {
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
+import { OwnerBillingPanel } from './owner-billing-panel';
+import { showsOwnerBilling } from '@/lib/owner-billing';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
 import { ReinspectNotice } from './damage/reinspect-notice';
@@ -174,6 +179,7 @@ export function BuildingUnitMatrixDrawer({
   locale?: string;
 }) {
   const en = locale === 'en';
+  const tOwnerBilling = useTranslations('ownerBilling');
   const labels = getLabels(locale);
   const toast = useToast();
   /** The signed-in officer — lets the visit form recognise their own visit from earlier today. */
@@ -214,7 +220,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       setError(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not load the building.'
             : 'تعذّر تحميل المبنى.',
@@ -329,7 +335,7 @@ export function BuildingUnitMatrixDrawer({
         toast.success(message);
       } catch (caught) {
         logApiError(caught);
-        const message = caught instanceof ApiRequestError ? caught.payload.message : failure;
+        const message = caught instanceof ApiRequestError ? caught.message : failure;
         setActionError(message);
         toast.error(failure, { description: message });
       } finally {
@@ -400,7 +406,7 @@ export function BuildingUnitMatrixDrawer({
       }
 
       const failure = en ? 'Could not add the unit.' : 'تعذّرت إضافة الوحدة.';
-      const message = caught instanceof ApiRequestError ? caught.payload.message : failure;
+      const message = caught instanceof ApiRequestError ? caught.message : failure;
       setActionError(message);
       toast.error(failure, { description: message });
     } finally {
@@ -477,7 +483,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not lift the vacancy.'
             : 'تعذّر إلغاء تأكيد الشغور.',
@@ -517,7 +523,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not end the occupancy.'
             : 'تعذّر إنهاء الإشغال.',
@@ -537,7 +543,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not link the owner.'
             : 'تعذّر الربط بالمالك.',
@@ -558,6 +564,16 @@ export function BuildingUnitMatrixDrawer({
         return en ? 'Seasonal details saved' : 'تم حفظ بيانات السكن الموسمي';
       },
       en ? 'Could not save the seasonal details.' : 'تعذّر حفظ بيانات السكن الموسمي.',
+    );
+
+  /** «توزيع الرسم على المالكين» — the officer's choice for a co-owned flat (0075). */
+  const saveOwnerBilling = (unit: UnitWithOccupants, input: SetOwnerBillingInput, kind: 'save' | 'withdraw') =>
+    run(
+      async () => {
+        await setOwnerBilling(tenant, token, unit.id, input);
+        return kind === 'withdraw' ? tOwnerBilling('withdrawn') : tOwnerBilling('saved');
+      },
+      tOwnerBilling('failed'),
     );
 
   return (
@@ -1022,6 +1038,17 @@ export function BuildingUnitMatrixDrawer({
                 canWrite={canWrite}
                 onEnd={(values) => liftVacancy(selectedUnit, values)}
               />
+
+              {/* «توزيع الرسم على المالكين» — a flat several people own. */}
+              {showsOwnerBilling(selectedUnit) ? (
+                <OwnerBillingPanel
+                  unit={selectedUnit}
+                  locale={locale}
+                  busy={busy}
+                  canWrite={canWrite}
+                  onSave={(input, kind) => void saveOwnerBilling(selectedUnit, input, kind)}
+                />
+              ) : null}
 
               {effectiveUnitStatus(selectedUnit) === 'SEASONAL' ? (
                 <SeasonalHomePanel

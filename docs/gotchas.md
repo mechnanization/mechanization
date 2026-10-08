@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/no-phone-follow-ups` (on `develop@4512abf`), 2026-10-06.
+Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-08.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -170,6 +170,18 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** `ADD VALUE` alone in one migration, its use in the next.
 - **Where:** `0062_status_conflict_case`, `0063_status_conflict_one_open`,
   `tenant-migrator.ts` `migrateTenantSchema`.
+
+### A CHECK passes on NULL, so `=` against a nullable column lets the row in
+
+- **What happens:** `CHECK ("responsibleOwnerId" IS NULL OR "ownerBillingMode" = 'RESPONSIBLE_OWNER')`
+  accepted a responsible owner on a flat with no method chosen. The first draft of
+  `0075` did exactly this, and only exercising the CHECK on a seeded row caught it.
+- **Why:** with `ownerBillingMode` NULL, `NULL = 'RESPONSIBLE_OWNER'` is NULL, `false
+  OR NULL` is NULL, and a CHECK fails only on false.
+- **Do this:** compare a nullable column with `IS NOT DISTINCT FROM` (or test `IS NOT
+  NULL` first), and prove every CHECK refuses the row it exists for before shipping.
+- **Where:** `0075_unit_owner_billing` (`units_responsible_owner_needs_mode`), `0077`'s
+  `units_fee_exemption_other_note` (`IS DISTINCT FROM`).
 
 ### No `CREATE INDEX CONCURRENTLY`
 
@@ -446,6 +458,36 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   `citizen-portal.spec.ts` pins it.
 - **Where:** `presentation/controllers/citizen.controller.ts` `mySummary`;
   `reporting.service.ts` `CitizenProfile`.
+
+### Re-recording an owner from the drawer used to wipe their أسهم
+
+- **What happens:** «تعديل» on an owner in the unit drawer, with the أسهم box left
+  empty, wrote `shares: null` over the أسهم on file. Harmless while nothing read
+  them; since `0075` a flat billed «حسب الأسهم» then refuses to bill.
+- **Why:** the drawer sends no `shares` for an empty box, and `recordOccupancy`'s
+  update wrote `input.shares ?? null`.
+- **Do this:** an absent value keeps what is on file (`input.shares ?? current.shares`);
+  أسهم are recorded or corrected beside the billing method, in «توزيع الرسم على المالكين».
+- **Where:** `BuildingsService.recordOccupancy`; pinned by
+  `co-owner-billing.integration.spec.ts`.
+
+### Archiving a co-owner re-divides the flat from then on, and no raised bill is listed for it
+
+- **What happens:** «أرشفة الملف» on one owner of a co-owned flat changes every other owner's part
+  from the next bill: four brothers at 1/4 become three at 1/3, and an archived «مالك مسؤول» falls
+  back to the equal split. Restoring the file divides it by four again. «فواتير تأثّرت بتصحيحات»
+  lists none of the bills already raised at the old part.
+- **Why:** billing divides a flat between open files only (`activeOwnerSpells`), so the archive
+  moves the division; but the archive is one `CITIZEN_DEACTIVATED` / `CITIZEN_REACTIVATED` row on
+  the archived person's own file, which `traceChanges` reads for that person alone and which is not
+  in `FILE_ACTIONS`. Deliberately: an archive runs forward, like a sale or a damage reading, and a
+  bill raised before it was right when it was raised.
+- **Do this:** treat it as a forward change. If a file was archived in error and the other owners
+  were billed more in the meantime, that is a manual correction of those bills, not something the
+  correction screen will find. «ملاحظات الجودة» flags an archived responsible owner
+  (`OWNER_BILLING_BLOCKED`).
+- **Where:** `buildings/owner-billing.ts` `activeOwnerSpells`; `fees/bill-corrections.ts`
+  `FILE_ACTIONS`, `traceChanges`.
 
 ### Events are synchronous strings
 

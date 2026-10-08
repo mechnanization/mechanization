@@ -3,6 +3,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
+import type { SetOwnerBillingInput } from '@mechanization/shared-schemas';
 import {
   AlertTriangle,
   ArrowLeftToLine,
@@ -50,6 +52,7 @@ import {
   recordDamage,
   recordOccupancy,
   resizeUnitSpan,
+  setOwnerBilling,
   updateUnit,
   type BuildingDetail,
   type DamageAssessmentRow,
@@ -101,6 +104,8 @@ import {
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
+import { OwnerBillingPanel } from './owner-billing-panel';
+import { showsOwnerBilling } from '@/lib/owner-billing';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
@@ -169,6 +174,7 @@ export function BuildingUnitMatrixView({
   const router = useRouter();
   const toast = useToast();
   const en = locale === 'en';
+  const tOwnerBilling = useTranslations('ownerBilling');
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
 
@@ -610,6 +616,17 @@ export function BuildingUnitMatrixView({
         return en ? 'Seasonal details saved' : 'تم حفظ بيانات السكن الموسمي';
       },
       en ? 'Could not save the seasonal details.' : 'تعذّر حفظ بيانات السكن الموسمي.',
+    );
+
+  /** «توزيع الرسم على المالكين» — the officer's choice for a co-owned flat (0075). */
+  const saveOwnerBilling = (unit: UnitWithOccupants, input: SetOwnerBillingInput, kind: 'save' | 'withdraw') =>
+    run(
+      async () => {
+        if (!token) throw new Error('unauthenticated');
+        await setOwnerBilling(tenant, token, unit.id, input);
+        return kind === 'withdraw' ? tOwnerBilling('withdrawn') : tOwnerBilling('saved');
+      },
+      tOwnerBilling('failed'),
     );
 
   const cancelHref = `${base}/buildings`;
@@ -1597,6 +1614,17 @@ export function BuildingUnitMatrixView({
                 canWrite={canWrite}
                 onEnd={(values) => liftVacancy(selectedUnit, values)}
               />
+
+              {/* «توزيع الرسم على المالكين» — a flat several people own. */}
+              {showsOwnerBilling(selectedUnit) ? (
+                <OwnerBillingPanel
+                  unit={selectedUnit}
+                  locale={locale}
+                  busy={busy}
+                  canWrite={canWrite}
+                  onSave={(input, kind) => void saveOwnerBilling(selectedUnit, input, kind)}
+                />
+              ) : null}
 
               {effectiveUnitStatus(selectedUnit) === 'SEASONAL' ? (
                 <SeasonalHomePanel

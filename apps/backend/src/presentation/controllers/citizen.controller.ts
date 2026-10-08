@@ -277,9 +277,16 @@ export class CitizenController {
           // ids and numbers — their own or a relative's — are not: the
           // landlord's number is on the card. Named, so a field added to the
           // staff view never reaches the portal by default.
-          units: property.units.map((unit) => ({
+          units: property.units.map(({ ownerBilling, ...unit }) => ({
             ...unit,
             owners: unit.owners.map((owner) => ({ name: owner.name, shares: owner.shares })),
+            // How a co-owned flat is divided, and this person's part — never
+            // another owner's register id. Under «مالك مسؤول» their part says
+            // whether they pay for all (1/1) or nothing (0/1), read the same way
+            // as the staff file reads it (`lib/owner-billing.ts`).
+            ownerBilling: ownerBilling
+              ? { mode: ownerBilling.mode, effectiveMode: ownerBilling.effectiveMode, share: ownerBilling.share }
+              : null,
           })),
         })),
       payments: citizen.payments,

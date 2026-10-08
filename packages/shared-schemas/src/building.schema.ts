@@ -5,6 +5,7 @@ import {
   damageSourceSchema,
   occupancyEndReasonSchema,
   occupancyRoleSchema,
+  ownerBillingModeSchema,
   structureTypeSchema,
   surveyStatusSchema,
   unitStatusSchema,
@@ -813,6 +814,13 @@ export const createDamageAssessmentSchema = z
 
 export type CreateDamageAssessmentInput = z.infer<typeof createDamageAssessmentSchema>;
 
+/** أسهم out of 2400 — an owner's part of the deed, as the register records it. */
+export const ownerSharesValue = z.coerce
+  .number({ invalid_type_error: 'عدد الأسهم يجب أن يكون رقماً' })
+  .int('يجب أن يكون رقماً صحيحاً')
+  .min(1, 'يجب أن يكون سهماً واحداً على الأقل')
+  .max(2400, 'الحد الأقصى 2400 سهم');
+
 /**
  * Who is in a unit, recorded straight onto the matrix.
  *
@@ -834,12 +842,7 @@ export const upsertOccupancySchema = z
     citizenId: uuid,
     role: occupancyRoleSchema,
     /** أسهم out of 2400 — owners only; see the refinement below. */
-    shares: z.coerce
-      .number({ invalid_type_error: 'عدد الأسهم يجب أن يكون رقماً' })
-      .int('يجب أن يكون رقماً صحيحاً')
-      .min(1, 'يجب أن يكون سهماً واحداً على الأقل')
-      .max(2400, 'الحد الأقصى 2400 سهم')
-      .optional(),
+    shares: ownerSharesValue.optional(),
     /**
      * حالة الوحدة, stated rather than inferred — and asked of an owner only.
      *
@@ -1313,6 +1316,75 @@ export const endVacancySchema = z.object({
 });
 
 export type EndVacancyInput = z.infer<typeof endVacancySchema>;
+
+/**
+ * «توزيع الرسم على المالكين» — the officer's choice for a flat with several
+ * owners (migration 0075; the user's decision, 2026-10-07). See
+ * `OWNER_BILLING_MODE` and `ownerShareOf`.
+ *
+ * `mode` null puts the flat back on the default — split equally — and is how
+ * a choice is withdrawn. `shares` records or corrects the owners' أسهم in the
+ * same save, because «حسب الأسهم» is only as good as the figures behind it and
+ * the drawer asks for them beside the choice; each entry names a current owner
+ * of the flat (the server refuses anyone else).
+ */
+export const setOwnerBillingSchema = z
+  .object({
+    mode: ownerBillingModeSchema.nullable(),
+    responsibleOwnerId: uuid.nullable().optional(),
+    shares: z
+      .array(z.object({ citizenId: uuid, shares: ownerSharesValue }))
+      .max(200, 'عدد المالكين كبير جداً')
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.mode === 'RESPONSIBLE_OWNER' && !value.responsibleOwnerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['responsibleOwnerId'],
+        message: 'اختر المالك الذي يدفع عن الجميع',
+      });
+    }
+    if (value.mode !== 'RESPONSIBLE_OWNER' && value.responsibleOwnerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['responsibleOwnerId'],
+        message: 'المالك المسؤول يُحدَّد فقط مع «مالك مسؤول يدفع عن الجميع»',
+      });
+    }
+    const seen = new Set<string>();
+    for (const [index, entry] of (value.shares ?? []).entries()) {
+      if (seen.has(entry.citizenId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['shares', index, 'citizenId'],
+          message: 'هذا المالك مكرّر',
+        });
+      }
+      seen.add(entry.citizenId);
+    }
+  });
+
+export type SetOwnerBillingInput = z.infer<typeof setOwnerBillingSchema>;
+
+/** A flat's «توزيع الرسم على المالكين» as the drawer shows it, after a save or on demand. */
+export interface OwnerBillingState {
+  unitId: string;
+  unitCode: string;
+  /** The officer's choice; null means nobody chose and the flat is split equally. */
+  mode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
+  responsibleOwnerId: string | null;
+  /** The method billing applies — after the default and any fallback. */
+  effectiveMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER';
+  /** The responsible owner is no longer an owner, so the flat is split equally until someone chooses again. */
+  fallback: 'RESPONSIBLE_NOT_OWNER' | null;
+  owners: Array<{
+    citizenId: string;
+    shares: number | null;
+    /** This owner's part as a fraction; null when it cannot be computed (أسهم missing). */
+    share: { numerator: number; denominator: number } | null;
+  }>;
+}
 
 /**
  * What the census ledger filters on.

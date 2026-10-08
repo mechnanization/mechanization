@@ -335,9 +335,15 @@
     "SESSION_ENDED": "Your session has ended. Sign in again.",
     "ORIGIN_NOT_ALLOWED": "This request did not come from the municipality’s portal.",
     "SESSION_REFRESH_UNAVAILABLE": "The session could not be renewed. Check the connection and try again.",
-    "FEE_NOTHING_TO_CHARGE": "Nothing to charge — no notice was issued.{held, plural, =0 {} one { 1 unit is held for review (unit status conflict).} other { # units are held for review (unit status conflict).}}{uninhabitable, plural, =0 {} one { 1 unit is uninhabitable — its occupancy fee is held until re-inspection.} other { # units are uninhabitable — their occupancy fee is held until re-inspection.}}{exempted, plural, =0 {} one { 1 unit is vacant, under construction or exempt by bearer.} other { # units are vacant, under construction or exempt by bearer.}}{unassessable, plural, =0 {} one { 1 citizen's records need a field survey first.} other { # citizens' records need a field survey first.}}",
+    "FEE_NOTHING_TO_CHARGE": "Nothing to charge — no notice was issued.{held, plural, =0 {} one { 1 unit is held for review (unit status conflict).} other { # units are held for review (unit status conflict).}}{uninhabitable, plural, =0 {} one { 1 unit is uninhabitable — its occupancy fee is held until re-inspection.} other { # units are uninhabitable — their occupancy fee is held until re-inspection.}}{exempted, plural, =0 {} one { 1 unit is vacant, under construction or exempt by bearer.} other { # units are vacant, under construction or exempt by bearer.}}{coOwnerPaid, plural, =0 {} one { 1 co-owned unit is paid for by its responsible owner.} other { # co-owned units are paid for by their responsible owner.}}{unassessable, plural, =0 {} one { 1 citizen's records need a field survey first.} other { # citizens' records need a field survey first.}}",
     "CITIZEN_NO_PHONE_HAS_NUMBER": "The file is marked «has no phone» but holds a number of the citizen's own — clear the phone and WhatsApp, or untick «Does not have a phone number».",
-    "CITIZEN_CONTACT_PHONE_IS_OWN": "The contact number is a relative's, so it cannot be the citizen's own phone — correct one of them."
+    "CITIZEN_CONTACT_PHONE_IS_OWN": "The contact number is a relative's, so it cannot be the citizen's own phone — correct one of them.",
+    "OWNER_BILLING_NOT_CO_OWNED": "Unit {unitCode} does not have more than one current owner, so there is no fee to divide between owners.",
+    "OWNER_BILLING_STRUCTURAL_UNIT": "Unit {unitCode} is a structural floor that is never billed, so there are no owners to divide its fee between.",
+    "OWNER_BILLING_RESPONSIBLE_NOT_OWNER": "The responsible owner must be one of the current owners of unit {unitCode}.",
+    "OWNER_BILLING_RESPONSIBLE_NOT_BILLED": "This owner’s file does not claim unit {unitCode} as its owner, so they cannot be billed for it. Add it to their file first, or choose another owner.",
+    "OWNER_BILLING_SHARES_NOT_OWNER": "Shares can only be recorded for the current owners of unit {unitCode}.",
+    "OWNER_BILLING_SHARES_MISSING": "Record every owner’s shares for unit {unitCode} before choosing “By shares” (owners without shares: {missing})."
   },
   "damage": {
     "level": "Damage level",
@@ -582,12 +588,16 @@
     "notesSeparator": "; ",
     "notCharged": "{count} not charged",
     "heldForReview": "{count} held for review",
-    "uninhabitable": "{count} uninhabitable, not charged"
+    "uninhabitable": "{count} uninhabitable, not charged",
+    "coOwnedShare": "{count} co-owned, charged at this owner’s part",
+    "coOwnerPays": "{count} paid by another owner",
+    "coOwnedShareParts": "{count} co-owned, charged at this owner’s part ({parts})"
   },
   "fees": {
     "issue": {
       "uninhabitable": "Uninhabitable units: {count} — not charged this fee. Charging resumes at the first billing run after a re-inspection reads a unit habitable: for the current period if the person has no bill for it yet, otherwise from the next period.",
-      "uninhabitableOnce": "Uninhabitable units: {count} — not charged this fee. It is a one-off fee, so nothing charges them later by itself; to collect it once a re-inspection reads a unit habitable, issue an individual charge."
+      "uninhabitableOnce": "Uninhabitable units: {count} — not charged this fee. It is a one-off fee, so nothing charges them later by itself; to collect it once a re-inspection reads a unit habitable, issue an individual charge.",
+      "coOwnerPaid": "Co-owned units paid for by their responsible owner: {count} — nothing was charged for them to their other owners."
     }
   },
   "parcelDrawer": {
@@ -789,7 +799,8 @@
     "TOTP_ENROLLED": "2FA enrollment",
     "TOTP_CONFIRMED": "2FA confirmed",
     "DATA_REPAIR": "Data repair",
-    "DAMAGE_RECORDED": "Damage assessment recorded"
+    "DAMAGE_RECORDED": "Damage assessment recorded",
+    "UNIT_OWNER_BILLING_SET": "Co-owner billing set on a unit"
   },
   "auditEntities": {
     "User": "Citizen or staff",
@@ -910,7 +921,9 @@
       "created": "Created",
       "habitable": "Habitable",
       "level": "Damage level",
-      "source": "Source"
+      "source": "Source",
+      "ownerBillingMode": "How the owners are billed",
+      "shares": "Shares"
     },
     "text": {
       "redacted": "hidden to protect personal data",
@@ -1067,5 +1080,47 @@
       "reconciled": "The building you created on parcel <ltr>{parcel}</ltr> was saved as <now>{code}</now>, not <was>{provisional}</was>. Another building already held that letter on the parcel.",
       "acknowledge": "Got it"
     }
+  },
+  "ownerBilling": {
+    "title": "How the owners are billed",
+    "intro": "This unit has {count, plural, one {one current owner} other {{count} current owners}}. Choose how what the owners owe is divided between them.",
+    "defaultNote": "No method chosen yet — the fee is split equally between the owners.",
+    "tenantNote": "A tenant or free occupant pays the whole occupancy fee; this only divides what the owners owe.",
+    "modeLabel": "Method",
+    "responsibleLabel": "The owner who pays for everyone",
+    "responsiblePlaceholder": "Choose the owner",
+    "sharesLegend": "Each owner’s shares (out of 2400)",
+    "sharesHint": "Parts are divided by the sum of the owners’ recorded shares, not by 2400.",
+    "sharesFor": "Shares of {name}",
+    "previewTitle": "What each owner is billed for",
+    "partWhole": "The whole fee",
+    "partFraction": "{numerator}/{denominator} of the fee",
+    "partNone": "Nothing — the responsible owner pays",
+    "partUnknown": "Unknown — shares not recorded",
+    "notOnFile": "Their file does not claim this unit, so their part is not billed until their file is completed",
+    "fallback": "The chosen responsible owner no longer owns this unit, so the fee is split equally until a new method is chosen.",
+    "singleOwner": "This unit has only one owner now, so the saved method ({mode}) does not apply. You can withdraw it.",
+    "withdraw": "Withdraw the saved method",
+    "save": "Save the method",
+    "saved": "Billing method saved",
+    "withdrawn": "Saved method withdrawn",
+    "failed": "Could not save the billing method",
+    "unnamed": "Unnamed owner",
+    "sharesInvalid": "Enter a whole number from 1 to 2400",
+    "fileLabel": "Owners’ billing",
+    "fileShare": "Their part: {numerator}/{denominator} of the fee",
+    "filePaysAll": "Pays the fee for all the owners",
+    "filePaysNone": "Not billed for it — the responsible owner pays",
+    "fileUnknown": "Part unknown — the owners’ shares are incomplete",
+    "fileDefault": "Split equally (no method chosen)",
+    "mineShare": "Your part: {numerator}/{denominator} of the fee",
+    "minePaysAll": "You pay the fee for all the owners",
+    "minePaysNone": "Another owner pays for you",
+    "archivedOwners": "<names></names>: their file is archived, so they are left out and their part falls to the other owners.",
+    "mineUnknown": "Your part is unknown — the owners’ shares are incomplete",
+    "summaryLine": "{method} — {part}",
+    "listSeparator": ", ",
+    "pickResponsible": "Choose the owner who pays for everyone to see what each owner is billed for.",
+    "notOnFileOption": "Their file does not claim this unit"
   }
 }

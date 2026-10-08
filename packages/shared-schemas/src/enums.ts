@@ -815,6 +815,31 @@ export const occupancyEndReasonSchema = arabicEnum(
 export type OccupancyEndReason = z.infer<typeof occupancyEndReasonSchema>;
 
 /**
+ * «توزيع الرسم على المالكين» — how a flat with several current owners is
+ * billed (migration 0075; the user's decision, 2026-10-07).
+ *
+ * Lebanese inheritance makes co-heirs on one deed the normal case, and the
+ * register has always recorded them — one OWNER spell each, with their أسهم.
+ * Billing read neither: every co-owner's file claims the flat, the assessment
+ * runs one citizen at a time, and so each was billed for the whole of it.
+ *
+ *  - `EQUAL` — each of the N current owners pays 1/N. The default: a flat with
+ *    no choice recorded (`Unit.ownerBillingMode` NULL) is billed this way.
+ *  - `BY_SHARES` — each pays their أسهم over the sum of every current owner's
+ *    أسهم. Normalised by the sum, not by 2400: on a building nobody has
+ *    partitioned (غير مفرز) the 2400 cover the whole building, not the flat.
+ *  - `RESPONSIBLE_OWNER` — one owner, named on the unit, pays the whole; the
+ *    others are not charged for this flat.
+ *
+ * Applies only to what an owner bears — an owner-borne notice, or an occupancy
+ * notice on a flat its owners use themselves. A tenant pays for what they
+ * occupy whatever the deed says. See `ownerShareOf`.
+ */
+export const OWNER_BILLING_MODE = ['EQUAL', 'BY_SHARES', 'RESPONSIBLE_OWNER'] as const;
+export const ownerBillingModeSchema = arabicEnum(OWNER_BILLING_MODE, 'اختر طريقة توزيع الرسم');
+export type OwnerBillingMode = z.infer<typeof ownerBillingModeSchema>;
+
+/**
  * What a «تأكيد الشغور» rests on — asked every time one is recorded.
  *
  * Confirming a vacancy is not a display state: it stops the occupancy fee

@@ -206,6 +206,35 @@ describe('traceChanges — «حذف وحدة سُجِّلت بالخطأ»', () 
   });
 });
 
+describe('traceChanges — «توزيع الرسم على المالكين» (UNIT_OWNER_BILLING_SET)', () => {
+  // The flat's code is one this holder's file does not carry: only `after.citizens` can reach them.
+  const choice = (citizens: string[], createdAt = new Date('2026-10-07T10:00:00Z')) =>
+    row({
+      action: 'UNIT_OWNER_BILLING_SET',
+      entityType: 'Building',
+      entityId: 'b-1',
+      before: { unitId: 'u-5', unitCode: '0005', ownerBillingMode: null, responsibleOwnerId: null },
+      after: { unitId: 'u-5', unitCode: '0005', ownerBillingMode: 'RESPONSIBLE_OWNER', responsibleOwnerId: TENANT, citizens },
+      createdAt,
+    });
+
+  it('reaches every co-owner it names, and nobody else', () => {
+    expect(kinds(traceChanges([choice([TENANT, CITIZEN])], holder))).toEqual(['DATED_CHANGE']);
+    expect(kinds(traceChanges([choice([TENANT, CITIZEN])], { citizenId: TENANT, unitCodes: new Set() }))).toEqual([
+      'DATED_CHANGE',
+    ]);
+    expect(traceChanges([choice([TENANT])], holder)).toEqual([]);
+  });
+
+  it('is a choice made going forward: a bill raised before the day it was made stays as raised', () => {
+    const traced = traceChanges([choice([CITIZEN], new Date('2026-10-07T10:00:00Z'))], holder);
+    expect(traced).toEqual([expect.objectContaining({ effectiveOn: new Date('2026-10-07T10:00:00Z') })]);
+    expect(affectsBill(traced, new Date('2026-10-01T09:00:00Z'))).toBe(false);
+    // Raised a day after it, the bill had the choice to read — a figure that now differs is one to look at.
+    expect(affectsBill(traced, new Date('2026-10-08T09:00:00Z'))).toBe(true);
+  });
+});
+
 describe('affectsBill', () => {
   const raisedAt = new Date('2026-09-15T09:30:00Z');
   const dated = (on: string): TracedChange => ({ row: row({}), kind: 'DATED_CHANGE', effectiveOn: new Date(on) });
@@ -238,6 +267,19 @@ describe('linesDiff and figureKey', () => {
       removed: [line('45', 'SHOP'), line('46', 'OFFICE')],
       added: [line('47', 'SHOP')],
     });
+  });
+
+  it('keys a line by the owner’s part too: a quarter of a shop is not the shop', () => {
+    const whole = line('420', 'SHOP', 300);
+    const quarter = { ...whole, unitCode: '0005', ownerShare: { mode: 'EQUAL' as const, numerator: 1, denominator: 4 } };
+    expect(linesDiff([whole], [quarter])).toEqual({ removed: [whole], added: [quarter] });
+    expect(linesDiff([quarter], [{ ...quarter }])).toEqual({ removed: [], added: [] });
+  });
+
+  it('matches a line raised before 0075 to the same flat billed whole today, census code or not', () => {
+    // Bills raised before co-owner billing carry no `unitCode` and no `ownerShare`; today's lines carry the code.
+    const raised = line('45', 'APARTMENT', 120);
+    expect(linesDiff([raised], [{ ...raised, unitCode: '0201' }])).toEqual({ removed: [], added: [] });
   });
 
   it('keys a figure by what it is, and an amount only when there is one', () => {

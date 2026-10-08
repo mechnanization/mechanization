@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-08.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -114,6 +114,26 @@ Data access for new code (decided):
   the review hold. Only a reading that answers decides: «غير مصنّف» with no answer judged nothing, so
   the hold, both census worklists and the panels skip it (`answersHabitability` and its SQL twin
   `answersHabitabilitySql`, `currentReadingForUnit(…, { answering: true })`) and it never ends a hold.
+- **Co-owner billing.** A flat with several current OWNER spells is divided between them, never billed
+  to each in full (`0075`; decision of 2026-10-07). The rule is `ownerShareOf` in
+  `@mechanization/shared-schemas` (`owner-share.ts`): equal by default (`units.ownerBillingMode` NULL),
+  by أسهم over their sum, or one responsible owner. `holdingsOf` loads every owner of each flat in the
+  batch (`buildings/owner-billing.ts`) and attaches this owner's part; `assessCitizen` multiplies area or
+  units by it, only for what an owner bears, and refuses («unassessable») «حسب الأسهم» with أسهم
+  missing. The choice is saved by `OwnerBillingService` (`PUT buildings/units/:unitId/owner-billing`,
+  `REGISTER_WRITE_ROLES`), Tier 1, refusing a responsible owner whose own file billing would not charge
+  (asked through `holdingsOf`). Owners are the flat's current OWNER spells held by an **open** file
+  (`activeOwnerSpells`): an archived file is never billed, so its part falls to the others, and a
+  responsible owner who is archived or stops owning falls back to the equal split at read time. A
+  merge re-points `units.responsibleOwnerId` (only rows still naming the absorbed person) and its
+  undo puts it back. Each owner's amount is rounded on its own, so a flat's parts can differ from
+  the whole by under a pound per owner. «ملاحظات الجودة» warns of a saved method billing cannot carry
+  out (`OWNER_BILLING_BLOCKED`, `DataQualityService.ownerBillingBlocked`, verdict `ownerBillingBlock` in
+  `owner-billing.ts`): «حسب الأسهم» with an owner's أسهم missing (HIGH, every co-owner's bill refused) or a
+  responsible owner no longer among the open owners (MEDIUM, split equally). A notice that bills nobody
+  because «مالك مسؤول» pays refuses with `FEE_NOTHING_TO_CHARGE` (`coOwnerPaid`), not
+  `FEE_NO_MATCHING_CITIZENS`. The portal gets this owner's part and never the responsible owner's id;
+  under «مالك مسؤول» the part (1/1 or 0/1) says who pays, read the same way on both sides.
 - **Searching citizens as «مشاهد فقط».** The register, the review queue and the payments list match a
   citizen through `citizenSearchText(S, role)` (`application/common/citizen-search.ts`) rather than
   `u."searchText"` directly: for VIEWER it removes the رقم مرجعي (folded and compact) from the searched
@@ -277,7 +297,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 114 specs, 26 of them `*.integration.spec.ts`.
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 119 specs, 27 of them `*.integration.spec.ts`.
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

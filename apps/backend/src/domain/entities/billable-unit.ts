@@ -27,6 +27,17 @@
  */
 const STRUCTURAL_UNIT_TYPES: ReadonlySet<string> = new Set(['PILOTIS', 'EMPTY_FLOOR']);
 
+/**
+ * An owner's part of a co-owned flat («توزيع الرسم على المالكين», migration
+ * 0075), as `ownerShareOf` in the shared rules computes it. Restated rather
+ * than imported, because this layer imports nothing outside itself.
+ */
+export interface BillableOwnerShare {
+  mode: string;
+  numerator: number;
+  denominator: number;
+}
+
 /** The taxonomy values a card may hold; kept loose to avoid importing Prisma enums. */
 export interface BillableUnit {
   /** `APARTMENT`, `SHOP`, … or null where the card never recorded one. */
@@ -73,6 +84,27 @@ export interface BillableUnit {
   uninhabitable: boolean;
   /** The canonical unit, when there is one — so a held flat is counted once, however many cards bill it. */
   unitId?: string | null;
+  /** The census code of that unit («0201»), for the bill's line. */
+  unitCode?: string | null;
+  /**
+   * This owner's part of a flat several people own, when it is co-owned —
+   * absent (billed whole) otherwise, and always absent on a tenant's or شاغل
+   * بتسامح's unit: an occupant pays for what they occupy whatever the deed
+   * says. `numerator` 0 means another owner, the responsible one, pays.
+   */
+  ownerShare?: BillableOwnerShare | null;
+  /**
+   * The flat is billed «حسب الأسهم» and an owner's أسهم are not recorded, so
+   * this owner's part cannot be computed. `assessCitizen` refuses to guess,
+   * exactly as it does for a flat with no area.
+   */
+  ownerShareUndecidable?: boolean;
+}
+
+/** The co-ownership facts each storage shape carries for one flat. */
+interface OwnerShareFields {
+  ownerShare?: BillableOwnerShare | null;
+  ownerShareUndecidable?: boolean;
 }
 
 /**
@@ -98,6 +130,12 @@ export interface LinkedUnit {
   underReview?: boolean;
   /** See `BillableUnit.uninhabitable`. */
   uninhabitable?: boolean;
+  /** See `BillableUnit.unitCode`. */
+  unitCode?: string | null;
+  /** See `BillableUnit.ownerShare` — set only on a co-owned flat, for an owner's card. */
+  ownerShare?: BillableOwnerShare | null;
+  /** See `BillableUnit.ownerShareUndecidable`. */
+  ownerShareUndecidable?: boolean;
 }
 
 /** The stored shape this reads — a property card and its unit rows. */
@@ -118,6 +156,12 @@ export interface BillablePropertyEntry {
   uninhabitable?: boolean;
   /** The one flat of the structure a منزل card names, when billing found it. */
   soleUnitId?: string | null;
+  /** That flat's census code. */
+  soleUnitCode?: string | null;
+  /** A منزل owned with others — the card-level twin of `LinkedUnit.ownerShare`. */
+  ownerShare?: BillableOwnerShare | null;
+  /** The card-level twin of `LinkedUnit.ownerShareUndecidable`. */
+  ownerShareUndecidable?: boolean;
   /**
    * `unitType` is nullable here for the same reason `unitArea` always was: a
    * per-unit «غير مؤكَّد» flag blanks the field it excuses (migration 0031), so
@@ -155,7 +199,19 @@ export interface BillablePropertyEntry {
     unitStatus?: string | null;
     underReview?: boolean;
     uninhabitable?: boolean;
+    unitCode?: string | null;
+    /** Set on an OWNER spell of a co-owned flat. See `BillableUnit.ownerShare`. */
+    ownerShare?: BillableOwnerShare | null;
+    ownerShareUndecidable?: boolean;
   }>;
+}
+
+/** The co-ownership facts, copied across without inventing any. */
+function shareFields(source: OwnerShareFields | null | undefined): OwnerShareFields {
+  return {
+    ...(source?.ownerShare ? { ownerShare: source.ownerShare } : {}),
+    ...(source?.ownerShareUndecidable ? { ownerShareUndecidable: true } : {}),
+  };
 }
 
 function toNumber(value: { toString(): string } | number | null): number | null {
@@ -232,6 +288,8 @@ function heldThroughOccupancy(entry: BillablePropertyEntry): BillableUnit[] | nu
     underReview: occupancy.underReview ?? false,
     uninhabitable: occupancy.uninhabitable ?? false,
     unitId: occupancy.unitId ?? null,
+    ...(occupancy.unitCode ? { unitCode: occupancy.unitCode } : {}),
+    ...shareFields(occupancy),
   }));
 }
 
@@ -315,6 +373,8 @@ function collectBillableUnits(entry: BillablePropertyEntry): BillableUnit[] {
       underReview: line.unit?.underReview ?? false,
       uninhabitable: line.unit?.uninhabitable ?? false,
       unitId: line.unit?.id ?? null,
+      ...(line.unit?.unitCode ? { unitCode: line.unit.unitCode } : {}),
+      ...shareFields(line.unit),
     }));
   }
 
@@ -340,6 +400,8 @@ function collectBillableUnits(entry: BillablePropertyEntry): BillableUnit[] {
       underReview: entry.underReview ?? false,
       uninhabitable: entry.uninhabitable ?? false,
       unitId: entry.soleUnitId ?? null,
+      ...(entry.soleUnitCode ? { unitCode: entry.soleUnitCode } : {}),
+      ...shareFields(entry),
     },
   ];
 }

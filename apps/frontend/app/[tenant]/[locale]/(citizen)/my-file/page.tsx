@@ -26,6 +26,7 @@ import {
   MessageSquareWarning,
   Phone,
   Ruler,
+  Scale,
   Sun,
   User,
   Users,
@@ -49,6 +50,7 @@ import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { formatDate, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
+import { ownerBillingWording } from '@/lib/owner-billing';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -864,6 +866,18 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
               {months}
             </span>
           ) : null}
+        </p>
+      ) : null}
+
+      {/*
+        A flat this person owns with others: how its owner-borne fees are
+        divided, and their own part (migration 0075) — never who else pays.
+      */}
+      {unit.ownerBilling ? (
+        <p className="flex flex-wrap items-center gap-x-2 px-2 text-muted-foreground">
+          <Scale className="size-3 shrink-0" aria-hidden />
+          {/* Worded to the owner reading it, the way the staff file words it (`ownerBillingWording`). */}
+          <span>{ownerBillingWording(unit.ownerBilling, locale, 'mine').line}</span>
         </p>
       ) : null}
     </li>
