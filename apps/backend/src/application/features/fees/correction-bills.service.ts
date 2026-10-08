@@ -333,8 +333,9 @@ export class CorrectionBillsService {
 
     /*
       A FLAT bill aimed at a category reads the register too since 0077: a
-      holder whose every unit of the category became exempt or uninhabitable
-      owes nothing for it (`flatCategoryCharge`).
+      holder whose every unit of the category became exempt or uninhabitable,
+      or another co-owner's to pay under «مالك مسؤول», owes nothing for it
+      (`flatCategoryCharge`).
     */
     const flatByCategory = flat.filter((bill) => bill.feeNotice!.targetCategory);
     const holdings = await this.holdings([

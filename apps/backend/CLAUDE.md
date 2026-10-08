@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/unit-fee-exemptions` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/unit-fee-exemptions`, 2026-10-08.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -142,11 +142,17 @@ Data access for new code (decided):
   unit. A building's lifecycle exempts nothing: `UNINHABITABLE_LIFECYCLE` buildings still billed are a
   «مراجعة الجودة» finding (`UNINHABITED_WITHOUT_READING`, archived files ignored, cleared on
   `damage.recorded`) until a «غير صالحة للسكن» reading is recorded. A FLAT notice to a category reads the
-  register too: `flatCategoryCharge` lets off a holder every one of whose units of that category is exempt
-  or uninhabitable (never the review hold or the bearer rule), and `CorrectionBillsService` uses the same
-  function for today's figure. FLAT to ALL_CITIZENS stays a per-person charge. The profile carries
-  `heldUnits` for cards with no unit lines (a منزل's flat, a مبنى card's census flats), read like
-  `holdingsOf`, so the exemption and the owners' split show there too.
+  register too: `flatCategoryCharge` lets off a holder every one of whose units of that category is exempt,
+  uninhabitable, or paid by another co-owner under «مالك مسؤول» (their part 0, counted as
+  `coOwnerPaidUnitCount`; decision 2026-10-08) — never the review hold or the bearer rule — and
+  `CorrectionBillsService` uses the same function for today's figure. Under EQUAL and BY_SHARES every
+  co-owner still pays a FLAT amount once; FLAT to ALL_CITIZENS stays a per-person charge. In «فواتير
+  تأثّرت بتصحيحات» (`bill-corrections.ts`) granting an exemption (`UNIT_FEE_EXEMPTION_SET`) is a
+  CORRECTION, so it reaches bills raised before it; lifting (`UNIT_FEE_EXEMPTION_LIFTED`) is a
+  DATED_CHANGE, forward only. Neither changes a bill. The profile carries `heldUnits` for cards with no
+  current unit lines (a منزل's flat, a مبنى card's census flats), the cards chosen by `billedBareCards`
+  (latest registration, current cards and lines, `attachOccupancies`), so the exemption and the owners'
+  split show on exactly the cards a bill is raised from.
 - **Searching citizens as «مشاهد فقط».** The register, the review queue and the payments list match a
   citizen through `citizenSearchText(S, role)` (`application/common/citizen-search.ts`) rather than
   `u."searchText"` directly: for VIEWER it removes the رقم مرجعي (folded and compact) from the searched

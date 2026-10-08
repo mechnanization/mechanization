@@ -89,11 +89,11 @@ export const UNIT_ACTIONS = [
   'UNIT_STATUS_AFTER_TENANCY',
   'UNIT_CORRECTION_DELETED',
   /*
-    A damage reading can hold a flat's occupant-borne fees («غير صالحة للسكن»)
-    or end a hold. Today's figure already reflects it (`assessCitizen`), so the
-    reading is listed beside it — as a real change on the day it was recorded,
-    which never makes a bill one a correction affected on its own: the hold
-    runs forward, never back (decision, 2026-10-05).
+    A damage reading can exempt a flat from every fee («غير صالحة للسكن», the
+    user's decisions of 2026-10-05 and 2026-10-07) or end that. Today's figure
+    already reflects it (`assessCitizen`), so the reading is listed beside it —
+    as a real change on the day it was recorded, which never makes a bill one a
+    correction affected on its own: the exemption runs forward, never back.
   */
   'DAMAGE_RECORDED',
   /*
@@ -104,8 +104,13 @@ export const UNIT_ACTIONS = [
   */
   'UNIT_OWNER_BILLING_SET',
   /*
-    «معفاة من الرسوم» (migration 0077), granted or lifted by the office. Forward
-    from the day, like the billing method above.
+    «معفاة من الرسوم» (migration 0077), granted or lifted by the office.
+
+    Granting is a correction of fact (the user's decision, 2026-10-08): the
+    mosque was a mosque before anyone ticked the box, so a bill raised on it
+    earlier was raised on a register that was wrong — listed whatever day it
+    was raised, as a «سُجّل خطأً» is. Lifting runs forward from the day, like
+    the billing method above: the unit owes from then, not before.
   */
   'UNIT_FEE_EXEMPTION_SET',
   'UNIT_FEE_EXEMPTION_LIFTED',
@@ -266,9 +271,12 @@ export function traceChanges(
           // The unit never existed: everything billed on it was a correction.
           change = { kind: 'CORRECTION', effectiveOn: null };
           break;
+        case 'UNIT_FEE_EXEMPTION_SET':
+          // Granted: the unit was exempt all along — see UNIT_ACTIONS.
+          change = { kind: 'CORRECTION', effectiveOn: null };
+          break;
         case 'DAMAGE_RECORDED':
         case 'UNIT_OWNER_BILLING_SET':
-        case 'UNIT_FEE_EXEMPTION_SET':
         case 'UNIT_FEE_EXEMPTION_LIFTED':
           change = { kind: 'DATED_CHANGE', effectiveOn: row.createdAt };
           break;

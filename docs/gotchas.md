@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/unit-fee-exemptions`, 2026-10-08.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -470,6 +470,19 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   أسهم are recorded or corrected beside the billing method, in «توزيع الرسم على المالكين».
 - **Where:** `BuildingsService.recordOccupancy`; pinned by
   `co-owner-billing.integration.spec.ts`.
+
+### Granting an exemption reaches back; lifting one does not
+
+- **What happens:** «معفاة من الرسوم» granted on a unit lists, in «فواتير تأثّرت بتصحيحات»,
+  every open bill on it whose figure now differs — raised last week or last year. Lifting the
+  same exemption lists none of the bills raised before the lift.
+- **Why:** `traceChanges` reads `UNIT_FEE_EXEMPTION_SET` as a CORRECTION (the mosque was a
+  mosque before anyone ticked the box, so a bill raised on it was raised on a wrong register)
+  and `UNIT_FEE_EXEMPTION_LIFTED` as a DATED_CHANGE on its day, like a damage reading or a
+  co-owner billing method (the user's decision, 2026-10-08). A change of reason on a standing
+  exemption is also a SET, but leaves the figure as it was, so it lists nothing.
+- **Do this:** do not "fix" the asymmetry. The listing never changes a bill; the accountant decides.
+- **Where:** `fees/bill-corrections.ts` `traceChanges`; pinned in `bill-corrections.spec.ts`.
 
 ### Archiving a co-owner re-divides the flat from then on, and no raised bill is listed for it
 

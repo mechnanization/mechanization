@@ -149,6 +149,17 @@ function bearsFee(unit: BillableUnit, bearer: FeeBearer): boolean {
   return !isOccupiedByOthers(unit.unitStatus) && !isUnoccupied(unit.unitStatus);
 }
 
+/**
+ * The part of a unit this person is billed for: their share of a co-owned
+ * flat on an owner's card (`ownerShareOf`), else the whole of it. 0 means
+ * another co-owner — the responsible one under «مالك مسؤول» — pays for it.
+ */
+function ownerWeight(unit: BillableUnit): number {
+  return unit.occupancyType === 'OWNER' && unit.ownerShare
+    ? unit.ownerShare.numerator / unit.ownerShare.denominator
+    : 1;
+}
+
 type HeldEntry = {
   heldUnitIds?: readonly string[];
   uninhabitableUnitIds?: readonly string[];
@@ -422,13 +433,9 @@ export function assessCitizen(
       reason: `وحدة ${undecidable.unitCode ?? ''} على العقار ${undecidable.propertyNumber ?? '—'} يتوزّع رسمها «حسب الأسهم» وأسهم أحد مالكيها غير مسجّلة`,
     };
   }
-  const weightOf = (unit: BillableUnit): number =>
-    unit.occupancyType === 'OWNER' && unit.ownerShare
-      ? unit.ownerShare.numerator / unit.ownerShare.denominator
-      : 1;
   // Paid by the responsible owner named on the flat — not this person's to pay.
-  const paidByCoOwner = owed.filter((unit) => weightOf(unit) === 0);
-  const units = owed.filter((unit) => weightOf(unit) > 0);
+  const paidByCoOwner = owed.filter((unit) => ownerWeight(unit) === 0);
+  const units = owed.filter((unit) => ownerWeight(unit) > 0);
   const shared = units.filter((unit) => unit.occupancyType === 'OWNER' && unit.ownerShare);
   const heldUnitCount = reviewing.length;
   const uninhabitableUnitCount = unlivable.length;
@@ -461,8 +468,8 @@ export function assessCitizen(
   }
 
   // A co-owned flat counts for this owner's part of its area, or of one unit.
-  const totalArea = units.reduce((sum, unit) => sum + (unit.unitArea ?? 0) * weightOf(unit), 0);
-  const chargedUnits = units.reduce((sum, unit) => sum + weightOf(unit), 0);
+  const totalArea = units.reduce((sum, unit) => sum + (unit.unitArea ?? 0) * ownerWeight(unit), 0);
+  const chargedUnits = units.reduce((sum, unit) => sum + ownerWeight(unit), 0);
 
   // Only the two rate bases reach here; FLAT returned above.
   const multiplier = notice.basis === 'PER_AREA' ? totalArea : chargedUnits;
@@ -518,10 +525,14 @@ export function assessCitizen(
  *
  * The notice's own amount, as every FLAT notice charges — per holder, whatever
  * they hold of it — except a holder every one of whose units of that category
- * is charged nothing: «معفاة من الرسوم» (0077) or «غير صالحة للسكن». The waqf
- * whose one office is the mosque is not a holder of offices for this notice,
- * and a family whose one shop is a ruin is not a shop holder (the user's
- * decisions of 2026-10-07: «not habitable → exempt», and the mosque exempt).
+ * is charged nothing: «معفاة من الرسوم» (0077), «غير صالحة للسكن», or paid by
+ * another co-owner under «مالك مسؤول» (this owner's part is 0). The waqf whose
+ * one office is the mosque is not a holder of offices for this notice, a family
+ * whose one shop is a ruin is not a shop holder (the user's decisions of
+ * 2026-10-07: «not habitable → exempt», and the mosque exempt), and of four
+ * brothers whose one shop the eldest pays for, only the eldest is (the user's
+ * decision, 2026-10-08). Under «بالتساوي» and «حسب الأسهم» every co-owner is
+ * still a holder and pays the amount once: a flat amount is not divided.
  *
  * Only that. The review hold and the bearer rule stay out of FLAT, as they
  * always have: a flat amount is a person's charge, not a flat's. A notice to
@@ -536,14 +547,22 @@ export function assessCitizen(
 export function flatCategoryCharge(
   entries: readonly BillablePropertyEntry[],
   notice: { amount: number; targetCategory: string },
-): { amount: number; assessment: FeeAssessment | null; uninhabitableUnitIds?: string[]; exemptUnitIds?: string[] } {
+): {
+  amount: number;
+  assessment: FeeAssessment | null;
+  uninhabitableUnitIds?: string[];
+  exemptUnitIds?: string[];
+  coOwnerPaidUnitIds?: string[];
+} {
   const matching = entries
     .flatMap(billableUnits)
     .filter((unit) => unitMatches(unit, notice.targetCategory));
   const exempt = matching.filter((unit) => unit.exempt);
   const unlivable = matching.filter((unit) => !unit.exempt && unit.uninhabitable);
+  // In the order `assessCitizen` reports them: exempt, then uninhabitable, then another owner's to pay.
+  const paidByCoOwner = matching.filter((unit) => !unit.exempt && !unit.uninhabitable && ownerWeight(unit) === 0);
 
-  if (matching.length === 0 || exempt.length + unlivable.length < matching.length) {
+  if (matching.length === 0 || exempt.length + unlivable.length + paidByCoOwner.length < matching.length) {
     return { amount: notice.amount, assessment: null };
   }
 
@@ -553,6 +572,7 @@ export function flatCategoryCharge(
     amount: 0,
     uninhabitableUnitIds: ids(unlivable),
     exemptUnitIds: ids(exempt),
+    coOwnerPaidUnitIds: ids(paidByCoOwner),
     assessment: {
       basis: 'FLAT',
       rate: notice.amount,
@@ -562,7 +582,7 @@ export function flatCategoryCharge(
       heldUnitCount: 0,
       uninhabitableUnitCount: unlivable.length,
       sharedUnitCount: 0,
-      coOwnerPaidUnitCount: 0,
+      coOwnerPaidUnitCount: paidByCoOwner.length,
       exemptUnitCount: exempt.length,
       lines: [],
     },
