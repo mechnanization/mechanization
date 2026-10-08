@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { uuid } from './primitives';
+import { normalizeDigits, uuid } from './primitives';
 import { OWNER_BILLING_MODE } from './enums';
 import { ADJUSTMENT_REASON_MIN, municipalToday } from './cash-policy';
 
@@ -827,3 +827,57 @@ export const referenceOnlyLoginSchema = z.object({
 });
 
 export type ReferenceOnlyLogin = z.infer<typeof referenceOnlyLoginSchema>;
+
+/**
+ * «ما المستحق على العقار» — what is still owed on one رقم العقار, before a
+ * براءة ذمّة (the user's guidance of 2026-10-07: a debt attaches to the
+ * property, whoever the owner of record is now). Read-only; it issues no
+ * certificate.
+ */
+export const parcelDuesQuerySchema = z.object({
+  /*
+    Latin digits whatever was typed: an Arabic keyboard gives «٤٢٠», and the
+    bill lines hold «420» — read as typed, the answer would be a false «لا شيء
+    مستحق» on the one check a clearance rests on.
+  */
+  propertyNumber: z
+    .string({ required_error: 'رقم العقار مطلوب' })
+    .trim()
+    .min(1, 'رقم العقار مطلوب')
+    .max(40)
+    .transform((value) => normalizeDigits(value)),
+});
+export type ParcelDuesQuery = z.infer<typeof parcelDuesQuerySchema>;
+
+/** One open bill, and the part of what remains on it that is this parcel's. */
+export interface ParcelDuesBill {
+  paymentId: string;
+  citizenId: string;
+  /** «ورثة المرحوم …» for an estate. */
+  citizenName: string;
+  title: string;
+  dueDate: string;
+  paymentStatus: 'UNPAID' | 'OVERDUE' | 'PENDING_REVIEW';
+  /** What is still unpaid on the whole bill. */
+  remaining: number;
+  /** This parcel's part of `remaining`, by the bill's own lines (area or units, and owners' parts). */
+  onParcel: number;
+  /** The census units on this parcel the bill charged for, where it names them. */
+  unitCodes: string[];
+  /** Every line on the bill is on this parcel. */
+  wholeBill: boolean;
+}
+
+export interface ParcelDues {
+  propertyNumber: string;
+  /** Sum of `onParcel` — what is owed on the parcel by its bills' own lines. */
+  total: number;
+  bills: ParcelDuesBill[];
+  /**
+   * Open bills of the people on this parcel that name no unit — a flat amount,
+   * or a bill from before itemised billing. Shown apart: they are the holders'
+   * debts, not demonstrably the parcel's.
+   */
+  unlinked: Array<Omit<ParcelDuesBill, 'onParcel' | 'unitCodes' | 'wholeBill'>>;
+  unlinkedTotal: number;
+}

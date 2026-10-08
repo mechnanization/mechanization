@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/unit-fee-exemptions`, 2026-10-08.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -594,6 +594,41 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Where:** `src/scripts/import-parcels.ts`, `clearRemoteCredentials` in
   `src/scripts/seed.ts`.
 
+### A name joined by hand drops «ورثة المرحوم»
+
+- **What happens:** an estate's bill, roster row or tenant card reads «حسن
+  واكد سرور», as if the man who died were the one being billed, while every
+  other screen says «ورثة المرحوم حسن واكد سرور».
+- **Why:** an estate (`0076`) keeps the deceased's own name in the row; the
+  prefix is added when it is shown. `[firstName, lastName].join(' ')` shows the
+  row.
+- **Do this:** name a citizen through `citizenDisplayName` (shared-schemas),
+  with `residence` in the select. It also reads an institution's name, which
+  is one line stored across `firstName`/`lastName` (`splitInstitutionName`), so
+  a search or a sort on `lastName` alone does not find «وقف مسجد البلدة».
+  The opposite holds when a name is **written** into another row (a tenancy
+  card's owner name): use `citizenStoredName`, never the display name — the
+  heirs' sale once wrote «ورثة المرحوم …» onto a tenant's card. Text someone
+  typed is matched through `withoutEstatePrefix` (SQL: `ESTATE_PREFIX_PATTERN`).
+  A card's `landlordName` **as submitted** goes through `storedLandlordName`
+  on the server, at every write: the owner lookup and the unit matrix answer
+  with display names, «نعم، هو المالك» and the sole-owner prefill copy them
+  into the card, and a queued offline save carries whatever the form held.
+  The form strips it too (`landlordNameToSend`), and `landlordLink` carries
+  `name` (stored, the one sent) apart from `displayName` (the one shown).
+- **Where:** `fees.service.ts`, `reporting.service.ts`, `citizens.service.ts`,
+  `buildings.service.ts` (`toOccupancyRow`), `parcel-dues.service.ts`.
+
+### «ليس مقيماً» is not one value any more
+
+- **What happens:** an estate or a waqf is asked for a mother's name, offered
+  «مشغولة من المالك», or billed a per-head flat amount.
+- **Why:** «not a household» used to be `residence === 'NON_RESIDENT_OWNER'`,
+  and `0076` added `ESTATE` and `INSTITUTION`, which are not households either.
+- **Do this:** ask `isOwnerRecord` (not a household) or `isNonPersonRecord`
+  (not a living person). A new check against the one value misses two kinds.
+- **Where:** `packages/shared-schemas/src/enums.ts`.
+
 ## Auth
 
 ### A route without `@Roles` is open to citizens
@@ -809,6 +844,20 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   stored meanwhile.
 - **Where:** `lib/session.ts` `clearSession`, `lib/citizen-draft.ts`,
   `lib/offline-db.ts`.
+
+### A رقم العقار typed in Arabic digits misses its Latin twin
+
+- **What happens:** «ما المستحق على العقار» for 420 answers «لا شيء مستحق»
+  although a card and its bill lines say «٤٢٠».
+- **Why:** `propertyNumber` is stored as typed, and the fee lines copy it.
+  The query is normalised to Latin digits (`parcelDuesQuerySchema`), the rows
+  are not.
+- **Do this:** compare digit-normalised values on both sides — `normalizeDigits`
+  in TypeScript, `translate(btrim(x), '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹',
+  '01234567890123456789')` in SQL. Over a jsonb array, guard with
+  `CASE WHEN jsonb_typeof(…) = 'array' THEN … END`, not `AND`/`OR`: Postgres
+  does not promise the order it evaluates them in.
+- **Where:** `parcel-dues.service.ts`, `parcel-dues.ts` (`parcelShareOf`).
 
 ### `#` in a plural branch can print Arabic-Indic digits
 

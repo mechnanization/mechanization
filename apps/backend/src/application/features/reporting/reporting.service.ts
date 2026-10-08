@@ -1,3 +1,4 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
@@ -1030,6 +1031,7 @@ export class ReportingService {
                     firstName: true,
                     middleName: true,
                     lastName: true,
+                    residence: true,
                     referenceNumber: true,
                   },
                 },
@@ -1094,7 +1096,7 @@ export class ReportingService {
                 // so the card can link to their file instead of naming them.
                 landlordCitizenId: true,
                 landlordCitizen: {
-                  select: { firstName: true, middleName: true, lastName: true, referenceNumber: true },
+                  select: { firstName: true, middleName: true, lastName: true, residence: true, referenceNumber: true },
                 },
                 unitStatus: true,
                 buildingName: true,
@@ -1195,6 +1197,7 @@ export class ReportingService {
                                 firstName: true,
                                 middleName: true,
                                 lastName: true,
+                                residence: true,
                                 phone: true,
                                 hasNoPhone: true,
                                 contactPhone: true,
@@ -1270,9 +1273,8 @@ export class ReportingService {
 
     return {
       id: citizen.id,
-      fullName: [citizen.firstName, citizen.middleName, citizen.lastName]
-        .filter(Boolean)
-        .join(' '),
+      // «ورثة المرحوم …» for an estate (0076).
+      fullName: citizenDisplayName(citizen),
       motherName: citizen.motherName,
       phone: citizen.phone,
       whatsapp: citizen.whatsapp,
@@ -1563,6 +1565,7 @@ export class ReportingService {
                   firstName: true,
                   middleName: true,
                   lastName: true,
+                  residence: true,
                   phone: true,
                   hasNoPhone: true,
                   contactPhone: true,
@@ -1712,13 +1715,7 @@ export class ReportingService {
         const registrant: ParcelRegistrant = {
           citizenId,
           registrationId: row.registration.id,
-          fullName: [
-            row.registration.citizen.firstName,
-            row.registration.citizen.middleName,
-            row.registration.citizen.lastName,
-          ]
-            .filter(Boolean)
-            .join(' '),
+          fullName: citizenDisplayName(row.registration.citizen),
           phone: row.registration.citizen.phone,
           hasNoPhone: row.registration.citizen.hasNoPhone,
           contactPhone: row.registration.citizen.contactPhone,
@@ -1826,6 +1823,7 @@ export class ReportingService {
               firstName: true,
               middleName: true,
               lastName: true,
+              residence: true,
               phone: true,
               hasNoPhone: true,
               contactPhone: true,
@@ -1856,9 +1854,8 @@ export class ReportingService {
       totalProcessed += rows.length;
 
       for (const row of rows) {
-        const name = [row.citizen.firstName, row.citizen.middleName, row.citizen.lastName]
-          .filter(Boolean)
-          .join(' ');
+        // «ورثة المرحوم …» for an estate (0076), as on every screen.
+        const name = citizenDisplayName(row.citizen);
 
         // One line per property, so a citizen with three properties produces three
         // rows — municipality staff filter by property, not by person. A building
@@ -1987,8 +1984,10 @@ function personName(person: {
   firstName: string;
   middleName: string | null;
   lastName: string;
+  residence?: string | null;
 }): string {
-  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ');
+  // «ورثة المرحوم …» for an estate (0076).
+  return citizenDisplayName(person);
 }
 
 /**

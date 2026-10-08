@@ -1,3 +1,4 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import type {
   Case,
@@ -27,12 +28,16 @@ type CaseRow = {
   unit: {
     unitCode: string;
     unitStatus: string | null;
-    occupancies: Array<{ citizenId: string; role: string; citizen: { firstName: string; lastName: string } }>;
+    occupancies: Array<{
+      citizenId: string;
+      role: string;
+      citizen: { firstName: string; lastName: string; residence: string };
+    }>;
   } | null;
   damageAssessmentId: string | null;
   scheduledRevisitAt: Date | null;
   resolvedCitizenId: string | null;
-  resolvedCitizen: { firstName: string; lastName: string } | null;
+  resolvedCitizen: { firstName: string; lastName: string; residence: string } | null;
   resolvedAt: Date | null;
   createdById: string | null;
   createdBy: { firstName: string; lastName: string } | null;
@@ -61,15 +66,14 @@ function toDomain(row: CaseRow): Case {
     unitStatus: row.unit?.unitStatus ?? null,
     unitOccupants: (row.unit?.occupancies ?? []).map((occupancy) => ({
       citizenId: occupancy.citizenId,
-      name: `${occupancy.citizen.firstName} ${occupancy.citizen.lastName}`,
+      // «ورثة المرحوم …» for an estate (0076).
+      name: citizenDisplayName(occupancy.citizen, { middleName: false }),
       role: occupancy.role as Case['unitOccupants'][number]['role'],
     })),
     damageAssessmentId: row.damageAssessmentId,
     scheduledRevisitAt: row.scheduledRevisitAt,
     resolvedCitizenId: row.resolvedCitizenId,
-    resolvedCitizenName: row.resolvedCitizen
-      ? `${row.resolvedCitizen.firstName} ${row.resolvedCitizen.lastName}`
-      : null,
+    resolvedCitizenName: row.resolvedCitizen ? citizenDisplayName(row.resolvedCitizen, { middleName: false }) : null,
     resolvedAt: row.resolvedAt,
     createdById: row.createdById,
     createdByName: row.createdBy ? `${row.createdBy.firstName} ${row.createdBy.lastName}` : null,
@@ -80,7 +84,7 @@ function toDomain(row: CaseRow): Case {
 
 const includeRelations = {
   createdBy: { select: { firstName: true, lastName: true } },
-  resolvedCitizen: { select: { firstName: true, lastName: true } },
+  resolvedCitizen: { select: { firstName: true, lastName: true, residence: true } },
   // Codes rather than whole rows: a case list shows «A-1042-B · 0304» and
   // nothing else about the structure, and joining the full building onto every
   // case would carry a unit matrix into a table that never draws one.
@@ -92,7 +96,7 @@ const includeRelations = {
       // Who is on the flat now — a handful of rows at most, read for the case's actions.
       occupancies: {
         where: { toDate: null },
-        select: { citizenId: true, role: true, citizen: { select: { firstName: true, lastName: true } } },
+        select: { citizenId: true, role: true, citizen: { select: { firstName: true, lastName: true, residence: true } } },
         orderBy: { fromDate: 'asc' },
       },
     },

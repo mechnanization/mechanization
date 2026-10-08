@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/unit-fee-exemptions`, 2026-10-08.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -74,6 +74,27 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   owners — the answer «لا يملك رقم هاتف» and the relative's number are shown as such,
   never as the citizen's own, and a search that found a file through the relative's
   number says so on the row.
+- **An owner can be an estate or a body, not only a person** (the user's guidance of
+  2026-10-07). «صاحب الملف» asks first whether the file is a person's or an estate's or a
+  body's. «تركة (ورثة المرحوم)» is the file of an owner who has died: converted in place
+  from his own file — with the date of death, through the same guide as a move — so his
+  properties and their bills stay where they were, shown everywhere as «ورثة المرحوم …».
+  It only owns: his rentals end on the date of death, a home he lived in — or came back to
+  for a season — becomes «مشغولة بتسامح» with the widow or a child filed as a household who
+  pays the occupancy fee (or «مؤجرة», or «شاغرة»), and the owner's fees and empty units stay
+  with the estate. A tenant who writes the owner as «ورثة المرحوم …» is still matched to him.
+  «جهة أو وقف» is a waqf, an association or a public body: one name, and it may rent
+  what nobody lives in. Each records a representative («ممثل الورثة», «المسؤول عن الجهة»)
+  and needs no phone. Neither is billed a per-head flat amount, and neither can be merged
+  with a person's file. Archiving a file warns that a deceased owner who still owns here
+  should become an estate instead.
+- **What is owed on a parcel can be looked up** («المستحق على عقار», for every role that
+  reads the fees). Given a رقم العقار, it lists every unpaid bill with a unit on that parcel,
+  whoever's file it is on today — the estate's, a tenant's, an archived owner's — with the
+  parcel's part of each, by the bill's own lines; and apart, the unpaid bills that name no
+  unit of the people on the parcel today. It answers «is anything owed» before a براءة ذمّة
+  and issues no certificate; a bill that names no parcel cannot be found by it, and the
+  empty answer says so rather than claiming nothing is owed.
 - **A citizen file is archived, never deleted** (decision of 2026-10-05). «أرشفة الملف»
   asks for the reason and who asked for it, both written to the activity log; an archived
   file is billed nothing new and keeps everything it holds, and «إعادة من الأرشيف» brings it

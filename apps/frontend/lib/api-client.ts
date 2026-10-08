@@ -3531,7 +3531,10 @@ export interface CitizenListItem {
   identityDocType: string | null;
   identityDocNumber: string | null;
   residentStatus: string | null;
-  /** نوع الملف — a household file, or «غير مقيم في البلدة» (stored as NON_RESIDENT_OWNER). */
+  /**
+   * نوع الملف — a household (RESIDENT), «غير مقيم في البلدة» (NON_RESIDENT_OWNER),
+   * «تركة (ورثة المرحوم)» (ESTATE) or «جهة أو وقف» (INSTITUTION).
+   */
   residence?: CitizenResidence;
   isActive: boolean;
   /** The file «دمج ملفين» folded this one into — pickers skip it, the register points to it. */
@@ -5340,6 +5343,12 @@ export function getCorrectionAffectedBills(
   });
 }
 
+/** «المستحق على عقار» — open bills with a line on one رقم العقار. Read-only. */
+export function getParcelDues(tenant: string, token: string, propertyNumber: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({ propertyNumber });
+  return apiFetch<ParcelDues>(tenant, `/fees/parcel-dues?${params.toString()}`, { token, signal });
+}
+
 /** The key a review records having seen — must match the server's `figureKey`. */
 export function billFigureKey(figure: BillFigure): string {
   return figure.kind === 'ASSESSED' ? `ASSESSED:${figure.amount}` : figure.kind;
@@ -5827,12 +5836,15 @@ export async function disableStaffTotp(
 // ── «حذف تصحيحي» (SUPER_ADMIN) ──────────────────────────────────────────────
 
 import type {
+  ParcelDues,
   UnitCorrectionDeleteInput,
   UnitCorrectionPreview,
   UnitCorrectionResult,
 } from '@mechanization/shared-schemas';
 
 export type {
+  ParcelDues,
+  ParcelDuesBill,
   UnitCorrectionBlocker,
   UnitCorrectionDeleteInput,
   UnitCorrectionPreview,

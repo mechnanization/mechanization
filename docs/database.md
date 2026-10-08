@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/unit-fee-exemptions`, 2026-10-08.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -94,7 +94,24 @@ Besides `RESIDENT` and `NON_RESIDENT_OWNER`, `CitizenResidence` holds `ESTATE`
 his cards, flats and bills stay on it, and `INSTITUTION` «جهة / وقف», a waqf,
 council or public body. Neither is a household: no mother's name, gender or
 residency is asked of either, and every population count that filters
-`residence = 'RESIDENT'` already leaves both out.
+`residence = 'RESIDENT'` already leaves both out. An institution's name is one
+line on the form and is stored across `firstName`/`lastName` (first word, the
+rest; `splitInstitutionName`), so any screen that joins the parts reads it
+whole. An estate keeps the deceased's own name: «ورثة المرحوم …» is added when
+it is shown (`citizenDisplayName`), never written into the row — nor into
+another row: a name copied onto a tenancy card is `citizenStoredName`. Every
+write of `property_entries.landlordName` from a submitted card goes through
+`storedLandlordName` (the entity's `normalise`; `landlordNamesToStore` in the
+registration create and the citizen update; the census tenant card), which
+takes the prefix off whatever a client sent — a form copies the name it was
+*shown* — and, for a card linked to an owner, stores that owner's own name.
+The non-person kinds are `NON_PERSON_RESIDENCE` for a Prisma filter.
+
+**A card's `propertyNumber` is stored as typed**, «٤٢٠» as well as «420», and
+so are the fee lines copied from it. A lookup by رقم العقار compares
+digit-normalised values on both sides (`normalizeDigits`; in SQL,
+`translate(…, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')`, as
+`parcel-dues.service.ts` does).
 
 **A flat's billing facts live on `units`** (`0075`, `0077`), beside its status:
 

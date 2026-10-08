@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `feat/unit-fee-exemptions` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,
@@ -8,14 +8,14 @@ used on both sides of the wire. Repo-wide rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## What it exports
 
-`src/index.ts` re-exports 30 modules. Everything is imported from the package
+`src/index.ts` re-exports 31 modules. Everything is imported from the package
 root (`from '@mechanization/shared-schemas'`); there are no deep imports.
 
 | Kind | Modules |
 |---|---|
 | Vocabulary | `enums` (the `as const` value lists, their zod schemas and types), `error-codes` (`ERROR_KINDS`, `ERROR_CODES`, `ErrorCode`, `ErrorParams`, `ApiErrorBody`, `isSpecificErrorCode`), `labels` (`ar`, `en`, `getLabels`), `primitives` (`lebanesePhone`, `internationalPhone`, `optionalInternationalPhone`, `arabicOrLatinName`, `documentNumber`, `civilRecordNumber`, `tenantSlug`, `uuid`, `normalizeDigits`), `role-sets` (who may call what: `EVERY_STAFF_ROLE`, `WORKING_STAFF_ROLES`, `REGISTER_WRITE_ROLES`, `CENSUS_WORKLIST_ROLES`, `FEE_ISSUE_ROLES`, `REGISTER_EXPORT_ROLES` and the rest, `hasStaffRole`) |
 | Contracts (`*.schema.ts`) | `citizen`, `field-flag`, `property`, `registration`, `admin-citizen`, `citizen-import`, `fee`, `auth`, `tenant`, `zone`, `building`, `unit-correction`, `staff`, `case`, `quality`, `citizen-merge` |
-| Pure rules | `numbering`, `unit-layout`, `cash-policy`, `payout-policy`, `inspector-earnings`, `unit-status-rule`, `owner-share` (how a co-owned flat is divided: `ownerShareOf`, `effectiveOwnerBilling`, `ownerSharesPreview`, `usableShares`), `damage-rule` (the severity ladder, `habitabilityFor`, `isUninhabitableReading`, the re-inspection day on the municipality's calendar), `staff-presence` (the stamp interval, the online threshold, `isStaffOnline`, `BACKGROUND_REQUEST_HEADER`) |
+| Pure rules | `numbering`, `unit-layout`, `cash-policy`, `payout-policy`, `inspector-earnings`, `unit-status-rule`, `owner-share` (how a co-owned flat is divided: `ownerShareOf`, `effectiveOwnerBilling`, `ownerSharesPreview`, `usableShares`), `citizen-name` (`citizenDisplayName` — «ورثة المرحوم …» for an estate; every screen and bill names a citizen through it — `citizenStoredName` for a name copied into another row, `storedLandlordName` for every write of a card's submitted `landlordName`, `withoutEstatePrefix`/`ESTATE_PREFIX_PATTERN` for matching typed names, `splitInstitutionName`), `damage-rule` (the severity ladder, `habitabilityFor`, `isUninhabitableReading`, the re-inspection day on the municipality's calendar), `staff-presence` (the stamp interval, the online threshold, `isStaffOnline`, `BACKGROUND_REQUEST_HEADER`) |
 
 The code is plain TypeScript with no I/O and no Node or browser APIs
 (`tsconfig.base.json` sets `lib` to ES2022). Keep it that way: both apps run
@@ -101,6 +101,12 @@ What checks the copies:
 
 Never rename or remove a stored value: that is destructive DDL. Change the
 label instead (see the `NON_RESIDENT_OWNER` comment in `enums.ts`).
+
+`CITIZEN_RESIDENCE` has four values since `0076`. Ask `isOwnerRecord` ("not a
+household": non-resident, estate, institution) or `isNonPersonRecord` (estate,
+institution) rather than comparing to one value; the admin schema picks each
+kind's sections in `sectionSchemas`, and `nonResidentCardIssues` takes the kind
+(an estate owns only: `ESTATE_OWNS_ONLY`).
 
 ## Add an error code
 

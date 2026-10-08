@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/unit-fee-exemptions` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -22,7 +22,7 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
     citizens/** buildings/** cases/** fees/** inspector/profile/** quality/**
 ```
 
-All 49 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
+All 50 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
 `components/ui` is the kit (32 files); `components/admin` holds staff screens (feature
 folders `cases/`, `damage/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
 form pieces used by staff screens, and only `pay-dialog` serves the portal. `lib` holds the
@@ -111,7 +111,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (928 each today). Read it with `useTranslations`.
+  the same keys in both (1,086 each today). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -169,6 +169,22 @@ component types.
 `lib/use-url-state.ts` with `param.*` from `lib/url-state.ts`: `useUrlState` (schema at
 module scope), `useUrlPagination`, `PAGE_SIZE_OPTIONS`. The search term lives in tab
 sessionStorage through `useTabSearch`, never in the URL.
+
+## Citizen record kinds
+
+A file is a household, «غير مقيم في البلدة», «تركة (ورثة المرحوم)» or «جهة أو وقف» (`0076`).
+`ResidenceChooser` in `citizen-form.tsx` asks it in two steps («صاحب الملف»: a person, or an
+estate or a body; then which), and each kind has its own first two steps
+(`PersonalStep`/`ContactStep`, `OwnerPersonalStep`/`OwnerContactStep`,
+`NonPersonPersonalStep`/`NonPersonContactStep`). Branch on `isOwnerRecord` / `isNonPersonRecord`
+from shared-schemas, not on one value. `withResidence` joins or splits an institution's one-line
+name (`namesForKind` in `lib/residence-move.ts`); it and `withSeededSearch` (which takes the kind
+the form opens as) live in `lib/citizen-seed.ts`, re-exported by `citizen-form.tsx`. A card
+never sends a shown owner name: `landlordNameToSend` (`lib/citizen-field-edit.ts`) strips
+«ورثة المرحوم», and `landlordLink.displayName` is what the locked field shows; `PropertyCard` takes `recordKind` (an estate
+offers «مالك» only); `RecordKindBadge` marks the kind beside a name. On a saved file a death
+(person → estate) goes through `ResidenceChangeDialog`, like a move; switching to or from an
+institution is a correction. «المستحق على عقار» is `fees/parcel`.
 
 ## Recipe: add a staff screen
 
@@ -237,7 +253,7 @@ when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `
 
 - UI debt with counts and files, including the contrast failures:
   [docs/ui-ux-standards.md](../../docs/ui-ux-standards.md) §17.
-- Code debt (40 `.tsx` files over 600 lines, `lib/api-client.ts` at 5,782 lines, dead
+- Code debt (40 `.tsx` files over 600 lines, `lib/api-client.ts` at 5,885 lines, dead
   modules, the tenant config fetched three times, UTC "today"): [docs/code-quality.md](../../docs/code-quality.md).
 - Traps (tailwind-merge 3 on Tailwind 3, the two default locales, missing providers on the
   citizen side, null token on first paint, `sw.js` `VERSION`, the CSP nonce, `[adminPath]` is not a control):

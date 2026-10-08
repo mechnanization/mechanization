@@ -1,3 +1,4 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { ConflictError } from '../../common/exceptions';
 
 /**
@@ -17,8 +18,10 @@ export async function assertNotMergedAway(
     citizenMerge: {
       findFirst(args: {
         where: { absorbedId: string; undoneAt: null };
-        select: { survivor: { select: { id: true; firstName: true; lastName: true; referenceNumber: true } } };
-      }): Promise<{ survivor: { id: string; firstName: string; lastName: string; referenceNumber: string | null } } | null>;
+        select: { survivor: { select: { id: true; firstName: true; lastName: true; residence: true; referenceNumber: true } } };
+      }): Promise<{
+        survivor: { id: string; firstName: string; lastName: string; residence?: string | null; referenceNumber: string | null };
+      } | null>;
     };
   },
   citizenId: string | null | undefined,
@@ -26,14 +29,15 @@ export async function assertNotMergedAway(
   if (!citizenId) return;
   const merge = await db.citizenMerge.findFirst({
     where: { absorbedId: citizenId, undoneAt: null },
-    select: { survivor: { select: { id: true, firstName: true, lastName: true, referenceNumber: true } } },
+    select: { survivor: { select: { id: true, firstName: true, lastName: true, residence: true, referenceNumber: true } } },
   });
   if (!merge) return;
   const { survivor } = merge;
   throw new ConflictError({
     code: 'CITIZEN_MERGED_AWAY',
     message: 'This file was merged into the file of <name>. Use that file. A system administrator can undo the merge to separate them.',
-    params: { name: `${survivor.firstName} ${survivor.lastName}`, hasReference: survivor.referenceNumber ? 'yes' : 'no', reference: survivor.referenceNumber ?? '' },
+    // «ورثة المرحوم …» for an estate (0076).
+    params: { name: citizenDisplayName(survivor, { middleName: false }), hasReference: survivor.referenceNumber ? 'yes' : 'no', reference: survivor.referenceNumber ?? '' },
     details: { code: 'MERGED_AWAY', survivorId: survivor.id },
   });
 }

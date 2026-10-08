@@ -1,3 +1,4 @@
+import { citizenDisplayName, NON_PERSON_RESIDENCE } from '@mechanization/shared-schemas';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Prisma, type $Enums } from '../../../generated/tenant-client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -1042,7 +1043,7 @@ export class FeesService {
       this.db.feeNotice.findMany({
         orderBy: { createdAt: 'desc' },
         include: {
-          targetCitizen: { select: { firstName: true, lastName: true } },
+          targetCitizen: { select: { firstName: true, lastName: true, residence: true } },
           _count: { select: { payments: true } },
         },
       }),
@@ -1060,9 +1061,7 @@ export class FeesService {
       frequency: row.frequency,
       targetType: row.targetType,
       targetCategory: row.targetCategory,
-      targetCitizenName: row.targetCitizen
-        ? `${row.targetCitizen.firstName} ${row.targetCitizen.lastName}`
-        : null,
+      targetCitizenName: row.targetCitizen ? citizenDisplayName(row.targetCitizen, { middleName: false }) : null,
       dueDate: row.dueDate.toISOString(),
       instructions: row.instructions,
       /** How many citizens this notice actually billed. */
@@ -1361,6 +1360,7 @@ export class FeesService {
         targetType: notice.targetType as never,
         targetCategory: notice.targetCategory ?? undefined,
         targetCitizenId: notice.targetCitizenId ?? undefined,
+        basis: notice.basis,
       } as never);
 
       if (citizenIds.length === 0) {
@@ -1586,6 +1586,8 @@ export class FeesService {
     targetType: string;
     targetCategory?: string;
     targetCitizenId?: string;
+    /** The notice's basis — a flat charge falls on people, not on estates or institutions. */
+    basis?: string;
   }): Promise<string[]> {
     if (input.targetType === 'INDIVIDUAL_CITIZEN') {
       const citizen = await this.db.user.findFirst({
@@ -1601,7 +1603,17 @@ export class FeesService {
 
     if (input.targetType === 'ALL_CITIZENS') {
       const rows = await this.db.user.findMany({
-        where: { kind: 'CITIZEN', isActive: true },
+        where: {
+          kind: 'CITIZEN',
+          isActive: true,
+          /*
+            A flat charge is one per person, and an estate or an institution
+            (0076) is not a person: «ورثة المرحوم …» and «وقف مسجد البلدة» own
+            property and are billed for it by the rate-based notices, never per
+            head. A rate-based notice still reaches them through what they hold.
+          */
+          ...(input.basis === 'FLAT' ? { residence: { notIn: [...NON_PERSON_RESIDENCE] } } : {}),
+        },
         select: { id: true },
       });
       return rows.map((row) => row.id);
@@ -1791,6 +1803,7 @@ export class FeesService {
             id: true,
             firstName: true,
             lastName: true,
+            residence: true,
             registrations: {
               orderBy: { submittedAt: 'desc' },
               take: 1,
@@ -2120,7 +2133,7 @@ export class FeesService {
 
         return {
           citizenId: row.id,
-          name: [row.firstName, row.lastName].filter(Boolean).join(' '),
+          name: citizenDisplayName(row, { middleName: false }),
           entries: entries as unknown as BillablePropertyEntry[],
           buildingIds: [...buildingIds],
           unitCodes: [...unitCodes],
@@ -2306,7 +2319,7 @@ export class FeesService {
         orderBy: { updatedAt: 'desc' },
         include: {
           citizen: {
-            select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true },
+            select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true, residence: true },
           },
         },
       }),
@@ -2324,7 +2337,8 @@ export class FeesService {
       whishTransactionRef: row.whishTransactionRef,
       isSeen: row.isSeen,
       citizenId: row.citizen.id,
-      citizenName: `${row.citizen.firstName} ${row.citizen.lastName}`,
+      // «ورثة المرحوم …» for an estate (0076): the heirs owe, not the deceased.
+      citizenName: citizenDisplayName(row.citizen, { middleName: false }),
       citizenPhone: row.citizen.phone,
       citizenReference: row.citizen.referenceNumber,
     }));
@@ -2543,7 +2557,7 @@ export class FeesService {
    *  in one place so `getPaymentById` and `listAllPayments` read the identical shape. */
   private readonly ADMIN_PAYMENT_INCLUDE = {
     citizen: {
-      select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true },
+      select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true, residence: true },
     },
     collectedBy: { select: { firstName: true, lastName: true } },
     feeNotice: { select: { frequency: true } },
@@ -2594,7 +2608,8 @@ export class FeesService {
        */
       assessment: (row.assessment as FeeAssessment | null) ?? null,
       citizenId: row.citizen.id,
-      citizenName: `${row.citizen.firstName} ${row.citizen.lastName}`,
+      // «ورثة المرحوم …» for an estate (0076): the heirs owe, not the deceased.
+      citizenName: citizenDisplayName(row.citizen, { middleName: false }),
       citizenPhone: row.citizen.phone,
       citizenReference: row.citizen.referenceNumber,
     };
@@ -2992,7 +3007,7 @@ export class FeesService {
         paidAmount: true,
         currency: true,
         paymentStatus: true,
-        citizen: { select: { firstName: true, lastName: true } },
+        citizen: { select: { firstName: true, lastName: true, residence: true } },
       },
     });
 
@@ -3029,7 +3044,7 @@ export class FeesService {
       paymentId: payment.id,
       amount: outstanding,
       currency: payment.currency,
-      citizenName: `${payment.citizen.firstName} ${payment.citizen.lastName}`,
+      citizenName: citizenDisplayName(payment.citizen, { middleName: false }),
       callbackUrl: input.callbackUrl,
       returnUrl: input.returnUrl,
     });

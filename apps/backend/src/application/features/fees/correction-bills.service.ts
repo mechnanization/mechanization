@@ -1,3 +1,4 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Inject, Injectable } from '@nestjs/common';
 import type { FeeAssessment, FeeAssessmentLine, FeeBasis, FeeBearer } from '@mechanization/shared-schemas';
 import { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
@@ -463,8 +464,9 @@ export class CorrectionBillsService {
     if (ids.length === 0) return new Map();
     const rows = await this.db.user.findMany({
       where: { id: { in: [...new Set(ids)] } },
-      select: { id: true, firstName: true, lastName: true },
+      select: { id: true, firstName: true, lastName: true, residence: true },
     });
-    return new Map(rows.map((row) => [row.id, [row.firstName, row.lastName].filter(Boolean).join(' ')]));
+    // «ورثة المرحوم …» for an estate (0076).
+    return new Map(rows.map((row) => [row.id, citizenDisplayName(row, { middleName: false })]));
   }
 }

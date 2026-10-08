@@ -1,3 +1,4 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../../generated/tenant-client';
 import { StaffRole, User } from '../../domain/entities/user.entity';
@@ -93,6 +94,7 @@ export class PrismaUserRepository implements UserRepository {
       identityDocNumber: row.identityDocNumber!,
       isActive: row.isActive,
       tokenVersion: row.tokenVersion,
+      residence: row.residence,
     });
   }
 
@@ -119,6 +121,7 @@ export class PrismaUserRepository implements UserRepository {
       identityDocNumber: row.identityDocNumber!,
       isActive: row.isActive,
       tokenVersion: row.tokenVersion,
+      residence: row.residence,
     });
   }
 
@@ -131,13 +134,14 @@ export class PrismaUserRepository implements UserRepository {
   async findCitizensByPhone(phone: string): Promise<CitizenChoice[]> {
     const rows = await this.db.user.findMany({
       where: { kind: 'CITIZEN', phone, isActive: true },
-      select: { id: true, firstName: true, lastName: true, identityDocNumber: true },
+      select: { id: true, firstName: true, lastName: true, residence: true, identityDocNumber: true },
       orderBy: { createdAt: 'asc' },
     });
 
     return rows.map((row) => ({
       id: row.id,
-      displayName: `${row.firstName} ${row.lastName}`,
+      // «ورثة المرحوم …» for an estate (0076): the heirs choosing which file is theirs.
+      displayName: citizenDisplayName(row, { middleName: false }),
       identityDocLastDigits: (row.identityDocNumber ?? '').slice(-2).padStart(2, '•'),
     }));
   }

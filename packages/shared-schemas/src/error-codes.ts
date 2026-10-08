@@ -134,6 +134,8 @@ export const ERROR_CODES = [
   'OWNER_BILLING_SHARES_MISSING',
   // «معفاة من الرسوم» (migration 0077)
   'FEE_EXEMPTION_STRUCTURAL_UNIT',
+  // «تركة (ورثة المرحوم)» (migration 0076)
+  'ESTATE_OWNS_ONLY',
   // Corrections
   'UNIT_CORRECTION_PREVIEW_STALE',
   'UNIT_CONFIRM_CODE_MISMATCH',

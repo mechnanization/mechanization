@@ -18,7 +18,7 @@ import { isSamePerson, PrismaRegistrationRepository } from './registration.repos
  */
 
 function harness(
-  holder: { firstName: string; middleName: string | null; lastName: string } | null,
+  holder: { firstName: string; middleName: string | null; lastName: string; residence?: string } | null,
   /** The flags on the holder's newest registration. */
   holderFlags: Array<{ path: string; kind: string; reason: string }> = [],
 ) {
@@ -142,6 +142,17 @@ describe('registration — a document number never merges two people', () => {
         reason: expect.stringContaining('N123456'),
       }),
     ]);
+  });
+
+  it('never attaches a filing to an estate holding the number — the deceased’s document again is a conflict (0076)', async () => {
+    const { repository, tx } = harness({ firstName: 'يوسف', middleName: null, lastName: 'جفال', residence: 'ESTATE' });
+
+    const result = await repository.submit(
+      filing({ identityDocType: 'PASSPORT', identityDocNumber: 'N123456' }),
+    );
+
+    expect(result.identity).toBe('CONFLICT');
+    expect(tx.user.update).not.toHaveBeenCalled();
   });
 
   it('creates without looking anything up when no number is given', async () => {

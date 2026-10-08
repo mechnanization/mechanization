@@ -10,6 +10,8 @@ import {
   type DismissFindingInput,
   type FieldFlag,
   type QualityFindingKind,
+  citizenDisplayName,
+  NON_PERSON_RESIDENCE,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -69,8 +71,8 @@ export interface QualityFinding {
   dismissal: { reason: string; by: string | null; at: string } | null;
 }
 
-const fullName = (row: { firstName: string; middleName?: string | null; lastName: string }) =>
-  [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' ');
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+const fullName = (row: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }) => citizenDisplayName(row);
 
 const SEVERITY_ORDER: Record<FindingSeverity, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
@@ -475,7 +477,8 @@ export class DataQualityService {
    */
   private async duplicateCitizens(): Promise<RawFinding[]> {
     const people = await this.db.user.findMany({
-      where: { kind: 'CITIZEN', isActive: true },
+      // People only: an estate or an institution (0076) is never "the same person" as anyone.
+      where: { kind: 'CITIZEN', isActive: true, residence: { notIn: [...NON_PERSON_RESIDENCE] } },
       select: {
         id: true,
         firstName: true,
@@ -594,11 +597,23 @@ export class DataQualityService {
   /** An occupant whose own number is the landlord's number on their card, or their linked landlord's. */
   private async occupantsWithLandlordPhone(): Promise<RawFinding[]> {
     const rows = await this.db.$queryRaw<
-      Array<{ entryId: string; citizenId: string; createdById: string | null; createdAt: Date; landlordName: string | null; field: string }>
+      Array<{
+        entryId: string;
+        citizenId: string;
+        createdById: string | null;
+        createdAt: Date;
+        landlordName: string | null;
+        ownerFirstName: string | null;
+        ownerLastName: string | null;
+        ownerResidence: string | null;
+        field: string;
+      }>
     >`
       -- The officer who filed the card, wherever «دمج ملفين» has since moved it (0061).
       SELECT pe.id AS "entryId", u.id AS "citizenId", COALESCE(fr."createdById", r."createdById") AS "createdById", pe."createdAt",
-             COALESCE(pe."landlordName", l."firstName" || ' ' || l."lastName") AS "landlordName",
+             -- The linked owner's name parts, named in TypeScript (citizenDisplayName) where the card names nobody.
+             pe."landlordName", l."firstName" AS "ownerFirstName", l."lastName" AS "ownerLastName",
+             l.residence::text AS "ownerResidence",
              CASE
                WHEN u.phone IS NOT NULL AND (u.phone = pe."landlordPhone" OR u.phone = l.phone OR u.phone = l.whatsapp) THEN 'phone'
                ELSE 'whatsapp'
@@ -619,19 +634,30 @@ export class DataQualityService {
     `;
     if (rows.length === 0) return [];
     const citizens = await this.citizenLabels(rows.map((row) => row.citizenId));
-    return rows.map((row) => ({
-      kind: 'OCCUPANT_HAS_LANDLORD_PHONE' as const,
-      subjectKey: row.entryId,
-      severity: 'MEDIUM' as const,
-      detail:
-        row.field === 'phone'
-          ? `رقم هاتف الشاغل هو رقم المالك${row.landlordName ? ` (${row.landlordName})` : ''} — قد يكون رقم العائلة المشترك`
-          : `رقم واتساب الشاغل هو رقم المالك${row.landlordName ? ` (${row.landlordName})` : ''} — قد يكون رقم العائلة المشترك`,
-      subjects: [citizens.get(row.citizenId)].filter((subject): subject is FindingSubject => Boolean(subject)),
-      officerIds: row.createdById ? [row.createdById] : [],
-      at: row.createdAt.toISOString(),
-      dismissable: true,
-    }));
+    return rows.map((row) => {
+      // «ورثة المرحوم …» for an estate owner (0076): the card's own words first.
+      const named =
+        row.landlordName ??
+        (row.ownerFirstName && row.ownerLastName
+          ? citizenDisplayName(
+              { firstName: row.ownerFirstName, lastName: row.ownerLastName, residence: row.ownerResidence },
+              { middleName: false },
+            )
+          : null);
+      return {
+        kind: 'OCCUPANT_HAS_LANDLORD_PHONE' as const,
+        subjectKey: row.entryId,
+        severity: 'MEDIUM' as const,
+        detail:
+          row.field === 'phone'
+            ? `رقم هاتف الشاغل هو رقم المالك${named ? ` (${named})` : ''} — قد يكون رقم العائلة المشترك`
+            : `رقم واتساب الشاغل هو رقم المالك${named ? ` (${named})` : ''} — قد يكون رقم العائلة المشترك`,
+        subjects: [citizens.get(row.citizenId)].filter((subject): subject is FindingSubject => Boolean(subject)),
+        officerIds: row.createdById ? [row.createdById] : [],
+        at: row.createdAt.toISOString(),
+        dismissable: true,
+      };
+    });
   }
 
   /** Two pinned structures on one parcel, metres apart — the parcel 56 shape. */
@@ -1035,7 +1061,7 @@ export class DataQualityService {
   private async citizenLabels(ids: readonly string[]): Promise<Map<string, FindingSubject>> {
     const rows = await this.db.user.findMany({
       where: { id: { in: [...new Set(ids)] } },
-      select: { id: true, firstName: true, middleName: true, lastName: true, referenceNumber: true },
+      select: { id: true, firstName: true, middleName: true, lastName: true, residence: true, referenceNumber: true },
     });
     return new Map(
       rows.map((row) => [

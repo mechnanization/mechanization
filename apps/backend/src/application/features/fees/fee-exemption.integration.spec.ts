@@ -328,6 +328,35 @@ describeIfDb('units charged nothing', () => {
     expect(cards.get(blockCard.id)!.heldUnits[0]!.ownerBilling).toBeNull();
   });
 
+  it('bills an estate by what it holds, but never a per-head flat amount — nor an institution (0076)', async () => {
+    const parcel = await waqfParcel();
+    await db.user.update({ where: { id: parcel.waqf }, data: { residence: 'INSTITUTION' as never } });
+    const deceased = await holder(parcel.building.id, parcel.shop.id, 'OWNER', 30, 'SHOP');
+    await db.user.update({ where: { id: deceased }, data: { residence: 'ESTATE' as never } });
+
+    const perHead = {
+      title: `رسم عن كل مواطن ${randomUUID().slice(0, 6)}`,
+      amount: 10_000,
+      basis: 'FLAT',
+      bearer: 'OCCUPANT',
+      frequency: 'ONCE',
+      targetType: 'ALL_CITIZENS',
+      dueDate: '2026-12-31',
+    } as never;
+    const issued = await within(() => fees.issue(perHead, admin));
+    const billed = new Set(
+      (await db.citizenPayment.findMany({ where: { feeNoticeId: issued.noticeId }, select: { citizenId: true } })).map(
+        (row) => row.citizenId,
+      ),
+    );
+    expect(billed.has(parcel.tenant)).toBe(true);
+    expect(billed.has(deceased)).toBe(false);
+    expect(billed.has(parcel.waqf)).toBe(false);
+
+    // An owner-borne rate on the shop reaches the estate as any owner.
+    expect(await bill(deceased, 'OWNER')).toMatchObject({ kind: 'assessed', amount: 30_000 });
+  });
+
   it('shows them on the cards billing reads: the latest file only, and a card whose every line has ended', async () => {
     /*
       The file used to choose its own cards: every registration, a line counted
