@@ -1,4 +1,4 @@
-import { isOwnerRecord } from '@mechanization/shared-schemas';
+import { isOwnerRecord, storedLandlordName } from '@mechanization/shared-schemas';
 import type { CitizenFormData, CitizenWriteInput } from './api-client';
 
 /**
@@ -80,6 +80,31 @@ const NON_RESIDENT_CONTACT = [
   'localContactName',
   'localContactPhone',
 ] as const;
+
+/**
+ * The owner's name a property card sends as `landlordName`.
+ *
+ * The tenant's own words; where they are blank (a name flagged unknown before
+ * the owner was identified), the linked or agreed owner's name, because the
+ * schema requires one of a non-owner. Never a name as it is *shown*: the
+ * agreed name is copied from a display, so «ورثة المرحوم» is taken off (the
+ * server does the same at the write — `storedLandlordName`). Shared by the full
+ * form (`toPayloadProperty`) and the one-field correction (`toPayloadCard`).
+ */
+export function landlordNameToSend(card: {
+  occupancyType?: unknown;
+  landlordName?: unknown;
+  landlordLink?: unknown;
+  landlordAgreedName?: unknown;
+}): unknown {
+  const isNonOwner = card.occupancyType === 'TENANT' || card.occupancyType === 'FREE_OCCUPANT';
+  if (!isNonOwner) return card.landlordName;
+  const link = card.landlordLink as { name?: string } | null | undefined;
+  const sent = text(card.landlordName).trim()
+    ? card.landlordName
+    : (link?.name ?? (card.landlordAgreedName as string | undefined) ?? card.landlordName);
+  return typeof sent === 'string' && sent.trim() ? storedLandlordName(sent) : sent;
+}
 
 /**
  * A field the form does not ask on this kind of file cannot be corrected on it.
@@ -171,12 +196,7 @@ function toPayloadCard(card: Record<string, unknown>): Record<string, unknown> {
     ...rest
   } = card;
 
-  const link = landlordLink as { name?: string } | null | undefined;
-  const isNonOwner = rest.occupancyType === 'TENANT' || rest.occupancyType === 'FREE_OCCUPANT';
-  const landlordName =
-    isNonOwner && !text(rest.landlordName).trim()
-      ? (link?.name ?? (landlordAgreedName as string | undefined) ?? rest.landlordName)
-      : rest.landlordName;
+  const landlordName = landlordNameToSend({ ...rest, landlordLink, landlordAgreedName });
 
   const area = numeric(unitArea);
   const shareCount = numeric(shares);

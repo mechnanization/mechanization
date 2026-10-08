@@ -29,9 +29,7 @@ export function RecordKindBadge({
       ? t('badgeEstate')
       : residence === 'INSTITUTION'
         ? t('badgeInstitution')
-        : locale === 'en'
-          ? 'Lives elsewhere'
-          : 'غير مقيم'
+        : t('badgeNonResident')
     : ((labels.citizenResidence as Record<string, string>)[residence] ?? residence);
   return <Badge variant="soft-info">{label}</Badge>;
 }

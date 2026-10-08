@@ -33,7 +33,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import { getLabels, isUnoccupied, OWNER_BILLED_WHILE_ABSENT } from '@mechanization/shared-schemas';
+import { getLabels, isNonPersonRecord, isUnoccupied, OWNER_BILLED_WHILE_ABSENT } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   getMyPayments,
@@ -165,6 +165,8 @@ export default function MyFilePage({
 
   const [token, setToken] = useState<string | null>(null);
   const [summary, setSummary] = useState<MyCitizenSummary | null>(null);
+  // A household's details — not an estate's or an institution's (0076), which is asked none of them.
+  const household = !isNonPersonRecord(summary?.residence);
   const [payments, setPayments] = useState<CitizenPaymentItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -363,11 +365,14 @@ export default function MyFilePage({
               the row rather than printing a dash the reader would take for an
               answer.
             */}
-            <Detail
-              icon={User}
-              label={locale === 'en' ? "Mother's Full Name" : 'اسم الأم وشهرتها'}
-              value={summary?.motherName}
-            />
+            {/* Not on an estate or an institution (0076): it is not a household, and nothing here is asked of it. */}
+            {household ? (
+              <Detail
+                icon={User}
+                label={locale === 'en' ? "Mother's Full Name" : 'اسم الأم وشهرتها'}
+                value={summary?.motherName}
+              />
+            ) : null}
             {/*
               «غير مقيم في البلدة» — where they live, and who holds their keys
               here. The municipality asks for these instead of a household, and
@@ -413,77 +418,81 @@ export default function MyFilePage({
                 <Detail icon={Phone} label={tKind('representativePhone')} value={summary.localContactPhone} mono />
               </>
             ) : null}
-            <Detail
-              icon={IdCard}
-              label={
-                summary?.identityDocType
-                  ? (labels.identityDocType[summary.identityDocType as never] ?? (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات'))
-                  : (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات')
-              }
-              value={summary?.identityDocNumberMasked}
-              mono
-              hint={locale === 'en' ? 'Last 3 digits only' : 'آخر ثلاثة أرقام فقط'}
-            />
-            <Detail
-              icon={Flag}
-              label={locale === 'en' ? 'Nationality' : 'الجنسية'}
-              value={
-                summary?.nationality ??
-                (summary?.isLebanese ? (locale === 'en' ? 'Lebanese' : 'لبناني') : null)
-              }
-            />
-            <Detail
-              icon={Home}
-              label={locale === 'en' ? 'Residency Status' : 'صفة الإقامة'}
-              value={
-                summary?.residentStatus
-                  ? (labels.residentStatus[summary.residentStatus as never] ?? summary.residentStatus)
-                  : null
-              }
-            />
-            <Detail
-              icon={HeartHandshake}
-              label={locale === 'en' ? 'Marital Status' : 'الحالة الاجتماعية'}
-              value={
-                summary?.maritalStatus
-                  ? (labels.maritalStatus[summary.maritalStatus as never] ?? summary.maritalStatus)
-                  : null
-              }
-            />
-            <Detail
-              icon={Users}
-              label={
-                locale === 'en'
-                  ? 'Family Members (Living in House)'
-                  : 'عدد أفراد الأسرة (المقيمين في المنزل)'
-              }
-              value={
-                summary?.actualHouseholdMembers
-                  ? String(summary.actualHouseholdMembers)
-                  : summary?.totalRegisteredMembers
-                    ? String(summary.totalRegisteredMembers)
-                    : null
-              }
-            />
-            {/*
-              إجمالي المسجلين في القيد earns a row only where it differs from
-              the household actually in the house.
-            */}
-            {summary?.totalRegisteredMembers != null &&
-            summary?.actualHouseholdMembers != null &&
-            summary.totalRegisteredMembers > summary.actualHouseholdMembers ? (
-              <Detail
-                icon={Users}
-                label={locale === 'en' ? 'Total Registered (Civil Record)' : 'إجمالي المسجلين في القيد'}
-                value={String(summary.totalRegisteredMembers)}
-              />
+            {household ? (
+              <>
+                <Detail
+                  icon={IdCard}
+                  label={
+                    summary?.identityDocType
+                      ? (labels.identityDocType[summary.identityDocType as never] ?? (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات'))
+                      : (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات')
+                  }
+                  value={summary?.identityDocNumberMasked}
+                  mono
+                  hint={locale === 'en' ? 'Last 3 digits only' : 'آخر ثلاثة أرقام فقط'}
+                />
+                <Detail
+                  icon={Flag}
+                  label={locale === 'en' ? 'Nationality' : 'الجنسية'}
+                  value={
+                    summary?.nationality ??
+                    (summary?.isLebanese ? (locale === 'en' ? 'Lebanese' : 'لبناني') : null)
+                  }
+                />
+                <Detail
+                  icon={Home}
+                  label={locale === 'en' ? 'Residency Status' : 'صفة الإقامة'}
+                  value={
+                    summary?.residentStatus
+                      ? (labels.residentStatus[summary.residentStatus as never] ?? summary.residentStatus)
+                      : null
+                  }
+                />
+                <Detail
+                  icon={HeartHandshake}
+                  label={locale === 'en' ? 'Marital Status' : 'الحالة الاجتماعية'}
+                  value={
+                    summary?.maritalStatus
+                      ? (labels.maritalStatus[summary.maritalStatus as never] ?? summary.maritalStatus)
+                      : null
+                  }
+                />
+                <Detail
+                  icon={Users}
+                  label={
+                    locale === 'en'
+                      ? 'Family Members (Living in House)'
+                      : 'عدد أفراد الأسرة (المقيمين في المنزل)'
+                  }
+                  value={
+                    summary?.actualHouseholdMembers
+                      ? String(summary.actualHouseholdMembers)
+                      : summary?.totalRegisteredMembers
+                        ? String(summary.totalRegisteredMembers)
+                        : null
+                  }
+                />
+                {/*
+                  إجمالي المسجلين في القيد earns a row only where it differs from
+                  the household actually in the house.
+                */}
+                {summary?.totalRegisteredMembers != null &&
+                summary?.actualHouseholdMembers != null &&
+                summary.totalRegisteredMembers > summary.actualHouseholdMembers ? (
+                  <Detail
+                    icon={Users}
+                    label={locale === 'en' ? 'Total Registered (Civil Record)' : 'إجمالي المسجلين في القيد'}
+                    value={String(summary.totalRegisteredMembers)}
+                  />
+                ) : null}
+                <Detail
+                  icon={FileDigit}
+                  label={locale === 'en' ? 'Civil Record Number' : 'رقم السجل'}
+                  value={summary?.civilRecordNumberMasked}
+                  mono
+                />
+              </>
             ) : null}
-            <Detail
-              icon={FileDigit}
-              label={locale === 'en' ? 'Civil Record Number' : 'رقم السجل'}
-              value={summary?.civilRecordNumberMasked}
-              mono
-            />
             <Detail
               icon={Building2}
               label={locale === 'en' ? 'Properties Count' : 'عدد العقارات'}

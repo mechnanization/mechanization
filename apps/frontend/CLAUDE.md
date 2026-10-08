@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -111,7 +111,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (1,071 each today). Read it with `useTranslations`.
+  the same keys in both (1,086 each today). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -178,7 +178,10 @@ estate or a body; then which), and each kind has its own first two steps
 (`PersonalStep`/`ContactStep`, `OwnerPersonalStep`/`OwnerContactStep`,
 `NonPersonPersonalStep`/`NonPersonContactStep`). Branch on `isOwnerRecord` / `isNonPersonRecord`
 from shared-schemas, not on one value. `withResidence` joins or splits an institution's one-line
-name (`namesForKind` in `lib/residence-move.ts`); `PropertyCard` takes `recordKind` (an estate
+name (`namesForKind` in `lib/residence-move.ts`); it and `withSeededSearch` (which takes the kind
+the form opens as) live in `lib/citizen-seed.ts`, re-exported by `citizen-form.tsx`. A card
+never sends a shown owner name: `landlordNameToSend` (`lib/citizen-field-edit.ts`) strips
+«ورثة المرحوم», and `landlordLink.displayName` is what the locked field shows; `PropertyCard` takes `recordKind` (an estate
 offers «مالك» only); `RecordKindBadge` marks the kind beside a name. On a saved file a death
 (person → estate) goes through `ResidenceChangeDialog`, like a move; switching to or from an
 institution is a correction. «المستحق على عقار» is `fees/parcel`.

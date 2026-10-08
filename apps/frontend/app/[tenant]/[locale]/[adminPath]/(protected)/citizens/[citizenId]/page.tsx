@@ -191,7 +191,8 @@ function householdFacts(citizen: CitizenProfile, locale: string): FactItem[] {
 }
 
 /**
- * What a «غير مقيم في البلدة» record still holds from when it was a household.
+ * What an owner record — «غير مقيم في البلدة», «تركة», «جهة أو وقف» — still
+ * holds from when it was a household.
  *
  * Nothing is erased by the conversion — the edit form stops asking and the
  * server stops writing these columns, and the values filed before it stay
@@ -212,11 +213,13 @@ function RetainedHouseholdSection({
   citizen: CitizenProfile;
   locale: string;
 }) {
+  const tKind = useTranslations('citizenKind');
   // Any record that is not a household — a converted file keeps what it held (0076 too).
   if (!isOwnerRecord(citizen.residence)) return null;
 
   const en = locale === 'en';
   const labels = getLabels(locale);
+  const kind = (labels.citizenResidence as Record<string, string>)[citizen.residence ?? ''] ?? String(citizen.residence);
 
   const identity = present([
     {
@@ -283,9 +286,7 @@ function RetainedHouseholdSection({
     >
       <div className="space-y-4">
         <p className="rounded-lg border bg-muted/20 p-3 text-sm leading-relaxed text-muted-foreground">
-          {en
-            ? 'This record was filed as a household before it became a non-resident record. These values are kept as history — the form no longer asks for them and nothing updates them, so do not rely on them as current.'
-            : 'سُجِّل هذا الملف كملف أسرة قبل أن يصبح ملف «غير مقيم في البلدة». هذه القيم محفوظة كتاريخ — لم تعد تُطلب في النموذج ولا يحدّثها شيء، فلا يُعتمد عليها كبيانات حالية.'}
+          {tKind('retainedNote', { kind })}
         </p>
         {/* One section above the other, split by the same coloured rule the
             property cards use between their sections (`SECTION_RULE`, spelled

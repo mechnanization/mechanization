@@ -118,8 +118,9 @@ export function ResidenceChangeDialog({
   }, [open]);
 
   // Until the officer writes their own, the reason says what the dialog knows.
+  // A death that leaves nothing owned archives the file — the reason says so, not «باسم ورثته».
   const suggested = death
-    ? tKind('death.suggestedReason')
+    ? tKind(plan.nothingLeft ? 'death.archiveReason' : 'death.suggestedReason')
     : leaving
     ? en
       ? `Moved to live outside the town${place.trim() ? ` (${place.trim()})` : ''}`
@@ -385,7 +386,7 @@ export function ResidenceChangeDialog({
             ) : null}
 
             {/* Asked on the deactivation too: it goes on the audit row with the day they left. */}
-            <Field label={en ? 'Reason for the change' : 'سبب التعديل'} htmlFor={ids.reason} required>
+            <Field label={tKind('death.reason')} htmlFor={ids.reason} required>
               <Textarea
                 id={ids.reason}
                 value={reasonText}

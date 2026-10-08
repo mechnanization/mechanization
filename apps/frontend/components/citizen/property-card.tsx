@@ -166,7 +166,12 @@ export interface PropertyDraft {
    * one — and «إلغاء الربط» is the only way out, because undoing it also
    * removes what it added to the owner's file. Never sent (`toPayloadProperty`).
    */
-  landlordLink?: { citizenId: string; name: string; referenceNumber: string | null };
+  /**
+   * `name` is the owner's name as a row stores it (sent when the tenant's own
+   * is blank); `displayName` is what the locked field shows — an estate as
+   * «ورثة المرحوم …».
+   */
+  landlordLink?: { citizenId: string; name: string; displayName: string; referenceNumber: string | null };
   /**
    * The registered name of the citizen agreed to on this form, shown in the
    * locked name field. The tenant's own words stay in `landlordName`, so
@@ -1055,7 +1060,7 @@ export function PropertyCard({
                       <span className="font-medium">
                         {locale === 'en' ? 'Linked to a registered citizen: ' : 'مرتبط بمواطن مسجَّل: '}
                       </span>
-                      <span className="font-semibold">{draft.landlordLink.name}</span>
+                      <span className="font-semibold">{draft.landlordLink.displayName}</span>
                       {draft.landlordLink.referenceNumber ? (
                         <bdi dir="ltr" className="ms-2 font-mono text-xs text-muted-foreground">
                           {draft.landlordLink.referenceNumber}
@@ -1150,7 +1155,7 @@ export function PropertyCard({
                       id={`ln-${index}`}
                       invalid={!landlordFromRegister && Boolean(errors.landlordName)}
                       value={
-                        draft.landlordLink?.name ??
+                        draft.landlordLink?.displayName ??
                         (draft.landlordCitizenId ? draft.landlordAgreedName : undefined) ??
                         draft.landlordName ??
                         ''

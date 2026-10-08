@@ -103,11 +103,13 @@ function text(value: unknown): string | undefined {
 /** The server's `landlordLink` for a card, or nothing when there is none. */
 function readLandlordLink(value: unknown): PropertyDraft['landlordLink'] {
   if (!value || typeof value !== 'object') return undefined;
-  const link = value as { citizenId?: unknown; name?: unknown; referenceNumber?: unknown };
+  const link = value as { citizenId?: unknown; name?: unknown; displayName?: unknown; referenceNumber?: unknown };
   if (typeof link.citizenId !== 'string' || typeof link.name !== 'string') return undefined;
   return {
     citizenId: link.citizenId,
     name: link.name,
+    // A response from before `displayName` existed shows the stored name.
+    displayName: typeof link.displayName === 'string' ? link.displayName : link.name,
     referenceNumber: typeof link.referenceNumber === 'string' ? link.referenceNumber : null,
   };
 }
@@ -1138,9 +1140,12 @@ export function CitizenEditor({
           /*
             Seeded first, then the kind: an institution's name is one line, and
             `withResidence` joins the parts the search term was split into
-            («وقف مسجد البلدة» would otherwise keep only «وقف»).
+            («وقف مسجد البلدة» would otherwise keep only «وقف»). The kind goes
+            in too, so a name holding a digit («مدرسة رسمية 2») is still seeded.
           */
-          const withSearch = initialSearch ? withSeededSearch(fresh, initialSearch) : fresh;
+          const withSearch = initialSearch
+            ? withSeededSearch(fresh, initialSearch, initialResidence)
+            : fresh;
           setInitial(initialResidence ? withResidence(withSearch, initialResidence) : withSearch);
           return;
         }

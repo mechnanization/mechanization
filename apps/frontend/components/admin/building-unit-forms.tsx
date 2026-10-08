@@ -29,6 +29,7 @@ import {
   isStructuralUnitType,
   isUnoccupied,
   layoutFloorSpans,
+  NON_PERSON_RESIDENCE,
   OCCUPANCY_ROLE,
   SURVEY_STATUS,
   UNIT_STATUS,
@@ -1192,7 +1193,7 @@ export function AddPersonForm({
                   may also rent what nobody lives in.
                 */}
                 {(role === 'OWNER'
-                  ? (['ESTATE', 'INSTITUTION'] as const)
+                  ? NON_PERSON_RESIDENCE
                   : isDwellingUnitType(unitType ?? '')
                     ? ([] as const)
                     : (['INSTITUTION'] as const)

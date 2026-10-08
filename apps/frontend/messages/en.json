@@ -1197,14 +1197,18 @@
       "nothingLeft": "The deceased owned nothing here — the file is archived instead of made an estate.",
       "reason": "Reason for the change",
       "suggestedReason": "Owner died — the file is in the heirs' name",
+      "archiveReason": "The file holder died — owned nothing here",
       "correct": "Correct without a death",
       "apply": "Apply to the form",
       "endNotice": "Ended on the day of the death. What ends leaves the form; the rest of the form is unchanged."
     },
     "archiveSuggestEstate": "If the person has died and still owns property here, do not archive the file: make it «Estate (heirs of the late)» under «Whose file», so the properties and their bills stay with the heirs.",
+    "retainedNote": "This record was filed as a household before it became a «{kind}» record. These values are kept as history — the form no longer asks for them and nothing updates them, so do not rely on them as current.",
     "badgeEstate": "Estate",
     "badgeInstitution": "Body or waqf",
+    "badgeNonResident": "Lives elsewhere",
     "institutionRents": "A body is recorded as a tenant or occupant of a shop, office, clinic, warehouse or land only — it lives in no home.",
+    "ownerNotHousehold": "The owner is not a household living in the town (lives elsewhere, an estate or a body) — they do not live in the unit.",
     "deathApplied": "A death on {date} is applied on this form; it is recorded when you save.",
     "moveApplied": "A move on {date} is applied on this form; it is recorded when you save.",
     "motherNotAsked": "Not asked on this kind of file."

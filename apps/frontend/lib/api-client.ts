@@ -3531,7 +3531,10 @@ export interface CitizenListItem {
   identityDocType: string | null;
   identityDocNumber: string | null;
   residentStatus: string | null;
-  /** نوع الملف — a household file, or «غير مقيم في البلدة» (stored as NON_RESIDENT_OWNER). */
+  /**
+   * نوع الملف — a household (RESIDENT), «غير مقيم في البلدة» (NON_RESIDENT_OWNER),
+   * «تركة (ورثة المرحوم)» (ESTATE) or «جهة أو وقف» (INSTITUTION).
+   */
   residence?: CitizenResidence;
   isActive: boolean;
   /** The file «دمج ملفين» folded this one into — pickers skip it, the register points to it. */
