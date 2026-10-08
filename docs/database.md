@@ -98,7 +98,8 @@ residency is asked of either, and every population count that filters
 line on the form and is stored across `firstName`/`lastName` (first word, the
 rest; `splitInstitutionName`), so any screen that joins the parts reads it
 whole. An estate keeps the deceased's own name: «ورثة المرحوم …» is added when
-it is shown (`citizenDisplayName`), never written into the row.
+it is shown (`citizenDisplayName`), never written into the row — nor into
+another row: a name copied onto a tenancy card is `citizenStoredName`.
 
 **A flat's billing facts live on `units`** (`0075`, `0077`), beside its status:
 

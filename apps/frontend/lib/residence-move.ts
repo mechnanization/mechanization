@@ -209,25 +209,46 @@ export function applyResidenceMove(
   };
 }
 
+/** A person's name parts, kept while the file is an institution — see `namesForKind`. */
+export interface NamesBefore {
+  firstName: string;
+  middleName: string;
+  lastName: string;
+  /** The one line they were joined into; restored only while it still reads so. */
+  joined: string;
+}
+
 /**
  * The name boxes across a change of record kind (0076). An institution's name
  * is one line («وقف مسجد البلدة»), a person's or an estate's three boxes:
- * joined on the way in, split on the way out by the API's own rule
- * (`splitInstitutionName`), so nothing typed is lost to a box the form hides.
+ * joined on the way in, and on the way out restored from `before` when the
+ * line is still what they were joined into — a switch made by mistake and
+ * undone loses nothing — or else split by the API's own rule
+ * (`splitInstitutionName`). Nothing typed is lost to a box the form hides.
  */
 export function namesForKind(
   personal: Record<string, unknown>,
   from: CitizenResidence,
   to: CitizenResidence,
-): Record<string, unknown> {
+  before?: NamesBefore,
+): { personal: Record<string, unknown>; before?: NamesBefore } {
   const part = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
   if (to === 'INSTITUTION' && from !== 'INSTITUTION') {
-    const name = [personal.firstName, personal.middleName, personal.lastName].map(part).filter(Boolean).join(' ');
-    return { ...personal, firstName: name, middleName: '', lastName: '' };
+    const parts = { firstName: part(personal.firstName), middleName: part(personal.middleName), lastName: part(personal.lastName) };
+    const joined = [parts.firstName, parts.middleName, parts.lastName].filter(Boolean).join(' ');
+    return {
+      personal: { ...personal, firstName: joined, middleName: '', lastName: '' },
+      before: { ...parts, joined },
+    };
   }
   if (from === 'INSTITUTION' && to !== 'INSTITUTION') {
-    const { firstName, lastName } = splitInstitutionName(part(personal.firstName));
-    return { ...personal, firstName, middleName: '', lastName };
+    const line = part(personal.firstName);
+    if (before && before.joined === line) {
+      const { joined: _joined, ...parts } = before;
+      return { personal: { ...personal, ...parts } };
+    }
+    const { firstName, lastName } = splitInstitutionName(line);
+    return { personal: { ...personal, firstName, middleName: '', lastName } };
   }
-  return personal;
+  return { personal, before };
 }

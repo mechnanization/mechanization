@@ -1003,6 +1003,30 @@ describeIfDb('LandlordLinkService', () => {
     expect(audit?.after).toMatchObject({ matchedBy: 'NAME' });
   });
 
+  it('reads «ورثة المرحوم X» typed by a tenant as X, and shows the estate as the heirs (0076)', async () => {
+    const { units, building } = await surveyedBlock('LNK-ESTATE');
+    const ownerId = await citizen('نزار', freshPhone().stored, { lastName: 'عاقوري' });
+    await db.user.update({ where: { id: ownerId }, data: { residence: 'ESTATE' as never } });
+    await db.registration.create({
+      data: { citizenId: ownerId, referenceNumber: `REF-${randomUUID().slice(0, 10)}` },
+    });
+    const { entryId } = await tenantFiling({
+      landlordPhone: freshPhone().stored,
+      landlordName: 'ورثة المرحوم نزار عاقوري',
+      parcelNumber: 'LNK-ESTATE',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+    });
+
+    expect(await offeredOn(entryId)).toEqual([[ownerId, 'NAME']]);
+    // The estate is shown as the heirs everywhere a name is read.
+    const queued = (await within(() => links.proposals({ limit: 100, offset: 0 }))).items.find(
+      (item) => item.propertyEntryId === entryId,
+    );
+    expect(queued?.candidates[0]?.name).toBe('ورثة المرحوم نزار علي عاقوري');
+
+  });
+
   // ─────────────────────────────  By the property  ─────────────────────────────
 
   /** An ownership card on the building, naming these flats — none for a whole-building card. */

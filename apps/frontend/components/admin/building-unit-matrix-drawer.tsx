@@ -1235,6 +1235,7 @@ export function BuildingUnitMatrixDrawer({
                   // See the matrix page's own call — the field opens only where
                   // the census has no area for this flat.
                   unitArea={selectedUnit.unitArea}
+                  unitType={selectedUnit.unitType}
                   onSubmit={({ citizen, role, endsVacancy, ...rest }) =>
                     void run(
                       async () => {

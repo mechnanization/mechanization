@@ -1166,7 +1166,7 @@ export class CitizenMergeService {
       return [
         {
           code: 'MERGED_AGAIN',
-          message: `الملف الباقي نفسه دُمج بعدها في ملف ${later.survivor.firstName} ${later.survivor.lastName}${
+          message: `الملف الباقي نفسه دُمج بعدها في ملف ${citizenDisplayName(later.survivor, { middleName: false })}${
             later.survivor.referenceNumber ? ` (${later.survivor.referenceNumber})` : ''
           }. تراجع عن ذلك الدمج أولاً.`,
         },

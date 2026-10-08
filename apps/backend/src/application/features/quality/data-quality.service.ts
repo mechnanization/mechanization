@@ -598,7 +598,11 @@ export class DataQualityService {
     >`
       -- The officer who filed the card, wherever «دمج ملفين» has since moved it (0061).
       SELECT pe.id AS "entryId", u.id AS "citizenId", COALESCE(fr."createdById", r."createdById") AS "createdById", pe."createdAt",
-             COALESCE(pe."landlordName", l."firstName" || ' ' || l."lastName") AS "landlordName",
+             -- «ورثة المرحوم …» for an estate owner (0076), as citizenDisplayName shows it.
+             COALESCE(
+               pe."landlordName",
+               CASE WHEN l.residence::text = 'ESTATE' THEN 'ورثة المرحوم ' ELSE '' END || l."firstName" || ' ' || l."lastName"
+             ) AS "landlordName",
              CASE
                WHEN u.phone IS NOT NULL AND (u.phone = pe."landlordPhone" OR u.phone = l.phone OR u.phone = l.whatsapp) THEN 'phone'
                ELSE 'whatsapp'

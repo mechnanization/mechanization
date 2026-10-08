@@ -60,7 +60,7 @@ import { QuickSaveDialog } from './quick-save-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
 import { ResidenceChangeDialog } from './residence-change-dialog';
-import { applyResidenceMove, namesForKind, planResidenceMove } from '@/lib/residence-move';
+import { applyResidenceMove, namesForKind, planResidenceMove, type NamesBefore } from '@/lib/residence-move';
 import { carryHeldPhone, withoutUnusedWhatsapp } from '@/lib/citizen-contact';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
@@ -126,6 +126,12 @@ export interface CitizenFormValues {
    * from. Absent on a correction, where only the answer changes.
    */
   residenceMove?: { movedOn: string; reason: string };
+  /**
+   * A person's name parts as they were when the file was switched to «جهة أو
+   * وقف», so switching back restores them rather than re-splitting the joined
+   * line (`namesForKind`). Never sent.
+   */
+  namesBefore?: NamesBefore;
 }
 
 /**
@@ -187,7 +193,8 @@ export function withResidence(
   const from = values.residence ?? 'RESIDENT';
   if (from === residence) return values;
   // An institution's name is one line, a person's three boxes (`namesForKind`).
-  return { ...values, residence, personal: namesForKind(values.personal, from, residence) };
+  const names = namesForKind(values.personal, from, residence, values.namesBefore);
+  return { ...values, residence, personal: names.personal, namesBefore: names.before };
 }
 
 /**
@@ -257,6 +264,10 @@ export function withSeededSearch(
   if (phone) return { ...values, contact: { ...values.contact, phone } };
 
   const trimmed = term.trim();
+  // An institution's name is one line, digits and all («مدرسة رسمية 2»): kept whole (0076).
+  if (trimmed && values.residence === 'INSTITUTION') {
+    return { ...values, personal: { ...values.personal, firstName: trimmed } };
+  }
   // Arabic-Indic and Extended digits alongside the Latin ones: an Arabic
   // keyboard produces «٠٣» by default, and a phone typed that way is no more a
   // name than «03» is.
@@ -1945,13 +1956,9 @@ export function CitizenForm({
             {values.residenceMove ? (
               <p className="-mt-2 mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-primary/5 px-3 py-2 text-sm">
                 <span>
-                  {values.residence === 'ESTATE'
-                    ? locale === 'en'
-                      ? `A death on ${values.residenceMove.movedOn} is applied on this form; it is recorded when you save.`
-                      : `وفاة بتاريخ ${values.residenceMove.movedOn} مطبَّقة على النموذج، وتُسجَّل عند الحفظ.`
-                    : locale === 'en'
-                      ? `A move on ${values.residenceMove.movedOn} is applied on this form; it is recorded when you save.`
-                      : `انتقال بتاريخ ${values.residenceMove.movedOn} مطبَّق على النموذج، ويُسجَّل عند الحفظ.`}
+                  {tKind(values.residence === 'ESTATE' ? 'deathApplied' : 'moveApplied', {
+                    date: values.residenceMove.movedOn,
+                  })}
                 </span>
                 <Button
                   type="button"

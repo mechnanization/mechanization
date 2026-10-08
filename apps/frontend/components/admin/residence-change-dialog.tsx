@@ -454,9 +454,7 @@ export function ResidenceChangeDialog({
           defaults={{ reason: 'MOVED_OUT', endedAt: movedOn }}
           notice={
             death
-              ? en
-                ? 'Ended on the day of the death. What ends leaves the form; the rest of the form is unchanged.'
-                : 'يُنهى بتاريخ الوفاة. ما يُنهى يخرج من النموذج، وباقي النموذج لا يتغيّر.'
+              ? tKind('death.endNotice')
               : en
                 ? 'Ended on the day of the move. What ends leaves the form; the rest of the form is unchanged.'
                 : 'يُنهى بتاريخ الانتقال. ما يُنهى يخرج من النموذج، وباقي النموذج لا يتغيّر.'

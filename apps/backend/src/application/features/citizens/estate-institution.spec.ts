@@ -1,9 +1,11 @@
 import {
   adminCreateCitizenSubmissionSchema,
   citizenDisplayName,
+  citizenStoredName,
   isNonPersonRecord,
   isOwnerRecord,
   splitInstitutionName,
+  withoutEstatePrefix,
 } from '@mechanization/shared-schemas';
 import { assertNonResidentOccupancy } from '../buildings/buildings.service';
 import { citizenColumnsForEdit } from './citizens.service';
@@ -89,6 +91,30 @@ describe('«تركة (ورثة المرحوم)»', () => {
     expect(failures(estate({ properties: [{ ...house, unitStatus: 'FREE_OCCUPIED' }] }))).toEqual([]);
   });
 
+  it('has no «مسكن موسمي» either — nobody comes back for a season once the owner has died', () => {
+    const house = {
+      occupancyType: 'OWNER',
+      propertyType: 'HOUSE',
+      propertyNumber: '267',
+      unitArea: '120',
+      unitStatus: 'SEASONAL',
+    };
+    expect(failures(estate({ properties: [house] }))).toContain('properties.0.unitStatus');
+    expect(() =>
+      assertNonResidentOccupancy({ unitCode: '0001', unitType: 'APARTMENT', residence: 'ESTATE', role: 'OWNER', unitStatus: 'SEASONAL' }),
+    ).toThrow('المرحوم لا يسكن');
+    // A non-resident's seasonal home is what «مسكن موسمي» is for.
+    expect(() =>
+      assertNonResidentOccupancy({
+        unitCode: '0001',
+        unitType: 'APARTMENT',
+        residence: 'NON_RESIDENT_OWNER',
+        role: 'OWNER',
+        unitStatus: 'SEASONAL',
+      }),
+    ).not.toThrow();
+  });
+
   it('is named «ورثة المرحوم …» everywhere a name is shown, in both languages', () => {
     const person = { firstName: 'حسن', middleName: 'واكد', lastName: 'تجربة', residence: 'ESTATE' };
     expect(citizenDisplayName(person)).toBe('ورثة المرحوم حسن واكد تجربة');
@@ -97,6 +123,11 @@ describe('«تركة (ورثة المرحوم)»', () => {
     expect(citizenDisplayName({ ...person, residence: 'RESIDENT' })).toBe('حسن واكد تجربة');
     // A form not yet filled in has no name — not «ورثة المرحوم» alone.
     expect(citizenDisplayName({ firstName: null, lastName: '', residence: 'ESTATE' })).toBe('');
+    // Stored text never carries the prefix, and typed text is read through it.
+    expect(citizenStoredName(person)).toBe('حسن واكد تجربة');
+    expect(withoutEstatePrefix('ورثة المرحوم حسن تجربة')).toBe('حسن تجربة');
+    expect(withoutEstatePrefix('ورثة المرحومة فاطمة تجربة')).toBe('فاطمة تجربة');
+    expect(withoutEstatePrefix('حسن تجربة')).toBe('حسن تجربة');
   });
 
   it('keeps the household columns a converted file holds, and frees a relative’s number it now uses', () => {

@@ -39,3 +39,28 @@ export function splitInstitutionName(name: string): { firstName: string; middleN
   const words = name.trim().split(/\s+/);
   return { firstName: words[0] ?? '', middleName: null, lastName: words.slice(1).join(' ') };
 }
+
+/**
+ * The name as the row holds it — never with «ورثة المرحوم». For writing a
+ * citizen's name into another row (a tenancy card's owner name): the prefix
+ * is how an estate is shown, and stored text keeps no record of the kind it
+ * was copied under, so a file corrected back to a person would leave it wrong.
+ */
+export function citizenStoredName(person: NamedRecord): string {
+  return [person.firstName, person.middleName, person.lastName]
+    .filter((part): part is string => Boolean(part && part.trim()))
+    .join(' ');
+}
+
+/**
+ * «ورثة المرحوم …» as somebody typed it, read as the name it carries — so a
+ * tenant who writes the owner the way the register shows an estate still
+ * matches the deceased's own name. `ESTATE_PREFIX_PATTERN` is the same rule in
+ * POSIX form for the SQL twin of the match.
+ */
+export const ESTATE_PREFIX_PATTERN = '^[[:space:]]*ورثة[[:space:]]+((ال)?مرحوم(ة)?|المغفور[[:space:]]+لها?)?[[:space:]]*';
+const ESTATE_PREFIX = /^\s*ورثة\s+(?:(?:ال)?مرحومة?|المغفور\s+لها?)?\s*/u;
+
+export function withoutEstatePrefix(name: string): string {
+  return name.replace(ESTATE_PREFIX, '');
+}

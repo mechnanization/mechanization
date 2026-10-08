@@ -278,7 +278,7 @@ describeIfDb('OwnershipService', () => {
   // ─────────────────────────────  Tenants  ─────────────────────────────
 
   /** A tenant whose card is linked to a registered owner — the full owner link. */
-  const linkedTenancy = async (parcelNumber: string) => {
+  const linkedTenancy = async (parcelNumber: string, over: { landlordName?: string | null } = {}) => {
     const { building, units } = await block(parcelNumber);
     const ownerPhone = phone();
     const ownerId = await citizen('مالك', { phone: ownerPhone });
@@ -293,7 +293,7 @@ describeIfDb('OwnershipService', () => {
       data: {
         registrationId: registration.id,
         occupancyType: 'TENANT',
-        landlordName: 'مالك المبنى',
+        landlordName: over.landlordName === undefined ? 'مالك المبنى' : over.landlordName,
         landlordPhone: ownerPhone,
         propertyType: 'BUILDING',
         neighborhood: 'الحي',
@@ -336,6 +336,19 @@ describeIfDb('OwnershipService', () => {
       where: { unitId: linked.unitId, citizenId: linked.tenantId, toDate: null },
     });
     expect(tenantSpell).toBe(1);
+  });
+
+  it('writes the seller’s own name on a tenant’s blank card when heirs sell — never «ورثة المرحوم» (0076)', async () => {
+    const linked = await linkedTenancy('OWN-EST', { landlordName: null });
+    await db.user.update({ where: { id: linked.ownerId }, data: { residence: 'ESTATE' as never } });
+    const spell = await ownerSpell(linked.ownerId, linked.unitId);
+
+    await within(() => tenancy.endOccupancy(spell.id, { reason: 'OWNERSHIP_TRANSFERRED' }, actor()));
+
+    const owner = await db.user.findUniqueOrThrow({ where: { id: linked.ownerId } });
+    const card = await db.propertyEntry.findUniqueOrThrow({ where: { id: linked.tenantCardId } });
+    expect(card.landlordName).toBe([owner.firstName, owner.middleName, owner.lastName].filter(Boolean).join(' '));
+    expect(card.landlordName).not.toMatch(/ورثة/);
   });
 
   it('refuses a correction while a tenant’s link names this person as the landlord', async () => {

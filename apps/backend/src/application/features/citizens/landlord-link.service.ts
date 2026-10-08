@@ -6,6 +6,9 @@ import {
   STRUCTURE_TYPE_MAP,
   unitStatusForRole,
   citizenDisplayName,
+  citizenStoredName,
+  ESTATE_PREFIX_PATTERN,
+  withoutEstatePrefix,
 } from '@mechanization/shared-schemas';
 import type { StructureType } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
@@ -258,7 +261,7 @@ export class LandlordLinkService {
       : scope.naming
         ? Prisma.sql`AND (
             pe."landlordPhone" = ANY(${[...scope.naming.phones]}::text[])
-            OR ${S}search_compact(pe."landlordName") IN (
+            OR ${S}search_compact(regexp_replace(pe."landlordName", ${ESTATE_PREFIX_PATTERN}, '')) IN (
               SELECT key FROM citizen_names WHERE citizen_id = ${scope.naming.citizenId}::uuid
             )
             OR (
@@ -358,7 +361,8 @@ export class LandlordLinkService {
       open_claims AS (
         SELECT pe.id,
                pe."landlordPhone" AS phone,
-               nullif(${S}search_compact(pe."landlordName"), '') AS name_key,
+               -- «ورثة المرحوم X» typed by a tenant is X's name (0076).
+               nullif(${S}search_compact(regexp_replace(pe."landlordName", ${ESTATE_PREFIX_PATTERN}, '')), '') AS name_key,
                pe."createdAt" AS created_at,
                pe."landlordLinkDismissedAt" AS dismissed_at,
                pe."landlordLinkDismissedIds" AS dismissed_ids,
@@ -1456,9 +1460,7 @@ export class LandlordLinkService {
       data: {
         landlordCitizenId: owner.id,
         // The row's own name: «ورثة المرحوم» is added where it is shown, never stored.
-        ...(entry.landlordName
-          ? {}
-          : { landlordName: [owner.firstName, owner.middleName, owner.lastName].filter(Boolean).join(' ') }),
+        ...(entry.landlordName ? {} : { landlordName: citizenStoredName(owner) }),
         ...(entry.landlordPhone ? {} : { landlordPhone: owner.phone ?? owner.whatsapp ?? null }),
       },
     });
@@ -2658,7 +2660,8 @@ export class LandlordLinkService {
       where: { id: input.ownerId },
       select: { firstName: true, middleName: true, lastName: true, residence: true, phone: true },
     });
-    const sellerName = seller ? fullName(seller) : null;
+    // Written onto the tenant's card below: the row's own name, never «ورثة المرحوم …».
+    const sellerName = seller ? citizenStoredName(seller) : null;
 
     const released: SaleRelease[] = [];
     const events: PendingEvent[] = [];
@@ -3422,7 +3425,8 @@ export function landlordNameMatches(
   typed: string | null | undefined,
   citizen: { firstName: string; middleName: string | null; lastName: string },
 ): boolean {
-  const key = foldNamePart(typed);
+  // «ورثة المرحوم X» typed by a tenant is X's name (0076), as in the SQL twin.
+  const key = foldNamePart(typed ? withoutEstatePrefix(typed) : typed);
   if (!key) return false;
   const short = foldNamePart(`${citizen.firstName} ${citizen.lastName}`);
   const long = citizen.middleName?.trim()

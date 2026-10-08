@@ -514,14 +514,21 @@ export function nonResidentCardIssues(
   const owner = card.occupancyType === 'OWNER';
   const units = Array.isArray(card.units) ? (card.units as Array<Record<string, unknown>>) : [];
   const notLivingThere = OWNER_NOT_LIVING_THERE_BY_RECORD[residence] ?? OWNER_NOT_LIVING_THERE;
+  /*
+    «مشغولة من المالك» for every owner record; and «مسكن موسمي» for an estate,
+    whose owner comes back for no season — a family that does is «مشغولة
+    بتسامح», and pays the occupancy fee itself.
+  */
+  const livesThere = (status: unknown) =>
+    status === 'OWNER_OCCUPIED' || (residence === 'ESTATE' && status === 'SEASONAL');
 
   if (owner) {
-    if (card.propertyType === 'HOUSE' && card.unitStatus === 'OWNER_OCCUPIED') {
+    if (card.propertyType === 'HOUSE' && livesThere(card.unitStatus)) {
       issues.push({ path: ['unitStatus'], message: notLivingThere, code: 'OWNER_LIVES_THERE' });
     }
     if (card.propertyType === 'BUILDING') {
       units.forEach((unit, unitIndex) => {
-        if (isDwellingUnitType(unit.unitType as string) && unit.unitStatus === 'OWNER_OCCUPIED') {
+        if (isDwellingUnitType(unit.unitType as string) && livesThere(unit.unitStatus)) {
           issues.push({ path: ['units', unitIndex, 'unitStatus'], message: notLivingThere, code: 'OWNER_LIVES_THERE' });
         }
       });

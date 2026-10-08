@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { uuid } from './primitives';
+import { normalizeDigits, uuid } from './primitives';
 import { OWNER_BILLING_MODE } from './enums';
 import { ADJUSTMENT_REASON_MIN, municipalToday } from './cash-policy';
 
@@ -835,7 +835,17 @@ export type ReferenceOnlyLogin = z.infer<typeof referenceOnlyLoginSchema>;
  * certificate.
  */
 export const parcelDuesQuerySchema = z.object({
-  propertyNumber: z.string({ required_error: 'رقم العقار مطلوب' }).trim().min(1, 'رقم العقار مطلوب').max(40),
+  /*
+    Latin digits whatever was typed: an Arabic keyboard gives «٤٢٠», and the
+    bill lines hold «420» — read as typed, the answer would be a false «لا شيء
+    مستحق» on the one check a clearance rests on.
+  */
+  propertyNumber: z
+    .string({ required_error: 'رقم العقار مطلوب' })
+    .trim()
+    .min(1, 'رقم العقار مطلوب')
+    .max(40)
+    .transform((value) => normalizeDigits(value)),
 });
 export type ParcelDuesQuery = z.infer<typeof parcelDuesQuerySchema>;
 

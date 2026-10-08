@@ -1,4 +1,4 @@
-import { citizenDisplayName } from '@mechanization/shared-schemas';
+import { citizenDisplayName, citizenStoredName } from '@mechanization/shared-schemas';
 import { Injectable, Logger } from '@nestjs/common';
 import { OWNER_RECORD_RESIDENCE, isOwnerRecord } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -2286,9 +2286,7 @@ export class BuildingsService {
               unitArea: row.unitArea != null ? Number(row.unitArea) : null,
               occupants: occupancies.map((row) => ({
                 role: row.role,
-                citizenName: row.citizen
-                  ? `${row.citizen.firstName} ${row.citizen.lastName}`
-                  : null,
+                citizenName: row.citizen ? citizenDisplayName(row.citizen, { middleName: false }) : null,
               })),
             })),
           },
@@ -4143,7 +4141,7 @@ export class BuildingsService {
         ...(nonOwner && owner
           ? {
               // The row's own name: «ورثة المرحوم» is added where it is shown, never stored.
-              landlordName: [owner.firstName, owner.middleName, owner.lastName].filter(Boolean).join(' '),
+              landlordName: citizenStoredName(owner),
               landlordPhone: owner.phone ?? owner.whatsapp ?? null,
             }
           : nonOwner && (input.landlord?.name || input.landlord?.phone)
@@ -5124,15 +5122,15 @@ export function nonResidentUnitConflict(input: {
   if (occupants.length > 0) {
     return (
       `لا يمكن جعل الوحدة ${input.unitCode} مسكناً: ${occupants.join('، ')} ` +
-      `${occupants.length === 1 ? 'مسجَّل عليها مستأجراً أو شاغلاً وملفه' : 'مسجَّلون عليها مستأجرين أو شاغلين وملفاتهم'} «غير مقيم في البلدة»، ` +
-      'وغير المقيم لا يستأجر مسكناً. إن كان يسكنها فعلاً فغيّر ملفه إلى «مقيم»، وإن كان قد تركها فأنهِ إيجاره أولاً'
+      `${occupants.length === 1 ? 'مسجَّل عليها مستأجراً أو شاغلاً وملفه ليس' : 'مسجَّلون عليها مستأجرين أو شاغلين وملفاتهم ليست'} ملف أسرة مقيمة ` +
+      '(غير مقيم في البلدة، أو تركة، أو جهة)، وهذا لا يستأجر مسكناً. إن كان يسكنها فعلاً فصحّح نوع ملفه إلى «أسرة مقيمة»، وإن كان قد تركها فأنهِ إيجاره أولاً'
     );
   }
 
   if (input.ownerOccupiedByNonResident) {
     return (
-      `لا يمكن تسجيل الوحدة ${input.unitCode} «مشغولة من المالك»: مالكها «غير مقيم في البلدة». ` +
-      'اختر «مسكن موسمي» أو «شاغرة»، أو غيّر ملف المالك إلى «مقيم» إن كان قد عاد ليسكنها'
+      `لا يمكن تسجيل الوحدة ${input.unitCode} «مشغولة من المالك»: مالكها ليس أسرة مقيمة في البلدة (غير مقيم، أو تركة، أو جهة). ` +
+      'اختر «مسكن موسمي» (لغير المقيم) أو «مشغولة بتسامح» أو «شاغرة»، أو صحّح نوع ملف المالك إن كان يسكنها'
     );
   }
 
@@ -5278,7 +5276,8 @@ export function assertNonResidentOccupancy(input: {
     );
   }
 
-  if (input.unitStatus === 'OWNER_OCCUPIED') {
+  // An estate's owner comes back for no season either (see `nonResidentCardIssues`).
+  if (input.unitStatus === 'OWNER_OCCUPIED' || (input.residence === 'ESTATE' && input.unitStatus === 'SEASONAL')) {
     throw new ValidationError(
       input.residence === 'ESTATE'
         ? `المرحوم لا يسكن الوحدة ${input.unitCode} — إن كانت عائلته تسكنها فاختر «مشغولة بتسامح» وسجّل أحدهم بملف أسرة، وإلا فـ«مؤجرة» أو «شاغرة»`

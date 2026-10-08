@@ -1135,8 +1135,13 @@ export function CitizenEditor({
           }
 
           const fresh = seeded ? { ...empty, properties: seeded } : empty;
-          const withFile = initialResidence ? withResidence(fresh, initialResidence) : fresh;
-          setInitial(initialSearch ? withSeededSearch(withFile, initialSearch) : withFile);
+          /*
+            Seeded first, then the kind: an institution's name is one line, and
+            `withResidence` joins the parts the search term was split into
+            («وقف مسجد البلدة» would otherwise keep only «وقف»).
+          */
+          const withSearch = initialSearch ? withSeededSearch(fresh, initialSearch) : fresh;
+          setInitial(initialResidence ? withResidence(withSearch, initialResidence) : withSearch);
           return;
         }
 

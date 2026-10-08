@@ -1,3 +1,4 @@
+import type { CitizenResidence } from '@mechanization/shared-schemas';
 import { isNonPersonRecord, isOwnerRecord } from '@mechanization/shared-schemas';
 import {
   nonResidentCardIssues,
@@ -952,12 +953,17 @@ export function planMerge(input: PlanInput): MergePlan {
           .map((rowId) => card.units.find((row) => row.id === rowId)!)
           .map((row) => ({ unitType: row.unitType, unitStatus: row.unitStatus })),
       };
-      if (nonResidentCardIssues(shaped, flaggedPaths, `properties.${index}`).length > 0) {
+      // The kept file's own kind decides: an estate owns only (0076), a non-resident or a body rents no home.
+      if (nonResidentCardIssues(shaped, flaggedPaths, `properties.${index}`, keep.residence as CitizenResidence).length > 0) {
         block(
           'RESIDENCE_CONFLICT',
-          `الملف الباقي «غير مقيم في البلدة»، والملف الآخر يحمل بطاقة تقول إنه يسكن في البلدة (${
-            card.propertyNumber ?? 'عقار'
-          }). احتفظ بالملف الآخر بدلاً منه، أو صحّح الإقامة أولاً عبر «تغيير الإقامة».`,
+          keep.residence === 'ESTATE'
+            ? `الملف الباقي تركة، والتركة تملك فقط، والملف الآخر يحمل بطاقة إيجار أو سكن (${
+                card.propertyNumber ?? 'عقار'
+              }). من يسكن أو يستأجر يبقى بملفه هو.`
+            : `الملف الباقي «${keep.residence === 'INSTITUTION' ? 'جهة أو وقف' : 'غير مقيم في البلدة'}»، والملف الآخر يحمل بطاقة تقول إنه يسكن في البلدة (${
+                card.propertyNumber ?? 'عقار'
+              }). احتفظ بالملف الآخر بدلاً منه، أو صحّح نوع الملف أولاً.`,
         );
       }
     });

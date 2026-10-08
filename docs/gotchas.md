@@ -575,6 +575,10 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   with `residence` in the select. It also reads an institution's name, which
   is one line stored across `firstName`/`lastName` (`splitInstitutionName`), so
   a search or a sort on `lastName` alone does not find «وقف مسجد البلدة».
+  The opposite holds when a name is **written** into another row (a tenancy
+  card's owner name): use `citizenStoredName`, never the display name — the
+  heirs' sale once wrote «ورثة المرحوم …» onto a tenant's card. Text someone
+  typed is matched through `withoutEstatePrefix` (SQL: `ESTATE_PREFIX_PATTERN`).
 - **Where:** `fees.service.ts`, `reporting.service.ts`, `citizens.service.ts`,
   `buildings.service.ts` (`toOccupancyRow`), `parcel-dues.service.ts`.
 

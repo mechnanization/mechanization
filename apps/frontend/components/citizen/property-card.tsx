@@ -922,6 +922,7 @@ export function PropertyCard({
                           : undefined
                       }
                       nonResident={nonResident}
+                      estate={recordKind === 'ESTATE'}
                       layout="wide"
                       onPatch={(patch) =>
                         onChange((current) => ({
@@ -1374,7 +1375,7 @@ export function PropertyCard({
                 value={draft.unitStatus}
                 onChange={(unitStatus) => set({ unitStatus })}
                 // A منزل is a dwelling; its owner lives elsewhere, so not in it.
-                omit={nonResident ? ['OWNER_OCCUPIED'] : []}
+                omit={nonResident ? (recordKind === 'ESTATE' ? ['OWNER_OCCUPIED', 'SEASONAL'] : ['OWNER_OCCUPIED']) : []}
                 path={flagPath(index, 'unitStatus')}
                 required
                 error={errors.unitStatus}
@@ -1424,6 +1425,7 @@ export function PropertyCard({
                     : undefined
                 }
                 nonResident={nonResident}
+                estate={recordKind === 'ESTATE'}
                 errors={scopeErrors(errors, 'units')}
                 onChange={(update) =>
                   onChange((current) => ({ ...current, units: update(current.units ?? []) }))

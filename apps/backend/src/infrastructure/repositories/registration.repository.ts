@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { POSSIBLE_DUPLICATE_FLAG_PATH, type FieldFlag } from '@mechanization/shared-schemas';
+import { POSSIBLE_DUPLICATE_FLAG_PATH, type FieldFlag, isNonPersonRecord } from '@mechanization/shared-schemas';
 import { Prisma } from '../../generated/tenant-client';
 import { PropertyEntry } from '../../domain/entities/property-entry.entity';
 import { Registration } from '../../domain/entities/registration.entity';
@@ -168,7 +168,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
                 identityDocNumber,
               },
             },
-            select: { id: true, kind: true, firstName: true, middleName: true, lastName: true },
+            select: { id: true, kind: true, firstName: true, middleName: true, lastName: true, residence: true },
           });
 
           /*
@@ -182,7 +182,9 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
             const merge = await tx.citizenMerge.findFirst({
               where: { absorbedId: holder.id, undoneAt: null },
               select: {
-                survivor: { select: { id: true, kind: true, firstName: true, middleName: true, lastName: true } },
+                survivor: {
+                  select: { id: true, kind: true, firstName: true, middleName: true, lastName: true, residence: true },
+                },
               },
             });
             if (!merge) break;
@@ -191,7 +193,13 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
 
           if (!holder) {
             identity = 'NEW';
-          } else if (holder.kind === 'CITIZEN' && isSamePerson(holder, input.citizen)) {
+          } else if (
+            holder.kind === 'CITIZEN' &&
+            // An estate or a body is no person to attach a filing to (0076): a deceased's
+            // document filed again is a conflict to look at, never his heirs' file growing.
+            !isNonPersonRecord(holder.residence) &&
+            isSamePerson(holder, input.citizen)
+          ) {
             identity = 'ATTACHED';
             attachedTo = holder.id;
           } else {

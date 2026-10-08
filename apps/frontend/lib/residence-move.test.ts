@@ -102,6 +102,14 @@ describe('planResidenceMove — the owner died («تركة», 0076)', () => {
     expect(plan.nothingLeft).toBe(false);
   });
 
+  it('re-asks a non-resident’s «مسكن موسمي» — nobody comes back for a season once he has died', () => {
+    const seasonal = { ...ownsHouseLivesThere, unitStatus: 'SEASONAL' };
+    const values = { ...file([seasonal] as never), residence: 'NON_RESIDENT_OWNER' as const };
+    expect(planResidenceMove(values, 'ESTATE').homes.map((home) => [home.key, home.status])).toEqual([
+      ['card:0', 'SEASONAL'],
+    ]);
+  });
+
   it('a deceased who only rented has nothing left: archive, do not make an estate', () => {
     expect(planResidenceMove(file([rentsFlat] as never), 'ESTATE').nothingLeft).toBe(true);
   });
@@ -126,14 +134,25 @@ describe('planResidenceMove — the owner died («تركة», 0076)', () => {
 });
 
 describe('namesForKind — an institution is one name', () => {
-  it('joins a person’s name into one line, and splits it back', () => {
-    const body = namesForKind({ firstName: 'وقف', middleName: 'مسجد', lastName: 'البلدة' }, 'RESIDENT', 'INSTITUTION');
-    expect(body).toMatchObject({ firstName: 'وقف مسجد البلدة', middleName: '', lastName: '' });
-    expect(namesForKind(body, 'INSTITUTION', 'RESIDENT')).toMatchObject({ firstName: 'وقف', lastName: 'مسجد البلدة' });
+  it('joins a person’s name into one line, and restores the parts when switched straight back', () => {
+    const person = { firstName: 'علي', middleName: 'حسن', lastName: 'سرور' };
+    const body = namesForKind(person, 'RESIDENT', 'INSTITUTION');
+    expect(body.personal).toMatchObject({ firstName: 'علي حسن سرور', middleName: '', lastName: '' });
+    expect(namesForKind(body.personal, 'INSTITUTION', 'RESIDENT', body.before).personal).toMatchObject(person);
+  });
+
+  it('splits the line by the API’s rule once it was edited as an institution', () => {
+    const body = namesForKind({ firstName: 'وقف', middleName: '', lastName: '' }, 'RESIDENT', 'INSTITUTION');
+    const renamed = { ...body.personal, firstName: 'وقف مسجد البلدة' };
+    expect(namesForKind(renamed, 'INSTITUTION', 'RESIDENT', body.before).personal).toMatchObject({
+      firstName: 'وقف',
+      middleName: '',
+      lastName: 'مسجد البلدة',
+    });
   });
 
   it('keeps the name parts for an estate — the deceased’s own name', () => {
     const personal = { firstName: 'حسن', middleName: 'علي', lastName: 'سرور' };
-    expect(namesForKind(personal, 'RESIDENT', 'ESTATE')).toBe(personal);
+    expect(namesForKind(personal, 'RESIDENT', 'ESTATE').personal).toBe(personal);
   });
 });

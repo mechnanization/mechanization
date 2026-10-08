@@ -1002,7 +1002,7 @@ export class FeesService {
       this.db.feeNotice.findMany({
         orderBy: { createdAt: 'desc' },
         include: {
-          targetCitizen: { select: { firstName: true, lastName: true } },
+          targetCitizen: { select: { firstName: true, lastName: true, residence: true } },
           _count: { select: { payments: true } },
         },
       }),
@@ -1020,9 +1020,7 @@ export class FeesService {
       frequency: row.frequency,
       targetType: row.targetType,
       targetCategory: row.targetCategory,
-      targetCitizenName: row.targetCitizen
-        ? `${row.targetCitizen.firstName} ${row.targetCitizen.lastName}`
-        : null,
+      targetCitizenName: row.targetCitizen ? citizenDisplayName(row.targetCitizen, { middleName: false }) : null,
       dueDate: row.dueDate.toISOString(),
       instructions: row.instructions,
       /** How many citizens this notice actually billed. */

@@ -46,6 +46,7 @@ import {
   type UnitStatus,
   type VacancyBasis,
   type VacancyEndReason,
+  isDwellingUnitType,
 } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
@@ -823,11 +824,14 @@ export function AddPersonForm({
   vacancy,
   owners = [],
   unitArea: recordedArea,
+  unitType,
   onSubmit,
 }: {
   tenant: string;
   token: string;
   busy: boolean;
+  /** The unit's type: a body («جهة أو وقف») is offered as a tenant only of what nobody lives in. */
+  unitType?: string | null;
   locale: string;
   /**
    * The registration form, pointed at this unit, with نوع الملف preset. The
@@ -1187,7 +1191,12 @@ export function AddPersonForm({
                   so it is offered for an owner only; a waqf or a public body
                   may also rent what nobody lives in.
                 */}
-                {(role === 'OWNER' ? (['ESTATE', 'INSTITUTION'] as const) : (['INSTITUTION'] as const)).map((kind) => (
+                {(role === 'OWNER'
+                  ? (['ESTATE', 'INSTITUTION'] as const)
+                  : isDwellingUnitType(unitType ?? '')
+                    ? ([] as const)
+                    : (['INSTITUTION'] as const)
+                ).map((kind) => (
                   <Link
                     key={kind}
                     href={newFileHref(kind)}

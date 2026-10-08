@@ -1,4 +1,4 @@
-import type { FeeAssessment } from '@mechanization/shared-schemas';
+import { parcelDuesQuerySchema, type FeeAssessment } from '@mechanization/shared-schemas';
 import { parcelShareOf } from './parcel-dues';
 
 /** «ما المستحق على العقار»: the part of a bill that is one parcel's, by its own lines. */
@@ -52,5 +52,11 @@ describe('parcelShareOf', () => {
   it('is nothing for a bill with no line on the parcel, or no lines at all', () => {
     expect(parcelShareOf(assessment('PER_UNIT', [line('19', null)]), '420')).toBeNull();
     expect(parcelShareOf(null, '420')).toBeNull();
+  });
+});
+
+describe('parcelDuesQuerySchema', () => {
+  it('reads a parcel number typed on an Arabic keyboard as the bills hold it', () => {
+    expect(parcelDuesQuerySchema.parse({ propertyNumber: ' ٤٢٠ ' })).toEqual({ propertyNumber: '420' });
   });
 });

@@ -147,9 +147,12 @@ Data access for new code (decided):
   institution) and "not a living person" is `isNonPersonRecord`; never compare to `'NON_RESIDENT_OWNER'`
   for either. A name goes through `citizenDisplayName` wherever it is shown (an estate is «ورثة المرحوم …»),
   and an institution's one-line name is split on write (`splitInstitutionName`, in
-  `RegistrationService` and `citizenColumnsForEdit`) and joined back in `getEditable`. An estate owns and
-  nothing else: `nonResidentCardIssues` (`ESTATE_OWNS_ONLY`) and `assertNonResidentOccupancy` (coded
-  `ESTATE_OWNS_ONLY`) refuse a tenancy on it. `planMerge` blocks a person with a body, or an estate with
+  `RegistrationService` and `citizenColumnsForEdit`) and joined back in `getEditable`. A name copied into
+  another row goes through `citizenStoredName` (never the display form), and a typed owner name is matched
+  through `withoutEstatePrefix` / `ESTATE_PREFIX_PATTERN`. An estate owns and nothing else:
+  `nonResidentCardIssues` (`ESTATE_OWNS_ONLY`) and `assertNonResidentOccupancy` (coded `ESTATE_OWNS_ONLY`)
+  refuse a tenancy on it, and refuse «مسكن موسمي» on its homes as well as «مشغولة من المالك». A filing whose
+  document number an estate or a body holds is a CONFLICT, never attached to it. `planMerge` blocks a person with a body, or an estate with
   an institution (`RESIDENCE_CONFLICT`); duplicate detection and the quality scan skip both kinds; a FLAT
   notice to ALL_CITIZENS skips both (`resolveTargets` with `basis`).
 - **«المستحق على عقار».** `ParcelDuesService` (`GET fees/parcel-dues?propertyNumber=`, `FEE_READ_ROLES`,

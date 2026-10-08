@@ -565,7 +565,7 @@ export class TenancyService {
       if (refused) {
         throw new ValidationError({
           code: 'NON_RESIDENT_OWNER_CANNOT_OCCUPY',
-          message: `The owner of unit ${refused.unitCode} does not live in the town, so they cannot be recorded as living there. Choose “Vacant” or “I don’t know”.`,
+          message: `The owner of unit ${refused.unitCode} is not a household in the town (living elsewhere, an estate or a body), so they cannot be recorded as living there. Choose “Vacant” or “I don’t know”.`,
           params: { unitCode: refused.unitCode },
           details: { unitCode: refused.unitCode },
         });

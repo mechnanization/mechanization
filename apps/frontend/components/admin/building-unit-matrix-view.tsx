@@ -1466,6 +1466,7 @@ export function BuildingUnitMatrixView({
                   // painted from the street records that a flat exists, not
                   // that anyone has measured it.
                   unitArea={selectedUnit.unitArea}
+                  unitType={selectedUnit.unitType}
                   onSubmit={({ citizen, role: occRole, endsVacancy, ...rest }) =>
                     void run(
                       async () => {
