@@ -28,14 +28,8 @@ import {
 import type { FeeBasis, FeeBearer } from '@mechanization/shared-schemas';
 import type { CitizenListItem } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import Link from 'next/link';
+import { Alert } from '@/components/ui/alert';
 import { ChoiceCard, Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -108,22 +102,33 @@ function formatLbp(value: string): string {
   return digits ? Number(digits).toLocaleString('en-US') : '';
 }
 
-export function IssueFeeDialog({
-  open,
-  onOpenChange,
+/**
+ * «إصدار رسم جديد» — the three steps, on their own page.
+ *
+ * It was a dialog, which BAN-10 refuses for a task that needs neither
+ * interruption nor protected focus: issuing a fee is a three-step wizard that
+ * decides what every household in the town owes, and it is read and re-read
+ * before the last button. A route gives it an address, a back button that means
+ * what it says, and no overlay for a half-filled wizard to be lost to.
+ *
+ * The page owns the submit and what follows it (the counts of what went
+ * unbilled); this owns the steps and the fields.
+ */
+export function IssueFeeForm({
   citizens,
   submitting,
   error,
   onSubmit,
+  backHref,
   locale = 'ar',
   existingTitles = [],
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   citizens: CitizenListItem[];
   submitting: boolean;
   error: string | null;
   onSubmit: (values: IssueFeeValues) => void;
+  /** Where «إلغاء» goes from the first step. */
+  backHref: string;
   locale?: string;
   existingTitles?: string[];
 }) {
@@ -143,14 +148,6 @@ export function IssueFeeDialog({
     BUILDING_CATEGORY: locale === 'en' ? 'Citizens who registered a specific property category' : 'المواطنون الذين سجّلوا عقاراً من نوع محدّد',
     INDIVIDUAL_CITIZEN: locale === 'en' ? 'Single citizen by name or reference number' : 'مواطن واحد بالاسم أو بالرقم المرجعي',
   };
-
-  useEffect(() => {
-    if (open) {
-      setValues(EMPTY);
-      setCitizenQuery('');
-      setStepIndex(0);
-    }
-  }, [open]);
 
   /**
    * A failed submit sends the clerk back to المراجعة.
@@ -220,41 +217,23 @@ export function IssueFeeDialog({
   const bulk = values.targetType !== 'INDIVIDUAL_CITIZEN';
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        closeLabel={locale === 'en' ? 'Close' : 'إغلاق'}
-        className="flex max-h-[88dvh] flex-col gap-0 p-0 sm:max-w-xl"
-      >
-        <DialogHeader className="shrink-0 space-y-3 border-b p-6 text-start">
-          <div className="space-y-1">
-            <DialogTitle className="flex items-center gap-2">
-              <Receipt className="size-5 text-primary" aria-hidden />
-              {locale === 'en' ? 'Issue New Fee' : 'إصدار رسم جديد'}
-            </DialogTitle>
-            <DialogDescription>
-              {locale === 'en'
-                ? 'Creates a fee rule and issues claims to all matching citizens.'
-                : 'يُنشئ إشعاراً واحداً ويصدر مطالبة لكل مواطن مشمول به.'}
-            </DialogDescription>
-          </div>
+    <div className="mx-auto w-full max-w-2xl overflow-hidden rounded-lg border bg-card">
+      <div className="border-b p-4 sm:p-6">
+        <Stepper
+          index={stepIndex}
+          steps={steps}
+          complete={stepComplete}
+          onSelect={(next) => setStepIndex(Math.min(next, stepIndex))}
+        />
+      </div>
 
-          <Stepper
-            index={stepIndex}
-            steps={steps}
-            complete={stepComplete}
-            onSelect={(next) => setStepIndex(Math.min(next, stepIndex))}
-          />
-        </DialogHeader>
-
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
-          {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
-              {error}
-            </p>
-          ) : null}
+      <div className="space-y-5 p-4 sm:p-6">
+        {/* The primitive CTL-12 asked for, in place of this file's hand-rolled banner. */}
+        {error ? (
+          <Alert variant="destructive" live="alert">
+            {error}
+          </Alert>
+        ) : null}
 
           {current.id === 'details' ? (
             <>
@@ -595,42 +574,37 @@ export function IssueFeeDialog({
               ) : null}
             </div>
           ) : null}
-        </div>
+      </div>
 
-        <DialogFooter className="shrink-0 flex-row items-center justify-between gap-2 border-t p-6 sm:justify-between">
-          <Button
-            variant="ghost"
-            onClick={() => (stepIndex === 0 ? onOpenChange(false) : setStepIndex(stepIndex - 1))}
-            disabled={submitting}
-          >
-            {stepIndex === 0 ? (
-              (locale === 'en' ? 'Cancel' : 'إلغاء')
-            ) : (
-              <>
-                <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
-                {locale === 'en' ? 'Back' : 'السابق'}
-              </>
-            )}
+      <div className="flex flex-row items-center justify-between gap-2 border-t p-4 sm:p-6">
+        {stepIndex === 0 ? (
+          <Button asChild variant="ghost" disabled={submitting}>
+            <Link href={backHref}>{locale === 'en' ? 'Cancel' : 'إلغاء'}</Link>
           </Button>
+        ) : (
+          <Button variant="ghost" onClick={() => setStepIndex(stepIndex - 1)} disabled={submitting}>
+            <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
+            {locale === 'en' ? 'Back' : 'السابق'}
+          </Button>
+        )}
 
-          {isLast ? (
-            <Button disabled={!canSubmit || submitting} onClick={() => onSubmit(values)}>
-              {submitting ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-              ) : (
-                <Check className="size-4" aria-hidden />
-              )}
-              {locale === 'en' ? 'Issue Claims' : 'إصدار المطالبات'}
-            </Button>
-          ) : (
-            <Button disabled={!canAdvance} onClick={() => setStepIndex(stepIndex + 1)}>
-              {locale === 'en' ? 'Next' : 'التالي'}
-              <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        {isLast ? (
+          <Button disabled={!canSubmit || submitting} onClick={() => onSubmit(values)}>
+            {submitting ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <Check className="size-4" aria-hidden />
+            )}
+            {locale === 'en' ? 'Issue Claims' : 'إصدار المطالبات'}
+          </Button>
+        ) : (
+          <Button disabled={!canAdvance} onClick={() => setStepIndex(stepIndex + 1)}>
+            {locale === 'en' ? 'Next' : 'التالي'}
+            <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 

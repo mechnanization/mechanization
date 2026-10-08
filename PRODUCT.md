@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -51,6 +51,27 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     wallet in the same act — there is no approval queue. A mistake is cancelled with a reason, which
     returns the money and keeps both the voucher and its cancellation on the record. Only the
     manager may cancel.
+  - **عهدة الجباة**: what each collector is still carrying from his round, and «استلام الصندوق» —
+    the accountant counts the notes with him and records the handover, which moves the money from
+    his name into the cash safe. Cash a collector took at a door is never counted as the
+    municipality's until that moment. A partial handover is normal; the rest stays on his name.
+  - **ما حصّله الجابي**: beside «استلام الصندوق», the people behind the figure — every receipt he
+    wrote at a door, with the citizen who paid, what the bill was for, and how much. What the
+    accountant reads while the notes are on the desk, and what settles «قلت إني دفعت لعلي» when a
+    citizen comes back. Collected and held are two different numbers and the screen says why: the
+    difference is what he has already handed in. Each collector also carries a status read off his
+    receipts — «يجمع اليوم», «لم يخرج اليوم», «سلّم كل شيء» — and the day's count and takings.
+  - **ترقيم المستندات**: every document the municipality issues carries its book, the month it was
+    issued in and a counter that restarts each month — «INV-2610-0001» for a bill, «RCP-2610-0001»
+    for the receipt, «PV-» for an expense voucher and «TR-» for a transfer. A number read over the
+    phone says which book it came from. Documents issued before the change keep the numbers already
+    printed on them; bills raised before it stay without one, because a number minted today for a
+    document issued last year would be a fiction.
+  - **جولتي**: the collector's own screen, on his own phone. What is in his pocket, then every door
+    he collected at since his last handover — the citizen, his unit, the amount, the time and the
+    receipt number — with the وصل one tap away to print, download or send over WhatsApp. He sees his
+    own round and nothing else of the treasury: it is the answer to «كم بجيبتي؟», not a view of the
+    municipality's books.
 - **The municipality head (`VIEWER`, مشاهد فقط)** reads the dashboard, the reports, the
   register with its citizens' data, the census, the cases and the fees, and changes nothing
   (decision of 2026-10-05). Every mutating route refuses the role and its screens offer no

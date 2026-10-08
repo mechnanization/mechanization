@@ -1,11 +1,17 @@
 'use client';
 
 import { use, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import type { ColumnDef } from '@tanstack/react-table';
-import { ChevronLeft, HandCoins, Landmark, Lock, Receipt } from 'lucide-react';
-import { getLabels, TREASURY_ADMIN_ROLES } from '@mechanization/shared-schemas';
+import {
+  Banknote,
+  HandCoins,
+  Landmark,
+  Lock,
+  Smartphone,
+  Wallet,
+  type LucideIcon,
+} from 'lucide-react';
+import { getLabels, TREASURY_ADMIN_ROLES, type TreasuryAccountType } from '@mechanization/shared-schemas';
 import { getTreasuryOverview, type TreasuryAccountView, type TreasuryOverview } from '@/lib/api-client';
 import { formatMoney } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
@@ -13,40 +19,52 @@ import { hasRole } from '@/lib/staff-roles';
 import { totalInCurrency, usableRate } from '@/lib/treasury-convert';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
-import { useTableLabels } from '@/lib/use-table-labels';
 import { ActivateTreasuryDialog } from '@/components/admin/finance/activate-treasury-dialog';
+import { CollectorCustodyPanel } from '@/components/admin/finance/collector-custody-panel';
 import { TreasuryAmount } from '@/components/admin/finance/treasury-amount';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { DataTable } from '@/components/ui/data-table';
+import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 
 /**
  * «الخزينة» — where the municipality's money is and what each place holds.
  *
- * ## Why a register and not a row of balance cards
+ * ## The wallets are a strip, not a grid of cards
  *
- * The wallets were four equal cards with a big number each, which is the
- * hero-metric grid BAN-6 refuses, and it broke down three ways: the card was a
- * `div` with `onClick`, so the keyboard could not open a statement and the
- * screen reader was told nothing was there; a nested button inside that click
- * target made the same wallet two overlapping controls; and the grid has no
- * answer for the fifth wallet, which the design already expects (a bank
- * account, a petty-cash fund). A register answers all three — `DataTable` gives
- * the rows a real link each, phone cards for free, and one more wallet is one
- * more row — and it is the pattern every other list in this portal uses, which
- * is the point of UX-1.
+ * The four wallets sit side by side, two cash boxes and two Whish accounts, each
+ * with its icon and its balance. They are a `StatStrip` — one framed bar split
+ * into equal cells — rather than four free-standing cards, which is the
+ * same-size icon card grid BAN-6 refuses as page structure. The strip is one
+ * object among the page's three, which is what keeps it a summary rather than
+ * the layout.
+ *
+ * An earlier version had exactly four such cards and was replaced by a table
+ * for three faults, all of which the strip answers rather than repeats:
+ *
+ *  - the card was a `div` with `onClick`, so the keyboard could not open a
+ *    statement — each cell here is a real link (`StatItem`'s `href`);
+ *  - a nested button made one wallet two overlapping controls — there is one
+ *    stretched link per cell and nothing else in it;
+ *  - the grid had no answer for a fifth wallet — the strip takes as many
+ *    columns as there are wallets, and wraps two-up on a phone.
+ *
+ * The icon follows the wallet's *type*, never its position, so «صندوق النقد»
+ * is a banknote and «Whish» a phone-wallet whichever order they arrive in, and a
+ * bank account added later gets its own without a code change.
  *
  * Each wallet keeps its own currency and its own real balance. The converted
- * total below is one extra line at the municipality's own rate; it never
- * replaces a wallet's figure. What collectors still hold is drawn apart from
- * the safe and is in no total.
+ * total below is one extra figure at the municipality's own rate; it never
+ * replaces a wallet's. What collectors still hold is drawn apart from the safe
+ * and is in no total.
+ *
+ * The expense register is reached from the sidebar («النفقات»), not from a
+ * button here.
  *
  * Reading is `TREASURY_READ_ROLES` (the `/finance` nav row and the server both
  * enforce it); activating is the manager's alone, so the control is shown to
@@ -77,7 +95,7 @@ export default function FinancePage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <PageHeader icon={Landmark} title={t('title')} subtitle={t('subtitle')} />
+      <PageHeader icon={Landmark} title={t('title')} />
 
       {query.error ? (
         <Card>
@@ -97,27 +115,21 @@ export default function FinancePage({
       ) : (
         <>
           <section aria-labelledby="treasury-balances" className="space-y-3">
-            <h2 id="treasury-balances" className="text-base font-semibold">
-              {t('accounts.heading')}
-            </h2>
-            <WalletRegister accounts={overview.accounts} base={base} locale={locale} loading={false} />
-            <div className="flex flex-wrap gap-2">
-              <Button asChild variant="outline" size="sm">
-                <Link href={`${base}/finance/expenses`}>
-                  <Receipt className="size-4" aria-hidden />
-                  {t('accounts.openExpenses')}
-                </Link>
-              </Button>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <h2 id="treasury-balances" className="text-base font-semibold">
+                {t('accounts.heading')}
+              </h2>
+              {overview.goLiveAt ? (
+                <p className="text-xs text-muted-foreground">
+                  {t('accounts.goLive', { date: formatDate(overview.goLiveAt) })}
+                </p>
+              ) : null}
             </div>
-            {overview.goLiveAt ? (
-              <p className="text-xs text-muted-foreground">
-                {t('accounts.goLive', { date: formatDate(overview.goLiveAt) })}
-              </p>
-            ) : null}
+            <WalletStrip accounts={overview.accounts} base={base} locale={locale} />
           </section>
 
           <ConvertedTotal overview={overview} locale={locale} />
-          <HeldByCollectors held={overview.heldByCollectors} locale={locale} />
+          <CollectorCustodyPanel tenant={tenant} base={base} token={token} locale={locale} role={user?.role} />
         </>
       )}
 
@@ -134,19 +146,17 @@ export default function FinancePage({
   );
 }
 
-/** The shape the register leaves, so the page does not jump when the balances land. */
+/** The shape the strip leaves, so the page does not jump when the balances land. */
 function BalancesSkeleton(): React.JSX.Element {
   return (
     <div className="space-y-3">
       <Skeleton className="h-5 w-32" />
-      <div className="space-y-px overflow-hidden rounded-lg border bg-border">
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-4">
         {Array.from({ length: 4 }, (_, index) => (
-          <div key={index} className="flex items-center justify-between gap-4 bg-card px-4 py-3.5">
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-36" />
-              <Skeleton className="h-3 w-24" />
-            </div>
-            <Skeleton className="h-5 w-28" />
+          <div key={index} className="flex flex-col items-center gap-2.5 bg-card px-3 py-4">
+            <Skeleton className="size-10 rounded-full" />
+            <Skeleton className="h-5 w-24" />
+            <Skeleton className="h-3 w-20" />
           </div>
         ))}
       </div>
@@ -155,116 +165,71 @@ function BalancesSkeleton(): React.JSX.Element {
 }
 
 /**
- * The wallets, one row each, with the balance at the far edge and a link into
+ * Which picture a wallet gets, by what it is.
+ *
+ * Whish has no mark of its own here on purpose: its logo is a third party's
+ * trademark, and drawing it from memory would put a wrong version of somebody
+ * else's brand on a municipal screen. A phone-wallet says what it is. If the
+ * municipality supplies the official mark, it replaces `Smartphone` here.
+ */
+const WALLET_ICON: Record<TreasuryAccountType, LucideIcon> = {
+  CASH_SAFE: Banknote,
+  WHISH_ACCOUNT: Smartphone,
+  BANK_ACCOUNT: Landmark,
+  COLLECTOR_CUSTODY: HandCoins,
+  PETTY_CASH: Wallet,
+};
+
+/**
+ * The wallets, side by side: icon, balance, name — and the whole cell opens
  * the statement.
  *
- * The balance is `text-base font-semibold` rather than the card's old
- * `text-2xl font-bold`: in a column the figures read against each other, and
- * the size that made one number a headline makes four of them shout. It keeps
- * `tabular-nums` through `TreasuryAmount`, so the digits line up down the
- * column (TYP-4).
+ * The balance carries `tabular-nums` through `StatItem` (TYP-4). A negative one
+ * is a refusal the ledger should have prevented: its minus sign says so, and the
+ * colour only repeats it (COL-3).
  */
-function WalletRegister({
+function WalletStrip({
   accounts,
   base,
   locale,
-  loading,
 }: {
   accounts: TreasuryAccountView[];
   base: string;
   locale: string;
-  loading: boolean;
 }): React.JSX.Element {
   const t = useTranslations('finance.accounts');
-  const labels = getLabels(locale);
-  const tableLabels = useTableLabels({ empty: t('empty'), emptyHint: t('emptyHint') });
+
+  if (accounts.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-0">
+          <EmptyState icon={Wallet} title={t('empty')} description={t('emptyHint')} />
+        </CardContent>
+      </Card>
+    );
+  }
 
   /*
-    «الحساب الرئيسي» marks the wallet a payment of that kind is routed to. While
-    every wallet is one — the four seeded today — the badge is on every row and
-    tells the reader nothing, which is the noise UX-3 separates from density. It
-    earns its place the moment a municipality adds a second cash box, and that is
-    exactly when it appears.
+    «الرئيسي» marks the wallet a payment of that kind is routed to. While every
+    wallet is one — the four seeded today — saying so on each cell tells the
+    reader nothing (UX-3). It appears the moment a municipality adds a second
+    cash box, which is exactly when it starts to matter.
   */
   const marksPrimary = accounts.some((account) => !account.isPrimary);
 
-  const columns = useMemo<ColumnDef<TreasuryAccountView>[]>(
-    () => [
-      {
-        id: 'wallet',
-        header: t('wallet'),
-        meta: { mobile: 'primary' },
-        cell: ({ row }) => (
-          <div className="min-w-0 space-y-0.5">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate font-medium text-foreground">{row.original.name}</span>
-              {marksPrimary && row.original.isPrimary ? (
-                <Badge variant="soft-default" className="shrink-0">
-                  {t('primary')}
-                </Badge>
-              ) : null}
-            </div>
-            <p className="truncate text-xs text-muted-foreground">
-              {labels.treasuryAccountType[row.original.type]}
-              {row.original.ownerName ? ` · ${row.original.ownerName}` : ''}
-            </p>
-          </div>
-        ),
-      },
-      {
-        id: 'currency',
-        header: t('currency'),
-        cell: ({ row }) => (
-          <span dir="ltr" className="font-medium tabular-nums">
-            {row.original.currency}
-          </span>
-        ),
-      },
-      {
-        id: 'balance',
-        header: t('balance'),
-        meta: { align: 'end' },
-        cell: ({ row }) => (
-          <TreasuryAmount
-            amount={row.original.balance}
-            currency={row.original.currency}
-            locale={locale}
-            /* A negative balance is a refusal the ledger should have prevented: name it, never only colour it (COL-3). */
-            className={row.original.balance < 0 ? 'text-base font-semibold text-destructive' : 'text-base font-semibold'}
-          />
-        ),
-      },
-      {
-        id: 'open',
-        header: t('actions'),
-        enableSorting: false,
-        meta: { mobile: 'actions', align: 'end' },
-        cell: ({ row }) => (
-          <Button asChild variant="ghost" size="sm" className="max-sm:w-full">
-            <Link href={`${base}/finance/accounts/${row.original.id}`}>
-              <span className="truncate">{t('openStatement')}</span>
-              {/* Drawn pointing left for Arabic; flipped for English (RTL-3). */}
-              <ChevronLeft className="size-4 ltr:rotate-180" aria-hidden />
-            </Link>
-          </Button>
-        ),
-      },
-    ],
-    [t, labels, locale, base, marksPrimary],
-  );
-
   return (
-    <DataTable
-      columns={columns}
-      data={accounts}
-      labels={tableLabels}
-      getRowId={(account) => account.id}
-      searchable={false}
-      sortable={false}
-      paginated={false}
-      loading={loading}
-      error={null}
-    />
+    <StatStrip>
+      {accounts.map((account) => (
+        <StatItem
+          key={account.id}
+          icon={WALLET_ICON[account.type] ?? Wallet}
+          href={`${base}/finance/accounts/${account.id}`}
+          label={marksPrimary && account.isPrimary ? `${account.name} · ${t('primary')}` : account.name}
+          value={<TreasuryAmount amount={account.balance} currency={account.currency} locale={locale} />}
+          className={account.balance < 0 ? 'text-destructive' : undefined}
+        />
+      ))}
+    </StatStrip>
   );
 }
 
@@ -313,9 +278,13 @@ function SetupState({
 }
 
 /**
- * One extra line: every balance added up in the chosen currency at the
- * municipality's rate. The register above is the truth; this is a convenience,
- * and it says which rate it used and when that rate was set (FRM-5).
+ * «مجموع الأرصدة بعد التحويل» — every balance added up in the chosen currency
+ * at the municipality's rate.
+ *
+ * Laid out as a figure and its provenance: the total large at the top with the
+ * currency switch beside it, then a footer that says which rate produced it and
+ * when that rate was set (FRM-5). The wallets above are the truth; this is a
+ * convenience, and the footer is what keeps it honest about that.
  */
 function ConvertedTotal({ overview, locale }: { overview: TreasuryOverview; locale: string }): React.JSX.Element {
   const t = useTranslations('finance.view');
@@ -344,91 +313,72 @@ function ConvertedTotal({ overview, locale }: { overview: TreasuryOverview; loca
   );
 
   return (
-    <Card>
-      <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
-        <CardTitle className="text-base">{t('totalLabel')}</CardTitle>
-        <SegmentedControl
-          aria-label={t('aria')}
-          size="field"
-          fullWidth={false}
-          value={target}
-          onChange={setChosen}
-          options={options}
-          disabled={!pair}
-        />
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {pair && converted ? (
-          <>
-            <p className="text-2xl font-bold">
-              <TreasuryAmount amount={converted.total} currency={converted.currency} locale={locale} />
-            </p>
-            {converted.skipped.length > 0 ? (
-              <Alert variant="warning" live="status" title={t('skippedTitle')}>
-                {t('skipped', { currencies: converted.skipped.join(', ') })}
-              </Alert>
-            ) : null}
-            <SummaryList>
-              <SummaryRow label={t('rateLabel')}>
-                {t('rateUsed', {
-                  unit: formatMoney(1, pair.secondary, locale),
-                  rate: formatMoney(pair.exchangeRate, pair.base, locale),
-                })}
-              </SummaryRow>
-              {rate.exchangeRateUpdatedAt ? (
-                <SummaryRow label={t('rateUpdatedLabel')}>{formatDate(rate.exchangeRateUpdatedAt)}</SummaryRow>
+    <section aria-labelledby="treasury-total">
+      <Card className="overflow-hidden">
+        <CardContent className="p-0">
+          <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 space-y-2">
+              <h2 id="treasury-total" className="text-sm font-medium text-muted-foreground">
+                {t('totalLabel')}
+              </h2>
+              {pair && converted ? (
+                <p className="text-2xl font-bold leading-none tracking-tight sm:text-3xl">
+                  <TreasuryAmount amount={converted.total} currency={converted.currency} locale={locale} />
+                </p>
               ) : null}
-            </SummaryList>
-            <p className="text-xs text-muted-foreground">{t('totalHint')}</p>
-          </>
-        ) : (
-          <Alert variant="warning" title={t('noRateTitle')}>
-            {t('noRateBody')}
-          </Alert>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-/** What collectors have taken in and not handed over. Drawn apart: not the safe, and not in the total. */
-function HeldByCollectors({
-  held,
-  locale,
-}: {
-  held: TreasuryOverview['heldByCollectors'];
-  locale: string;
-}): React.JSX.Element {
-  const t = useTranslations('finance.held');
-  return (
-    <section aria-labelledby="treasury-held" className="rounded-lg border border-dashed bg-muted/20 p-4">
-      <div className="flex items-start gap-3">
-        <span
-          aria-hidden
-          className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"
-        >
-          <HandCoins className="size-5" />
-        </span>
-        <div className="min-w-0 flex-1 space-y-2">
-          <div>
-            <h2 id="treasury-held" className="text-base font-semibold">
-              {t('title')}
-            </h2>
-            <p className="text-xs text-muted-foreground">{t('hint')}</p>
+            </div>
+            <SegmentedControl
+              aria-label={t('aria')}
+              size="field"
+              fullWidth={false}
+              value={target}
+              onChange={setChosen}
+              options={options}
+              disabled={!pair}
+            />
           </div>
-          {held.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t('none')}</p>
+
+          {pair && converted ? (
+            <>
+              {converted.skipped.length > 0 ? (
+                <div className="px-5 pb-4">
+                  <Alert variant="warning" live="status" title={t('skippedTitle')}>
+                    {t('skipped', { currencies: converted.skipped.join(', ') })}
+                  </Alert>
+                </div>
+              ) : null}
+
+              {/* The provenance: which rate, set when — the two facts that make the figure checkable. */}
+              <dl className="grid grid-cols-1 gap-px border-t bg-border sm:grid-cols-2">
+                <div className="bg-muted/30 px-5 py-3">
+                  <dt className="text-xs text-muted-foreground">{t('rateLabel')}</dt>
+                  <dd className="mt-0.5 text-sm font-semibold tabular-nums">
+                    {t('rateUsed', {
+                      unit: formatMoney(1, pair.secondary, locale),
+                      rate: formatMoney(pair.exchangeRate, pair.base, locale),
+                    })}
+                  </dd>
+                </div>
+                {rate.exchangeRateUpdatedAt ? (
+                  <div className="bg-muted/30 px-5 py-3">
+                    <dt className="text-xs text-muted-foreground">{t('rateUpdatedLabel')}</dt>
+                    <dd className="mt-0.5 text-sm font-semibold tabular-nums">
+                      {formatDate(rate.exchangeRateUpdatedAt)}
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+              <p className="border-t px-5 py-3 text-xs text-muted-foreground">{t('totalHint')}</p>
+            </>
           ) : (
-            <ul className="flex flex-wrap gap-x-6 gap-y-1">
-              {held.map((entry) => (
-                <li key={entry.currency} className="text-lg font-semibold">
-                  <TreasuryAmount amount={entry.amount} currency={entry.currency} locale={locale} />
-                </li>
-              ))}
-            </ul>
+            <div className="px-5 pb-5">
+              <Alert variant="warning" title={t('noRateTitle')}>
+                {t('noRateBody')}
+              </Alert>
+            </div>
           )}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </section>
   );
 }

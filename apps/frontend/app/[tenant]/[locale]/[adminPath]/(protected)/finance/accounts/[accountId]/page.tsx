@@ -3,7 +3,6 @@
 import { use } from 'react';
 import { useTranslations } from 'next-intl';
 import { Landmark } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
 import { getTreasuryStatement } from '@/lib/api-client';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
@@ -34,7 +33,6 @@ export default function TreasuryAccountStatementPage({
   const { tenant, locale, adminPath, accountId } = use(params);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const t = useTranslations('finance.statement');
-  const labels = getLabels(locale);
   const { token } = useStaffSession(tenant, base);
 
   const query = useStaffQuery({
@@ -55,9 +53,6 @@ export default function TreasuryAccountStatementPage({
       <PageHeader
         icon={Landmark}
         title={account ? t('title', { name: account.name }) : <Skeleton className="h-7 w-56" />}
-        subtitle={
-          account ? t('description', { type: labels.treasuryAccountType[account.type], currency: account.currency }) : undefined
-        }
         actions={
           account ? (
             <div className="text-end">

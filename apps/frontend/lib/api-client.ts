@@ -3254,6 +3254,14 @@ export interface CitizenProfilePayment {
   /** `OVERDUE` is derived server-side from the due date, never stored. */
   paymentStatus: string;
   paymentMethod: string | null;
+  /**
+   * «INV-2610-0001» — the number on the bill itself (migration 0079).
+   *
+   * Null on every bill raised before that migration, which is why the receipt
+   * falls back to a reference derived from the id: those documents were issued
+   * without a number and inventing one now would be a lie on a printed page.
+   */
+  invoiceNumber: string | null;
   whishTransactionRef: string | null;
   paidAt: string | null;
   reviewNote: string | null;
@@ -5796,6 +5804,13 @@ import type {
   RecordExpenseResult,
   UpdateExpenseCategoryInput,
   VoidExpenseInput,
+  CollectorCollectionsResult,
+  CollectorCustodyView,
+  CollectorRoundView,
+  ReceiveCustodyInput,
+  ReceiveCustodyResult,
+  TransferView,
+  VoidTransferInput,
 } from '@mechanization/shared-schemas';
 
 export type {
@@ -5815,6 +5830,16 @@ export type {
   RecordExpenseInput,
   RecordExpenseResult,
   VoidExpenseInput,
+  CollectorCollectionRow,
+  CollectorCollectionsResult,
+  CollectorCustodyView,
+  CollectorRoundCurrency,
+  CollectorRoundRow,
+  CollectorRoundView,
+  ReceiveCustodyInput,
+  ReceiveCustodyResult,
+  TransferView,
+  VoidTransferInput,
 } from '@mechanization/shared-schemas';
 
 /** Every wallet with its balance, whether the treasury is live, and the rate to convert with. `GET /treasury`. */
@@ -5855,6 +5880,85 @@ export function activateTreasury(
     method: 'POST',
     token,
     body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «ما بعهدة الجباة» — what each collector is still carrying. `GET /treasury/transfers/custody`. */
+export function getCollectorCustody(tenant: string, token: string, _args?: undefined, signal?: AbortSignal) {
+  return apiFetch<CollectorCustodyView[]>(tenant, '/treasury/transfers/custody', { token, signal });
+}
+
+/**
+ * «من حصّل الجابي» — the receipts behind one collector's custody balance.
+ * `GET /treasury/transfers/custody/:collectorId/collections`.
+ */
+export function getCollectorCollections(
+  tenant: string,
+  token: string,
+  args: { collectorId: string; limit?: number },
+  signal?: AbortSignal,
+) {
+  const suffix = args.limit === undefined ? '' : `?limit=${args.limit}`;
+  return apiFetch<CollectorCollectionsResult>(
+    tenant,
+    `/treasury/transfers/custody/${encodeURIComponent(args.collectorId)}/collections${suffix}`,
+    { token, signal },
+  );
+}
+
+/**
+ * «جولتي» — the signed-in collector's own round: what is in his pocket, and
+ * which doors it came from. `GET /treasury/transfers/custody/mine`.
+ *
+ * No id in the path on purpose — the server scopes it by the session, so there
+ * is nothing here for a client to tamper with.
+ */
+export function getMyRound(tenant: string, token: string, _args?: undefined, signal?: AbortSignal) {
+  return apiFetch<CollectorRoundView>(tenant, '/treasury/transfers/custody/mine', { token, signal });
+}
+
+/** The transfers recorded, newest first. `GET /treasury/transfers`. */
+export function getTransfers(
+  tenant: string,
+  token: string,
+  args: { limit?: number } = {},
+  signal?: AbortSignal,
+) {
+  const suffix = args.limit === undefined ? '' : `?limit=${args.limit}`;
+  return apiFetch<TransferView[]>(tenant, `/treasury/transfers${suffix}`, { token, signal });
+}
+
+/**
+ * «استلام صندوق الجابي» — the counted cash leaves custody and reaches the safe.
+ * ACCOUNTANT or SUPER_ADMIN. `POST /treasury/transfers/custody/receive`.
+ */
+export function receiveCollectorCustody(
+  tenant: string,
+  token: string,
+  args: ReceiveCustodyInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ReceiveCustodyResult>(tenant, '/treasury/transfers/custody/receive', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** Cancels a transfer and puts both legs back. SUPER_ADMIN only. `POST /treasury/transfers/:id/void`. */
+export function voidTransfer(
+  tenant: string,
+  token: string,
+  args: { id: string } & VoidTransferInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<TransferView>(tenant, `/treasury/transfers/${encodeURIComponent(id)}/void`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
     signal,
   });
 }

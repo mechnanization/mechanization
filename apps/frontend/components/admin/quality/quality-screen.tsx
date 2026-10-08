@@ -29,7 +29,6 @@ export function QualityScreen({
   adminPath,
   icon,
   title,
-  subtitle,
   children,
 }: {
   tenant: string;
@@ -37,7 +36,6 @@ export function QualityScreen({
   adminPath: string;
   icon: LucideIcon;
   title: string;
-  subtitle: string;
   /**
    * `role` rides along with the token because who is asking decides what a
    * screen may *offer*, not only what it may read. «ملاحظات الجودة» is open to
@@ -87,7 +85,7 @@ export function QualityScreen({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <PageHeader icon={icon} title={title} subtitle={subtitle} />
+      <PageHeader icon={icon} title={title} />
       {children({ token, base, locale, role: user.role })}
     </div>
   );

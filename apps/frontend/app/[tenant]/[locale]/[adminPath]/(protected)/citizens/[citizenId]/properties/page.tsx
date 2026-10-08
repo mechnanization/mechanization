@@ -205,16 +205,6 @@ export default function CitizenPropertiesPage({
           <PageHeader
             icon={Building2}
             title={citizen.fullName}
-            subtitle={
-              <span className="flex flex-wrap items-center gap-2">
-                <span>{en ? 'Properties & units' : 'العقارات والوحدات'}</span>
-                {citizen.referenceNumber ? (
-                  <Badge variant="soft-muted" className="font-mono">
-                    <bdi dir="ltr">{citizen.referenceNumber}</bdi>
-                  </Badge>
-                ) : null}
-              </span>
-            }
             actions={
               <Link href={profileHref} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
                 <IdCard className="size-4" aria-hidden />

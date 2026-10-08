@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -191,7 +191,8 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - **Audit tiers.** Tier 1 MUST write its audit row inside the transaction of the change, so the change
   rolls back if the row cannot be written: payments (declaration, confirmation, refusal, counter and
   Whish settlement), payment reversals, activating the treasury (`TREASURY_ACTIVATED`: the opening
-  balances and the go-live stamp, one transaction), recording and cancelling an expense, corrections, ownership changes (ending an ownership, owner links,
+  balances and the go-live stamp, one transaction), recording and cancelling an expense, receiving a
+  collector's custody (`CUSTODY_RECEIVED`) and cancelling a transfer, corrections, ownership changes (ending an ownership, owner links,
   merges), ending a tenancy, review decisions (approve, return, quality check) and citizen status changes
   (archive and restore). Everything else is Tier 2: an event
   after the commit, whose failed write is logged and does not undo the change. How:
@@ -219,6 +220,26 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   in-flight ref and an idempotency key the server honours, and the outflow goes through the same
   locked, never-negative ledger post as everything else. `payee` is free text that may name a
   citizen, so the audit row carries the voucher number and the figures, never the name.
+- **«من حصّل الجابي»** (`GET /treasury/transfers/custody/:collectorId/collections`) names citizens
+  and carries their phone and sector, so it stays on the finance *read* roles. That is deliberate and
+  it widens nobody's sight: the register itself (`EVERY_STAFF_ROLE`) already shows every staff role
+  the same name and number, and treasury-read is a strict subset of it. A relative's number is
+  labelled as a relative's, never passed off as the citizen's own. What the row does **not** carry is
+  a رقم مرجعي or a national id — those are sign-in credentials, not contact details. The row's exact
+  key set is pinned by an integration test, so widening it again stays a decision somebody makes on
+  purpose rather than a field that drifts onto a screen.
+- **«جولتي»** (`GET /treasury/transfers/custody/mine`) is the only treasury route a collector may
+  call, and the only one on `WORKING_STAFF_ROLES` rather than a `TREASURY_*` list. It is safe
+  because it is scoped by `user.sub` **in the query** rather than checked afterwards: there is no id
+  in the path to tamper with, so it can only ever answer for the person asking. A new route that
+  takes a `collectorId` must go back on `TREASURY_READ_ROLES` — `custody/:collectorId/collections`
+  does. Granting the collector `TREASURY_READ_ROLES` instead would have handed him the
+  municipality's whole ledger to answer a question about his own pocket.
+- **Collector custody.** A payment taken at a door credits that collector's own custody wallet, not
+  the safe: until someone counts the notes and receives them, the municipality does not have the
+  money and its books must not say otherwise. The handover is a transfer, recorded by a different
+  person from the one who collected, and it cannot exceed what the collector holds. The audit row
+  names him by id, never by name.
 - A money write MUST be safe against double submission on the client (an in-flight guard) and on the
   server (a constraint or idempotent write).
 

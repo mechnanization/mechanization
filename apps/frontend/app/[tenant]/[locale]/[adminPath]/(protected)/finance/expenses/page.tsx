@@ -206,7 +206,6 @@ export default function ExpensesPage({
       <PageHeader
         icon={Receipt}
         title={t('title')}
-        subtitle={t('subtitle')}
         actions={
           canRecord && overview.data?.active ? (
             <Button asChild>

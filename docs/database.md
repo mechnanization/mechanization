@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `chore/migration-0073-0074` (on `develop@4512abf`), 2026-10-06.
+Last verified against the code: `chore/migration-0073-0074` (on `develop@4512abf`), 2026-10-07.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -47,6 +47,7 @@ every municipality ([security.md](security.md)).
 | Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions`, `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` | `FeesService`, `PaymentLedgerService`, `CorrectionBillsService`, `StaffService` (payouts) |
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
+| Transfers (0078) | `treasury_transfers` | `TransfersService` (the collector handover; a Whish cash-out, a bank deposit and an exchange share the table and come later) |
 | Expenses (0074) | `expense_categories`, `expense_vouchers` | `ExpensesService` |
 | Treasury (0073) | `treasury_accounts`, `treasury_entries`, and `system_settings.treasuryGoLiveAt` | `TreasuryService` (activation, reads), `TreasuryLedgerService` (entries; called from `PaymentLedgerService` inside its transaction) |
 | Ledger | `_tenant_migrations` (no Prisma model) | `migrateTenantSchema` |
@@ -431,14 +432,15 @@ reads staging's history from `.env.staging` and nothing else, and
 
 ### Numbering
 
-- The latest tenant migrations are `0073_treasury_ledger` and `0074_expense_vouchers`, added by
-  this branch. `develop` and `main` both end at `0072_users_no_phone_rules`, so `0067`–`0072`
+- The latest tenant migrations are `0073_treasury_ledger`, `0074_expense_vouchers` and
+  `0078_treasury_transfers`, added by this branch. 0078 is not 0075: `chore/migration-0075-0077`
+  holds 0075–0077, which is the second time a number was taken mid-flight on this branch. `develop` and `main` both end at `0072_users_no_phone_rules`, so `0067`–`0072`
   have reached production and these two are the only ones outstanding.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
   `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of
   this check (2026-10-06, against `origin/main`, `origin/develop` and every
-  unmerged remote branch) the next free number is `0075`.
+  unmerged remote branch) the next free number is `0079`.
 - The treasury migration was first written as `0071` and renumbered to `0073`:
   `0071_damage_habitable` and `0072_users_no_phone_rules` landed on `develop`
   while it was in progress. A branch cut before a release is a branch whose
@@ -586,6 +588,34 @@ and goes through contract.
   `_prisma_migrations` holds the registry's history. **Unverified:** expected
   to report drift and offer to reset `public`; reasoned from the code, not run.
 - `pnpm db:generate` after changing `schema.prisma`.
+
+### Document numbering (migration 0079)
+
+Four books — invoices, receipts, expense vouchers and transfers — share one
+scheme: «INV-2610-0001» is the book, the year and month it was issued in, and a
+counter that **restarts at 0001 on the first of each month**.
+
+The counter is a row in `document_counters` keyed by `(kind, period)`, not a
+Postgres sequence, and the reason is the reset: `nextval` only ever climbs, and
+anything that resets it on the first races whatever is drawing from it. One
+atomic `INSERT … ON CONFLICT DO UPDATE … RETURNING` both starts a month and
+advances it, and hands back the block it reserved.
+
+- **Draw through `allocateDocumentNumbers`** (`application/common/document-number.ts`),
+  never by hand, and always with the caller's `tx`: the number and the document
+  it goes on must commit or roll back together.
+- **It serialises issuance within a month.** The counter row stays locked until
+  the caller commits. At a municipality's volume that is nothing; the
+  alternative is two residents holding the same receipt number.
+- **It gaps less than a sequence did** — a sequence keeps its advance through a
+  rollback and this does not — but it is still not a gapless book, and nothing
+  may be built on the assumption that it is.
+- **The old sequences stay.** `payment_receipt_seq`, `expense_voucher_seq` and
+  `treasury_transfer_seq` are simply no longer drawn from. Dropping them is
+  destructive DDL for its own later release.
+- **Two shapes coexist.** Documents issued before 0079 keep «RCP-000014», and
+  bills raised before it stay unnumbered (`invoiceNumber` is nullable). Nothing
+  in the code parses or orders by either shape; `isDocumentNumber` accepts both.
 
 ### Test a migration on a throwaway Postgres 17
 

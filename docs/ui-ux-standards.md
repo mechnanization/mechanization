@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -106,7 +106,7 @@ to, the primitive gets a prop instead.
 
 | ID | Need | Use | Never |
 |---|---|---|---|
-| PRIM-1 | Page heading | `PageHeader` (icon, title, subtitle, actions) | A bespoke `<header>` with its own tile and sizes |
+| PRIM-1 | Page heading | `PageHeader` (icon, title, actions). **No subtitle** — removed from every page on 2026-10-08 and from the component. Something the reader needs goes in the title (a cash screen's title names the bill and the payer) or in the page body, never in a line under the heading | A bespoke `<header>` with its own tile and sizes; a description line under the title |
 | PRIM-2 | Back navigation | `BackLink` with a real `fallbackHref` | A fixed link to the index |
 | PRIM-3 | A list or register | `DataTable`. Server paging: `manualPagination manualFiltering sortable={false}`. Shape phone cards with `meta.mobile` | A hand-rolled `<table>`, pager, search or empty row |
 | PRIM-4 | Pagination outside a table | `Pager` (`components/ui/pager.tsx`): strings as props, a `<nav aria-label>` landmark, the position read as one phrase, scroll-to-top through `scrollTarget`, like DataTable's footer | A page-local pager or `‹ ›` text buttons |
@@ -125,10 +125,10 @@ to, the primitive gets a prop instead.
 | PRIM-17 | Any other modal | `Dialog`, always with a `closeLabel` in the current locale | `Sheet` for new work: it lacks a focus trap. Fix Sheet before adding users (§17.1) |
 | PRIM-18 | Feedback after a write | `useToast()` | `alert()`, a page-local banner that never clears |
 | PRIM-19 | Icon-only control | `Button size="icon*"` + `aria-label` + `ActionTooltip` | A bare `<button>` with only an icon |
-| PRIM-20 | KPI or stat row | `StatStrip` with `StatItem` (`components/ui/stat-strip.tsx`), up to five figures. A PR that touches a page with a local stat component replaces it | An eleventh local copy (§17.1 lists the ten) |
+| PRIM-20 | KPI or stat row | `StatStrip` with `StatItem` (`components/ui/stat-strip.tsx`), up to five figures. `StatItem` takes an optional `icon` (decorative, in a tinted circle above the number) and `href` (the whole cell becomes one stretched link named by its label — the treasury's wallets use both). A PR that touches a page with a local stat component replaces it | An eleventh local copy (§17.1 lists the ten) |
 | PRIM-23 | DataTable strings | `useTableLabels(overrides)` (`lib/use-table-labels.ts`, reads `messages.table`) | A page-local `getTableLabels` |
 | PRIM-24 | A filter control above a table | `FilterSelect`, `FilterInput` (`components/ui/filter-controls.tsx`) | A hand-styled select or search box |
-| PRIM-25 | Typing a money amount | `CurrencyInput` | A local `formatLbp(value: string)` that shadows `lib/currency` |
+| PRIM-25 | Typing a money amount | `CurrencyInput`. The unit gets a segment of its own beside the digits, never laid over them: an `dir="ltr"` field on an RTL page reserves its padding on one side while `end-0` pins the unit to the other, and «ل.ل» lands on the «0». `inputClassName` styles the digits, for the cash counter alone | A local `formatLbp(value: string)` that shadows `lib/currency`; an input with the unit absolutely positioned over it |
 | PRIM-26 | A menu of actions | `DropdownMenu` and its parts | A hand-rolled menu panel |
 | PRIM-27 | A yes/no field; a choice drawn as a card | `Checkbox`; `ChoiceCard` (`components/ui/field.tsx`) | A native checkbox or radio (CTL-3, CTL-4) |
 
@@ -670,7 +670,7 @@ Code-pattern debt outside the UI rules lives in
   (`citizens/[citizenId]/page.tsx`); `Stat` in
   `inspector/profile/[staffId]/payouts/page.tsx`, `inspector-earnings-roster.tsx`
   and `inspector-profile-detail.tsx`; `StatusTile` (`settings/settings-ui.tsx`);
-  `StatCard` (`(citizen)/my-file`). `StatStrip` has 5 uses in 4 files.
+  `StatCard` (`(citizen)/my-file`). `StatStrip` has 9 uses in 8 files.
 - **Hand-rolled pagers, 3** (PRIM-4): `AuditTrailPage` (`audit/page.tsx`),
   `CorrectionBillsPage` (`fees/corrections/page.tsx`), `AuditDaily`
   (`components/admin/audit-daily.tsx`). `Pager` has 1 user.
@@ -700,7 +700,7 @@ Code-pattern debt outside the UI rules lives in
   (`components/admin/cases/case-table-labels.ts`). `useTableLabels` has 6 users.
 - **Native date and time inputs, 14 in 7 files** (CTL-1, CTL-2): 13
   `type="date"` (`building-unit-forms` 8, `charge-citizen-dialog`,
-  `end-ownership-dialog`, `end-tenancy-dialog`, `issue-fee-dialog`,
+  `end-ownership-dialog`, `end-tenancy-dialog`, `issue-fee-form`,
   `residence-change-dialog`) and 1 `type="time"` in
   `settings/backup-section.tsx`, which is not rendered.
 - **Native radios, 6 in 4 files** (CTL-4): `after-tenancy-question` (2),
@@ -872,10 +872,13 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   (2026-10-06).
 - **Money formatting** (PRIM-11, PRIM-25): `inspector-payout-dialog.tsx` writes
   `$${x.toFixed(2)}` 5 times; `charge-citizen-dialog.tsx` and
-  `issue-fee-dialog.tsx` each define a local `formatLbp(value: string)`;
+  `issue-fee-form.tsx` each define a local `formatLbp(value: string)`;
   `components/citizen/pay-dialog.tsx` builds «ل.ل» by hand in a local `lbp` (PRIM-10).
-- **Double submit** (STA-4): the settle page, `fees/page.tsx` with
-  `IssueFeeDialog`, and the payouts page with `InspectorPayoutDialog` guard with
+  The settle page's own hand-rolled field — an input with «ل.ل» absolutely placed
+  over it — was replaced by `CurrencyInput` on 2026-10-07, which is what fixed
+  the unit landing on the digits. Check the three above for the same shape.
+- **Double submit** (STA-4): the settle page, the fee wizard (`fees/new`, whose
+  form is `issue-fee-form.tsx`), and the payouts page with `InspectorPayoutDialog` guard with
   `busy` state only, with no in-flight ref.
 
 ### 17.7 Stale comments touching the UI (BAN-15)

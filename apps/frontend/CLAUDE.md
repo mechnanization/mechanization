@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -21,10 +21,18 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
     dashboard account audit map zones settings staff payments
     finance (الخزينة) · finance/accounts/[accountId] (كشف حساب)
     finance/expenses (النفقات) · finance/expenses/new (تسجيل نفقة)
-    citizens/** buildings/** cases/** fees/** inspector/profile/** quality/**
+    finance/collectors/[collectorId] (ما حصّله الجابي)
+    my-round (جولتي — the collector's own pocket, phone-first, WORKING_STAFF_ROLES)
+
+`CitizenProfilePayment.invoiceNumber` carries «INV-2610-0001» and is what
+`payment-receipt.tsx` prints as the bill's reference. It is null on every bill
+raised before migration 0079, and those keep printing the reference derived from
+the id — `billReference` is where that choice lives.
+    citizens/** buildings/** cases/** fees/** (incl. fees/new — إصدار رسم جديد)
+    inspector/profile/** quality/**
 ```
 
-All 53 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
+All 54 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
 `components/ui` is the kit (33 files, `alert.tsx` added 2026-10-06); `components/admin` holds staff screens (feature
 folders `cases/`, `damage/`, `finance/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
 form pieces used by staff screens, and only `pay-dialog` serves the portal. `lib` holds the
@@ -192,7 +200,7 @@ Model: `app/[tenant]/[locale]/[adminPath]/(protected)/citizens/review/page.tsx` 
 5. **Read**: `useStaffSession`, then `useStaffQuery`; list state from `useUrlPagination`,
    `useTabSearch`, `useUrlState`.
 6. **Layout**: root `w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8`, `PageHeader` (`BackLink`
-   first on a detail page), `Card` > `CardContent className="p-0"` > borderless `DataTable`
+   first on a detail page; a title and no subtitle — the prop no longer exists, PRIM-1), `Card` > `CardContent className="p-0"` > borderless `DataTable`
    (`manualPagination manualFiltering sortable={false}`, `loading`, `error`, `onRetry`,
    labels from `useTableLabels`) (LAY-1, BAN-4, PRIM-3).
 7. **Panels and cells**: `LoadingState`, `EmptyState`, `ErrorState`; `CellTag`, `Money`,

@@ -3,6 +3,7 @@ import { municipalToday, type PaymentMethod } from '@mechanization/shared-schema
 import type { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
+import { allocateDocumentNumber } from '../../common/document-number';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
@@ -425,24 +426,19 @@ export class PaymentLedgerService {
     changeGiven = 0,
   ): Promise<SettledTotals> {
     /*
-      The sequence names its schema too — see `tenant-schema-ref.ts`.
+      «RCP-2610-0001» — the book, the month it was issued in, and a counter that
+      restarts on the first (migration 0079). Drawn from `document_counters`
+      rather than the old `payment_receipt_seq`, which a monthly reset is
+      impossible with: `nextval` only climbs.
 
-      `payment_receipt_seq` is created once per tenant schema (migration 0017),
-      so a bare `nextval('payment_receipt_seq')` resolves through the pooled
-      connection's `search_path` exactly as an unqualified table would. The
-      failure is worse than a missing table, though: this runs *inside* the
-      caller's transaction, behind the invoice's `FOR UPDATE`, so a drifted
-      connection either 42P01s a payment that is already half-written, or draws
-      from **another municipality's** sequence — and receipt numbers are printed
-      on paper handed to a resident.
-
-      `nextval` takes text cast to `regclass`, which accepts a quoted qualified
-      name, so the prefix goes inside the literal.
+      `tx`, not `this.db`: the number and the receipt have to commit or roll
+      back together. This runs inside the caller's transaction, behind the
+      invoice's `FOR UPDATE`, and `this.S` names the schema for the reason it
+      always has — a drifted pooled connection would otherwise draw from
+      **another municipality's** counter, and receipt numbers are printed on
+      paper handed to a resident.
     */
-    const [{ nextval }] = await tx.$queryRaw<Array<{ nextval: bigint }>>`
-      SELECT nextval('${this.S}payment_receipt_seq') AS nextval
-    `;
-    const receiptNumber = `RCP-${String(nextval).padStart(6, '0')}`;
+    const receiptNumber = await allocateDocumentNumber(tx, this.S, 'RECEIPT');
 
     const created = await tx.paymentTransaction.create({
       data: {

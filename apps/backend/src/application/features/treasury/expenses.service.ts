@@ -12,6 +12,7 @@ import {
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { allocateDocumentNumber } from '../../common/document-number';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
@@ -355,10 +356,8 @@ export class ExpensesService {
 
       const occurredAt = expenseOccurredAt(verdict.paidOn, today);
 
-      const [{ nextval }] = await tx.$queryRaw<Array<{ nextval: bigint }>>`
-        SELECT nextval('${this.S}expense_voucher_seq') AS nextval
-      `;
-      const voucherNumber = `PV-${String(nextval).padStart(6, '0')}`;
+      // «PV-2610-0001». See `allocateDocumentNumbers` and migration 0079.
+      const voucherNumber = await allocateDocumentNumber(tx, this.S, 'VOUCHER');
 
       const voucher = await tx.expenseVoucher.create({
         data: {

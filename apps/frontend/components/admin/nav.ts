@@ -21,6 +21,7 @@ import {
   UserPlus,
   Users,
   UsersRound,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -165,6 +166,27 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: BadgeDollarSign,
         roles: WORKING_STAFF_ROLES,
         keywords: ['أرباح', 'عمولة', 'مفتش', 'مسح', 'عقارات', 'inspector', 'earnings'],
+      },
+      /*
+        Self-service too, and for the same reason: `transfers.myRound` answers
+        for whoever is asking and there is no id in the path to point elsewhere.
+        A man carrying the municipality's cash is owed the answer to «كم
+        بجيبتي؟» without being given sight of the books — which is why this is
+        the one treasury screen outside `TREASURY_READ_ROLES`.
+
+        `WORKING_STAFF_ROLES` rather than `COLLECTOR`, because nothing
+        restricts who may be named on a payment: in practice it is the field
+        inspectors who carry the cash. Staff holding no custody get an empty
+        round, which is the honest answer to the question rather than a locked
+        door.
+      */
+      {
+        path: '/my-round',
+        label: 'جولتي',
+        labelEn: 'My round',
+        icon: Wallet,
+        roles: WORKING_STAFF_ROLES,
+        keywords: ['جولة', 'عهدة', 'جابي', 'تحصيل', 'نقدي', 'round', 'custody', 'collector'],
       },
     ],
   },

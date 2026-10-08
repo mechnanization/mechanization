@@ -164,7 +164,6 @@
   },
   "payments": {
     "title": "Transactions Log",
-    "subtitle": "Every payment in the municipality — who paid, by which method, and when",
     "cardTitle": "Transactions Log",
     "filterAria": "Filter by payment method",
     "methodAll": "All",
@@ -351,7 +350,12 @@
     "EXPENSE_DATE_IN_FUTURE": "An expense cannot be dated after today.",
     "EXPENSE_DATE_BEFORE_GO_LIVE": "An expense cannot be dated before the treasury went live ({date}). That money is already counted in the opening balance.",
     "EXPENSE_BACKDATE_REASON_REQUIRED": "Give the reason for dating the expense earlier than today.",
-    "EXPENSE_CATEGORY_CODE_TAKEN": "Another category is already charged to that budget chapter and article."
+    "EXPENSE_CATEGORY_CODE_TAKEN": "Another category is already charged to that budget chapter and article.",
+    "TRANSFER_NOT_FOUND": "The transfer voucher was not found.",
+    "TRANSFER_ALREADY_VOID": "This transfer has already been cancelled.",
+    "CUSTODY_ACCOUNT_NOT_FOUND": "The collector custody account was not found.",
+    "CUSTODY_EXCEEDS_HELD": "More than the collector holds: {held, number} in custody, {amount, number} received.",
+    "COLLECTOR_NOT_FOUND": "That collector was not found."
   },
   "damage": {
     "level": "Damage level",
@@ -405,8 +409,6 @@
   },
   "unsurveyed": {
     "title": "Unsurveyed units",
-    "subtitleAll": "Units in every building with no survey answer and nobody registered in them yet — building by building, top floor down.",
-    "subtitleMine": "Units in the buildings you added with no survey answer and nobody registered in them yet — building by building, top floor down.",
     "waiting": "Waiting for a visit",
     "loadError": "Could not load the unsurveyed units.",
     "searchPlaceholder": "Search by building code, name, parcel or unit",
@@ -435,8 +437,6 @@
   },
   "reinspections": {
     "title": "Awaiting re-inspection",
-    "subtitleAll": "Units and buildings read not habitable, waiting for the visit after repair — their occupancy fee is held until then. Overdue first.",
-    "subtitleMine": "What you read not habitable, waiting for the visit after repair — its occupancy fee is held until then. Overdue first.",
     "waiting": "Waiting for re-inspection",
     "loadError": "Could not load the re-inspection list.",
     "searchPlaceholder": "Search by building code, name, parcel or unit",
@@ -462,7 +462,6 @@
   },
   "reviewQueue": {
     "title": "Requires review",
-    "subtitle": "{scope, select, all {{review, select, yes {Records every officer filed with fields that could not be established, oldest first. Review a file to complete it.} other {Records every officer filed with fields that could not be established, oldest first.}}} other {{review, select, yes {Records you filed with fields that could not be established, oldest first. Review a file to complete it.} other {Records you filed with fields that could not be established, oldest first.}}}}",
     "wholeRegister": "Whole register",
     "waiting": "Waiting for review",
     "loadError": "Could not load the review queue.",
@@ -602,6 +601,18 @@
     "issue": {
       "uninhabitable": "Uninhabitable units: {count} — not charged this fee. Charging resumes at the first billing run after a re-inspection reads a unit habitable: for the current period if the person has no bill for it yet, otherwise from the next period.",
       "uninhabitableOnce": "Uninhabitable units: {count} — not charged this fee. It is a one-off fee, so nothing charges them later by itself; to collect it once a re-inspection reads a unit habitable, issue an individual charge."
+    },
+    "issuePage": {
+      "back": "Back to fees and payments",
+      "title": "Issue a new fee",
+      "loadError": "Could not load the fee data.",
+      "issued": "The fee was issued and charged to {count, number} citizens.",
+      "unassessable": "{count, number} records were not assessed because the census is incomplete: ",
+      "exempted": "{count, number} units were not charged, under the bearer rule for this fee.",
+      "held": "{count, number} units are held for review (a conflict in the unit status) — no occupancy fee was charged on them this period. Once settled they are charged from the next period; to recover this one, issue an individual fee. They are listed under «جودة البيانات».",
+      "failed": "The fee could not be issued.",
+      "notAllowedTitle": "You may not issue fees",
+      "notAllowedBody": "Issuing fees is limited to certain roles. You can read the register without issuing."
     }
   },
   "parcelDrawer": {
@@ -808,7 +819,9 @@
     "EXPENSE_RECORDED": "Expense recorded",
     "EXPENSE_VOIDED": "Expense voucher cancelled",
     "EXPENSE_CATEGORY_CREATED": "Expense category added",
-    "EXPENSE_CATEGORY_UPDATED": "Expense category updated"
+    "EXPENSE_CATEGORY_UPDATED": "Expense category updated",
+    "CUSTODY_RECEIVED": "Collector box received",
+    "TRANSFER_VOIDED": "Transfer cancelled"
   },
   "auditEntities": {
     "User": "Citizen or staff",
@@ -826,7 +839,8 @@
     "DataQuality": "Quality review",
     "Treasury": "Treasury",
     "ExpenseVoucher": "Expense voucher",
-    "ExpenseCategory": "Expense category"
+    "ExpenseCategory": "Expense category",
+    "TreasuryTransfer": "Transfer voucher"
   },
   "audit": {
     "families": {
@@ -1091,7 +1105,6 @@
   },
   "finance": {
     "title": "Treasury",
-    "subtitle": "The municipality’s safes and accounts, their balances and movements",
     "loadError": "Could not load the treasury.",
     "setup": {
       "title": "The treasury is not active yet",
@@ -1129,15 +1142,9 @@
     "accounts": {
       "heading": "Treasury balances",
       "primary": "Primary account",
-      "openStatement": "Open the statement",
       "goLive": "The treasury went live on {date}",
-      "wallet": "Account",
-      "currency": "Currency",
-      "balance": "Balance",
-      "actions": "Statement",
       "empty": "There are no treasury accounts.",
-      "emptyHint": "The cash safe and the Whish account are created when the municipality is set up.",
-      "openExpenses": "Expense register"
+      "emptyHint": "The cash safe and the Whish account are created when the municipality is set up."
     },
     "view": {
       "aria": "Currency of the total",
@@ -1154,14 +1161,8 @@
       "rateUpdatedLabel": "Rate last updated",
       "skippedTitle": "Balances left out of the total"
     },
-    "held": {
-      "title": "Held by collectors",
-      "hint": "Money collectors have taken in and not yet handed over. It is not part of the treasury balance or of the total above.",
-      "none": "Nothing is held by collectors."
-    },
     "statement": {
       "title": "Statement: {name}",
-      "description": "{type} · {currency}",
       "opening": "Balance before the first movement shown",
       "loadError": "Could not load the statement.",
       "empty": "This account has no movements yet.",
@@ -1185,7 +1186,6 @@
     },
     "expenses": {
       "title": "Expenses",
-      "subtitle": "What has left the municipality's safes and accounts, and the voucher behind each figure",
       "back": "Back to the treasury",
       "loadError": "Could not load the expenses.",
       "record": "Record an expense",
@@ -1299,6 +1299,93 @@
       "notAllowedTitle": "You may not record expenses",
       "notAllowedBody": "Recording expenses is for the accountant and the system administrator. You can read the register without recording.",
       "backToRegister": "Back to the expense register"
+    },
+    "custody": {
+      "title": "Held by collectors",
+      "hint": "Cash collected at the doors and not handed in yet. It is not in the treasury until it is received and counted.",
+      "loadError": "Could not load the collector custody.",
+      "unknownCollector": "Unnamed collector",
+      "lastCollected": "Last collected: {when}",
+      "settled": "Has handed in everything.",
+      "receive": "Receive the box",
+      "receiveDialog": {
+        "title": "Receive {name}'s box",
+        "description": "Count the cash with the collector before recording. The money leaves his custody for the safe at once.",
+        "close": "Close",
+        "amount": "Amount received",
+        "held": "He holds now",
+        "remaining": "Stays with him",
+        "partial": "A partial handover: the rest stays in the collector’s custody until he brings it.",
+        "note": "Note",
+        "notePlaceholder": "For example: the Zahra district round",
+        "optional": "optional",
+        "submit": "Receive into the safe",
+        "saving": "Recording…",
+        "cancel": "Cancel",
+        "success": "Box received — voucher {number}",
+        "successBody": "The money has left the collector's custody and entered the cash safe.",
+        "errors": {
+          "amount": "Enter an amount greater than zero",
+          "tooMuch": "More than the collector holds",
+          "form": "The box could not be received."
+        }
+      },
+      "viewCollections": "Who he collected from",
+      "status": {
+        "COLLECTING_TODAY": "Out collecting today",
+        "NOT_OUT_TODAY": "Not out today",
+        "SETTLED": "Has handed in everything"
+      },
+      "todayLine": "{receipts, plural, one {One receipt} other {{receipts} receipts}} today · {amount}"
+    },
+    "collections": {
+      "back": "Back to finance",
+      "title": "What {name} collected",
+      "titleLoading": "The collector's receipts",
+      "loadError": "Could not load the collector's receipts.",
+      "empty": "No collections for this collector.",
+      "emptyHint": "No receipt has been recorded in his name yet.",
+      "collectedInLBP": "Collected in lira",
+      "collectedInUSD": "Collected in dollars",
+      "collectedInOther": "Collected in {currency}",
+      "heldInLBP": "Holds now, in lira",
+      "heldInUSD": "Holds now, in dollars",
+      "heldInOther": "Holds now, in {currency}",
+      "receiptCount": "Receipts",
+      "handedInNote": "Collected is the sum of the receipts; held is what he has not handed in yet. The difference is what he brought to the treasury — a handover moves an amount, not particular receipts.",
+      "reversed": "Payment reversed",
+      "reversalRow": "Reversal entry",
+      "truncatedTitle": "The list is cut short",
+      "truncated": "Showing the latest {shown} receipts of {total}.",
+      "columns": {
+        "citizen": "Citizen",
+        "receipt": "Receipt no.",
+        "date": "Date",
+        "amount": "Amount",
+        "phone": "Phone",
+        "zone": "Sector"
+      },
+      "contactPhone": "A relative's:",
+      "noPhone": "Owns no phone",
+      "noZone": "In no unit"
+    },
+    "myRound": {
+      "title": "My round",
+      "loadError": "Could not load your round.",
+      "noCustody": "Nothing on your name",
+      "noCustodyHint": "No collection has been recorded in your name yet. Cash you take at the doors appears here.",
+      "inHand": "Cash in hand",
+      "carriedOver": "This round’s receipts come to {amount, number} — the rest is carried from an earlier round you part-handed in.",
+      "sinceHandover": "Since your last handover · {when}",
+      "sinceStart": "Everything you have collected",
+      "empty": "No receipts since your last handover",
+      "emptyHint": "Everything in your pocket is carried from an earlier round you part-handed in.",
+      "noUnit": "No unit on file",
+      "receipt": "Receipt",
+      "receiptError": "The receipt could not be opened.",
+      "receiptMissing": "The bill for this receipt was not found.",
+      "emptySettled": "You have handed everything in",
+      "emptySettledHint": "Nothing is in your custody now. Cash you take at the doors appears here."
     }
   }
 }

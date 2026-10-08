@@ -601,7 +601,6 @@ export default function StaffPage({
       <PageHeader
         icon={UsersRound}
         title={en ? 'Staff' : 'الموظفون'}
-        subtitle={en ? 'Municipal staff accounts and what each may do' : 'حسابات موظفي البلدية وصلاحياتهم'}
         actions={
           <Button
             onClick={() => {

@@ -71,7 +71,7 @@ export default function NewExpensePage({
       {/* Named for where it goes — the register, not the treasury the register sits under. */}
       <BackLink fallbackHref={registerHref} label={t('backToRegister')} />
 
-      <PageHeader icon={Receipt} title={t('form.title')} subtitle={t('form.description')} />
+      <PageHeader icon={Receipt} title={t('form.title')} />
 
       {overview.error ? (
         <Card>

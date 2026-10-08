@@ -421,11 +421,6 @@ export default function LandlordLinksPage({
       <PageHeader
         icon={Link2}
         title={en ? 'Owner links' : 'روابط المالكين'}
-        subtitle={
-          en
-            ? 'Tenants and free occupants named an owner who is now a registered citizen — usually because they were registered before the owner. Check each link and say who the owner is, and the property goes onto their file and bill.'
-            : 'مستأجرون وشاغلون بتسامح ذكروا مالكاً أصبح مواطناً مسجَّلاً — غالباً لأنهم سُجِّلوا قبله. افحص كل رابط وحدِّد من هو المالك ليُضاف العقار إلى ملفه ويدخل في فواتيره.'
-        }
         actions={
           <Button variant="outline" onClick={() => query.refetch()} disabled={query.fetching} className="h-10">
             <RefreshCw

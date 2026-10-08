@@ -1,6 +1,6 @@
 # Finance (الخزينة والمالية) — design draft
 
-Status: **DESIGN, with stages 1 and 3 built (see section 14).** It records the design
+Status: **DESIGN, with stages 1 and 3 built, and of stage 4 the collector handover, the accountant’s collector panel and «جولتي» (see section 14).** It records the design
 agreed in discussion, 2026-10-06. Stages 2 to 5 are not built, and every table,
 column, enum value and error code for them is a *proposal* until its migration
 exists (CLAUDE.md: never invent names; grep first). Stage 1 names are real: they
@@ -77,7 +77,18 @@ Read on 2026-10-06 on branch `feat/staff-scoping-roles-archive`.
   `reject_ledger_mutation()` (migration `0017_payment_ledger`).
 - Corrections are **reversing rows** (negative amount, `reversalOfId`, unique so an
   entry can be reversed once).
-- Receipt numbers `RCP-nnnnnn` come from the Postgres sequence `payment_receipt_seq`
+- **Numbering changed in migration 0079.** Every book now reads
+  «INV-2610-0001» — the book, the year and month it was issued in, and a counter
+  that restarts at 0001 each month: invoices (new), receipts, expense vouchers
+  (`PV-`) and transfers (`TR-`). The counter is a row in `document_counters`
+  keyed by (kind, period) rather than a sequence, because `nextval` only climbs
+  and nothing resets it monthly without racing whatever draws from it. Draw
+  through `allocateDocumentNumbers` and never by hand; it must share the
+  caller's transaction. Documents issued before 0079 keep their six-digit form
+  and bills raised before it stay unnumbered. Every `-nnnnnn` sequence named
+  further down this file describes what 0079 replaced. Full reasoning: the
+  migration header and docs/database.md.
+- ~~Receipt numbers `RCP-nnnnnn` come from the Postgres sequence `payment_receipt_seq`
   (gaps possible after a rollback; a number is never reused).
 - `clientRequestId` (unique UUID) makes a retry return the first movement instead of
   booking the money twice (migration `0066`).
@@ -528,6 +539,7 @@ Two working roles. The **accountant** runs the daily work. The **manager
 | Action | ACCOUNTANT | SUPER_ADMIN (manager) | AUDITOR | VIEWER | COLLECTOR / FIELD_INSPECTOR |
 |---|---|---|---|---|---|
 | View balances, lists, reports | yes | yes | yes | yes | no |
+| **See his own custody and his own round** (`custody/mine`) | yes | yes | yes | no | **yes — his own only** |
 | Post income voucher | yes | yes | no | no | no |
 | Record (pay) an expense | yes | yes | no | no | no |
 | Record an inspector payout (picks the wallet) | yes | yes | no | no | no |
@@ -542,6 +554,17 @@ Two working roles. The **accountant** runs the daily work. The **manager
 
 `ACCOUNTANT` and `SUPER_ADMIN` can reuse `FINANCE_OVERRIDE_ROLES` from
 `cash-policy.ts`. `@Roles` on **every** handler.
+
+**The one exception, and why it is not a hole.** `GET custody/mine` is on
+`WORKING_STAFF_ROLES`, which is every role but «مشاهد فقط». It is the only
+treasury route a collector may call. The table above still holds — he sees no
+balance, no list and no report of the municipality's — because the route is
+scoped by `user.sub` and takes no id: it can only ever answer for the person
+asking. «كم بجيبتي؟» is a man's question about his own pocket, and refusing it
+makes the cash no safer while leaving him unable to check the figure he will be
+held to. `WORKING_STAFF_ROLES` rather than `COLLECTOR` because nothing
+restricts who may be named on a payment, and in practice it is the field
+inspectors who carry the cash; staff with no custody get an empty round.
 
 ---
 
@@ -766,7 +789,81 @@ table, approval thresholds, a supplier register, and the inspector-payout link
 of §5.6 — `inspector_payouts` still records a payout with no wallet, and wiring
 it to a voucher is the next piece of this stage.
 
-### Stages 2, 4 and 5
+### Stage 4 — the collector handover (built; same branch, not committed)
+
+The one piece of §6 the flow could not do without: a collector's cash reached his
+custody wallet and had no way out. Built:
+
+- Migration `0078_treasury_transfers` (not 0075 — `chore/migration-0075-0077`
+  had taken it): one `treasury_transfers` table for every move between wallets,
+  the `TR-` sequence, and a CHECK that a same-currency move carries no rate while
+  a cross-currency one must. The columns an exchange needs are there and
+  nullable; only the same-currency path is wired.
+- Backend: `TransfersService` and `TransfersController`. `custody` answers «كم
+  بعهدة كل جابٍ»; `receiveCustody` writes both ledger legs, the transfer document
+  and the Tier 1 audit row in one transaction; `void` puts the money back on the
+  collector. More than he holds is refused with the figure named
+  (`CUSTODY_EXCEEDS_HELD`), and again by the ledger's never-negative post.
+- Frontend: the treasury page's read-only «محتجز لدى الجباة» line became a panel
+  listing each collector with «استلام الصندوق», and a dialog that shows what he
+  holds and what would remain as the amount is typed.
+- **«من حصّل الجابي»** (`finance/collectors/[collectorId]`), reached from a second
+  button on that panel: every receipt he wrote at a door, with the citizen who
+  paid — named in full with his father's name, because two «غسان جواد» in one
+  village is ordinary — his phone, the sector he lives in, what the bill was
+  for, the receipt number and the amount. Enough to ring him and enough to find
+  him, which is what the screen is for. Custody is one
+  number; a round is thirty doors, and this is the list the accountant reads
+  while the notes are on the desk. Offered whether or not he is still carrying
+  anything — a collector who has settled is exactly the one whose round someone
+  asks about afterwards. **Collected and held are two different figures** and the
+  page says so in as many words: a handover moves an amount, not a set of
+  receipts, so nothing can honestly be marked "handed over" receipt by receipt,
+  and the difference between the two numbers is simply what he has brought in.
+  Reversed payments stay on the list beside their opposing rows, struck through,
+  because hiding the pair would make the totals stop adding up for whoever is
+  counting. No رقم مرجعي anywhere — see the note in docs/security.md.
+- **The accountant's panel now carries the day**: each collector's receipts and
+  takings for today (Beirut, `municipalToday`), and a status badge —
+  «يجمع اليوم» / «لم يخرج اليوم» / «سلّم كل شيء». The status is **derived from
+  his receipts, never stored**: nothing in the system records whether a man is
+  out on a round, and «لم يخرج اليوم» with cash still on him is a different
+  answer from «سلّم كل شيء», so they are different badges rather than one vague
+  tone.
+- **«جولتي»** (`/my-round`, `GET custody/mine`) — the collector's own screen,
+  built for a phone on a doorstep: what is in his pocket, then the doors it came
+  from as cards rather than a table, each with the citizen, his unit reference,
+  the receipt number and the time, and a button that opens the existing
+  `PaymentReceipt` to print, download or send it over WhatsApp. Nothing new was
+  built for the receipt itself.
+
+  The list is **everything since his last handover**, not "today": his pocket
+  does not empty at midnight, and a man who collected yesterday and has not
+  handed in would otherwise see a full pocket above an empty list. After a
+  *partial* handover even that set cannot account for all he holds — a handover
+  moves an amount, not a set of receipts — so the remainder is named
+  («محمول من جولة سابقة») rather than left as an unexplained gap between two
+  numbers. Cancelled payments and their opposing rows are left out here, unlike
+  the accountant's reconciliation list: this screen is the money in his pocket,
+  and a cancelled payment is not in it.
+- Tests: 16 integration tests walking the whole flow — collected at a door, held
+  in custody with the safe untouched, partial handover, full handover, double
+  press, two simultaneous handovers, cancellation, and an audit row that does not
+  name the collector.
+- Verified in the browser against the seeded database: `TR-000001` moved
+  500,000 ل.ل of a collector's 1,500,000 into the safe; he kept 1,000,000.
+
+**A rule worth stating plainly**, because it is what makes custody worth having:
+nothing here touches an invoice. The citizen's debt was settled at his door. If
+the handover never happened the register would still be right, and the collector
+would simply still owe the municipality the cash — which is exactly what his
+custody balance says.
+
+**Not in stage 4 yet**: a Whish cash-out, a bank deposit, petty cash, currency
+exchange with its rate tolerance and post-review flag, and transfer fees. They
+share the table and the service.
+
+### Stages 2 and 5
 
 Not started.
 

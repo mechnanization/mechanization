@@ -149,11 +149,6 @@ export default function InspectorPayoutHistoryPage({
       <PageHeader
         icon={Receipt}
         title={title}
-        subtitle={
-          isAr
-            ? 'كل مبلغ سُلّم لهذا الموظف عن مسحه الميداني، بتاريخه ورقم إيصاله ومن سجّله'
-            : 'Every amount handed to this staff member for their field survey, with its date, receipt number and who recorded it'
-        }
         actions={
           <div className="flex items-center gap-2">
             {data ? (

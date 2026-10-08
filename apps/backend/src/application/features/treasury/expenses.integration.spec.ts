@@ -9,6 +9,7 @@ import { AuditService } from '../audit/audit.service';
 import { ExpensesService } from './expenses.service';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { TreasuryService } from './treasury.service';
+import { municipalPeriod } from '@mechanization/shared-schemas';
 
 /**
  * Expenses against a real Postgres.
@@ -275,7 +276,7 @@ describeIfDb('ExpensesService', () => {
       const before = await balance(safeLbpId);
       const result = await spend({ amount: 250_000 });
 
-      expect(result.voucherNumber).toMatch(/^PV-\d{6}$/);
+      expect(result.voucherNumber).toMatch(new RegExp(`^PV-${municipalPeriod()}-\\d{4}$`));
       expect(result.replayed).toBe(false);
       expect(await balance(safeLbpId)).toBe(before - 250_000);
       expect(result.balanceAfter).toBe(before - 250_000);

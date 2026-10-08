@@ -576,19 +576,6 @@ export default function ReviewFilePage({
       <PageHeader
         icon={ClipboardCheck}
         title={values ? fullName : en ? 'Review file' : 'فحص الملف'}
-        subtitle={
-          values ? (
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span>{en ? 'Review file' : 'فحص الملف'}</span>
-              {record?.citizenReferenceNumber ? (
-                <>
-                  <span aria-hidden>·</span>
-                  <bdi className="font-mono">{record.citizenReferenceNumber}</bdi>
-                </>
-              ) : null}
-            </span>
-          ) : undefined
-        }
         actions={
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
             {values ? (

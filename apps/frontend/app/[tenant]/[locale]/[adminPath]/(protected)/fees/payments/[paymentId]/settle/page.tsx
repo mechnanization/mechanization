@@ -30,7 +30,8 @@ import type {
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { PAYMENT_SETTLE_ROLES, hasRole } from '@/lib/staff-roles';
-import { formatLbp } from '@/lib/currency';
+import { formatLbp, formatTypedAmount } from '@/lib/currency';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import { formatDate } from '@/lib/dates';
 import { tafqeet } from '@/lib/tafqeet';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
@@ -130,7 +131,7 @@ export default function SettlePaymentPage({
     try {
       const row = await getPaymentById(tenant, accessToken, paymentId);
       setPayment(row);
-      setAmount(String(Math.round(row.remaining)));
+      setAmount(formatTypedAmount(String(Math.round(row.remaining)), 0));
     } catch (caught) {
       logApiError(caught);
       if (caught instanceof ApiRequestError && caught.status === 401) {
@@ -247,7 +248,6 @@ export default function SettlePaymentPage({
       <PageHeader
         icon={Banknote}
         title={locale === 'en' ? 'Record Payment' : 'تسجيل دفعة'}
-        subtitle={`${payment.title} — ${payment.citizenName}`}
         actions={
           <Badge variant="outline" className="text-sm font-semibold px-3 py-1">
             {locale === 'en' ? 'Remaining Balance: ' : 'الرصيد المستحق: '}
@@ -355,21 +355,24 @@ export default function SettlePaymentPage({
                       : undefined
                   }
                 >
-                  <div className="relative flex items-center">
-                    <Input
-                      id="settle-amount"
-                      inputMode="numeric"
-                      dir="ltr"
-                      className="text-start text-xl font-bold tabular-nums pe-16"
-                      invalid={tooMuch}
-                      value={amount ? Number(amount).toLocaleString('en-US') : ''}
-                      onChange={(e) => setAmount(e.target.value.replace(/\D/g, ''))}
-                      placeholder="0"
-                    />
-                    <div className="pointer-events-none absolute inset-y-0 end-0 flex items-center pe-4 text-xs font-bold text-muted-foreground">
-                      {locale === 'en' ? 'LBP' : 'ل.ل'}
-                    </div>
-                  </div>
+                  {/*
+                    `CurrencyInput`, not an input with the unit absolutely placed
+                    over it (PRIM-25). The old markup put «ل.ل» on top of the
+                    digits: the field is `dir="ltr"` so `pe-16` reserved room on
+                    its right, while the wrapper inherits the page's RTL so
+                    `end-0` pinned the unit to the left — opposite sides, and the
+                    unit landed on the «0». The primitive gives the unit a segment
+                    of its own, which is the bug its own doc comment describes.
+                  */}
+                  <CurrencyInput
+                    id="settle-amount"
+                    unit={locale === 'en' ? 'LBP' : 'ل.ل'}
+                    value={amount}
+                    placeholder="0"
+                    invalid={tooMuch}
+                    inputClassName="text-xl font-bold"
+                    onChange={(raw) => setAmount(formatTypedAmount(raw, 0))}
+                  />
                 </Field>
 
                 {/* Amount Quick Presets */}
@@ -380,7 +383,7 @@ export default function SettlePaymentPage({
                       variant="outline"
                       size="sm"
                       className="h-8 text-xs"
-                      onClick={() => setAmount(String(Math.round(payment.remaining)))}
+                      onClick={() => setAmount(formatTypedAmount(String(Math.round(payment.remaining)), 0))}
                     >
                       {locale === 'en' ? 'Full Balance' : 'كامل الرصيد'} ({formatLbp(payment.remaining, locale)})
                     </Button>
@@ -389,7 +392,7 @@ export default function SettlePaymentPage({
                       variant="outline"
                       size="sm"
                       className="h-8 text-xs"
-                      onClick={() => setAmount(String(Math.round(payment.remaining / 2)))}
+                      onClick={() => setAmount(formatTypedAmount(String(Math.round(payment.remaining / 2)), 0))}
                     >
                       {locale === 'en' ? 'Half' : 'النصف'} ({formatLbp(Math.round(payment.remaining / 2), locale)})
                     </Button>
