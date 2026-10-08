@@ -255,6 +255,24 @@ describeIfDb('Quality review', () => {
     expect(await within(() => reviews.openReturnFor(citizenId))).toBeNull();
   });
 
+  it('closes a return for the phone and the mother’s name on an estate, which is asked neither (0076)', async () => {
+    const { citizenId, registrationId } = await filing(staff.jawad, { firstName: 'نزار', lastName: 'تركة' });
+    await db.user.update({
+      where: { id: citizenId },
+      data: { residence: 'ESTATE' as never, phone: null, whatsapp: null, motherName: null, hasNoPhone: false },
+    });
+    await within(() =>
+      reviews.returnToOfficer(
+        registrationId,
+        { reason: 'الهاتف واسم الأم ناقصان', fields: ['PHONE', 'MOTHER_NAME'] },
+        as('auditor'),
+      ),
+    );
+
+    await within(() => reviews.onCitizenChanged({ citizenId, action: 'CITIZEN_UPDATED', actorId: staff.jawad }));
+    expect(await within(() => reviews.openReturnFor(citizenId))).toBeNull();
+  });
+
   // ─────────────────────────────  Sample  ─────────────────────────────
 
   it("draws a per-officer sample, never lets an officer check their own filing, and scores the result", async () => {

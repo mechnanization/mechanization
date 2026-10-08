@@ -12,6 +12,7 @@ import {
 import { TenantContextService } from '../context/tenant-context.service';
 import { citizenPhoneRuleError } from '../prisma/check-violation';
 import { normalizeSearchText } from '../../application/common/search-terms';
+import { landlordNamesToStore } from '../../application/common/landlord-name';
 
 /** Where an identity-document clash is recorded on the new citizen's file. */
 const IDENTITY_DOC_PATH = 'personal.identityDocNumber';
@@ -275,13 +276,17 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
         });
 
         const propertyIds: string[] = [];
-        for (const property of input.properties) {
+        const landlordNames = await landlordNamesToStore(
+          tx,
+          input.properties.map((property) => property.props),
+        );
+        for (const [index, property] of input.properties.entries()) {
           const p = property.props;
           const created = await tx.propertyEntry.create({
             data: {
               registrationId: registration.id,
               occupancyType: p.occupancyType as never,
-              landlordName: p.landlordName ?? null,
+              landlordName: landlordNames[index] ?? null,
               landlordPhone: p.landlordPhone ?? null,
               propertyType: p.propertyType as never,
               neighborhood: p.neighborhood,

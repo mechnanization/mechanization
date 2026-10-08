@@ -1493,6 +1493,64 @@ describeIfDb('LandlordLinkService', () => {
       expect((await ownerSpells(linked.owner.id))[0]!.toDate).toBeNull();
     });
 
+    it('stores an estate owner’s own name when the form sends the name it was shown (0076)', async () => {
+      const { units, building } = await surveyedBlock(`LNK-EST-${randomUUID().slice(0, 4)}`);
+      const filing = await tenantFiling({
+        landlordPhone: null,
+        landlordName: 'مالك لا يعرف اسمه',
+        occupancyType: 'FREE_OCCUPANT',
+        parcelNumber: 'LNK-UPD',
+        buildingId: building.id,
+        unitIds: [units[0]!.id],
+      });
+      const estateId = await citizen('نزار', freshPhone().stored, { lastName: 'عاقوري', residence: 'ESTATE' });
+      /*
+        What the form sent: the matrix row's display name (no middle name),
+        copied by the sole-owner prefill into the card, with the agreement.
+      */
+      const payload = await payloadFor(filing.tenantId, [
+        cardFor(filing.entryId, building.id, units[0]!.id, {
+          occupancyType: 'FREE_OCCUPANT',
+          landlordPhone: undefined,
+          landlordName: 'ورثة المرحوم نزار عاقوري',
+          landlordCitizenId: estateId,
+        }),
+      ]);
+
+      await within(() =>
+        citizens.update({ tenantSlug: 'links', citizenId: filing.tenantId, payload, actor: actor() }),
+      );
+
+      const card = await db.propertyEntry.findUniqueOrThrow({ where: { id: filing.entryId } });
+      expect(card.landlordName).toBe('نزار علي عاقوري');
+    });
+
+    it('never stores «ورثة المرحوم» a tenant card was sent with, linked or not (0076)', async () => {
+      const { units, building } = await surveyedBlock(`LNK-EST-${randomUUID().slice(0, 4)}`);
+      const filing = await tenantFiling({
+        landlordPhone: null,
+        landlordName: 'مالك لا يعرف اسمه',
+        occupancyType: 'FREE_OCCUPANT',
+        parcelNumber: 'LNK-UPD',
+        buildingId: building.id,
+        unitIds: [units[0]!.id],
+      });
+      const payload = await payloadFor(filing.tenantId, [
+        cardFor(filing.entryId, building.id, units[0]!.id, {
+          occupancyType: 'FREE_OCCUPANT',
+          landlordPhone: undefined,
+          landlordName: 'ورثة المرحوم سليم داغر',
+        }),
+      ]);
+
+      await within(() =>
+        citizens.update({ tenantSlug: 'links', citizenId: filing.tenantId, payload, actor: actor() }),
+      );
+
+      const card = await db.propertyEntry.findUniqueOrThrow({ where: { id: filing.entryId } });
+      expect(card.landlordName).toBe('سليم داغر');
+    });
+
     it('undoes the link, and what it wrote, when the number is corrected', async () => {
       const linked = await linkedTenant();
       const corrected = freshPhone();

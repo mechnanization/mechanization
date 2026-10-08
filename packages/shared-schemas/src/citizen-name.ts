@@ -64,3 +64,33 @@ const ESTATE_PREFIX = /^\s*ورثة\s+(?:(?:ال)?مرحومة?|المغفور\s
 export function withoutEstatePrefix(name: string): string {
   return name.replace(ESTATE_PREFIX, '');
 }
+
+/**
+ * The owner's name as a tenancy card stores it (`property_entries.landlordName`).
+ *
+ * What a form sends can be a name it was *shown*: the owner lookup and the unit
+ * matrix answer with `citizenDisplayName`, and «نعم، هو المالك» and the
+ * sole-owner prefill copy that into the card. So «ورثة المرحوم» comes off here,
+ * at the write, for every client — a queued offline save included. Given the
+ * owner the card is linked to, a name that is that owner's shown form (with or
+ * without the middle name) is stored as `citizenStoredName(owner)`. Anything
+ * else is what the tenant said, kept.
+ */
+export function storedLandlordName(
+  submitted: string | null | undefined,
+  owner?: NamedRecord | null,
+): string | null {
+  const typed = submitted?.trim().replace(/\s+/g, ' ');
+  if (!typed) return null;
+  // A name that is nothing but the prefix has no name in it to keep.
+  const name = withoutEstatePrefix(typed).trim() || typed;
+  if (owner) {
+    // Compared without the prefix, so a name already stripped once (the entity does) still matches.
+    const shown = [citizenDisplayName(owner), citizenDisplayName(owner, { middleName: false })].map((form) =>
+      withoutEstatePrefix(form).trim(),
+    );
+    const stored = citizenStoredName(owner);
+    if (stored && shown.includes(name)) return stored;
+  }
+  return name;
+}

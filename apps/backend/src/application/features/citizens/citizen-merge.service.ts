@@ -666,7 +666,7 @@ export class CitizenMergeService {
     ];
     const officerRows = await this.db.user.findMany({
       where: { id: { in: officerIds }, kind: 'STAFF' },
-      select: { id: true, firstName: true, lastName: true, residence: true },
+      select: { id: true, firstName: true, lastName: true },
     });
 
     return {

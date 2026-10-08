@@ -34,6 +34,7 @@ import { optionalInternationalPhone, uuid } from './primitives';
 import {
   citizenResidenceSchema,
   isOwnerRecord,
+  isNonPersonRecord,
   isDwellingUnitType,
   NON_OWNER_OCCUPANCY,
   type CitizenResidence,
@@ -515,12 +516,14 @@ export function nonResidentCardIssues(
   const units = Array.isArray(card.units) ? (card.units as Array<Record<string, unknown>>) : [];
   const notLivingThere = OWNER_NOT_LIVING_THERE_BY_RECORD[residence] ?? OWNER_NOT_LIVING_THERE;
   /*
-    «مشغولة من المالك» for every owner record; and «مسكن موسمي» for an estate,
-    whose owner comes back for no season — a family that does is «مشغولة
-    بتسامح», and pays the occupancy fee itself.
+    «مشغولة من المالك» for every owner record; and «مسكن موسمي» for an estate
+    or an institution, neither of which comes back for a season — a family that
+    does is «مشغولة بتسامح», and pays the occupancy fee itself. («مسكن موسمي»
+    is billed to the owner while away, so on either it would bill the heirs or
+    the body the occupancy fee.)
   */
   const livesThere = (status: unknown) =>
-    status === 'OWNER_OCCUPIED' || (residence === 'ESTATE' && status === 'SEASONAL');
+    status === 'OWNER_OCCUPIED' || (isNonPersonRecord(residence) && status === 'SEASONAL');
 
   if (owner) {
     if (card.propertyType === 'HOUSE' && livesThere(card.unitStatus)) {

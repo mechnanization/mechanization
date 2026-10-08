@@ -99,7 +99,13 @@ line on the form and is stored across `firstName`/`lastName` (first word, the
 rest; `splitInstitutionName`), so any screen that joins the parts reads it
 whole. An estate keeps the deceased's own name: «ورثة المرحوم …» is added when
 it is shown (`citizenDisplayName`), never written into the row — nor into
-another row: a name copied onto a tenancy card is `citizenStoredName`.
+another row: a name copied onto a tenancy card is `citizenStoredName`. Every
+write of `property_entries.landlordName` from a submitted card goes through
+`storedLandlordName` (the entity's `normalise`; `landlordNamesToStore` in the
+registration create and the citizen update; the census tenant card), which
+takes the prefix off whatever a client sent — a form copies the name it was
+*shown* — and, for a card linked to an owner, stores that owner's own name.
+The non-person kinds are `NON_PERSON_RESIDENCE` for a Prisma filter.
 
 **A card's `propertyNumber` is stored as typed**, «٤٢٠» as well as «420», and
 so are the fee lines copied from it. A lookup by رقم العقار compares

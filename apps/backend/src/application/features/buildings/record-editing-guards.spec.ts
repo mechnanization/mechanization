@@ -63,6 +63,13 @@ describe('nonResidentUnitConflict', () => {
     expect(message).toMatch(/مسكن موسمي/);
   });
 
+  it('refuses «مسكن موسمي» on a home every owner of which is an estate or an institution, in its words', () => {
+    const conflict = (seasonalOwner: string) =>
+      nonResidentUnitConflict({ unitCode: '0101', nonResidentOccupants: [], ownerOccupiedByNonResident: false, seasonalOwner });
+    expect(conflict('ESTATE')).toMatch(/المرحوم لا يسكن الوحدة 0101/);
+    expect(conflict('INSTITUTION')).toMatch(/الجهة لا تسكن المسكن 0101/);
+  });
+
   it('lets everything else through', () => {
     expect(
       nonResidentUnitConflict({ unitCode: '0101', nonResidentOccupants: [], ownerOccupiedByNonResident: false }),

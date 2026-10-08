@@ -86,13 +86,16 @@ export function isOwnerRecord(residence: string | null | undefined): boolean {
   return residence != null && (OWNER_RECORD_RESIDENCE as readonly string[]).includes(residence);
 }
 
+/** The owner-record kinds that are not a living person — see `isNonPersonRecord`. */
+export const NON_PERSON_RESIDENCE = ['ESTATE', 'INSTITUTION'] as const;
+
 /**
  * Whether this owner of record is not a living person — an estate or an
  * institution: no phone required, no duplicate-person checks by mother or
  * gender, never merged with a person's file.
  */
 export function isNonPersonRecord(residence: string | null | undefined): boolean {
-  return residence === 'ESTATE' || residence === 'INSTITUTION';
+  return residence != null && (NON_PERSON_RESIDENCE as readonly string[]).includes(residence);
 }
 
 export const GENDER = ['MALE', 'FEMALE'] as const;

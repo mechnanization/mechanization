@@ -1,6 +1,6 @@
-import { citizenDisplayName, citizenStoredName } from '@mechanization/shared-schemas';
+import { citizenDisplayName, citizenStoredName, storedLandlordName } from '@mechanization/shared-schemas';
 import { Injectable, Logger } from '@nestjs/common';
-import { OWNER_RECORD_RESIDENCE, isOwnerRecord } from '@mechanization/shared-schemas';
+import { OWNER_RECORD_RESIDENCE, isNonPersonRecord, isOwnerRecord } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   formatBuildingCode,
@@ -1911,7 +1911,7 @@ export class BuildingsService {
     const staff = last?.actorId
       ? await this.db.user.findFirst({
           where: { id: last.actorId, kind: 'STAFF' },
-          select: { firstName: true, lastName: true, residence: true },
+          select: { firstName: true, lastName: true },
         })
       : null;
     const who = staff ? `${staff.firstName} ${staff.lastName}` : null;
@@ -2594,8 +2594,18 @@ export class BuildingsService {
       isDwellingUnitType(typeAfter) &&
       statusAfter === 'OWNER_OCCUPIED' &&
       (becomingDwelling || before.unitStatus !== 'OWNER_OCCUPIED');
+    /*
+      «مسكن موسمي» is the owner's own seasonal absence, billed to the owner: on
+      a home of an estate or an institution it would bill the heirs or the body
+      the occupancy fee. Refused as the card schema and the matrix refuse it
+      (`ownerSaidToLiveThere`).
+    */
+    const sayingSeasonal =
+      isDwellingUnitType(typeAfter) &&
+      statusAfter === 'SEASONAL' &&
+      (becomingDwelling || before.unitStatus !== 'SEASONAL');
 
-    if (becomingDwelling || sayingOwnerLivesThere) {
+    if (becomingDwelling || sayingOwnerLivesThere || sayingSeasonal) {
       const names = { select: { firstName: true, middleName: true, lastName: true, residence: true } } as const;
       const nonOwner = { in: ['TENANT', 'FREE_OCCUPANT'] as never };
       const [spells, rows, owners] = await Promise.all([
@@ -2624,7 +2634,7 @@ export class BuildingsService {
               select: { propertyEntry: { select: { registration: { select: { citizen: names } } } } },
             })
           : Promise.resolve([]),
-        sayingOwnerLivesThere
+        sayingOwnerLivesThere || sayingSeasonal
           ? this.db.unitOccupancy.findMany({
               where: { unitId, toDate: null, role: 'OWNER' as never },
               select: { citizen: { select: { residence: true } } },
@@ -2642,6 +2652,10 @@ export class BuildingsService {
           sayingOwnerLivesThere &&
           owners.length > 0 &&
           owners.every((owner) => isOwnerRecord(owner.citizen.residence)),
+        seasonalOwner:
+          sayingSeasonal && owners.length > 0 && owners.every((owner) => isNonPersonRecord(owner.citizen.residence))
+            ? owners[0]!.citizen.residence
+            : null,
       });
       if (conflict) {
         throw new ConflictError(conflict, { unitCode: before.unitCode, unitType: typeAfter });
@@ -4146,7 +4160,8 @@ export class BuildingsService {
             }
           : nonOwner && (input.landlord?.name || input.landlord?.phone)
             ? {
-                landlordName: input.landlord.name ?? null,
+                // Never «ورثة المرحوم …» — see `storedLandlordName`.
+                landlordName: storedLandlordName(input.landlord.name),
                 landlordPhone: input.landlord.phone ?? null,
               }
             : {}),
@@ -5116,6 +5131,11 @@ export function nonResidentUnitConflict(input: {
   nonResidentOccupants: readonly string[];
   /** The edit says the owner lives here, and every recorded owner lives elsewhere. */
   ownerOccupiedByNonResident: boolean;
+  /**
+   * The edit says «مسكن موسمي», and every recorded owner is an estate or an
+   * institution: that kind (the first owner's), for the refusal's wording.
+   */
+  seasonalOwner?: string | null;
 }): string | null {
   const occupants = [...new Set(input.nonResidentOccupants.filter(Boolean))];
 
@@ -5133,6 +5153,8 @@ export function nonResidentUnitConflict(input: {
       'اختر «مسكن موسمي» (لغير المقيم) أو «مشغولة بتسامح» أو «شاغرة»، أو صحّح نوع ملف المالك إن كان يسكنها'
     );
   }
+
+  if (input.seasonalOwner) return ownerLivesThereRefusal(input.seasonalOwner, input.unitCode);
 
   return null;
 }
@@ -5276,17 +5298,32 @@ export function assertNonResidentOccupancy(input: {
     );
   }
 
-  // An estate's owner comes back for no season either (see `nonResidentCardIssues`).
-  if (input.unitStatus === 'OWNER_OCCUPIED' || (input.residence === 'ESTATE' && input.unitStatus === 'SEASONAL')) {
-    throw new ValidationError(
-      input.residence === 'ESTATE'
-        ? `المرحوم لا يسكن الوحدة ${input.unitCode} — إن كانت عائلته تسكنها فاختر «مشغولة بتسامح» وسجّل أحدهم بملف أسرة، وإلا فـ«مؤجرة» أو «شاغرة»`
-        : input.residence === 'INSTITUTION'
-          ? `الجهة لا تسكن المسكن ${input.unitCode} — اختر حالة من يشغله أو «شاغرة»`
-          : `غير المقيم لا يسكن الوحدة ${input.unitCode} — اختر «مسكن موسمي» إن كان يحضر في مواسم، أو «شاغرة»`,
-      { unitStatus: input.unitStatus },
-    );
+  // An estate or an institution comes back for no season either (see `nonResidentCardIssues`).
+  if (ownerSaidToLiveThere(input.residence, input.unitStatus)) {
+    throw new ValidationError(ownerLivesThereRefusal(input.residence, input.unitCode), {
+      unitStatus: input.unitStatus,
+    });
   }
+}
+
+/**
+ * Whether this status says an owner record lives in the dwelling it owns:
+ * «مشغولة من المالك» for any of them, and «مسكن موسمي» for an estate or an
+ * institution — «مسكن موسمي» is the owner's own seasonal absence, billed to the
+ * owner, and neither has a season to come back for. The matrix's and the unit
+ * edit's twin of `livesThere` in the card schema (`nonResidentCardIssues`).
+ */
+function ownerSaidToLiveThere(residence: string | null | undefined, unitStatus: string | null | undefined): boolean {
+  return unitStatus === 'OWNER_OCCUPIED' || (isNonPersonRecord(residence) && unitStatus === 'SEASONAL');
+}
+
+/** The refusal of `ownerSaidToLiveThere`, in the words of the record kind. */
+function ownerLivesThereRefusal(residence: string | null | undefined, unitCode: string): string {
+  return residence === 'ESTATE'
+    ? `المرحوم لا يسكن الوحدة ${unitCode} — إن كانت عائلته تسكنها فاختر «مشغولة بتسامح» وسجّل أحدهم بملف أسرة، وإلا فـ«مؤجرة» أو «شاغرة»`
+    : residence === 'INSTITUTION'
+      ? `الجهة لا تسكن المسكن ${unitCode} — اختر حالة من يشغله («مؤجرة»، «مشغولة بتسامح») أو «شاغرة»`
+      : `غير المقيم لا يسكن الوحدة ${unitCode} — اختر «مسكن موسمي» إن كان يحضر في مواسم، أو «شاغرة»`;
 }
 
 /**

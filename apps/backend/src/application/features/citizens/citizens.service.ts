@@ -1,4 +1,4 @@
-import { citizenDisplayName } from '@mechanization/shared-schemas';
+import { citizenDisplayName, citizenStoredName } from '@mechanization/shared-schemas';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
@@ -70,6 +70,7 @@ import {
   type DuplicateReviewFindings,
 } from './possible-duplicates';
 import { normalizeSearchText } from '../../common/search-terms';
+import { landlordNamesToStore } from '../../common/landlord-name';
 import { assertNotMergedAway } from './merged-away';
 
 /**
@@ -917,6 +918,7 @@ export class CitizensService {
                       firstName: true,
                       middleName: true,
                       lastName: true,
+                      residence: true,
                       referenceNumber: true,
                     },
                   },
@@ -1139,13 +1141,14 @@ export class CitizensService {
         landlordLink: property.landlordCitizen
           ? {
               citizenId: property.landlordCitizen.id,
-              name: [
-                property.landlordCitizen.firstName,
-                property.landlordCitizen.middleName,
-                property.landlordCitizen.lastName,
-              ]
-                .filter(Boolean)
-                .join(' '),
+              /*
+                The owner's name as a row stores it: the form sends this as the
+                card's `landlordName` when the tenant's own is blank, so it is
+                copied into the row and never carries «ورثة المرحوم».
+              */
+              name: citizenStoredName(property.landlordCitizen),
+              // What the locked field shows — an estate as its heirs.
+              displayName: citizenDisplayName(property.landlordCitizen),
               referenceNumber: property.landlordCitizen.referenceNumber,
             }
           : null,
@@ -2349,11 +2352,15 @@ export class CitizensService {
         });
       }
 
+      const landlordNames = await landlordNamesToStore(
+        tx,
+        entries.map(({ entry }) => entry.props),
+      );
       for (const { id, index, entry } of entries) {
         const p = entry.props;
         const data = {
           occupancyType: p.occupancyType as never,
-          landlordName: p.landlordName ?? null,
+          landlordName: landlordNames[index] ?? null,
           landlordPhone: p.landlordPhone ?? null,
           propertyType: p.propertyType as never,
           neighborhood: p.neighborhood,

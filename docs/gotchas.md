@@ -610,6 +610,12 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   card's owner name): use `citizenStoredName`, never the display name — the
   heirs' sale once wrote «ورثة المرحوم …» onto a tenant's card. Text someone
   typed is matched through `withoutEstatePrefix` (SQL: `ESTATE_PREFIX_PATTERN`).
+  A card's `landlordName` **as submitted** goes through `storedLandlordName`
+  on the server, at every write: the owner lookup and the unit matrix answer
+  with display names, «نعم، هو المالك» and the sole-owner prefill copy them
+  into the card, and a queued offline save carries whatever the form held.
+  The form strips it too (`landlordNameToSend`), and `landlordLink` carries
+  `name` (stored, the one sent) apart from `displayName` (the one shown).
 - **Where:** `fees.service.ts`, `reporting.service.ts`, `citizens.service.ts`,
   `buildings.service.ts` (`toOccupancyRow`), `parcel-dues.service.ts`.
 

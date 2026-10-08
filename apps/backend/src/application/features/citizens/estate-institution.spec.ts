@@ -5,6 +5,7 @@ import {
   isNonPersonRecord,
   isOwnerRecord,
   splitInstitutionName,
+  storedLandlordName,
   withoutEstatePrefix,
 } from '@mechanization/shared-schemas';
 import { assertNonResidentOccupancy } from '../buildings/buildings.service';
@@ -130,6 +131,18 @@ describe('«تركة (ورثة المرحوم)»', () => {
     expect(withoutEstatePrefix('حسن تجربة')).toBe('حسن تجربة');
   });
 
+  it('is never stored «ورثة المرحوم …» on a tenancy card — the shown name becomes the owner’s own', () => {
+    const owner = { firstName: 'حسن', middleName: 'واكد', lastName: 'تجربة', residence: 'ESTATE' };
+    expect(storedLandlordName('ورثة المرحوم حسن تجربة')).toBe('حسن تجربة');
+    // Linked: the shown form, with or without the middle name, or already stripped once.
+    expect(storedLandlordName('ورثة المرحوم حسن تجربة', owner)).toBe('حسن واكد تجربة');
+    expect(storedLandlordName('ورثة المرحوم حسن واكد تجربة', owner)).toBe('حسن واكد تجربة');
+    expect(storedLandlordName('حسن تجربة', owner)).toBe('حسن واكد تجربة');
+    // What the tenant said otherwise stands.
+    expect(storedLandlordName('أبو علي', owner)).toBe('أبو علي');
+    expect(storedLandlordName('  ', owner)).toBeNull();
+  });
+
   it('keeps the household columns a converted file holds, and frees a relative’s number it now uses', () => {
     const columns = citizenColumnsForEdit(parsed(estate({ contact: { phone: '+9613123456' } })), {
       identityDocType: null,
@@ -155,6 +168,20 @@ describe('«جهة أو وقف»', () => {
     expect(
       citizenDisplayName({ firstName: 'وقف', middleName: null, lastName: 'مسجد الساحة', residence: 'INSTITUTION' }),
     ).toBe('وقف مسجد الساحة');
+  });
+
+  it('has no «مسكن موسمي» — a body comes back for no season, and the status would bill it the occupancy fee', () => {
+    const house = {
+      occupancyType: 'OWNER',
+      propertyType: 'HOUSE',
+      propertyNumber: '267',
+      unitArea: '120',
+      unitStatus: 'SEASONAL',
+    };
+    expect(failures(institution({ properties: [house] }))).toContain('properties.0.unitStatus');
+    expect(() =>
+      assertNonResidentOccupancy({ unitCode: '0001', unitType: 'APARTMENT', residence: 'INSTITUTION', role: 'OWNER', unitStatus: 'SEASONAL' }),
+    ).toThrow('الجهة لا تسكن');
   });
 
   it('may rent an office, as a non-resident may, but not a home', () => {

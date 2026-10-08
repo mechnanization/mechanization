@@ -1,4 +1,4 @@
-import { citizenDisplayName } from '@mechanization/shared-schemas';
+import { citizenDisplayName, NON_PERSON_RESIDENCE } from '@mechanization/shared-schemas';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Prisma, type $Enums } from '../../../generated/tenant-client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -1612,7 +1612,7 @@ export class FeesService {
             property and are billed for it by the rate-based notices, never per
             head. A rate-based notice still reaches them through what they hold.
           */
-          ...(input.basis === 'FLAT' ? { residence: { notIn: ['ESTATE', 'INSTITUTION'] as never } } : {}),
+          ...(input.basis === 'FLAT' ? { residence: { notIn: [...NON_PERSON_RESIDENCE] } } : {}),
         },
         select: { id: true },
       });
