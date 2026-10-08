@@ -18,6 +18,7 @@ import { ConflictError, NotFoundError } from '../../common/exceptions';
 import { metresBetween } from '../buildings/buildings.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
 import { unitsUnderReview } from '../buildings/unit-status';
+import { activeOwnerSpells, ownerBillingBlock, type OwnerBillingBlock } from '../buildings/owner-billing';
 import {
   duplicateSignals,
   foldNamePart,
@@ -119,7 +120,7 @@ export class DataQualityService {
   }
 
   /**
-   * The eight scans, and only the eight scans.
+   * The ten scans, and only the ten scans.
    *
    * This is the whole cost of «مراجعة الجودة»: `duplicateCitizens` alone reads
    * every active citizen and compares them pairwise inside each name and phone
@@ -150,6 +151,7 @@ export class DataQualityService {
       this.nearDuplicateBuildings(),
       this.unitStatusContradictions(),
       this.unitsHeldForReview(),
+      this.ownerBillingBlocked(),
       this.buildingsWithoutPin(),
       this.unitsWithoutArea(),
       this.unlinkedLandlords(),
@@ -798,6 +800,61 @@ export class DataQualityService {
     });
   }
 
+  /**
+   * Co-owned flats whose saved «توزيع الرسم على المالكين» billing cannot carry
+   * out (migration 0075) — the early warning for a bill that would otherwise be
+   * the first to say so. «حسب الأسهم» stops every co-owner's bill the day an
+   * owner spell is recorded without أسهم (the drawer's box is optional, and a
+   * registration writes no أسهم at all), and nothing else tells the office.
+   *
+   * The owners are `activeOwnerSpells`, the same read billing makes, and the
+   * verdict is `ownerBillingBlock`, the rule billing applies, so this list and
+   * the refused bills are one list. Fresh without a rescan: an owner-billing
+   * save, an occupancy write and «أرشفة الملف» all emit `building.changed` or
+   * `citizen.changed`, which clear the cache (`onRegisterChanged`).
+   *
+   * Not here: a responsible owner whose own file stopped claiming the flat.
+   * Only `holdingsOf` knows which file claims a flat — the census claim rule
+   * and its four readers — and a set-based copy of it would be a fifth.
+   */
+  private async ownerBillingBlocked(): Promise<RawFinding[]> {
+    const units = await this.db.unit.findMany({
+      where: { ownerBillingMode: { in: ['BY_SHARES', 'RESPONSIBLE_OWNER'] } },
+      select: {
+        id: true,
+        unitCode: true,
+        buildingId: true,
+        ownerBillingMode: true,
+        responsibleOwnerId: true,
+        updatedAt: true,
+        occupancies: activeOwnerSpells({ citizenId: true, shares: true, createdAt: true }),
+      },
+    });
+    const blocked = units.flatMap((unit) => {
+      const block = ownerBillingBlock({
+        mode: unit.ownerBillingMode,
+        responsibleOwnerId: unit.responsibleOwnerId,
+        owners: unit.occupancies.map((spell) => ({ citizenId: spell.citizenId, shares: spell.shares })),
+      });
+      return block ? [{ unit, block }] : [];
+    });
+    if (blocked.length === 0) return [];
+
+    const buildings = await this.db.building.findMany({
+      where: { id: { in: [...new Set(blocked.map(({ unit }) => unit.buildingId))] } },
+      select: { id: true, code: true, name: true, parcelNumber: true },
+    });
+    const byId = new Map(buildings.map((building) => [building.id, building]));
+    return blocked.flatMap(({ unit, block }) => {
+      const building = byId.get(unit.buildingId);
+      if (!building) return [];
+      const at = [unit.updatedAt, ...unit.occupancies.map((spell) => spell.createdAt)].sort(
+        (a, b) => b.getTime() - a.getTime(),
+      )[0]!;
+      return [ownerBillingBlockedFinding({ unitId: unit.id, unitCode: unit.unitCode, at }, block, building)];
+    });
+  }
+
   /** Structures with no entrance — the duplicate prompt cannot measure from them. */
   private async buildingsWithoutPin(): Promise<RawFinding[]> {
     const rows = await this.db.$queryRaw<
@@ -925,5 +982,41 @@ export class DataQualityService {
   }
 }
 
-type RawFinding = Omit<QualityFinding, 'officers' | 'dismissal'> & { officerIds: string[] };
+export type RawFinding = Omit<QualityFinding, 'officers' | 'dismissal'> & { officerIds: string[] };
+
+/**
+ * One `OWNER_BILLING_BLOCKED` finding: the flat, what stops its saved method,
+ * and what billing does meanwhile. Keyed by the unit, which is what «الإجراء»
+ * opens. Nobody's filing is at fault — a method saved before an owner was
+ * recorded is ordinary — so no officer is named.
+ */
+export function ownerBillingBlockedFinding(
+  unit: { unitId: string; unitCode: string; at: Date },
+  block: OwnerBillingBlock,
+  building: { id: string; code: string; name: string | null; parcelNumber: string },
+): RawFinding {
+  const detail =
+    block.reason === 'SHARES_MISSING'
+      ? `الوحدة ${unit.unitCode}: يتوزّع رسمها حسب الأسهم، وأسهم بعض مالكيها غير مسجّلة (${block.missing} من ${block.owners}) — فواتير جميع مالكيها مرفوضة حتى تُسجَّل الأسهم أو تُختار طريقة أخرى`
+      : `الوحدة ${unit.unitCode}: المالك المسؤول المختار لم يعد بين مالكيها الحاليين (انتهت ملكيته أو أُرشف ملفه) — يُقسَم رسمها بالتساوي بين مالكيها حتى تُختار طريقة جديدة`;
+  return {
+    kind: 'OWNER_BILLING_BLOCKED',
+    subjectKey: unit.unitId,
+    // Every co-owner's bill refused, against a method the office chose that billing set aside.
+    severity: block.reason === 'SHARES_MISSING' ? 'HIGH' : 'MEDIUM',
+    detail,
+    subjects: [
+      {
+        kind: 'building',
+        id: building.id,
+        label: building.name ? `${building.code} — ${building.name}` : building.code,
+        secondary: `عقار ${building.parcelNumber}`,
+      },
+    ],
+    officerIds: [],
+    at: unit.at.toISOString(),
+    // Closed by recording the أسهم or choosing again; «ليست مشكلة» would hide a refused bill.
+    dismissable: false,
+  };
+}
 

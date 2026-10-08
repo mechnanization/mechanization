@@ -281,16 +281,11 @@ export class CitizenController {
             ...unit,
             owners: unit.owners.map((owner) => ({ name: owner.name, shares: owner.shares })),
             // How a co-owned flat is divided, and this person's part — never
-            // another owner's register id: whether they are the one paying for
-            // all is the only fact about that choice that is theirs.
+            // another owner's register id. Under «مالك مسؤول» their part says
+            // whether they pay for all (1/1) or nothing (0/1), read the same way
+            // as the staff file reads it (`lib/owner-billing.ts`).
             ownerBilling: ownerBilling
-              ? {
-                  mode: ownerBilling.mode,
-                  effectiveMode: ownerBilling.effectiveMode,
-                  share: ownerBilling.share,
-                  paysForAll:
-                    ownerBilling.effectiveMode === 'RESPONSIBLE_OWNER' && ownerBilling.responsibleOwnerId === user.sub,
-                }
+              ? { mode: ownerBilling.mode, effectiveMode: ownerBilling.effectiveMode, share: ownerBilling.share }
               : null,
           })),
         })),

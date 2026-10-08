@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-07.
+Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-08.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -470,6 +470,24 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   أسهم are recorded or corrected beside the billing method, in «توزيع الرسم على المالكين».
 - **Where:** `BuildingsService.recordOccupancy`; pinned by
   `co-owner-billing.integration.spec.ts`.
+
+### Archiving a co-owner re-divides the flat from then on, and no raised bill is listed for it
+
+- **What happens:** «أرشفة الملف» on one owner of a co-owned flat changes every other owner's part
+  from the next bill: four brothers at 1/4 become three at 1/3, and an archived «مالك مسؤول» falls
+  back to the equal split. Restoring the file divides it by four again. «فواتير تأثّرت بتصحيحات»
+  lists none of the bills already raised at the old part.
+- **Why:** billing divides a flat between open files only (`activeOwnerSpells`), so the archive
+  moves the division; but the archive is one `CITIZEN_DEACTIVATED` / `CITIZEN_REACTIVATED` row on
+  the archived person's own file, which `traceChanges` reads for that person alone and which is not
+  in `FILE_ACTIONS`. Deliberately: an archive runs forward, like a sale or a damage reading, and a
+  bill raised before it was right when it was raised.
+- **Do this:** treat it as a forward change. If a file was archived in error and the other owners
+  were billed more in the meantime, that is a manual correction of those bills, not something the
+  correction screen will find. «ملاحظات الجودة» flags an archived responsible owner
+  (`OWNER_BILLING_BLOCKED`).
+- **Where:** `buildings/owner-billing.ts` `activeOwnerSpells`; `fees/bill-corrections.ts`
+  `FILE_ACTIONS`, `traceChanges`.
 
 ### Events are synchronous strings
 

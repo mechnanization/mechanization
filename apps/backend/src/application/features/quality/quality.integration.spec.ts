@@ -69,7 +69,7 @@ describeIfDb('Quality review', () => {
     /*
       Always a miss, so every assertion below reads the register rather than
       whatever a previous case left behind. `DataQualityService` caches its
-      eight scans in production; a test that shared them could not tell a
+      scans in production; a test that shared them could not tell a
       finding that was fixed from one that was merely remembered.
     */
     const cache = {
@@ -481,6 +481,84 @@ describeIfDb('Quality review', () => {
       target: { link: { kind: 'building', id: second.building.id } },
     });
     expect((created.items[0]!.after as Record<string, unknown>).duplicateReason).toBe('مبنى آخر خلفه');
+  });
+
+  /**
+   * «توزيع على المالكين لا يُطبَّق» against the real `activeOwnerSpells` read:
+   * a «حسب الأسهم» shop that gained an owner with no أسهم, and a responsible
+   * owner whose file was archived. Each finding closes by itself once the flat
+   * is one billing can divide again.
+   */
+  it('warns of a co-owned flat whose saved billing method cannot be carried out', async () => {
+    const tag = randomUUID().slice(0, 8);
+    const building = await db.building.create({
+      data: {
+        parcelNumber: `OB${tag}`,
+        codeSuffix: 'A',
+        code: `A2-OB-${tag}`,
+        structureType: 'MIXED_USE',
+        floorsCount: 1,
+        createdById: staff.jawad,
+      },
+    });
+    const unit = (unitCode: string, sequence: number) =>
+      db.unit.create({ data: { buildingId: building.id, unitCode, floor: 0, sequence, unitType: 'SHOP' } });
+    const owner = async (firstName: string) =>
+      (await filing(staff.jawad, { firstName, lastName: `مالك${tag}` })).citizenId;
+    const ali = await owner('علي');
+    const maarouf = await owner('معروف');
+    const aref = await owner('عارف');
+
+    const byShares = await unit('0001', 1);
+    await db.unitOccupancy.createMany({
+      data: [
+        { unitId: byShares.id, citizenId: ali, role: 'OWNER', shares: 1200 },
+        // Recorded after «حسب الأسهم» was saved, by a path that writes no أسهم.
+        { unitId: byShares.id, citizenId: maarouf, role: 'OWNER', shares: null },
+      ],
+    });
+    await db.unit.update({ where: { id: byShares.id }, data: { ownerBillingMode: 'BY_SHARES' } });
+
+    const responsible = await unit('0002', 2);
+    await db.unitOccupancy.createMany({
+      data: [
+        { unitId: responsible.id, citizenId: ali, role: 'OWNER' },
+        { unitId: responsible.id, citizenId: maarouf, role: 'OWNER' },
+        { unitId: responsible.id, citizenId: aref, role: 'OWNER' },
+      ],
+    });
+    await db.unit.update({
+      where: { id: responsible.id },
+      data: { ownerBillingMode: 'RESPONSIBLE_OWNER', responsibleOwnerId: aref },
+    });
+
+    const blocked = async () =>
+      new Map(
+        (await within(() => quality.findings())).items
+          .filter((finding) => finding.kind === 'OWNER_BILLING_BLOCKED')
+          .map((finding) => [finding.subjectKey, finding]),
+      );
+
+    // A responsible owner who still owns it is a method billing carries out.
+    let found = await blocked();
+    expect(found.get(byShares.id)).toMatchObject({
+      severity: 'HIGH',
+      dismissable: false,
+      subjects: [expect.objectContaining({ kind: 'building', id: building.id })],
+    });
+    expect(found.get(byShares.id)!.detail).toContain('(1 من 2)');
+    expect(found.has(responsible.id)).toBe(false);
+
+    // «أرشفة الملف» on the responsible owner: billing falls back to the equal split, and says so here.
+    await db.user.update({ where: { id: aref }, data: { isActive: false } });
+    found = await blocked();
+    expect(found.get(responsible.id)).toMatchObject({ severity: 'MEDIUM' });
+
+    // The أسهم recorded: the shop divides again, and the finding is gone.
+    await db.unitOccupancy.updateMany({ where: { unitId: byShares.id, citizenId: maarouf }, data: { shares: 1200 } });
+    found = await blocked();
+    expect(found.has(byShares.id)).toBe(false);
+    expect(found.has(responsible.id)).toBe(true);
   });
 
   it('hides a phone number inside a hand-written audit snapshot when the row is read', async () => {
