@@ -1100,6 +1100,8 @@
     "sharesHint": "Parts are divided by the sum of the owners’ recorded shares, not by 2400.",
     "sharesFor": "Shares of {name}",
     "previewTitle": "What each owner is billed for",
+    "previewExempt": "This unit is exempt from fees, so no owner is billed for it while the exemption stands.",
+    "previewUninhabitable": "This unit is not habitable, so no owner is billed for it until a later reading finds it habitable.",
     "partWhole": "The whole fee",
     "partFraction": "{numerator}/{denominator} of the fee",
     "partNone": "Nothing — the responsible owner pays",
@@ -1140,6 +1142,7 @@
     "note": "Reason in words",
     "notePlaceholder": "e.g. the main mosque — council decision no. …",
     "noteRequired": "Write the reason for the exemption",
+    "noteTooLong": "The reason is too long — 500 characters at most",
     "grant": "Exempt the unit",
     "cancel": "Cancel",
     "standing": "Exempt from fees — {reason}",
@@ -1153,6 +1156,6 @@
     "failed": "Could not save the exemption",
     "fileLabel": "Fee exemption",
     "fileValue": "Exempt — {reason}",
-    "lifecycleNote": "The building’s status alone exempts nothing from fees. If it cannot be lived in, record a damage assessment of “Not habitable” from the unit matrix — everything in it is then exempt from fees until a re-inspection."
+    "lifecycleNote": "The building’s status alone exempts nothing from fees. If it cannot be lived in, use “Assess the building” (or “Assess this unit” for a single unit) in the unit matrix and record it as “Not habitable” — what is read not habitable is then exempt from every fee until a re-inspection."
   }
 }

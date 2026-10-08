@@ -83,13 +83,14 @@ export function currentReadingForUnit(
 
 /**
  * The flats among these whose current reading says nobody can live in them —
- * the ones the biller holds the occupancy fee on (decision, 2026-10-05).
+ * the ones the biller charges no fee on at all, until a later reading says
+ * habitable (decisions of 2026-10-05 and 2026-10-07: «غير صالحة للسكن» exempts).
  *
  * Released by the next reading that says otherwise, from any screen, with
- * nothing to close by hand: the hold is recomputed from the readings every
+ * nothing to close by hand: the exemption is recomputed from the readings every
  * run, as `unitsUnderReview` is recomputed from the records. A reading that
  * judged nothing («غير مصنّف» with no answer) does not say otherwise, so it
- * leaves the hold standing (`answering`).
+ * leaves the exemption standing (`answering`).
  */
 export async function uninhabitableUnitIds(
   db: Pick<TenantPrismaClient, '$queryRaw'>,

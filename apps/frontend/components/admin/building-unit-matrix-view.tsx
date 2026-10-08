@@ -112,7 +112,7 @@ import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
 import { ReinspectNotice } from './damage/reinspect-notice';
-import { damageInput } from '@/lib/damage-reading';
+import { damageInput, isUninhabitableNow } from '@/lib/damage-reading';
 
 
 type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | 'vacancy' | 'resize' | null;
@@ -1645,6 +1645,7 @@ export function BuildingUnitMatrixView({
                   locale={locale}
                   busy={busy}
                   canWrite={canWrite}
+                  uninhabitable={isUninhabitableNow(damage?.history ?? [], { unitId: selectedUnit.id })}
                   onSave={(input, kind) => void saveOwnerBilling(selectedUnit, input, kind)}
                 />
               ) : null}

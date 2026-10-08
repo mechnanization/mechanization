@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { BadgeCheck, Loader2 } from 'lucide-react';
 import {
   FEE_EXEMPTION_REASON,
   getLabels,
   isStructuralUnitType,
+  setUnitFeeExemptionSchema,
   type FeeExemptionReason,
   type SetUnitFeeExemptionInput,
 } from '@mechanization/shared-schemas';
@@ -48,11 +49,15 @@ export function FeeExemptionPanel({
   const [reason, setReason] = useState<FeeExemptionReason | ''>('');
   const [note, setNote] = useState('');
   const [confirmLift, setConfirmLift] = useState(false);
+  /** The note has been left or a grant tried — only then is its error shown (FRM-2). */
+  const [noteTouched, setNoteTouched] = useState(false);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     setOpen(false);
     setReason('');
     setNote('');
+    setNoteTouched(false);
   }, [unit.id, unit.feeExemption]);
 
   if (isStructuralUnitType(unit.unitType)) return null;
@@ -83,6 +88,8 @@ export function FeeExemptionPanel({
               description={t('liftBody')}
               confirmLabel={t('lift')}
               cancelLabel={t('cancel')}
+              // Lifting is undone by granting again: not a destructive act.
+              destructive={false}
               onConfirm={() => {
                 setConfirmLift(false);
                 onSave({ reason: null });
@@ -99,7 +106,19 @@ export function FeeExemptionPanel({
   const occupied = unit.occupants.some(
     (occupant) => occupant.toDate === null && (occupant.role === 'TENANT' || occupant.role === 'FREE_OCCUPANT'),
   );
-  const noteMissing = reason === 'OTHER' && note.trim().length < 3;
+  const input: SetUnitFeeExemptionInput | null = reason ? { reason, ...(note.trim() ? { note: note.trim() } : {}) } : null;
+  // The server's own rule (`setUnitFeeExemptionSchema`), not a copy of it.
+  const parsed = input ? setUnitFeeExemptionSchema.safeParse(input) : null;
+  const noteIssue = parsed && !parsed.success ? parsed.error.issues.find((issue) => issue.path[0] === 'note') : undefined;
+  const noteError = noteIssue ? (noteIssue.code === 'too_big' ? t('noteTooLong') : t('noteRequired')) : undefined;
+  const grant = () => {
+    setNoteTouched(true);
+    if (!input || !parsed?.success) {
+      if (noteIssue) noteRef.current?.focus();
+      return;
+    }
+    onSave(input);
+  };
 
   if (!open) {
     return (
@@ -137,13 +156,17 @@ export function FeeExemptionPanel({
         label={t('note')}
         htmlFor={`fee-exemption-note-${unit.id}`}
         required={reason === 'OTHER'}
-        error={noteMissing && note !== '' ? t('noteRequired') : undefined}
+        error={noteTouched ? noteError : undefined}
       >
         <Textarea
+          ref={noteRef}
           id={`fee-exemption-note-${unit.id}`}
           rows={2}
+          maxLength={500}
           value={note}
+          aria-invalid={(noteTouched && Boolean(noteError)) || undefined}
           onChange={(event) => setNote(event.target.value)}
+          onBlur={() => setNoteTouched(true)}
           placeholder={t('notePlaceholder')}
           disabled={busy}
         />
@@ -151,8 +174,8 @@ export function FeeExemptionPanel({
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
-          disabled={busy || !reason || noteMissing}
-          onClick={() => reason && onSave({ reason, ...(note.trim() ? { note: note.trim() } : {}) })}
+          disabled={busy || !reason}
+          onClick={grant}
         >
           {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
           {t('grant')}

@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/unit-fee-exemptions` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/unit-fee-exemptions`, 2026-10-08.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -92,16 +92,23 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   editor asks for the reading, and «مراجعة الجودة» lists any such building whose units are
   still billed. The bill and the issue summary both say how many units were not charged.
 - **A flat amount aimed at a kind of unit follows the same rule.** A notice of one amount
-  per holder of, say, shops is not charged to someone all of whose shops are exempt or
-  cannot be lived in; one usable shop beside them and the amount is due as usual. A flat
-  amount sent to every citizen is a charge on the person and is not affected.
+  per holder of, say, shops is not charged to someone all of whose shops are exempt, cannot
+  be lived in, or are paid for by another co-owner named «مالك مسؤول»; one shop they pay for
+  beside them and the amount is due as usual. Of four brothers whose one shop the eldest pays
+  for, only he is charged; when they split it equally or by أسهم, each is charged the amount
+  once (the user's decision of 2026-10-08). A flat amount sent to every citizen is a charge on
+  the person and is not affected.
 - **A unit can be exempt from fees.** A system administrator can mark a unit «معفاة من
   الرسوم» — a place of worship, a public facility, or another reason written out — and no
   fee is charged on it, whoever owns or uses it. It is for the mosque itself or the
   municipality's own building, not for a shop a waqf rents out: that shop's tenant is billed
   as usual. Granting and lifting are on the activity log; the unit, the owner's file and the
   citizen's «ملفّي» show it — on a house's own flat and on a flat the census recorded the
-  person on as well as on an itemised unit.
+  person on as well as on an itemised unit — and none of them shows a co-owned unit's split
+  while it is exempt, since no owner is billed for it. Granting corrects a fact: bills raised
+  on the unit before it, on any day, are listed in «فواتير تأثّرت بتصحيحات» for the accountant
+  to decide. Lifting runs forward: the unit owes from then, and earlier bills stay as raised.
+  Nothing changes a bill by itself (the user's decision of 2026-10-08).
 - **A flat several people own is billed once, divided between them.** Each co-owner's file
   claims the flat, and each used to be billed for all of it. Now what the owners owe is split
   equally by default, and an officer can choose instead to divide it by the owners' أسهم or to

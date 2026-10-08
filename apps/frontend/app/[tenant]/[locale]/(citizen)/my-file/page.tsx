@@ -51,7 +51,7 @@ import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { formatDate, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
-import { ownerBillingWording } from '@/lib/owner-billing';
+import { ownerBillingApplies, ownerBillingWording } from '@/lib/owner-billing';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -893,8 +893,8 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
 /**
  * What changes a unit's bill beyond its status: «معفاة من الرسوم» (0077), and
  * how a flat this person owns with others is divided (0075) — their own part,
- * never who else pays. On a unit line, and on a house or a census flat whose
- * card has no unit lines (`heldUnits`).
+ * never who else pays, and only while the unit is billed at all. On a unit
+ * line, and on a house or a census flat whose card has no unit lines (`heldUnits`).
  */
 function UnitBillingNotes({
   feeExemption,
@@ -919,7 +919,8 @@ function UnitBillingNotes({
           <span>{tFeeExemption('fileValue', { reason: labels.feeExemptionReason[feeExemption] })}</span>
         </p>
       ) : null}
-      {ownerBilling ? (
+      {/* An exempt unit is billed to no owner: no part to tell them (`ownerBillingApplies`). */}
+      {ownerBilling && ownerBillingApplies({ feeExemption }) ? (
         <p className="flex flex-wrap items-center gap-x-2 px-2 text-muted-foreground">
           <Scale className="size-3 shrink-0" aria-hidden />
           {code}

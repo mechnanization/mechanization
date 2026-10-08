@@ -20,6 +20,7 @@ import type { UnitOccupant, UnitWithOccupants } from '@/lib/api-client';
 import {
   archivedOwners,
   currentOwners,
+  ownerBillingApplies,
   ownerBillingWording,
   parseShares,
   type OwnerBillingView,
@@ -40,18 +41,24 @@ function storedShares(owners: readonly UnitOccupant[]): Record<string, string> {
  * what each owner's next bill will charge. It only divides what the owners
  * owe; a tenant's occupancy fee is never divided, and the panel says so.
  * Whether it shows at all is `showsOwnerBilling` (`lib/owner-billing.ts`).
+ * While the unit is exempt or uninhabitable no owner is billed for it, and the
+ * preview says that instead of listing parts (`ownerBillingApplies`); the
+ * method can still be chosen, for when it is billed again.
  */
 export function OwnerBillingPanel({
   unit,
   locale,
   busy,
   canWrite,
+  uninhabitable = false,
   onSave,
 }: {
   unit: UnitWithOccupants;
   locale: string;
   busy: boolean;
   canWrite: boolean;
+  /** The unit's current damage reading says «غير صالحة للسكن» (`isUninhabitableNow`). */
+  uninhabitable?: boolean;
   /** `withdraw` saves `mode: null` — back to the equal split. */
   onSave: (input: SetOwnerBillingInput, kind: 'save' | 'withdraw') => void;
 }) {
@@ -276,7 +283,10 @@ export function OwnerBillingPanel({
 
       <div className="space-y-1.5">
         <p className="text-xs font-medium">{t('previewTitle')}</p>
-        {missingResponsible ? (
+        {!ownerBillingApplies({ feeExemption: unit.feeExemption, uninhabitable }) ? (
+          // Charged to nobody while it stands: listing parts would bill what no bill charges.
+          <p className="text-xs text-muted-foreground">{unit.feeExemption ? t('previewExempt') : t('previewUninhabitable')}</p>
+        ) : missingResponsible ? (
           // No owner picked yet: an equal split here would preview a choice nobody made.
           <p className="text-xs text-muted-foreground">{t('pickResponsible')}</p>
         ) : (

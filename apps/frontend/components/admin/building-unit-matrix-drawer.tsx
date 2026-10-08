@@ -97,7 +97,7 @@ import { showsOwnerBilling } from '@/lib/owner-billing';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
 import { ReinspectNotice } from './damage/reinspect-notice';
-import { damageInput } from '@/lib/damage-reading';
+import { damageInput, isUninhabitableNow } from '@/lib/damage-reading';
 
 /**
  * One building's units, floor by floor, with the things an officer standing in
@@ -1068,6 +1068,7 @@ export function BuildingUnitMatrixDrawer({
                   locale={locale}
                   busy={busy}
                   canWrite={canWrite}
+                  uninhabitable={isUninhabitableNow(damage?.history ?? [], { unitId: selectedUnit.id })}
                   onSave={(input, kind) => void saveOwnerBilling(selectedUnit, input, kind)}
                 />
               ) : null}
