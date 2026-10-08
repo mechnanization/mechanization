@@ -104,7 +104,8 @@ import {
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
-import { OwnerBillingPanel, showsOwnerBilling } from './owner-billing-panel';
+import { OwnerBillingPanel } from './owner-billing-panel';
+import { showsOwnerBilling } from '@/lib/owner-billing';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';

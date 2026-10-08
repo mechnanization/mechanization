@@ -90,7 +90,8 @@ import {
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
-import { OwnerBillingPanel, showsOwnerBilling } from './owner-billing-panel';
+import { OwnerBillingPanel } from './owner-billing-panel';
+import { showsOwnerBilling } from '@/lib/owner-billing';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
 import { ReinspectNotice } from './damage/reinspect-notice';
@@ -219,7 +220,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       setError(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not load the building.'
             : 'تعذّر تحميل المبنى.',
@@ -334,7 +335,7 @@ export function BuildingUnitMatrixDrawer({
         toast.success(message);
       } catch (caught) {
         logApiError(caught);
-        const message = caught instanceof ApiRequestError ? caught.payload.message : failure;
+        const message = caught instanceof ApiRequestError ? caught.message : failure;
         setActionError(message);
         toast.error(failure, { description: message });
       } finally {
@@ -405,7 +406,7 @@ export function BuildingUnitMatrixDrawer({
       }
 
       const failure = en ? 'Could not add the unit.' : 'تعذّرت إضافة الوحدة.';
-      const message = caught instanceof ApiRequestError ? caught.payload.message : failure;
+      const message = caught instanceof ApiRequestError ? caught.message : failure;
       setActionError(message);
       toast.error(failure, { description: message });
     } finally {
@@ -482,7 +483,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not lift the vacancy.'
             : 'تعذّر إلغاء تأكيد الشغور.',
@@ -522,7 +523,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not end the occupancy.'
             : 'تعذّر إنهاء الإشغال.',
@@ -542,7 +543,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not link the owner.'
             : 'تعذّر الربط بالمالك.',

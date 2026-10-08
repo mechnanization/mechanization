@@ -2,7 +2,6 @@
 
 import { use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useTranslations } from 'next-intl';
 import {
   BadgeCheck,
   Building2,
@@ -51,6 +50,7 @@ import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { formatDate, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
+import { ownerBillingWording } from '@/lib/owner-billing';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -792,17 +792,6 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
   */
   const status = unit.censusUnitStatus ?? unit.unitStatus;
   const months = unit.presenceMonths?.length ? formatMonthList(unit.presenceMonths, locale) : null;
-  const tOwnerBilling = useTranslations('ownerBilling');
-  /** «توزيع الرسم على المالكين», worded to the owner reading it. */
-  const ownerBillingLine = (billing: NonNullable<CitizenProfileUnit['ownerBilling']>): string => {
-    const method = billing.mode ? labels.ownerBillingMode[billing.effectiveMode] : tOwnerBilling('fileDefault');
-    if (!billing.share) return `${method} — ${tOwnerBilling('mineUnknown')}`;
-    const { numerator, denominator } = billing.share;
-    if (billing.effectiveMode === 'RESPONSIBLE_OWNER') {
-      return `${method} — ${billing.paysForAll ? tOwnerBilling('minePaysAll') : tOwnerBilling('minePaysNone')}`;
-    }
-    return `${method} — ${tOwnerBilling('mineShare', { numerator, denominator })}`;
-  };
 
   return (
     <li className="space-y-1 px-3 py-2 text-xs">
@@ -887,7 +876,8 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
       {unit.ownerBilling ? (
         <p className="flex flex-wrap items-center gap-x-2 px-2 text-muted-foreground">
           <Scale className="size-3 shrink-0" aria-hidden />
-          <span>{ownerBillingLine(unit.ownerBilling)}</span>
+          {/* Worded to the owner reading it, the way the staff file words it (`ownerBillingWording`). */}
+          <span>{ownerBillingWording(unit.ownerBilling, locale, 'mine').line}</span>
         </p>
       ) : null}
     </li>

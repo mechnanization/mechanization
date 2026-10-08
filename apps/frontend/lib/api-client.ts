@@ -2909,19 +2909,6 @@ export async function logUnitVisit(tenant: string, token: string, input: LogVisi
 }
 
 /**
- * Records that a unit was found empty, with what says so.
- *
- * Its own call rather than a `updateUnit({ unitStatus: 'VACANT', surveyStatus:
- * 'VACANT_CONFIRMED' })`, which is what this was and which the server now
- * refuses: a confirmed vacancy exempts the owner from the occupancy fee, so it
- * is recorded as a row carrying its basis, its date and whoever decided it —
- * and it can be lifted again at any time by `endVacancy`.
- *
- * Refused while a مستأجر or شاغل بتسامح is recorded in the unit, while the flat
- * is a مسكن موسمي, and while another confirmation is already standing. Each
- * refusal names its own remedy, so callers should surface it verbatim.
- */
-/**
  * «توزيع الرسم على المالكين» — saves how a co-owned flat is billed, and the
  * owners' أسهم with it. `mode: null` withdraws a choice (back to the equal split).
  */
@@ -2941,6 +2928,19 @@ export async function setOwnerBilling(
   return result;
 }
 
+/**
+ * Records that a unit was found empty, with what says so.
+ *
+ * Its own call rather than a `updateUnit({ unitStatus: 'VACANT', surveyStatus:
+ * 'VACANT_CONFIRMED' })`, which is what this was and which the server now
+ * refuses: a confirmed vacancy exempts the owner from the occupancy fee, so it
+ * is recorded as a row carrying its basis, its date and whoever decided it —
+ * and it can be lifted again at any time by `endVacancy`.
+ *
+ * Refused while a مستأجر or شاغل بتسامح is recorded in the unit, while the flat
+ * is a مسكن موسمي, and while another confirmation is already standing. Each
+ * refusal names its own remedy, so callers should surface it verbatim.
+ */
 export async function confirmVacancy(
   tenant: string,
   token: string,
@@ -3170,9 +3170,10 @@ export interface CitizenProfileUnit {
   }>;
   /**
    * «توزيع الرسم على المالكين» (0075) when the linked flat has several current
-   * owners; null otherwise. `share` is this file's owner's part. On the
-   * citizen's own portal view `responsibleOwnerId` and `fallback` are absent
-   * and `paysForAll` says whether they are the one paying for everyone.
+   * owners; null otherwise. `share` is this file's owner's part — under «مالك
+   * مسؤول», 1/1 for the owner who pays for all and 0/1 for the others. On the
+   * citizen's own portal view `responsibleOwnerId` and `fallback` are absent.
+   * Worded by `ownerBillingWording` (`lib/owner-billing.ts`).
    */
   ownerBilling?: {
     mode: OwnerBillingMode | null;
@@ -3180,7 +3181,6 @@ export interface CitizenProfileUnit {
     responsibleOwnerId?: string | null;
     fallback?: 'RESPONSIBLE_NOT_OWNER' | null;
     share: { numerator: number; denominator: number } | null;
-    paysForAll?: boolean;
   } | null;
 }
 
@@ -5149,6 +5149,12 @@ export async function issueFeeNotice(
      * period after a re-inspection reads them habitable.
      */
     uninhabitableUnits?: number;
+    /**
+     * Co-owned flats this notice reached whose responsible owner («مالك مسؤول»)
+     * pays for them in full, so the other owners were charged nothing for them —
+     * see `FeeAssessment.coOwnerPaidUnitCount`. Each flat once.
+     */
+    coOwnerPaidUnits?: number;
   }>(tenant, '/fees/notices', {
     token,
     method: 'POST',
