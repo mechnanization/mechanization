@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { POSSIBLE_DUPLICATE_FLAG_PATH, type FieldFlag, isNonPersonRecord } from '@mechanization/shared-schemas';
+import {
+  POSSIBLE_DUPLICATE_FLAG_PATH,
+  type FieldFlag,
+  isNonPersonRecord,
+  storedLandlordName,
+} from '@mechanization/shared-schemas';
 import { Prisma } from '../../generated/tenant-client';
 import { PropertyEntry } from '../../domain/entities/property-entry.entity';
 import { Registration } from '../../domain/entities/registration.entity';
@@ -12,7 +17,6 @@ import {
 import { TenantContextService } from '../context/tenant-context.service';
 import { citizenPhoneRuleError } from '../prisma/check-violation';
 import { normalizeSearchText } from '../../application/common/search-terms';
-import { landlordNamesToStore } from '../../application/common/landlord-name';
 
 /** Where an identity-document clash is recorded on the new citizen's file. */
 const IDENTITY_DOC_PATH = 'personal.identityDocNumber';
@@ -276,7 +280,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
         });
 
         const propertyIds: string[] = [];
-        const landlordNames = await landlordNamesToStore(
+        const landlordNames = await this.landlordNamesToStore(
           tx,
           input.properties.map((property) => property.props),
         );
@@ -360,6 +364,43 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
    * the point: a queued record that reaches the server twice should leave the
    * phone in exactly the state one delivery would have.
    */
+  /**
+   * The owner's name each card writes to `property_entries.landlordName`:
+   * `storedLandlordName`, given the owner the card names in `landlordCitizenId`,
+   * so a name the form was *shown* for that owner is stored as the owner's own.
+   * Every linked owner of the submission is read in one query.
+   *
+   * The citizen update path does the same through `application/common/landlord-name.ts`;
+   * this one reads the owners itself because infrastructure imports only the
+   * domain and the pure shared rules, never application code (docs/code-quality.md).
+   */
+  private async landlordNamesToStore(
+    tx: Prisma.TransactionClient,
+    cards: ReadonlyArray<{ landlordName?: string | null; landlordCitizenId?: unknown }>,
+  ): Promise<Array<string | null>> {
+    const ids = [
+      ...new Set(
+        cards
+          .filter((card) => card.landlordName)
+          .map((card) => card.landlordCitizenId)
+          .filter((id): id is string => typeof id === 'string'),
+      ),
+    ];
+    const owners = ids.length
+      ? await tx.user.findMany({
+          where: { id: { in: ids }, kind: 'CITIZEN' },
+          select: { id: true, firstName: true, middleName: true, lastName: true, residence: true },
+        })
+      : [];
+    const byId = new Map(owners.map((owner) => [owner.id, owner]));
+    return cards.map((card) =>
+      storedLandlordName(
+        card.landlordName,
+        typeof card.landlordCitizenId === 'string' ? byId.get(card.landlordCitizenId) : null,
+      ),
+    );
+  }
+
   private async findByClientSubmissionId(
     clientSubmissionId: string,
   ): Promise<SubmitRegistrationResult | null> {
