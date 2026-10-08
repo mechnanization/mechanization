@@ -6,7 +6,6 @@ import { usePathname } from 'next/navigation';
 import { ChevronDown, CloudOff, ExternalLink, GitMerge, ShieldAlert, UsersRound } from 'lucide-react';
 import {
   duplicateMatchedOnLabels,
-  getLabels,
   type PossibleDuplicateMatch,
 } from '@mechanization/shared-schemas';
 import { checkPossibleDuplicates, logApiError } from '@/lib/api-client';
@@ -14,6 +13,7 @@ import { formatDate } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { RecordKindBadge } from '@/components/admin/record-kind-badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 
 const DEBOUNCE_MS = 500;
@@ -252,7 +252,6 @@ function MatchRow({
   onMerge?: (match: PossibleDuplicateMatch) => void;
 }) {
   const en = locale === 'en';
-  const labels = getLabels(locale);
   const agreed = duplicateMatchedOnLabels(locale);
 
   return (
@@ -269,9 +268,7 @@ function MatchRow({
             {match.certain ? (
               <Badge variant="soft-destructive">{en ? 'Same person' : 'الشخص نفسه'}</Badge>
             ) : null}
-            {match.residence === 'NON_RESIDENT_OWNER' ? (
-              <Badge variant="soft-info">{labels.citizenResidence.NON_RESIDENT_OWNER}</Badge>
-            ) : null}
+            <RecordKindBadge residence={match.residence} locale={locale} />
           </p>
 
           {/*

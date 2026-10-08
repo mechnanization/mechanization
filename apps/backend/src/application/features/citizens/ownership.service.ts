@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { isOwnerRecord, citizenDisplayName } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { isDwellingUnitType, statusForFlags, type AfterTenancyStatus, type FieldFlag } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -307,7 +308,7 @@ export class OwnershipService {
             select: {
               unitId: true,
               citizenId: true,
-              citizen: { select: { firstName: true, middleName: true, lastName: true } },
+              citizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
             },
           })
         : Promise.resolve([]),
@@ -334,7 +335,7 @@ export class OwnershipService {
               buildingId: true,
               units: { where: { endedAt: null }, select: { unitId: true } },
               registration: {
-                select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } } },
+                select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } } },
               },
             },
           })
@@ -377,7 +378,8 @@ export class OwnershipService {
     return {
       citizenId: input.citizenId,
       citizenName: fullName(owner),
-      ownerNonResident: owner.residence === 'NON_RESIDENT_OWNER',
+      // Not a household (non-resident, estate, institution): nobody of theirs lives in a dwelling.
+      ownerNonResident: isOwnerRecord(owner.residence),
       startedAt: starts.length ? new Date(Math.max(...starts)) : null,
       cards: input.cards,
       spells,
@@ -978,8 +980,9 @@ function day(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function fullName(person: { firstName: string; middleName?: string | null; lastName: string }): string {
-  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ');
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+function fullName(person: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }): string {
+  return citizenDisplayName(person);
 }
 
 const CARD_SELECT = {

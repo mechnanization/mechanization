@@ -86,6 +86,7 @@ import {
   type CitizenFormValues,
 } from './citizen-form';
 import {
+  citizenDisplayName,
   parseFloorLabel,
   POSSIBLE_DUPLICATE_FLAG_PATH,
   qualityLabels,
@@ -1490,11 +1491,16 @@ export function CitizenEditor({
 
       const payload = toSubmission(materialised);
 
+      // «ورثة المرحوم …» for an estate (0076), as the register will show it.
       const displayName =
-        [values.personal.firstName, values.personal.lastName]
-          .filter(Boolean)
-          .join(' ')
-          .trim() || (locale === 'en' ? 'Unnamed record' : 'سجل بلا اسم');
+        citizenDisplayName(
+          {
+            firstName: typeof values.personal.firstName === 'string' ? values.personal.firstName : null,
+            lastName: typeof values.personal.lastName === 'string' ? values.personal.lastName : null,
+            residence: values.residence ?? null,
+          },
+          { locale, middleName: false },
+        ) || (locale === 'en' ? 'Unnamed record' : 'سجل بلا اسم');
 
       /*
         Correcting a record that is already sitting in the queue.

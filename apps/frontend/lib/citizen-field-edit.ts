@@ -1,3 +1,4 @@
+import { isOwnerRecord } from '@mechanization/shared-schemas';
 import type { CitizenFormData, CitizenWriteInput } from './api-client';
 
 /**
@@ -69,6 +70,9 @@ const SECTION: Record<CitizenEditableField, 'personal' | 'contact'> = {
  * validation.
  */
 const NON_RESIDENT_PERSONAL = ['firstName', 'middleName', 'lastName', 'residencePlace'] as const;
+/** «تركة» (0076): the deceased's name; «جهة أو وقف»: its name, on one line. Same contact as above. */
+const ESTATE_PERSONAL = ['firstName', 'middleName', 'lastName'] as const;
+const INSTITUTION_PERSONAL = ['firstName'] as const;
 const NON_RESIDENT_CONTACT = [
   'phone',
   'whatsapp',
@@ -81,7 +85,8 @@ const NON_RESIDENT_CONTACT = [
  * A field the form does not ask on this kind of file cannot be corrected on it.
  *
  * Two files do not ask for the phone or the mother's name: «غير مقيم في البلدة»
- * has no اسم الأم, and a file marked «لا يملك رقم هاتف» has no phone. The second
+ * (and «تركة», «جهة أو وقف») has no اسم الأم, and a file marked «لا يملك رقم
+ * هاتف» has no phone. An institution's name is one line, so only «الاسم». The second
  * is a finished answer and the flag decides over the field — a number sent
  * beside it is dropped on save (`contactDetailsSchema`), so a correction made
  * here would be reported as made and not stored. Giving the person a phone is
@@ -89,7 +94,9 @@ const NON_RESIDENT_CONTACT = [
  */
 export function isEditableOn(form: CitizenFormData, field: CitizenEditableField): boolean {
   if (field === 'phone' && form.contact.hasNoPhone === true) return false;
-  if (form.residence !== 'NON_RESIDENT_OWNER') return true;
+  // An institution's name is one line, held in «الاسم» (0076).
+  if (form.residence === 'INSTITUTION') return field === 'firstName' || field === 'phone';
+  if (!isOwnerRecord(form.residence)) return true;
   return field !== 'motherName';
 }
 
@@ -209,7 +216,14 @@ export function citizenFieldPatch(
   form: CitizenFormData,
   edits: Partial<Record<CitizenEditableField, string>>,
 ): CitizenWriteInput {
-  const nonResident = form.residence === 'NON_RESIDENT_OWNER';
+  // Not a household (non-resident, estate, institution): only what its form asks goes back.
+  const nonResident = isOwnerRecord(form.residence);
+  const personalKeys =
+    form.residence === 'ESTATE'
+      ? ESTATE_PERSONAL
+      : form.residence === 'INSTITUTION'
+        ? INSTITUTION_PERSONAL
+        : NON_RESIDENT_PERSONAL;
 
   const personal: Record<string, unknown> = { ...form.personal };
   const contact: Record<string, unknown> = { ...form.contact };
@@ -230,7 +244,7 @@ export function citizenFieldPatch(
   const lebanese = personal.isLebanese !== false;
 
   const submittedPersonal = nonResident
-    ? pick(personal, NON_RESIDENT_PERSONAL)
+    ? pick(personal, personalKeys)
     : lebanese
       ? (() => {
           const {

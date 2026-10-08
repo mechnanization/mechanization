@@ -31,6 +31,7 @@ import { ReportingService } from './features/reporting/reporting.service';
 import { TenantService } from './features/tenant/tenant.service';
 import { FeesService } from './features/fees/fees.service';
 import { CorrectionBillsService } from './features/fees/correction-bills.service';
+import { ParcelDuesService } from './features/fees/parcel-dues.service';
 import { PaymentLedgerService } from './features/fees/payment-ledger.service';
 import { StaffService } from './features/staff/staff.service';
 import { ZonesService } from './features/zones/zones.service';
@@ -73,6 +74,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CitizenMergeService,
     FeesService,
     CorrectionBillsService,
+    ParcelDuesService,
     PaymentLedgerService,
     StaffService,
     ZonesService,
@@ -110,6 +112,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CitizenMergeService,
     FeesService,
     CorrectionBillsService,
+    ParcelDuesService,
     PaymentLedgerService,
     StaffService,
     ZonesService,

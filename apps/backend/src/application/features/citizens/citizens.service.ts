@@ -1,3 +1,4 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
@@ -9,7 +10,10 @@ import {
   formatUnitCode,
   IMPORT_COLUMNS,
   internationalPhone,
+  isNonPersonRecord,
+  isOwnerRecord,
   POSSIBLE_DUPLICATE_FLAG_PATH,
+  splitInstitutionName,
   statusForFlags,
 } from '@mechanization/shared-schemas';
 import type {
@@ -615,7 +619,7 @@ export class CitizensService {
     return {
       items: rows.map((row) => ({
         id: row.id,
-        fullName: [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' '),
+        fullName: citizenDisplayName(row),
         /*
           Carried on the list row because this is what tells two «محمد خليل»s
           apart wherever people are offered for picking — the occupant search on
@@ -740,7 +744,7 @@ export class CitizensService {
     return {
       items: rows.map((row) => ({
         id: row.id,
-        fullName: [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' '),
+        fullName: citizenDisplayName(row),
         motherName: row.motherName,
         referenceNumber: row.referenceNumber,
         phone: row.phone,
@@ -1046,9 +1050,16 @@ export class CitizensService {
       })),
       residence: citizen.residence,
       personal: {
-        firstName: citizen.firstName,
-        middleName: citizen.middleName ?? '',
-        lastName: citizen.lastName,
+        /*
+          An institution's name is one line on the form; it is stored across
+          the parts (`splitInstitutionName`), so it is joined back here (0076).
+        */
+        firstName:
+          citizen.residence === 'INSTITUTION'
+            ? [citizen.firstName, citizen.middleName, citizen.lastName].filter(Boolean).join(' ')
+            : citizen.firstName,
+        middleName: citizen.residence === 'INSTITUTION' ? '' : (citizen.middleName ?? ''),
+        lastName: citizen.residence === 'INSTITUTION' ? '' : citizen.lastName,
         /*
           Empty for a record filed before migration 0044, which is exactly what
           the form needs: the field renders blank and required, so an officer
@@ -1218,6 +1229,8 @@ export class CitizensService {
     payload: AdminCitizenSubmission,
     actor: { id: string },
   ): Promise<DuplicateReviewFindings> {
+    // «تركة» and «جهة أو وقف» (0076) are not checked as people — see `assessFindings`.
+    if (isNonPersonRecord(payload.residence)) return NO_FINDINGS;
     const personal = payload.personal as Record<string, unknown>;
     const contact = payload.contact as Record<string, unknown>;
     const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
@@ -3084,9 +3097,7 @@ export class CitizensService {
       const citizen = entry.registration.citizen;
       const existing = byCitizen.get(citizen.id) ?? {
         citizenId: citizen.id,
-        fullName: [citizen.firstName, citizen.middleName, citizen.lastName]
-          .filter(Boolean)
-          .join(' '),
+        fullName: citizenDisplayName(citizen),
         phone: citizen.phone,
         referenceNumber: citizen.referenceNumber,
         isActive: citizen.isActive,
@@ -3203,15 +3214,38 @@ export function citizenColumnsForEdit(
     match. `|| null` rather than `?? null` because the cleared field arrives
     as an empty string, and `''` is not an absence to Postgres.
   */
-  const hasNoPhone = contact.hasNoPhone === true;
+  const hasNoPhone = contact.hasNoPhone === true && !isOwnerRecord(payload.residence);
+  // An institution's name comes as one line and is stored across the parts (0076).
+  const names =
+    payload.residence === 'INSTITUTION'
+      ? splitInstitutionName(personal.firstName)
+      : { firstName: personal.firstName, middleName: personal.middleName || null, lastName: personal.lastName };
   const shared = {
-    firstName: personal.firstName,
-    middleName: personal.middleName || null,
-    lastName: personal.lastName,
+    ...names,
     hasNoPhone,
     phone: hasNoPhone ? null : (contact.phone || null),
     whatsapp: hasNoPhone ? null : (contact.whatsapp || contact.phone || null),
   };
+
+  if (isNonPersonRecord(payload.residence)) {
+    /*
+      «تركة» or «جهة أو وقف» (0076): the name, a phone if there is one, and the
+      representative in the local-contact fields. Every household column is
+      left as filed — the deceased's file converted to an estate keeps what was
+      recorded about him, under the no-data-loss rule the non-resident branch
+      below follows — except the one the CHECK in 0072 forbids keeping: a
+      relative's number that this save makes the record's own phone.
+    */
+    const newPhone = shared.phone;
+    return {
+      ...shared,
+      hasNoPhone: false,
+      ...(newPhone && stored.contactPhone === newPhone ? { contactPhone: null } : {}),
+      residence: payload.residence as never,
+      localContactName: contact.localContactName ?? null,
+      localContactPhone: contact.localContactPhone ?? null,
+    };
+  }
 
   if (payload.residence === 'NON_RESIDENT_OWNER') {
     /*

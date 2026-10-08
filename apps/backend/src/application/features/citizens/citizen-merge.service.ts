@@ -16,6 +16,7 @@ import {
   type CitizenMergeSide,
   type CitizenUnmergePreview,
   type CitizenUnmergeBlockCode,
+  citizenDisplayName,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -156,8 +157,9 @@ const VERSIONED_PERSON = (() => {
   return fields;
 })();
 
-const fullName = (person: { firstName: string; middleName: string | null; lastName: string }) =>
-  [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ');
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+const fullName = (person: { firstName: string; middleName: string | null; lastName: string; residence?: string | null }) =>
+  citizenDisplayName(person);
 
 const RECORDED_IN_ERROR = 'RECORDED_IN_ERROR';
 
@@ -664,7 +666,7 @@ export class CitizenMergeService {
     ];
     const officerRows = await this.db.user.findMany({
       where: { id: { in: officerIds }, kind: 'STAFF' },
-      select: { id: true, firstName: true, lastName: true },
+      select: { id: true, firstName: true, lastName: true, residence: true },
     });
 
     return {
@@ -1158,7 +1160,7 @@ export class CitizenMergeService {
 
     const later = await this.db.citizenMerge.findFirst({
       where: { absorbedId: merge.survivorId, undoneAt: null },
-      select: { survivor: { select: { firstName: true, lastName: true, referenceNumber: true } } },
+      select: { survivor: { select: { firstName: true, lastName: true, residence: true, referenceNumber: true } } },
     });
     if (later) {
       return [
@@ -1557,8 +1559,8 @@ const MERGE_RECORD_SELECT = {
   mergedAt: true,
   undoneAt: true,
   undoReason: true,
-  survivor: { select: { id: true, firstName: true, middleName: true, lastName: true, referenceNumber: true } },
-  absorbed: { select: { id: true, firstName: true, middleName: true, lastName: true, referenceNumber: true } },
+  survivor: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true, referenceNumber: true } },
+  absorbed: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true, referenceNumber: true } },
   mergedBy: { select: { firstName: true, lastName: true } },
   undoneBy: { select: { firstName: true, lastName: true } },
 } as const;

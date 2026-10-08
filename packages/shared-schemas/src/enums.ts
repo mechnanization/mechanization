@@ -49,10 +49,51 @@ function arabicEnum<T extends readonly [string, ...string[]]>(values: T, message
  *
  * Decided by where the person *lives most of the year*, never by محل القيد:
  * plenty of people registered in the town live in Beirut, and the reverse.
+ *
+ * Two owners of record that are not a living person (migration 0076; the
+ * user's decision, 2026-10-07):
+ *
+ * `ESTATE` — «تركة (ورثة المرحوم …)». The owner died and the heirs have not
+ * partitioned. A dead man cannot be billed, sign a receipt or pay, so the owner
+ * of record becomes his estate: his own file, converted in place (his cards,
+ * flats and bills stay on it), shown as «ورثة المرحوم …» (`citizenDisplayName`).
+ * It owns and nothing else — whoever lives in or uses the flat (the widow, a
+ * tenant) is filed in their own name and pays the occupancy fee; an empty flat's
+ * owner-borne charges fall on the heirs collectively.
+ *
+ * `INSTITUTION` — «جهة أو وقف». A waqf, a council, a public body, so a mosque
+ * or a municipal hall never stands with no owner (an ownerless flat bills
+ * nobody and reads as broken data). Like a non-resident it may own anything and
+ * rent or occupy premises nobody lives in — a waqf uses its mosque hall.
+ *
+ * Neither is a household: no mother's name, gender, nationality or residency is
+ * asked, the phone is optional (a representative's, in the local contact
+ * fields), and every population count that reads `RESIDENT` leaves both out.
  */
-export const CITIZEN_RESIDENCE = ['RESIDENT', 'NON_RESIDENT_OWNER'] as const;
+export const CITIZEN_RESIDENCE = ['RESIDENT', 'NON_RESIDENT_OWNER', 'ESTATE', 'INSTITUTION'] as const;
 export const citizenResidenceSchema = arabicEnum(CITIZEN_RESIDENCE, 'نوع الملف غير صالح');
 export type CitizenResidence = z.infer<typeof citizenResidenceSchema>;
+
+/**
+ * The file types that are not a household — on the register to say who owns
+ * (and, for a non-resident or an institution, rents or runs) a unit. They share
+ * the form's short shape and the rule that none of them lives in a dwelling.
+ */
+export const OWNER_RECORD_RESIDENCE = ['NON_RESIDENT_OWNER', 'ESTATE', 'INSTITUTION'] as const;
+
+/** Whether this file is not a household — see `OWNER_RECORD_RESIDENCE`. */
+export function isOwnerRecord(residence: string | null | undefined): boolean {
+  return residence != null && (OWNER_RECORD_RESIDENCE as readonly string[]).includes(residence);
+}
+
+/**
+ * Whether this owner of record is not a living person — an estate or an
+ * institution: no phone required, no duplicate-person checks by mother or
+ * gender, never merged with a person's file.
+ */
+export function isNonPersonRecord(residence: string | null | undefined): boolean {
+  return residence === 'ESTATE' || residence === 'INSTITUTION';
+}
 
 export const GENDER = ['MALE', 'FEMALE'] as const;
 export const genderSchema = arabicEnum(GENDER, 'الجنس مطلوب');

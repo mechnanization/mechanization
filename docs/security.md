@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/unit-fee-exemptions` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -82,6 +82,9 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   changes and never who viewed what. `route-inventory.spec.ts` pins all of this over every
   controller on disk: every non-public route has `@Roles` or is on its reviewed self-service list, no
   write and no side-effecting GET (`SIDE_EFFECT_GETS`) admits VIEWER, and no route deletes a citizen.
+- «المستحق على عقار» (`GET fees/parcel-dues`) is read-only and gated like the ledger it reads
+  (`FEE_READ_ROLES`); its one query value goes through `parcelDuesQuerySchema`. It names each debtor
+  and the remaining amount, nothing a ledger reader does not already see, and never a رقم مرجعي.
 - A citizen file is never hard-deleted (decision of 2026-10-05). It is archived — `isActive: false`
   through `PATCH citizens/:id/active` — with a written reason and who asked (`setCitizenActiveSchema`
   requires both), recorded on the Tier 1 audit row, and restored the same way.

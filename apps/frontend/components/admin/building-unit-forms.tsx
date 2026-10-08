@@ -11,6 +11,7 @@ import {
   DoorClosed,
   EllipsisVertical,
   Footprints,
+  Landmark,
   Loader2,
   MapPin,
   Ruler,
@@ -1181,6 +1182,22 @@ export function AddPersonForm({
                   <MapPin className="size-4" aria-hidden />
                   {labels.citizenResidence.NON_RESIDENT_OWNER}
                 </Link>
+                {/*
+                  Not a living person (0076): an estate owns and nothing else,
+                  so it is offered for an owner only; a waqf or a public body
+                  may also rent what nobody lives in.
+                */}
+                {(role === 'OWNER' ? (['ESTATE', 'INSTITUTION'] as const) : (['INSTITUTION'] as const)).map((kind) => (
+                  <Link
+                    key={kind}
+                    href={newFileHref(kind)}
+                    onClick={() => stashLinkSeed(tenant, newFileHref(kind), term)}
+                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                  >
+                    <Landmark className="size-4" aria-hidden />
+                    {labels.citizenResidence[kind]}
+                  </Link>
+                ))}
               </div>
             </div>
           ) : (

@@ -346,6 +346,8 @@ export const ar = {
   citizenResidence: {
     RESIDENT: 'أسرة مقيمة في البلدة',
     NON_RESIDENT_OWNER: 'غير مقيم في البلدة',
+    ESTATE: 'تركة (ورثة المرحوم)',
+    INSTITUTION: 'جهة أو وقف',
   } satisfies Record<CitizenResidence, string>,
 
   documentType: {
@@ -674,6 +676,8 @@ export const en = {
   citizenResidence: {
     RESIDENT: 'Household living in the town',
     NON_RESIDENT_OWNER: 'Lives outside the town',
+    ESTATE: 'Estate (heirs of the late)',
+    INSTITUTION: 'Institution or waqf',
   } satisfies Record<CitizenResidence, string>,
 
   documentType: {

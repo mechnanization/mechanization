@@ -3,6 +3,7 @@
 import { isValidElement, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   Archive,
   Banknote,
@@ -31,7 +32,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, isNonPersonRecord, isOwnerRecord } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   getCitizenProfile,
@@ -211,7 +212,8 @@ function RetainedHouseholdSection({
   citizen: CitizenProfile;
   locale: string;
 }) {
-  if (citizen.residence !== 'NON_RESIDENT_OWNER') return null;
+  // Any record that is not a household — a converted file keeps what it held (0076 too).
+  if (!isOwnerRecord(citizen.residence)) return null;
 
   const en = locale === 'en';
   const labels = getLabels(locale);
@@ -432,6 +434,7 @@ export default function CitizenProfilePage({
   const { tenant, locale, adminPath, citizenId } = use(params);
   const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
+  const tKind = useTranslations('citizenKind');
 
   const [citizen, setCitizen] = useState<CitizenProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -540,7 +543,9 @@ export default function CitizenProfilePage({
     officer verified this week. They go into «بيانات محفوظة» below instead,
     which says what they are.
   */
-  const isNonResident = citizen.residence === 'NON_RESIDENT_OWNER';
+  /** Not a household: «غير مقيم في البلدة», «تركة» or «جهة أو وقف» (0076). */
+  const isNonResident = isOwnerRecord(citizen.residence);
+  const nonPerson = isNonPersonRecord(citizen.residence) ? citizen.residence : null;
 
   // What they hold now — a tenancy they left is history, not a property.
   const propertyCount = citizen.registrations.reduce(
@@ -590,12 +595,17 @@ export default function CitizenProfilePage({
           on this kind of record it is not a way to reach them, it is the fact
           that defines the record. Law 60/1988 Art. 14 wants the occupancy
           notice to name the occupant *and where they live*, and this is that.
+          An estate or an institution lives nowhere.
         */
-        {
-          icon: Home,
-          label: en ? 'Lives in' : 'مكان الإقامة',
-          value: citizen.residencePlace ?? undefined,
-        },
+        ...(nonPerson
+          ? []
+          : [
+              {
+                icon: Home,
+                label: en ? 'Lives in' : 'مكان الإقامة',
+                value: citizen.residencePlace ?? undefined,
+              },
+            ]),
       ]
     : [
         { icon: User, label: en ? 'Name' : 'الاسم', value: citizen.fullName },
@@ -692,17 +702,24 @@ export default function CitizenProfilePage({
           },
         ]
       : []),
-    // Who holds the keys here, for an owner who is not here.
+    // Who holds the keys here, for an owner who is not here — or who speaks for the heirs, or the body.
     ...(isNonResident
       ? [
           {
             icon: User,
-            label: en ? 'Local contact' : 'جهة الاتصال المحلية',
+            label:
+              nonPerson === 'ESTATE'
+                ? tKind('estateRepresentative')
+                : nonPerson === 'INSTITUTION'
+                  ? tKind('institutionRepresentative')
+                  : en
+                    ? 'Local contact'
+                    : 'جهة الاتصال المحلية',
             value: citizen.localContactName ?? undefined,
           },
           {
             icon: Phone,
-            label: en ? 'Local contact phone' : 'هاتف جهة الاتصال',
+            label: nonPerson ? tKind('representativePhone') : en ? 'Local contact phone' : 'هاتف جهة الاتصال',
             value: citizen.localContactPhone ? (
               <PhoneLink phone={citizen.localContactPhone} locale={locale} />
             ) : null,
@@ -790,8 +807,8 @@ export default function CitizenProfilePage({
             <div className="flex flex-wrap items-center gap-1.5">
               {isNonResident ? (
                 <Badge variant="soft-info">
-                  {labels.citizenResidence.NON_RESIDENT_OWNER}
-                  {citizen.residencePlace ? ` — ${citizen.residencePlace}` : ''}
+                  {labels.citizenResidence[citizen.residence as keyof typeof labels.citizenResidence]}
+                  {!nonPerson && citizen.residencePlace ? ` — ${citizen.residencePlace}` : ''}
                 </Badge>
               ) : null}
               {/*

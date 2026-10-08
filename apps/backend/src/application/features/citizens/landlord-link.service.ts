@@ -5,6 +5,7 @@ import {
   occupancyLiftsSurvey,
   STRUCTURE_TYPE_MAP,
   unitStatusForRole,
+  citizenDisplayName,
 } from '@mechanization/shared-schemas';
 import type { StructureType } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
@@ -709,7 +710,7 @@ export class LandlordLinkService {
             select: {
               unitId: true,
               citizenId: true,
-              citizen: { select: { firstName: true, middleName: true, lastName: true } },
+              citizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
             },
           })
         : Promise.resolve([]),
@@ -931,6 +932,7 @@ export class LandlordLinkService {
         firstName: true,
         middleName: true,
         lastName: true,
+        residence: true,
       },
     });
     if (!citizen || citizen.kind !== 'CITIZEN') {
@@ -1214,7 +1216,7 @@ export class LandlordLinkService {
         toDate: true,
         createdAt: true,
         unit: { select: { id: true, buildingId: true, unitCode: true } },
-        citizen: { select: { firstName: true, middleName: true, lastName: true } },
+        citizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
       },
     });
     if (!spell) throw new NotFoundError({
@@ -1276,6 +1278,7 @@ export class LandlordLinkService {
         firstName: true,
         middleName: true,
         lastName: true,
+        residence: true,
         phone: true,
         whatsapp: true,
       },
@@ -1452,7 +1455,10 @@ export class LandlordLinkService {
       where: { id: targetId, landlordCitizenId: null },
       data: {
         landlordCitizenId: owner.id,
-        ...(entry.landlordName ? {} : { landlordName: fullName(owner) }),
+        // The row's own name: «ورثة المرحوم» is added where it is shown, never stored.
+        ...(entry.landlordName
+          ? {}
+          : { landlordName: [owner.firstName, owner.middleName, owner.lastName].filter(Boolean).join(' ') }),
         ...(entry.landlordPhone ? {} : { landlordPhone: owner.phone ?? owner.whatsapp ?? null }),
       },
     });
@@ -1523,7 +1529,7 @@ export class LandlordLinkService {
           propertyType: true,
           landlordCitizenId: true,
           landlordLinkFootprint: true,
-          landlordCitizen: { select: { firstName: true, middleName: true, lastName: true } },
+          landlordCitizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
           units: {
             where: { endedAt: null },
             orderBy: { createdAt: 'asc' },
@@ -1999,7 +2005,7 @@ export class LandlordLinkService {
         landlordCitizenId: true,
         landlordLinkFootprint: true,
         endedAt: true,
-        landlordCitizen: { select: { id: true, firstName: true, middleName: true, lastName: true } },
+        landlordCitizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } },
         units: { select: { unit: { select: { unitCode: true } } } },
       },
     });
@@ -2641,7 +2647,7 @@ export class LandlordLinkService {
         landlordLinkFootprint: true,
         landlordLinkDismissedIds: true,
         registration: {
-          select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } } },
+          select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } } },
         },
         units: { where: { endedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, unitId: true } },
       },
@@ -2650,7 +2656,7 @@ export class LandlordLinkService {
 
     const seller = await this.db.user.findUnique({
       where: { id: input.ownerId },
-      select: { firstName: true, middleName: true, lastName: true, phone: true },
+      select: { firstName: true, middleName: true, lastName: true, residence: true, phone: true },
     });
     const sellerName = seller ? fullName(seller) : null;
 
@@ -3061,7 +3067,7 @@ const ENTRY_SELECT = {
     select: {
       id: true,
       referenceNumber: true,
-      citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } },
+      citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } },
     },
   },
   // Current rows only — a flat an ended tenancy gave up is not one a link claims.
@@ -3400,8 +3406,9 @@ function summarise(report: RevertReport) {
   };
 }
 
-function fullName(person: { firstName: string; middleName?: string | null; lastName: string }): string {
-  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ').trim();
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+function fullName(person: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }): string {
+  return citizenDisplayName(person);
 }
 
 /**

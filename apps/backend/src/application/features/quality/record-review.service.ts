@@ -12,6 +12,7 @@ import {
   type DrawSampleInput,
   type FieldFlag,
   type ReturnRecordInput,
+  citizenDisplayName,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -70,8 +71,8 @@ export interface QueuePage {
   counts: Record<ReviewState, number>;
 }
 
-const fullName = (row: { firstName: string; middleName?: string | null; lastName: string }) =>
-  [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' ');
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+const fullName = (row: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }) => citizenDisplayName(row);
 
 type Actor = { id: string; role: string };
 
@@ -584,7 +585,7 @@ export class RecordReviewService {
           registration: {
             select: {
               referenceNumber: true,
-              citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } },
+              citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } },
             },
           },
         },
@@ -724,6 +725,7 @@ export class RecordReviewService {
                 firstName: true,
                 middleName: true,
                 lastName: true,
+                residence: true,
                 actualHouseholdMembers: true,
               },
             },

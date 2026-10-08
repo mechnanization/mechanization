@@ -1,4 +1,6 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable, Logger } from '@nestjs/common';
+import { OWNER_RECORD_RESIDENCE, isOwnerRecord } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   formatBuildingCode,
@@ -912,7 +914,7 @@ export class BuildingsService {
                 // matrix cell shows who is in the flat now, and the drawer
                 // below it shows who was.
                 orderBy: [{ toDate: 'asc' }, { fromDate: 'desc' }],
-                include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true } } },
+                include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true, residence: true } } },
               },
               /*
                 The attempts behind the status (D10).
@@ -1228,7 +1230,7 @@ export class BuildingsService {
         occupancyType: true,
         landlordName: true,
         landlordCitizenId: true,
-        landlordCitizen: { select: { firstName: true, middleName: true, lastName: true } },
+        landlordCitizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
         registration: { select: { citizenId: true } },
         units: { where: { endedAt: null }, select: { unitId: true } },
       },
@@ -1909,7 +1911,7 @@ export class BuildingsService {
     const staff = last?.actorId
       ? await this.db.user.findFirst({
           where: { id: last.actorId, kind: 'STAFF' },
-          select: { firstName: true, lastName: true },
+          select: { firstName: true, lastName: true, residence: true },
         })
       : null;
     const who = staff ? `${staff.firstName} ${staff.lastName}` : null;
@@ -2264,7 +2266,7 @@ export class BuildingsService {
             where: { toDate: null },
             select: {
               role: true,
-              citizen: { select: { firstName: true, lastName: true } },
+              citizen: { select: { firstName: true, lastName: true, residence: true } },
             },
           },
         },
@@ -2596,7 +2598,7 @@ export class BuildingsService {
       (becomingDwelling || before.unitStatus !== 'OWNER_OCCUPIED');
 
     if (becomingDwelling || sayingOwnerLivesThere) {
-      const names = { select: { firstName: true, middleName: true, lastName: true } } as const;
+      const names = { select: { firstName: true, middleName: true, lastName: true, residence: true } } as const;
       const nonOwner = { in: ['TENANT', 'FREE_OCCUPANT'] as never };
       const [spells, rows, owners] = await Promise.all([
         becomingDwelling
@@ -2605,7 +2607,7 @@ export class BuildingsService {
                 unitId,
                 toDate: null,
                 role: nonOwner,
-                citizen: { residence: 'NON_RESIDENT_OWNER' as never },
+                citizen: { residence: { in: [...OWNER_RECORD_RESIDENCE] as never } },
               },
               select: { citizen: names },
             })
@@ -2618,7 +2620,7 @@ export class BuildingsService {
                 propertyEntry: {
                   endedAt: null,
                   occupancyType: nonOwner,
-                  registration: { citizen: { residence: 'NON_RESIDENT_OWNER' as never } },
+                  registration: { citizen: { residence: { in: [...OWNER_RECORD_RESIDENCE] as never } } },
                 },
               },
               select: { propertyEntry: { select: { registration: { select: { citizen: names } } } } },
@@ -2641,7 +2643,7 @@ export class BuildingsService {
         ownerOccupiedByNonResident:
           sayingOwnerLivesThere &&
           owners.length > 0 &&
-          owners.every((owner) => owner.citizen.residence === 'NON_RESIDENT_OWNER'),
+          owners.every((owner) => isOwnerRecord(owner.citizen.residence)),
       });
       if (conflict) {
         throw new ConflictError(conflict, { unitCode: before.unitCode, unitType: typeAfter });
@@ -3590,7 +3592,7 @@ export class BuildingsService {
             ...(input.fromDate ? { fromDate: input.fromDate } : {}),
             ...(input.toDate !== undefined ? { toDate: input.toDate } : {}),
           },
-          include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true } } },
+          include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true, residence: true } } },
         })
       : await this.db.unitOccupancy.create({
           data: {
@@ -3601,7 +3603,7 @@ export class BuildingsService {
             ...(input.fromDate ? { fromDate: input.fromDate } : {}),
             ...(input.toDate ? { toDate: input.toDate } : {}),
           },
-          include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true } } },
+          include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true, residence: true } } },
         });
 
     /*
@@ -4017,6 +4019,7 @@ export class BuildingsService {
               firstName: true,
               middleName: true,
               lastName: true,
+              residence: true,
               phone: true,
               whatsapp: true,
             },
@@ -4139,7 +4142,8 @@ export class BuildingsService {
         */
         ...(nonOwner && owner
           ? {
-              landlordName: personName(owner),
+              // The row's own name: «ورثة المرحوم» is added where it is shown, never stored.
+              landlordName: [owner.firstName, owner.middleName, owner.lastName].filter(Boolean).join(' '),
               landlordPhone: owner.phone ?? owner.whatsapp ?? null,
             }
           : nonOwner && (input.landlord?.name || input.landlord?.phone)
@@ -4355,7 +4359,7 @@ export class BuildingsService {
     const updated = await this.db.unitOccupancy.update({
       where: { id: occupancyId },
       data: { toDate, endReason: input.reason as never },
-      include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true } } },
+      include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true, residence: true } } },
     });
 
     const released = await this.releaseCensusClaim({
@@ -5249,7 +5253,23 @@ export function assertNonResidentOccupancy(input: {
   unitStatus?: string | null;
   unitCode: string;
 }): void {
-  if (input.residence !== 'NON_RESIDENT_OWNER' || !isDwellingUnitType(input.unitType)) return;
+  if (!isOwnerRecord(input.residence)) return;
+
+  /*
+    An estate owns and nothing else (0076): whoever lives in or uses the flat —
+    the widow, a tenant — is recorded in their own name, which is how the
+    occupancy fee reaches someone who can pay it.
+  */
+  if (input.residence === 'ESTATE' && input.role !== 'OWNER') {
+    throw new ValidationError({
+      code: 'ESTATE_OWNS_ONLY',
+      message: `An estate only owns: whoever rents or lives in unit ${input.unitCode} is filed in their own name.`,
+      params: { unitCode: input.unitCode },
+      details: { role: input.role, residence: input.residence },
+    });
+  }
+
+  if (!isDwellingUnitType(input.unitType)) return;
 
   if (input.role !== 'OWNER') {
     throw new ValidationError(
@@ -5260,7 +5280,11 @@ export function assertNonResidentOccupancy(input: {
 
   if (input.unitStatus === 'OWNER_OCCUPIED') {
     throw new ValidationError(
-      `غير المقيم لا يسكن الوحدة ${input.unitCode} — اختر «مسكن موسمي» إن كان يحضر في مواسم، أو «شاغرة»`,
+      input.residence === 'ESTATE'
+        ? `المرحوم لا يسكن الوحدة ${input.unitCode} — إن كانت عائلته تسكنها فاختر «مشغولة بتسامح» وسجّل أحدهم بملف أسرة، وإلا فـ«مؤجرة» أو «شاغرة»`
+        : input.residence === 'INSTITUTION'
+          ? `الجهة لا تسكن المسكن ${input.unitCode} — اختر حالة من يشغله أو «شاغرة»`
+          : `غير المقيم لا يسكن الوحدة ${input.unitCode} — اختر «مسكن موسمي» إن كان يحضر في مواسم، أو «شاغرة»`,
       { unitStatus: input.unitStatus },
     );
   }
@@ -5394,7 +5418,13 @@ function toOccupancyRow(
     id: string;
     unitId: string;
     citizenId: string;
-    citizen?: { firstName: string; lastName: string; phone?: string | null; isActive?: boolean } | null;
+    citizen?: {
+      firstName: string;
+      lastName: string;
+      phone?: string | null;
+      isActive?: boolean;
+      residence?: string | null;
+    } | null;
     role: string;
     shares: number | null;
     fromDate: Date;
@@ -5416,7 +5446,8 @@ function toOccupancyRow(
     id: row.id,
     unitId: row.unitId,
     citizenId: row.citizenId,
-    citizenName: row.citizen ? `${row.citizen.firstName} ${row.citizen.lastName}` : null,
+    // «ورثة المرحوم …» for an estate (0076).
+    citizenName: row.citizen ? citizenDisplayName(row.citizen, { middleName: false }) : null,
     citizenPhone: row.citizen?.phone ?? null,
     citizenActive: row.citizen?.isActive ?? true,
     role: row.role,
@@ -5431,6 +5462,7 @@ function toOccupancyRow(
   };
 }
 
-function personName(person: { firstName: string; middleName?: string | null; lastName: string }): string {
-  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ').trim();
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+function personName(person: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }): string {
+  return citizenDisplayName(person);
 }

@@ -80,7 +80,7 @@ export interface QueuedSubmission {
   displayName: string;
   payload: {
     /** نوع الملف. Absent on records queued before owner records existed — a household. */
-    residence?: 'RESIDENT' | 'NON_RESIDENT_OWNER';
+    residence?: 'RESIDENT' | 'NON_RESIDENT_OWNER' | 'ESTATE' | 'INSTITUTION';
     personal: Record<string, unknown>;
     contact: Record<string, unknown>;
     properties: Array<Record<string, unknown>>;

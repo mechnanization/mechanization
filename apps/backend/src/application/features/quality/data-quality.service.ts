@@ -10,6 +10,7 @@ import {
   type DismissFindingInput,
   type FieldFlag,
   type QualityFindingKind,
+  citizenDisplayName,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -68,8 +69,8 @@ export interface QualityFinding {
   dismissal: { reason: string; by: string | null; at: string } | null;
 }
 
-const fullName = (row: { firstName: string; middleName?: string | null; lastName: string }) =>
-  [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' ');
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+const fullName = (row: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }) => citizenDisplayName(row);
 
 const SEVERITY_ORDER: Record<FindingSeverity, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
@@ -458,7 +459,7 @@ export class DataQualityService {
   private async staffNames(): Promise<Map<string, string>> {
     const rows = await this.db.user.findMany({
       where: { kind: 'STAFF' },
-      select: { id: true, firstName: true, lastName: true },
+      select: { id: true, firstName: true, lastName: true, residence: true },
     });
     return new Map(rows.map((row) => [row.id, `${row.firstName} ${row.lastName}`]));
   }
@@ -473,7 +474,8 @@ export class DataQualityService {
    */
   private async duplicateCitizens(): Promise<RawFinding[]> {
     const people = await this.db.user.findMany({
-      where: { kind: 'CITIZEN', isActive: true },
+      // People only: an estate or an institution (0076) is never "the same person" as anyone.
+      where: { kind: 'CITIZEN', isActive: true, residence: { notIn: ['ESTATE', 'INSTITUTION'] as never } },
       select: {
         id: true,
         firstName: true,
@@ -978,7 +980,7 @@ export class DataQualityService {
   private async citizenLabels(ids: readonly string[]): Promise<Map<string, FindingSubject>> {
     const rows = await this.db.user.findMany({
       where: { id: { in: [...new Set(ids)] } },
-      select: { id: true, firstName: true, middleName: true, lastName: true, referenceNumber: true },
+      select: { id: true, firstName: true, middleName: true, lastName: true, residence: true, referenceNumber: true },
     });
     return new Map(
       rows.map((row) => [

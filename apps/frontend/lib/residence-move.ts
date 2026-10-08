@@ -1,8 +1,10 @@
 import {
   contactDetailsSchema,
   isDwellingUnitType,
+  isOwnerRecord,
   nonResidentCardIssues,
   personalDetailsSchema,
+  splitInstitutionName,
   type CitizenResidence,
   type UnitStatus,
 } from '@mechanization/shared-schemas';
@@ -27,6 +29,11 @@ import type { CitizenFormValues } from '@/components/admin/citizen-form';
  *
  * Moving back is lighter: which of their own homes they live in now, if any,
  * and the household questions the file will ask from now on.
+ *
+ * A death is the same settling, toward «تركة» (0076): the estate owns and
+ * nothing else, so every tenancy ends with the person, a home they lived in
+ * becomes whoever lives there now — the family, as «مشغولة بتسامح», with one
+ * of them filed as a household — and a file left owning nothing is archived.
  */
 export interface MoveHome {
   /** `card:<i>` for a منزل, `row:<i>:<u>` for a flat on a مبنى card. */
@@ -61,19 +68,29 @@ export interface ResidenceMovePlan {
 /** The statuses a home can take when its owner no longer lives in the town. */
 export const AWAY_HOME_STATUSES = ['SEASONAL', 'VACANT', 'RENTED', 'FREE_OCCUPIED'] as const satisfies readonly UnitStatus[];
 
+/** …and when its owner has died: nobody comes back for a season. The family staying is «مشغولة بتسامح». */
+export const ESTATE_HOME_STATUSES = ['FREE_OCCUPIED', 'RENTED', 'VACANT'] as const satisfies readonly UnitStatus[];
+
+/** What each home can become on a move or a death to `to`. */
+export function homeStatusesFor(to: CitizenResidence): readonly UnitStatus[] {
+  return to === 'ESTATE' ? ESTATE_HOME_STATUSES : AWAY_HOME_STATUSES;
+}
+
 const OCCUPIED_BY_SOMEONE_ELSE: ReadonlySet<string> = new Set(['RENTED', 'FREE_OCCUPIED']);
 
 export function planResidenceMove(values: CitizenFormValues, to: CitizenResidence): ResidenceMovePlan {
   const plan: ResidenceMovePlan = { to, tenancies: [], needsUnitType: [], homes: [], nothingLeft: false, householdMissing: [] };
   const flagged = new Set(values.flags.keys());
 
-  if (to === 'NON_RESIDENT_OWNER') {
+  if (isOwnerRecord(to)) {
     let remaining = 0;
     values.properties.forEach((card, cardIndex) => {
-      const issues = nonResidentCardIssues(card as Record<string, unknown>, flagged, `properties.${cardIndex}`);
+      const issues = nonResidentCardIssues(card as Record<string, unknown>, flagged, `properties.${cardIndex}`, to);
       const where = { cardIndex, propertyNumber: card.propertyNumber?.trim() || null };
+      // An estate holds no tenancy at all; anyone else none of somewhere people live.
+      const ownsOnly = issues.some((issue) => issue.code === 'ESTATE_OWNS_ONLY');
       const dwelling = issues.filter((issue) => issue.code === 'DWELLING');
-      if (dwelling.length > 0) {
+      if (ownsOnly || dwelling.length > 0) {
         plan.tenancies.push({ ...where, cardId: card.id ?? null, propertyType: card.propertyType ?? null });
       }
       if (issues.some((issue) => issue.code === 'NEEDS_UNIT_TYPE')) plan.needsUnitType.push(where);
@@ -87,7 +104,8 @@ export function planResidenceMove(values: CitizenFormValues, to: CitizenResidenc
       */
       const units = card.units ?? [];
       const wholeCardGoes =
-        dwelling.length > 0 && (card.propertyType !== 'BUILDING' || dwelling.length === units.length);
+        ownsOnly ||
+        (dwelling.length > 0 && (card.propertyType !== 'BUILDING' || dwelling.length === units.length));
       if (!wholeCardGoes) remaining += 1;
     });
     plan.nothingLeft = remaining === 0;
@@ -161,7 +179,7 @@ export function applyResidenceMove(
   answers: ResidenceMoveAnswers,
 ): CitizenFormValues {
   const statusFor = new Map<string, UnitStatus>();
-  if (plan.to === 'NON_RESIDENT_OWNER') {
+  if (isOwnerRecord(plan.to)) {
     for (const home of plan.homes) {
       const status = answers.homeStatuses?.[home.key];
       if (status) statusFor.set(home.key, status);
@@ -189,4 +207,27 @@ export function applyResidenceMove(
     properties,
     residenceMove: { movedOn: answers.movedOn, reason: answers.reason.trim() },
   };
+}
+
+/**
+ * The name boxes across a change of record kind (0076). An institution's name
+ * is one line («وقف مسجد البلدة»), a person's or an estate's three boxes:
+ * joined on the way in, split on the way out by the API's own rule
+ * (`splitInstitutionName`), so nothing typed is lost to a box the form hides.
+ */
+export function namesForKind(
+  personal: Record<string, unknown>,
+  from: CitizenResidence,
+  to: CitizenResidence,
+): Record<string, unknown> {
+  const part = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+  if (to === 'INSTITUTION' && from !== 'INSTITUTION') {
+    const name = [personal.firstName, personal.middleName, personal.lastName].map(part).filter(Boolean).join(' ');
+    return { ...personal, firstName: name, middleName: '', lastName: '' };
+  }
+  if (from === 'INSTITUTION' && to !== 'INSTITUTION') {
+    const { firstName, lastName } = splitInstitutionName(part(personal.firstName));
+    return { ...personal, firstName, middleName: '', lastName };
+  }
+  return personal;
 }

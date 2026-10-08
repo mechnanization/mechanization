@@ -654,10 +654,10 @@ function CitizenCompare({
       the comparison offering «تعديل» where the other does not reads as a fault
       until you know why.
     */
-    if (target === 'motherName' && person.residence === 'NON_RESIDENT_OWNER') {
+    if (target === 'motherName' && person.residence && person.residence !== 'RESIDENT') {
       return (
         <span className="mt-1 block text-xs text-muted-foreground">
-          {en ? 'Not asked on a non-resident file.' : 'لا يُسأل في ملف «غير مقيم».'}
+          {en ? 'Not asked on this kind of file.' : 'لا يُسأل في هذا النوع من الملفات.'}
         </span>
       );
     }

@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-07.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -562,6 +562,31 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   local `.env` and your shell. `pnpm db:seed` scrubs them for its own run.
 - **Where:** `src/scripts/import-parcels.ts`, `clearRemoteCredentials` in
   `src/scripts/seed.ts`.
+
+### A name joined by hand drops «ورثة المرحوم»
+
+- **What happens:** an estate's bill, roster row or tenant card reads «حسن
+  واكد سرور», as if the man who died were the one being billed, while every
+  other screen says «ورثة المرحوم حسن واكد سرور».
+- **Why:** an estate (`0076`) keeps the deceased's own name in the row; the
+  prefix is added when it is shown. `[firstName, lastName].join(' ')` shows the
+  row.
+- **Do this:** name a citizen through `citizenDisplayName` (shared-schemas),
+  with `residence` in the select. It also reads an institution's name, which
+  is one line stored across `firstName`/`lastName` (`splitInstitutionName`), so
+  a search or a sort on `lastName` alone does not find «وقف مسجد البلدة».
+- **Where:** `fees.service.ts`, `reporting.service.ts`, `citizens.service.ts`,
+  `buildings.service.ts` (`toOccupancyRow`), `parcel-dues.service.ts`.
+
+### «ليس مقيماً» is not one value any more
+
+- **What happens:** an estate or a waqf is asked for a mother's name, offered
+  «مشغولة من المالك», or billed a per-head flat amount.
+- **Why:** «not a household» used to be `residence === 'NON_RESIDENT_OWNER'`,
+  and `0076` added `ESTATE` and `INSTITUTION`, which are not households either.
+- **Do this:** ask `isOwnerRecord` (not a household) or `isNonPersonRecord`
+  (not a living person). A new check against the one value misses two kinds.
+- **Where:** `packages/shared-schemas/src/enums.ts`.
 
 ## Auth
 

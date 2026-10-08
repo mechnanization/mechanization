@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/unit-fee-exemptions` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -50,7 +50,8 @@ Data access for new code (decided):
   `PresentationModule`. A fifth import means something escaped its layer.
 - `InfrastructureModule` is `@Global()` and binds each port symbol in use to its adapter
   (`SUPABASE_AUTH_SERVICE` is declared but unbound). `ApplicationModule`
-  registers `JwtModule` (`JWT_SECRET`) and every service and job. In both, a new entry goes in `providers` AND `exports`.
+  registers `JwtModule` (`JWT_SECRET`) and every service and job (`ParcelDuesService` among the fee
+  services). In both, a new entry goes in `providers` AND `exports`.
 - `PresentationModule` registers the controllers, `APP_FILTER` = `DomainExceptionFilter`,
   `APP_INTERCEPTOR` = `ViewerCredentialMaskInterceptor` (masks a رقم مرجعي in every response to
   «مشاهد فقط»; [docs/security.md](../../docs/security.md#authentication-and-authorisation)), and
@@ -141,6 +142,20 @@ Data access for new code (decided):
   function for today's figure. FLAT to ALL_CITIZENS stays a per-person charge. The profile carries
   `heldUnits` for cards with no unit lines (a منزل's flat, a مبنى card's census flats), read like
   `holdingsOf`, so the exemption and the owners' split show there too.
+- **Owners that are not a person** (`0076`). `CitizenResidence` adds `ESTATE` «تركة (ورثة المرحوم)» and
+  `INSTITUTION` «جهة أو وقف». "Not a household" is `isOwnerRecord(residence)` (non-resident, estate,
+  institution) and "not a living person" is `isNonPersonRecord`; never compare to `'NON_RESIDENT_OWNER'`
+  for either. A name goes through `citizenDisplayName` wherever it is shown (an estate is «ورثة المرحوم …»),
+  and an institution's one-line name is split on write (`splitInstitutionName`, in
+  `RegistrationService` and `citizenColumnsForEdit`) and joined back in `getEditable`. An estate owns and
+  nothing else: `nonResidentCardIssues` (`ESTATE_OWNS_ONLY`) and `assertNonResidentOccupancy` (coded
+  `ESTATE_OWNS_ONLY`) refuse a tenancy on it. `planMerge` blocks a person with a body, or an estate with
+  an institution (`RESIDENCE_CONFLICT`); duplicate detection and the quality scan skip both kinds; a FLAT
+  notice to ALL_CITIZENS skips both (`resolveTargets` with `basis`).
+- **«المستحق على عقار».** `ParcelDuesService` (`GET fees/parcel-dues?propertyNumber=`, `FEE_READ_ROLES`,
+  `parcelDuesQuerySchema`) finds open bills by a JSONB containment on `assessment.lines` and gives each the
+  parcel's part by its own lines (`parcelShareOf`), then lists apart the open bills with no lines of the
+  people on the parcel today. Read-only; no certificate.
 - **Searching citizens as «مشاهد فقط».** The register, the review queue and the payments list match a
   citizen through `citizenSearchText(S, role)` (`application/common/citizen-search.ts`) rather than
   `u."searchText"` directly: for VIEWER it removes the رقم مرجعي (folded and compact) from the searched

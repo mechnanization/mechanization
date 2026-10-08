@@ -37,6 +37,7 @@ import { formatPhone } from '@/lib/phone';
 import { formatDate } from '@/lib/dates';
 import { LANDLORD_LINK_ANSWER_ROLES } from '@/lib/staff-roles';
 import { Badge } from '@/components/ui/badge';
+import { RecordKindBadge } from '@/components/admin/record-kind-badge';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -599,9 +600,7 @@ function CandidateCompare({
                   {formatDate(candidate.registeredAt)}
                 </span>
               ) : null}
-              {candidate.residence === 'NON_RESIDENT_OWNER' ? (
-                <Badge variant="soft-info">{en ? 'Lives elsewhere' : 'غير مقيم'}</Badge>
-              ) : null}
+              <RecordKindBadge residence={candidate.residence} locale={en ? 'en' : 'ar'} short />
             </span>
           </span>
         </span>
@@ -739,9 +738,7 @@ function CandidateRow({
             ) : candidate.matchedBy === 'PROPERTY' && sayFoundByProperty ? (
               <Badge variant="soft-warning">{tLink('provenance.PROPERTY')}</Badge>
             ) : null}
-            {candidate.residence === 'NON_RESIDENT_OWNER' ? (
-              <Badge variant="soft-info">{en ? 'Lives elsewhere' : 'غير مقيم'}</Badge>
-            ) : null}
+            <RecordKindBadge residence={candidate.residence} locale={en ? 'en' : 'ar'} short />
           </span>
           <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
             {candidate.referenceNumber ? (

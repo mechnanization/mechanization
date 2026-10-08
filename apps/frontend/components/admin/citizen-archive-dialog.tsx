@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Archive, Loader2 } from 'lucide-react';
+import { Archive, Info, Loader2 } from 'lucide-react';
 import { ApiRequestError, logApiError, setCitizenActive } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import {
@@ -41,6 +41,7 @@ export function CitizenArchiveDialog({
   onArchived: (citizen: { id: string; fullName: string }) => void;
 }) {
   const t = useTranslations('citizenArchive');
+  const tKind = useTranslations('citizenKind');
   const ids = { reason: useId(), requestedBy: useId() };
   const [reason, setReason] = useState('');
   const [requestedBy, setRequestedBy] = useState('');
@@ -96,6 +97,15 @@ export function CitizenArchiveDialog({
         </DialogHeader>
 
         <div className="space-y-3">
+          {/*
+            A death is the archive's most likely wrong use: the owner is gone,
+            the deeds are not. An estate keeps the properties and their bills on
+            the heirs (0076); archiving stops billing them altogether.
+          */}
+          <p className="flex items-start gap-1.5 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
+            <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span>{tKind('archiveSuggestEstate')}</span>
+          </p>
           <Field label={t('reason')} htmlFor={ids.reason} required>
             <Textarea
               id={ids.reason}

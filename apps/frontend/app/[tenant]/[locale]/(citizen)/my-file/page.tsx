@@ -160,6 +160,7 @@ export default function MyFilePage({
   const router = useRouter();
   const base = `/${tenant}/${locale}`;
   const labels = getLabels(locale);
+  const tKind = useTranslations('citizenKind');
 
   const [token, setToken] = useState<string | null>(null);
   const [summary, setSummary] = useState<MyCitizenSummary | null>(null);
@@ -306,9 +307,10 @@ export default function MyFilePage({
                   as anything other than an ordinary household — so the page
                   looked to them like a household file missing half its fields.
                 */}
-                {summary?.residence === 'NON_RESIDENT_OWNER' ? (
+                {summary?.residence && summary.residence !== 'RESIDENT' ? (
                   <Badge variant="soft-info">
-                    {labels.citizenResidence.NON_RESIDENT_OWNER}
+                    {labels.citizenResidence[summary.residence as keyof typeof labels.citizenResidence] ??
+                      summary.residence}
                   </Badge>
                 ) : null}
               </div>
@@ -397,6 +399,17 @@ export default function MyFilePage({
                   value={summary.localContactPhone}
                   mono
                 />
+              </>
+            ) : null}
+            {/* «تركة» or «جهة أو وقف» (0076): who speaks for the heirs, or for the body. */}
+            {summary?.residence === 'ESTATE' || summary?.residence === 'INSTITUTION' ? (
+              <>
+                <Detail
+                  icon={User}
+                  label={tKind(summary.residence === 'ESTATE' ? 'estateRepresentative' : 'institutionRepresentative')}
+                  value={summary.localContactName}
+                />
+                <Detail icon={Phone} label={tKind('representativePhone')} value={summary.localContactPhone} mono />
               </>
             ) : null}
             <Detail
