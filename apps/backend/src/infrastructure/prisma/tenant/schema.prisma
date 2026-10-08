@@ -265,6 +265,9 @@ model User {
   /// Expenses this staff member recorded, and any they cancelled (0074).
   expensesRecorded         ExpenseVoucher[]     @relation("ExpenseRecordedBy")
   expensesVoided           ExpenseVoucher[]     @relation("ExpenseVoidedBy")
+  /// Transfers between wallets this staff member recorded or cancelled (0078).
+  transfersRecorded        TreasuryTransfer[]   @relation("TransferRecordedBy")
+  transfersVoided          TreasuryTransfer[]   @relation("TransferVoidedBy")
   createdCases          Case[]               @relation("CaseCreatedBy")
   resolvedCases         Case[]               @relation("CaseResolvedCitizen")
   unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
@@ -1991,6 +1994,16 @@ model CitizenPayment {
   feeNoticeId String?    @db.Uuid
   feeNotice   FeeNotice? @relation(fields: [feeNoticeId], references: [id], onDelete: SetNull)
 
+  /// The number on the bill the resident is handed — «INV-2610-0001»: the year
+  /// and month it was issued in, then a counter that restarts each month.
+  /// Drawn from `document_counters`, migration 0079.
+  ///
+  /// Nullable because every bill issued before that migration has none and
+  /// never will: minting a number for a document that was never issued under
+  /// one would put a fiction in front of an auditor. Unique where present —
+  /// Postgres treats NULLs as distinct, so the legacy rows do not collide.
+  invoiceNumber String? @unique
+
   title      String
   /// What the invoice was raised for. Never mutated on receipt — see paidAmount.
   amount     Decimal  @db.Decimal(14, 2)
@@ -2245,6 +2258,8 @@ model TreasuryAccount {
 
   entries TreasuryEntry[]
   expenses ExpenseVoucher[]
+  transfersOut TreasuryTransfer[] @relation("TransferFrom")
+  transfersIn  TreasuryTransfer[] @relation("TransferTo")
 
   /// The target of the entries' (accountId, currency) foreign key.
   @@unique([id, currency], map: "treasury_accounts_id_currency_key")
@@ -2291,6 +2306,62 @@ model TreasuryEntry {
   @@index([occurredAt])
   @@index([actorId])
   @@map("treasury_entries")
+}
+
+// ─────────────────────────  Transfers (migration 0078)  ─────────────────────────
+// Design: docs/finance.md §6.
+
+/// Money moved between the municipality's own wallets — «تسليم صندوق الجابي»
+/// first among them, and later a Whish cash-out, a bank deposit or an exchange.
+///
+/// The money itself is two `TreasuryEntry` rows, which is what a balance sums;
+/// this is the document that explains them. Never edited: a mistake takes a
+/// cancellation stamp and the ledger gets the opposing pair.
+model TreasuryTransfer {
+  id String @id @default(uuid()) @db.Uuid
+  /// `TR-000001`, from `treasury_transfer_seq`. Printed on the سند مناقلة.
+  transferNumber String @unique
+
+  fromAccountId String          @db.Uuid
+  fromCurrency  String
+  from          TreasuryAccount @relation("TransferFrom", fields: [fromAccountId, fromCurrency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "treasury_transfers_from_fkey")
+
+  toAccountId String          @db.Uuid
+  toCurrency  String
+  to          TreasuryAccount @relation("TransferTo", fields: [toAccountId, toCurrency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "treasury_transfers_to_fkey")
+
+  /// What left the source, and what reached the destination. Equal on a
+  /// same-currency move; an exchange is the case where they differ (CHECK in 0078).
+  amount         Decimal @db.Decimal(14, 2)
+  receivedAmount Decimal @db.Decimal(14, 2)
+
+  /// An exchange's rate, the municipality's own beside it, and why they differ.
+  /// All NULL on a same-currency transfer, which is all this wires today.
+  exchangeRate         Decimal? @db.Decimal(18, 6)
+  officialExchangeRate Decimal? @db.Decimal(18, 6)
+  adjustmentReason     String?
+
+  description String
+
+  occurredAt   DateTime @default(now()) @db.Timestamptz(3)
+  recordedById String?  @db.Uuid
+  recordedBy   User?    @relation("TransferRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  /// One id per press of the button, so a retry does not move the money twice.
+  clientRequestId String? @unique @db.Uuid
+
+  voidedAt   DateTime? @db.Timestamptz(3)
+  voidedById String?   @db.Uuid
+  voidedBy   User?     @relation("TransferVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([fromAccountId, occurredAt(sort: Desc)])
+  @@index([toAccountId, occurredAt(sort: Desc)])
+  @@index([recordedById])
+  @@map("treasury_transfers")
 }
 
 // ─────────────────────────  Expenses (migration 0074)  ─────────────────────────
@@ -2573,4 +2644,30 @@ model WhishCheckout {
 
   @@index([paymentId, openedAt])
   @@map("whish_checkouts")
+}
+
+/// The counter book behind «INV-2610-0001», «RCP-2610-0001», «PV-2610-0001»
+/// and «TR-2610-0001». Migration 0079.
+///
+/// A row per (kind, period), because a Postgres sequence cannot restart on the
+/// first of the month — `nextval` only climbs, and anything that resets it
+/// races whatever is drawing from it. A number is taken with one atomic
+/// `INSERT … ON CONFLICT DO UPDATE … RETURNING`, so two clerks recording in the
+/// same moment cannot be handed the same number; the second waits on the row.
+///
+/// Never written through Prisma: `allocateDocumentNumbers` issues the raw
+/// statement, because the draw and the document must share one transaction.
+model DocumentCounter {
+  /// 'INVOICE' | 'RECEIPT' | 'VOUCHER' | 'TRANSFER'. Text, not an enum: a fifth
+  /// book should not need a migration, and nothing branches on the value.
+  kind   String
+  /// «YYMM» on the municipality's calendar (Asia/Beirut), e.g. '2610'.
+  period String
+
+  /// What the next document will take. A draw of n leaves it n higher.
+  nextValue Int      @default(1)
+  updatedAt DateTime @default(now())
+
+  @@id([kind, period])
+  @@map("document_counters")
 }
