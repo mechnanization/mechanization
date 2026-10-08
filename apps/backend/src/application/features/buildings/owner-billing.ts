@@ -1,5 +1,40 @@
-import { isCoOwned, type OwnerBillingRule } from '@mechanization/shared-schemas';
+import { isCoOwned, ownerSharesPreview, usableShares, type OwnerBillingRule } from '@mechanization/shared-schemas';
 import type { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
+
+/**
+ * Why a co-owned flat's saved method is not what billing carries out — what
+ * «ملاحظات الجودة» warns about (`OWNER_BILLING_BLOCKED`) before a bill finds it.
+ *
+ *  - `SHARES_MISSING` — «حسب الأسهم» with `missing` of the `owners` lacking
+ *    usable أسهم. Billing refuses every co-owner's bill as unassessable, the
+ *    way it refuses a flat with no area. Reached when an owner spell is
+ *    recorded after the choice was saved, without أسهم.
+ *  - `RESPONSIBLE_NOT_OWNER` — «مالك مسؤول» naming someone with no current
+ *    OWNER spell on an open file. Billing splits the flat equally instead.
+ */
+export type OwnerBillingBlock =
+  | { reason: 'SHARES_MISSING'; owners: number; missing: number }
+  | { reason: 'RESPONSIBLE_NOT_OWNER'; owners: number };
+
+/**
+ * The block on this flat's saved method, if any, read through the rule billing
+ * applies (`ownerSharesPreview`) — never a second statement of it. Null for a
+ * flat with one owner, where no method applies, and for one billing can carry out.
+ */
+export function ownerBillingBlock(rule: OwnerBillingRule): OwnerBillingBlock | null {
+  if (!isCoOwned(rule)) return null;
+  const preview = ownerSharesPreview(rule);
+  const owners = preview.owners.length;
+  if (preview.effective.fallback === 'RESPONSIBLE_NOT_OWNER') return { reason: 'RESPONSIBLE_NOT_OWNER', owners };
+  if (preview.owners.some((owner) => owner.outcome.kind === 'UNDECIDABLE')) {
+    return {
+      reason: 'SHARES_MISSING',
+      owners,
+      missing: preview.owners.filter((owner) => !usableShares(owner.shares)).length,
+    };
+  }
+  return null;
+}
 
 /**
  * «توزيع الرسم على المالكين» for the flats among these that have several current

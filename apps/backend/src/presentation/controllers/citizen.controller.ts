@@ -186,18 +186,12 @@ export class CitizenController {
 
     /*
       How a co-owned flat is divided, and this person's part — never another
-      owner's register id: whether they are the one paying for all is the only
-      fact about that choice that is theirs.
+      owner's register id. Under «مالك مسؤول» their part says whether they pay
+      for all (1/1) or nothing (0/1), read the same way as the staff file reads
+      it (`lib/owner-billing.ts`).
     */
     const portalOwnerBilling = (billing: CitizenProfileUnit['ownerBilling']) =>
-      billing
-        ? {
-            mode: billing.mode,
-            effectiveMode: billing.effectiveMode,
-            share: billing.share,
-            paysForAll: billing.effectiveMode === 'RESPONSIBLE_OWNER' && billing.responsibleOwnerId === user.sub,
-          }
-        : null;
+      billing ? { mode: billing.mode, effectiveMode: billing.effectiveMode, share: billing.share } : null;
 
     return {
       fullName: citizen.fullName,

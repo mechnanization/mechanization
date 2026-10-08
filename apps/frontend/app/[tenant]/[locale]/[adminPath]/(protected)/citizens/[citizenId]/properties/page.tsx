@@ -843,7 +843,7 @@ function HeldUnitBilling({
       ) : null}
       {unit.ownerBilling && tone === 'owner' ? (
         <SummaryRow label={tOwnerBilling('fileLabel')}>
-          <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} perspective="file" />
+          <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} />
           {suffix}
         </SummaryRow>
       ) : null}
@@ -957,7 +957,7 @@ function UnitRows({
           {/* «توزيع الرسم على المالكين» (0075): how this co-owned flat is billed, and this owner's part. */}
           {unit.ownerBilling && tone === 'owner' ? (
             <SummaryRow label={tOwnerBilling('fileLabel')}>
-              <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} perspective="file" />
+              <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} />
             </SummaryRow>
           ) : null}
           {/*

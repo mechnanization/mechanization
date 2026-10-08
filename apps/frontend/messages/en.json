@@ -335,7 +335,7 @@
     "SESSION_ENDED": "Your session has ended. Sign in again.",
     "ORIGIN_NOT_ALLOWED": "This request did not come from the municipality’s portal.",
     "SESSION_REFRESH_UNAVAILABLE": "The session could not be renewed. Check the connection and try again.",
-    "FEE_NOTHING_TO_CHARGE": "Nothing to charge — no notice was issued.{held, plural, =0 {} one { 1 unit is held for review (unit status conflict).} other { # units are held for review (unit status conflict).}}{uninhabitable, plural, =0 {} one { 1 unit is uninhabitable — it is exempt from fees until re-inspection.} other { # units are uninhabitable — they are exempt from fees until re-inspection.}}{exempted, plural, =0 {} one { 1 unit is vacant, under construction or exempt by bearer.} other { # units are vacant, under construction or exempt by bearer.}}{feeExempt, plural, =0 {} one { 1 unit is exempt from fees.} other { # units are exempt from fees.}}{unassessable, plural, =0 {} one { 1 citizen's records need a field survey first.} other { # citizens' records need a field survey first.}}",
+    "FEE_NOTHING_TO_CHARGE": "Nothing to charge — no notice was issued.{held, plural, =0 {} one { 1 unit is held for review (unit status conflict).} other { # units are held for review (unit status conflict).}}{uninhabitable, plural, =0 {} one { 1 unit is uninhabitable — it is exempt from fees until re-inspection.} other { # units are uninhabitable — they are exempt from fees until re-inspection.}}{exempted, plural, =0 {} one { 1 unit is vacant, under construction or exempt by bearer.} other { # units are vacant, under construction or exempt by bearer.}}{feeExempt, plural, =0 {} one { 1 unit is exempt from fees.} other { # units are exempt from fees.}}{coOwnerPaid, plural, =0 {} one { 1 co-owned unit is paid for by its responsible owner.} other { # co-owned units are paid for by their responsible owner.}}{unassessable, plural, =0 {} one { 1 citizen's records need a field survey first.} other { # citizens' records need a field survey first.}}",
     "CITIZEN_NO_PHONE_HAS_NUMBER": "The file is marked «has no phone» but holds a number of the citizen's own — clear the phone and WhatsApp, or untick «Does not have a phone number».",
     "CITIZEN_CONTACT_PHONE_IS_OWN": "The contact number is a relative's, so it cannot be the citizen's own phone — correct one of them.",
     "OWNER_BILLING_NOT_CO_OWNED": "Unit {unitCode} does not have more than one current owner, so there is no fee to divide between owners.",
@@ -600,7 +600,8 @@
     "issue": {
       "uninhabitable": "Uninhabitable units: {count} — not charged this fee. Charging resumes at the first billing run after a re-inspection reads a unit habitable: for the current period if the person has no bill for it yet, otherwise from the next period.",
       "uninhabitableOnce": "Uninhabitable units: {count} — not charged this fee. It is a one-off fee, so nothing charges them later by itself; to collect it once a re-inspection reads a unit habitable, issue an individual charge.",
-      "feeExempt": "Units exempt from fees (place of worship, public facility…): {count} — not charged this fee."
+      "feeExempt": "Units exempt from fees (place of worship, public facility…): {count} — not charged this fee.",
+      "coOwnerPaid": "Co-owned units paid for by their responsible owner: {count} — nothing was charged for them to their other owners."
     }
   },
   "parcelDrawer": {
@@ -1122,8 +1123,12 @@
     "mineShare": "Your part: {numerator}/{denominator} of the fee",
     "minePaysAll": "You pay the fee for all the owners",
     "minePaysNone": "Another owner pays for you",
-    "archivedOwners": "{names}: their file is archived, so they are left out and their part falls to the other owners.",
-    "mineUnknown": "Your part is unknown — the owners’ shares are incomplete"
+    "archivedOwners": "<names></names>: their file is archived, so they are left out and their part falls to the other owners.",
+    "mineUnknown": "Your part is unknown — the owners’ shares are incomplete",
+    "summaryLine": "{method} — {part}",
+    "listSeparator": ", ",
+    "pickResponsible": "Choose the owner who pays for everyone to see what each owner is billed for.",
+    "notOnFileOption": "Their file does not claim this unit"
   },
   "feeExemption": {
     "title": "Exempt this unit from fees",

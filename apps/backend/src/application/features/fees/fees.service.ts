@@ -69,6 +69,8 @@ export interface CitizenAssessment {
   uninhabitableUnitIds?: string[];
   /** The units «معفاة من الرسوم» on this bill, for the same reason. Not stored. */
   exemptUnitIds?: string[];
+  /** The co-owned flats another owner pays for, for the same reason. Not stored. */
+  coOwnerPaidUnitIds?: string[];
 }
 
 /** What one citizen holds today, as billing reads it. See `FeesService.holdingsOf`. */
@@ -151,6 +153,7 @@ type HeldEntry = {
   heldUnitIds?: readonly string[];
   uninhabitableUnitIds?: readonly string[];
   exemptUnitIds?: readonly string[];
+  coOwnerPaidUnitIds?: readonly string[];
   assessment?: FeeAssessment | null;
 };
 
@@ -190,6 +193,19 @@ function distinctUninhabitable(assessed: readonly HeldEntry[]): number {
     assessed,
     (entry) => entry.uninhabitableUnitIds,
     (assessment) => assessment.uninhabitableUnitCount,
+  );
+}
+
+/**
+ * Co-owned flats another owner — the responsible one — pays for, across a run
+ * (`assessCitizen`). Each flat once: three brothers who pay nothing for one shop
+ * are one shop paid by the fourth, not three.
+ */
+function distinctCoOwnerPaid(assessed: readonly HeldEntry[]): number {
+  return distinctUnits(
+    assessed,
+    (entry) => entry.coOwnerPaidUnitIds,
+    (assessment) => assessment.coOwnerPaidUnitCount,
   );
 }
 
@@ -269,6 +285,7 @@ export function assessCitizen(
       heldUnitIds?: string[];
       uninhabitableUnitIds?: string[];
       exemptUnitIds?: string[];
+      coOwnerPaidUnitIds?: string[];
     }
   | { kind: 'unassessable'; reason: string } {
   /*
@@ -421,6 +438,9 @@ export function assessCitizen(
     .map((unit) => unit.unitId)
     .filter((id): id is string => Boolean(id));
   const exemptUnitIds = exemptUnits.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+  const coOwnerPaidUnitIds = paidByCoOwner
+    .map((unit) => unit.unitId)
+    .filter((id): id is string => Boolean(id));
 
   if (notice.basis === 'PER_AREA') {
     /*
@@ -459,6 +479,7 @@ export function assessCitizen(
     heldUnitIds,
     uninhabitableUnitIds,
     exemptUnitIds,
+    coOwnerPaidUnitIds,
     assessment: {
       basis: notice.basis,
       rate: notice.amount,
@@ -1077,6 +1098,8 @@ export class FeesService {
     const uninhabitableUnits = distinctUninhabitable(assessed);
     /** Units «معفاة من الرسوم» (0077) — see `assessCitizen`. Each unit once. */
     const feeExemptUnits = distinctExempt(assessed);
+    /** Co-owned flats the responsible owner pays for, not the person assessed — see `assessCitizen`. Each flat once. */
+    const coOwnerPaidUnits = distinctCoOwnerPaid(assessed);
 
     if (billable.length === 0) {
       /*
@@ -1090,9 +1113,14 @@ export class FeesService {
       /*
         Every reason that applies, not the first one: a notice that held three
         flats and exempted five was reported as "everything held", and the
-        clerk went looking for the wrong thing.
+        clerk went looking for the wrong thing. A flat «مالك مسؤول» pays for is
+        a reason too: a notice aimed at the brother who pays nothing matched
+        him, and «لا يوجد مواطنون مطابقون» sent the clerk to the wrong place.
       */
-      if (heldUnits + uninhabitableUnits + exemptedUnits + feeExemptUnits + unassessable.length === 0) {
+      if (
+        heldUnits + uninhabitableUnits + exemptedUnits + feeExemptUnits + coOwnerPaidUnits + unassessable.length ===
+        0
+      ) {
         throw new ConflictError({
           code: 'FEE_NO_MATCHING_CITIZENS',
           message: 'No citizen matches this notice, so nothing was issued',
@@ -1100,12 +1128,14 @@ export class FeesService {
       }
       throw new ConflictError({
         code: 'FEE_NOTHING_TO_CHARGE',
-        message: 'Every unit this notice targets is held, exempted or unassessable, so nothing was issued',
+        message:
+          'Every unit this notice targets is held, exempted, paid by another co-owner or unassessable, so nothing was issued',
         params: {
           held: heldUnits,
           uninhabitable: uninhabitableUnits,
           exempted: exemptedUnits,
           feeExempt: feeExemptUnits,
+          coOwnerPaid: coOwnerPaidUnits,
           unassessable: unassessable.length,
         },
       });
@@ -1198,6 +1228,7 @@ export class FeesService {
       heldUnitCount: heldUnits,
       uninhabitableUnitCount: uninhabitableUnits,
       feeExemptUnitCount: feeExemptUnits,
+      coOwnerPaidUnitCount: coOwnerPaidUnits,
       actorId: actor.id,
       actorRole: actor.role,
     });
@@ -1226,7 +1257,21 @@ export class FeesService {
       this.logger.log(`Fee "${input.title}": ${feeExemptUnits} unit(s) exempt from fees (معفاة من الرسوم)`);
     }
 
-    return { ...result, unassessable, exemptedUnits, heldUnits, uninhabitableUnits, feeExemptUnits };
+    if (coOwnerPaidUnits > 0) {
+      this.logger.log(
+        `Fee "${input.title}": ${coOwnerPaidUnits} co-owned unit(s) paid by their responsible owner (مالك مسؤول)`,
+      );
+    }
+
+    return {
+      ...result,
+      unassessable,
+      exemptedUnits,
+      heldUnits,
+      uninhabitableUnits,
+      feeExemptUnits,
+      coOwnerPaidUnits,
+    };
   }
 
   /**
@@ -1352,6 +1397,13 @@ export class FeesService {
           `Recurring "${notice.title}" (${periodKey}): ${feeExemptUnits} unit(s) exempt from fees (معفاة من الرسوم)`,
         );
       }
+      // Paid in full by their responsible owner — a choice, not a hold, so logged rather than warned.
+      const coOwnerPaidUnits = distinctCoOwnerPaid(assessed);
+      if (coOwnerPaidUnits > 0) {
+        this.logger.log(
+          `Recurring "${notice.title}" (${periodKey}): ${coOwnerPaidUnits} co-owned unit(s) paid by their responsible owner (مالك مسؤول)`,
+        );
+      }
       if (billable.length === 0) {
         await this.recordBillingRun(notice.id, periodKey, startedAt, {
           outcome: 'SKIPPED',
@@ -1397,6 +1449,7 @@ export class FeesService {
           heldUnitCount: heldUnits,
           uninhabitableUnitCount: uninhabitableUnits,
           feeExemptUnitCount: feeExemptUnits,
+          coOwnerPaidUnitCount: coOwnerPaidUnits,
         });
       }
 
@@ -1677,6 +1730,7 @@ export class FeesService {
           heldUnitIds: outcome.heldUnitIds,
           uninhabitableUnitIds: outcome.uninhabitableUnitIds,
           exemptUnitIds: outcome.exemptUnitIds,
+          coOwnerPaidUnitIds: outcome.coOwnerPaidUnitIds,
         });
       }
     }

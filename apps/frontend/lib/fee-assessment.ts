@@ -66,8 +66,11 @@ export function describeAssessment(
   if (assessment.basis === 'PER_AREA') {
     /*
       Whole square metres, as always — except where a co-owned flat was
-      charged at a part, which makes the area a fraction the amount was
-      computed from: «33.33 م²», not «33», so the line multiplies out.
+      charged at a part, which makes the area a fraction: «33.33 م²», not «33».
+      Two decimals for reading only. The server multiplies the exact fraction
+      and rounds the amount once (`assessCitizen`), so this figure times the
+      rate can miss the amount by a pound or so; what makes the line checkable
+      is the part itself, named in the note («1/3 …», `withLeftOut`).
     */
     const area = (
       assessment.sharedUnitCount ? Math.round(assessment.totalArea * 100) / 100 : Math.round(assessment.totalArea)
@@ -77,8 +80,9 @@ export function describeAssessment(
 
   /*
     A co-owned flat charged at this owner's part counts as that part — two
-    whole shops and a quarter of a third are 2.25, the figure the rate was
-    multiplied by (`chargedUnits`, migration 0075).
+    whole shops and a quarter of a third are 2.25 (`chargedUnits`, migration
+    0075). Shown to two decimals: a third is 0.33 here and exactly 1/3 in the
+    server's arithmetic, so the fraction in the note is the checkable figure.
   */
   const units = assessment.chargedUnits ?? assessment.unitCount;
   const count = Number.isInteger(units) ? units : Math.round(units * 100) / 100;

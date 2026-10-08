@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
+import type { CreateFeeNotice } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
@@ -207,6 +208,36 @@ describeIfDb('co-owner billing', () => {
     expect(rows).toHaveLength(1);
     expect((rows[0]!.after as { citizens: string[] }).citizens.sort()).toEqual([...brothers].sort());
     expect(events.emit).toHaveBeenCalledWith('building.changed', expect.objectContaining({ alreadyAudited: true }));
+  });
+
+  it('tells a clerk who bills a brother the responsible owner pays for why nothing was issued', async () => {
+    /*
+      He is matched — he owns the shop — and owes nothing for it: the notice
+      bills nobody because another owner pays, not because nobody matched.
+      «لا يوجد مواطنون مطابقون لهذه الفئة» sent the clerk to the wrong place.
+    */
+    const { shop, brothers } = await seed();
+    await within(() => ownerBilling.set(shop.id, { mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: brothers[0]! }, actor));
+    const issuing = within(() =>
+      fees.issue(
+        {
+          title: `رسم الأرصفة ${randomUUID().slice(0, 8)}`,
+          amount: 10_000,
+          basis: 'PER_AREA',
+          bearer: 'OWNER',
+          frequency: 'ONCE',
+          targetType: 'INDIVIDUAL_CITIZEN',
+          targetCitizenId: brothers[1]!,
+          dueDate: '2026-12-31',
+        } as CreateFeeNotice,
+        actor,
+      ),
+    );
+    await expect(issuing).rejects.toMatchObject({
+      code: 'FEE_NOTHING_TO_CHARGE',
+      params: { held: 0, uninhabitable: 0, exempted: 0, coOwnerPaid: 1, unassessable: 0 },
+    });
+    expect(await db.citizenPayment.count({ where: { citizenId: brothers[1]! } })).toBe(0);
   });
 
   it('divides by أسهم recorded in the same save', async () => {

@@ -87,10 +87,11 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   requires both), recorded on the Tier 1 audit row, and restored the same way.
 - What the citizen portal sends about anyone else is named, never passed through: `mySummary` sends a
   flat's owners as name and أسهم only (an allowlist, pinned by `citizen-portal.spec.ts`) and drops the
-  landlord link's id and رقم مرجعي. A co-owned flat's billing goes as the method, this citizen's own part
-  and `paysForAll`, never the responsible owner's register id (same spec). A unit's fee exemption goes as
-  its reason only; the officer's note stays on the staff screens, and `heldUnits` (a house's flat, a
-  card's census flats) go through the same `portalOwnerBilling` mapper. Its property and unit fields still pass through by spread, so a
+  landlord link's id and رقم مرجعي. A co-owned flat's billing goes as the method and this citizen's own
+  part (under «مالك مسؤول», 1/1 or 0/1 says whether they pay for all), never the responsible owner's
+  register id (same spec). A unit's fee exemption goes as its reason only; the officer's note stays on the
+  staff screens, and `heldUnits` (a house's flat, a card's census flats) go through the same
+  `portalOwnerBilling` mapper. Its property and unit fields still pass through by spread, so a
   field added to the staff profile reaches «ملفّي» unless it is named out
   ([docs/gotchas.md](gotchas.md#a-field-added-to-the-staff-profile-reaches-the-citizen-portal)).
 - Scope citizen reads and writes by `user.sub` in the WHERE clause: `findFirst({ where: { id, citizenId } })`
