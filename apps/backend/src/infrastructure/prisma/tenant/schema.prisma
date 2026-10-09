@@ -265,9 +265,13 @@ model User {
   /// Expenses this staff member recorded, and any they cancelled (0074).
   expensesRecorded         ExpenseVoucher[]     @relation("ExpenseRecordedBy")
   expensesVoided           ExpenseVoucher[]     @relation("ExpenseVoidedBy")
+  expensesPaidTo           ExpenseVoucher[]     @relation("ExpensePayeeStaff")
   /// Transfers between wallets this staff member recorded or cancelled (0078).
   transfersRecorded        TreasuryTransfer[]   @relation("TransferRecordedBy")
   transfersVoided          TreasuryTransfer[]   @relation("TransferVoidedBy")
+  /// Income vouchers this staff member recorded, and any they cancelled (0080).
+  incomeRecorded           IncomeVoucher[]      @relation("IncomeRecordedBy")
+  incomeVoided             IncomeVoucher[]      @relation("IncomeVoidedBy")
   createdCases          Case[]               @relation("CaseCreatedBy")
   resolvedCases         Case[]               @relation("CaseResolvedCitizen")
   unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
@@ -2258,6 +2262,7 @@ model TreasuryAccount {
 
   entries TreasuryEntry[]
   expenses ExpenseVoucher[]
+  incomes  IncomeVoucher[]
   transfersOut TreasuryTransfer[] @relation("TransferFrom")
   transfersIn  TreasuryTransfer[] @relation("TransferTo")
 
@@ -2433,6 +2438,12 @@ model ExpenseVoucher {
   recordedById String? @db.Uuid
   recordedBy   User?   @relation("ExpenseRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
 
+  /// The staff account a salary or wage voucher paid (0081); NULL on every
+  /// other voucher. `payee` still holds the name as it stood on the day. That
+  /// it is a STAFF row is checked by its one writer, `recordSalary`.
+  payeeStaffId String? @db.Uuid
+  payeeStaff   User?   @relation("ExpensePayeeStaff", fields: [payeeStaffId], references: [id], onDelete: Restrict)
+
   /// One id per press of «سجّل النفقة», so a retry finds the first voucher
   /// instead of paying twice.
   clientRequestId String? @unique @db.Uuid
@@ -2450,7 +2461,96 @@ model ExpenseVoucher {
   @@index([categoryId, occurredAt(sort: Desc)])
   @@index([accountId, occurredAt(sort: Desc)])
   @@index([recordedById])
+  @@index([payeeStaffId, occurredAt(sort: Desc)])
   @@map("expense_vouchers")
+}
+
+// ─────────────────────────  Income (migration 0080)  ─────────────────────────
+// Design: docs/finance.md §4.
+
+/// Where income comes from: the Independent Municipal Fund, permits, rent,
+/// grants, fines. Rows rather than an enum, for the reason `ExpenseCategory` gives.
+model IncomeCategory {
+  id String @id @default(uuid()) @db.Uuid
+  /// The stable handle for the seeded rows (`INCOME_CATEGORY_KEYS`). NULL for a
+  /// municipality's own. Unique where present (a partial index in 0080).
+  key     String?
+  /// The name as the municipality reads it.
+  labelAr String
+  /// Its English name, or NULL for a category entered in Arabic only.
+  labelEn String?
+  /// باب وبند الموازنة. NULL on every seeded row: the codes come from the
+  /// municipality's adopted budget. Both set or both NULL (CHECK in 0080).
+  chapterCode String?
+  itemCode    String?
+  /// Deactivated, never deleted: vouchers point here for ever.
+  active    Boolean  @default(true)
+  sortOrder Int      @default(100)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  vouchers IncomeVoucher[]
+
+  @@map("income_categories")
+}
+
+/// One «سند قبض إيرادات»: money that reached a wallet without a citizen's bill
+/// behind it, and where it came from.
+///
+/// Recording is receiving — the `INCOME_VOUCHER` ledger entry is written in the
+/// same transaction. A mistake is voided, never edited: this row takes a
+/// cancellation stamp while the entry it wrote is opposed by a new one.
+model IncomeVoucher {
+  id String @id @default(uuid()) @db.Uuid
+  /// «RV-2610-0001», from `document_counters` (kind `REVENUE_VOUCHER`).
+  voucherNumber String @unique
+
+  categoryId String         @db.Uuid
+  category   IncomeCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  /// The wallet it reached. Paired with the currency, so the foreign key itself
+  /// refuses a ليرة voucher received into a dollar safe.
+  accountId String          @db.Uuid
+  currency  String
+  account   TreasuryAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "income_vouchers_account_currency_fkey")
+
+  /// Positive: what was received. The ledger's own precision.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// Who paid. Optional free text, and it may name a citizen — personal data,
+  /// kept out of logs, Sentry and audit rows.
+  payerName         String?
+  description       String
+  /// A cheque number, or a bank or Whish transfer number.
+  externalReference String?
+
+  /// The day the money arrived, which is not always the day the row was written.
+  occurredAt DateTime @default(now()) @db.Timestamptz(3)
+  /// Why it is dated before today. Required by the server for any back-dating.
+  adjustmentReason String?
+
+  recordedById String? @db.Uuid
+  recordedBy   User?   @relation("IncomeRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  /// One id per press of «سجّل الإيراد». Required, so a retry always finds the
+  /// first voucher instead of crediting the wallet twice.
+  clientRequestId String @unique @db.Uuid
+
+  /// The cancellation stamp. All three move together (CHECK in 0080); a voucher
+  /// with `voidedAt` set has an opposing ledger entry against the same wallet.
+  voidedAt   DateTime? @db.Timestamptz(3)
+  voidedById String?   @db.Uuid
+  voidedBy   User?     @relation("IncomeVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([categoryId, occurredAt(sort: Desc)])
+  @@index([accountId, occurredAt(sort: Desc)])
+  @@index([recordedById])
+  @@index([voidedById])
+  @@map("income_vouchers")
 }
 
 // ─────────────────────────  Quality review (migration 0049)  ─────────────────────────
