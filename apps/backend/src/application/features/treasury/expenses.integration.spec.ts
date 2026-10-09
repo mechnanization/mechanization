@@ -313,6 +313,27 @@ describeIfDb('ExpensesService', () => {
       expect(await balance(safeLbpId)).toBe(before - 7_000);
     });
 
+    /*
+      The race the advisory lock exists for: two identical requests in flight at
+      once. Without it both read "no voucher yet", and the second insert dies on
+      the unique index as an unmapped 500. With it, the second waits, then finds
+      the first. Four rather than two: a pair does not always land in the window
+      between the read and the insert, and a race test that passes by luck
+      without the lock proves nothing.
+    */
+    it('pays once when identical requests race', async () => {
+      const before = await balance(safeLbpId);
+      const clientRequestId = randomUUID();
+      const results = await Promise.all(
+        Array.from({ length: 4 }, () => spend({ amount: 3_000, clientRequestId })),
+      );
+
+      expect(new Set(results.map((r) => r.voucherNumber)).size).toBe(1);
+      expect(results.filter((r) => r.replayed)).toHaveLength(3);
+      expect(await balance(safeLbpId)).toBe(before - 3_000);
+      expect(await db.expenseVoucher.count({ where: { clientRequestId } })).toBe(1);
+    });
+
     it('refuses more than the wallet holds, and leaves no voucher behind', async () => {
       const before = await db.expenseVoucher.count();
       await expect(spend({ amount: (await balance(safeLbpId)) + 1 })).rejects.toMatchObject({
@@ -444,6 +465,18 @@ describeIfDb('ExpensesService', () => {
       expect(again.voucherNumber).toBe(first.voucherNumber);
       expect(again.replayed).toBe(true);
       expect(await balance(safeLbpId)).toBe(before - 5_000);
+    });
+
+    it('pays a salary once when identical requests race', async () => {
+      const before = await balance(safeLbpId);
+      const clientRequestId = randomUUID();
+      const results = await Promise.all(
+        Array.from({ length: 4 }, () => pay(clerkId, { amount: 4_000, clientRequestId })),
+      );
+
+      expect(new Set(results.map((r) => r.voucherNumber)).size).toBe(1);
+      expect(results.filter((r) => r.replayed)).toHaveLength(3);
+      expect(await balance(safeLbpId)).toBe(before - 4_000);
     });
 
     it('refuses more than the wallet holds, and leaves no voucher behind', async () => {

@@ -218,7 +218,8 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   (`TREASURY_*_ROLES` in shared-schemas). A payer or payee name on a voucher is personal data: it
   stays out of logs, Sentry and audit rows ([finance.md](finance.md)).
 - **Expenses.** Recording an expense is paying it, so the write is guarded on both sides: an
-  in-flight ref and an idempotency key the server honours, and the outflow goes through the same
+  in-flight ref and an idempotency key the server honours (serialised under a schema-scoped advisory
+  lock, so a raced retry replays rather than failing), and the outflow goes through the same
   locked, never-negative ledger post as everything else. `payee` is free text that may name a
   citizen, so the audit row carries the voucher number and the figures, never the name.
   **Salaries** (`POST treasury/expenses/salaries/:staffId`, `TREASURY_WORK_ROLES`, id through

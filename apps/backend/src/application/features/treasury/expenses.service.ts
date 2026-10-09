@@ -66,9 +66,10 @@ type VoucherRow = Prisma.ExpenseVoucherGetPayload<{ select: typeof VOUCHER_SELEC
  * ## What the client is not trusted with
  *
  * The currency is taken from the wallet, never from the request, so a voucher
- * can never claim a currency its wallet does not hold. The voucher number comes
- * from a Postgres sequence. The balance it reports is read back after the
- * write, not computed on the client.
+ * can never claim a currency its wallet does not hold. The voucher number is
+ * drawn from `document_counters` in the same transaction
+ * (`allocateDocumentNumber`, migration 0079). The balance it reports is read
+ * back after the write, not computed on the client.
  */
 @Injectable()
 export class ExpensesService {
@@ -339,11 +340,19 @@ export class ExpensesService {
 
       /*
         Checked before anything is written, so a double-clicked button answers
-        with the first voucher instead of paying the supplier twice. The unique
-        index on `clientRequestId` is what makes this safe under a real race:
-        the loser's insert fails rather than becoming a second payment.
+        with the first voucher instead of paying the supplier twice. Reading
+        first is not enough on its own: two identical requests arriving together
+        would both read nothing, and the second insert would die on the unique
+        index as an unmapped 500 (no money moved, but the clerk was told it
+        failed). So the retry key is serialised first — the second request waits
+        here until the first commits, then finds its voucher. The key names the
+        schema, so two municipalities never wait on each other; it is the twin
+        of `IncomeService.record`'s, in its own namespace.
       */
       if (input.clientRequestId) {
+        const lockKey = `${this.tenantContext.schemaName}:expense-request:${input.clientRequestId}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+
         const earlier = await tx.expenseVoucher.findUnique({
           where: { clientRequestId: input.clientRequestId },
           select: { id: true, voucherNumber: true, accountId: true, currency: true },

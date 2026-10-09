@@ -151,9 +151,11 @@ Data access for new code (decided):
   other way: one transaction writes the «سند قبض», posts the positive `INCOME_VOUCHER` entry and
   the Tier 1 audit row (number and amount, never the payer). The wallet must be one that
   `canReceiveIncome` allows (cash safe, Whish, bank) — never a collector's custody. The same three
-  role lists as expenses. Two differences from its twin, both deliberate: the retry key is
-  required and is serialised with a schema-scoped `pg_advisory_xact_lock` before it is read, so two
-  identical requests produce one voucher and one replay rather than a unique violation; and a void
+  role lists as expenses. Both serialise the retry key with a schema-scoped `pg_advisory_xact_lock`
+  before it is read (`<schema>:income-request:<key>`, `<schema>:expense-request:<key>`), so
+  identical requests produce one voucher and replays rather than a unique violation. Two
+  differences from its twin, both deliberate: the retry key is required (optional on an expense,
+  where the lock is taken only when a key is sent); and a void
   *removes* money, so it locks the voucher, then the wallet, and refuses with
   `TREASURY_INSUFFICIENT_FUNDS_FOR_VOID` when the wallet has spent it since. The register's
   `from`/`to` are municipal days, turned into Beirut midnights (`municipalDayStart`) rather than

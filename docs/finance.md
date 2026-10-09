@@ -365,7 +365,10 @@ RECORDED (paid) -> VOID (reversed)
 
 One transaction: lock the wallet, check the balance (never negative), write the
 negative wallet entry, assign the payment-order number `PV-nnnnnn`, write the Tier 1
-audit row. Retry key included. Insufficient funds returns a clear error code.
+audit row. Retry key included, serialised under a schema-scoped advisory lock before it
+is read, so identical requests racing each other produce one voucher and replays (until
+2026-10-09 the loser got a 500; no money moved twice). Insufficient funds returns a clear
+error code.
 
 ### 5.3 Voiding a recorded expense
 

@@ -181,7 +181,7 @@ export const NAV_GROUPS: NavGroup[] = [
       // nothing — and whom that route does not admit.
       {
         path: '/inspector/profile',
-        label: 'أرباحي والمسح الميداني',
+        label: 'أرباح المسح الميداني',
         labelEn: 'My earnings & survey',
         icon: BadgeDollarSign,
         roles: WORKING_STAFF_ROLES,
