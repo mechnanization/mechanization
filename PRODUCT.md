@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -42,7 +42,7 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - CSV export with formula-injection-safe cells.
   - An append-only audit log of staff actions.
   - **The treasury (الخزينة)**: live balances of the municipality's cash safe and Whish account in
-    ليرة and dollars, a statement for each, and what collectors still hold. A citizen payment credits
+    ليرة and dollars, a statement for each, and their total at the municipality's rate. A citizen payment credits
     the right wallet automatically. `SUPER_ADMIN` activates it once by entering the counted opening
     balances; the accountant works it, the auditor and view-only staff read it. Income, transfers and
     the daily count follow in later stages ([docs/finance.md](docs/finance.md)).
@@ -50,8 +50,23 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     paid, to whom, from which wallet and against which budget category, and the money leaves the
     wallet in the same act — there is no approval queue. A mistake is cancelled with a reason, which
     returns the money and keeps both the voucher and its cancellation on the record. Only the
-    manager may cancel.
-  - **عهدة الجباة**: what each collector is still carrying from his round, and «استلام الصندوق» —
+    manager may cancel. A salary or wage is paid from the staff list itself («صرف راتب / أجر»): the
+    manager picks the wallet, the amount and the month, and the voucher is filed under «رواتب وأجور»,
+    in the staff member's own name and linked to their account. The staff list no longer shows the
+    field inspectors' commission cards; an inspector's earnings stay on their own profile.
+  - **الإيرادات**: a register of «سند قبض إيرادات» — money that reaches the treasury without a
+    citizen's bill: the Independent Municipal Fund, the state's share of telephone, electricity and
+    water revenue, permits, rent on municipal property, grants, fines. The accountant or the manager
+    records the amount, the wallet it arrived in (a cash safe, Whish or a bank account, never a
+    collector's custody), the source category, the payer and the cheque or transfer number, and the
+    wallet's balance rises in the same act. Numbered «RV-2610-0001». Only the manager may cancel, with
+    a reason, and a cancellation is refused once the wallet has spent the money. Citizen fees are not
+    entered here: they credit the wallets on their own. The manager manages the income categories on
+    «بنود الإيرادات» — adds one (from that page, or without leaving a half-filled voucher), renames it,
+    gives it an English name or its budget chapter and article, and stops or restarts it. A category
+    is never deleted; a stopped one leaves the form and stays in the register.
+  - **عهدة الجباة**, on its own page «الجباة والتحصيل» rather than on the treasury's, since it is
+    not the treasury's money yet: what each collector is still carrying from his round, and «استلام الصندوق» —
     the accountant counts the notes with him and records the handover, which moves the money from
     his name into the cash safe. Cash a collector took at a door is never counted as the
     municipality's until that moment. A partial handover is normal; the rest stays on his name.

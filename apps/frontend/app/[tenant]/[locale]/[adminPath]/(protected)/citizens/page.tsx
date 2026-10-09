@@ -742,7 +742,7 @@ export default function CitizensPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={Users}
-        title={locale === 'en' ? 'Citizens' : 'المواطنون'}
+        title={locale === 'en' ? 'Citizen register' : 'سجل المواطنين'}
 
         actions={
           canWrite ? (
@@ -818,7 +818,7 @@ export default function CitizensPage({
         A permanent link reading «يتطلب مراجعة (٠)» is a standing invitation to
         check something that is never there. It appears when a record needs
         finishing, and leads to the queue's own page (`/citizens/review`, also
-        in «استكمال البيانات»), which lists just those records with a «فحص
+        a row of the «المواطنون» group), which lists just those records with a «فحص
         الملف» for each.
       */}
       {totals.requiringReview > 0 ? (

@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -141,7 +141,26 @@ Data access for new code (decided):
   role lists: read, `TREASURY_WORK_ROLES` to record, `TREASURY_ADMIN_ROLES` to void. The municipality
   names its own bands of spending: `POST`/`PATCH` on `expenses/categories`, manager only. A category
   is deactivated, never deleted — every voucher ever filed under it still points there, and the
-  foreign key is RESTRICT.
+  foreign key is RESTRICT. «صرف راتب / أجر» is `POST expenses/salaries/:staffId`
+  (`recordSalary`, `TREASURY_WORK_ROLES`): the same write through the private `recordVoucher`, with
+  the payee read from the staff account (`kind = 'STAFF'`, not deleted; a disabled account may
+  still be paid) and the category looked up by key (`SALARIES`). It stamps `payeeStaffId` (0081) on
+  the voucher and in the audit row's `after`, so a person's salaries are found by id, not by name.
+- **Income.** `IncomeService` and `IncomeController` (`t/:tenantSlug/treasury/income`), with the
+  date rules and the register's period bounds in `income.plan.ts`. The expense module run the
+  other way: one transaction writes the «سند قبض», posts the positive `INCOME_VOUCHER` entry and
+  the Tier 1 audit row (number and amount, never the payer). The wallet must be one that
+  `canReceiveIncome` allows (cash safe, Whish, bank) — never a collector's custody. The same three
+  role lists as expenses. Two differences from its twin, both deliberate: the retry key is
+  required and is serialised with a schema-scoped `pg_advisory_xact_lock` before it is read, so two
+  identical requests produce one voucher and one replay rather than a unique violation; and a void
+  *removes* money, so it locks the voucher, then the wallet, and refuses with
+  `TREASURY_INSUFFICIENT_FUNDS_FOR_VOID` when the wallet has spent it since. The register's
+  `from`/`to` are municipal days, turned into Beirut midnights (`municipalDayStart`) rather than
+  read as UTC dates. Categories: `POST`/`PATCH` on `income/categories`, manager only, never a
+  delete; an edit keeps `active` unless it is sent (the expense edit defaults it to true, so a
+  rename there restarts a stopped category), and a taken budget article is the partial unique
+  index's `P2002`, mapped to `INCOME_CATEGORY_CODE_TAKEN` in `writeCategory`.
 - **Transfers.** `TransfersService` and `TransfersController`
   (`t/:tenantSlug/treasury/transfers`). Today it wires one kind: «تسليم صندوق الجابي», the collector
   handing in what he took at the doors. A citizen's payment settles his invoice at the door and
@@ -161,8 +180,8 @@ Data access for new code (decided):
   credential, and an integration test pins the row's exact key set so a field added later fails there
   rather than in a browser.
 - **Document numbers.** `allocateDocumentNumbers` / `allocateDocumentNumber`
-  (`application/common/document-number.ts`) is the only way a number is drawn, for all four books:
-  «INV-2610-0001», «RCP-…», «PV-…», «TR-…». Pass the caller's `tx` and `this.S` — the draw and the
+  (`application/common/document-number.ts`) is the only way a number is drawn, for all five books:
+  «INV-2610-0001», «RCP-…», «PV-…», «TR-…», «RV-…». Pass the caller's `tx` and `this.S` — the draw and the
   document must share a transaction, and an unqualified name would resolve through the pooled
   connection's `search_path` into another municipality's counter. Bulk callers take a block sized to
   what was actually inserted: `FeesService.numberInvoices` numbers after `createMany` because
@@ -246,7 +265,7 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 
 1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
    settlements), payment reversals, activating the treasury, recording and cancelling an expense,
-   receiving a collector's custody and cancelling a transfer, corrections, ownership changes (ending an ownership, making, updating
+   recording and cancelling an income voucher, receiving a collector's custody and cancelling a transfer, corrections, ownership changes (ending an ownership, making, updating
    or ending an owner link, a merge or its undo), ending a tenancy, review decisions (approving or returning
    a record, completing a quality check) and citizen status changes (archive and restore; a citizen file
    is never deleted). The row is written in the same transaction as the change; if it fails, the change
@@ -332,7 +351,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 119 specs, 29 of them `*.integration.spec.ts`.
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 124 specs, 32 of them `*.integration.spec.ts` (counted 2026-10-09).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

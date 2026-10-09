@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -191,7 +191,8 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - **Audit tiers.** Tier 1 MUST write its audit row inside the transaction of the change, so the change
   rolls back if the row cannot be written: payments (declaration, confirmation, refusal, counter and
   Whish settlement), payment reversals, activating the treasury (`TREASURY_ACTIVATED`: the opening
-  balances and the go-live stamp, one transaction), recording and cancelling an expense, receiving a
+  balances and the go-live stamp, one transaction), recording and cancelling an expense, recording
+  and cancelling an income voucher (`INCOME_RECORDED`, `INCOME_VOIDED`), receiving a
   collector's custody (`CUSTODY_RECEIVED`) and cancelling a transfer, corrections, ownership changes (ending an ownership, owner links,
   merges), ending a tenancy, review decisions (approve, return, quality check) and citizen status changes
   (archive and restore). Everything else is Tier 2: an event
@@ -220,6 +221,21 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   in-flight ref and an idempotency key the server honours, and the outflow goes through the same
   locked, never-negative ledger post as everything else. `payee` is free text that may name a
   citizen, so the audit row carries the voucher number and the figures, never the name.
+  **Salaries** (`POST treasury/expenses/salaries/:staffId`, `TREASURY_WORK_ROLES`, id through
+  `ParseUUIDPipe`, body through `recordStaffSalarySchema`) take neither the payee nor the category
+  from the body: the server reads the name from the account, with `kind = 'STAFF'` and
+  `deletedAt IS NULL` in the WHERE (a citizen's id answers `SALARY_PAYEE_NOT_FOUND`, pinned by a
+  test), and files the voucher under the seeded `SALARIES`. The audit row names the staff member by
+  id (`payeeStaffId`), never by name. The button lives on «الموظفون», which only `SUPER_ADMIN`
+  opens; the route is what decides.
+- **Income vouchers** (`t/:tenantSlug/treasury/income`). The expense guards, mirrored: read on
+  `TREASURY_READ_ROLES`, record on `TREASURY_WORK_ROLES`, void and the category writes (`POST`,
+  `PATCH` on `income/categories`, both Tier 1 audited) on `TREASURY_ADMIN_ROLES`; the body
+  and the register's query values through shared zod schemas, ids through `ParseUUIDPipe`. The retry
+  key is required and serialised under an advisory lock keyed by schema, so a double press credits
+  once. `payerName` (a fine, a rent) may name a citizen: the audit row carries the voucher number and
+  figures only. The register's search term goes to the API in the query string, as the other
+  registers' do, and so falls under the URL-logging gap below.
 - **«من حصّل الجابي»** (`GET /treasury/transfers/custody/:collectorId/collections`) names citizens
   and carries their phone and sector, so it stays on the finance *read* roles. That is deliberate and
   it widens nobody's sight: the register itself (`EVERY_STAFF_ROLE`) already shows every staff role

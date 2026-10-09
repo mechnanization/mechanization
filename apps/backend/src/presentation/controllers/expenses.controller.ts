@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from 
 import {
   createExpenseCategorySchema,
   recordExpenseSchema,
+  recordStaffSalarySchema,
   updateExpenseCategorySchema,
   voidExpenseSchema,
   TREASURY_ADMIN_ROLES,
@@ -9,6 +10,7 @@ import {
   TREASURY_WORK_ROLES,
   type CreateExpenseCategoryInput,
   type RecordExpenseInput,
+  type RecordStaffSalaryInput,
   type UpdateExpenseCategoryInput,
   type VoidExpenseInput,
 } from '@mechanization/shared-schemas';
@@ -96,6 +98,21 @@ export class ExpensesController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.expenses.record(body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /**
+   * «صرف راتب / أجر» — a salary paid to the staff member in the path, from the
+   * staff page. The same role list as recording any expense: it is one. The
+   * payee and the category are the server's to set, never the body's.
+   */
+  @Roles(...TREASURY_WORK_ROLES)
+  @Post('salaries/:staffId')
+  recordSalary(
+    @Param('staffId', new ParseUUIDPipe()) staffId: string,
+    @Body(new ZodValidationPipe(recordStaffSalarySchema)) body: RecordStaffSalaryInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.expenses.recordSalary(staffId, body, { id: user.sub, role: user.role ?? '' });
   }
 
   @Roles(...TREASURY_READ_ROLES)

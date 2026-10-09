@@ -19,7 +19,7 @@ import {
   type ExpenseCategoryView,
   type TreasuryAccountView,
 } from '@/lib/api-client';
-import { formatTypedAmount, parseAmount } from '@/lib/currency';
+import { currencyUnit, formatTypedAmount, parseAmount } from '@/lib/currency';
 import { hasRole } from '@/lib/staff-roles';
 import { cn } from '@/lib/utils';
 import { Alert } from '@/components/ui/alert';
@@ -41,12 +41,6 @@ import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { TreasuryAmount } from './treasury-amount';
-
-/** The unit segment of the amount field: «ل.ل», «$», or the code itself. */
-function unitOf(currency: string, locale: string): string {
-  if (currency === 'LBP') return locale === 'en' ? 'LBP' : 'ل.ل';
-  return currency === 'USD' ? '$' : currency;
-}
 
 /**
  * A heading over a group of fields.
@@ -257,7 +251,7 @@ export function RecordExpenseForm({
           <Field htmlFor="expense-amount" label={t('amount')} error={errors.amount} required>
             <CurrencyInput
               id="expense-amount"
-              unit={account ? unitOf(account.currency, locale) : ''}
+              unit={account ? currencyUnit(account.currency, locale) : ''}
               value={amount}
               placeholder="0"
               invalid={Boolean(errors.amount) || short}

@@ -33,6 +33,7 @@ import { PaymentLedgerService } from './features/fees/payment-ledger.service';
 import { TreasuryLedgerService } from './features/treasury/treasury-ledger.service';
 import { TreasuryService } from './features/treasury/treasury.service';
 import { ExpensesService } from './features/treasury/expenses.service';
+import { IncomeService } from './features/treasury/income.service';
 import { TransfersService } from './features/treasury/transfers.service';
 import { StaffService } from './features/staff/staff.service';
 import { ZonesService } from './features/zones/zones.service';
@@ -79,6 +80,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     TreasuryLedgerService,
     TreasuryService,
     ExpensesService,
+    IncomeService,
     TransfersService,
     StaffService,
     ZonesService,
@@ -118,6 +120,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     TreasuryLedgerService,
     TreasuryService,
     ExpensesService,
+    IncomeService,
     TransfersService,
     StaffService,
     ZonesService,

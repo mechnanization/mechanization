@@ -74,6 +74,19 @@ export function formatMoney(amount: number, currency: string, locale: string = '
   return currency === 'LBP' ? formatLbp(amount, locale) : formatForeign(amount, currency);
 }
 
+/**
+ * The unit an amount field shows in its own segment beside the digits
+ * (`CurrencyInput`, PRIM-25): «ل.ل» for the pound, «$» for the dollar, the
+ * code for anything else.
+ *
+ * It was a page-local `unitOf` in three finance components; the fourth would
+ * have been a copy (PRIM-22), so it lives here once.
+ */
+export function currencyUnit(currency: string, locale: string = 'ar'): string {
+  if (currency === 'LBP') return locale === 'en' ? 'LBP' : 'ل.ل';
+  return currency === 'USD' ? '$' : currency;
+}
+
 const ARABIC_INDIC = /[٠-٩۰-۹]/g;
 
 /** «١٢٣» and «۱۲۳» → «123»: a clerk's keyboard may type either. */

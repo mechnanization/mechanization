@@ -8,6 +8,7 @@ import {
   type CreateExpenseCategoryInput,
   type RecordExpenseInput,
   type RecordExpenseResult,
+  type RecordStaffSalaryInput,
   type UpdateExpenseCategoryInput,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
@@ -31,6 +32,7 @@ const VOUCHER_SELECT = {
   amount: true,
   currency: true,
   payee: true,
+  payeeStaffId: true,
   description: true,
   occurredAt: true,
   invoiceNumber: true,
@@ -266,6 +268,72 @@ export class ExpensesService {
    * `planExpenseDate`, or the wallet does not hold the amount.
    */
   async record(input: RecordExpenseInput, actor: { id: string; role: string }): Promise<RecordExpenseResult> {
+    return this.recordVoucher(input, actor, null);
+  }
+
+  /**
+   * «صرف راتب / أجر» — a salary or wage paid to a staff member (docs/finance.md §5.8).
+   *
+   * `record`, with two things taken out of the client's hands: the payee is the
+   * account's own name, read here, and the category is the seeded «رواتب وأجور».
+   * The lock, the never-negative post, the number and the audit row are
+   * `record`'s, unchanged. The voucher also carries `payeeStaffId`, so what a
+   * person was paid is found by their id rather than by a name two people share.
+   *
+   * `kind = 'STAFF'` is in the WHERE because `users` holds citizens too. A
+   * deleted account is refused: it has left the books. A disabled one is not —
+   * someone who has stopped working may still be owed their last month.
+   */
+  async recordSalary(
+    staffId: string,
+    input: RecordStaffSalaryInput,
+    actor: { id: string; role: string },
+  ): Promise<RecordExpenseResult> {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+
+      const staff = await tx.user.findFirst({
+        where: { id: staffId, kind: 'STAFF', deletedAt: null },
+        select: { id: true, firstName: true, lastName: true },
+      });
+      if (!staff) {
+        throw new NotFoundError({
+          code: 'SALARY_PAYEE_NOT_FOUND',
+          message: `Staff member ${staffId} was not found`,
+        });
+      }
+
+      const salaries: ExpenseCategoryKey = 'SALARIES';
+      const category = await tx.expenseCategory.findFirst({ where: { key: salaries }, select: { id: true } });
+      if (!category) {
+        throw new NotFoundError({
+          code: 'EXPENSE_CATEGORY_NOT_FOUND',
+          message: 'The seeded salaries category is missing',
+        });
+      }
+
+      return this.recordVoucher(
+        {
+          categoryId: category.id,
+          accountId: input.accountId,
+          amount: input.amount,
+          payee: `${staff.firstName} ${staff.lastName}`.trim(),
+          description: input.description,
+          invoiceNumber: input.invoiceNumber,
+          clientRequestId: input.clientRequestId,
+        },
+        actor,
+        staff.id,
+      );
+    });
+  }
+
+  /** The one write behind `record` and `recordSalary`. `payeeStaffId` is null except for a salary. */
+  private async recordVoucher(
+    input: RecordExpenseInput,
+    actor: { id: string; role: string },
+    payeeStaffId: string | null,
+  ): Promise<RecordExpenseResult> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
 
@@ -367,6 +435,7 @@ export class ExpensesService {
           currency: account.currency,
           amount: new Prisma.Decimal(input.amount),
           payee: input.payee.trim(),
+          payeeStaffId,
           description: input.description.trim(),
           occurredAt,
           adjustmentReason: verdict.backdatedDays > 0 ? (input.adjustmentReason?.trim() ?? null) : null,
@@ -401,7 +470,8 @@ export class ExpensesService {
         Tier 1: the audit row commits with the money or not at all. The payee is
         deliberately absent — it is free text that may name a citizen, and an
         audit row is not a second copy of personal data (docs/security.md). The
-        voucher number is the handle that leads to it.
+        voucher number is the handle that leads to it. A salary's payee is a
+        staff account, so it is named here by its id, never by its name.
       */
       await this.audit.recordInTransaction({
         actorId: actor.id,
@@ -417,6 +487,7 @@ export class ExpensesService {
           categoryId: category.id,
           accountId: account.id,
           occurredAt: occurredAt.toISOString(),
+          ...(payeeStaffId ? { payeeStaffId } : {}),
         },
       });
 
@@ -561,6 +632,7 @@ export class ExpensesService {
       amount: row.amount.toNumber(),
       currency: row.currency,
       payee: row.payee,
+      payeeStaffId: row.payeeStaffId,
       description: row.description,
       occurredAt: row.occurredAt.toISOString(),
       invoiceNumber: row.invoiceNumber,

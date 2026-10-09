@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -68,6 +68,22 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   into its own `NEXT_DIST_DIR`.
 - **Where:** `apps/frontend/next.config.mjs` (`NEXT_DIST_DIR`),
   `apps/frontend/scripts/build-check.mjs`.
+
+### A running API keeps the old Prisma client after `pnpm db:generate`
+
+- **What happens:** after a schema change and `pnpm db:generate`, the API
+  started by `pnpm dev` recompiles the new code and then answers its new
+  queries with a 500 (`INTERNAL_ERROR`), while the integration suites, which
+  load the client from `src/`, pass. Seen 2026-10-09 with `payeeStaffId` (0081).
+- **Why:** `nest start --watch` runs `dist/`, and the Prisma clients reach
+  `dist/generated` only as assets. `nest-cli.json` sets `"watchAssets": false`,
+  so the watcher recompiles TypeScript but never re-copies the regenerated
+  client: the code asks for a column the loaded client does not know.
+- **Do this:** restart `pnpm dev` (the initial build copies the assets) after
+  every `pnpm db:generate`. `diff -rq apps/backend/src/generated apps/backend/dist/generated`
+  shows whether `dist/` is behind.
+- **Where:** `apps/backend/nest-cli.json` `compilerOptions.assets` and
+  `watchAssets`.
 
 ### Three Node versions, and an unknown fourth
 

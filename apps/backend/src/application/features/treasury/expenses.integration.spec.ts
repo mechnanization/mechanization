@@ -358,6 +358,151 @@ describeIfDb('ExpensesService', () => {
         code: 'EXPENSE_DATE_BEFORE_GO_LIVE',
       });
     });
+
+    it('links no staff member to an ordinary expense', async () => {
+      const result = await spend({ amount: 2_000 });
+      expect((await scoped(() => expenses.get(result.id))).payeeStaffId).toBeNull();
+    });
+  });
+
+  // ─────────────────────────────  paying a salary  ─────────────────────────────
+
+  describe('paying a salary (migration 0081)', () => {
+    let clerkId: string;
+    let salariesId: string;
+
+    const staffRow = (over: { isActive?: boolean; deletedAt?: Date } = {}) => {
+      const id = randomUUID();
+      return db.user
+        .create({
+          data: {
+            id,
+            kind: 'STAFF',
+            tenantSlug: 'expenses',
+            email: `s-${id}@t.gov.lb`,
+            firstName: 'ريما',
+            lastName: 'حداد',
+            role: 'ADMINISTRATIVE_OFFICER',
+            ...over,
+          },
+        })
+        .then((row) => row.id);
+    };
+
+    const pay = (staffId: string, over: Partial<Parameters<ExpensesService['recordSalary']>[1]> = {}) =>
+      scoped(() =>
+        expenses.recordSalary(
+          staffId,
+          {
+            accountId: safeLbpId,
+            amount: 300_000,
+            description: 'راتب تشرين الأول 2026',
+            clientRequestId: randomUUID(),
+            ...over,
+          },
+          MANAGER,
+        ),
+      );
+
+    beforeAll(async () => {
+      clerkId = await staffRow();
+      salariesId = (await db.expenseCategory.findFirstOrThrow({ where: { key: 'SALARIES' } })).id;
+    });
+
+    it('files it under «رواتب وأجور», paid to the account’s own name, and links the account', async () => {
+      const before = await balance(safeLbpId);
+      const result = await pay(clerkId, { amount: 300_000, invoiceNumber: 'كشف 10/2026' });
+
+      expect(result.voucherNumber).toMatch(new RegExp(`^PV-${municipalPeriod()}-\\d{4}$`));
+      expect(await balance(safeLbpId)).toBe(before - 300_000);
+
+      const voucher = await scoped(() => expenses.get(result.id));
+      expect(voucher.category.id).toBe(salariesId);
+      expect(voucher.payee).toBe('ريما حداد');
+      expect(voucher.payeeStaffId).toBe(clerkId);
+      expect(voucher.invoiceNumber).toBe('كشف 10/2026');
+      expect(voucher.currency).toBe('LBP');
+
+      const entries = await db.treasuryEntry.findMany({ where: { source: 'EXPENSE_VOUCHER', sourceId: result.id } });
+      expect(entries.map((entry) => Number(entry.amount))).toEqual([-300_000]);
+    });
+
+    it('names the staff member in the audit row by id, never by name', async () => {
+      const result = await pay(clerkId);
+      const rows = await db.auditLogEntry.findMany({ where: { action: 'EXPENSE_RECORDED', entityId: result.id } });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].after).toMatchObject({ voucherNumber: result.voucherNumber, payeeStaffId: clerkId });
+      expect(JSON.stringify(rows[0].after)).not.toContain('ريما');
+    });
+
+    it('answers a retry from the first voucher, and pays once', async () => {
+      const before = await balance(safeLbpId);
+      const clientRequestId = randomUUID();
+      const first = await pay(clerkId, { amount: 5_000, clientRequestId });
+      const again = await pay(clerkId, { amount: 5_000, clientRequestId });
+
+      expect(again.voucherNumber).toBe(first.voucherNumber);
+      expect(again.replayed).toBe(true);
+      expect(await balance(safeLbpId)).toBe(before - 5_000);
+    });
+
+    it('refuses more than the wallet holds, and leaves no voucher behind', async () => {
+      const before = await db.expenseVoucher.count();
+      await expect(pay(clerkId, { amount: (await balance(safeLbpId)) + 1 })).rejects.toMatchObject({
+        code: 'TREASURY_INSUFFICIENT_FUNDS',
+      });
+      expect(await db.expenseVoucher.count()).toBe(before);
+    });
+
+    it('refuses a citizen: `users` holds both, and only staff draw a salary', async () => {
+      const citizenId = randomUUID();
+      await db.user.create({
+        data: { id: citizenId, kind: 'CITIZEN', tenantSlug: 'expenses', firstName: 'مواطن', lastName: 'تجربة' },
+      });
+      const before = await db.expenseVoucher.count();
+      await expect(pay(citizenId)).rejects.toMatchObject({ code: 'SALARY_PAYEE_NOT_FOUND' });
+      expect(await db.expenseVoucher.count()).toBe(before);
+    });
+
+    it('refuses a deleted account and an id nobody holds', async () => {
+      await expect(pay(await staffRow({ deletedAt: new Date() }))).rejects.toMatchObject({
+        code: 'SALARY_PAYEE_NOT_FOUND',
+      });
+      await expect(pay(randomUUID())).rejects.toMatchObject({ code: 'SALARY_PAYEE_NOT_FOUND' });
+    });
+
+    it('still pays a disabled account: a person who has left may be owed their last month', async () => {
+      const leaverId = await staffRow({ isActive: false });
+      const result = await pay(leaverId, { amount: 1_000 });
+      expect((await scoped(() => expenses.get(result.id))).payeeStaffId).toBe(leaverId);
+    });
+
+    it('refuses when «رواتب وأجور» has been taken out of use', async () => {
+      await db.expenseCategory.update({ where: { id: salariesId }, data: { active: false } });
+      try {
+        await expect(pay(clerkId)).rejects.toMatchObject({ code: 'EXPENSE_CATEGORY_INACTIVE' });
+      } finally {
+        await db.expenseCategory.update({ where: { id: salariesId }, data: { active: true } });
+      }
+    });
+
+    it('lets the database refuse a link to a user that does not exist', async () => {
+      await expect(
+        db.expenseVoucher.create({
+          data: {
+            voucherNumber: `X-${randomUUID().slice(0, 8)}`,
+            categoryId: salariesId,
+            accountId: safeLbpId,
+            currency: 'LBP',
+            amount: 1,
+            payee: 'x',
+            description: 'x',
+            payeeStaffId: randomUUID(),
+          },
+        }),
+        // P2003 is a foreign-key violation, and this row's only unknown key is the payee link.
+      ).rejects.toMatchObject({ code: 'P2003' });
+    });
   });
 
   // ──────────────────────────────  the register  ──────────────────────────────

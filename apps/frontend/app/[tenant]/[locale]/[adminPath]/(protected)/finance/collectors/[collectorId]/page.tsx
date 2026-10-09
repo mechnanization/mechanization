@@ -42,8 +42,9 @@ const LIMIT = 200;
  * No رقم مرجعي anywhere: it is a citizen's sign-in credential and has no
  * business on a reconciliation screen (docs/security.md).
  *
- * Under `/finance`, so `canAccessPath` matches the `/finance` nav row by prefix
- * and the page inherits `TREASURY_READ_ROLES` (CODE-4). The server enforces it.
+ * Under `/finance/collectors`, so `canAccessPath` matches the «الجباة والتحصيل»
+ * nav row by prefix (the longest match) and the page inherits
+ * `TREASURY_READ_ROLES` (CODE-4). The server enforces it.
  */
 export default function CollectorCollectionsPage({
   params,
@@ -217,7 +218,7 @@ export default function CollectorCollectionsPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/finance`} label={t('back')} />
+      <BackLink fallbackHref={`${base}/finance/collectors`} label={t('back')} />
 
       <PageHeader
         icon={Users}

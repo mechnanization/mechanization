@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `chore/migration-0073-0074` (on `develop@4512abf`), 2026-10-07.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -48,7 +48,9 @@ every municipality ([security.md](security.md)).
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
 | Transfers (0078) | `treasury_transfers` | `TransfersService` (the collector handover; a Whish cash-out, a bank deposit and an exchange share the table and come later) |
-| Expenses (0074) | `expense_categories`, `expense_vouchers` | `ExpensesService` |
+| Expenses (0074) | `expense_categories`, `expense_vouchers` (`payeeStaffId`, 0081: the staff account a salary voucher paid, NULL otherwise; a FK to `users` that cannot say STAFF, so `recordSalary` filters `kind`) | `ExpensesService` |
+| Income (0080) | `income_categories`, `income_vouchers` (`payerName` is free text that may name a citizen) | `IncomeService` |
+| Document numbers (0079) | `document_counters`, one row per (book, month) | `allocateDocumentNumbers` |
 | Treasury (0073) | `treasury_accounts`, `treasury_entries`, and `system_settings.treasuryGoLiveAt` | `TreasuryService` (activation, reads), `TreasuryLedgerService` (entries; called from `PaymentLedgerService` inside its transaction) |
 | Ledger | `_tenant_migrations` (no Prisma model) | `migrateTenantSchema` |
 
@@ -432,15 +434,19 @@ reads staging's history from `.env.staging` and nothing else, and
 
 ### Numbering
 
-- The latest tenant migrations are `0073_treasury_ledger`, `0074_expense_vouchers` and
-  `0078_treasury_transfers`, added by this branch. 0078 is not 0075: `chore/migration-0075-0077`
-  holds 0075–0077, which is the second time a number was taken mid-flight on this branch. `develop` and `main` both end at `0072_users_no_phone_rules`, so `0067`–`0072`
-  have reached production and these two are the only ones outstanding.
+- The latest tenant migrations are `0073_treasury_ledger`, `0074_expense_vouchers`,
+  `0078_treasury_transfers`, `0079_document_numbering`, `0080_income_vouchers` and
+  `0081_expense_voucher_payee_staff`, added by `feat/finance-treasury-expenses`. 0078 is not
+  0075: `chore/migration-0075-0077` holds 0075–0077, which is the second time a number was taken
+  mid-flight on this branch. `main` ends at `0072_users_no_phone_rules`, so `0067`–`0072` have
+  reached production; `develop` has since taken `0075`–`0077`, and these six are outstanding.
+  Checked on 2026-10-09 against every local and remote branch after a fetch: the next free number
+  is `0082`.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
   `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of
-  this check (2026-10-06, against `origin/main`, `origin/develop` and every
-  unmerged remote branch) the next free number is `0079`.
+  this check (2026-10-09, against `origin/main`, `origin/develop` and every
+  local and remote branch) the next free number is `0082`.
 - The treasury migration was first written as `0071` and renumbered to `0073`:
   `0071_damage_habitable` and `0072_users_no_phone_rules` landed on `develop`
   while it was in progress. A branch cut before a release is a branch whose
@@ -591,9 +597,11 @@ and goes through contract.
 
 ### Document numbering (migration 0079)
 
-Four books — invoices, receipts, expense vouchers and transfers — share one
-scheme: «INV-2610-0001» is the book, the year and month it was issued in, and a
-counter that **restarts at 0001 on the first of each month**.
+Five books — invoices, receipts, expense vouchers, transfers and, since 0080,
+income vouchers («RV-», kind `REVENUE_VOUCHER`) — share one scheme:
+«INV-2610-0001» is the book, the year and month it was issued in, and a
+counter that **restarts at 0001 on the first of each month**. `kind` is text,
+so a new book needs no migration; its key is stored and never renamed.
 
 The counter is a row in `document_counters` keyed by `(kind, period)`, not a
 Postgres sequence, and the reason is the reset: `nextval` only ever climbs, and
@@ -712,7 +720,11 @@ Rare: only `0001_init` exists.
   `treasury_entries`, 0073). They hold no citizen data, but their rows are append-only and
   RESTRICT-linked to `users`, so a restore (which deletes users) aborts for any tenant that has
   moved money, exactly as for `payment_transactions`. A backup of such a tenant therefore does not
-  contain its wallets. **Undecided:** how the backup should carry an append-only ledger.
+  contain its wallets. Nor the documents beside them: `expense_categories`, `expense_vouchers`
+  (0074), `treasury_transfers` (0078), `document_counters` (0079), `income_categories` and
+  `income_vouchers` (0080) are not in `TABLE_ORDER` either (checked 2026-10-09), and the free-text
+  payee and payer columns may name a citizen. **Undecided:** how the backup should carry an
+  append-only ledger and the vouchers that explain it.
 - **`dump-tenant.js`, the `reissue-references` CSV, the `claude_ro` views**:
   see [Moving data](#moving-data-between-environments).
 - **Database roles.** One role per environment runs both DDL and DML for every

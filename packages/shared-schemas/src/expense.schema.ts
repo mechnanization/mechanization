@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BUDGET_CODES_INCOMPLETE, budgetCodeSchema, budgetCodesComplete } from './treasury.schema';
 
 /**
  * النفقات — money leaving a municipal wallet, and the «أمر صرف» that says why.
@@ -78,15 +79,34 @@ export const recordExpenseSchema = z.object({
 export type RecordExpenseInput = z.infer<typeof recordExpenseSchema>;
 
 /**
- * A budget code: the chapter or the article as the municipality's own budget
- * numbers it. Digits and dots, because that is every shape a Lebanese municipal
- * budget line takes, and free text here would make the codes unsortable.
+ * «صرف راتب / أجر» — a salary or wage paid to a staff member, from the staff
+ * page. Design: docs/finance.md §5.8.
+ *
+ * Narrower than `recordExpenseSchema` on purpose: the payee and the category
+ * are not the client's to state. The staff member is the route's id; the server
+ * writes their name as the payee, links the account (`payeeStaffId`), and files
+ * the voucher under the seeded «رواتب وأجور» (`SALARIES`). So a salary cannot be
+ * filed under fuel, or paid to a name no account carries.
+ *
+ * Dated today, with no date field: a salary paid on another day goes through
+ * the full expense form, which asks why it is back-dated.
  */
-const budgetCode = z
-  .string()
-  .trim()
-  .regex(/^[0-9][0-9.]{0,15}$/, 'الرمز أرقام، وقد تفصلها نقاط')
-  .optional();
+export const recordStaffSalarySchema = z.object({
+  accountId: z.string().uuid('اختر الحساب الذي سيُدفع منه'),
+  amount: paidAmount,
+  /** «عن شهر / بيان الصرف» — what the payment is for, e.g. the month. */
+  description: z
+    .string({ required_error: 'اكتب عن أي فترة يُصرف' })
+    .trim()
+    .min(3, 'اكتب عن أي فترة يُصرف')
+    .max(1000, 'الوصف طويل جداً'),
+  /** The paper behind it: a payroll sheet or a signed receipt number. */
+  invoiceNumber: z.string().trim().max(100, 'الرقم طويل جداً').optional(),
+  /** Required: one id per press, so a retry does not pay a salary twice. */
+  clientRequestId: z.string().uuid(),
+});
+
+export type RecordStaffSalaryInput = z.infer<typeof recordStaffSalarySchema>;
 
 /** The fields a municipality owns on a category, shared by create and edit. */
 const categoryFields = {
@@ -100,16 +120,13 @@ const categoryFields = {
    * باب وبند الموازنة. Both or neither: a chapter without its article is a
    * half-entered code no report can use, and the database refuses it.
    */
-  chapterCode: budgetCode,
-  itemCode: budgetCode,
+  chapterCode: budgetCodeSchema,
+  itemCode: budgetCodeSchema,
 };
-
-const bothOrNeither = (value: { chapterCode?: string; itemCode?: string }) =>
-  Boolean(value.chapterCode) === Boolean(value.itemCode);
 
 export const createExpenseCategorySchema = z
   .object(categoryFields)
-  .refine(bothOrNeither, { message: 'اكتب الباب والبند معاً، أو اتركهما فارغين', path: ['itemCode'] });
+  .refine(budgetCodesComplete, BUDGET_CODES_INCOMPLETE);
 
 export type CreateExpenseCategoryInput = z.infer<typeof createExpenseCategorySchema>;
 
@@ -119,7 +136,7 @@ export type CreateExpenseCategoryInput = z.infer<typeof createExpenseCategorySch
  */
 export const updateExpenseCategorySchema = z
   .object({ ...categoryFields, active: z.boolean().optional() })
-  .refine(bothOrNeither, { message: 'اكتب الباب والبند معاً، أو اتركهما فارغين', path: ['itemCode'] });
+  .refine(budgetCodesComplete, BUDGET_CODES_INCOMPLETE);
 
 export type UpdateExpenseCategoryInput = z.infer<typeof updateExpenseCategorySchema>;
 
@@ -160,6 +177,8 @@ export interface ExpenseVoucherView {
   amount: number;
   currency: string;
   payee: string;
+  /** The staff account a salary voucher paid; null on every other voucher. */
+  payeeStaffId: string | null;
   description: string;
   occurredAt: string;
   invoiceNumber: string | null;

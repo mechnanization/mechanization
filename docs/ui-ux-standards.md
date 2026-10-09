@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -125,7 +125,7 @@ to, the primitive gets a prop instead.
 | PRIM-17 | Any other modal | `Dialog`, always with a `closeLabel` in the current locale | `Sheet` for new work: it lacks a focus trap. Fix Sheet before adding users (§17.1) |
 | PRIM-18 | Feedback after a write | `useToast()` | `alert()`, a page-local banner that never clears |
 | PRIM-19 | Icon-only control | `Button size="icon*"` + `aria-label` + `ActionTooltip` | A bare `<button>` with only an icon |
-| PRIM-20 | KPI or stat row | `StatStrip` with `StatItem` (`components/ui/stat-strip.tsx`), up to five figures. `StatItem` takes an optional `icon` (decorative, in a tinted circle above the number) and `href` (the whole cell becomes one stretched link named by its label — the treasury's wallets use both). A PR that touches a page with a local stat component replaces it | An eleventh local copy (§17.1 lists the ten) |
+| PRIM-20 | KPI or stat row | `StatStrip` with `StatItem` (`components/ui/stat-strip.tsx`), up to five figures. `StatItem` takes an optional `icon` (decorative, in a tinted circle above the number) and `href` (the whole cell becomes one stretched link named by its label). The citizen properties page uses `icon`; `href` has no caller since the treasury's wallets became statement lines (2026-10-09). A list of places money is kept, each opening its own statement, is lines with a total, not a strip. A PR that touches a page with a local stat component replaces it | An eleventh local copy (§17.1 lists the ten) |
 | PRIM-23 | DataTable strings | `useTableLabels(overrides)` (`lib/use-table-labels.ts`, reads `messages.table`) | A page-local `getTableLabels` |
 | PRIM-24 | A filter control above a table | `FilterSelect`, `FilterInput` (`components/ui/filter-controls.tsx`) | A hand-styled select or search box |
 | PRIM-25 | Typing a money amount | `CurrencyInput`. The unit gets a segment of its own beside the digits, never laid over them: an `dir="ltr"` field on an RTL page reserves its padding on one side while `end-0` pins the unit to the other, and «ل.ل» lands on the «0». `inputClassName` styles the digits, for the cash counter alone | A local `formatLbp(value: string)` that shadows `lib/currency`; an input with the unit absolutely positioned over it |
@@ -670,7 +670,7 @@ Code-pattern debt outside the UI rules lives in
   (`citizens/[citizenId]/page.tsx`); `Stat` in
   `inspector/profile/[staffId]/payouts/page.tsx`, `inspector-earnings-roster.tsx`
   and `inspector-profile-detail.tsx`; `StatusTile` (`settings/settings-ui.tsx`);
-  `StatCard` (`(citizen)/my-file`). `StatStrip` has 9 uses in 8 files.
+  `StatCard` (`(citizen)/my-file`). `StatStrip` has 8 uses in 7 files.
 - **Hand-rolled pagers, 3** (PRIM-4): `AuditTrailPage` (`audit/page.tsx`),
   `CorrectionBillsPage` (`fees/corrections/page.tsx`), `AuditDaily`
   (`components/admin/audit-daily.tsx`). `Pager` has 1 user.

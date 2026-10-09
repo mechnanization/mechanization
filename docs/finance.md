@@ -1,10 +1,12 @@
 # Finance (الخزينة والمالية) — design draft
 
-Status: **DESIGN, with stages 1 and 3 built, and of stage 4 the collector handover, the accountant’s collector panel and «جولتي» (see section 14).** It records the design
-agreed in discussion, 2026-10-06. Stages 2 to 5 are not built, and every table,
-column, enum value and error code for them is a *proposal* until its migration
-exists (CLAUDE.md: never invent names; grep first). Stage 1 names are real: they
-are in migration `0073_treasury_ledger` and `treasury.schema.ts`.
+Status: **DESIGN, with stages 1, 2 and 3 built, and of stage 4 the collector handover, the accountant’s collector panel and «جولتي» (see section 14).** It records the design
+agreed in discussion, 2026-10-06. Stage 5 and the rest of stage 4 are not built,
+and every table, column, enum value and error code for them is a *proposal*
+until its migration exists (CLAUDE.md: never invent names; grep first). The
+built stages' names are real: they are in migrations `0073`, `0074`, `0078`,
+`0079`, `0080` and `0081` and in the `treasury`, `expense`, `transfer` and `income`
+contracts of `packages/shared-schemas`.
 Where the code was read, the file is cited. Where a claim could not be verified, it
 is marked **[unverified]**. Where a choice was assumed and not explicitly confirmed,
 it is marked **[assumed]**.
@@ -276,8 +278,8 @@ permits, fines, rent, donations. Citizen fees keep auto-crediting (Section 3.3).
 
 | Field | Rule |
 |---|---|
-| Number | `RV-nnnnnn`, from its own sequence. Gaps possible after a rollback; never reused **[assumed: gaps accepted]** |
-| Date | Today by default. Future dates refused. Backdating requires a reason |
+| Number | «RV-2610-0001»: the book, the month, a counter that restarts each month, drawn from `document_counters` (0079) as kind `REVENUE_VOUCHER`. Not gapless, never reused **[assumed: gaps accepted]** |
+| Date | Today by default. Future dates refused. Backdating requires a reason. Not before `treasuryGoLiveAt`: that money is already in the counted opening balance (the expense rule, mirrored) |
 | Category | From the income category list (below) |
 | Description | Required |
 | Amount, currency | Positive. Must equal the receiving wallet's currency (enforced by the database) |
@@ -290,15 +292,24 @@ Attachments are **not** in step 2 (see Step 3b).
 
 ### 4.3 Default income categories (seeded)
 
-1. الصندوق البلدي المستقل (Independent Municipal Fund)
-2. رخص بناء وإشغال وتخطيط (building permits)
-3. إيجارات واستثمار أملاك البلدية (municipal property rent)
-4. غرامات ومخالفات (fines and violations)
-5. هبات ومساعدات غير مشروطة (grants and donations)
-6. إيرادات متفرقة (miscellaneous)
+Seven, in this order (migration 0080, by `key`; the owner added the second on
+2026-10-09). Each carries an Arabic and an English name; the budget codes are
+NULL, as on the expense categories.
+
+1. الصندوق البلدي المستقل (`INDEPENDENT_MUNICIPAL_FUND`)
+2. عائدات الهاتف والكهرباء والمياه من الدولة (`STATE_UTILITIES_FEES`)
+3. رخص بناء وإشغال وتخطيط (`BUILDING_PERMITS_PLANNING`)
+4. إيجارات واستثمار أملاك البلدية (`PROPERTY_RENTAL_INVESTMENT`)
+5. هبات ومساعدات غير مشروطة (`UNCONDITIONAL_GRANTS_DONATIONS`)
+6. غرامات ومخالفات (`FINES_AND_PENALTIES`)
+7. إيرادات متفرقة (`MISCELLANEOUS_INCOME`)
 
 Managed by `SUPER_ADMIN` only. A category is **deactivated, never deleted or
 silently renamed**; vouchers point to it by id so old receipts never change.
+The manager manages them on «بنود الإيرادات» (`finance/income/categories`) and
+adds one inline from the recording form (see §14, stage 2). A municipality's own
+category has no `key`, an Arabic name, and an English one only if someone gives
+it one.
 
 ### 4.4 Posting and voiding
 
@@ -384,7 +395,8 @@ any approval step or amount-based thresholds.
 10. رسوم تحويل ومصرفية (transfer and bank fees — used by transfer fees, Section 6)
 
 Managed by `SUPER_ADMIN`; deactivated, never deleted. Salaries are only a category
-here. A payroll module with a line per employee is **out of scope**.
+here. A payroll module with a line per employee is **out of scope**; paying one
+staff member from the staff page is one voucher in this category (§5.8).
 
 **باب وبند الموازنة (added 2026-10-06).** Each category also carries an optional
 `chapterCode` and `itemCode` — the chapter and article it is charged to in the
@@ -423,6 +435,41 @@ File upload of the invoice scan. Follows the upload security rules in
 amount threshold above which an attachment is required before the expense can be recorded (off by
 default, set by `SUPER_ADMIN`; the example thresholds seen in discussion — $50 /
 5,000,000 LBP — are **not verified rules**).
+
+### 5.8 Salary and wage payouts — «صرف راتب / أجر» (built 2026-10-09)
+
+Requested by the owner on 2026-10-09, together with removing the field
+inspectors' commission cards («ما سجّله كل مفتش، وما يستحقه من عمولات
+(1$ لكل وحدة محتسبة)») from the staff page. The inspector payout ledger itself
+is untouched and still reached from the inspector's row (§5.6).
+
+- **Where.** A «صرف راتب / أجر» action on each *active* row of «الموظفون», which
+  opens a dialog: the payee (shown, not typed), the paying wallet with its
+  balance and what would be left, the amount in that wallet's currency, «عن شهر
+  / بيان الصرف» (required) and a paper reference (optional). An amount above the
+  wallet's balance disables the button before any request; the server re-checks
+  under the wallet's lock.
+- **What it writes.** An ordinary expense voucher: `PV-` number, the negative
+  ledger entry, the Tier 1 audit row, in one transaction, through the same code
+  as §5.2. Two things are the server's, not the client's: the payee is the staff
+  account's own name, and the category is the seeded «رواتب وأجور» (`SALARIES`).
+  Dated today; a salary paid on another day goes through the full expense form,
+  which asks why it is back-dated.
+- **The link.** `expense_vouchers.payeeStaffId` (migration 0081) holds the staff
+  account the voucher paid, and the audit row carries the same id. `payee` still
+  holds the name as it stood that day. No screen lists a person's salaries yet;
+  the column is what such a screen would read.
+- **Who.** `POST treasury/expenses/salaries/:staffId` is `TREASURY_WORK_ROLES`,
+  like any expense. The button is on «الموظفون», which only `SUPER_ADMIN` opens,
+  so in practice the manager pays from there and the accountant records a salary
+  through the expense form.
+- **Refused.** A citizen's id, a deleted account or an unknown id
+  (`SALARY_PAYEE_NOT_FOUND`); a stopped «رواتب وأجور» (`EXPENSE_CATEGORY_INACTIVE`);
+  everything §5.2 refuses. A *disabled* account can still be paid: someone who
+  has left may be owed their last month.
+- **Not built.** A printable «أمر صرف»: no printed layout exists for any expense
+  voucher, and its wording and layout are unverified (§13.2). The success toast
+  links to the expense register instead.
 
 ---
 
@@ -543,6 +590,7 @@ Two working roles. The **accountant** runs the daily work. The **manager
 | Post income voucher | yes | yes | no | no | no |
 | Record (pay) an expense | yes | yes | no | no | no |
 | Record an inspector payout (picks the wallet) | yes | yes | no | no | no |
+| Pay a staff member's salary (§5.8; the button is on the `SUPER_ADMIN`-only staff page) | yes (API) | yes | no | no | no |
 | Transfer, exchange, collector handover | yes | yes | no | no | no |
 | Count a wallet | yes | yes | no | no | no |
 | Close a day | yes | yes | no | no | no |
@@ -575,7 +623,7 @@ inspectors who carry the cash; staff with no custody get an empty round.
 | `treasury_accounts` | Wallets | name, type (enum), currency, active, optional owner (collector user id for custody). Four seeded rows |
 | `treasury_entries` | Append-only ledger | account, signed amount `Decimal`, currency, `exchangeRateAtPosting`, source type + source id, occurredAt, actor, note, `clientRequestId`. Triggers refuse update/delete. CHECK amount <> 0 |
 | `income_categories`, `income_vouchers` | Manual income | `RV-` sequence; CHECK currency = account currency (via account FK + trigger or app + constraint) |
-| `expense_categories`, `expense_vouchers` | Expenses | `PV-` sequence; status (RECORDED, VOID); wallet, recorded by, void reason; invoice fields |
+| `expense_categories`, `expense_vouchers` | Expenses | `PV-` sequence; status (RECORDED, VOID); wallet, recorded by, void reason; invoice fields; `payeeStaffId` for a salary (0081, built) |
 | `treasury_transfers` | Transfers, exchanges, handovers | `TR-` sequence; from/to accounts; amounts; rate, official rate, `adjustmentReason`; fee amount; money changer name; review flag + reviewed by/at |
 | `treasury_counts` | Daily count per wallet | expected, counted, difference, reason, counter |
 | `treasury_day_closures` | Closed days | business date, closed by/at, reopen history |
@@ -789,6 +837,20 @@ table, approval thresholds, a supplier register, and the inspector-payout link
 of §5.6 — `inspector_payouts` still records a payout with no wallet, and wiring
 it to a voucher is the next piece of this stage.
 
+**Added to stage 3 on 2026-10-09: the salary payout (§5.8).** Migration
+`0081_expense_voucher_payee_staff` (`payeeStaffId`, its foreign key and index),
+`ExpensesService.recordSalary` and `POST expenses/salaries/:staffId`, the
+`SALARY_PAYEE_NOT_FOUND` code, and the «صرف راتب / أجر» dialog on the staff page,
+which lost the inspectors' commission cards in the same change. Nine
+integration tests on a throwaway Postgres 17 (the voucher and its link, the
+audit row by id, the retry, the overdraw, a citizen's id, a deleted and a
+disabled account, a stopped category, the foreign key). Verified in a browser
+against the local seeded database: two payments of 250,000 ل.ل
+(`PV-2610-0002`, `PV-2610-0003`) took the ليرة safe from 6,525,000 to
+6,025,000, each with one ledger entry and one audit row, and an amount above
+the balance disabled the button and wrote nothing. Rendered at 360 and 1440px,
+Arabic and English, light and dark.
+
 ### Stage 4 — the collector handover (built; same branch, not committed)
 
 The one piece of §6 the flow could not do without: a collector's cash reached his
@@ -863,7 +925,61 @@ custody balance says.
 exchange with its rate tolerance and post-review flag, and transfer fees. They
 share the table and the service.
 
-### Stages 2 and 5
+### Stage 2 — income vouchers (built 2026-10-09; same branch, not committed)
+
+Built as §4 describes, with the differences listed after:
+
+- Migration `0080_income_vouchers`: `income_categories` (Arabic and English
+  names, optional budget codes, deactivated never deleted) and
+  `income_vouchers`, with the seven categories of §4.3 seeded by `key`. The
+  (accountId, currency) foreign key makes a ليرة voucher in a dollar safe
+  impossible at the database; `clientRequestId` is NOT NULL. The amount is
+  `DECIMAL(14,2)`, the ledger's own precision. No sequence: the number comes
+  from `document_counters`, kind `REVENUE_VOUCHER`, prefix `RV`.
+- Backend: `income.plan.ts` (the date rules — `planExpenseDate`'s, delegated and
+  renamed, not copied — and the Beirut-midnight bounds of a register period),
+  `IncomeService`, `IncomeController` (`t/:tenantSlug/treasury/income`), wired
+  into both modules. Recording writes the voucher, posts the positive
+  `INCOME_VOUCHER` entry and the Tier 1 audit row (number and amount, never the
+  payer) in one transaction. The receiving wallet must be a cash safe, Whish or
+  a bank account (`canReceiveIncome`); custody and petty cash are refused with
+  `INCOME_ACCOUNT_NOT_RECEIVING`.
+- The retry key is serialised with a schema-scoped advisory lock before it is
+  read, so two identical requests racing each other produce one voucher and
+  one replay — not a unique violation surfacing as a 500, which a read alone
+  cannot prevent. Pinned by a test.
+- Voiding, manager only, locks the voucher and then the wallet, and refuses
+  with `TREASURY_INSUFFICIENT_FUNDS_FOR_VOID` (figures named) when the wallet
+  has spent the money since (§4.4, assumption 13.1.2). The voucher is left
+  untouched.
+- Categories, the manager's alone: `POST` and `PATCH` on `income/categories`
+  add one, rename it, give it an English name or its budget codes, and stop or
+  restart it. Never a delete. Two on one budget article are refused by the
+  partial unique index (`INCOME_CATEGORY_CODE_TAKEN`). An edit replaces the
+  names and codes as the form holds them, but keeps `active` unless it is sent —
+  unlike the expense edit, which defaults it to true and so restarts a stopped
+  category that is only renamed. Both acts are Tier 1 audited with the state
+  before and after.
+- Tests: 12 unit (dates, Beirut midnights across both clock changes, periods)
+  and 38 integration on a throwaway Postgres 17.
+- Frontend: the `finance/income` register (search on the server, period,
+  category, currency and status filters, per-currency totals over the whole
+  filtered set, cancelled vouchers struck through with their reason), the
+  cancel dialog, its own nav row «الإيرادات», and the recording page
+  `finance/income/new` with the sticky summary of the expense page — balance
+  now, amount, balance after. «بنود الإيرادات» (`finance/income/categories`)
+  lists every category, stopped ones included, for every finance reader, and
+  gives the manager add, edit, stop and restart; the recording form offers the
+  manager «بند جديد» inline, so a missing category does not cost the voucher.
+  The register's category filter lists stopped categories too, since their
+  vouchers are still in it.
+
+**Not in stage 2 yet**, against §4.5: the register lists manual vouchers only,
+not citizen-fee income beside them; there is no printable «سند قبض» (nor its
+QR code); the totals have no convert toggle. Not rendered in a browser (no check at 360/1440px, light/dark,
+Arabic/English) and not exercised over HTTP.
+
+### Stage 5
 
 Not started.
 

@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -19,8 +19,12 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
   [adminPath]/(protected)/layout.tsx    ProtectedAdminLayout + manifest.webmanifest/route.ts
     page.tsx (AdminIndexPage, role landing) · [...unknown] (AdminNotFound)
     dashboard account audit map zones settings staff payments
+    (staff: «صرف راتب / أجر» per active row, `components/admin/staff/staff-salary-dialog.tsx`, TREASURY_WORK_ROLES)
     finance (الخزينة) · finance/accounts/[accountId] (كشف حساب)
     finance/expenses (النفقات) · finance/expenses/new (تسجيل نفقة)
+    finance/income (الإيرادات) · finance/income/new (تسجيل إيراد جديد)
+    finance/income/categories (بنود الإيرادات — every reader sees the list, the manager edits it)
+    finance/collectors (الجباة والتحصيل — عهدة الجباة and «استلام الصندوق», moved off the treasury page)
     finance/collectors/[collectorId] (ما حصّله الجابي)
     my-round (جولتي — the collector's own pocket, phone-first, WORKING_STAFF_ROLES)
 
@@ -32,7 +36,7 @@ the id — `billReference` is where that choice lives.
     inspector/profile/** quality/**
 ```
 
-All 54 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
+All 60 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
 `components/ui` is the kit (33 files, `alert.tsx` added 2026-10-06); `components/admin` holds staff screens (feature
 folders `cases/`, `damage/`, `finance/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
 form pieces used by staff screens, and only `pay-dialog` serves the portal. `lib` holds the
@@ -121,7 +125,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (928 each today). Read it with `useTranslations`.
+  the same keys in both (1,316 leaf keys each, counted 2026-10-09). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -187,7 +191,8 @@ Model: `app/[tenant]/[locale]/[adminPath]/(protected)/citizens/review/page.tsx` 
 1. **API function** in `lib/api-client.ts` beside its feature, shaped like `getReviewQueue`.
 2. **Route** `app/[tenant]/[locale]/[adminPath]/(protected)/<section>/page.tsx`: `'use client'`,
    `use(params)`, `base = /<tenant>/<locale>/<adminPath>`.
-3. **Roles**: a `NAV_GROUPS` row with `roles` from the same shared set as the controller's
+3. **Roles**: a `NAV_GROUPS` row (in the group of the job it serves; at most five rows a group,
+   an icon no other row uses — `lib/nav.test.ts` fails otherwise) with `roles` from the same shared set as the controller's
    `@Roles` (`role-sets.ts` in shared-schemas); gate controls with an allow-list in
    `lib/staff-roles.ts` and `hasRole`. Never a deny-list: the next read-only role, or an
    undefined role on first paint, would get the write controls. A write page that a role
@@ -237,11 +242,17 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 19 files, 246 cases.
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 22 files, 280 cases.
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
-when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`,
-`lib/currency.ts`, `canAccessPath`.
+when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`.
+`lib/nav.test.ts` (2026-10-09) covers `components/admin/nav.ts`: each role's landing page,
+`canAccessPath`, `activeNavItem`, and the sidebar's shape — every path once, at most five rows
+a group, one icon per row. A row hidden from a role under a row it can see (`/citizens/new`
+under `/citizens` for «مشاهد فقط») is still reachable by address, because the longest
+*visible* row matches; the page turns the role away itself. (`lib/currency.ts` gained `currency.test.ts` on 2026-10-09, with
+`currencyUnit`, the one home of the «ل.ل»/«$» field unit that three finance components had
+each copied.)
 
 ## Current state and known issues
 

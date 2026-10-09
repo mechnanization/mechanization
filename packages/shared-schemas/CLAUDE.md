@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,
@@ -8,14 +8,14 @@ used on both sides of the wire. Repo-wide rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## What it exports
 
-`src/index.ts` re-exports 33 modules. Everything is imported from the package
+`src/index.ts` re-exports 34 modules. Everything is imported from the package
 root (`from '@mechanization/shared-schemas'`); there are no deep imports.
 
 | Kind | Modules |
 |---|---|
 | Vocabulary | `enums` (the `as const` value lists, their zod schemas and types), `error-codes` (`ERROR_KINDS`, `ERROR_CODES`, `ErrorCode`, `ErrorParams`, `ApiErrorBody`, `isSpecificErrorCode`), `labels` (`ar`, `en`, `getLabels`), `primitives` (`lebanesePhone`, `internationalPhone`, `optionalInternationalPhone`, `arabicOrLatinName`, `documentNumber`, `civilRecordNumber`, `tenantSlug`, `uuid`, `normalizeDigits`), `role-sets` (who may call what: `EVERY_STAFF_ROLE`, `WORKING_STAFF_ROLES`, `REGISTER_WRITE_ROLES`, `CENSUS_WORKLIST_ROLES`, `FEE_ISSUE_ROLES`, `REGISTER_EXPORT_ROLES` and the rest, `hasStaffRole`) |
-| Contracts (`*.schema.ts`) | `citizen`, `field-flag`, `property`, `registration`, `admin-citizen`, `citizen-import`, `fee`, `auth`, `tenant`, `zone`, `building`, `unit-correction`, `staff`, `case`, `quality`, `citizen-merge`, `treasury`, `expense`, `transfer` |
-| Document numbering | `document-numbering` (`DOCUMENT_PREFIX`, `DocumentKind`, `municipalPeriod`, `formatDocumentNumber`, `isDocumentNumber`) — the shape of «INV-2610-0001». The counter that fills it lives in the backend (`allocateDocumentNumbers`), because drawing a number is a database act |
+| Contracts (`*.schema.ts`) | `citizen`, `field-flag`, `property`, `registration`, `admin-citizen`, `citizen-import`, `fee`, `auth`, `tenant`, `zone`, `building`, `unit-correction`, `staff`, `case`, `quality`, `citizen-merge`, `treasury`, `expense` (with `recordStaffSalarySchema`, the salary payout that leaves the payee and the category to the server), `income` (with `INCOME_RECEIVING_ACCOUNT_TYPES` and `canReceiveIncome`, the rule both the API and the form apply to the receiving wallet), `transfer`. The budget-code rule both category kinds share (`budgetCodeSchema`, `budgetCodesComplete`, `BUDGET_CODES_INCOMPLETE`) lives once, in `treasury` |
+| Document numbering | `document-numbering` (`DOCUMENT_PREFIX`, `DocumentKind`, `municipalPeriod`, `formatDocumentNumber`, `isDocumentNumber`) — the shape of «INV-2610-0001», five books since `REVENUE_VOUCHER` («RV-»). A `DocumentKind` key is what `document_counters.kind` stores, so it is never renamed. The counter that fills it lives in the backend (`allocateDocumentNumbers`), because drawing a number is a database act |
 | Pure rules | `numbering`, `unit-layout`, `cash-policy`, `payout-policy`, `inspector-earnings`, `unit-status-rule`, `damage-rule` (the severity ladder, `habitabilityFor`, `isUninhabitableReading`, the re-inspection day on the municipality's calendar), `staff-presence` (the stamp interval, the online threshold, `isStaffOnline`, `BACKGROUND_REQUEST_HEADER`) |
 
 The code is plain TypeScript with no I/O and no Node or browser APIs

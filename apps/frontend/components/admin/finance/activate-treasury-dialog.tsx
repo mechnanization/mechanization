@@ -10,7 +10,7 @@ import {
   logApiError,
   type TreasuryAccountView,
 } from '@/lib/api-client';
-import { formatTypedAmount } from '@/lib/currency';
+import { currencyUnit, formatTypedAmount } from '@/lib/currency';
 import { parseOpeningAmount } from '@/lib/treasury-input';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -31,12 +31,6 @@ import { useToast } from '@/components/ui/toast';
 import { TreasuryAmount } from './treasury-amount';
 
 const NOTE_MAX = 500;
-
-/** The unit segment of an amount field: «ل.ل» for the pound, «$» for the dollar, the code otherwise. */
-function unitOf(currency: string, locale: string): string {
-  if (currency === 'LBP') return locale === 'en' ? 'LBP' : 'ل.ل';
-  return currency === 'USD' ? '$' : currency;
-}
 
 /**
  * «تفعيل الخزينة» — one counted balance per account, then a confirmation.
@@ -161,7 +155,7 @@ export function ActivateTreasuryDialog({
               >
                 <CurrencyInput
                   id={`opening-${account.id}`}
-                  unit={unitOf(account.currency, locale)}
+                  unit={currencyUnit(account.currency, locale)}
                   value={raw[account.id] ?? ''}
                   placeholder="0"
                   invalid={Boolean(errors[account.id])}
