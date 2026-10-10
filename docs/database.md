@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
+Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; 0083 extended to income vouchers and the urgent-payment ceiling), 2026-10-10.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -47,11 +47,17 @@ every municipality ([security.md](security.md)).
 | Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions`, `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` | `FeesService`, `PaymentLedgerService`, `CorrectionBillsService`, `StaffService` (payouts) |
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
+| Transfers (0078) | `treasury_transfers` | `TransfersService` (the collector handover; a Whish cash-out, a bank deposit and an exchange share the table and come later) |
+| Expenses (0074, 0081, 0083) | `expense_categories`, `expense_vouchers` (the payment order: `orderedAt`, `orderedById`, `urgentReason`, 0083; `payeeStaffId`, 0081: the staff account a salary voucher paid, NULL otherwise; a FK to `users` that cannot say STAFF, so `recordSalary` filters `kind`), `expense_requests` (requests for the manager's order, 0083) | `ExpensesService` |
+| Income (0080, 0083) | `income_categories`, `income_vouchers` (`payerName` is free text that may name a citizen; written once, 0083) | `IncomeService` |
+| Document numbers (0079) | `document_counters`, one row per (book, month) | `allocateDocumentNumbers` |
+| Treasury (0073, 0083) | `treasury_accounts`, `treasury_entries`, `system_settings.treasuryGoLiveAt`, and `system_settings.urgentExpenseCeilingLbp` / `urgentExpenseCeilingUsd` (0083: the manager's ceiling on an accountant's urgent payment, `DECIMAL(14,2)`, NULL = none, CHECK NULL or > 0) | `TreasuryService` (activation, reads), `TreasuryLedgerService` (entries; called from `PaymentLedgerService` inside its transaction) |
 | Ledger | `_tenant_migrations` (no Prisma model) | `migrateTenantSchema` |
 
 Each schema also carries plpgsql functions created by migrations:
-`reject_audit_mutation`, `reject_ledger_mutation`, `search_normalize`,
-`search_compact`, `sync_building_unit_counts`.
+`reject_audit_mutation`, `reject_ledger_mutation`, `reject_treasury_mutation`,
+`reject_treasury_document_mutation` (0083), `search_normalize`, `search_compact`,
+`sync_building_unit_counts`.
 
 ### `users` holds staff AND citizens
 
@@ -166,7 +172,30 @@ chain, so it reports an officer who worked all morning as last seen at eight.
   `payment_transactions_no_delete` call `reject_ledger_mutation()`
   (`0017_payment_ledger`). Deleting a `citizen_payments` row cascades into it
   and raises.
-- Neither trigger covers `TRUNCATE`. Using `TRUNCATE`, or
+- `treasury_entries`: `treasury_entries_no_update` and `treasury_entries_no_delete` call
+  `reject_treasury_mutation()` (`0073`). A wallet balance is the SUM of its entries; there is no
+  balance column. Its foreign keys to `users` and `treasury_accounts` are RESTRICT, so erasing a staff
+  member or a wallet that has moved money fails instead of cascading into the trigger. An entry's
+  currency equals its account's because the foreign key is the pair `(accountId, currency)`.
+- `expense_vouchers`, `income_vouchers`, `treasury_transfers` and `expense_requests` are the
+  documents behind those entries, and are written once (`0083`).
+  - Triggers `expense_vouchers_written_once`, `income_vouchers_written_once`,
+    `treasury_transfers_written_once` and `expense_requests_written_once` call
+    `reject_treasury_document_mutation(<stamps>)`. An income voucher's stamps are its
+    cancellation (`voidedAt`, `voidedById`, `voidReason`); its `voidedById` index is 0080's.
+  - No row is deleted, and no column changes after insert except the trigger's named stamps.
+    Those are the cancellation, the payment order, and a request's decision; each goes from empty
+    to a value once.
+  - A cancelled document, and a decided request, accepts nothing further: a reason a
+    withdrawal never gave cannot be added to it later.
+  - The function pins `search_path` and reads no table.
+  - A later migration that backfills a new column on one of these tables wraps its
+    `UPDATE` in `ALTER TABLE … DISABLE TRIGGER …_written_once` / `ENABLE TRIGGER`, in the same
+    file. Without that the backfill is refused like any other edit.
+  - `0083`'s own backfill stamps the order on vouchers written before it, and skips cancelled
+    ones: they are closed and wait for nothing, and the trigger would refuse the stamp when the
+    file runs a second time.
+- No trigger covers `TRUNCATE`. Using `TRUNCATE`, or
   `session_replication_role`, to get past them is circumventing a control. If a
   trigger stops you, stop and report it
   ([CLAUDE.md](../CLAUDE.md#how-to-work-here)).
@@ -457,24 +486,37 @@ reads staging's history from `.env.staging` and nothing else, and
 
 ### Numbering
 
-- The latest tenant migration on `develop` and on `main` is
-  `0072_users_no_phone_rules`: `0067`–`0072` went to `main` in their own
-  migrations-only PR, ahead of the release that carries the code reading them
-  (root rule 5; the PR #61 and #86 pattern). `0075`–`0077` follow the same
-  path: their own PR into `develop`, then to `main` alone, before any release
-  that writes the new columns or values.
+- `main` ends at `0072_users_no_phone_rules`: `0067`–`0072` went to `main` in their own
+  migrations-only PR, ahead of the release that carries the code reading them (root rule 5; the
+  PR #61 and #86 pattern). `develop` ends at `0077_unit_fee_exemption`: `0075`–`0077`
+  (`chore/migration-0075-0077`: co-owner billing, the estate and institution record types, the
+  unit fee exemption) follow the same path, their own PR into `develop`, then to `main` alone,
+  before any release that writes the new columns or values.
+- The treasury's are `0073_treasury_ledger`, `0074_expense_vouchers`,
+  `0078_treasury_transfers`, `0079_document_numbering`, `0080_income_vouchers`,
+  `0081_expense_voucher_payee_staff` and `0083_treasury_controls` (PR #104 and its review), none
+  of them on `develop` yet. They ship in their own `chore/migration-0073-0083` PR, merged before
+  the code that reads them.
+  - The PRs for `0073`/`0074` (#94, #93) were closed unmerged on 2026-10-08, but the branches are
+    still on `origin`, so those numbers stay reserved and are never reused.
+  - `0078` is not `0075` because `chore/migration-0075-0077` took that number mid-flight.
+  - `0083_treasury_controls` was first written as `0080`, renumbered to `0082` when
+    `0080_income_vouchers` and `0081_expense_voucher_payee_staff` landed on the same PR, and to
+    `0083` when PR #106 brought `0082_treasury_day_closing` (2026-10-10). It had been applied
+    nowhere but throwaway databases. The two touch different tables, so either merge order works:
+    a database that already has `0083` takes `0082` out of order, with `deploy.mjs`'s warning.
+  - The treasury migration was itself first written as `0071` and renumbered when
+    `0071_damage_habitable` and `0072_users_no_phone_rules` landed on `develop`.
+  - A branch cut before a release is a branch whose numbers can be taken while you work:
+    re-check before you open the PR, not only when you pick.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
-  `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of
-  2026-10-08, `0073_treasury_ledger` and `0074_expense_vouchers` are taken by
-  `chore/migration-0073-0074` and `feat/finance-treasury-expenses`: their PRs
-  (#94, #93) were closed unmerged on 2026-10-08, but both branches are still on
-  `origin`, so the two numbers stay reserved and are never reused for anything
-  else. `0075`–`0077` are taken by `chore/migration-0075-0077` (co-owner billing, the
-  estate and institution record types, the unit fee exemption). The next free
-  number is `0078`. Whichever of `0073`/`0074` and `0075`–`0077` merges second
-  lands out of order on a database that already has the other, which
-  `deploy.mjs` warns about and applies; the two sets touch different tables.
+  `0066`, so it applies out of order: `deploy.mjs` warns and applies it. `0073` and
+  `0074` reach a database that already has `0075`–`0077` the same way, with the same
+  warning; the two sets touch different tables (checked on a scratch schema on the
+  PR #104 review, 2026-10-09). On 2026-10-10, after a fresh fetch, the remote branches use
+  `0080`–`0082` (`0082_treasury_day_closing` on PR #106) and this branch `0083`, so the next
+  free number is `0084`.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 
@@ -618,6 +660,36 @@ and goes through contract.
   to report drift and offer to reset `public`; reasoned from the code, not run.
 - `pnpm db:generate` after changing `schema.prisma`.
 
+### Document numbering (migration 0079)
+
+Five books — invoices, receipts, expense vouchers, transfers and, since 0080,
+income vouchers («RV-», kind `REVENUE_VOUCHER`) — share one scheme:
+«INV-2610-0001» is the book, the year and month it was issued in, and a
+counter that **restarts at 0001 on the first of each month**. `kind` is text,
+so a new book needs no migration; its key is stored and never renamed.
+
+The counter is a row in `document_counters` keyed by `(kind, period)`, not a
+Postgres sequence, and the reason is the reset: `nextval` only ever climbs, and
+anything that resets it on the first races whatever is drawing from it. One
+atomic `INSERT … ON CONFLICT DO UPDATE … RETURNING` both starts a month and
+advances it, and hands back the block it reserved.
+
+- **Draw through `allocateDocumentNumbers`** (`application/common/document-number.ts`),
+  never by hand, and always with the caller's `tx`: the number and the document
+  it goes on must commit or roll back together.
+- **It serialises issuance within a month.** The counter row stays locked until
+  the caller commits. At a municipality's volume that is nothing; the
+  alternative is two residents holding the same receipt number.
+- **It gaps less than a sequence did** — a sequence keeps its advance through a
+  rollback and this does not — but it is still not a gapless book, and nothing
+  may be built on the assumption that it is.
+- **The old sequences stay.** `payment_receipt_seq`, `expense_voucher_seq` and
+  `treasury_transfer_seq` are simply no longer drawn from. Dropping them is
+  destructive DDL for its own later release.
+- **Two shapes coexist.** Documents issued before 0079 keep «RCP-000014», and
+  bills raised before it stay unnumbered (`invoiceNumber` is nullable). Nothing
+  in the code parses or orders by either shape; `isDocumentNumber` accepts both.
+
 ### Test a migration on a throwaway Postgres 17
 
 The integration suites (`*.integration.spec.ts`, gated by `TEST_DATABASE_URL`)
@@ -709,6 +781,20 @@ Rare: only `0001_init` exists.
 - **`BackupService` restore** aborts for any tenant with `payment_transactions`
   rows (the append-only trigger fires through the cascade). Documented in its
   own comment as a design decision.
+- **`BackupService` does not export the treasury tables:** `treasury_accounts`,
+  `treasury_entries` (0073), `expense_categories`, `expense_vouchers` (0074), `treasury_transfers`
+  (0078), `document_counters` (0079), `income_categories`, `income_vouchers` (0080) and
+  `expense_requests` (0083) are not in `TABLE_ORDER`.
+  - Their rows are append-only or written once, and RESTRICT-linked to `users`. So a restore,
+    which deletes users, aborts for any tenant that has activated its treasury, exactly as for
+    `payment_transactions`; even the opening balances carry the activating manager's id.
+  - A backup of such a tenant therefore does not contain its wallets, nor the documents that
+    explain them. The free-text payee and payer columns may name a citizen.
+  - The in-app restore is not reachable: `BackupController` is not registered
+    (`presentation.module.ts`), and disaster recovery is the `pg_dump` path, which discovers
+    schemas at run time and carries every table.
+  - **Undecided:** how the in-app backup should carry an append-only ledger and the vouchers
+    that explain it.
 - **`dump-tenant.js`, the `reissue-references` CSV, the `claude_ro` views**:
   see [Moving data](#moving-data-between-environments).
 - **Database roles.** One role per environment runs both DDL and DML for every
