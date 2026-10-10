@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/treasury-inspector-payouts-and-vouchers` (on `feat/treasury-daily-count-and-closure@3ea515a`), 2026-10-10.
+Last verified against the code: `feat/treasury-transfers-and-exchange` (on `feat/treasury-inspector-payouts-and-vouchers@c734ae3`), 2026-10-10.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -47,7 +47,7 @@ every municipality ([security.md](security.md)).
 | Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions`, `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` (`expenseVoucherId`, 0083: the «PV-» voucher that paid it once the treasury is live, unique, NULL before; a payout whose voucher is voided is not counted as paid, a filter both readers apply) | `FeesService`, `PaymentLedgerService`, `CorrectionBillsService`, `StaffService` (payouts; once live through `ExpensesService.recordCommission`) |
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
-| Transfers (0078) | `treasury_transfers` | `TransfersService` (the collector handover; a Whish cash-out, a bank deposit and an exchange share the table and come later) |
+| Transfers (0078, 0084) | `treasury_transfers` (0084: `feeAmount` and `feeVoucherId`, the «PV-» voucher that books a fee, both set or both NULL; `moneyChangerName`, exchanges only; `backdateReason`; `requiresReview` and the review stamp `reviewedAt`/`reviewedById`/`reviewNote`, only on a flagged transfer) and, on `system_settings`, `exchangeRateTolerancePercent` (default 3) and `largeExchangeThreshold` (default 1000) | `TransfersService` (the collector handover, internal transfers with their fee, exchanges, the review); `ExpensesService.recordTransferFee` writes the fee voucher |
 | Expenses (0074) | `expense_categories`, `expense_vouchers` (`payeeStaffId`, 0081: the staff account a salary or commission voucher paid, NULL otherwise; a FK to `users` that cannot say STAFF, so `recordSalary` and, for a commission, `StaffService.recordInspectorPayout` filter `kind`) | `ExpensesService` |
 | Income (0080) | `income_categories`, `income_vouchers` (`payerName` is free text that may name a citizen) | `IncomeService` |
 | Document numbers (0079) | `document_counters`, one row per (book, month) | `allocateDocumentNumbers` |
@@ -504,6 +504,13 @@ reads staging's history from `.env.staging` and nothing else, and
   Needs `0074`. Checked on 2026-10-10 after a fetch against every local and remote branch: no branch
   held an `0083` or later. The next free number is `0084`. Its own `chore/migration-0083` PR, after
   the finance migrations.
+- `feat/treasury-transfers-and-exchange` (cut from `feat/treasury-inspector-payouts-and-vouchers`)
+  holds `0084_treasury_exchange_and_review`: eight nullable or defaulted columns on
+  `treasury_transfers` (0078, not in production) and two NOT NULL columns with constant defaults on
+  `system_settings` (in production; a catalog change only), eight constraints, two foreign keys and
+  three indexes. Needs `0074` and `0078`. Checked on 2026-10-10 after a fetch against every local and
+  remote branch: no branch held an `0084` or later. The next free number is `0085`. Its own
+  `chore/migration-0084` PR, after the finance migrations.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
   `0066`, so it applies out of order: `deploy.mjs` warns and applies it.

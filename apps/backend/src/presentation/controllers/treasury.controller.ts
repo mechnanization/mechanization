@@ -1,9 +1,11 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import {
   activateTreasurySchema,
+  createTreasuryAccountSchema,
   TREASURY_ADMIN_ROLES,
   TREASURY_READ_ROLES,
   type ActivateTreasuryInput,
+  type CreateTreasuryAccountInput,
 } from '@mechanization/shared-schemas';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
@@ -16,8 +18,8 @@ import { requireDate } from './query-params';
  * الخزينة — the wallets and the ledger behind them (docs/finance.md).
  *
  * Reading is open to every finance-facing staff role; activating the treasury
- * is the manager's alone. The routes that move money (income, expenses,
- * transfers) arrive with their own controllers in later stages.
+ * is the manager's alone, and so is opening a wallet. The routes that move
+ * money (income, expenses, transfers) have their own controllers.
  */
 @Controller('t/:tenantSlug/treasury')
 export class TreasuryController {
@@ -56,5 +58,15 @@ export class TreasuryController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.treasury.activate(body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** «إضافة حساب»: a bank account or a petty-cash fund, opened empty. */
+  @Roles(...TREASURY_ADMIN_ROLES)
+  @Post('accounts')
+  createAccount(
+    @Body(new ZodValidationPipe(createTreasuryAccountSchema)) body: CreateTreasuryAccountInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.treasury.createAccount(body, { id: user.sub, role: user.role ?? '' });
   }
 }

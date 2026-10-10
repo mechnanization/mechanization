@@ -156,6 +156,33 @@ export class TreasuryLedgerService {
   }
 
   /**
+   * Row-locks wallets for the rest of the caller's transaction, in ascending id
+   * order, and returns the ones that exist.
+   *
+   * The order is the whole point. Two transfers over the same pair of wallets,
+   * opposite ways round, would otherwise each hold one row and wait for the
+   * other. `post` takes its own wallets this way; an act that posts more than
+   * once — a transfer and the voucher for its fee — calls this first with every
+   * wallet it will touch, because two `post`s each locking in order can still
+   * meet in the opposite order between them. A row already held is re-locked
+   * without waiting, so the posts that follow cost nothing.
+   */
+  async lockAccounts(
+    tx: Prisma.TransactionClient,
+    accountIds: readonly string[],
+  ): Promise<Array<{ id: string; name: string; currency: string }>> {
+    const ids = [...new Set(accountIds)].sort();
+    if (ids.length === 0) return [];
+    return tx.$queryRaw<Array<{ id: string; name: string; currency: string }>>`
+      SELECT "id", "name", "currency"
+        FROM ${this.S}treasury_accounts
+       WHERE "id" = ANY(${ids}::uuid[])
+       ORDER BY "id"
+       FOR UPDATE
+    `;
+  }
+
+  /**
    * Posts the entries of one act, atomically with the caller's transaction.
    *
    * Refuses the whole act, writing nothing, when any wallet would end below
@@ -177,18 +204,7 @@ export class TreasuryLedgerService {
       net.set(draft.accountId, (net.get(draft.accountId) ?? new Prisma.Decimal(0)).plus(draft.amount));
     }
     const ids = [...net.keys()].sort();
-
-    /*
-      Locked in id order. Two transfers over the same pair of wallets, opposite
-      ways round, would otherwise each hold one row and wait for the other.
-    */
-    const locked = await tx.$queryRaw<Array<{ id: string; name: string; currency: string }>>`
-      SELECT "id", "name", "currency"
-        FROM ${this.S}treasury_accounts
-       WHERE "id" = ANY(${ids}::uuid[])
-       ORDER BY "id"
-       FOR UPDATE
-    `;
+    const locked = await this.lockAccounts(tx, ids);
     const byId = new Map(locked.map((row) => [row.id, row]));
 
     for (const id of ids) {

@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/treasury-inspector-payouts-and-vouchers` (on `feat/treasury-daily-count-and-closure@3ea515a`), 2026-10-10.
+Last verified against the code: `feat/treasury-transfers-and-exchange` (on `feat/treasury-inspector-payouts-and-vouchers@c734ae3`), 2026-10-10.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -44,8 +44,20 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - **The treasury (الخزينة)**: live balances of the municipality's cash safe and Whish account in
     ليرة and dollars, a statement for each, and their total at the municipality's rate. A citizen payment credits
     the right wallet automatically. `SUPER_ADMIN` activates it once by entering the counted opening
-    balances; the accountant works it, the auditor and view-only staff read it. Exchange, bank
-    deposits and petty cash follow in later stages ([docs/finance.md](docs/finance.md)).
+    balances; the accountant works it, the auditor and view-only staff read it. The manager adds a
+    bank account or a petty-cash fund («إضافة حساب»); it opens at zero and is filled by a transfer
+    ([docs/finance.md](docs/finance.md)).
+  - **المناقلات والمصارفة**: money between the municipality's own wallets, in one register with the
+    collectors' handovers. An *internal transfer* moves one currency — a Whish cash-out, a bank
+    deposit, topping up petty cash — and any bank or Whish fee is taken from the source with it and
+    filed as its own «أمر صرف» under «رسوم تحويل ومصرفية». An *exchange* sells one currency for the
+    other: the accountant enters what left and what arrived (or the rate the صرّاف quoted), the
+    screen shows the rate against the municipality's own, and a rate further than the allowed
+    difference (3% unless the manager changes it) needs a written reason. Such an exchange, any
+    exchange above the large-exchange threshold ($1,000 unless changed), and any exchange made with
+    no official rate set are booked at once and wait, amber, for an auditor or the manager to
+    approve the review. Every transfer prints as a «سند» with the three signatures (handed over,
+    received, accountant). Only the manager cancels one, and its fee goes back with it.
   - **النفقات**: an expense register and «أمر صرف». The accountant or the manager records what was
     paid, to whom, from which wallet and against which budget category, and the money leaves the
     wallet in the same act — there is no approval queue. A mistake is cancelled with a reason, which

@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/treasury-inspector-payouts-and-vouchers` (on `feat/treasury-daily-count-and-closure@3ea515a`), 2026-10-10.
+Last verified against the code: `feat/treasury-transfers-and-exchange` (on `feat/treasury-inspector-payouts-and-vouchers@c734ae3`), 2026-10-10.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -347,6 +347,23 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** put `/usr/lib/postgresql/17/bin` first on `PATH` and assert the
   version.
 - **Where:** `migrate-database.yml`, step "Install Postgres 17 client and age".
+
+### A lock-order test cannot fail while a document number is drawn first
+
+- **What happens:** a test that runs transfers both ways over one pair of
+  wallets, to prove they cannot deadlock, passes with the wallet lock order
+  removed.
+- **Why:** every transfer draws its «TR-» number from `document_counters`,
+  which row-locks the month's counter. That queues every concurrent transfer
+  before a wallet is touched, so the inversion the test hunts never happens.
+  Any act that draws a document number first has the same cover.
+- **Do this:** pin a lock by what it changes, not by a deadlock: the transfer
+  suite races two transfers for one wallet and checks the loser is refused with
+  amount + fee against the balance the winner left, which only holds when both
+  wallets are locked before the balance is read. Remove the lock and run it to
+  see it fail (docs/code-quality.md, rule 12).
+- **Where:** `TransfersService.create`, `TreasuryLedgerService.lockAccounts`,
+  `transfers-exchange.integration.spec.ts`.
 
 ### Advisory-lock keys must match character for character
 

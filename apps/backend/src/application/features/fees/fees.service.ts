@@ -1,4 +1,9 @@
-import { citizenDisplayName, NON_PERSON_RESIDENCE } from '@mechanization/shared-schemas';
+import {
+  citizenDisplayName,
+  DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+  DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+  NON_PERSON_RESIDENCE,
+} from '@mechanization/shared-schemas';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Prisma, type $Enums } from '../../../generated/tenant-client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -40,6 +45,7 @@ import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
 import { ownerBillingRules } from '../buildings/owner-billing';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
@@ -931,6 +937,8 @@ export class FeesService {
       secondaryCurrency: row?.secondaryCurrency ?? null,
       exchangeRate: row?.exchangeRate == null ? null : Number(row.exchangeRate),
       exchangeRateUpdatedAt: row?.exchangeRateUpdatedAt?.toISOString() ?? null,
+      exchangeRateTolerancePercent: row ? Number(row.exchangeRateTolerancePercent) : DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+      largeExchangeThreshold: row ? Number(row.largeExchangeThreshold) : DEFAULT_LARGE_EXCHANGE_THRESHOLD,
 
       numberingSequences: (row?.numberingSequences as SystemSettingsInput['numberingSequences']) ?? null,
       backupSchedule: (row?.backupSchedule as SystemSettingsInput['backupSchedule']) ?? null,
@@ -947,6 +955,37 @@ export class FeesService {
     // fields owned by the five it did not render.
     const blankToNull = (value: string | undefined) =>
       value === undefined ? undefined : value.trim() === '' ? null : value.trim();
+
+    /*
+      The exchange rule decides which exchanges an auditor reviews, and the
+      accountant — who may save this section — books them. Moving it is the
+      manager's alone (docs/finance.md §6.3); the same values sent back are fine.
+    */
+    if (input.exchangeRateTolerancePercent !== undefined || input.largeExchangeThreshold !== undefined) {
+      const rule = await withConnectionRetry(() =>
+        this.db.systemSettings.findFirst({
+          where: { singleton: true },
+          select: { exchangeRateTolerancePercent: true, largeExchangeThreshold: true },
+        }),
+      );
+      const allowed = exchangeRuleChangeAllowed({
+        role: actor.role,
+        current: {
+          tolerancePercent: rule ? Number(rule.exchangeRateTolerancePercent) : DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+          largeThreshold: rule ? Number(rule.largeExchangeThreshold) : DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+        },
+        requested: {
+          tolerancePercent: input.exchangeRateTolerancePercent,
+          largeThreshold: input.largeExchangeThreshold,
+        },
+      });
+      if (!allowed) {
+        throw new ForbiddenError({
+          code: 'EXCHANGE_RULE_MANAGER_ONLY',
+          message: 'Only the manager changes the exchange tolerance and the large-exchange threshold.',
+        });
+      }
+    }
 
     /*
      * Stamped here, not by the client.
@@ -999,6 +1038,8 @@ export class FeesService {
       ...(rateChanged
         ? { exchangeRateUpdatedAt: input.exchangeRate === null ? null : new Date() }
         : {}),
+      exchangeRateTolerancePercent: input.exchangeRateTolerancePercent,
+      largeExchangeThreshold: input.largeExchangeThreshold,
 
       numberingSequences: input.numberingSequences,
       backupSchedule: input.backupSchedule,

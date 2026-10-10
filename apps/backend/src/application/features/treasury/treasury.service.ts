@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import {
+  DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+  DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+} from '@mechanization/shared-schemas';
 import type {
   ActivateTreasuryInput,
   ActivateTreasuryResult,
+  CreateTreasuryAccountInput,
   TreasuryAccountView,
   TreasuryOverview,
   TreasuryStatement,
@@ -11,7 +16,7 @@ import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
-import { ConflictError, NotFoundError } from '../../common/exceptions';
+import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 
@@ -54,6 +59,8 @@ export class TreasuryService {
           secondaryCurrency: true,
           exchangeRate: true,
           exchangeRateUpdatedAt: true,
+          exchangeRateTolerancePercent: true,
+          largeExchangeThreshold: true,
         },
       }),
       this.db.treasuryAccount.findMany({
@@ -95,6 +102,8 @@ export class TreasuryService {
         secondaryCurrency: settings?.secondaryCurrency ?? null,
         exchangeRate: settings?.exchangeRate?.toNumber() ?? null,
         exchangeRateUpdatedAt: settings?.exchangeRateUpdatedAt?.toISOString() ?? null,
+        tolerancePercent: settings?.exchangeRateTolerancePercent.toNumber() ?? DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+        largeExchangeThreshold: settings?.largeExchangeThreshold.toNumber() ?? DEFAULT_LARGE_EXCHANGE_THRESHOLD,
       },
       heldByCollectors: [...heldByCollectors.entries()]
         .map(([currency, amount]) => ({ currency, amount }))
@@ -315,6 +324,55 @@ export class TreasuryService {
       });
 
       return { goLiveAt: goLiveAt.toISOString(), entriesPosted: drafts.length };
+    });
+  }
+
+  /**
+   * «إضافة حساب» — the manager opens a bank account or a petty-cash fund.
+   *
+   * It starts empty, by decision of 2026-10-10: money reaches it by a transfer,
+   * so every amount in it has a source in the ledger. An opening balance for a
+   * bank account that already holds money is a later, separate act — it would
+   * create money in the books after go-live, and needs rules of its own.
+   *
+   * Never primary: the primary wallet of a type and currency is where citizen
+   * payments are routed, and a bank account or a petty-cash fund never is. The
+   * currency is the municipality's base or secondary one, so every exchange the
+   * new wallet takes part in can be read as base currency per unit of the
+   * other. Tier 1 audited with the name, type and currency.
+   */
+  async createAccount(
+    input: CreateTreasuryAccountInput,
+    actor: { id: string; role: string },
+  ): Promise<TreasuryAccountView> {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const settings = await tx.systemSettings.findFirst({ select: { baseCurrency: true, secondaryCurrency: true } });
+      const allowed = [settings?.baseCurrency ?? 'LBP', settings?.secondaryCurrency].filter(Boolean);
+      if (!allowed.includes(input.currency)) {
+        throw new ValidationError({
+          code: 'TREASURY_ACCOUNT_CURRENCY_UNSUPPORTED',
+          message: `A new wallet must hold ${allowed.join(' or ')}, not ${input.currency}.`,
+          params: { currency: input.currency },
+        });
+      }
+
+      const created = await tx.treasuryAccount.create({
+        data: { name: input.name.trim(), type: input.type, currency: input.currency, isPrimary: false, active: true },
+        select: { id: true, name: true, type: true, currency: true, isPrimary: true, active: true, owner: { select: { firstName: true, lastName: true } } },
+      });
+
+      await this.audit.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'TREASURY_ACCOUNT_CREATED',
+        entityType: 'TreasuryAccount',
+        entityId: created.id,
+        after: { name: created.name, type: created.type, currency: created.currency },
+      });
+
+      return this.view(created, 0);
     });
   }
 

@@ -4981,6 +4981,10 @@ export interface MunicipalitySettings {
   exchangeRate: number | null;
   /** Stamped server-side, and only when the rate actually changes. */
   exchangeRateUpdatedAt: string | null;
+  /** How far an exchange may stray from the rate before it needs a reason, in percent (0084). */
+  exchangeRateTolerancePercent: number;
+  /** Above this, on an exchange's non-base side, it is reviewed whatever its rate (0084). */
+  largeExchangeThreshold: number;
 
   numberingSequences: Record<SequenceKey, NumberingSequence> | null;
   backupSchedule: BackupSchedule | null;
@@ -5932,6 +5936,13 @@ import type {
   ReceiveCustodyResult,
   TransferView,
   VoidTransferInput,
+  CreateTransferInput,
+  CreateTransferResult,
+  ListTransfersQuery,
+  ReviewTransferInput,
+  TransferListResult,
+  CreateTreasuryAccountInput,
+  TreasuryAccountView,
 } from '@mechanization/shared-schemas';
 
 export type {
@@ -5971,6 +5982,13 @@ export type {
   ReceiveCustodyResult,
   TransferView,
   VoidTransferInput,
+  CreateTransferInput,
+  CreateTransferResult,
+  ListTransfersQuery,
+  ReviewTransferInput,
+  TransferListResult,
+  TransferKind,
+  CreateTreasuryAccountInput,
 } from '@mechanization/shared-schemas';
 
 /** Every wallet with its balance, whether the treasury is live, and the rate to convert with. `GET /treasury`. */
@@ -6001,6 +6019,21 @@ export function getTreasuryStatement(
 }
 
 /** «تفعيل الخزينة» — the counted opening balances, posted once. SUPER_ADMIN only. `POST /treasury/activate`. */
+/** «إضافة حساب» — a bank account or a petty-cash fund, opened empty. SUPER_ADMIN. `POST /treasury/accounts`. */
+export function createTreasuryAccount(
+  tenant: string,
+  token: string,
+  args: CreateTreasuryAccountInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<TreasuryAccountView>(tenant, '/treasury/accounts', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
 export function activateTreasury(
   tenant: string,
   token: string,
@@ -6049,15 +6082,60 @@ export function getMyRound(tenant: string, token: string, _args?: undefined, sig
   return apiFetch<CollectorRoundView>(tenant, '/treasury/transfers/custody/mine', { token, signal });
 }
 
-/** The transfers recorded, newest first. `GET /treasury/transfers`. */
+/**
+ * «سجل المناقلات» — newest first, filtered, with the count waiting for review.
+ * `GET /treasury/transfers`.
+ */
 export function getTransfers(
   tenant: string,
   token: string,
-  args: { limit?: number } = {},
+  args: Partial<Omit<ListTransfersQuery, 'includeVoid'>> & { includeVoid?: boolean } = {},
   signal?: AbortSignal,
 ) {
-  const suffix = args.limit === undefined ? '' : `?limit=${args.limit}`;
-  return apiFetch<TransferView[]>(tenant, `/treasury/transfers${suffix}`, { token, signal });
+  const query = new URLSearchParams();
+  if (args.kind) query.set('kind', args.kind);
+  if (args.review) query.set('review', args.review);
+  if (args.from) query.set('from', args.from);
+  if (args.to) query.set('to', args.to);
+  if (args.includeVoid) query.set('includeVoid', 'true');
+  if (args.page) query.set('page', String(args.page));
+  if (args.pageSize) query.set('pageSize', String(args.pageSize));
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  return apiFetch<TransferListResult>(tenant, `/treasury/transfers${suffix}`, { token, signal });
+}
+
+/** One transfer, for its printed «سند». `GET /treasury/transfers/:id`. */
+export function getTransfer(tenant: string, token: string, args: { id: string }, signal?: AbortSignal) {
+  return apiFetch<TransferView>(tenant, `/treasury/transfers/${encodeURIComponent(args.id)}`, { token, signal });
+}
+
+/**
+ * «تحويل داخلي» or «مصارفة» — both legs and any fee, in one call.
+ * ACCOUNTANT or SUPER_ADMIN. `POST /treasury/transfers`.
+ */
+export function createTransfer(tenant: string, token: string, args: CreateTransferInput, signal?: AbortSignal) {
+  return apiFetch<CreateTransferResult>(tenant, '/treasury/transfers', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «اعتماد المراجعة». AUDITOR or SUPER_ADMIN. `POST /treasury/transfers/:id/review`. */
+export function reviewTransfer(
+  tenant: string,
+  token: string,
+  args: { id: string } & ReviewTransferInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<TransferView>(tenant, `/treasury/transfers/${encodeURIComponent(id)}/review`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
+    signal,
+  });
 }
 
 /**

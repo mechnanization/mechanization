@@ -9,6 +9,7 @@ import {
   HandCoins,
   Landmark,
   Lock,
+  Plus,
   Smartphone,
   Wallet,
   type LucideIcon,
@@ -27,6 +28,7 @@ import { convertAmount, totalInCurrency, usableRate } from '@/lib/treasury-conve
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { ActivateTreasuryDialog } from '@/components/admin/finance/activate-treasury-dialog';
+import { AddAccountDialog } from '@/components/admin/finance/add-account-dialog';
 import { TreasuryAmount } from '@/components/admin/finance/treasury-amount';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -86,6 +88,7 @@ export default function FinancePage({
   const canActivate = user ? hasRole(TREASURY_ADMIN_ROLES, user.role) : false;
 
   const [activating, setActivating] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   const query = useStaffQuery({
     queryKey: ['treasury', tenant, 'overview'],
@@ -99,7 +102,19 @@ export default function FinancePage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <PageHeader icon={Landmark} title={t('title')} />
+      <PageHeader
+        icon={Landmark}
+        title={t('title')}
+        actions={
+          // Opening a wallet is the manager's, as activating is (`TreasuryController`).
+          canActivate && overview ? (
+            <Button variant="outline" onClick={() => setAdding(true)}>
+              <Plus className="size-4" aria-hidden />
+              {t('addAccount.open')}
+            </Button>
+          ) : undefined
+        }
+      />
 
       {query.error ? (
         <Card>
@@ -127,6 +142,16 @@ export default function FinancePage({
           locale={locale}
           accounts={overview.accounts}
           onClose={() => setActivating(false)}
+        />
+      ) : null}
+
+      {adding && overview && token ? (
+        <AddAccountDialog
+          tenant={tenant}
+          token={token}
+          locale={locale}
+          rate={overview.rate}
+          onClose={() => setAdding(false)}
         />
       ) : null}
     </div>

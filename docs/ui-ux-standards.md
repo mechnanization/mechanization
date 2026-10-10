@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `feat/treasury-inspector-payouts-and-vouchers` (on `feat/treasury-daily-count-and-closure@3ea515a`), 2026-10-10.
+Last verified against the code: `feat/treasury-transfers-and-exchange` (on `feat/treasury-inspector-payouts-and-vouchers@c734ae3`), 2026-10-10.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -275,7 +275,7 @@ Token values, light and dark: [DESIGN.md](../DESIGN.md) "Colors".
     over five map files, §17.2).
   - The printed receipt and the receipt PDF canvas, which must print black on
     white whatever the theme, and the printed treasury documents —
-    «تقرير الصندوق اليومي», «أمر الصرف» and «سند القبض» — through one print
+    «تقرير الصندوق اليومي», «أمر الصرف», «سند القبض» and «سند المناقلة» — through one print
     stylesheet, `documentPrintCss` in
     `components/admin/finance/official-document.tsx` (on screen they use
     tokens). They should become `--paper` and `--ink` tokens.

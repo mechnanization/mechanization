@@ -4,12 +4,22 @@ import {
   MUNICIPAL_TIME_ZONE,
   municipalToday,
 } from '@mechanization/shared-schemas';
+import {
+  DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+  DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+  exchangeRateOf,
+  judgeExchange,
+} from '@mechanization/shared-schemas';
 import type {
   CollectorCollectionsResult,
   CollectorCustodyView,
   CollectorRoundView,
+  CreateTransferInput,
+  CreateTransferResult,
+  ListTransfersQuery,
   ReceiveCustodyInput,
   ReceiveCustodyResult,
+  TransferListResult,
   TransferView,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
@@ -17,9 +27,13 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { allocateDocumentNumber } from '../../common/document-number';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
-import { ConflictError, NotFoundError } from '../../common/exceptions';
+import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
+import { ExpensesService } from './expenses.service';
+import { expenseOccurredAt } from './expenses.plan';
+import { incomePeriod } from './income.plan';
 import { TreasuryLedgerService } from './treasury-ledger.service';
+import { planTransferDate, transferKindOf } from './transfers.plan';
 import { roundMoney } from './treasury.plan';
 
 /** The row a screen reads a transfer as. */
@@ -28,13 +42,24 @@ const TRANSFER_SELECT = {
   transferNumber: true,
   amount: true,
   receivedAmount: true,
+  feeAmount: true,
+  exchangeRate: true,
+  officialExchangeRate: true,
+  adjustmentReason: true,
+  moneyChangerName: true,
+  backdateReason: true,
+  requiresReview: true,
+  reviewedAt: true,
+  reviewNote: true,
   description: true,
   occurredAt: true,
   voidedAt: true,
   voidReason: true,
-  from: { select: { id: true, name: true, currency: true } },
-  to: { select: { id: true, name: true, currency: true } },
+  from: { select: { id: true, name: true, currency: true, type: true } },
+  to: { select: { id: true, name: true, currency: true, type: true } },
+  feeVoucher: { select: { id: true, voucherNumber: true } },
   recordedBy: { select: { firstName: true, lastName: true } },
+  reviewedBy: { select: { firstName: true, lastName: true } },
   voidedBy: { select: { firstName: true, lastName: true } },
 } satisfies Prisma.TreasuryTransferSelect;
 
@@ -72,6 +97,7 @@ export class TransfersService {
     private readonly tenantContext: TenantContextService,
     private readonly ledger: TreasuryLedgerService,
     private readonly audit: AuditService,
+    private readonly expenses: ExpensesService,
   ) {}
 
   private get db() {
@@ -293,14 +319,448 @@ export class TransfersService {
     };
   }
 
-  /** The transfers recorded, newest first. */
-  async list(limit = 100): Promise<TransferView[]> {
-    const rows = await this.db.treasuryTransfer.findMany({
-      orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
-      take: Math.min(Math.max(limit, 1), 200),
-      select: TRANSFER_SELECT,
+  /**
+   * «سجل المناقلات» — newest first, filtered, with the auditor's count.
+   *
+   * The kind is derived from the two ends (`transferKindOf`), so it is filtered
+   * the same way: a handover leaves a custody wallet, an exchange changes
+   * currency. The period is the municipality's calendar.
+   */
+  async list(query: Partial<ListTransfersQuery> = {}): Promise<TransferListResult> {
+    const pageSize = Math.min(Math.max(query.pageSize ?? 50, 1), 200);
+    const page = Math.max(query.page ?? 1, 1);
+
+    const sameCurrency = Prisma.sql`"fromCurrency" = "toCurrency"`;
+    const kindFilter =
+      query.kind === 'HANDOVER'
+        ? { from: { type: 'COLLECTOR_CUSTODY' as const } }
+        : query.kind === 'SAME_CURRENCY' || query.kind === 'EXCHANGE'
+          ? { from: { type: { not: 'COLLECTOR_CUSTODY' as const } } }
+          : {};
+    /*
+      «same currency» compares two columns of one row, which Prisma's filters
+      cannot say, so the ids come from one schema-qualified query.
+    */
+    const currencyIds =
+      query.kind === 'SAME_CURRENCY' || query.kind === 'EXCHANGE'
+        ? (
+            await this.db.$queryRaw<Array<{ id: string }>>`
+              SELECT "id" FROM ${this.S}treasury_transfers
+               WHERE ${query.kind === 'SAME_CURRENCY' ? sameCurrency : Prisma.sql`NOT (${sameCurrency})`}
+            `
+          ).map((row) => row.id)
+        : null;
+
+    const where: Prisma.TreasuryTransferWhereInput = {
+      ...kindFilter,
+      ...(currencyIds ? { id: { in: currencyIds } } : {}),
+      ...(query.review === 'PENDING' ? { requiresReview: true, reviewedAt: null } : {}),
+      ...(query.review === 'REVIEWED' ? { requiresReview: true, reviewedAt: { not: null } } : {}),
+      ...(query.includeVoid ? {} : { voidedAt: null }),
+      // Beirut midnights, the same bounds as the income register's.
+      ...(query.from || query.to ? { occurredAt: incomePeriod(query.from, query.to) } : {}),
+    };
+
+    const [rows, total, pendingReview] = await Promise.all([
+      this.db.treasuryTransfer.findMany({
+        where,
+        orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: TRANSFER_SELECT,
+      }),
+      this.db.treasuryTransfer.count({ where }),
+      this.db.treasuryTransfer.count({ where: { requiresReview: true, reviewedAt: null, voidedAt: null } }),
+    ]);
+
+    return { transfers: rows.map((row) => this.view(row)), total, pendingReview };
+  }
+
+  async get(id: string): Promise<TransferView> {
+    const row = await this.db.treasuryTransfer.findUnique({ where: { id }, select: TRANSFER_SELECT });
+    if (!row) {
+      throw new NotFoundError({ code: 'TRANSFER_NOT_FOUND', message: `Transfer ${id} was not found` });
+    }
+    return this.view(row);
+  }
+
+  /**
+   * «تحويل داخلي» and «مصارفة» — money between two working wallets, with its
+   * fee, in one transaction (docs/finance.md §6).
+   *
+   * ## What is written
+   *
+   * The transfer document; its two ledger legs, out of the source and into the
+   * destination; when there is a fee, a «PV-» voucher under «رسوم تحويل
+   * ومصرفية» whose own entry takes the fee from the source too; and the Tier 1
+   * audit row. All or nothing.
+   *
+   * ## Locks
+   *
+   * Both wallets are locked in ascending id order before anything posts. The
+   * fee and the move are two posts, and each locking its own wallets in order
+   * is not enough: two transfers over one pair of wallets, opposite ways round,
+   * would meet in the opposite order between them. Locked first, the balance
+   * check is then honest for amount + fee together.
+   *
+   * ## An exchange
+   *
+   * The rate is derived from the two amounts (`exchangeRateOf`), stored with
+   * the official rate beside it, and judged by `judgeExchange` — the function
+   * the form warned with. Beyond the tolerance a written reason is required;
+   * beyond it, above the threshold, or with no official rate to compare, the
+   * transfer is flagged for an auditor. The money moves either way (§6.3).
+   */
+  async create(input: CreateTransferInput, actor: { id: string; role: string }): Promise<CreateTransferResult> {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+
+      /*
+        Serialised before it is read, as the vouchers' keys are: two identical
+        requests arriving together would both read nothing, and the second
+        insert would die on the unique index as an unmapped 500. The key names
+        the schema, so two municipalities never wait on each other.
+      */
+      const lockKey = `${this.tenantContext.schemaName}:transfer-request:${input.clientRequestId}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+      const earlier = await tx.treasuryTransfer.findUnique({
+        where: { clientRequestId: input.clientRequestId },
+        select: {
+          id: true,
+          transferNumber: true,
+          fromAccountId: true,
+          toAccountId: true,
+          requiresReview: true,
+          feeVoucher: { select: { voucherNumber: true } },
+        },
+      });
+      if (earlier) {
+        return {
+          id: earlier.id,
+          transferNumber: earlier.transferNumber,
+          feeVoucherNumber: earlier.feeVoucher?.voucherNumber ?? null,
+          requiresReview: earlier.requiresReview,
+          fromBalanceAfter: (await this.ledger.balanceOf(tx, earlier.fromAccountId)).toNumber(),
+          toBalanceAfter: (await this.ledger.balanceOf(tx, earlier.toAccountId)).toNumber(),
+          replayed: true,
+        };
+      }
+
+      const config = await this.ledger.config(tx);
+      if (!config.goLiveAt) {
+        throw new ConflictError({
+          code: 'TREASURY_NOT_ACTIVE',
+          message: 'The treasury is not active, so no money can move yet.',
+        });
+      }
+
+      const today = municipalToday();
+      const verdict = planTransferDate({
+        transferredOn: input.transferredOn,
+        reason: input.backdateReason,
+        goLiveOn: municipalToday(config.goLiveAt),
+        today,
+      });
+      if (!verdict.ok) {
+        if (verdict.code === 'TRANSFER_DATE_BEFORE_GO_LIVE') {
+          throw new ValidationError({
+            code: verdict.code,
+            message: `A transfer cannot be dated before the treasury went live (${verdict.goLiveOn}).`,
+            params: { date: verdict.goLiveOn },
+          });
+        }
+        throw new ValidationError({
+          code: verdict.code,
+          message:
+            verdict.code === 'TRANSFER_DATE_IN_FUTURE'
+              ? 'A transfer cannot be dated after today.'
+              : 'A back-dated transfer must say why.',
+          details: { transferredOn: input.transferredOn ?? today },
+        });
+      }
+
+      if (input.fromAccountId === input.toAccountId) {
+        throw new ValidationError({
+          code: 'TRANSFER_SAME_ACCOUNT_FORBIDDEN',
+          message: 'Money cannot move to the wallet it is in.',
+        });
+      }
+
+      const ends = await tx.treasuryAccount.findMany({
+        where: { id: { in: [input.fromAccountId, input.toAccountId] } },
+        select: { id: true, name: true, type: true, currency: true, active: true },
+      });
+      const from = ends.find((account) => account.id === input.fromAccountId);
+      const to = ends.find((account) => account.id === input.toAccountId);
+      if (!from || !to) {
+        throw new NotFoundError({
+          code: 'TREASURY_ACCOUNT_NOT_FOUND',
+          message: 'A wallet named by this transfer does not exist.',
+        });
+      }
+      /*
+        A collector's custody has its own act, the handover, which knows whose
+        pocket it is and refuses more than he holds; money is never sent into
+        one. A stopped wallet does not move at all.
+      */
+      for (const end of [from, to]) {
+        if (end.type === 'COLLECTOR_CUSTODY' || !end.active) {
+          throw new ValidationError({
+            code: 'TRANSFER_ACCOUNT_NOT_ALLOWED',
+            message: `Wallet ${end.id} cannot be an end of this transfer.`,
+            params: { account: end.name },
+          });
+        }
+      }
+
+      const amount = new Prisma.Decimal(input.amount);
+      const fee = input.feeAmount ? new Prisma.Decimal(input.feeAmount) : null;
+      let receivedAmount = amount;
+      let exchange: {
+        rate: number;
+        officialRate: number | null;
+        reason: string | null;
+        changer: string | null;
+        requiresReview: boolean;
+      } | null = null;
+
+      if (input.kind === 'SAME_CURRENCY') {
+        if (from.currency !== to.currency) {
+          throw new ValidationError({
+            code: 'TRANSFER_CURRENCY_MISMATCH',
+            message: `An internal transfer needs one currency, not ${from.currency} and ${to.currency}.`,
+            params: { from: from.currency, to: to.currency },
+          });
+        }
+      } else {
+        if (from.currency === to.currency) {
+          throw new ValidationError({
+            code: 'EXCHANGE_SAME_CURRENCY_FORBIDDEN',
+            message: `Both wallets hold ${from.currency}; an exchange needs two currencies.`,
+            params: { currency: from.currency },
+          });
+        }
+        const settings = await tx.systemSettings.findFirst({
+          select: { baseCurrency: true, exchangeRateTolerancePercent: true, largeExchangeThreshold: true },
+        });
+        const baseCurrency = settings?.baseCurrency ?? 'LBP';
+        const legs = exchangeRateOf({
+          fromCurrency: from.currency,
+          toCurrency: to.currency,
+          amount: input.amount,
+          receivedAmount: input.receivedAmount,
+          baseCurrency,
+        });
+        if (!legs) {
+          throw new ValidationError({
+            code: 'EXCHANGE_PAIR_UNSUPPORTED',
+            message: `No rate between ${from.currency} and ${to.currency} against base ${baseCurrency}.`,
+            params: { from: from.currency, to: to.currency, base: baseCurrency },
+          });
+        }
+        const officialRate = config.exchangeRate?.toNumber() ?? null;
+        const tolerance = settings?.exchangeRateTolerancePercent.toNumber() ?? DEFAULT_EXCHANGE_TOLERANCE_PERCENT;
+        const judgement = judgeExchange({
+          rate: legs.rate,
+          foreignAmount: legs.foreignAmount,
+          officialRate,
+          tolerancePercent: tolerance,
+          largeThreshold: settings?.largeExchangeThreshold.toNumber() ?? DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+        });
+        const reason = input.adjustmentReason?.trim() || null;
+        if (judgement.beyondTolerance && !reason) {
+          throw new ValidationError({
+            code: 'EXCHANGE_RATE_TOLERANCE_EXCEEDED',
+            message: `The rate is ${judgement.deviationPercent}% from the official one; ${tolerance}% is allowed without a reason.`,
+            params: { deviation: judgement.deviationPercent ?? 0, tolerance },
+            details: { rate: legs.rate, officialRate },
+          });
+        }
+        receivedAmount = new Prisma.Decimal(input.receivedAmount);
+        exchange = {
+          rate: legs.rate,
+          officialRate,
+          reason,
+          changer: input.moneyChangerName?.trim() || null,
+          requiresReview: judgement.requiresReview,
+        };
+      }
+
+      await this.ledger.lockAccounts(tx, [from.id, to.id]);
+
+      /*
+        Checked for amount + fee together, under the lock, so the refusal names
+        what the source actually needs. The two posts below would each refuse
+        on their own, but the second would report the balance the first had
+        already reduced.
+      */
+      const needed = fee ? amount.plus(fee) : amount;
+      const held = await this.ledger.balanceOf(tx, from.id);
+      if (held.lessThan(needed)) {
+        throw new ConflictError({
+          code: 'TREASURY_INSUFFICIENT_FUNDS',
+          message: `Account ${from.id} holds ${held.toString()}, less than the ${needed.toString()} this transfer needs.`,
+          params: { account: from.name, available: held.toNumber(), required: needed.toNumber() },
+        });
+      }
+
+      const occurredAt = expenseOccurredAt(verdict.transferredOn, today);
+      // «TR-2610-0001». See `allocateDocumentNumbers` and migration 0079.
+      const transferNumber = await allocateDocumentNumber(tx, this.S, 'TRANSFER');
+      const description = input.description.trim();
+      const backdateReason = verdict.backdatedDays > 0 ? (input.backdateReason?.trim() ?? null) : null;
+
+      // The fee first: its voucher number goes on the transfer, which points at it.
+      const feeVoucher = fee
+        ? await this.expenses.recordTransferFee(
+            {
+              accountId: from.id,
+              amount: fee.toNumber(),
+              // Who was paid: the صرّاف, else the provider the wallet is with.
+              payee: exchange?.changer ?? from.name,
+              description: `رسوم المناقلة ${transferNumber}`,
+              paidOn: verdict.transferredOn,
+              adjustmentReason: backdateReason ?? undefined,
+            },
+            actor,
+          )
+        : null;
+
+      const transfer = await tx.treasuryTransfer.create({
+        data: {
+          transferNumber,
+          fromAccountId: from.id,
+          fromCurrency: from.currency,
+          toAccountId: to.id,
+          toCurrency: to.currency,
+          amount,
+          receivedAmount,
+          feeAmount: fee,
+          feeVoucherId: feeVoucher?.id ?? null,
+          exchangeRate: exchange ? new Prisma.Decimal(exchange.rate) : null,
+          officialExchangeRate:
+            exchange?.officialRate !== null && exchange?.officialRate !== undefined
+              ? new Prisma.Decimal(exchange.officialRate)
+              : null,
+          adjustmentReason: exchange?.reason ?? null,
+          moneyChangerName: exchange?.changer ?? null,
+          backdateReason,
+          requiresReview: exchange?.requiresReview ?? false,
+          description,
+          occurredAt,
+          recordedById: actor.id,
+          clientRequestId: input.clientRequestId,
+        },
+        select: { id: true },
+      });
+
+      await this.ledger.post(
+        tx,
+        [
+          { accountId: from.id, currency: from.currency, amount: amount.negated() },
+          { accountId: to.id, currency: to.currency, amount: receivedAmount },
+        ],
+        {
+          source: 'TRANSFER',
+          sourceId: transfer.id,
+          actorId: actor.id,
+          occurredAt,
+          exchangeRate: config.exchangeRate,
+          note: description,
+        },
+      );
+
+      /*
+        Tier 1: ids, figures and rates. The changer's name and the free-text
+        reasons stay on the document; an audit row is not a second copy of
+        whatever was typed.
+      */
+      await this.audit.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: exchange ? 'EXCHANGE_RECORDED' : 'TRANSFER_RECORDED',
+        entityType: 'TreasuryTransfer',
+        entityId: transfer.id,
+        after: {
+          transferNumber,
+          amount: input.amount,
+          fromAccountId: from.id,
+          fromCurrency: from.currency,
+          receivedAmount: receivedAmount.toNumber(),
+          toAccountId: to.id,
+          toCurrency: to.currency,
+          occurredAt: occurredAt.toISOString(),
+          ...(fee ? { feeAmount: fee.toNumber(), feeVoucherNumber: feeVoucher!.voucherNumber } : {}),
+          ...(exchange
+            ? { exchangeRate: exchange.rate, officialRate: exchange.officialRate, requiresReview: exchange.requiresReview }
+            : {}),
+        },
+      });
+
+      return {
+        id: transfer.id,
+        transferNumber,
+        feeVoucherNumber: feeVoucher?.voucherNumber ?? null,
+        requiresReview: exchange?.requiresReview ?? false,
+        fromBalanceAfter: (await this.ledger.balanceOf(tx, from.id)).toNumber(),
+        toBalanceAfter: (await this.ledger.balanceOf(tx, to.id)).toNumber(),
+        replayed: false,
+      };
     });
-    return rows.map((row) => this.view(row));
+  }
+
+  /**
+   * «اعتماد المراجعة» — an auditor or the manager clears a flagged exchange.
+   *
+   * Locked before it is read, so two reviewers meet one after the other and the
+   * second is told it is done. Nothing about the money changes: the exchange was
+   * booked when it happened, and this records that somebody whose job is
+   * checking has looked at it. Tier 1 audited, with the note.
+   */
+  async review(id: string, note: string | undefined, actor: { id: string; role: string }): Promise<TransferView> {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const locked = await tx.$queryRaw<
+        Array<{ id: string; transferNumber: string; requiresReview: boolean; reviewedAt: Date | null }>
+      >`
+        SELECT "id", "transferNumber", "requiresReview", "reviewedAt"
+          FROM ${this.S}treasury_transfers
+         WHERE "id" = ${id}::uuid
+         FOR UPDATE
+      `;
+      const transfer = locked[0];
+      if (!transfer) {
+        throw new NotFoundError({ code: 'TRANSFER_NOT_FOUND', message: `Transfer ${id} was not found` });
+      }
+      if (!transfer.requiresReview) {
+        throw new ConflictError({ code: 'TRANSFER_NOT_FLAGGED', message: 'This transfer is not flagged for review.' });
+      }
+      if (transfer.reviewedAt) {
+        throw new ConflictError({
+          code: 'TRANSFER_ALREADY_REVIEWED',
+          message: 'This transfer has already been reviewed.',
+        });
+      }
+
+      const reviewNote = note?.trim() || null;
+      await tx.treasuryTransfer.update({
+        where: { id },
+        data: { reviewedAt: new Date(), reviewedById: actor.id, reviewNote },
+      });
+
+      await this.audit.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'TRANSFER_REVIEWED',
+        entityType: 'TreasuryTransfer',
+        entityId: id,
+        after: { transferNumber: transfer.transferNumber, ...(reviewNote ? { note: reviewNote } : {}) },
+      });
+
+      return this.view(await tx.treasuryTransfer.findUniqueOrThrow({ where: { id }, select: TRANSFER_SELECT }));
+    });
   }
 
   /**
@@ -460,19 +920,29 @@ export class TransfersService {
   }
 
   /**
-   * Cancels a transfer and puts both legs back.
+   * Cancels a transfer and puts both legs back — and its fee, when it had one.
    *
    * The money returns to the wallet it left, which for a handover means back
    * onto the collector's name — the honest answer when the count turns out to
    * have been wrong, since the cash is his responsibility again. Refused if the
-   * safe no longer holds it.
+   * destination no longer holds what arrived. A fee's voucher is cancelled in
+   * the same act, so the source gets amount + fee back, as it gave them.
    */
   async void(id: string, reason: string, actor: { id: string; role: string }): Promise<TransferView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
 
-      const locked = await tx.$queryRaw<Array<{ id: string; transferNumber: string; voidedAt: Date | null }>>`
-        SELECT "id", "transferNumber", "voidedAt"
+      const locked = await tx.$queryRaw<
+        Array<{
+          id: string;
+          transferNumber: string;
+          voidedAt: Date | null;
+          fromAccountId: string;
+          toAccountId: string;
+          feeVoucherId: string | null;
+        }>
+      >`
+        SELECT "id", "transferNumber", "voidedAt", "fromAccountId", "toAccountId", "feeVoucherId"
           FROM ${this.S}treasury_transfers
          WHERE "id" = ${id}::uuid
          FOR UPDATE
@@ -488,6 +958,9 @@ export class TransfersService {
         });
       }
 
+      // Two reversals when there is a fee: both wallets first, in id order, as `create` does.
+      await this.ledger.lockAccounts(tx, [transfer.fromAccountId, transfer.toAccountId]);
+
       const voidedAt = new Date();
       await this.ledger.reverseEntriesOf(tx, {
         source: 'TRANSFER',
@@ -496,6 +969,9 @@ export class TransfersService {
         occurredAt: voidedAt,
         note: `إلغاء سند المناقلة ${transfer.transferNumber}`,
       });
+      if (transfer.feeVoucherId) {
+        await this.expenses.voidTransferFee(transfer.feeVoucherId, reason, actor);
+      }
 
       await tx.treasuryTransfer.update({
         where: { id },
@@ -705,13 +1181,26 @@ export class TransfersService {
       id: row.id,
       transferNumber: row.transferNumber,
       status: row.voidedAt ? 'VOID' : 'RECORDED',
+      kind: transferKindOf(row.from, row.to),
       from: row.from,
       to: row.to,
       amount: row.amount.toNumber(),
       receivedAmount: row.receivedAmount.toNumber(),
+      fee:
+        row.feeAmount && row.feeVoucher
+          ? { amount: row.feeAmount.toNumber(), voucherId: row.feeVoucher.id, voucherNumber: row.feeVoucher.voucherNumber }
+          : null,
+      exchangeRate: row.exchangeRate?.toNumber() ?? null,
+      officialExchangeRate: row.officialExchangeRate?.toNumber() ?? null,
+      adjustmentReason: row.adjustmentReason,
+      moneyChangerName: row.moneyChangerName,
+      backdateReason: row.backdateReason,
       description: row.description,
       occurredAt: row.occurredAt.toISOString(),
       recordedByName: name(row.recordedBy),
+      review: row.requiresReview
+        ? { reviewedAt: row.reviewedAt?.toISOString() ?? null, reviewedByName: name(row.reviewedBy), note: row.reviewNote }
+        : null,
       voidedAt: row.voidedAt?.toISOString() ?? null,
       voidedByName: name(row.voidedBy),
       voidReason: row.voidReason,

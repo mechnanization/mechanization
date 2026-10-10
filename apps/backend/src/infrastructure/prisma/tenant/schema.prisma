@@ -275,6 +275,8 @@ model User {
   /// Transfers between wallets this staff member recorded or cancelled (0078).
   transfersRecorded        TreasuryTransfer[]   @relation("TransferRecordedBy")
   transfersVoided          TreasuryTransfer[]   @relation("TransferVoidedBy")
+  /// Flagged exchanges this staff member reviewed (0084).
+  transfersReviewed        TreasuryTransfer[]   @relation("TransferReviewedBy")
   /// Income vouchers this staff member recorded, and any they cancelled (0080).
   incomeRecorded           IncomeVoucher[]      @relation("IncomeRecordedBy")
   incomeVoided             IncomeVoucher[]      @relation("IncomeVoidedBy")
@@ -1893,6 +1895,12 @@ model SystemSettings {
   exchangeRate          Decimal?  @db.Decimal(18, 6)
   exchangeRateUpdatedAt DateTime?
 
+  /// How far an exchange's rate may stray from `exchangeRate`, in percent,
+  /// before it needs a written reason and a review (0084).
+  exchangeRateTolerancePercent Decimal @default(3) @db.Decimal(5, 2)
+  /// Above this, on an exchange's non-base side, it is reviewed whatever its rate (0084).
+  largeExchangeThreshold       Decimal @default(1000) @db.Decimal(14, 2)
+
   // ── Configuration held as documents ─────────────────────────────────────
 
   /// Per-document-type reference format: `{ invoice: { prefix, nextNumber,
@@ -2405,11 +2413,33 @@ model TreasuryTransfer {
   amount         Decimal @db.Decimal(14, 2)
   receivedAmount Decimal @db.Decimal(14, 2)
 
-  /// An exchange's rate, the municipality's own beside it, and why they differ.
-  /// All NULL on a same-currency transfer, which is all this wires today.
+  /// An exchange's rate — base currency per one unit of the other side, derived
+  /// from the two amounts — the municipality's own beside it, and why they
+  /// differ. All NULL on a same-currency transfer.
   exchangeRate         Decimal? @db.Decimal(18, 6)
   officialExchangeRate Decimal? @db.Decimal(18, 6)
   adjustmentReason     String?
+
+  /// What a bank or Whish charged, in the source's currency (0084). The source
+  /// loses amount + fee; the fee is booked as its own «PV-» voucher under
+  /// «رسوم تحويل ومصرفية». Both set or both NULL.
+  feeAmount    Decimal?        @db.Decimal(14, 2)
+  feeVoucherId String?         @unique @db.Uuid
+  feeVoucher   ExpenseVoucher? @relation("TransferFee", fields: [feeVoucherId], references: [id], onDelete: Restrict)
+
+  /// The صرّاف an exchange went through (0084). Exchanges only (CHECK).
+  moneyChangerName String?
+  /// Why it is dated before the day it was written (0084). Not `adjustmentReason`.
+  backdateReason   String?
+
+  /// Set by the server when the exchange is booked: the rate strays beyond the
+  /// tolerance, there was no official rate, or the amount is large (0084). The
+  /// money has moved either way; the flag waits for an auditor.
+  requiresReview Boolean   @default(false)
+  reviewedAt     DateTime? @db.Timestamptz(3)
+  reviewedById   String?   @db.Uuid
+  reviewedBy     User?     @relation("TransferReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  reviewNote     String?
 
   description String
 
@@ -2431,6 +2461,7 @@ model TreasuryTransfer {
   @@index([fromAccountId, occurredAt(sort: Desc)])
   @@index([toAccountId, occurredAt(sort: Desc)])
   @@index([recordedById])
+  @@index([reviewedById])
   @@map("treasury_transfers")
 }
 
@@ -2513,6 +2544,8 @@ model ExpenseVoucher {
 
   /// The inspector payout this voucher paid, when it paid one (0083).
   inspectorPayout InspectorPayout?
+  /// The transfer whose fee this voucher books, when it books one (0084).
+  transferFeeOf   TreasuryTransfer? @relation("TransferFee")
 
   /// One id per press of «سجّل النفقة», so a retry finds the first voucher
   /// instead of paying twice.

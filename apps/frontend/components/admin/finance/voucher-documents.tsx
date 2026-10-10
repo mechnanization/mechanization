@@ -6,8 +6,9 @@ import type { ExpenseVoucherView, IncomeVoucherView } from '@/lib/api-client';
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { tafqeetAmount } from '@/lib/tafqeet';
 import { Alert } from '@/components/ui/alert';
-import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
+import { SummaryList } from '@/components/ui/summary-list';
 import {
+  DocumentRow as Row,
   LetterheadCrest,
   LetterheadLines,
   SignatureBlock,
@@ -243,15 +244,6 @@ function VoucherSheet({
         {t('printed', { date: formatDateTime(new Date()) })}
       </footer>
     </article>
-  );
-}
-
-/** A labelled line of the voucher; the value may wrap, since a statement is prose. */
-function Row({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
-  return (
-    <SummaryRow label={label}>
-      <span className="whitespace-normal break-words text-end">{children}</span>
-    </SummaryRow>
   );
 }
 

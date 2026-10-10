@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/treasury-inspector-payouts-and-vouchers` (on `feat/treasury-daily-count-and-closure@3ea515a`), 2026-10-10.
+Last verified against the code: `feat/treasury-transfers-and-exchange` (on `feat/treasury-inspector-payouts-and-vouchers@c734ae3`), 2026-10-10.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -187,7 +187,11 @@ Data access for new code (decided):
   its own transaction** after it writes the payment row, so the payment and its wallet entries commit
   together; `TreasuryLedgerService` never opens a transaction and takes the client explicitly. Nothing
   credits a wallet until `system_settings.treasuryGoLiveAt` is set and the payment's `occurredAt` is
-  at or after it. An outflow locks the wallet rows (id order) and is refused below zero. Design and
+  at or after it. An outflow locks the wallet rows (id order) and is refused below zero. The manager
+  opens a bank account or a petty-cash fund with `TreasuryService.createAccount` (`POST accounts`,
+  `TREASURY_ADMIN_ROLES`): empty, never primary, in the base or secondary currency. The exchange rule
+  (`system_settings.exchangeRateTolerancePercent`, `largeExchangeThreshold`, 0084) is saved through
+  `FeesService.updateSettings`, which lets only the manager move it (`exchangeRuleChangeAllowed`). Design and
   rules: [docs/finance.md](../../docs/finance.md).
 - **Expenses.** `ExpensesService` and `ExpensesController` (`t/:tenantSlug/treasury/expenses`), with
   the date rules in `expenses.plan.ts`. Recording *is* paying: one transaction writes the voucher,
@@ -233,7 +237,23 @@ Data access for new code (decided):
   rename there restarts a stopped category), and a taken budget article is the partial unique
   index's `P2002`, mapped to `INCOME_CATEGORY_CODE_TAKEN` in `writeCategory`.
 - **Transfers.** `TransfersService` and `TransfersController`
-  (`t/:tenantSlug/treasury/transfers`). Today it wires one kind: «تسليم صندوق الجابي», the collector
+  (`t/:tenantSlug/treasury/transfers`), with the pure rules in `transfers.plan.ts` and the exchange
+  arithmetic in shared `exchange-policy.ts`. Three kinds, derived from the two ends and never stored
+  (`transferKindOf`). «تحويل داخلي» and «مصارفة» are `create` (`POST`, `TREASURY_WORK_ROLES`):
+  the retry key under a schema-scoped advisory lock (`<schema>:transfer-request:<key>`), the date by
+  `planTransferDate` (the expense rules, renamed), both wallets locked through
+  `TreasuryLedgerService.lockAccounts` in ascending id order *before* anything posts — the fee and
+  the move are two posts, and amount + fee is judged under that lock — then the fee voucher
+  (`ExpensesService.recordTransferFee`, `TRANSFER_FEES`), the document, its two legs and a Tier 1
+  `TRANSFER_RECORDED` or `EXCHANGE_RECORDED`. An exchange's rate is derived from its two amounts
+  (`exchangeRateOf`) and judged by `judgeExchange`; beyond the tolerance without a reason it is
+  refused (`EXCHANGE_RATE_TOLERANCE_EXCEEDED`), and beyond it, above the threshold, or with no
+  official rate it is booked with `requiresReview`. `review` (`POST :id/review`,
+  `TREASURY_REVIEW_ROLES`) stamps it once. `void` reverses the legs and cancels the fee voucher with
+  them (`voidTransferFee`); `ExpensesService.void` refuses a fee voucher alone
+  (`EXPENSE_IS_TRANSFER_FEE`). Every transfer draws its «TR-» number from `document_counters`, whose
+  row lock queues concurrent transfers before any wallet is touched — so a test of the wallet lock
+  order cannot rely on a deadlock appearing (docs/gotchas.md). The first kind is «تسليم صندوق الجابي», the collector
   handing in what he took at the doors. A citizen's payment settles his invoice at the door and
   credits the *collector's* custody wallet, never the safe — the money is in his pocket — and this is
   the step where it reaches the municipality: both ledger legs, the transfer document and the Tier 1

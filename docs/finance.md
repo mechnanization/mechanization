@@ -1,13 +1,13 @@
 # Finance (الخزينة والمالية) — design draft
 
-Status: **DESIGN, with stages 1, 2, 3 and 5 built, and of stage 4 the collector handover, the accountant’s collector panel and «جولتي» (see section 14).** It records the design
-agreed in discussion, 2026-10-06. The rest of stage 4 (exchange, Whish cash-out,
-bank deposit, petty cash, fees) and the §7.2 adjustment entry are not built, and
+Status: **DESIGN, with stages 1 to 5 built (see section 14).** It records the design
+agreed in discussion, 2026-10-06. The §7.2 adjustment entry, an opening balance
+for a wallet added after go-live, and transfer write-offs are not built, and
 every table, column, enum value and error code for them is a *proposal* until its
 migration exists (CLAUDE.md: never invent names; grep first). The built stages'
 names are real: they are in migrations `0073`, `0074`, `0078`, `0079`, `0080`,
-`0081`, `0082` and `0083` and in the `treasury`, `expense`, `transfer`, `income`,
-`treasury-closing` and `staff` contracts of `packages/shared-schemas`.
+`0081`, `0082`, `0083` and `0084` and in the `treasury`, `expense`, `transfer`, `income`,
+`treasury-closing` and `staff` contracts and `exchange-policy` of `packages/shared-schemas`.
 Where the code was read, the file is cited. Where a claim could not be verified, it
 is marked **[unverified]**. Where a choice was assumed and not explicitly confirmed,
 it is marked **[assumed]**.
@@ -527,6 +527,33 @@ the category «رسوم تحويل ومصرفية», all in one atomic transacti
 
 ---
 
+### 6.4 As built (2026-10-10)
+
+Built as 6.1 to 6.3 describe, with these decisions taken while building:
+
+- **The rate is derived from the two amounts**, never typed as a third figure the server would
+  have to reconcile: base currency per one unit of the other side (`exchangeRateOf`). The form
+  lets the accountant type either the received amount or the rate the صرّاف quoted; it sends the
+  two amounts. One side of an exchange must be the base currency (`EXCHANGE_PAIR_UNSUPPORTED`).
+- **The large-exchange threshold is on the non-base side** — the dollars, in practice — and an
+  exchange made while **no official rate is set** is booked and flagged, with no reason asked:
+  there is nothing to say it is fair.
+- **Both settings are the manager's** (`EXCHANGE_RULE_MANAGER_ONLY`): the accountant may save the
+  finance settings, but moving the rule that decides which of his exchanges are reviewed is not his.
+- **A fee is allowed on either kind**, in the source's currency, and is its own «PV-» voucher whose
+  payee is the صرّاف, or else the source wallet. It is cancelled with the transfer and never alone
+  (`EXPENSE_IS_TRANSFER_FEE`).
+- **Custody is never an end** of these transfers (`TRANSFER_ACCOUNT_NOT_ALLOWED`); the handover
+  keeps its own act. A stopped wallet is refused too.
+- **A transfer may be dated earlier**, with the expense rules: not in the future, not before
+  go-live, a reason when earlier (`backdateReason`, not `adjustmentReason`, which is the rate's).
+  A closed day refuses it through the ledger, as everything else.
+- **New wallets** (decided by the owner on 2026-10-10): the manager adds a bank account or a
+  petty-cash fund, in the base or secondary currency. It opens at zero and is filled by a transfer;
+  an opening balance for one that already holds money is not built.
+- **Not built:** transfer write-offs and partial-handover shortages (6.3, later), exchange
+  gain/loss (§8), and a currency filter on the register.
+
 ## 7. Daily count and closing (Step 5)
 
 ### 7.1 The count (جرد الصندوق)
@@ -618,6 +645,8 @@ Two working roles. The **accountant** runs the daily work. The **manager
 | Close a day | yes | yes | no | no | no |
 | Review a flagged exchange | no | yes | yes | no | no |
 | Void any voucher or transfer | no | **yes** | no | no | no |
+| Add a wallet (bank account, petty cash) | no | **yes** | no | no | no |
+| Change the exchange tolerance and threshold | no | **yes** | no | no | no |
 | Activate treasury (opening balances) | no | **yes** | no | no | no |
 | Reopen a closed day, post an adjustment | no | **yes** | no | no | no |
 | Manage categories and finance settings | no | **yes** | no | no | no |
@@ -646,10 +675,10 @@ inspectors who carry the cash; staff with no custody get an empty round.
 | `treasury_entries` | Append-only ledger | account, signed amount `Decimal`, currency, `exchangeRateAtPosting`, source type + source id, occurredAt, actor, note, `clientRequestId`. Triggers refuse update/delete. CHECK amount <> 0 |
 | `income_categories`, `income_vouchers` | Manual income | `RV-` sequence; CHECK currency = account currency (via account FK + trigger or app + constraint) |
 | `expense_categories`, `expense_vouchers` | Expenses | `PV-` sequence; status (RECORDED, VOID); wallet, recorded by, void reason; invoice fields; `payeeStaffId` for a salary (0081, built) |
-| `treasury_transfers` | Transfers, exchanges, handovers | `TR-` sequence; from/to accounts; amounts; rate, official rate, `adjustmentReason`; fee amount; money changer name; review flag + reviewed by/at |
+| `treasury_transfers` | Transfers, exchanges, handovers | **Built, 0078 and 0084.** `TR-` number from `document_counters`; from/to accounts each paired with its currency; `amount`, `receivedAmount`; `exchangeRate`, `officialExchangeRate`, `adjustmentReason`; `feeAmount` + `feeVoucherId` (both or neither); `moneyChangerName` (exchanges only); `backdateReason`; `requiresReview` + `reviewedAt`/`reviewedById`/`reviewNote` (only when flagged) |
 | `treasury_counts` | Daily count per wallet | **Built, 0082.** `(accountId, currency)` FK, `businessDate`, `expectedAmount`, `countedAmount`, `difference` (CHECK = counted − expected), `varianceReason` (CHECK: required when the difference is not zero), `countedById`/`countedAt`, `closureId`. One per wallet per day |
 | `treasury_day_closures` | Closed days | **Built, 0082.** `businessDate` (unique), `status` (`TreasuryDayStatus`: CLOSED, REOPENED; no row = open), `autoClosed`, `closedById`/`closedAt`, `reopenedById`/`reopenedAt`/`reopenReason` (CHECK: set exactly while REOPENED). Reopen history lives in the audit log |
-| `system_settings` (existing) | Add columns | `treasuryGoLiveAt`, rate tolerance %, large-exchange threshold |
+| `system_settings` (existing) | Add columns | **Built:** `treasuryGoLiveAt` (0073), `exchangeRateTolerancePercent` (default 3) and `largeExchangeThreshold` (default 1000) (0084) |
 | `inspector_payouts` (existing) | Add column | link to its expense voucher |
 
 Rules for every migration: idempotent, schema-qualified guards, additive,
@@ -1109,6 +1138,32 @@ cancel dialog that the voucher paid a commission; the wording and layout of both
 still to be confirmed by the municipality's accountant (§13.2), and the signatories' titles
 («رئيس المحاسبة» among them) are the brief's, not the law's.
 
+
+### Stage 4, finished — transfers, fees, exchange and review (built 2026-10-10; branch `feat/treasury-transfers-and-exchange`, not committed)
+
+The rest of §6, from the owner's brief of 2026-10-10, with the decisions of §6.4:
+
+- Migration `0084_treasury_exchange_and_review`: the fee link, the changer, the back-dating reason
+  and the review stamp on `treasury_transfers`; the tolerance and the threshold on
+  `system_settings`.
+- Backend: `TransfersService.create` (both kinds), `review`, `list` with filters and the count
+  awaiting review, `get`; `void` now cancels the fee voucher too. `TreasuryLedgerService.lockAccounts`
+  locks every wallet of an act in ascending id order before it posts. `ExpensesService.recordTransferFee`
+  and `voidTransferFee`. `TreasuryService.createAccount`. The settings guard in `FeesService`.
+  Fourteen error codes.
+- Frontend: «المناقلات والمصارفة» (`finance/transfers`) — the register with kind, review and status
+  filters, the amber «بانتظار المراجعة», the review dialog showing the rates and the reason, the
+  cancel dialog naming the fee voucher; «مناقلة جديدة» (`finance/transfers/new`) with the
+  segmented kind, the live rate against the official one, the tolerance warning and its reason box,
+  and the sticky summary of both wallets before and after; «سند المناقلة» printed A4, each side in
+  figures and Arabic words, the rates, the fee voucher, three signatures. «إضافة حساب» on the
+  treasury page; the two settings in الإعدادات → المالية. «الجباة والتحصيل» moved to the «الرسوم
+  والجباية» group to keep «الخزينة» at five rows.
+- Tests: 18 unit (dates, kinds, the rate, the judgement, the settings guard) and 28 integration on a
+  throwaway Postgres 17 — fees, retries, every refusal writing nothing, each exchange flag, the
+  review, cancelling with the fee, the spent destination, back-dating into a closed day, and a race
+  that fails without the up-front lock. Rendered with a mocked API at 360 and 1440px, light and
+  dark, Arabic and English, and printed to PDF.
 ---
 
 ## 15. The schema found in the local database (2026-10-06)

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { ArrowLeftRight, Coins, Smartphone } from 'lucide-react';
 import {
   ApiRequestError,
@@ -49,6 +50,10 @@ interface FinanceDraft {
   exchangeRate: string;
   /** Read-only here: the server stamps it, and only when the rate changes. */
   exchangeRateUpdatedAt: string;
+  /** How far an exchange may stray from the rate before it needs a reason, in percent (0084). */
+  tolerancePercent: string;
+  /** Above this, in the secondary currency, an exchange is reviewed whatever its rate (0084). */
+  largeExchangeThreshold: string;
 }
 
 const EMPTY: FinanceDraft = {
@@ -61,6 +66,8 @@ const EMPTY: FinanceDraft = {
   secondaryCurrency: '',
   exchangeRate: '',
   exchangeRateUpdatedAt: '',
+  tolerancePercent: '3',
+  largeExchangeThreshold: '1000',
 };
 
 function toDraft(settings: MunicipalitySettings): FinanceDraft {
@@ -74,6 +81,8 @@ function toDraft(settings: MunicipalitySettings): FinanceDraft {
     secondaryCurrency: settings.secondaryCurrency ?? '',
     exchangeRate: settings.exchangeRate === null ? '' : String(settings.exchangeRate),
     exchangeRateUpdatedAt: settings.exchangeRateUpdatedAt ?? '',
+    tolerancePercent: String(settings.exchangeRateTolerancePercent),
+    largeExchangeThreshold: String(settings.largeExchangeThreshold),
   };
 }
 
@@ -142,6 +151,12 @@ export function FinanceSection({
   const exchange = parseNumber(local.exchangeRate);
   const exchangeValid = !local.secondaryCurrency || (exchange !== null && exchange > 0);
   const dueDays = parseNumber(local.dueDays);
+  const tolerance = parseNumber(local.tolerancePercent);
+  const toleranceValid = tolerance !== null && tolerance >= 0 && tolerance <= 100;
+  const threshold = parseNumber(local.largeExchangeThreshold);
+  const thresholdValid = threshold !== null && threshold > 0;
+  /* New copy in next-intl (TXT-1); the rest of this section still reads `settingsCopy` (§17.6). */
+  const tRules = useTranslations('finance.exchangeRules');
   const dueDaysValid = dueDays !== null && Number.isInteger(dueDays) && dueDays >= 0 && dueDays <= 365;
 
   const dirty = useMemo(
@@ -158,6 +173,10 @@ export function FinanceSection({
       toast.error(copy.finance.invalidDueDays);
       return;
     }
+    if (local.secondaryCurrency && (!toleranceValid || !thresholdValid)) {
+      toast.error(toleranceValid ? tRules('invalidThreshold') : tRules('invalidTolerance'));
+      return;
+    }
 
     setSaving(true);
     try {
@@ -170,6 +189,10 @@ export function FinanceSection({
         baseCurrency: local.baseCurrency,
         secondaryCurrency: local.secondaryCurrency === '' ? null : local.secondaryCurrency,
         exchangeRate: local.secondaryCurrency === '' ? null : exchange,
+        // Only sent with a secondary currency: with none there is nothing to exchange.
+        ...(local.secondaryCurrency && tolerance !== null && threshold !== null
+          ? { exchangeRateTolerancePercent: tolerance, largeExchangeThreshold: threshold }
+          : {}),
       });
       const next = toDraft(result);
       setSaved(next);
@@ -191,6 +214,11 @@ export function FinanceSection({
     exchange,
     dueDays,
     exchangeValid,
+    tolerance,
+    toleranceValid,
+    threshold,
+    thresholdValid,
+    tRules,
     dueDaysValid,
     toast,
     copy,
@@ -370,6 +398,55 @@ export function FinanceSection({
                     </div>
                   </SettingsField>
                 </div>
+
+                {/*
+                  The rule an exchange is judged by (docs/finance.md §6.3): beyond
+                  the tolerance it needs a written reason, and beyond it or above
+                  the threshold an auditor reviews it afterwards.
+                */}
+                <AlignedFieldGrid>
+                  <SettingsField
+                    label={tRules('tolerance')}
+                    htmlFor="exchange-tolerance"
+                    error={toleranceValid ? undefined : tRules('invalidTolerance')}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="exchange-tolerance"
+                        inputMode="decimal"
+                        dir="ltr"
+                        invalid={!toleranceValid}
+                        className="text-start font-mono font-medium"
+                        value={local.tolerancePercent}
+                        onChange={(e) => setLocal({ ...local, tolerancePercent: e.target.value })}
+                      />
+                      <span className="shrink-0 rounded-md bg-muted px-2.5 py-2 text-xs font-semibold text-muted-foreground">
+                        %
+                      </span>
+                    </div>
+                  </SettingsField>
+                  <SettingsField
+                    label={tRules('threshold')}
+                    htmlFor="exchange-threshold"
+                    error={thresholdValid ? undefined : tRules('invalidThreshold')}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="exchange-threshold"
+                        inputMode="decimal"
+                        dir="ltr"
+                        invalid={!thresholdValid}
+                        className="text-start font-mono font-medium"
+                        value={local.largeExchangeThreshold}
+                        onChange={(e) => setLocal({ ...local, largeExchangeThreshold: e.target.value })}
+                      />
+                      <span className="shrink-0 rounded-md bg-muted px-2.5 py-2 text-xs font-semibold text-muted-foreground">
+                        {local.secondaryCurrency}
+                      </span>
+                    </div>
+                  </SettingsField>
+                </AlignedFieldGrid>
+                <p className="text-xs text-muted-foreground">{tRules('hint')}</p>
               </div>
             ) : null}
           </FieldGroup>

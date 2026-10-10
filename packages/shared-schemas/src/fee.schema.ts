@@ -484,6 +484,18 @@ export const systemSettingsSchema = z.object({
     .max(1_000_000_000)
     .nullable()
     .optional(),
+  /** How far an exchange may stray from `exchangeRate` before it needs a reason (0084). */
+  exchangeRateTolerancePercent: z
+    .number()
+    .min(0, 'النسبة يجب أن تكون بين 0 و100')
+    .max(100, 'النسبة يجب أن تكون بين 0 و100')
+    .optional(),
+  /** Above this, on an exchange's non-base side, it is reviewed whatever its rate (0084). */
+  largeExchangeThreshold: z
+    .number()
+    .positive('الحد يجب أن يكون أكبر من صفر')
+    .max(999_999_999_999)
+    .optional(),
 
   // ── Configuration held as documents ───────────────────────────────────
   /**

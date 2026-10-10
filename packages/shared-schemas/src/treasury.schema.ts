@@ -41,6 +41,34 @@ export type TreasuryEntrySource = (typeof TREASURY_ENTRY_SOURCES)[number];
 export const TREASURY_READ_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT', 'AUDITOR', 'VIEWER'] as const;
 export const TREASURY_WORK_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const;
 export const TREASURY_ADMIN_ROLES = ['SUPER_ADMIN'] as const;
+/**
+ * Who clears a flagged exchange (§6.3, §9): the auditor, whose job is checking,
+ * and the manager. Not the accountant, who booked it.
+ */
+export const TREASURY_REVIEW_ROLES = ['SUPER_ADMIN', 'AUDITOR'] as const;
+
+/**
+ * The wallets the manager adds by hand. The cash safes and Whish accounts are
+ * seeded and routed to by citizen payments; a collector's custody is made by
+ * his first round. A bank account and a petty-cash fund are the two kinds a
+ * municipality opens later, and both start empty: money reaches them by a
+ * transfer, so every pound in them has a source in the ledger.
+ */
+export const TREASURY_NEW_ACCOUNT_TYPES = ['BANK_ACCOUNT', 'PETTY_CASH'] as const;
+
+/** «إضافة حساب» — the manager opens a bank account or a petty-cash fund. */
+export const createTreasuryAccountSchema = z.object({
+  name: z
+    .string({ required_error: 'اكتب اسم الحساب' })
+    .trim()
+    .min(2, 'اكتب اسم الحساب')
+    .max(120, 'الاسم طويل جداً'),
+  type: z.enum(TREASURY_NEW_ACCOUNT_TYPES, { errorMap: () => ({ message: 'اختر نوع الحساب' }) }),
+  /** The municipality's base or secondary currency; the server refuses any other. */
+  currency: z.string().regex(/^[A-Z]{3}$/, 'اختر العملة'),
+});
+
+export type CreateTreasuryAccountInput = z.infer<typeof createTreasuryAccountSchema>;
 
 /**
  * باب وبند الموازنة: the chapter or the article as the municipality's own budget
@@ -120,6 +148,10 @@ export interface TreasuryRate {
   /** Units of `baseCurrency` per one unit of `secondaryCurrency`. */
   exchangeRate: number | null;
   exchangeRateUpdatedAt: string | null;
+  /** How far an exchange may stray from `exchangeRate` before it needs a reason, in percent (0084). */
+  tolerancePercent: number;
+  /** Above this, on an exchange's non-base side, it is reviewed whatever its rate (0084). */
+  largeExchangeThreshold: number;
 }
 
 export interface TreasuryOverview {

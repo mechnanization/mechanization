@@ -4,10 +4,14 @@ import { z } from 'zod';
  * المناقلات — money moving between the municipality's own wallets.
  * Design: docs/finance.md §6.
  *
- * The first and, today, only kind wired is «تسليم صندوق الجابي»: a collector
- * hands in the cash he took at people's doors, and it leaves his custody wallet
- * for the safe. A Whish cash-out, a bank deposit and a currency exchange are the
- * same act with different ends and come later.
+ * Three kinds, one table and one ledger source:
+ *
+ *  - «تسليم صندوق الجابي»: a collector hands in the cash he took at people's
+ *    doors, and it leaves his custody wallet for the safe (`receiveCustody`).
+ *  - «تحويل داخلي»: the same currency between any two working wallets — a Whish
+ *    cash-out, a bank deposit, funding petty cash — with an optional fee.
+ *  - «مصارفة»: two currencies, the rate derived from the two amounts and judged
+ *    by `judgeExchange` (`exchange-policy.ts`).
  */
 
 /** An amount handed over: greater than zero, at most two decimals. */
@@ -48,6 +52,98 @@ export const voidTransferSchema = z.object({
 
 export type VoidTransferInput = z.infer<typeof voidTransferSchema>;
 
+/** The two kinds the transfer form records; a handover has its own form. */
+export const TRANSFER_KINDS = ['SAME_CURRENCY', 'EXCHANGE'] as const;
+export type TransferKind = (typeof TRANSFER_KINDS)[number];
+
+/** `YYYY-MM-DD` on the municipality's calendar. */
+const businessDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صالح');
+
+const optionalText = (max: number, tooLong: string) => z.string().trim().max(max, tooLong).optional();
+
+/** What both kinds carry. */
+const transferBase = {
+  fromAccountId: z.string().uuid('اختر الحساب الذي يخرج منه المبلغ'),
+  toAccountId: z.string().uuid('اختر الحساب الذي يصل إليه المبلغ'),
+  /** What leaves the source, in its currency — the fee is on top. */
+  amount: transferAmount,
+  /**
+   * What a bank or Whish charged, in the source's currency. The source loses
+   * amount + fee, and the fee is booked as its own voucher under «رسوم تحويل
+   * ومصرفية».
+   */
+  feeAmount: transferAmount.optional(),
+  description: z
+    .string({ required_error: 'اكتب بيان المناقلة' })
+    .trim()
+    .min(3, 'اكتب بيان المناقلة')
+    .max(500, 'البيان طويل جداً'),
+  /** Absent means today. Not in the future, not before go-live, and earlier needs a reason. */
+  transferredOn: businessDate.optional(),
+  backdateReason: optionalText(500, 'السبب طويل جداً'),
+  /** Required: one id per press, so a retry does not move the money twice. */
+  clientRequestId: z.string().uuid(),
+};
+
+/**
+ * «تحويل داخلي» or «مصارفة» — what the transfer form sends.
+ *
+ * The shape is checked here; the rules that need the database — the wallets'
+ * currencies, the balance, the official rate and the tolerance — are the
+ * server's, with the same `judgeExchange` the form warns with. A schema cannot
+ * know the municipality's rate, so «a reason when the rate strays» is enforced
+ * where the rate is: the server refuses it with `EXCHANGE_RATE_TOLERANCE_EXCEEDED`.
+ */
+export const createTransferSchema = z
+  .discriminatedUnion('kind', [
+    z.object({ kind: z.literal('SAME_CURRENCY'), ...transferBase }),
+    z.object({
+      kind: z.literal('EXCHANGE'),
+      ...transferBase,
+      /** What reached the destination, in its currency. The rate is derived from the two. */
+      receivedAmount: transferAmount,
+      /** The صرّاف, when there was one. */
+      moneyChangerName: optionalText(200, 'الاسم طويل جداً'),
+      /** Why the rate strays from the official one; required beyond the tolerance. */
+      adjustmentReason: optionalText(1000, 'السبب طويل جداً'),
+    }),
+  ])
+  .refine((value) => value.fromAccountId !== value.toAccountId, {
+    message: 'اختر حسابين مختلفين',
+    path: ['toAccountId'],
+  });
+
+export type CreateTransferInput = z.infer<typeof createTransferSchema>;
+
+/** «اعتماد المراجعة» — the auditor clears a flagged exchange, with an optional note. */
+export const reviewTransferSchema = z.object({
+  note: optionalText(500, 'الملاحظة طويلة جداً'),
+});
+
+export type ReviewTransferInput = z.infer<typeof reviewTransferSchema>;
+
+/** The register's filters. */
+export const listTransfersQuerySchema = z
+  .object({
+    kind: z.enum(['HANDOVER', 'SAME_CURRENCY', 'EXCHANGE']).optional(),
+    /** `PENDING`: flagged and not yet reviewed — the auditor's queue. */
+    review: z.enum(['PENDING', 'REVIEWED']).optional(),
+    from: businessDate.optional(),
+    to: businessDate.optional(),
+    includeVoid: z
+      .enum(['true', 'false'])
+      .optional()
+      .transform((value) => value === 'true'),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(200).default(50),
+  })
+  .refine((value) => !value.from || !value.to || value.from <= value.to, {
+    message: 'بداية الفترة بعد نهايتها',
+    path: ['to'],
+  });
+
+export type ListTransfersQuery = z.infer<typeof listTransfersQuerySchema>;
+
 // ───────────────────────────────  response shapes  ───────────────────────────────
 
 /** What one collector is still carrying, per currency. */
@@ -79,16 +175,54 @@ export interface TransferView {
   id: string;
   transferNumber: string;
   status: 'RECORDED' | 'VOID';
-  from: { id: string; name: string; currency: string };
-  to: { id: string; name: string; currency: string };
+  /** Derived, never stored: a handover leaves a custody wallet, an exchange changes currency. */
+  kind: 'HANDOVER' | TransferKind;
+  from: { id: string; name: string; currency: string; type: string };
+  to: { id: string; name: string; currency: string; type: string };
   amount: number;
   receivedAmount: number;
+  /** The fee and the «PV-» voucher that books it; null when there was none. */
+  fee: { amount: number; voucherId: string; voucherNumber: string } | null;
+  /** An exchange's rate, base currency per one unit of the other side; null otherwise. */
+  exchangeRate: number | null;
+  /** The municipality's own rate when it was booked. */
+  officialExchangeRate: number | null;
+  /** Why the rate strays from the official one. */
+  adjustmentReason: string | null;
+  moneyChangerName: string | null;
+  backdateReason: string | null;
   description: string;
   occurredAt: string;
   recordedByName: string | null;
+  /** Null when the transfer was never flagged. */
+  review: {
+    reviewedAt: string | null;
+    reviewedByName: string | null;
+    note: string | null;
+  } | null;
   voidedAt: string | null;
   voidedByName: string | null;
   voidReason: string | null;
+}
+
+export interface TransferListResult {
+  transfers: TransferView[];
+  total: number;
+  /** Flagged and not reviewed, over the whole register: the auditor's count. */
+  pendingReview: number;
+}
+
+export interface CreateTransferResult {
+  id: string;
+  transferNumber: string;
+  /** The fee's «PV-» number, when there was a fee. */
+  feeVoucherNumber: string | null;
+  requiresReview: boolean;
+  /** The two wallets' balances once it is booked. */
+  fromBalanceAfter: number;
+  toBalanceAfter: number;
+  /** True when this answers a retry of a transfer already recorded. */
+  replayed: boolean;
 }
 
 export interface ReceiveCustodyResult {
