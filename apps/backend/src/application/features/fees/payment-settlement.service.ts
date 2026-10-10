@@ -20,6 +20,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../../common/exce
 import { AuditService } from '../audit/audit.service';
 import { isUniqueViolationOn } from '../treasury/retry-key';
 import { officialRateFor } from './fees.service';
+import { assertLiveCollector } from './live-collector';
 import { PaymentLedgerService, type Tender } from './payment-ledger.service';
 
 /** What the transaction decided, before the receipt is read back. */
@@ -70,7 +71,10 @@ export class PaymentSettlementService {
    *
    * Refused when a bill is missing (`PAYMENT_NOT_FOUND`), belongs to someone
    * else (`BULK_SETTLE_CITIZEN_MISMATCH`), was settled since it was ticked
-   * (`BULK_SETTLE_SOME_ALREADY_PAID`), when the notes do not cover the set or
+   * (`BULK_SETTLE_SOME_ALREADY_PAID`) or sent for review since
+   * (`BULK_SETTLE_BILL_PENDING_REVIEW`), when what the bills owe is not what
+   * the clerk was shown (`BULK_SETTLE_DUE_CHANGED`), when the collector cannot
+   * hold cash (`COLLECTOR_NOT_FOUND`), when the notes do not cover the set or
    * cannot be spread over it (`planBulkSettlement`'s refusals), when the safe
    * cannot hand back the change (`TREASURY_INSUFFICIENT_FUNDS`, from the
    * ledger), and for anything a single counter payment is refused for.
@@ -232,6 +236,17 @@ export class PaymentSettlementService {
     const earlier = await this.replay(tx, input);
     if (earlier) return earlier;
 
+    /*
+      The collector must be able to hold the cash, as on a single counter
+      payment (`FeesService.settleInPerson`). Asked here, not left to the
+      treasury: before go-live nothing else looks at him, and after it a
+      deactivated or view-only member of staff still got a custody wallet.
+      After the replay, so a retry is answered whatever has happened to him since.
+    */
+    if (input.method === 'COLLECTOR' && input.collectedById) {
+      await assertLiveCollector(tx, input.collectedById);
+    }
+
     const invoices = await this.ledger.lockInvoices(tx, input.paymentIds);
     const found = new Set(invoices.map((invoice) => invoice.id));
     const missing = input.paymentIds.find((id) => !found.has(id));
@@ -255,13 +270,51 @@ export class PaymentSettlementService {
       ).map((row) => [row.id, row]),
     );
     for (const invoice of invoices) {
+      const bill = meta.get(invoice.id);
       if (invoice.paymentStatus === 'PAID' || invoice.amount - invoice.paidAmount <= toleranceFor(invoice.currency)) {
-        const bill = meta.get(invoice.id);
         throw new ConflictError({
           code: 'BULK_SETTLE_SOME_ALREADY_PAID',
           message: `Payment ${invoice.id} was settled before this settlement reached it.`,
           params: { invoice: bill?.invoiceNumber ?? bill?.title ?? invoice.id },
           details: { paymentId: invoice.id },
+        });
+      }
+      /*
+        A Whish claim waiting for review is settled by confirming it, not by
+        taking the money a second time — the rule the dialog applies when it
+        offers the boxes (`isBulkSettleable`), applied again here, under the
+        lock: a citizen can send a bill for review between the tick and the press.
+      */
+      if (invoice.paymentStatus === 'PENDING_REVIEW') {
+        throw new ConflictError({
+          code: 'BULK_SETTLE_BILL_PENDING_REVIEW',
+          message: `Payment ${invoice.id} is a transfer waiting for review.`,
+          params: { invoice: bill?.invoiceNumber ?? bill?.title ?? invoice.id },
+          details: { paymentId: invoice.id },
+        });
+      }
+    }
+
+    /*
+      What the bills owe, per currency, against what the clerk was shown. A
+      Whish or collector settlement carries no figure of its own, so without
+      this a part-payment taken at the next desk after the tick was recorded
+      as a smaller transfer than the one that arrived; on cash it would change
+      the change. Refused, never adjusted: the dialog re-reads and shows the new sum.
+    */
+    const due: Record<string, number> = {};
+    for (const invoice of invoices) {
+      due[invoice.currency] = roundIn((due[invoice.currency] ?? 0) + invoice.amount - invoice.paidAmount, invoice.currency);
+    }
+    const expectedDue = input.expectedDue ?? {};
+    for (const currency of [...new Set([...Object.keys(due), ...Object.keys(expectedDue)])].sort()) {
+      const owed = due[currency] ?? 0;
+      const shown = expectedDue[currency] ?? 0;
+      if (Math.abs(owed - shown) > toleranceFor(currency)) {
+        throw new ConflictError({
+          code: 'BULK_SETTLE_DUE_CHANGED',
+          message: `The selected bills owe ${owed} ${currency}, not the ${shown} shown when the button was pressed.`,
+          params: { currency, expected: shown, due: owed },
         });
       }
     }

@@ -807,3 +807,24 @@ is written up, with its grounds, in
 - Petty-cash advances (art. 37–42).
 - How a backup should carry an append-only ledger ([database.md](database.md),
   **Undecided**).
+
+---
+
+## 19. Settling several bills at once: what the PR #112 review left open (2026-10-10)
+
+What the code does now ([finance.md](finance.md) §3.7):
+
+- «تسديد الفواتير المحددة» refuses a bill waiting for review of a Whish transfer
+  (`BULK_SETTLE_BILL_PENDING_REVIEW`): the screens never offer one, and a citizen can send
+  a bill for review between the tick and the press. The **single** counter settle does not
+  refuse it on the server: its screens hide the button, but the API takes the money, and the
+  Whish callback then finds the bill PAID and records nothing for the transfer that arrived
+  (`FeesService.settleFromWhishCallback` returns `{ applied: false }` on a PAID bill).
+  **Undecided:** may cash be taken at the counter for a bill whose citizen has declared a
+  transfer that is still being reviewed? If not, the single settle needs the same refusal;
+  if so, the bulk refusal should go and the transfer that arrives later needs a refund path.
+- A settlement row keeps the citizen who paid. A merge of two citizen files moves the bills
+  to the file kept, but `payment_settlements` is append-only, so the consolidated receipt
+  still names the file merged away, and a retry of that press after the merge is refused as
+  another act. **Undecided:** is that the receipt as issued (keep it), or should a merge
+  carry settlements over (which needs an exception to the append-only trigger)?

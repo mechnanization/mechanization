@@ -1,5 +1,6 @@
 import { BULK_SETTLE_MAX_BILLS } from '@mechanization/shared-schemas';
 import type { AdminPaymentItem, CitizenProfilePayment } from './api-client';
+import { heldInDoubt } from './request-id';
 
 /**
  * «تسديد الفواتير المحددة» — what the screens decide before the dialog opens:
@@ -157,12 +158,21 @@ export function togglePage(bills: readonly SelectedBill[], rows: readonly Select
  * on screen could untick it. A ticked bill the read does not show (another
  * page of /fees) is kept as it was: the server judges it again under its lock.
  *
+ * **Held** (`selectionHeld`: a press of this set is on the wire, or ended with
+ * no answer): nothing is dropped. The set is the retry key's scope
+ * (`bulkKeyScope`), and a lost press that committed is exactly what a re-read
+ * shows as paid — dropping those bills emptied the set, unmounted the dialog
+ * with the bar, and orphaned the key whose retry is answered with the
+ * consolidated receipt (review of PR #112). Kept, the retry is the same press;
+ * a bill that someone else paid is refused by name, and the clerk unticks it.
+ *
  * Returns the same array when nothing changed, so a page can run it on every
  * read without re-rendering.
  */
 export function reconcileSelection(
   bills: readonly SelectedBill[],
   fresh: ReadonlyArray<{ bill: SelectedBill; settleable: boolean }>,
+  held = false,
 ): readonly SelectedBill[] {
   if (bills.length === 0) return bills;
   const byId = new Map(fresh.map((entry) => [entry.bill.id, entry]));
@@ -175,6 +185,10 @@ export function reconcileSelection(
       continue;
     }
     if (!seen.settleable) {
+      if (held) {
+        next.push(bill);
+        continue;
+      }
       changed = true;
       continue;
     }
@@ -225,6 +239,34 @@ export function dueByCurrency(
  */
 export function bulkKeyScope(ids: readonly string[]): `bulk-settle:${string}` {
   return `bulk-settle:${[...ids].sort().join(',')}`;
+}
+
+/**
+ * The sets with a press on the wire, by `${tenant}:${scope}`. Module state for
+ * the reason the retry keys are (`lib/request-id.ts`): the dialog that pressed
+ * can unmount before the answer comes back.
+ */
+const pressing = new Set<string>();
+
+/** A press of this set has left: until `endPress`, a re-read drops none of its bills. */
+export function beginPress(tenant: string, scope: `bulk-settle:${string}`): void {
+  pressing.add(`${tenant}:${scope}`);
+}
+
+/** The press has its answer (or its failure, which `markInDoubt` records first when it is in doubt). */
+export function endPress(tenant: string, scope: `bulk-settle:${string}`): void {
+  pressing.delete(`${tenant}:${scope}`);
+}
+
+/**
+ * Whether a re-read may drop bills from this set (`reconcileSelection`): not
+ * while a press of it is on the wire, nor while its key is held in doubt —
+ * the bills it would drop are the ones the lost press may have paid.
+ */
+export function selectionHeld(tenant: string, bills: readonly Pick<SelectedBill, 'id'>[]): boolean {
+  if (bills.length === 0) return false;
+  const scope = bulkKeyScope(bills.map((bill) => bill.id));
+  return pressing.has(`${tenant}:${scope}`) || heldInDoubt(tenant, scope);
 }
 
 /** One parcel or unit a bill was assessed on, as the receipt words it. */

@@ -22,7 +22,7 @@ import {
   type SettlementReceipt,
 } from '@/lib/api-client';
 import { localizeApiError } from '@/lib/api-errors';
-import { bulkKeyScope, dueByCurrency, type SelectedBill } from '@/lib/bulk-settle';
+import { beginPress, bulkKeyScope, dueByCurrency, endPress, type SelectedBill } from '@/lib/bulk-settle';
 import { currencyUnit, formatMoney, formatTypedAmount, parseAmount } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
 import { heldInDoubt, heldKey, keyIsSpent, markInDoubt, outcomeInDoubt, spendKey } from '@/lib/request-id';
@@ -56,6 +56,13 @@ const METHODS = [
   { value: 'WHISH_MONEY', icon: CreditCard },
   { value: 'COLLECTOR', icon: UserCheck },
 ] as const satisfies ReadonlyArray<{ value: PaymentMethod; icon: unknown }>;
+
+/**
+ * Refusals that mean the bills on screen are behind the register: one paid or
+ * sent for review since it was ticked, or a balance that moved. The page reads
+ * them again; the refusal's words say which.
+ */
+const STALE_REFUSALS = new Set(['BULK_SETTLE_SOME_ALREADY_PAID', 'BULK_SETTLE_BILL_PENDING_REVIEW', 'BULK_SETTLE_DUE_CHANGED']);
 
 /** Where a field's refusal is shown, and the order focus goes to the first (FRM-2). */
 type FieldKey = 'tender' | 'reference' | 'collector';
@@ -265,6 +272,8 @@ export function BulkSettleDialog({
       whishTransactionRef: method === 'WHISH_MONEY' ? ref || undefined : undefined,
       tendered: cash ? { local, foreign, foreignCurrency: foreignCurrency ?? 'USD' } : undefined,
       note: note.trim() || undefined,
+      // What the clerk is looking at, per currency: the server refuses the press if the bills owe otherwise.
+      expectedDue: Object.fromEntries(due.map((entry) => [entry.currency, entry.amount])),
       clientRequestId: heldKey(tenant, scope),
     });
     if (!parsed.success) {
@@ -298,6 +307,8 @@ export function BulkSettleDialog({
     inFlight.current = true;
     setBusy(true);
     let result: SettlementReceipt;
+    // Until the answer, a background re-read drops none of these bills (`selectionHeld`).
+    beginPress(tenant, scope);
     try {
       result = await bulkSettlePayments(tenant, token, parsed.data);
     } catch (caught) {
@@ -317,11 +328,15 @@ export function BulkSettleDialog({
         markInDoubt(tenant, scope);
         void refreshTreasury();
       }
-      if (caught instanceof ApiRequestError && caught.code === 'BULK_SETTLE_SOME_ALREADY_PAID') onStale();
+      // The bills moved since they were read: read them again, so the table and the sums show it.
+      if (caught instanceof ApiRequestError && STALE_REFUSALS.has(caught.code)) onStale();
       // A failed attempt releases the button; a recorded one never does.
       inFlight.current = false;
       setBusy(false);
       return;
+    } finally {
+      // After `markInDoubt` above, so a press with no answer is never left unheld.
+      endPress(tenant, scope);
     }
 
     // Recorded: `inFlight` stays held and the form locked; the receipt page opens.

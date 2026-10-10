@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; bulk settlement, the consolidated receipt, `renderReceiptPdf` options; uncommitted), 2026-10-10.
+Last verified against the code: `feat/fees-bulk-settlement-review` (PR #112 head `9df68e4` plus its review fixes; bulk settlement, the held selection, `expectedDue`, the consolidated receipt, `renderReceiptPdf` options; uncommitted), 2026-10-10.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -63,7 +63,13 @@ Pieces in `components/admin/bulk-settle/` (`bill-checkbox`, `bulk-settle-bar` �
 `bulk-settle-dialog`, `bulk-bills-table`, `money-list`, `bulk-payment-receipt`); the rules in
 `lib/bulk-settle.ts` (which bills can be ticked, one citizen, at most 50, select-all, due per
 currency, the retry-key scope, the parcel/unit wording) and the selection in
-`lib/use-bulk-selection.ts`. The dialog's live «الباقي للمواطن» is `planBulkSettlement` from the
+`lib/use-bulk-selection.ts` (`useBulkSelection(tenant)`). A re-read of the list drops a ticked bill paid or
+sent for review since, **except** while the set is held (`selectionHeld`: a press of it is on the
+wire, `beginPress`/`endPress`, or its key is in doubt): the set is the key's scope, and dropping the
+bills a lost press paid emptied the set, unmounted the dialog with its bar and orphaned the key whose
+retry returns the consolidated receipt (review of PR #112). The dialog sends `expectedDue`, the sums it
+shows, and re-reads the list on `BULK_SETTLE_SOME_ALREADY_PAID`, `BULK_SETTLE_BILL_PENDING_REVIEW` and
+`BULK_SETTLE_DUE_CHANGED`. The dialog's live «الباقي للمواطن» is `planBulkSettlement` from the
 shared package, the function the server runs under lock; it refuses submit when the main cash safe
 in the base currency plus the ليرة handed in cannot cover the change (a warning only while the key
 is in doubt). The WhatsApp text is `lib/bulk-receipt-message.ts`, which never carries a رقم مرجعي

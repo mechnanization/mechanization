@@ -47,6 +47,7 @@ import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { PaymentLedgerService, type Tender } from './payment-ledger.service';
 import { creditsWallets, documentOccurredAt } from '../treasury/treasury.plan';
+import { assertLiveCollector } from './live-collector';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 
 /** Property categories that live on `PropertyEntry.propertyType`. */
@@ -3686,17 +3687,8 @@ export class FeesService {
    * would have a custody wallet opened in his name that nobody can hand in.
    */
   private async assertLiveCollector(collectorId: string): Promise<void> {
-    // `kind` in the WHERE, as on every read of `users`.
-    const collector = await this.db.user.findFirst({
-      where: { id: collectorId, kind: 'STAFF', isActive: true, deletedAt: null, role: { not: 'VIEWER' } },
-      select: { id: true },
-    });
-    if (!collector) {
-      throw new NotFoundError({
-        code: 'COLLECTOR_NOT_FOUND',
-        message: `Collector ${collectorId} is not active staff who can hold cash`,
-      });
-    }
+    // The one rule, shared with the bulk settlement (`live-collector.ts`).
+    await assertLiveCollector(this.db, collectorId);
   }
 
   /** Every movement of money against one invoice, oldest first. */

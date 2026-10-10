@@ -95,13 +95,30 @@ describeIfDb('Bulk settlement', () => {
     ).id;
   };
 
-  const settle = (input: Partial<BulkSettlePayments> & Pick<BulkSettlePayments, 'paymentIds' | 'method'>) =>
-    scoped(() =>
+  /** What the selected bills owe now, per currency — what the dialog shows the clerk before the press. */
+  const dueOf = async (paymentIds: string[]): Promise<Record<string, number>> => {
+    const rows = await db.citizenPayment.findMany({
+      where: { id: { in: paymentIds } },
+      select: { amount: true, paidAmount: true, currency: true },
+    });
+    const due: Record<string, number> = {};
+    for (const row of rows) {
+      const sum = (due[row.currency] ?? 0) + Number(row.amount) - Number(row.paidAmount);
+      due[row.currency] = row.currency === 'LBP' ? Math.round(sum) : Math.round(sum * 100) / 100;
+    }
+    return due;
+  };
+
+  /** One press, carrying what the bills owe as the clerk saw them unless the test says otherwise. */
+  const settle = async (input: Partial<BulkSettlePayments> & Pick<BulkSettlePayments, 'paymentIds' | 'method'>) => {
+    const expectedDue = input.expectedDue ?? (await dueOf(input.paymentIds));
+    return scoped(() =>
       settlements.settle(
-        { citizenId, clientRequestId: randomUUID(), ...input } as BulkSettlePayments,
+        { citizenId, clientRequestId: randomUUID(), ...input, expectedDue } as BulkSettlePayments,
         actor(),
       ),
     );
+  };
 
   const account = (type: string, currency: string) =>
     db.treasuryAccount.findFirstOrThrow({ where: { type: type as never, currency, isPrimary: true } });
@@ -304,6 +321,89 @@ describeIfDb('Bulk settlement', () => {
       await expect(
         settle({ paymentIds: [a, b], method: 'CASH', tendered: { local: 150_000, foreign: 0, foreignCurrency: 'USD' } }),
       ).rejects.toMatchObject({ code: 'BULK_SETTLE_TENDER_SHORT', params: { shortBy: 50_000, currency: 'LBP' } });
+      expect(await snapshot()).toEqual(before);
+    });
+
+    /*
+      Review of PR #112: the single counter payment refuses a collector who
+      cannot hold the cash (`FeesService.assertLiveCollector`); the bulk path
+      named any user. Before go-live nothing else looks at him, so the refusal
+      has to be the settlement's own.
+    */
+    it.each([
+      ['view-only staff', 'VIEWER', true, null],
+      ['deactivated staff', 'COLLECTOR', false, null],
+      ['removed staff', 'COLLECTOR', true, new Date('2026-09-01T00:00:00.000Z')],
+    ] as const)('a collector who cannot hold the cash: %s', async (_label, role, isActive, deletedAt) => {
+      const named = randomUUID();
+      await db.user.create({
+        data: {
+          id: named, kind: 'STAFF', tenantSlug: 'settlement', email: `x-${named}@t.gov.lb`,
+          firstName: 'موظف', lastName: 'سابق', role, isActive, deletedAt,
+        },
+      });
+      const a = await bill(10_000);
+      const before = await snapshot();
+      await expect(settle({ paymentIds: [a], method: 'COLLECTOR', collectedById: named })).rejects.toMatchObject({
+        code: 'COLLECTOR_NOT_FOUND',
+      });
+      expect(await snapshot()).toEqual(before);
+      expect(await status(a)).toBe('UNPAID');
+    });
+
+    it('a citizen named as the collector', async () => {
+      const a = await bill(10_000);
+      const before = await snapshot();
+      await expect(settle({ paymentIds: [a], method: 'COLLECTOR', collectedById: otherCitizenId })).rejects.toMatchObject({
+        code: 'COLLECTOR_NOT_FOUND',
+      });
+      expect(await snapshot()).toEqual(before);
+    });
+
+    /*
+      Review of PR #112: the dialog never offers a bill waiting for review — a
+      Whish claim is settled by confirming it — but the server took one, so a
+      bill the citizen sent for review after it was ticked was settled in cash
+      while his transfer was on its way.
+    */
+    it('a bill sent for review since it was ticked, named in the refusal', async () => {
+      const a = await bill(10_000);
+      const b = await bill(20_000);
+      await db.citizenPayment.update({ where: { id: b }, data: { paymentStatus: 'PENDING_REVIEW' } });
+      const before = await snapshot();
+      await expect(
+        settle({ paymentIds: [a, b], method: 'CASH', tendered: { local: 30_000, foreign: 0, foreignCurrency: 'USD' } }),
+      ).rejects.toMatchObject({ code: 'BULK_SETTLE_BILL_PENDING_REVIEW', params: { invoice: expect.any(String) } });
+      expect(await snapshot()).toEqual(before);
+      expect(await status(a)).toBe('UNPAID');
+    });
+
+    /*
+      Review of PR #112: a Whish or collector settlement carries no figure, so
+      the server recorded whatever the bills owed under its lock. A part-payment
+      taken at the next desk after the tick turned a 15,000 transfer into an
+      11,000 record. The press now carries what the clerk saw.
+    */
+    it('a balance that moved since the clerk saw it', async () => {
+      const a = await bill(10_000);
+      const b = await bill(5_000);
+      const seen = await dueOf([a, b]);
+      await scoped(() => payments.record({ audit, paymentId: a, amount: 4_000, method: 'CASH', recordedById: accountantId }));
+      const before = await snapshot();
+      await expect(
+        settle({ paymentIds: [a, b], method: 'WHISH_MONEY', whishTransactionRef: 'WH-DUE-1', expectedDue: seen }),
+      ).rejects.toMatchObject({ code: 'BULK_SETTLE_DUE_CHANGED', params: { currency: 'LBP', expected: 15_000, due: 11_000 } });
+      expect(await snapshot()).toEqual(before);
+      expect(await status(b)).toBe('UNPAID');
+    });
+
+    it('a currency the clerk was not shown', async () => {
+      const a = await bill(10_000);
+      const usd = await bill(5, 'USD');
+      const before = await snapshot();
+      await expect(
+        settle({ paymentIds: [a, usd], method: 'WHISH_MONEY', whishTransactionRef: 'WH-DUE-2', expectedDue: { LBP: 10_000 } }),
+      ).rejects.toMatchObject({ code: 'BULK_SETTLE_DUE_CHANGED', params: { currency: 'USD' } });
       expect(await snapshot()).toEqual(before);
     });
 

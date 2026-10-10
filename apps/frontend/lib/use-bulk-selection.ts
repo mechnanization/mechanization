@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
   reconcileSelection,
+  selectionHeld,
   toggleBill,
   togglePage,
   type SelectedBill,
@@ -19,7 +20,7 @@ const NONE: readonly SelectedBill[] = [];
  * the citizen file the sticky bar and the dialog sit at the page's root, outside
  * the folding section the list is drawn in.
  */
-export function useBulkSelection() {
+export function useBulkSelection(tenant: string) {
   const [bills, setBills] = useState<readonly SelectedBill[]>(NONE);
 
   const toggle = useCallback((bill: SelectedBill) => setBills((current) => toggleBill(current, bill)), []);
@@ -34,8 +35,9 @@ export function useBulkSelection() {
   const clear = useCallback(() => setBills(NONE), []);
   const reconcile = useCallback(
     (fresh: ReadonlyArray<{ bill: SelectedBill; settleable: boolean }>) =>
-      setBills((current) => reconcileSelection(current, fresh)),
-    [],
+      // A set with a press on the wire or in doubt drops nothing (`selectionHeld`).
+      setBills((current) => reconcileSelection(current, fresh, selectionHeld(tenant, current))),
+    [tenant],
   );
 
   return useMemo(

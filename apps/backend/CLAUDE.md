@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; settling several bills at once, `PaymentLedgerService.recordIn`), 2026-10-10.
+Last verified against the code: `feat/fees-bulk-settlement-review` (PR #112 head `9df68e4` plus its review fixes; settling several bills at once, `PaymentLedgerService.recordIn`, `live-collector.ts`), 2026-10-10.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -330,6 +330,12 @@ Data access for new code (decided):
     the same order.
   - How the notes are spread is `planBulkSettlement` in `@mechanization/shared-schemas`, run by the
     dialog for its preview and by the service under the locks; its refusals become `ValidationError`s.
+  - Refused under the locks, before anything is written: a bill paid since (`BULK_SETTLE_SOME_ALREADY_PAID`)
+    or waiting for review (`BULK_SETTLE_BILL_PENDING_REVIEW`), and sums per currency that are not the
+    request's `expectedDue` (`BULK_SETTLE_DUE_CHANGED`) — without it a Whish or collector settlement
+    recorded whatever the bills owed by then. A COLLECTOR settlement checks the collector with
+    `assertLiveCollector` (`fees/live-collector.ts`, shared with `FeesService.settleInPerson`), after
+    the replay and before the bill locks.
   - The retry key is required and lives on the settlement (`payment_transactions.clientRequestId` is
     unique per row). A replay is bound to citizen, method and the set of bills
     (`BULK_SETTLE_REQUEST_REUSED`); one of whose bills was reversed since is `TRANSACTION_ALREADY_REVERSED`;

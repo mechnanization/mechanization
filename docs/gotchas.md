@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; the payment ledger's own transaction, the doubled `0083`), 2026-10-10.
+Last verified against the code: `feat/fees-bulk-settlement-review` (PR #112 head `9df68e4` plus its review fixes; the payment ledger's own transaction, the doubled `0083`, a selection that is a retry key's scope), 2026-10-10.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -1041,6 +1041,19 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   translator uses `FORMAT_LOCALE` (`ar-u-nu-latn`) from `lib/api-errors.ts`.
 - **Where:** `apps/frontend/messages/ar.json`; `lib/messages-parity.test.ts`
   refuses a `#` in any Arabic message outside `errors`.
+
+### A re-read that tidies a selection can orphan its retry key
+
+- **What happens:** a clerk presses «تسديد الفواتير المحددة», the answer is lost, the settlement
+  committed. He switches window and back; the dialog vanishes, the bills read as paid, and no retry
+  ever shows him the consolidated receipt.
+- **Why:** the lists drop a ticked bill once a read shows it paid (`reconcileSelection`), and the
+  window-focus refetch is such a read. The ticked set is also the retry key's scope
+  (`bulkKeyScope`): emptying it unmounts the bar and its dialog, and any other set is a new key.
+- **Do this:** never drop from a set while a press of it is on the wire or its key is in doubt —
+  `selectionHeld` (`beginPress`/`endPress`, `heldInDoubt`). Any screen whose key scope is derived
+  from state that a background read can rewrite needs the same hold.
+- **Where:** `lib/bulk-settle.ts`, `lib/use-bulk-selection.ts`, `components/admin/bulk-settle/bulk-settle-dialog.tsx`.
 
 ### A poll keeps its user «متصل الآن»
 

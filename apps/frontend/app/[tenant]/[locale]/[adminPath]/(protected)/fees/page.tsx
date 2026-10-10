@@ -216,7 +216,7 @@ export default function FeesPage({
     citizen's at a time (`lib/bulk-settle.ts`). Cleared when a filter changes,
     because the rows it was ticked from are no longer the ones on screen.
   */
-  const selection = useBulkSelection();
+  const selection = useBulkSelection(tenant);
   const { clear: clearSelection, reconcile: reconcileSelection } = selection;
   useEffect(() => {
     clearSelection();

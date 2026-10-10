@@ -77,6 +77,10 @@ export const ERROR_CODES = [
   'BULK_SETTLE_RATE_NOT_SET',
   // A retry key already used to settle another set of bills.
   'BULK_SETTLE_REQUEST_REUSED',
+  // A selected bill is a Whish claim waiting for review (`params.invoice`): confirm it, do not take the money again.
+  'BULK_SETTLE_BILL_PENDING_REVIEW',
+  // What the bills owe in a currency is not what the clerk was shown (`params.currency`, `params.expected`, `params.due`).
+  'BULK_SETTLE_DUE_CHANGED',
   'PAYMENT_SETTLEMENT_NOT_FOUND',
   'INVOICE_NOT_FOUND',
   'INVOICE_NOT_OPEN',

@@ -239,6 +239,8 @@
     "BULK_SETTLE_CURRENCY_UNSUPPORTED": "One of the bills is in {currency}, which neither currency received can pay. Settle it on its own.",
     "BULK_SETTLE_RATE_NOT_SET": "No official exchange rate is set, so foreign notes cannot be counted against bills in the base currency. Set the rate first.",
     "BULK_SETTLE_REQUEST_REUSED": "This operation’s identifier was already used to settle other bills. Reload the page.",
+    "BULK_SETTLE_BILL_PENDING_REVIEW": "Bill «{invoice}» is waiting for review of a transfer the citizen sent. Confirm or reject the transfer instead of taking the money again, and deselect it. Nothing was recorded.",
+    "BULK_SETTLE_DUE_CHANGED": "What the selected bills owe changed since they were shown: {due, number} {currency}, not {expected, number}. They have been read again: check the sum and press again. Nothing was recorded.",
     "PAYMENT_SETTLEMENT_NOT_FOUND": "This consolidated receipt could not be found.",
     "INVOICE_NOT_FOUND": "This invoice could not be found.",
     "INVOICE_NOT_OPEN": "This invoice is no longer due: it was paid, or the register no longer charges it.",

@@ -481,7 +481,7 @@ export default function CitizenProfilePage({
     clips its content), and a sticky bar inside it would hold nowhere.
   */
   const canBulkSettle = hasRole(BULK_SETTLE_ROLES, role);
-  const bulkSelection = useBulkSelection();
+  const bulkSelection = useBulkSelection(tenant);
   const { reconcile: reconcileBulk } = bulkSelection;
   // Each read of the file drops a ticked bill that has been paid, or sent for review, since.
   useEffect(() => {

@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { BULK_SETTLE_MAX_BILLS } from '@mechanization/shared-schemas';
+import { heldKey, markInDoubt, spendKey } from './request-id';
 import {
+  beginPress,
   bulkKeyScope,
   dueByCurrency,
+  endPress,
   isBulkSettleable,
   pageSelection,
   propertyLines,
   reconcileSelection,
   rowBlock,
   selectedCitizen,
+  selectionHeld,
   toggleBill,
   togglePage,
   type SelectedBill,
@@ -139,6 +143,50 @@ describe('reconcileSelection', () => {
       // Not on this page of the read: kept as it was, for the server to judge again.
       ['elsewhere', 500_000],
     ]);
+  });
+});
+
+/*
+  Review of PR #112. A press with no answer may have paid the bills; the next
+  window-focus re-read shows them paid, and dropping them emptied the set, took
+  the bar and its dialog with it, and orphaned the retry key — the one retry the
+  server answers with the consolidated receipt and «سُجّلت سابقاً».
+*/
+describe('a held set (selectionHeld)', () => {
+  const paid = (id: string) => ({ bill: bill(id, { remaining: 0 }), settleable: false });
+
+  it('drops nothing while held, and still takes new figures for a bill still open', () => {
+    const set = [bill('h1'), bill('h2')];
+    const next = reconcileSelection(set, [paid('h1'), { bill: bill('h2', { remaining: 100 }), settleable: true }], true);
+    expect(next.map((entry) => [entry.id, entry.remaining])).toEqual([
+      ['h1', 500_000],
+      ['h2', 100],
+    ]);
+    expect(reconcileSelection(set, [paid('h1'), paid('h2')], true)).toBe(set);
+  });
+
+  it('is held while a press of the set is on the wire, and not after', () => {
+    const set = [bill('p2'), bill('p1')];
+    const scope = bulkKeyScope(['p1', 'p2']);
+    expect(selectionHeld('t-held', set)).toBe(false);
+    beginPress('t-held', scope);
+    expect(selectionHeld('t-held', set)).toBe(true);
+    // Another set, or another municipality, is not held by this press.
+    expect(selectionHeld('t-held', [bill('p1')])).toBe(false);
+    expect(selectionHeld('t-other', set)).toBe(false);
+    endPress('t-held', scope);
+    expect(selectionHeld('t-held', set)).toBe(false);
+  });
+
+  it('is held while the set’s key is in doubt, until the server confirms the act', () => {
+    const set = [bill('d1'), bill('d2')];
+    const scope = bulkKeyScope(['d1', 'd2']);
+    heldKey('t-held', scope);
+    markInDoubt('t-held', scope);
+    expect(selectionHeld('t-held', set)).toBe(true);
+    spendKey('t-held', scope);
+    expect(selectionHeld('t-held', set)).toBe(false);
+    expect(selectionHeld('t-held', [])).toBe(false);
   });
 });
 

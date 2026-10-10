@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; the bulk-settle routes and the receipt's رقم مرجعي gap), 2026-10-10.
+Last verified against the code: `feat/fees-bulk-settlement-review` (PR #112 head `9df68e4` plus its review fixes; the bulk-settle routes, their inventory pins and the collector check), 2026-10-10.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -87,8 +87,12 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   and the remaining amount, nothing a ledger reader does not already see, and never a رقم مرجعي.
 - Settling several bills at once (`POST fees/payments/bulk-settle`) is `BULK_SETTLE_ROLES` (manager and
   accountant), narrower than the single settle's `FEE_ISSUE_ROLES`; its body is `bulkSettlePaymentsSchema`
-  (1–50 distinct UUIDs, each method's one fact, a required retry key). Every bill must belong to the
-  citizen named, checked under the bills' locks. The reprint, `GET fees/settlements/:id`, is
+  (1–50 distinct UUIDs, each method's one fact, a required retry key, and `expectedDue`, the sums the
+  clerk was shown). Every bill must belong to the citizen named, be neither paid nor waiting for review,
+  and owe what the clerk was shown, all checked under the bills' locks; a COLLECTOR settlement names
+  active, non-view-only staff (`live-collector.ts`, the single settle's own rule — the review of PR #112
+  found the bulk path took any user, a citizen included). Both routes' role lists are pinned in
+  `route-inventory.spec.ts`. The reprint, `GET fees/settlements/:id`, is
   `FEE_READ_ROLES` with `ParseUUIDPipe`. The consolidated receipt names the citizen with father's name and
   phone, never the رقم مرجعي — on paper, in the PDF or in the WhatsApp text — and an integration test pins
   the citizen block's key set (docs/finance.md §3.7). The WhatsApp text is built by
