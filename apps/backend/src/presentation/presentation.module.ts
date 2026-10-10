@@ -11,6 +11,7 @@ import { TreasuryController } from './controllers/treasury.controller';
 import { ExpensesController } from './controllers/expenses.controller';
 import { IncomeController } from './controllers/income.controller';
 import { TransfersController } from './controllers/transfers.controller';
+import { TreasuryClosingController } from './controllers/treasury-closing.controller';
 import { CasesController } from './controllers/cases.controller';
 import { CitizenController } from './controllers/citizen.controller';
 import { DashboardController } from './controllers/dashboard.controller';
@@ -55,6 +56,7 @@ import { MetricsModule } from './metrics.module';
     ExpensesController,
     IncomeController,
     TransfersController,
+    TreasuryClosingController,
     /*
      * BackupController (`t/:tenantSlug/backup/export` and `/restore`) is not
      * registered. Backups are taken on the AWS side now, and the in-app page

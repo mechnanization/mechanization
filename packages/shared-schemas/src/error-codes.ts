@@ -231,6 +231,22 @@ export const ERROR_CODES = [
   // A query-string value that does not parse (presentation/controllers/query-params.ts)
   'INVALID_QUERY_DATE',
   'INVALID_QUERY_VALUE',
+  // The daily count and closing the day (docs/finance.md §7)
+  'COUNT_DATE_IN_FUTURE',
+  'COUNT_VARIANCE_REASON_REQUIRED',
+  'COUNT_EXPECTED_CHANGED',
+  // A close whose dialog listed counts that were since recorded, replaced or added (`params.count`).
+  'COUNT_CHANGED_SINCE_LOADED',
+  'COUNT_MISSING_FOR_ACTIVE_ACCOUNTS',
+  'DAY_ALREADY_CLOSED',
+  'DAY_NOT_CLOSED',
+  'DAY_NOT_OVER',
+  'DAY_BEFORE_GO_LIVE',
+  'CLOSURE_OUT_OF_CHRONOLOGICAL_ORDER',
+  'UNRESOLVED_ACTIVE_DAYS_EXIST',
+  'CLOSED_DAY_MUTATION_BLOCKED',
+  'REOPEN_REASON_REQUIRED',
+  'ONLY_LATEST_CLOSED_DAY_CAN_BE_REOPENED',
   // Fixed messages the filter and the tenant layer already send
   'INTERNAL_ERROR',
   'TENANT_MISMATCH',

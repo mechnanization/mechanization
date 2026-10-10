@@ -774,8 +774,10 @@ is written up, with its grounds, in
   (art. 28, 33). Urgent payments are paid first and regularised after (art. 35). The
   manager records the order the head signs on paper; the head’s own account stays
   «مشاهد فقط» (decision 16).
-- **D4, stage 5 before activation:** not required with D3 in place. Until it ships, the
-  one-day statement is the daily register (art. 101), printed, counted and signed.
+- **D4, stage 5 before activation:** not required with D3 in place. Until it shipped, the
+  one-day statement was the daily register (art. 101), printed, counted and signed. Stage 5
+  was built on 2026-10-10 (PR #106): the day is counted and closed in the system, and
+  «تقرير الصندوق اليومي» is the register ([finance.md §7](finance.md)).
 - **D5, the go-live day:** live, for payments, expenses and income alike. Whatever was
   taken before the opening count is entered before activation; a document dated that
   day is never placed before the opening entry.

@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes: the stage 5 route pin, 0084; uncommitted), 2026-10-10.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -202,7 +202,9 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   order's life (`EXPENSE_REQUESTED`; `EXPENSE_ORDERED`, on a request or after an urgent payment;
   `EXPENSE_REQUEST_REJECTED`; `EXPENSE_REQUEST_WITHDRAWN`), recording and cancelling an income
   voucher (`INCOME_RECORDED`, `INCOME_VOIDED`), receiving a collector's custody
-  (`CUSTODY_RECEIVED`) and cancelling a transfer, corrections, ownership changes (ending an ownership,
+  (`CUSTODY_RECEIVED`) and cancelling a transfer, counting the treasury and closing, sweeping and
+  reopening a day (`TREASURY_COUNT_RECORDED`, `TREASURY_DAY_CLOSED`, `TREASURY_DAY_AUTO_CLOSED`,
+  `TREASURY_DAY_REOPENED`), corrections, ownership changes (ending an ownership,
   owner links, merges), ending a tenancy, review decisions (approve, return, quality check), citizen
   status changes (archive and restore), how a co-owned flat is billed (`UNIT_OWNER_BILLING_SET`,
   `OwnerBillingService`, which moves every co-owner's bill), and a unit's fee exemption
@@ -218,7 +220,8 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   credential, and four of its characters leave 1,024 candidates. The filing's own number
   (`registrations.referenceNumber`) is not a credential and may be written in full.
 - MUST NOT bypass the append-only triggers on `audit_log_entries`, `payment_transactions` and
-  `treasury_entries` (`0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`), MUST NOT `SET session_replication_role`, and MUST NOT reach
+  `treasury_entries` (`0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`), or the closed-day
+  triggers on `treasury_entries`, `treasury_counts` and `treasury_day_closures` (`0082`, `0084`), MUST NOT `SET session_replication_role`, and MUST NOT reach
   for `TRUNCATE` because a trigger refused a `DELETE`. A refusal is an answer
   ([CLAUDE.md](../CLAUDE.md#how-to-work-here)).
 - Uniqueness is enforced by a database constraint and surfaces as a `ConflictError`, never by a
@@ -300,6 +303,21 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   - It cannot exceed what the collector holds, read behind the wallets' locks.
   - The audit row names him by id, never by name, beside what he held before.
   - A refund after he handed the cash in comes out of the safe, never his custody (decision D1).
+- **A closed day** (docs/finance.md §7, `t/:tenantSlug/treasury`: `GET counts`, `GET closures`, `GET
+  reports/daily` on `TREASURY_READ_ROLES`; `POST counts`, `POST closures` on `TREASURY_WORK_ROLES`;
+  `POST closures/reopen` on `TREASURY_ADMIN_ROLES`; every body and query value through a shared zod
+  schema). Once the accountant signs a day off, nothing dated on or before it can be written — no
+  payment, voucher, transfer or reversal — by the application (`TreasuryLedgerService.post`) or by
+  anything else (the 0082 triggers). A closure cannot be deleted, only reopened by the manager with a
+  reason that goes into the audit row and onto the printed report, and only the latest closed day. Nor
+  can it be rewritten (0084): its day never moves, reopening keeps who closed it, and a count links
+  only to its own day's closure. The close carries the counts its dialog showed and is refused
+  (`COUNT_CHANGED_SINCE_LOADED`) when someone recounted meanwhile, so the audit row records figures
+  the closer saw. `route-inventory.spec.ts` pins the six handlers' roles, reopening among the
+  manager-only ones. A
+  count is a statement about cash, not a movement of it: a difference is recorded with its reason and
+  never posted. The report names staff (who counted, closed, reopened; each collector holding cash)
+  and no citizen.
 - A money write MUST be safe against double submission on the client (an in-flight guard) and on the
   server (a constraint or idempotent write). A screen keeps its key across every failure and every
   edit, and renews it only when the server confirms the key's act exists (a success, or a code

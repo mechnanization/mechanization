@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes; uncommitted), 2026-10-10.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -117,7 +117,7 @@ to, the primitive gets a prop instead.
 | PRIM-9 | An annotation chip | `Badge` with a `soft-*` variant | `Badge` with colour overrides in `className` |
 | PRIM-10 | LBP on screen | `<Money>`; `formatLbp` only for plain strings (toast, aria, CSV). `Money` isolates the signed figure left to right — a negative keeps its minus, U+2212, on the left of the digits on an Arabic page — and leaves the unit in the page's direction, so «ل.ل» sits after the figure in reading order on every screen. `signed` adds «+» for a ledger movement; `wrap` lets the unit drop under the figure in a narrow box. The treasury's `TreasuryAmount` is `Money` with `exact` | `toLocaleString()` plus «ل.ل» by hand; a figure wrapped in `dir="ltr"` with its unit, which puts «ل.ل» on the other side from every other screen (UX-1) |
 | PRIM-11 | USD/EUR on screen | `<Money currency>` in a figure or a table (drawn as PRIM-10, never compacted); `formatForeign(amount, currency)` or `formatMoney(amount, currency, locale)` from `lib/currency.ts` for plain strings | A page-local USD formatter, `$${x.toFixed(2)}`, or a third spelling |
-| PRIM-12 | Dates | `formatDate` / `formatTime` / `formatDateTime` / `formatMonthList` from `lib/dates` | `toLocaleDateString('ar')`, raw month numbers joined with «، » |
+| PRIM-12 | Dates | `formatDate` / `formatTime` / `formatDateTime` / `formatMonthList` from `lib/dates`; a calendar day (`YYYY-MM-DD`, a business day with no time) through `formatDay` / `formatDayLong`, which never pass it through a zone | `toLocaleDateString('ar')`, raw month numbers joined with «، » |
 | PRIM-13 | A labelled input | `Field` (label, required `*`, «(اختياري)», `caution`, error with `role="alert"`) wrapping `Input`/`Select`/`Textarea`/`DatePicker` | A bare `<label>` plus input; a native `<select>`; a native `type="date"` in new code |
 | PRIM-14 | Two to four options | `SegmentedControl`; three or more filter chips: `ChipGroup` | Hand-rolled toggle buttons |
 | PRIM-15 | Foldable section | `CollapsibleSection` | A `useState` toggle with a chevron |
@@ -275,7 +275,9 @@ Token values, light and dark: [DESIGN.md](../DESIGN.md) "Colors".
     one map-palette module derived from the tokens (today the hex is spread
     over five map files, §17.2).
   - The printed receipt and the receipt PDF canvas, which must print black on
-    white whatever the theme. They should become `--paper` and `--ink` tokens.
+    white whatever the theme, and the printed «تقرير الصندوق اليومي» (the print
+    stylesheet in `components/admin/finance/daily-cash-report.tsx`; on screen it
+    uses tokens). They should become `--paper` and `--ink` tokens.
   - QR codes, which need fixed dark-on-light.
   - `app/global-error.tsx`, which renders outside the token tree, and the web
     manifest's `background_color` and `theme_color`.
@@ -377,6 +379,7 @@ Spacing, radius and shadow values as defined: [DESIGN.md](../DESIGN.md) "Layout"
   with data already on screen, the content stays and `RefreshFailedAlert` says
   so above it, with a retry. Swapping a page for `ErrorState` unmounts what is
   open on it — a half-filled form, a dialog in the middle of a payment.
+  `readView(data, error)` (`lib/read-view.ts`) makes the choice in one place.
 - **STA-2. Every interactive control has its states:** default, hover,
   `focus-visible`, active, disabled, loading. A button that starts async work
   is disabled with a spinner until the work ends.
@@ -887,6 +890,12 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   The settle page's own hand-rolled field — an input with «ل.ل» absolutely placed
   over it — was replaced by `CurrencyInput` on 2026-10-07, which is what fixed
   the unit landing on the digits. Check the three above for the same shape.
+- **A calendar day through `formatDate`** (PRIM-12): `formatDate('2026-10-09')` reads the
+  string as midnight UTC and shows it in the browser's zone, the day before anywhere west of
+  Greenwich. Found 2026-10-10 in `damage/damage-history.tsx` (`reinspectAt`),
+  `end-ownership-dialog.tsx` (`endedAt`) and the citizen payment page
+  (`citizens/[citizenId]/payments/[paymentId]/page.tsx`, `paidOn`); `formatDay` is the fix.
+  Harmless in Lebanon, wrong on a laptop set to another zone.
 - **Double submit** (STA-4): the payouts page with `InspectorPayoutDialog` guards with `busy`
   state only, with no in-flight ref.
   - The counter settle page (`fees/payments/[paymentId]/settle`) gained an in-flight ref and a
@@ -915,6 +924,15 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
     urgent ceiling could likewise turn a retry into a request under a new key. Fixed 2026-10-10:
     `markInDoubt`/`heldInDoubt` in `lib/request-id.ts`; while a key is held in doubt both checks
     are warnings that say to press again unchanged, and the server answers from the key.
+  - «جرد وإقفال اليومية» (PR #106) checked the error before the sheet, so a failed refocus read
+    unmounted the typed counts and an open close dialog; the report page did the same. A save
+    cleared every box, a correction typed while it was in flight included, and offered the close;
+    after `COUNT_EXPECTED_CHANGED` a second press filed the old reason against the new difference;
+    a close with a lost answer lost its message when the page moved on to the next day; the
+    refusal under the button showed an ISO date and Arabic commas in English. Fixed 2026-10-10
+    (seen in the harness): `readView` (`lib/read-view.ts`, STA-1) on both pages,
+    `draftsAfterSave`, `draftsAfterExpectedChanged` (the moved boxes emptied and marked, FRM-2),
+    `closeLanded` and a toast, `verdictParams` and `dayList` in `lib/daily-count.ts`.
   - An income category added inline on the recording form never reached the cached category
     lists (reference reads), so the register's filter and the next form missed it until a
     reload. Fixed 2026-10-10: `IncomeCategoryEditor` writes it into both (`withSavedCategory`).
@@ -925,7 +943,11 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
     second press there would bill every household twice.
 
 - **Printing** (PRIM-28): a page with no print root prints the receipt rule's blank sheet;
-  only the treasury statement has one. «طباعة الوصل» printed only the receipt's top strip,
+  only the treasury statement has one. «تقرير الصندوق اليومي» (`finance/daily/report`, PR #106)
+  was written before PRIM-28 and prints by its own sheet instead (`PRINT_CSS` in
+  `daily-cash-report.tsx`: A4 landscape, `#daily-cash-report` made visible over the receipt
+  rule); it should move to a print root. Not printed in the harness since the merge.
+  «طباعة الوصل» printed only the receipt's top strip,
   repeated on every A5 sheet, because its dialog is fixed and one screen tall (it predates
   PR #104); fixed 2026-10-09 by releasing the dialog in print. The drawn receipt is 653px
   tall at the A5-landscape width against a 484px sheet, so it printed whole over two A5

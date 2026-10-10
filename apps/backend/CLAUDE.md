@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes; uncommitted), 2026-10-10.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -29,8 +29,8 @@ Data access for new code (decided):
 - Application code MAY import from infrastructure only: `TenantContextService` and `TenantScope`,
   `runInTenantTransaction`, `tenantSchemaRef` / `tenantSchemaPrefix`, `withConnectionRetry` /
   `isTransientConnectionError`, `RedisCacheService`, `citizenPhoneRuleError` /
-  `violatedCheckConstraint` (`infrastructure/prisma/check-violation.ts`, which turns the `0072` CHECKs'
-  refusal into a coded `ValidationError`), and types or the `Prisma` namespace from
+  `violatedCheckConstraint` / `closedTreasuryDay` (`infrastructure/prisma/check-violation.ts`, which turn
+  the `0072` CHECKs' refusal into a coded `ValidationError` and read the day a `0082` trigger refused), and types or the `Prisma` namespace from
   `src/generated/tenant-client`. `TenantPrismaFactory` only in a background job that builds a tenant scope.
 - Application code MUST NOT import a `Prisma*Repository`, an adapter (`S3StorageService`,
   `SmtpEmailSender`, `SmsProviderService`, `WhishGatewayService`, `BcryptPasswordHasher`,
@@ -309,6 +309,28 @@ Data access for new code (decided):
   table read once per page rather than once per row. It carries no رقم مرجعي: that is a sign-in
   credential, and an integration test pins the row's exact key set so a field added later fails there
   rather than in a browser.
+- **Daily count and closing** (docs/finance.md §7, migrations 0082 and 0084). The rules are `day-closing.plan.ts`
+  (`planCountDate`, `planCountLine`, `planClosure`, `countsChangedSinceShown`, `planReopen`, `nextDayToClose`,
+  `summariseDay`);
+  `DayClosureService` (book state, a day's facts, `close`, `reopen`, `history`), `DailyCountService`
+  (`sheet`, `record`) and `DailyCashReportService` (`daily`) do the I/O; routes in
+  `TreasuryClosingController` (`t/:tenantSlug/treasury`: `counts`, `closures`, `closures/reopen`,
+  `reports/daily`). Read `TREASURY_READ_ROLES`, count and close `TREASURY_WORK_ROLES`, reopen
+  `TREASURY_ADMIN_ROLES`. Only a day that has ended closes; days with movement on a counted wallet close
+  in order, and the quiet days between are swept closed with the next close. Counting, closing and
+  reopening serialise on `TreasuryLedgerService.lockDayBook` (`<schema>:treasury-day-book`), and a close
+  also takes `SHARE` on `treasury_entries` so nothing lands in the day while it is judged. It reads
+  `ledger.config` (the settings row, `FOR SHARE`) before that `LOCK TABLE` and refuses a book not live
+  first: settings row, then entries, as every writer; the reverse deadlocked with activation. The close
+  carries the counts its dialog showed (`counts`, each with `countedAt`) and refuses a recount made
+  since with `COUNT_CHANGED_SINCE_LOADED`. `DailyCashReportService.daily` reads in one `RepeatableRead`
+  transaction and adds the go-live day's `OPENING_BALANCE` entries to the opening, not the receipts. The lock on
+  money is in `TreasuryLedgerService.post` (`assertDayOpen`), which every entry passes through, and in
+  `PaymentLedgerService.record` (`assertPaymentDayOpen`, only for a payment that reaches a wallet), with
+  the 0082 triggers underneath. A count stores the server's books figure and is refused, or goes stale
+  for the close, when the books move (`COUNT_EXPECTED_CHANGED`). Counts, closes, sweeps and reopens are
+  Tier 1 audit rows filed as `entityType 'TreasuryDay'`, `entityId` the date: the report's timeline
+  reads them.
 - **Document numbers.** `allocateDocumentNumbers` / `allocateDocumentNumber`
   (`application/common/document-number.ts`) is the only way a number is drawn, for all five books:
   «INV-2610-0001», «RCP-…», «PV-…», «TR-…», «RV-…». Pass the caller's `tx` and `this.S` — the draw and the
@@ -407,7 +429,8 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 
 1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
    settlements), payment reversals, activating the treasury, recording and cancelling an expense,
-   recording and cancelling an income voucher, receiving a collector's custody and cancelling a transfer, corrections, ownership changes (ending an ownership, making, updating
+   recording and cancelling an income voucher, receiving a collector's custody and cancelling a transfer,
+   counting the treasury, closing (and sweeping) and reopening a day, corrections, ownership changes (ending an ownership, making, updating
    or ending an owner link, a merge or its undo), ending a tenancy, review decisions (approving or returning
    a record, completing a quality check) and citizen status changes (archive and restore; a citizen file
    is never deleted). The row is written in the same transaction as the change; if it fails, the change
@@ -493,7 +516,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 136 spec files, 36 of them `*.integration.spec.ts` (counted on disk 2026-10-10, mid-merge of `fix/expense-retry-key-race`).
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 138 spec files, 37 of them `*.integration.spec.ts` (counted on disk 2026-10-10, mid-merge of PR #106 `feat/treasury-daily-count-and-closure`).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

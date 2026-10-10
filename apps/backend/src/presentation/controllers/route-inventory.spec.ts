@@ -201,8 +201,19 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     'TransfersController.list': READ,
     'TransfersController.receiveCustody': WORK,
     'TransfersController.void': ADMIN,
+    // Stage 5 (§7): the sheet, the history and the report are read; counting and closing are work;
+    // reopening a closed day is the manager's alone.
+    'TreasuryClosingController.sheet': READ,
+    'TreasuryClosingController.history': READ,
+    'TreasuryClosingController.daily': READ,
+    'TreasuryClosingController.record': WORK,
+    'TreasuryClosingController.close': WORK,
+    'TreasuryClosingController.reopen': ADMIN,
   };
-  const treasury = routes().filter((route) => /^(Treasury|Expenses|Income|Transfers)Controller\./.test(route.name));
+  // Every treasury controller by name: a new one is added here, or its handlers are pinned by nothing.
+  const treasury = routes().filter((route) =>
+    /^(Treasury|TreasuryClosing|Expenses|Income|Transfers)Controller\./.test(route.name),
+  );
 
   it('knows every treasury handler, and no other', () => {
     expect(treasury.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
@@ -213,9 +224,9 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
   });
 
-  it('lets no one but the manager order, refuse, regularise or cancel', () => {
+  it('lets no one but the manager order, refuse, regularise, cancel or reopen a closed day', () => {
     // `void` covers an expense, an income voucher and a transfer alike.
-    const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate'];
+    const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate', 'reopen'];
     const wider = treasury.filter(
       (route) => managerOnly.includes(route.name.split('.')[1]) && (route.roles ?? []).some((role) => role !== 'SUPER_ADMIN'),
     );

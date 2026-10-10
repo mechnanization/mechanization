@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes; uncommitted), 2026-10-10.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -23,8 +23,9 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
       the manager's payout is the order, anyone else's is said before and after to await it, D7)
     (settings › المالية: «سقف الدفع العاجل», one per currency, empty for none, `finance-section.tsx`;
       a save sends a ceiling only when its field changed, `ceilingChange` in lib/urgent-ceiling.ts)
-    finance (الخزينة) · finance/accounts/[accountId] (كشف حساب: prints as the daily register through
-      `data-print-root`; SUPER_ADMIN cancels a handover from its row, «إلغاء التسليم»,
+    finance (الخزينة) · finance/accounts/[accountId] (كشف حساب: prints through `data-print-root`;
+      until stage 5 the one-day print was the daily register, now finance/daily/report;
+      SUPER_ADMIN cancels a handover from its row, «إلغاء التسليم»,
       components/admin/finance/void-transfer-dialog.tsx, `mayVoidTransfer` in lib/treasury-statement.ts)
     finance/expenses (النفقات: the register is server-paged, filtered by band, wallet, status and
       from/to day, every filter, the view and the page in the URL; ?view=queue — «بانتظار أمر الصرف»:
@@ -38,6 +39,10 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
     finance/income/categories (بنود الإيرادات — every reader sees the list, the manager edits it)
     finance/collectors (الجباة والتحصيل — عهدة الجباة and «استلام الصندوق», moved off the treasury page)
     finance/collectors/[collectorId] (ما حصّله الجابي)
+    finance/daily (جرد وإقفال اليومية — the count, the close, the manager's reopen; `?date=`;
+      the close sends the counts its dialog listed, `closeRequest` in lib/daily-count.ts; a save
+      clears only the boxes it carried, `draftsAfterSave`; a lost close answer re-reads that day)
+    finance/daily/report (تقرير الصندوق اليومي — printed A4 landscape by its own print rules; `?date=`)
     my-round (جولتي — the collector's own pocket, phone-first, WORKING_STAFF_ROLES)
 
 `CitizenProfilePayment.invoiceNumber` carries «INV-2610-0001» and is what
@@ -53,7 +58,7 @@ and today's date, which is a different document from the one the citizen was han
     inspector/profile/** quality/**
 ```
 
-All 61 `page.tsx` files are `'use client'` and read `params` with `use(params)` (counted 2026-10-10).
+All 63 `page.tsx` files are `'use client'` and read `params` with `use(params)` (counted 2026-10-10, after PR #106 added `finance/daily` and `finance/daily/report`).
 `components/ui` is the kit (33 files, `alert.tsx` added 2026-10-06); `components/admin` holds staff screens (feature
 folders `cases/`, `damage/`, `finance/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
 form pieces used by staff screens, and only `pay-dialog` serves the portal. `lib` holds the
@@ -106,7 +111,8 @@ component types.
   - **A failed re-read keeps the page.** TanStack keeps the last data when a background
     re-read fails, and `error` comes back beside it. Show `ErrorState` only when nothing has
     loaded (`error && !data`); with data on screen, keep it and show `RefreshFailedAlert`
-    (`components/admin/refresh-failed-alert.tsx`) above it, with a retry. Replacing the page
+    (`components/admin/refresh-failed-alert.tsx`) above it, with a retry. `readView(data, error)`
+    (`lib/read-view.ts`) makes that choice once; the day-closing pages use it. Replacing the page
     unmounted whatever was open on it: a failed treasury re-read after an in-doubt handover
     unmounted the custody panel and its key, and the retry recorded the handover twice. A relative label («آخر ظهور»)
   needs the re-render as much as the data does, and the server's clock: the presence read
@@ -196,8 +202,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (1,590 leaf keys each before `fix/expense-retry-key-race` was merged in;
-  not recounted since). Read it with `useTranslations`.
+  the same keys in both (1,964 leaf keys each, counted 2026-10-10 after PR #106 was merged in). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -353,8 +358,8 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 31 test files (counted on disk
-2026-10-10, mid-merge of `fix/expense-retry-key-race`; cases not recounted).
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 34 test files (counted on disk
+2026-10-10, mid-merge of PR #106; cases not recounted).
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
 when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`.

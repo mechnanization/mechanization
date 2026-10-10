@@ -1,12 +1,13 @@
 # Finance (الخزينة والمالية) — design draft
 
-Status: **DESIGN, with stages 1, 2 and 3 built, and of stage 4 the collector handover, the accountant’s collector panel and «جولتي» (see section 14).** It records the design
-agreed in discussion, 2026-10-06. Stage 5 and the rest of stage 4 are not built,
-and every table, column, enum value and error code for them is a *proposal*
-until its migration exists (CLAUDE.md: never invent names; grep first). The
-built stages' names are real: they are in migrations `0073`, `0074`, `0078`,
-`0079`, `0080`, `0081` and `0083` and in the `treasury`, `expense`, `transfer` and `income`
-contracts of `packages/shared-schemas`.
+Status: **DESIGN, with stages 1, 2, 3 and 5 built, and of stage 4 the collector handover, the accountant’s collector panel and «جولتي» (see section 14).** It records the design
+agreed in discussion, 2026-10-06. The rest of stage 4 (exchange, Whish cash-out,
+bank deposit, petty cash, fees) and the §7.2 adjustment entry are not built, and
+every table, column, enum value and error code for them is a *proposal* until its
+migration exists (CLAUDE.md: never invent names; grep first). The built stages'
+names are real: they are in migrations `0073`, `0074`, `0078`, `0079`, `0080`,
+`0081`, `0082`, `0083` and `0084` and in the `treasury`, `expense`, `transfer`, `income`
+and `treasury-closing` contracts of `packages/shared-schemas`.
 Where the code was read, the file is cited. Where a claim could not be verified, it
 is marked **[unverified]**. Where a choice was assumed and not explicitly confirmed,
 it is marked **[assumed]**.
@@ -429,8 +430,9 @@ Decree 5595 of 22 September 1982 (تحديد أصول المحاسبة في ال
   through advances approved by the head (art. 37–42).
 
 The first design had no approval step and leaned on "the daily count and close" as the
-control that would make up for it. That count is stage 5, which isn't built. Without it,
-one accountant could record and pay any expense alone, which is exactly the
+control that would make up for it. That count is stage 5, which was not built then (it
+was built on 2026-10-10, §7). Without an approval step, one accountant could record and
+pay any expense alone, which is exactly the
 single-person outflow the decree's separation is there to prevent.
 
 ```
@@ -682,20 +684,27 @@ the category «رسوم تحويل ومصرفية», all in one atomic transacti
 
 ## 7. Daily count and closing (Step 5)
 
-**Until stage 5 ships (decided 2026-10-09).** The decree has the cashier keep a daily
-register: the opening balance, the day's receipts and payments, and the closing
-balance. A new day's register is not opened until the previous one is closed (art. 101).
+The decree has the cashier keep a daily register: the opening balance, the day's
+receipts and payments, and the closing balance. A new day's register is not opened
+until the previous one is closed (art. 101).
 
-Activation is not held back for stage 5. With the payment order in place (§5.1), the
-expense outflow no longer rests on the count alone. In the meantime:
+**Stage 5 is built (2026-10-10, PR #106; §14).** The count is recorded per wallet in
+the system (§7.1), the day is closed there and refuses anything dated on or before it
+(§7.3), and the register is «تقرير الصندوق اليومي» (§7.4, `finance/daily/report`),
+printed with signature lines for the accountant and the head of the municipality.
 
-- A wallet's statement for a single day is that register. «اليوم» on the statement
+**Before stage 5 (D4, decided 2026-10-09; replaced by the above).** Activation was not
+held back for stage 5: with the payment order in place (§5.1), the expense outflow no
+longer rested on the count alone. In the meantime:
+
+- A wallet's statement for a single day was that register. «اليوم» on the statement
   screen reads one day on Beirut's calendar, from its opening balance to its close.
-- The accountant prints it, counts the cash against it, and signs it with a second
+- The accountant printed it, counted the cash against it, and signed it with a second
   person. «طباعة» on the statement prints it alone on A4 (`data-print-root`): the
   municipality, the wallet, the day, the opening and closing balances, every
   movement, the print time, and signature lines for the cashier and the accountant.
-- A difference is written on the paper, never posted (§7.2).
+  It still prints, as a wallet's statement; it is no longer the register.
+- A difference was written on the paper, never posted (§7.2).
 
 ### 7.1 The count (جرد الصندوق)
 
@@ -720,25 +729,62 @@ new entries). A day may be closed with an unresolved difference.
 ### 7.3 Closing the day (إقفال اليومية)
 
 - A day locks **only when explicitly closed**, not by a clock at midnight (closing
-  often happens at 09:00 the next morning).
+  often happens at 09:00 the next morning). **Only a day that has ended can be
+  closed** (decided by the owner on 2026-10-10): closing today would refuse every
+  payment until midnight, the automatic Whish confirmations included, because they
+  are stamped with the real clock. Today can be counted; it closes tomorrow
+  (`DAY_NOT_OVER`).
 - Who closes: `ACCOUNTANT` or `SUPER_ADMIN`. The same person may count and close;
   there is no separate-closer rule and no setting for it.
 - Days **with movements** must be counted and closed **in chronological order**.
 - Days **with no activity** (no entries, balance unchanged) are closed
   **automatically**, lazily, when the next active day is closed — no scheduled job
-  (scheduler ownership is a known trap in `docs/gotchas.md`).
+  (scheduler ownership is a known trap in `docs/gotchas.md`). **Activity means an
+  entry on a counted wallet** (decided by the owner on 2026-10-10): a day on which
+  only collectors' custody moved is swept closed too, because nothing in it could
+  be counted differently from the day before. A swept day locks like any other.
 - Once closed: **hard lock.** Any entry dated on or before a closed day is refused.
   A late entry must be dated on the current open day, with a note. This also applies
   to `PaymentLedgerService` (a backdated citizen payment or a collector round entered
   into a closed day is refused). **This changes the existing payment path** and needs
   its own tests.
-- **Reopening a day:** `SUPER_ADMIN` only, with a reason, audited.
+- **Reopening a day:** `SUPER_ADMIN` only, with a reason, audited. **The latest
+  closed day only** (the stage 5 brief): reopening an older one would leave a
+  closed day after an open one. A reopened day must be closed again before any
+  later day can be (`CLOSURE_OUT_OF_CHRONOLOGICAL_ORDER`).
+- **Signed off on what the dialog showed** (PR #106 review, 2026-10-10). The close
+  sends every count its confirm dialog listed, each with its `countedAt`
+  (`closeDaySchema.counts`). A count recorded, replaced or added since — another
+  accountant's recount while the dialog was open — is refused with
+  `COUNT_CHANGED_SINCE_LOADED`, and the screen reads the sheet again. The books'
+  check cannot see this: a recount agrees with the books as well as the count it
+  replaced.
+- **One lock order.** A close takes the day book's advisory lock, then the settings
+  row (`ledger.config`, `FOR SHARE`), then `SHARE` on `treasury_entries`: the
+  settings row before the entries, as every writer takes them. Taken the other way
+  it deadlocked with activation, which holds the row `FOR UPDATE` while it posts the
+  opening balances (reproduced on Postgres 17). A close before go-live is refused
+  (`TREASURY_NOT_ACTIVE`) before anything is locked.
+- **A closure is written once** (migration `0084`). Its day never moves; reopening
+  keeps who closed it and when; the only changes are CLOSED → REOPENED and
+  REOPENED → CLOSED. A count is linked only to its own day's closure, and the link
+  is never moved or removed. Before `0084` an `UPDATE` of `businessDate` silently
+  reopened a day.
 
 ### 7.4 The daily report (تقرير الصندوق اليومي)
 
 Per wallet: opening balance, receipts, payments, closing balance, count, difference.
 A visible summary line "cash held by collectors" (custody balances) — **not**
 required for closing. Printable.
+
+- **The go-live day opens on the counted balances.** Activation's `OPENING_BALANCE`
+  entries are dated inside the go-live day, but they are what the wallets held when
+  the treasury started, not money received that day: the report adds them to the
+  opening balance, never to the receipts (art. 101 keeps the two apart). Opening +
+  receipts − payments = closing still holds (`summariseDay`'s `opening`).
+- **One snapshot.** Every figure on the sheet is read in one `RepeatableRead`
+  transaction, as the wallet statement is, so a voucher or a recount committed
+  while the report is read is on none of it rather than on half of it.
 
 ### 7.5 Whish and bank
 
@@ -786,7 +832,11 @@ Two working roles. The **accountant** runs the daily work. The **manager
 
 `ACCOUNTANT` and `SUPER_ADMIN` can reuse `FINANCE_OVERRIDE_ROLES` from
 `cash-policy.ts`. `@Roles` on **every** handler, and `route-inventory.spec.ts` pins every
-treasury handler to its row of this table, so widening one is a decision made there.
+treasury handler to its row of this table, so widening one is a decision made there. That
+includes stage 5's `TreasuryClosingController` (sheet, history and report read; count and
+close work; reopen the manager's), and reopening a closed day is in its manager-only check
+beside ordering, refusing, regularising, cancelling and activation. Until the PR #106 review
+the pin's filter missed that controller, and all six handlers were unpinned.
 `ADMINISTRATIVE_OFFICER` reads `custody/mine` too: the route is on every role but
 «مشاهد فقط», as the next paragraph says.
 
@@ -813,8 +863,8 @@ inspectors who carry the cash; staff with no custody get an empty round.
 | `expense_categories`, `expense_vouchers` | Expenses | `PV-` number (0079); status (RECORDED, VOID); wallet, recorded by, void reason; invoice fields; the payment order — `orderedAt`/`orderedById`, `urgentReason` for art. 35 (0083); `payeeStaffId` for a salary (0081, built) |
 | `expense_requests` | Payment-order requests (0083) | category, wallet + currency, amount, payee, description; requested by; the decision written once (ORDERED with its voucher, REJECTED with a reason, WITHDRAWN) |
 | `treasury_transfers` | Transfers, exchanges, handovers | `TR-` sequence; from/to accounts; amounts; rate, official rate, `adjustmentReason`; fee amount; money changer name; review flag + reviewed by/at |
-| `treasury_counts` | Daily count per wallet | expected, counted, difference, reason, counter |
-| `treasury_day_closures` | Closed days | business date, closed by/at, reopen history |
+| `treasury_counts` | Daily count per wallet | **Built, 0082.** `(accountId, currency)` FK, `businessDate`, `expectedAmount`, `countedAmount`, `difference` (CHECK = counted − expected), `varianceReason` (CHECK: required when the difference is not zero), `countedById`/`countedAt`, `closureId`. One per wallet per day |
+| `treasury_day_closures` | Closed days | **Built, 0082.** `businessDate` (unique), `status` (`TreasuryDayStatus`: CLOSED, REOPENED; no row = open), `autoClosed`, `closedById`/`closedAt`, `reopenedById`/`reopenedAt`/`reopenReason` (CHECK: set exactly while REOPENED). Reopen history lives in the audit log |
 | `system_settings` (existing) | Add columns | `treasuryGoLiveAt`, rate tolerance %, large-exchange threshold |
 | `inspector_payouts` (existing) | Add column | link to its expense voucher |
 
@@ -935,7 +985,7 @@ municipal cash-handling practice, and is pinned by
 | D1 | A collector's payment reversed after he handed the cash in: which wallet pays? | His custody while it still holds all of it; otherwise the safe of the same currency (§3.4) | Decree 5595/1982 art. 93: a collector pays nothing out. Municipal policies route refunds through the treasury's disbursement, never out of collections |
 | D2 | Who may date a payment before go-live, once the treasury is live? | A finance role only, and the audit row says no wallet was credited (§3.3) | Art. 16 and 98: a receipt is written when the money is taken. The go-live cut-off is the opening count |
 | D3 | May an accountant pay an expense without the head's order? | No: a request for the manager's order; art. 35 urgent payments first, regularised after (§5.1) | Art. 21, 28, 33, 35, 85, 89 |
-| D4 | Must stage 5 exist before a municipality activates the treasury? | No, with D3 in place; until it ships, the one-day statement is the daily register, printed, counted and signed (§7) | Art. 101: the daily register, closed before the next opens |
+| D4 | Must stage 5 exist before a municipality activates the treasury? | No, with D3 in place; until it shipped, the one-day statement was the daily register, printed, counted and signed. Stage 5 was built on 2026-10-10 (PR #106): the day is now counted and closed in the system and «تقرير الصندوق اليومي» is the register (§7) | Art. 101: the daily register, closed before the next opens |
 | D5 | Which side of go-live is the go-live day itself? | Live, for payments, expenses and income alike. A document dated that day is placed at the opening entry or after it, never before (§3.3) | Cutover practice: every receipt taken before the opening count is entered before activation, so what is entered for that day afterwards is new cash. Art. 16 and 98: a receipt carries the day the money was taken |
 | D6 | Is the accountant's urgent path (art. 35) limited? (decided by the owner, 2026-10-10) | Yes: a per-voucher ceiling per currency (LBP, USD) that the manager sets in الإعدادات. Above it, `EXPENSE_URGENT_OVER_CEILING`, and the expense goes as a request. NULL means none. Not for the manager's voucher, nor for a salary (§5.1) | Art. 35 covers salaries, routine petty expenses and genuinely urgent ones. A ceiling keeps a large purchase on the order path (art. 28, 33) without slowing what the article lets through |
 | D7 | Does an accountant's salary payout need the manager's order first? (decided by the owner, 2026-10-10) | No: it is paid on the urgent path with the server's reason «راتب — يُدفع قبل الحوالة (المادة 35)», and waits for regularisation. The manager's payout is the order (§5.8) | Art. 35 names salaries among what may be paid before the order |
@@ -1094,7 +1144,8 @@ once after the fix.
   (`replayed`).
 - A handover dialog closed and reopened keeps its key (held per wallet by the
   panel), and re-reads the figures after a doubtful failure.
-- The statement prints as the daily register (§7).
+- The statement prints as the daily register (§7); stage 5 has since replaced it with
+  «تقرير الصندوق اليومي» (§7.4).
 - The manager can cancel a mistaken handover from its row on the statement
   («إلغاء التسليم», reason required). The money goes back onto the collector's name;
   it is refused (`TREASURY_INSUFFICIENT_FUNDS`) once the safe no longer holds it.
@@ -1352,9 +1403,101 @@ not citizen-fee income beside them; there is no printable «سند قبض» (nor
 QR code); the totals have no convert toggle. Not rendered in a browser (no check at 360/1440px, light/dark,
 Arabic/English) and not exercised over HTTP.
 
-### Stage 5
+### Stage 5 — the daily count, closing the day and the daily report (built 2026-10-10; branch `feat/treasury-daily-count-and-closure`, PR #106; merged with the PR #104 review on `feat/treasury-day-closing`, not committed)
 
-Not started.
+Built as §7 describes, with the two decisions of 2026-10-10 (only an ended day
+closes; activity means a counted wallet moved):
+
+- Migration `0082_treasury_day_closing`: `treasury_day_closures`,
+  `treasury_counts` and the `TreasuryDayStatus` enum (§10), and three triggers.
+  `treasury_entries_respect_closed_days` refuses an entry inserted, updated or
+  deleted on or before a CLOSED day; `treasury_counts_respect_closed_days`
+  refuses any change to a closed day's count except closing's own link to its
+  closure; `treasury_day_closures_no_delete` makes a closure undeletable. The
+  day is `occurredAt AT TIME ZONE 'Asia/Beirut'` — the database's copy of
+  `MUNICIPAL_TIME_ZONE`. Each function pins its `search_path`.
+- Contracts (`treasury-closing.schema.ts`): `recordDailyCountSchema` (a day
+  begun, any subset of wallets, amounts ≥ 0 with two decimals, and a reason
+  wherever counted ≠ the books' figure the screen showed), `closeDaySchema`,
+  `reopenDaySchema` (`REOPEN_REASON_MIN` = 10), `treasuryDayQuerySchema`,
+  `dailyCashReportQuerySchema`, the response shapes, `sameMoney` and
+  `varianceOf` (both apps compute a difference the same way). Thirteen error
+  codes: the ten of the brief plus `COUNT_EXPECTED_CHANGED`, `DAY_NOT_OVER` and
+  `DAY_BEFORE_GO_LIVE`.
+- Backend: `day-closing.plan.ts` (the rules, 37 unit tests), `DayClosureService`
+  (book state, a day's facts, close with the sweep of quiet days, reopen,
+  history), `DailyCountService` (the sheet, recording), `DailyCashReportService`,
+  `TreasuryClosingController`. `TreasuryLedgerService.post` refuses any entry on
+  a closed day (`CLOSED_DAY_MUTATION_BLOCKED`), so every voucher, transfer,
+  reversal and payment is covered; `PaymentLedgerService.record` asks the same
+  before it draws a receipt number, for a payment that would reach a wallet. A
+  trigger refusal that slips past the check is mapped back to the same code
+  (`closedTreasuryDay` in `check-violation.ts`).
+- **The books' figure is the server's, and a count goes stale.** The screen
+  sends the figure it compared against; the server refuses a count whose figure
+  has moved, and a close whose counts no longer match the books
+  (`COUNT_EXPECTED_CHANGED`). A close takes `SHARE` on `treasury_entries`, so an
+  entry already being written into the day is waited for and judged, and no new
+  one lands while the close decides.
+- Which wallets a day counts: active, not custody, and opened by the day's end
+  **or holding an entry before it** — a wallet's `createdAt` is not when it first
+  held money (a custody wallet is created by a round that may be entered days
+  late).
+- Every count, close, sweep and reopen is a Tier 1 audit row filed as
+  `entityType 'TreasuryDay'`, `entityId` the date, so the report reads the
+  day's history — the reopening's reason included — from one place.
+- Frontend: «جرد وإقفال اليومية» (`finance/daily`, the fifth «الخزينة» row) —
+  the day picker, the sheet with the live difference (فائض / عجز) and a reason box
+  only where there is one, the close panel that explains a refusal in the
+  server's own words and confirms with the figures, the manager's reopen with a
+  reason, and the latest closures. «تقرير الصندوق اليومي»
+  (`finance/daily/report?date=`): the official letterhead from الإعدادات, wallets
+  (opening, in, out, closing, counted, difference, notes) with totals per
+  currency, movement by source, collectors' custody apart, the day's history,
+  two signature blocks, «مسودة» on any day not closed, and print rules for A4
+  landscape.
+- Tests: 37 unit (rules), 33 integration on a throwaway Postgres 17 (schema,
+  counting, closing, sweeping, the lock on the ledger, the payment path and the
+  database, reopening, the report, and two races), 2 for the trigger mapper, 10
+  frontend (`lib/daily-count.ts`). Rendered against the local seeded database at
+  360 and 1440px, light and dark, Arabic and English; the closed and closable
+  states with the API's answer rewritten in the test browser, so the local data
+  was not changed.
+
+**Review fixes (2026-10-10, on `feat/treasury-day-closing`, not committed).** The PR #106
+review's confirmed findings, each with a test that fails without its fix (proved by breaking
+the fix in place and restoring it byte for byte):
+
+- The close takes the settings row before `SHARE` on the entries, and refuses a book that is
+  not live first (§7.3, «One lock order»). Integration test: activation holds the row and
+  posts while a close waits; both finish, the close with `TREASURY_NOT_ACTIVE`.
+- The go-live day's opening balances are its opening, not its receipts (§7.4). Unit test on
+  `summariseDay`, integration test on D0's report.
+- The report reads one snapshot (§7.4). Integration test: an entry committed between the
+  report's first read and its openings is on none of it.
+- The close carries the counts the dialog listed (§7.3, `COUNT_CHANGED_SINCE_LOADED`, the
+  fourteenth stage 5 code; `countsChangedSinceShown` in the plan). Unit and integration tests.
+- Migration `0084_treasury_day_closure_written_once` (§7.3). Integration tests: idempotent, the
+  day never moves, who closed it is never rewritten, a reopening's reason is not rewritten, the
+  reopen and re-close transitions pass, and a count links only to its own day's closure, once.
+- `route-inventory.spec.ts` pins the six stage 5 handlers (§9).
+- The count screen: a failed background re-read keeps the sheet and the typed boxes and shows
+  `RefreshFailedAlert`, on the report too (`lib/read-view.ts`); a box corrected while
+  «سجّل الجرد» is in flight is kept, unsaved, and holds the close (`draftsAfterSave`); after
+  `COUNT_EXPECTED_CHANGED` the moved wallets' figure and reason are emptied and marked, so
+  the old reason is never filed against the new difference (`draftsAfterExpectedChanged`); a
+  close whose answer is lost re-reads its own day and says it closed in a toast that outlives
+  the dialog (`closeLanded`); the refusal under the close button names the day as
+  `dd/mm/yyyy` and lists swept days with the locale's comma. Unit tests in
+  `lib/daily-count.test.ts` and `lib/read-view.test.ts`; each flow driven again in the
+  headless harness against a mocked API.
+- Tests now: 40 unit (rules), 41 integration on Postgres 17, 20 frontend for stage 5
+  (`lib/daily-count.ts`, `lib/read-view.ts`).
+
+**Not in stage 5**: the §7.2 adjustment entry (a difference stays recorded and
+unposted), note-by-note counting, statement matching (§7.5), and a date picker
+on the voucher forms that stops before the closed days (a back-dated voucher into
+one is refused by the server, with the day named).
 
 ---
 

@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; uncommitted), 2026-10-10.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -44,9 +44,9 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - **The treasury (الخزينة)**: live balances of the municipality's cash safe and Whish account in
     ليرة and dollars, a statement for each, and their total at the municipality's rate. A citizen payment credits
     the right wallet automatically. `SUPER_ADMIN` activates it once by entering the counted opening
-    balances; the accountant works it, the auditor and view-only staff read it. Income and the
-    collector handover are below; the other transfers and the daily count follow in later stages
-    ([docs/finance.md](docs/finance.md)).
+    balances; the accountant works it, the auditor and view-only staff read it. Income, the
+    collector handover and the daily count and day closing are below; exchange, bank deposits and
+    petty cash follow in later stages ([docs/finance.md](docs/finance.md)).
   - **النفقات**: an expense register and «أمر صرف».
     - Money leaves on the payment order, as the municipal accounting decree requires (Decree
       5595/1982 art. 28 and 33). The accountant prepares «طلب أمر صرف»: what, to whom, from which
@@ -102,6 +102,17 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     transfer. A number read over the phone says which book it came from. Documents issued before
     the change keep the numbers already printed on them; bills raised before it stay without one,
     because a number minted today for a document issued last year would be a fiction.
+  - **جرد وإقفال اليومية**: at the end of a municipal day the accountant counts each wallet — the
+    notes in the safe, the balance in the Whish app or on the bank statement — beside what the books
+    say, and writes why wherever the two differ (فائض or عجز). A difference never changes the books.
+    Once the day is over (the next morning, typically) the accountant or the manager closes it: from
+    then on nothing dated on that day or before it can be recorded, not a payment, a voucher or a
+    transfer, and a late one is entered on the day it is entered. Days on which no counted wallet
+    moved close by themselves with the next close. Only the manager can reopen a day — the latest
+    one, with a reason that stays on the record. «تقرير الصندوق اليومي» prints the day on A4: each
+    wallet's opening balance, money in and out, closing balance, count and difference, the cash still
+    with collectors set apart, the day's history, and signature lines for the accountant and the head
+    of the municipality.
   - **جولتي**: the collector's own screen, on his own phone. What is in his pocket, then every door
     he collected at since his last handover — the citizen, his unit, the amount, the time and the
     receipt number — with the وصل one tap away to print, download or send over WhatsApp. He sees his

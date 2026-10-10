@@ -163,6 +163,15 @@ export class PaymentLedgerService {
         });
       }
 
+      /*
+        A closed treasury day takes nothing (docs/finance.md §7.3): a collector's
+        round or a counter payment back-dated into one is refused here, before a
+        receipt number is drawn, rather than by the ledger's own check further
+        down. Today is never closed — only a day that has ended can be — so an
+        undated payment always passes.
+      */
+      await this.treasury.assertPaymentDayOpen(tx, input.occurredAt ?? new Date());
+
       // Money cannot have been taken against a bill before the bill existed.
       if (input.occurredAt && municipalToday(input.occurredAt) < municipalToday(invoice.createdAt)) {
         throw new ValidationError({
