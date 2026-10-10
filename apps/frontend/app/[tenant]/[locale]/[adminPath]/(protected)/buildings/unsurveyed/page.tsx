@@ -235,7 +235,7 @@ export default function UnsurveyedUnitsPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <PageHeader icon={ScanSearch} title={t('title')} subtitle={seesAll ? t('subtitleAll') : t('subtitleMine')} />
+      <PageHeader icon={ScanSearch} title={t('title')} />
 
       {seesAll ? <WorklistOwnerFilter value={owner} onChange={narrow} ownerName={ownerName} /> : null}
 

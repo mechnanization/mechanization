@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/living-floors` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -41,6 +41,63 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - A cadastral map explorer with parcel numbering and sector zones.
   - CSV export with formula-injection-safe cells.
   - An append-only audit log of staff actions.
+  - **The treasury (الخزينة)**: live balances of the municipality's cash safe and Whish account in
+    ليرة and dollars, a statement for each, and their total at the municipality's rate. A citizen payment credits
+    the right wallet automatically. `SUPER_ADMIN` activates it once by entering the counted opening
+    balances; the accountant works it, the auditor and view-only staff read it. Exchange, bank
+    deposits and petty cash follow in later stages ([docs/finance.md](docs/finance.md)).
+  - **النفقات**: an expense register and «أمر صرف». The accountant or the manager records what was
+    paid, to whom, from which wallet and against which budget category, and the money leaves the
+    wallet in the same act — there is no approval queue. A mistake is cancelled with a reason, which
+    returns the money and keeps both the voucher and its cancellation on the record. Only the
+    manager may cancel. A salary or wage is paid from the staff list itself («صرف راتب / أجر»): the
+    manager picks the wallet, the amount and the month, and the voucher is filed under «رواتب وأجور»,
+    in the staff member's own name and linked to their account. The staff list no longer shows the
+    field inspectors' commission cards; an inspector's earnings stay on their own profile.
+  - **الإيرادات**: a register of «سند قبض إيرادات» — money that reaches the treasury without a
+    citizen's bill: the Independent Municipal Fund, the state's share of telephone, electricity and
+    water revenue, permits, rent on municipal property, grants, fines. The accountant or the manager
+    records the amount, the wallet it arrived in (a cash safe, Whish or a bank account, never a
+    collector's custody), the source category, the payer and the cheque or transfer number, and the
+    wallet's balance rises in the same act. Numbered «RV-2610-0001». Only the manager may cancel, with
+    a reason, and a cancellation is refused once the wallet has spent the money. Citizen fees are not
+    entered here: they credit the wallets on their own. The manager manages the income categories on
+    «بنود الإيرادات» — adds one (from that page, or without leaving a half-filled voucher), renames it,
+    gives it an English name or its budget chapter and article, and stops or restarts it. A category
+    is never deleted; a stopped one leaves the form and stays in the register.
+  - **عهدة الجباة**, on its own page «الجباة والتحصيل» rather than on the treasury's, since it is
+    not the treasury's money yet: what each collector is still carrying from his round, and «استلام الصندوق» —
+    the accountant counts the notes with him and records the handover, which moves the money from
+    his name into the cash safe. Cash a collector took at a door is never counted as the
+    municipality's until that moment. A partial handover is normal; the rest stays on his name.
+  - **ما حصّله الجابي**: beside «استلام الصندوق», the people behind the figure — every receipt he
+    wrote at a door, with the citizen who paid, what the bill was for, and how much. What the
+    accountant reads while the notes are on the desk, and what settles «قلت إني دفعت لعلي» when a
+    citizen comes back. Collected and held are two different numbers and the screen says why: the
+    difference is what he has already handed in. Each collector also carries a status read off his
+    receipts — «يجمع اليوم», «لم يخرج اليوم», «سلّم كل شيء» — and the day's count and takings.
+  - **ترقيم المستندات**: every document the municipality issues carries its book, the month it was
+    issued in and a counter that restarts each month — «INV-2610-0001» for a bill, «RCP-2610-0001»
+    for the receipt, «PV-» for an expense voucher and «TR-» for a transfer. A number read over the
+    phone says which book it came from. Documents issued before the change keep the numbers already
+    printed on them; bills raised before it stay without one, because a number minted today for a
+    document issued last year would be a fiction.
+  - **جرد وإقفال اليومية**: at the end of a municipal day the accountant counts each wallet — the
+    notes in the safe, the balance in the Whish app or on the bank statement — beside what the books
+    say, and writes why wherever the two differ (فائض or عجز). A difference never changes the books.
+    Once the day is over (the next morning, typically) the accountant or the manager closes it: from
+    then on nothing dated on that day or before it can be recorded, not a payment, a voucher or a
+    transfer, and a late one is entered on the day it is entered. Days on which no counted wallet
+    moved close by themselves with the next close. Only the manager can reopen a day — the latest
+    one, with a reason that stays on the record. «تقرير الصندوق اليومي» prints the day on A4: each
+    wallet's opening balance, money in and out, closing balance, count and difference, the cash still
+    with collectors set apart, the day's history, and signature lines for the accountant and the head
+    of the municipality.
+  - **جولتي**: the collector's own screen, on his own phone. What is in his pocket, then every door
+    he collected at since his last handover — the citizen, his unit, the amount, the time and the
+    receipt number — with the وصل one tap away to print, download or send over WhatsApp. He sees his
+    own round and nothing else of the treasury: it is the answer to «كم بجيبتي؟», not a view of the
+    municipality's books.
 - **The municipality head (`VIEWER`, مشاهد فقط)** reads the dashboard, the reports, the
   register with its citizens' data, the census, the cases and the fees, and changes nothing
   (decision of 2026-10-05). Every mutating route refuses the role and its screens offer no

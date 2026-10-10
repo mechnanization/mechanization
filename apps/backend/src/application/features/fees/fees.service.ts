@@ -35,6 +35,7 @@ import {
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
+import { allocateDocumentNumber, allocateDocumentNumbers } from '../../common/document-number';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
 import { ownerBillingRules } from '../buildings/owner-billing';
@@ -1178,6 +1179,8 @@ export class FeesService {
         select: { id: true },
       });
 
+      // Taken before the insert; see `numberInvoices`.
+      const raisedAt = new Date();
       const created = await tx.citizenPayment.createMany({
         data: billable.map((entry) => ({
           citizenId: entry.citizenId,
@@ -1203,6 +1206,14 @@ export class FeesService {
         // request tops up missing rows instead of failing the whole batch.
         skipDuplicates: true,
       });
+
+      await this.numberInvoices(
+        tx,
+        notice.id,
+        periodKeyFor(input.frequency, dueDate),
+        created.count,
+        raisedAt,
+      );
 
       return { noticeId: notice.id, issued: created.count };
     });
@@ -1440,17 +1451,28 @@ export class FeesService {
         );
       }
 
-      const created = await this.db.citizenPayment.createMany({
-        data: billable.map((entry) => ({
-          citizenId: entry.citizenId,
-          feeNoticeId: notice.id,
-          title: notice.title,
-          amount: entry.amount,
-          assessment: (entry.assessment ?? undefined) as never,
-          dueDate,
-          periodKey,
-        })),
-        skipDuplicates: true,
+      /*
+        The insert and the numbering share a transaction, so a period is never
+        left with bills that carry no number. It holds this month's invoice
+        counter for the length of the batch — acceptable here because the
+        recurring job runs at 2am and is the only thing issuing bills at that
+        hour, and the alternative is a half-numbered period.
+      */
+      const created = await this.db.$transaction(async (tx) => {
+        const inserted = await tx.citizenPayment.createMany({
+          data: billable.map((entry) => ({
+            citizenId: entry.citizenId,
+            feeNoticeId: notice.id,
+            title: notice.title,
+            amount: entry.amount,
+            assessment: (entry.assessment ?? undefined) as never,
+            dueDate,
+            periodKey,
+          })),
+          skipDuplicates: true,
+        });
+        await this.numberInvoices(tx, notice.id, periodKey, inserted.count, startedAt);
+        return inserted;
       });
 
       if (created.count > 0) {
@@ -2540,17 +2562,79 @@ export class FeesService {
     // A bill on a file folded into another is one the person never sees.
     await assertNotMergedAway(this.db, citizen.id);
 
-    const created = await this.db.citizenPayment.create({
-      data: {
-        citizenId: citizen.id,
-        title: input.title,
-        amount: input.amount,
-        dueDate: new Date(input.dueDate),
-      },
-      select: { id: true },
+    /*
+      One bill, so the number goes straight into the row rather than through
+      `numberInvoices` — there is no notice to scope an after-the-fact update
+      by, and nothing here is skipped as a duplicate. The transaction is what
+      ties the number to the bill: drawn and then not used, it would be printed
+      on nothing.
+    */
+    const created = await this.db.$transaction(async (tx) => {
+      const invoiceNumber = await allocateDocumentNumber(tx, this.S, 'INVOICE');
+      return tx.citizenPayment.create({
+        data: {
+          citizenId: citizen.id,
+          title: input.title,
+          amount: input.amount,
+          dueDate: new Date(input.dueDate),
+          invoiceNumber,
+        },
+        select: { id: true },
+      });
     });
 
     return { id: created.id };
+  }
+
+  /**
+   * Puts «INV-2610-0001» on the bills just raised, in the order they were created.
+   *
+   * Numbered **after** the insert rather than in it, because `createMany` runs
+   * with `skipDuplicates`: a block reserved beforehand would be sized to what we
+   * meant to write, and a re-run that inserts nothing would burn a month's worth
+   * of numbers on documents that do not exist. `count` is `createMany`'s own
+   * return, so exactly as many numbers are drawn as there are rows to carry them.
+   *
+   * `since` is taken before the insert and is what keeps this off bills raised
+   * earlier. Without it, a recurring notice re-billed for a period that was
+   * already billed before migration 0079 would hand this run's numbers to those
+   * older, unnumbered rows — the oldest first, by this very ordering — and leave
+   * the new ones blank. Bills issued before 0079 stay unnumbered on purpose.
+   *
+   * The numbers are formatted once, in TypeScript, and carried into the
+   * statement as a VALUES list: building them in SQL instead would be a second
+   * copy of `formatDocumentNumber` waiting to drift from the first.
+   */
+  private async numberInvoices(
+    tx: Prisma.TransactionClient,
+    noticeId: string,
+    periodKey: string,
+    count: number,
+    since: Date,
+  ): Promise<void> {
+    if (count < 1) return;
+
+    const numbers = await allocateDocumentNumbers(tx, this.S, 'INVOICE', count);
+    const assigned = Prisma.join(
+      numbers.map((number, index) => Prisma.sql`(${index + 1}::bigint, ${number}::text)`),
+    );
+
+    await tx.$executeRaw`
+      WITH ordered AS (
+        SELECT "id", row_number() OVER (ORDER BY "createdAt", "id") AS "rn"
+          FROM ${this.S}citizen_payments
+         WHERE "feeNoticeId" = ${noticeId}::uuid
+           AND "periodKey" = ${periodKey}
+           AND "invoiceNumber" IS NULL
+           AND "createdAt" >= ${since}
+      ),
+      assigned ("rn", "number") AS (VALUES ${assigned})
+      UPDATE ${this.S}citizen_payments AS p
+         SET "invoiceNumber" = assigned."number"
+        FROM ordered, assigned
+       WHERE assigned."rn" = ordered."rn"
+         AND p."id" = ordered."id"
+    `;
   }
 
   /** The include this app always joins onto a `CitizenPayment` for admin use — kept

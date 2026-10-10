@@ -138,11 +138,6 @@ export default function CorrectionBillsPage({
       <PageHeader
         icon={FileWarning}
         title={en ? 'Bills affected by corrections' : 'فواتير تأثّرت بتصحيحات'}
-        subtitle={
-          en
-            ? 'Unpaid bills whose basis changed after the record behind them was corrected. Bills are never changed automatically; the decision is yours.'
-            : 'فواتير غير مسدَّدة تغيّر أساس احتسابها بعد تصحيح السجل الذي بُنيت عليه. لا تتغيّر أي فاتورة تلقائياً؛ القرار للمحاسب.'
-        }
         actions={
           <Button variant="outline" size="sm" onClick={() => listQuery.refetch()} disabled={listQuery.fetching}>
             <RefreshCw className={cn('size-4 rtl:ml-1.5 ltr:mr-1.5', listQuery.fetching && 'animate-spin')} aria-hidden />

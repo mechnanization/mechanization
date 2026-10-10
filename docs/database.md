@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
+Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -47,11 +47,18 @@ every municipality ([security.md](security.md)).
 | Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions`, `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` | `FeesService`, `PaymentLedgerService`, `CorrectionBillsService`, `StaffService` (payouts) |
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
+| Transfers (0078) | `treasury_transfers` | `TransfersService` (the collector handover; a Whish cash-out, a bank deposit and an exchange share the table and come later) |
+| Expenses (0074) | `expense_categories`, `expense_vouchers` (`payeeStaffId`, 0081: the staff account a salary voucher paid, NULL otherwise; a FK to `users` that cannot say STAFF, so `recordSalary` filters `kind`) | `ExpensesService` |
+| Income (0080) | `income_categories`, `income_vouchers` (`payerName` is free text that may name a citizen) | `IncomeService` |
+| Document numbers (0079) | `document_counters`, one row per (book, month) | `allocateDocumentNumbers` |
+| Daily count and closing (0082) | `treasury_day_closures` (one row per closed or reopened day), `treasury_counts` (one count per wallet per day) | `DayClosureService` (close, sweep, reopen), `DailyCountService` (counts) |
+| Treasury (0073) | `treasury_accounts`, `treasury_entries`, and `system_settings.treasuryGoLiveAt` | `TreasuryService` (activation, reads), `TreasuryLedgerService` (entries; called from `PaymentLedgerService` inside its transaction) |
 | Ledger | `_tenant_migrations` (no Prisma model) | `migrateTenantSchema` |
 
 Each schema also carries plpgsql functions created by migrations:
-`reject_audit_mutation`, `reject_ledger_mutation`, `search_normalize`,
-`search_compact`, `sync_building_unit_counts`.
+`reject_audit_mutation`, `reject_ledger_mutation`, `reject_treasury_mutation`, `search_normalize`,
+`search_compact`, `sync_building_unit_counts`, and since 0082 `reject_closed_day_entry`,
+`reject_closed_day_count`, `reject_day_closure_delete` (each pinned to its schema).
 
 ### `users` holds staff AND citizens
 
@@ -166,7 +173,21 @@ chain, so it reports an officer who worked all morning as last seen at eight.
   `payment_transactions_no_delete` call `reject_ledger_mutation()`
   (`0017_payment_ledger`). Deleting a `citizen_payments` row cascades into it
   and raises.
-- Neither trigger covers `TRUNCATE`. Using `TRUNCATE`, or
+- `treasury_entries`: `treasury_entries_no_update` and `treasury_entries_no_delete` call
+  `reject_treasury_mutation()` (`0073`). A wallet balance is the SUM of its entries; there is no
+  balance column. Its foreign keys to `users` and `treasury_accounts` are RESTRICT, so erasing a staff
+  member or a wallet that has moved money fails instead of cascading into the trigger. An entry's
+  currency equals its account's because the foreign key is the pair `(accountId, currency)`.
+- **A closed treasury day takes nothing** (0082). `treasury_entries_respect_closed_days` refuses an
+  entry inserted, updated or deleted whose day — `occurredAt AT TIME ZONE 'Asia/Beirut'`, the database's
+  copy of `MUNICIPAL_TIME_ZONE` — is on or before a CLOSED `treasury_day_closures` row.
+  `treasury_counts_respect_closed_days` refuses any write to a closed day's count except the one
+  closing makes (linking it to its own day's closure, compared as the row minus `closureId`), and
+  `treasury_day_closures_no_delete` refuses deleting a closure: a day is reopened, never erased. The
+  application refuses first (`TreasuryLedgerService.post`, `CLOSED_DAY_MUTATION_BLOCKED`); a trigger
+  refusal is read back by `closedTreasuryDay` (`check-violation.ts`). Closing takes `SHARE` on
+  `treasury_entries` for the length of the close, so writers already in the day finish first.
+- No trigger covers `TRUNCATE`. Using `TRUNCATE`, or
   `session_replication_role`, to get past them is circumventing a control. If a
   trigger stops you, stop and report it
   ([CLAUDE.md](../CLAUDE.md#how-to-work-here)).
@@ -457,24 +478,34 @@ reads staging's history from `.env.staging` and nothing else, and
 
 ### Numbering
 
-- The latest tenant migration on `develop` and on `main` is
-  `0072_users_no_phone_rules`: `0067`–`0072` went to `main` in their own
-  migrations-only PR, ahead of the release that carries the code reading them
-  (root rule 5; the PR #61 and #86 pattern). `0075`–`0077` follow the same
-  path: their own PR into `develop`, then to `main` alone, before any release
-  that writes the new columns or values.
+- `main` ends at `0072_users_no_phone_rules`: `0067`–`0072` went to `main` in their own
+  migrations-only PR, ahead of the release that carries the code reading them (root rule 5; the
+  PR #61 and #86 pattern). `develop` ends at `0077_unit_fee_exemption`: `0075`–`0077`
+  (`chore/migration-0075-0077`: co-owner billing, the estate and institution record types, the
+  unit fee exemption) follow the same path, their own PR into `develop`, then to `main` alone,
+  before any release that writes the new columns or values.
+- `feat/finance-treasury-expenses` holds `0073_treasury_ledger`, `0074_expense_vouchers`,
+  `0078_treasury_transfers`, `0079_document_numbering`, `0080_income_vouchers` and
+  `0081_expense_voucher_payee_staff`, none of them on `develop` yet. The PRs for `0073`/`0074`
+  (#94, #93) were closed unmerged on 2026-10-08, but the branches are still on `origin`, so those
+  numbers stay reserved and are never reused. `0078` is not `0075` because
+  `chore/migration-0075-0077` had taken it: the second time a number was taken mid-flight on that
+  branch. As `0075`–`0077` merged first, `0073` and `0074` will land out of order on any database
+  that already has them, which `deploy.mjs` warns about and applies; the two sets touch different
+  tables. Checked on 2026-10-09 against `origin/main`, `origin/develop` and every local and remote
+  branch after a fetch: the next free number was `0082`.
+- `feat/treasury-daily-count-and-closure` (cut from `fix/expense-retry-key-race`, which carries all of
+  the above) holds `0082_treasury_day_closing`. Checked on 2026-10-10 after a fetch against every
+  local and remote branch: no branch held an `0082` or later. The next free number is `0083`; it needs
+  `0073`, so it ships after the finance migrations, in its own `chore/migration-0082` PR.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
-  `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of
-  2026-10-08, `0073_treasury_ledger` and `0074_expense_vouchers` are taken by
-  `chore/migration-0073-0074` and `feat/finance-treasury-expenses`: their PRs
-  (#94, #93) were closed unmerged on 2026-10-08, but both branches are still on
-  `origin`, so the two numbers stay reserved and are never reused for anything
-  else. `0075`–`0077` are taken by `chore/migration-0075-0077` (co-owner billing, the
-  estate and institution record types, the unit fee exemption). The next free
-  number is `0078`. Whichever of `0073`/`0074` and `0075`–`0077` merges second
-  lands out of order on a database that already has the other, which
-  `deploy.mjs` warns about and applies; the two sets touch different tables.
+  `0066`, so it applies out of order: `deploy.mjs` warns and applies it.
+- The treasury migration was first written as `0071` and renumbered to `0073`:
+  `0071_damage_habitable` and `0072_users_no_phone_rules` landed on `develop`
+  while it was in progress. A branch cut before a release is a branch whose
+  numbers can be taken while you work — re-check before you open the PR, not
+  only when you pick.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 
@@ -618,6 +649,36 @@ and goes through contract.
   to report drift and offer to reset `public`; reasoned from the code, not run.
 - `pnpm db:generate` after changing `schema.prisma`.
 
+### Document numbering (migration 0079)
+
+Five books — invoices, receipts, expense vouchers, transfers and, since 0080,
+income vouchers («RV-», kind `REVENUE_VOUCHER`) — share one scheme:
+«INV-2610-0001» is the book, the year and month it was issued in, and a
+counter that **restarts at 0001 on the first of each month**. `kind` is text,
+so a new book needs no migration; its key is stored and never renamed.
+
+The counter is a row in `document_counters` keyed by `(kind, period)`, not a
+Postgres sequence, and the reason is the reset: `nextval` only ever climbs, and
+anything that resets it on the first races whatever is drawing from it. One
+atomic `INSERT … ON CONFLICT DO UPDATE … RETURNING` both starts a month and
+advances it, and hands back the block it reserved.
+
+- **Draw through `allocateDocumentNumbers`** (`application/common/document-number.ts`),
+  never by hand, and always with the caller's `tx`: the number and the document
+  it goes on must commit or roll back together.
+- **It serialises issuance within a month.** The counter row stays locked until
+  the caller commits. At a municipality's volume that is nothing; the
+  alternative is two residents holding the same receipt number.
+- **It gaps less than a sequence did** — a sequence keeps its advance through a
+  rollback and this does not — but it is still not a gapless book, and nothing
+  may be built on the assumption that it is.
+- **The old sequences stay.** `payment_receipt_seq`, `expense_voucher_seq` and
+  `treasury_transfer_seq` are simply no longer drawn from. Dropping them is
+  destructive DDL for its own later release.
+- **Two shapes coexist.** Documents issued before 0079 keep «RCP-000014», and
+  bills raised before it stay unnumbered (`invoiceNumber` is nullable). Nothing
+  in the code parses or orders by either shape; `isDocumentNumber` accepts both.
+
 ### Test a migration on a throwaway Postgres 17
 
 The integration suites (`*.integration.spec.ts`, gated by `TEST_DATABASE_URL`)
@@ -709,6 +770,17 @@ Rare: only `0001_init` exists.
 - **`BackupService` restore** aborts for any tenant with `payment_transactions`
   rows (the append-only trigger fires through the cascade). Documented in its
   own comment as a design decision.
+- **`BackupService` does not export the treasury tables** (`treasury_accounts`,
+  `treasury_entries`, 0073). They hold no citizen data, but their rows are append-only and
+  RESTRICT-linked to `users`, so a restore (which deletes users) aborts for any tenant that has
+  moved money, exactly as for `payment_transactions`. A backup of such a tenant therefore does not
+  contain its wallets. Nor the documents beside them: `expense_categories`, `expense_vouchers`
+  (0074), `treasury_transfers` (0078), `document_counters` (0079), `income_categories` and
+  `income_vouchers` (0080), `treasury_day_closures` and `treasury_counts` (0082) are not in
+  `TABLE_ORDER` either (checked 2026-10-10; a restore would also meet the no-delete trigger on
+  closures), and the free-text
+  payee and payer columns may name a citizen. **Undecided:** how the backup should carry an
+  append-only ledger and the vouchers that explain it.
 - **`dump-tenant.js`, the `reissue-references` CSV, the `claude_ro` views**:
   see [Moving data](#moving-data-between-environments).
 - **Database roles.** One role per environment runs both DDL and DML for every

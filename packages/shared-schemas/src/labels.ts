@@ -26,6 +26,7 @@ import type {
   VacancyEndReason,
 } from './enums';
 import type { CaseStatus } from './case.schema';
+import type { TreasuryDayStatus } from './treasury-closing.schema';
 import type { FeeBasis, FeeBearer, FeeTargetCategory } from './fee.schema';
 
 /** Arabic display labels. Keep UI copy here, not inside the schemas. */
@@ -113,6 +114,32 @@ export const ar = {
     WHISH_MONEY: 'تحويل Whish Money',
     COLLECTOR: 'عبر المحصّل',
   },
+
+  /** Where the municipality's money is held (الخزينة). */
+  treasuryAccountType: {
+    CASH_SAFE: 'صندوق النقد',
+    WHISH_ACCOUNT: 'حساب Whish',
+    BANK_ACCOUNT: 'حساب مصرفي',
+    COLLECTOR_CUSTODY: 'عهدة جابٍ',
+    PETTY_CASH: 'سلفة مصاريف نثرية',
+  },
+
+  /** Why a wallet's balance moved. */
+  treasuryEntrySource: {
+    OPENING_BALANCE: 'رصيد افتتاحي',
+    CITIZEN_PAYMENT: 'دفعة مواطن',
+    INCOME_VOUCHER: 'سند قبض',
+    EXPENSE_VOUCHER: 'سند صرف',
+    TRANSFER: 'مناقلة',
+    ADJUSTMENT: 'تسوية',
+  },
+
+  /** Where a municipal day stands: open, locked by «إقفال اليومية», or opened again by the manager. */
+  treasuryDayStatus: {
+    OPEN: 'مفتوحة',
+    CLOSED: 'مقفلة',
+    REOPENED: 'أُعيد فتحها',
+  } satisfies Record<TreasuryDayStatus, string>,
 
   /** Staff roles as the municipality names them, not as the enum spells them. */
   staffRole: {
@@ -499,6 +526,29 @@ export const en = {
     WHISH_MONEY: 'Whish Money Transfer',
     COLLECTOR: 'Via Collector',
   },
+
+  treasuryAccountType: {
+    CASH_SAFE: 'Cash safe',
+    WHISH_ACCOUNT: 'Whish account',
+    BANK_ACCOUNT: 'Bank account',
+    COLLECTOR_CUSTODY: 'Collector custody',
+    PETTY_CASH: 'Petty cash',
+  },
+
+  treasuryEntrySource: {
+    OPENING_BALANCE: 'Opening balance',
+    CITIZEN_PAYMENT: 'Citizen payment',
+    INCOME_VOUCHER: 'Receipt voucher',
+    EXPENSE_VOUCHER: 'Payment voucher',
+    TRANSFER: 'Transfer',
+    ADJUSTMENT: 'Adjustment',
+  },
+
+  treasuryDayStatus: {
+    OPEN: 'Open',
+    CLOSED: 'Closed',
+    REOPENED: 'Reopened',
+  } satisfies Record<TreasuryDayStatus, string>,
 
   staffRole: {
     SUPER_ADMIN: 'System Administrator',

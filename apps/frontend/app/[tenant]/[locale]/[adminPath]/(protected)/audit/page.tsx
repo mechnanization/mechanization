@@ -186,11 +186,6 @@ export default function AuditTrailPage({
       <PageHeader
         icon={ShieldCheck}
         title={en ? 'Audit trail' : 'سجل النشاطات'}
-        subtitle={
-          en
-            ? 'Who did what, to which record, and when. Entries cannot be edited or deleted.'
-            : 'من فعل ماذا، وعلى أي سجل، ومتى. لا يمكن تعديل هذه القيود أو حذفها.'
-        }
       />
 
       <section

@@ -65,11 +65,6 @@ export default function AccountSecurityPage({
       <PageHeader
         icon={ShieldCheck}
         title={locale === 'en' ? 'Account Security' : 'أمان الحساب'}
-        subtitle={
-          locale === 'en'
-            ? 'Manage your personal email, password, two-factor authentication, and security logs.'
-            : 'إدارة البريد الإلكتروني، كلمة المرور، والمصادقة الثنائية وسجل تسجيل الدخول لحسابك الشخصي.'
-        }
       />
 
       {/* User profile summary card */}

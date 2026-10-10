@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -197,7 +197,12 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - Multi-step writes run in `runInTenantTransaction`.
 - **Audit tiers.** Tier 1 MUST write its audit row inside the transaction of the change, so the change
   rolls back if the row cannot be written: payments (declaration, confirmation, refusal, counter and
-  Whish settlement), payment reversals, corrections, ownership changes (ending an ownership, owner links,
+  Whish settlement), payment reversals, activating the treasury (`TREASURY_ACTIVATED`: the opening
+  balances and the go-live stamp, one transaction), recording and cancelling an expense, recording
+  and cancelling an income voucher (`INCOME_RECORDED`, `INCOME_VOIDED`), receiving a
+  collector's custody (`CUSTODY_RECEIVED`) and cancelling a transfer, counting the treasury and
+  closing, sweeping and reopening a day (`TREASURY_COUNT_RECORDED`, `TREASURY_DAY_CLOSED`,
+  `TREASURY_DAY_AUTO_CLOSED`, `TREASURY_DAY_REOPENED`), corrections, ownership changes (ending an ownership, owner links,
   merges), ending a tenancy, review decisions (approve, return, quality check), citizen status changes
   (archive and restore), how a co-owned flat is billed (`UNIT_OWNER_BILLING_SET`, `OwnerBillingService`,
   which moves every co-owner's bill), and a unit's fee exemption (`UNIT_FEE_EXEMPTION_SET` / `_LIFTED`,
@@ -211,12 +216,69 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   last four characters, the usual card and tax-number truncation: the six-character suffix *is* the
   credential, and four of its characters leave 1,024 candidates. The filing's own number
   (`registrations.referenceNumber`) is not a credential and may be written in full.
-- MUST NOT bypass the append-only triggers on `audit_log_entries` and `payment_transactions`
-  (`0001_init`, `0017_payment_ledger`), MUST NOT `SET session_replication_role`, and MUST NOT reach
+- MUST NOT bypass the append-only triggers on `audit_log_entries`, `payment_transactions` and
+  `treasury_entries` (`0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`), or the closed-day
+  triggers on `treasury_entries`, `treasury_counts` and `treasury_day_closures` (`0082`), MUST NOT `SET session_replication_role`, and MUST NOT reach
   for `TRUNCATE` because a trigger refused a `DELETE`. A refusal is an answer
   ([CLAUDE.md](../CLAUDE.md#how-to-work-here)).
 - Uniqueness is enforced by a database constraint and surfaces as a `ConflictError`, never by a
   check-then-insert alone.
+- **The treasury (الخزينة).** Wallet balances are the sum of append-only entries. An outflow takes row
+  locks on the wallets in id order and refuses to take one below zero (`TREASURY_INSUFFICIENT_FUNDS`);
+  the wallet entries of a citizen payment commit in the payment's own transaction. Reading is
+  `SUPER_ADMIN`, `ACCOUNTANT`, `AUDITOR` and `VIEWER`; activating is `SUPER_ADMIN` only
+  (`TREASURY_*_ROLES` in shared-schemas). A payer or payee name on a voucher is personal data: it
+  stays out of logs, Sentry and audit rows ([finance.md](finance.md)).
+- **Expenses.** Recording an expense is paying it, so the write is guarded on both sides: an
+  in-flight ref and an idempotency key the server honours (serialised under a schema-scoped advisory
+  lock, so a raced retry replays rather than failing), and the outflow goes through the same
+  locked, never-negative ledger post as everything else. `payee` is free text that may name a
+  citizen, so the audit row carries the voucher number and the figures, never the name.
+  **Salaries** (`POST treasury/expenses/salaries/:staffId`, `TREASURY_WORK_ROLES`, id through
+  `ParseUUIDPipe`, body through `recordStaffSalarySchema`) take neither the payee nor the category
+  from the body: the server reads the name from the account, with `kind = 'STAFF'` and
+  `deletedAt IS NULL` in the WHERE (a citizen's id answers `SALARY_PAYEE_NOT_FOUND`, pinned by a
+  test), and files the voucher under the seeded `SALARIES`. The audit row names the staff member by
+  id (`payeeStaffId`), never by name. The button lives on «الموظفون», which only `SUPER_ADMIN`
+  opens; the route is what decides.
+- **Income vouchers** (`t/:tenantSlug/treasury/income`). The expense guards, mirrored: read on
+  `TREASURY_READ_ROLES`, record on `TREASURY_WORK_ROLES`, void and the category writes (`POST`,
+  `PATCH` on `income/categories`, both Tier 1 audited) on `TREASURY_ADMIN_ROLES`; the body
+  and the register's query values through shared zod schemas, ids through `ParseUUIDPipe`. The retry
+  key is required and serialised under an advisory lock keyed by schema, so a double press credits
+  once. `payerName` (a fine, a rent) may name a citizen: the audit row carries the voucher number and
+  figures only. The register's search term goes to the API in the query string, as the other
+  registers' do, and so falls under the URL-logging gap below.
+- **«من حصّل الجابي»** (`GET /treasury/transfers/custody/:collectorId/collections`) names citizens
+  and carries their phone and sector, so it stays on the finance *read* roles. That is deliberate and
+  it widens nobody's sight: the register itself (`EVERY_STAFF_ROLE`) already shows every staff role
+  the same name and number, and treasury-read is a strict subset of it. A relative's number is
+  labelled as a relative's, never passed off as the citizen's own. What the row does **not** carry is
+  a رقم مرجعي or a national id — those are sign-in credentials, not contact details. The row's exact
+  key set is pinned by an integration test, so widening it again stays a decision somebody makes on
+  purpose rather than a field that drifts onto a screen.
+- **«جولتي»** (`GET /treasury/transfers/custody/mine`) is the only treasury route a collector may
+  call, and the only one on `WORKING_STAFF_ROLES` rather than a `TREASURY_*` list. It is safe
+  because it is scoped by `user.sub` **in the query** rather than checked afterwards: there is no id
+  in the path to tamper with, so it can only ever answer for the person asking. A new route that
+  takes a `collectorId` must go back on `TREASURY_READ_ROLES` — `custody/:collectorId/collections`
+  does. Granting the collector `TREASURY_READ_ROLES` instead would have handed him the
+  municipality's whole ledger to answer a question about his own pocket.
+- **Collector custody.** A payment taken at a door credits that collector's own custody wallet, not
+  the safe: until someone counts the notes and receives them, the municipality does not have the
+  money and its books must not say otherwise. The handover is a transfer, recorded by a different
+  person from the one who collected, and it cannot exceed what the collector holds. The audit row
+  names him by id, never by name.
+- **A closed day** (docs/finance.md §7, `t/:tenantSlug/treasury`: `GET counts`, `GET closures`, `GET
+  reports/daily` on `TREASURY_READ_ROLES`; `POST counts`, `POST closures` on `TREASURY_WORK_ROLES`;
+  `POST closures/reopen` on `TREASURY_ADMIN_ROLES`; every body and query value through a shared zod
+  schema). Once the accountant signs a day off, nothing dated on or before it can be written — no
+  payment, voucher, transfer or reversal — by the application (`TreasuryLedgerService.post`) or by
+  anything else (the 0082 triggers). A closure cannot be deleted, only reopened by the manager with a
+  reason that goes into the audit row and onto the printed report, and only the latest closed day. A
+  count is a statement about cash, not a movement of it: a difference is recorded with its reason and
+  never posted. The report names staff (who counted, closed, reopened; each collector holding cash)
+  and no citizen.
 - A money write MUST be safe against double submission on the client (an in-flight guard) and on the
   server (a constraint or idempotent write).
 

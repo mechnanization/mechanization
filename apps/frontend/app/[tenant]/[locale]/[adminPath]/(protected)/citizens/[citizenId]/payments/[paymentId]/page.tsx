@@ -3,7 +3,7 @@
 import { use, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, Banknote, CalendarDays, Coins, Eraser, Loader2, Pencil, ReceiptText, RotateCcw, UserRound } from 'lucide-react';
+import { AlertTriangle, Banknote, CalendarDays, Coins, Eraser, Loader2, Pencil, ReceiptText, RotateCcw } from 'lucide-react';
 import {
   ADJUSTMENT_REASON_MIN,
   BACKDATE_WINDOW_DAYS,
@@ -26,7 +26,6 @@ import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate } from '@/lib/dates';
 import { formatForeign, formatLbp, formatTypedAmount, parseAmount } from '@/lib/currency';
 import { BackLink } from '@/components/ui/back-link';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { CurrencyInput } from '@/components/ui/currency-input';
@@ -307,26 +306,20 @@ export default function SettleCashPage({
       {/*
         Who is paying, for what, and how much is left — the three things the
         clerk checks against the person at the counter before taking a note.
+        Headers carry a title and nothing under it, so the bill and the payer
+        are the title itself: this screen's only other place for them was the
+        line that was removed, and a cash screen that does not say whose cash
+        it is takes money from the wrong person. «رجوع» above still leads back
+        to the citizen's file.
       */}
       <PageHeader
         icon={Banknote}
-        title={en ? 'Record cash payment' : 'تسجيل دفعة نقدية'}
-        subtitle={
-          <span className="flex flex-wrap items-center gap-2">
-            <Link
-              href={citizenHref}
-              className="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground hover:text-primary hover:underline"
-            >
-              <UserRound className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="truncate">{citizen.fullName}</span>
-            </Link>
-            {payment ? (
-              <Badge variant="soft-muted" className="max-w-full gap-1.5">
-                <ReceiptText className="size-3.5 shrink-0" aria-hidden />
-                <span className="truncate">{payment.title}</span>
-              </Badge>
-            ) : null}
-          </span>
+        title={
+          payment
+            ? `${payment.title} — ${citizen.fullName}`
+            : en
+              ? 'Record cash payment'
+              : 'تسجيل دفعة نقدية'
         }
         actions={
           payment ? (

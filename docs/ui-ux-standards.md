@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `feat/co-owner-billing` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -106,7 +106,7 @@ to, the primitive gets a prop instead.
 
 | ID | Need | Use | Never |
 |---|---|---|---|
-| PRIM-1 | Page heading | `PageHeader` (icon, title, subtitle, actions) | A bespoke `<header>` with its own tile and sizes |
+| PRIM-1 | Page heading | `PageHeader` (icon, title, actions). **No subtitle** — removed from every page on 2026-10-08 and from the component. Something the reader needs goes in the title (a cash screen's title names the bill and the payer) or in the page body, never in a line under the heading | A bespoke `<header>` with its own tile and sizes; a description line under the title |
 | PRIM-2 | Back navigation | `BackLink` with a real `fallbackHref` | A fixed link to the index |
 | PRIM-3 | A list or register | `DataTable`. Server paging: `manualPagination manualFiltering sortable={false}`. Shape phone cards with `meta.mobile` | A hand-rolled `<table>`, pager, search or empty row |
 | PRIM-4 | Pagination outside a table | `Pager` (`components/ui/pager.tsx`): strings as props, a `<nav aria-label>` landmark, the position read as one phrase, scroll-to-top through `scrollTarget`, like DataTable's footer | A page-local pager or `‹ ›` text buttons |
@@ -117,7 +117,7 @@ to, the primitive gets a prop instead.
 | PRIM-9 | An annotation chip | `Badge` with a `soft-*` variant | `Badge` with colour overrides in `className` |
 | PRIM-10 | LBP on screen | `<Money>`; `formatLbp` only for plain strings (toast, aria, CSV) | `toLocaleString()` plus «ل.ل» by hand |
 | PRIM-11 | USD/EUR on screen | `formatForeign(amount, currency)` or `formatMoney(amount, currency, locale)` from `lib/currency.ts` | A page-local USD formatter, `$${x.toFixed(2)}`, or a third spelling |
-| PRIM-12 | Dates | `formatDate` / `formatTime` / `formatDateTime` / `formatMonthList` from `lib/dates` | `toLocaleDateString('ar')`, raw month numbers joined with «، » |
+| PRIM-12 | Dates | `formatDate` / `formatTime` / `formatDateTime` / `formatMonthList` from `lib/dates`; a calendar day (`YYYY-MM-DD`, a business day with no time) through `formatDay` / `formatDayLong`, which never pass it through a zone | `toLocaleDateString('ar')`, raw month numbers joined with «، » |
 | PRIM-13 | A labelled input | `Field` (label, required `*`, «(اختياري)», `caution`, error with `role="alert"`) wrapping `Input`/`Select`/`Textarea`/`DatePicker` | A bare `<label>` plus input; a native `<select>`; a native `type="date"` in new code |
 | PRIM-14 | Two to four options | `SegmentedControl`; three or more filter chips: `ChipGroup` | Hand-rolled toggle buttons |
 | PRIM-15 | Foldable section | `CollapsibleSection` | A `useState` toggle with a chevron |
@@ -125,10 +125,10 @@ to, the primitive gets a prop instead.
 | PRIM-17 | Any other modal | `Dialog`, always with a `closeLabel` in the current locale | `Sheet` for new work: it lacks a focus trap. Fix Sheet before adding users (§17.1) |
 | PRIM-18 | Feedback after a write | `useToast()` | `alert()`, a page-local banner that never clears |
 | PRIM-19 | Icon-only control | `Button size="icon*"` + `aria-label` + `ActionTooltip` | A bare `<button>` with only an icon |
-| PRIM-20 | KPI or stat row | `StatStrip` with `StatItem` (`components/ui/stat-strip.tsx`), up to five figures. A PR that touches a page with a local stat component replaces it | An eleventh local copy (§17.1 lists the ten) |
+| PRIM-20 | KPI or stat row | `StatStrip` with `StatItem` (`components/ui/stat-strip.tsx`), up to five figures. `StatItem` takes an optional `icon` (decorative, in a tinted circle above the number) and `href` (the whole cell becomes one stretched link named by its label). The citizen properties page uses `icon`; `href` has no caller since the treasury's wallets became statement lines (2026-10-09). A list of places money is kept, each opening its own statement, is lines with a total, not a strip. A PR that touches a page with a local stat component replaces it | An eleventh local copy (§17.1 lists the ten) |
 | PRIM-23 | DataTable strings | `useTableLabels(overrides)` (`lib/use-table-labels.ts`, reads `messages.table`) | A page-local `getTableLabels` |
 | PRIM-24 | A filter control above a table | `FilterSelect`, `FilterInput` (`components/ui/filter-controls.tsx`) | A hand-styled select or search box |
-| PRIM-25 | Typing a money amount | `CurrencyInput` | A local `formatLbp(value: string)` that shadows `lib/currency` |
+| PRIM-25 | Typing a money amount | `CurrencyInput`. The unit gets a segment of its own beside the digits, never laid over them: an `dir="ltr"` field on an RTL page reserves its padding on one side while `end-0` pins the unit to the other, and «ل.ل» lands on the «0». `inputClassName` styles the digits, for the cash counter alone | A local `formatLbp(value: string)` that shadows `lib/currency`; an input with the unit absolutely positioned over it |
 | PRIM-26 | A menu of actions | `DropdownMenu` and its parts | A hand-rolled menu panel |
 | PRIM-27 | A yes/no field; a choice drawn as a card | `Checkbox`; `ChoiceCard` (`components/ui/field.tsx`) | A native checkbox or radio (CTL-3, CTL-4) |
 
@@ -163,7 +163,7 @@ Counts and files: §17.1.
 | CTL-9 | hand-rolled tabs (`role="tablist"` built by hand) | a `Tabs` primitive | **missing** (`@radix-ui/react-tabs` not installed) | `SegmentedControl` driving plain regions that are not tab panels (A11Y-3) |
 | CTL-10 | hand-rolled switches, `aria-pressed` buttons used as an option group | a `Switch` primitive for on/off; `SegmentedControl` or `ChipGroup` for options | Switch **missing** (`@radix-ui/react-switch` not installed) | a single `aria-pressed` toggle button such as show-password |
 | CTL-11 | hand-rolled popovers and comboboxes | a `Popover` primitive; `DropdownMenu` for menus | Popover **missing** (`@radix-ui/react-popover` not installed) | none |
-| CTL-12 | a hand-rolled inline alert or error banner | an inline `Alert` primitive; `ErrorState` for a failed panel | Alert **missing** (shadcn's Alert has no Radix part) | none |
+| CTL-12 | a hand-rolled inline alert or error banner | `Alert` (`components/ui/alert.tsx`), with `ErrorState` for a failed panel | yes (ported 2026-10-06 per KIT-1: shadcn's Alert has no Radix part, so plain markup with `cva`) | none |
 
 ### 3.2 Adding a missing primitive (decision D-kit)
 
@@ -274,7 +274,9 @@ Token values, light and dark: [DESIGN.md](../DESIGN.md) "Colors".
     one map-palette module derived from the tokens (today the hex is spread
     over five map files, §17.2).
   - The printed receipt and the receipt PDF canvas, which must print black on
-    white whatever the theme. They should become `--paper` and `--ink` tokens.
+    white whatever the theme, and the printed «تقرير الصندوق اليومي» (the print
+    stylesheet in `components/admin/finance/daily-cash-report.tsx`; on screen it
+    uses tokens). They should become `--paper` and `--ink` tokens.
   - QR codes, which need fixed dark-on-light.
   - `app/global-error.tsx`, which renders outside the token tree, and the web
     manifest's `background_color` and `theme_color`.
@@ -670,12 +672,13 @@ Code-pattern debt outside the UI rules lives in
   (`citizens/[citizenId]/page.tsx`); `Stat` in
   `inspector/profile/[staffId]/payouts/page.tsx`, `inspector-earnings-roster.tsx`
   and `inspector-profile-detail.tsx`; `StatusTile` (`settings/settings-ui.tsx`);
-  `StatCard` (`(citizen)/my-file`). `StatStrip` has 5 uses in 4 files.
+  `StatCard` (`(citizen)/my-file`). `StatStrip` has 8 uses in 7 files.
 - **Hand-rolled pagers, 3** (PRIM-4): `AuditTrailPage` (`audit/page.tsx`),
   `CorrectionBillsPage` (`fees/corrections/page.tsx`), `AuditDaily`
   (`components/admin/audit-daily.tsx`). `Pager` has 1 user.
-- **Red error banners, 61 copies in 46 files**, with no `Alert` primitive
-  (CTL-12): a className holding `border-destructive…`, `bg-destructive/5` or `/10` and
+- **Red error banners, 61 copies in 46 files** (CTL-12), none of them yet moved
+  to the `Alert` primitive that now exists — the finance screens are its only
+  users. Each is a className holding `border-destructive…`, `bg-destructive/5` or `/10` and
   `text-destructive`. Three each in `import-citizens-dialog`,
   `complete-record-dialog`, `building-unit-forms`; two each in
   `unit-correction-delete-dialog`, `merge-citizens-dialog`, `citizen-form`,
@@ -699,7 +702,7 @@ Code-pattern debt outside the UI rules lives in
   (`components/admin/cases/case-table-labels.ts`). `useTableLabels` has 6 users.
 - **Native date and time inputs, 14 in 7 files** (CTL-1, CTL-2): 13
   `type="date"` (`building-unit-forms` 8, `charge-citizen-dialog`,
-  `end-ownership-dialog`, `end-tenancy-dialog`, `issue-fee-dialog`,
+  `end-ownership-dialog`, `end-tenancy-dialog`, `issue-fee-form`,
   `residence-change-dialog`) and 1 `type="time"` in
   `settings/backup-section.tsx`, which is not rendered.
 - **Native radios, 6 in 4 files** (CTL-4): `after-tenancy-question` (2),
@@ -877,10 +880,19 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   (2026-10-06).
 - **Money formatting** (PRIM-11, PRIM-25): `inspector-payout-dialog.tsx` writes
   `$${x.toFixed(2)}` 5 times; `charge-citizen-dialog.tsx` and
-  `issue-fee-dialog.tsx` each define a local `formatLbp(value: string)`;
+  `issue-fee-form.tsx` each define a local `formatLbp(value: string)`;
   `components/citizen/pay-dialog.tsx` builds «ل.ل» by hand in a local `lbp` (PRIM-10).
-- **Double submit** (STA-4): the settle page, `fees/page.tsx` with
-  `IssueFeeDialog`, and the payouts page with `InspectorPayoutDialog` guard with
+  The settle page's own hand-rolled field — an input with «ل.ل» absolutely placed
+  over it — was replaced by `CurrencyInput` on 2026-10-07, which is what fixed
+  the unit landing on the digits. Check the three above for the same shape.
+- **A calendar day through `formatDate`** (PRIM-12): `formatDate('2026-10-09')` reads the
+  string as midnight UTC and shows it in the browser's zone, the day before anywhere west of
+  Greenwich. Found 2026-10-10 in `damage/damage-history.tsx` (`reinspectAt`),
+  `end-ownership-dialog.tsx` (`endedAt`) and the citizen payment page
+  (`citizens/[citizenId]/payments/[paymentId]/page.tsx`, `paidOn`); `formatDay` is the fix.
+  Harmless in Lebanon, wrong on a laptop set to another zone.
+- **Double submit** (STA-4): the settle page, the fee wizard (`fees/new`, whose
+  form is `issue-fee-form.tsx`), and the payouts page with `InspectorPayoutDialog` guard with
   `busy` state only, with no in-flight ref.
 
 ### 17.7 Stale comments touching the UI (BAN-15)

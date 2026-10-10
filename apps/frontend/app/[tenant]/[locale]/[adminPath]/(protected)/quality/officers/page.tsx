@@ -30,11 +30,6 @@ export default function QualityOfficersPage({
       adminPath={adminPath}
       icon={UsersRound}
       title={en ? 'Quality by officer' : 'الجودة حسب الموظف'}
-      subtitle={
-        en
-          ? 'How each officer’s filings are faring — returned records, open findings, and what re-checks found.'
-          : 'كيف تسير سجلات كل موظف — ما أُعيد منها، وملاحظات الجودة عليها، وما وجده التحقق الميداني.'
-      }
     >
       {({ token, base }) => (
         <OfficerQuality tenant={tenant} base={base} locale={locale} token={token} />

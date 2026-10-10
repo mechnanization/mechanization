@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -29,8 +29,8 @@ Data access for new code (decided):
 - Application code MAY import from infrastructure only: `TenantContextService` and `TenantScope`,
   `runInTenantTransaction`, `tenantSchemaRef` / `tenantSchemaPrefix`, `withConnectionRetry` /
   `isTransientConnectionError`, `RedisCacheService`, `citizenPhoneRuleError` /
-  `violatedCheckConstraint` (`infrastructure/prisma/check-violation.ts`, which turns the `0072` CHECKs'
-  refusal into a coded `ValidationError`), and types or the `Prisma` namespace from
+  `violatedCheckConstraint` / `closedTreasuryDay` (`infrastructure/prisma/check-violation.ts`, which turn
+  the `0072` CHECKs' refusal into a coded `ValidationError` and read the day a `0082` trigger refused), and types or the `Prisma` namespace from
   `src/generated/tenant-client`. `TenantPrismaFactory` only in a background job that builds a tenant scope.
 - Application code MUST NOT import a `Prisma*Repository`, an adapter (`S3StorageService`,
   `SmtpEmailSender`, `SmsProviderService`, `WhishGatewayService`, `BcryptPasswordHasher`,
@@ -180,6 +180,97 @@ Data access for new code (decided):
   profile: a flat's owners go as an allowlist (name and أسهم), the landlord link's id and reference are
   dropped, and everything else on a property or unit passes through, so decide for each field you add to
   `CitizenProfile` ([docs/gotchas.md](../../docs/gotchas.md)).
+- **Treasury.** `TreasuryService` (overview, statements, `activate`) and `TreasuryLedgerService`
+  (`post`, `creditPayment`, `reversePayment`, `reverseEntriesOf`), under
+  `application/features/treasury/`; routes in `TreasuryController` (`t/:tenantSlug/treasury`). The
+  pure routing rules are `treasury.plan.ts`. `PaymentLedgerService.append` calls the ledger **inside
+  its own transaction** after it writes the payment row, so the payment and its wallet entries commit
+  together; `TreasuryLedgerService` never opens a transaction and takes the client explicitly. Nothing
+  credits a wallet until `system_settings.treasuryGoLiveAt` is set and the payment's `occurredAt` is
+  at or after it. An outflow locks the wallet rows (id order) and is refused below zero. Design and
+  rules: [docs/finance.md](../../docs/finance.md).
+- **Expenses.** `ExpensesService` and `ExpensesController` (`t/:tenantSlug/treasury/expenses`), with
+  the date rules in `expenses.plan.ts`. Recording *is* paying: one transaction writes the voucher,
+  posts the negative ledger entry through `TreasuryLedgerService.post` (which refuses to take a wallet
+  below zero) and writes the Tier 1 audit row. There is no approval step, by product decision. A
+  voucher is never edited: it takes a void stamp and the ledger gets an opposing entry through
+  `reverseEntriesOf`. The voucher's currency is taken from its wallet, never from the request. Three
+  role lists: read, `TREASURY_WORK_ROLES` to record, `TREASURY_ADMIN_ROLES` to void. The municipality
+  names its own bands of spending: `POST`/`PATCH` on `expenses/categories`, manager only. A category
+  is deactivated, never deleted — every voucher ever filed under it still points there, and the
+  foreign key is RESTRICT. «صرف راتب / أجر» is `POST expenses/salaries/:staffId`
+  (`recordSalary`, `TREASURY_WORK_ROLES`): the same write through the private `recordVoucher`, with
+  the payee read from the staff account (`kind = 'STAFF'`, not deleted; a disabled account may
+  still be paid) and the category looked up by key (`SALARIES`). It stamps `payeeStaffId` (0081) on
+  the voucher and in the audit row's `after`, so a person's salaries are found by id, not by name.
+- **Income.** `IncomeService` and `IncomeController` (`t/:tenantSlug/treasury/income`), with the
+  date rules and the register's period bounds in `income.plan.ts`. The expense module run the
+  other way: one transaction writes the «سند قبض», posts the positive `INCOME_VOUCHER` entry and
+  the Tier 1 audit row (number and amount, never the payer). The wallet must be one that
+  `canReceiveIncome` allows (cash safe, Whish, bank) — never a collector's custody. The same three
+  role lists as expenses. Both serialise the retry key with a schema-scoped `pg_advisory_xact_lock`
+  before it is read (`<schema>:income-request:<key>`, `<schema>:expense-request:<key>`), so
+  identical requests produce one voucher and replays rather than a unique violation. Two
+  differences from its twin, both deliberate: the retry key is required (optional on an expense,
+  where the lock is taken only when a key is sent); and a void
+  *removes* money, so it locks the voucher, then the wallet, and refuses with
+  `TREASURY_INSUFFICIENT_FUNDS_FOR_VOID` when the wallet has spent it since. The register's
+  `from`/`to` are municipal days, turned into Beirut midnights (`municipalDayStart`) rather than
+  read as UTC dates. Categories: `POST`/`PATCH` on `income/categories`, manager only, never a
+  delete; an edit keeps `active` unless it is sent (the expense edit defaults it to true, so a
+  rename there restarts a stopped category), and a taken budget article is the partial unique
+  index's `P2002`, mapped to `INCOME_CATEGORY_CODE_TAKEN` in `writeCategory`.
+- **Transfers.** `TransfersService` and `TransfersController`
+  (`t/:tenantSlug/treasury/transfers`). Today it wires one kind: «تسليم صندوق الجابي», the collector
+  handing in what he took at the doors. A citizen's payment settles his invoice at the door and
+  credits the *collector's* custody wallet, never the safe — the money is in his pocket — and this is
+  the step where it reaches the municipality: both ledger legs, the transfer document and the Tier 1
+  audit row in one transaction. Partial handovers are normal and the remainder stays on his name;
+  more than he holds is refused twice over, by `CUSTODY_EXCEEDS_HELD` naming the figure and by the
+  ledger's own never-negative post. Cancelling puts both legs back, so the cash is his responsibility
+  again. A collector holds none of the treasury roles: the person who receives from him is someone
+  else, which is the control. `GET custody/:collectorId/collections` answers the other half of the
+  question — not «كم بعهدته» but «من حصّل منهم»: the receipts behind the figure, each with the citizen
+  who paid — his full three-part name, his phone and the sector he lives in. It is a list of receipts
+  and not of handovers, and the two totals part company the moment he hands anything in, because a
+  handover moves an amount and not a set of receipts. The sector is resolved the way it is everywhere
+  else: occupancy → unit → `building.parcelNumber` → the `Zone` listing it (D13), with the sector
+  table read once per page rather than once per row. It carries no رقم مرجعي: that is a sign-in
+  credential, and an integration test pins the row's exact key set so a field added later fails there
+  rather than in a browser.
+- **Daily count and closing** (docs/finance.md §7, migration 0082). The rules are `day-closing.plan.ts`
+  (`planCountDate`, `planCountLine`, `planClosure`, `planReopen`, `nextDayToClose`, `summariseDay`);
+  `DayClosureService` (book state, a day's facts, `close`, `reopen`, `history`), `DailyCountService`
+  (`sheet`, `record`) and `DailyCashReportService` (`daily`) do the I/O; routes in
+  `TreasuryClosingController` (`t/:tenantSlug/treasury`: `counts`, `closures`, `closures/reopen`,
+  `reports/daily`). Read `TREASURY_READ_ROLES`, count and close `TREASURY_WORK_ROLES`, reopen
+  `TREASURY_ADMIN_ROLES`. Only a day that has ended closes; days with movement on a counted wallet close
+  in order, and the quiet days between are swept closed with the next close. Counting, closing and
+  reopening serialise on `TreasuryLedgerService.lockDayBook` (`<schema>:treasury-day-book`), and a close
+  also takes `SHARE` on `treasury_entries` so nothing lands in the day while it is judged. The lock on
+  money is in `TreasuryLedgerService.post` (`assertDayOpen`), which every entry passes through, and in
+  `PaymentLedgerService.record` (`assertPaymentDayOpen`, only for a payment that reaches a wallet), with
+  the 0082 triggers underneath. A count stores the server's books figure and is refused, or goes stale
+  for the close, when the books move (`COUNT_EXPECTED_CHANGED`). Counts, closes, sweeps and reopens are
+  Tier 1 audit rows filed as `entityType 'TreasuryDay'`, `entityId` the date: the report's timeline
+  reads them.
+- **Document numbers.** `allocateDocumentNumbers` / `allocateDocumentNumber`
+  (`application/common/document-number.ts`) is the only way a number is drawn, for all five books:
+  «INV-2610-0001», «RCP-…», «PV-…», «TR-…», «RV-…». Pass the caller's `tx` and `this.S` — the draw and the
+  document must share a transaction, and an unqualified name would resolve through the pooled
+  connection's `search_path` into another municipality's counter. Bulk callers take a block sized to
+  what was actually inserted: `FeesService.numberInvoices` numbers after `createMany` because
+  `skipDuplicates` means a block reserved beforehand would burn numbers on rows that were never
+  written. Details and trade-offs: migration 0079 and docs/database.md.
+- **The collector's own round.** `GET custody/mine` (`TransfersService.myRound`) is the one treasury
+  route outside `TREASURY_*`: `WORKING_STAFF_ROLES`, scoped by `user.sub` with no id in the path, the
+  same shape as `inspector/me/profile`. It answers what he holds and the receipts since his last
+  handover that still stand. After a *partial* handover those receipts cannot add up to what he
+  holds, so the difference is returned as `carriedOver` and named on the screen rather than hidden.
+  Staff holding no custody get an empty round, not a 403. `custody()` additionally reports each
+  collector's receipts and takings for today via a raw query — the day boundary is Beirut's
+  (`municipalToday`) and `occurredAt` is a bare timestamp holding UTC, so it needs the two-step
+  `AT TIME ZONE 'UTC' AT TIME ZONE …` the audit day-buckets use.
 - **Who is calling.** `@CurrentUser()` yields `SessionClaims` (`application/features/identity/identity.service.ts`);
   `@CurrentTenant()` yields `req.tenant`. Pass the actor to services as `{ id: user.sub, role: user.role ?? '' }`.
 - **Validation.** `@Body(new ZodValidationPipe(schema))`, schema from `@mechanization/shared-schemas`. Put
@@ -248,7 +339,9 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 ([docs/security.md](../../docs/security.md#data-integrity-and-transactions)):
 
 1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
-   settlements), payment reversals, corrections, ownership changes (ending an ownership, making, updating
+   settlements), payment reversals, activating the treasury, recording and cancelling an expense,
+   recording and cancelling an income voucher, receiving a collector's custody and cancelling a transfer,
+   counting the treasury, closing (and sweeping) and reopening a day, corrections, ownership changes (ending an ownership, making, updating
    or ending an owner link, a merge or its undo), ending a tenancy, review decisions (approving or returning
    a record, completing a quality check) and citizen status changes (archive and restore; a citizen file
    is never deleted). The row is written in the same transaction as the change; if it fails, the change
@@ -334,7 +427,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 119 specs, 27 of them `*.integration.spec.ts`.
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 137 spec files, 36 of them `*.integration.spec.ts` (counted on disk 2026-10-10).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

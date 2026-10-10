@@ -1,6 +1,6 @@
 # Code quality
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
 
 Two parts: the code-pattern rules every change follows, and the debt the code carries today. The debt
 is not a precedent. **Fix an item when you touch its file, and remove its row in the same change.** Add a
@@ -57,6 +57,7 @@ in [docs/ui-ux-standards.md](ui-ux-standards.md) §17.
 |---|---|---|
 | `buildings.service.ts` (5,415 lines), `landlord-link.service.ts` (3,590), `fees.service.ts` (3,432), `citizens.service.ts` (3,321), `reporting.service.ts` (1,855), `citizen-merge.service.ts` (1,550), `citizen.controller.ts` (786) | God files | Split into plan and helper modules with their own specs, as `unit-correction.plan.ts` did |
 | `FeesService`, `CitizensService`, `PaymentLedgerService`, `RecordReviewService`, `BuildingsService` (incl. `atomic`), `BackupService`, `PrismaRegistrationRepository`, `PrismaDocumentRepository`, `PrismaParcelRepository` | Bare `$transaction`: no scope swap, no after-commit queue, and it throws inside an enclosing `runInTenantTransaction` (`atomic` duck-types around this) | `runInTenantTransaction` |
+| `fees/invoice-numbering.integration.spec.ts` (`carries on from where the last notice stopped` and two more) | Intermittent in the full parallel backend run against one Postgres 17 (a bill left unnumbered: expected «INV-2610-0004», got `null`): failed in 4 of 5 full runs on 2026-10-10, one of them at `ff44f27` before stage 5, and passes when run alone. Cause not investigated | Find why the numbering misses under a parallel run; until then, read a failure of this suite in the full run against a run of it alone |
 | `BuildingsService` `atomic` (15 s / 30 s), `BackupService` (15 s / 120 s), `runInTenantTransaction` defaults (15 s / 60 s) | Transaction timeouts hard-coded three ways | Named constants in `APP_CONFIG` |
 | Every `this.events.emit('…')` | Event names are free strings with payloads re-declared per listener; a typo is dropped silently | Typed event-name constants and payload types in one module |
 | `type Actor` in `ownership.service.ts`, `tenancy.service.ts`, `unit-correction.service.ts`, `record-review.service.ts`, `scripts/seed-census.ts`; `{ id: user.sub, role: user.role ?? '' }` 34 times in controllers | One shape declared five times and built inline everywhere | One exported actor type in `application/common` and a parameter decorator that builds it |

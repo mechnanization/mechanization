@@ -3,8 +3,10 @@ import { municipalToday, type PaymentMethod } from '@mechanization/shared-schema
 import type { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
+import { allocateDocumentNumber } from '../../common/document-number';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
+import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 
 /** One movement of money, as the caller describes it. */
 export interface LedgerEntryInput {
@@ -104,6 +106,7 @@ export class PaymentLedgerService {
   constructor(
     private readonly tenantContext: TenantContextService,
     private readonly auditTrail: AuditService,
+    private readonly treasury: TreasuryLedgerService,
   ) {}
 
   private get db() {
@@ -159,6 +162,15 @@ export class PaymentLedgerService {
           message: 'This payment has already been settled.',
         });
       }
+
+      /*
+        A closed treasury day takes nothing (docs/finance.md §7.3): a collector's
+        round or a counter payment back-dated into one is refused here, before a
+        receipt number is drawn, rather than by the ledger's own check further
+        down. Today is never closed — only a day that has ended can be — so an
+        undated payment always passes.
+      */
+      await this.treasury.assertPaymentDayOpen(tx, input.occurredAt ?? new Date());
 
       // Money cannot have been taken against a bill before the bill existed.
       if (input.occurredAt && municipalToday(input.occurredAt) < municipalToday(invoice.createdAt)) {
@@ -423,24 +435,19 @@ export class PaymentLedgerService {
     changeGiven = 0,
   ): Promise<SettledTotals> {
     /*
-      The sequence names its schema too — see `tenant-schema-ref.ts`.
+      «RCP-2610-0001» — the book, the month it was issued in, and a counter that
+      restarts on the first (migration 0079). Drawn from `document_counters`
+      rather than the old `payment_receipt_seq`, which a monthly reset is
+      impossible with: `nextval` only climbs.
 
-      `payment_receipt_seq` is created once per tenant schema (migration 0017),
-      so a bare `nextval('payment_receipt_seq')` resolves through the pooled
-      connection's `search_path` exactly as an unqualified table would. The
-      failure is worse than a missing table, though: this runs *inside* the
-      caller's transaction, behind the invoice's `FOR UPDATE`, so a drifted
-      connection either 42P01s a payment that is already half-written, or draws
-      from **another municipality's** sequence — and receipt numbers are printed
-      on paper handed to a resident.
-
-      `nextval` takes text cast to `regclass`, which accepts a quoted qualified
-      name, so the prefix goes inside the literal.
+      `tx`, not `this.db`: the number and the receipt have to commit or roll
+      back together. This runs inside the caller's transaction, behind the
+      invoice's `FOR UPDATE`, and `this.S` names the schema for the reason it
+      always has — a drifted pooled connection would otherwise draw from
+      **another municipality's** counter, and receipt numbers are printed on
+      paper handed to a resident.
     */
-    const [{ nextval }] = await tx.$queryRaw<Array<{ nextval: bigint }>>`
-      SELECT nextval('${this.S}payment_receipt_seq') AS nextval
-    `;
-    const receiptNumber = `RCP-${String(nextval).padStart(6, '0')}`;
+    const receiptNumber = await allocateDocumentNumber(tx, this.S, 'RECEIPT');
 
     const created = await tx.paymentTransaction.create({
       data: {
@@ -517,6 +524,43 @@ export class PaymentLedgerService {
         collectedById: input.collectedById ?? null,
       },
     });
+
+    /*
+      The wallets, in this same transaction: the payment and the money it moved
+      commit together or not at all. Only once the treasury is live and only for
+      a payment taken since (docs/finance.md §3). A reversal opposes the entries
+      of the movement it undoes; a refused outflow (the drawer cannot cover a
+      refund) rolls the reversal back with it.
+    */
+    if (reversalOfId) {
+      await this.treasury.reversePayment(tx, {
+        originalTransactionId: reversalOfId,
+        reversalTransactionId: created.id,
+        method: input.method,
+        invoiceCurrency: invoice.currency,
+        amount: Math.abs(delta),
+        occurredAt: created.occurredAt,
+        actorId: input.recordedById ?? null,
+      });
+    } else {
+      await this.treasury.creditPayment(tx, {
+        paymentTransactionId: created.id,
+        occurredAt: created.occurredAt,
+        actorId: input.recordedById ?? null,
+        method: input.method,
+        invoiceCurrency: invoice.currency,
+        amount: delta,
+        tendered: input.tendered
+          ? {
+              local: input.tendered.local,
+              foreign: input.tendered.foreign,
+              foreignCurrency: input.tendered.foreignCurrency,
+            }
+          : null,
+        changeGiven,
+        collectedById: input.collectedById ?? null,
+      });
+    }
 
     return {
       receiptNumber,

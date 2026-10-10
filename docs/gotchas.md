@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
+Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -68,6 +68,23 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   into its own `NEXT_DIST_DIR`.
 - **Where:** `apps/frontend/next.config.mjs` (`NEXT_DIST_DIR`),
   `apps/frontend/scripts/build-check.mjs`.
+
+### A running API keeps the old Prisma client after `pnpm db:generate`
+
+- **What happens:** after a schema change and `pnpm db:generate`, the API
+  started by `pnpm dev` recompiles the new code and then answers its new
+  queries with a 500 (`INTERNAL_ERROR`), while the integration suites, which
+  load the client from `src/`, pass. Seen 2026-10-09 with `payeeStaffId` (0081), and again
+  2026-10-10 with the 0082 models: every new treasury route answered 500.
+- **Why:** `nest start --watch` runs `dist/`, and the Prisma clients reach
+  `dist/generated` only as assets. `nest-cli.json` sets `"watchAssets": false`,
+  so the watcher recompiles TypeScript but never re-copies the regenerated
+  client: the code asks for a column the loaded client does not know.
+- **Do this:** restart `pnpm dev` (the initial build copies the assets) after
+  every `pnpm db:generate`. `diff -rq apps/backend/src/generated apps/backend/dist/generated`
+  shows whether `dist/` is behind.
+- **Where:** `apps/backend/nest-cli.json` `compilerOptions.assets` and
+  `watchAssets`.
 
 ### Three Node versions, and an unknown fourth
 
@@ -162,6 +179,25 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   qualify calls with the schema.
 - **Where:** `0030_building_census`, `0048_search_compact_schema_qualified`.
 
+### A closed treasury day is judged in two places, on a calendar written twice
+
+- **What happens:** a back-dated write into a closed day — a voucher, a payment, a
+  collector's round, a test fixture — is refused (`CLOSED_DAY_MUTATION_BLOCKED`, or the trigger's
+  «treasury day … is closed»), however it reaches `treasury_entries`. Change the municipal time
+  zone in one place only and the application and the database disagree about which day an entry
+  is on, for the hours between the two midnights.
+- **Why:** `TreasuryLedgerService.post` judges the day with `municipalToday` (`MUNICIPAL_TIME_ZONE`,
+  shared-schemas), and the 0082 triggers with `AT TIME ZONE 'Asia/Beirut'` written into SQL. The
+  count trigger also lets exactly one write through on a closed day — closing's link to its
+  closure — by comparing the row minus `closureId`, so a column added to `treasury_counts` that
+  closing must also set would be refused.
+- **Do this:** change the zone in both, in the same release. Date a late movement on the day it
+  is entered and say in its note which day it belongs to; reopen only the latest closed day. A new
+  count column that closing writes needs the trigger's exception widened in a new migration.
+  Integration fixtures that need old days move money on them before closing them.
+- **Where:** `0082_treasury_day_closing` (`reject_closed_day_entry`, `reject_closed_day_count`),
+  `treasury-ledger.service.ts` (`assertDayOpen`), `cash-policy.ts` (`MUNICIPAL_TIME_ZONE`).
+
 ### A new enum value cannot be used in its own migration
 
 - **What happens:** a migration that adds a value and then uses it fails.
@@ -246,6 +282,31 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** match `error.code` structurally.
 - **Where:** `with-connection-retry.ts` `isTransientConnectionError`.
 
+### A Radix Select drops a value set while its list is closed
+
+- **What happens:** setting a controlled `Select`'s value from code — after
+  creating the option the user should land on, say — appears to work for a
+  render or two and then resets to empty, so the trigger falls back to its
+  placeholder even though the option is in the list. A value present when the
+  Select *mounts* is kept; one assigned later, while the content is closed, is
+  not: the item backing it has never mounted, so nothing is registered for it.
+- **Do this:** remount the Select when the option set gains the new value
+  (`key` on a counter of additions), which hands Radix the value at mount time.
+  Passing `SelectValue` children fixes only the visible label, not the value.
+  Refetching the options while the form is open makes it worse, not better.
+- **Where:** `record-expense-form.tsx`, the «بند الصرف» select.
+
+### Two requests creating the same singleton row
+
+- **What happens:** `upsert` on a row that does not exist yet (`system_settings`, keyed by `singleton`)
+  is a read then an insert. Two requests arriving together both read nothing and both insert; the
+  loser fails with a raw unique violation (`P2002`) instead of the domain answer it should give,
+  and inside a transaction the violation aborts the whole transaction.
+- **Do this:** `INSERT … ON CONFLICT DO NOTHING` (raw, schema-qualified), then read and lock the
+  row. `TreasuryService.activate` does; `treasury.integration.spec.ts` pins it with two
+  simultaneous activations.
+- **Where:** `treasury.service.ts`.
+
 ### Append-only triggers fire through cascades
 
 - **What happens:** deleting a `citizen_payments` row cascades into
@@ -254,7 +315,8 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Why:** `payment_transactions_no_delete` rejects every row delete, including
   cascaded ones.
 - **Do this:** treat the abort as the control working. Never `TRUNCATE` or set
-  `session_replication_role` to get round it.
+  `session_replication_role` to get round it. `treasury_entries` (0073) behaves the same way: its
+  foreign keys are RESTRICT, so deleting a staff member or a wallet that moved money is refused.
 - **Where:** `0017_payment_ledger`, the `BackupService` comment above
   `TABLE_ORDER`.
 
