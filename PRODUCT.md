@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (inspector payouts and the printed vouchers; uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (inspector payouts and the printed vouchers), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted), 2026-10-10.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -74,9 +74,17 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
       balance, and once the treasury is live the payment is a «أمر صرف» under «تعويضات المسح
       والجباية» that takes the money out of that wallet; the manager's payout is the order.
       Cancelling that voucher puts the amount back on what the inspector is owed. Before the
-      treasury is live, a payout is recorded as it always was, with no wallet. How the payment
-      order applies to a commission an accountant pays is still to be decided
+      treasury is live, the manager records a payout as he always did, with no wallet, dated no
+      later than today.
+    - A commission is paid like a salary (decided 2026-10-10): an accountant may pay one once the
+      treasury is live, at once, as an art. 35 payment with the reason «عمولة مسح ميداني — تُدفع
+      قبل الحوالة (المادة 35)» written by the system, and it waits for the manager's order. He
+      cannot pay his own. He has no screen for it yet and is not shown what an inspector is owed
+      (the dialog is on the manager's screens), so today he pays through the API alone
       ([docs/finance.md](docs/finance.md) §5.6).
+    - A commission is paid only through «صرف عمولة»: the expense form no longer offers
+      «تعويضات المسح والجباية», since a commission paid there was not counted against what the
+      inspector is owed.
   - **Printed vouchers.** Every «أمر صرف» and every «سند قبض إيرادات» prints on an A4 sheet from
     its register, from the success message after recording it, and (for a commission) from the
     inspector's payout history: the municipality's letterhead and crest from الإعدادات, the number

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  COMMISSION_URGENT_REASON,
   isReservedExpenseCategory,
   municipalToday,
   SALARY_URGENT_REASON,
@@ -41,13 +42,18 @@ const PAGE_DEFAULT = 50;
  *
  * Each control here belongs to one path, and inferring it from another field
  * is how it ends up somewhere it was never meant to be: the urgent ceiling's
- * salary exemption was once `payeeStaffId !== null`, which a commission voucher
- * also satisfies, though art. 35 names salaries and not commissions.
+ * exemption was once `payeeStaffId !== null`, which says only that a staff
+ * account is paid, not that art. 35 covers the payment.
  */
 interface VoucherPath {
   /** The staff account the voucher pays (`recordSalary`, `recordCommission`); null on the form's vouchers. */
   payeeStaffId: string | null;
-  /** Art. 35 names salaries, so `recordSalary` alone is exempt from the urgent ceiling (D6, D7). */
+  /**
+   * Art. 35 names salaries and wages, so `recordSalary` (D7) and `recordCommission`
+   * (D9: a commission is paid like a salary) are exempt from the urgent ceiling
+   * (D6). Said by each path, never inferred: the form's voucher is held to it
+   * whoever its payee.
+   */
   exemptFromUrgentCeiling: boolean;
   /** `recordCommission` alone files under a reserved category (`RESERVED_EXPENSE_CATEGORY_KEYS`). */
   mayUseReservedCategory: boolean;
@@ -469,8 +475,16 @@ export class ExpensesService {
    * The only writer of that category (`RESERVED_EXPENSE_CATEGORY_KEYS`): the
    * form, a request and an order refuse it, because a commission voucher with
    * no payout row beside it would leave the inspector reading as owed what he
-   * was paid. And not exempt from the urgent ceiling — art. 35 names salaries,
-   * not commissions — should a commission ever take the urgent path.
+   * was paid.
+   *
+   * The payment order (decision D9, the owner, 2026-10-10): a commission is
+   * paid like a salary, because art. 35 names salaries and wages among what may
+   * be paid before the order. So the manager's payout is the order, and an
+   * accountant's is paid at once on the urgent path with
+   * `COMMISSION_URGENT_REASON`, written here rather than asked for, and waits
+   * for the manager's regularisation; the urgent ceiling does not apply to it
+   * (`exemptFromUrgentCeiling`). His own commission is refused by the caller
+   * (`COMMISSION_SELF_PAYOUT`), before any figure is read.
    *
    * With no statement given, the voucher says what its category says: a voucher
    * needs a description, and the category's name is the municipality's own
@@ -510,10 +524,12 @@ export class ExpensesService {
           payee: inspector.name,
           description: input.description?.trim() || category.name,
           invoiceNumber: input.invoiceNumber,
+          // D9: an accountant's commission is paid before the order; the manager's payout is the order.
+          urgentReason: ordersPayments(actor.role) ? undefined : COMMISSION_URGENT_REASON,
           clientRequestId: input.clientRequestId,
         },
         actor,
-        { payeeStaffId: inspector.id, exemptFromUrgentCeiling: false, mayUseReservedCategory: true },
+        { payeeStaffId: inspector.id, exemptFromUrgentCeiling: true, mayUseReservedCategory: true },
       );
     });
   }
@@ -562,12 +578,12 @@ export class ExpensesService {
       /*
         «أمر الصرف» (decree 5595/1982 art. 28 and 33): money leaves on the order
         of the head of the municipality. The manager's own voucher is that order.
-        An accountant pays without one only for what art. 35 allows — salaries,
-        routine petty and urgent expenses — and says why (a salary's reason is
-        written by `recordSalary`), up to the manager's ceiling below, and the
-        voucher then waits for the manager to regularise it; everything else
-        goes to the manager as a request (`requestPayment`) and moves no money
-        until ordered.
+        An accountant pays without one only for what art. 35 allows — salaries
+        and wages, routine petty and urgent expenses — and says why (the reason
+        of a salary or a commission is written by `recordSalary` or
+        `recordCommission`), up to the manager's ceiling below, and the voucher
+        then waits for the manager to regularise it; everything else goes to the
+        manager as a request (`requestPayment`) and moves no money until ordered.
       */
       const ordered = ordersPayments(actor.role);
       const urgentReason = ordered ? null : input.urgentReason?.trim() || null;
@@ -615,10 +631,10 @@ export class ExpensesService {
         the manager's ceiling for the wallet's currency, an accountant's urgent
         payment is refused and goes to him as a request. Read from the settings
         row `config` already holds FOR SHARE. Not for the manager's own voucher,
-        which is the order, nor for a salary paid by `recordSalary` (the one
-        path that says `exemptFromUrgentCeiling`): art. 35 names salaries, so no
-        ceiling holds them back. Said by the path, never read off
-        `payeeStaffId`, which a commission voucher carries too.
+        which is the order, nor for a salary (`recordSalary`, D7) or a commission
+        (`recordCommission`, D9), the two paths that say `exemptFromUrgentCeiling`:
+        art. 35 names salaries and wages, so no ceiling holds them back. Said by
+        the path, never read off `payeeStaffId`.
       */
       if (!ordered && !path.exemptFromUrgentCeiling) {
         const breach = urgentCeilingBreached({

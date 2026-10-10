@@ -583,18 +583,44 @@ a unique index.
   (before go-live no wallet is touched).
 - **Built 2026-10-10** (§14, «صرف عمولة»). Two decisions taken while building, not stated
   above: a payout made while the treasury is live is **dated today** like a salary
-  (`INSPECTOR_PAYOUT_DATE_NOT_ALLOWED`; a commission paid on another day is an expense-form
-  job); and **cancelling its voucher returns the amount to what the inspector is owed** — the
-  payout stays in his history marked cancelled, and both the profile and the roster leave it out
-  of what was paid. Derived on read from the voucher's `voidedAt`, never a second stamp.
-- The voucher is written through the same path as every other («أمر الصرف», §5.1), so the
-  manager's payout is the order. **Undecided** (raised when PR #109, written before the payment
-  order of D3, was merged with it on 2026-10-10): how the payment order applies to a commission
-  an accountant pays. The route admits him (§9), but art. 35 names salaries, not commissions, so
-  whether his payout is an urgent payment like a salary (D7), a request for the manager's order,
-  or not his to make is the owner's call. The dialog lives on screens only `SUPER_ADMIN` opens.
-  Whatever the code does meanwhile is set in `ExpensesService.recordCommission`; update this
-  line with it.
+  (`INSPECTOR_PAYOUT_DATE_NOT_ALLOWED`); and **cancelling its voucher returns the amount to
+  what the inspector is owed** — the payout stays in his history marked cancelled, and both the
+  profile and the roster leave it out of what was paid. Derived on read from the voucher's
+  `voidedAt`, never a second stamp.
+- **«صرف عمولة» is the only way a commission is paid.** «تعويضات المسح والجباية»
+  (`FIELD_COMMISSIONS`) is reserved to it: the expense form does not offer it, and `record`,
+  `requestPayment` and `orderRequest` refuse it (`EXPENSE_CATEGORY_RESERVED`). The PR #109
+  review found the hole: a commission paid through the form wrote no payout row, so the
+  inspector still read as owed it and «صرف عمولة» paid it again (reproduced: $4 through the
+  form, $19 still owed, then paid in full). Whether a commission may be paid **back-dated** once
+  live is **Undecided** ([open-decisions.md §18](open-decisions.md)); until it is decided there
+  is no road for one.
+- **Who pays it, and the payment order (decision D9, the owner, 2026-10-10).** A commission is
+  paid like a salary (§5.8). Decree 5595/1982 art. 35 names salaries and wages («الرواتب
+  والأجور») among what may be paid before the order, so, once the treasury is live:
+  - the manager's payout is the order (`orderStatus: 'ORDERED'`, no `urgentReason`);
+  - an accountant's is paid at once on the urgent path. The server writes its reason, exactly
+    «عمولة مسح ميداني — تُدفع قبل الحوالة (المادة 35)» (`COMMISSION_URGENT_REASON` in
+    `packages/shared-schemas`), and the voucher waits as «بانتظار أمر الصرف» until the manager
+    regularises it, like any urgent voucher. The body carries no reason field. The inspector's
+    owed balance drops at once, as the money has left; a voucher the manager will not order is
+    cancelled instead, which returns the amount to what is owed;
+  - the urgent-payment ceiling (§5.1, D6) does not apply, as it does not to a salary. The
+    exemption is said by the commission path itself (`VoucherPath.exemptFromUrgentCeiling`, set
+    by `recordSalary` and `recordCommission` alone), never inferred from the voucher naming a
+    staff payee;
+  - an accountant cannot pay a commission to himself (`COMMISSION_SELF_PAYOUT`, the D8 rule),
+    refused before any figure is read;
+  - before go-live a payout is a figure with no wallet, no voucher and so no order to wait for:
+    it stays the manager's (`INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY`), in dollars, dated no
+    later than today (`INSPECTOR_PAYOUT_DATE_IN_FUTURE`), with the amount in its Tier 1 audit row.
+- **The accountant does not see what is owed.** The inspector's profile lists the citizens he
+  registered and stays `SUPER_ADMIN` or the inspector himself. So the payout's refusal names no
+  figure to the accountant, and once live the balance is judged last, inside the transaction, so
+  no other refusal answers differently for an amount within what is owed. The dialog reads the
+  profile and lives on screens only `SUPER_ADMIN` opens: an accountant pays through the API
+  alone. Whether he should be given the owed figure, and a screen, is **Undecided**
+  ([open-decisions.md §18](open-decisions.md)).
 
 ### 5.7 Step 3b — attachments
 
@@ -834,7 +860,7 @@ Two working roles. The **accountant** runs the daily work. The **manager
 | Withdraw a request still waiting | **his own** | yes | no | no | no |
 | Issue a payment order, reject a request, regularise an urgent payment | no | **yes** | no | no | no |
 | Record (pay) an expense | **only urgent, with a reason (art. 35), up to the manager's ceiling (D6); it waits for the order** | yes — his recording is the order | no | no | no |
-| Record an inspector payout (picks the wallet) | yes (how the payment order applies to his: **Undecided**, §5.6) | yes — his payout is the order | no | no | no |
+| Record an inspector payout (picks the wallet; §5.6) | **yes, once live, on the urgent path: the server writes the art. 35 reason, no ceiling; it waits for the order (D9). Never his own; before go-live, no.** The dialog is on `SUPER_ADMIN`-only screens | yes — his payout is the order | no | no | no |
 | Pay a staff member's salary (§5.8; the button is on the `SUPER_ADMIN`-only staff page) | **yes, on the urgent path: the server writes the art. 35 reason, no ceiling; it waits for the order** (D7) | yes — his payout is the order | no | no | no |
 | Transfer, exchange, collector handover (never of one's own custody) | yes | yes | no | no | no |
 | Count a wallet | yes | yes | no | no | no |
@@ -852,7 +878,10 @@ treasury handler to its row of this table, so widening one is a decision made th
 includes stage 5's `TreasuryClosingController` (sheet, history and report read; count and
 close work; reopen the manager's), and reopening a closed day is in its manager-only check
 beside ordering, refusing, regularising, cancelling and activation. Until the PR #106 review
-the pin's filter missed that controller, and all six handlers were unpinned.
+the pin's filter missed that controller, and all six handlers were unpinned. A handler that
+moves treasury money from another controller is pinned by name
+(`MONEY_HANDLERS_ELSEWHERE`): today `StaffController.recordPayout`, at the work roles (D9),
+which the pin's filter missed until the PR #109 review.
 `ADMINISTRATIVE_OFFICER` reads `custody/mine` too: the route is on every role but
 «مشاهد فقط», as the next paragraph says.
 
@@ -1006,6 +1035,7 @@ municipal cash-handling practice, and is pinned by
 | D6 | Is the accountant's urgent path (art. 35) limited? (decided by the owner, 2026-10-10) | Yes: a per-voucher ceiling per currency (LBP, USD) that the manager sets in الإعدادات. Above it, `EXPENSE_URGENT_OVER_CEILING`, and the expense goes as a request. NULL means none. Not for the manager's voucher, nor for a salary (§5.1) | Art. 35 covers salaries, routine petty expenses and genuinely urgent ones. A ceiling keeps a large purchase on the order path (art. 28, 33) without slowing what the article lets through |
 | D7 | Does an accountant's salary payout need the manager's order first? (decided by the owner, 2026-10-10) | No: it is paid on the urgent path with the server's reason «راتب — يُدفع قبل الحوالة (المادة 35)», and waits for regularisation. The manager's payout is the order (§5.8) | Art. 35 names salaries among what may be paid before the order |
 | D8 | May an accountant pay his own salary on the urgent path? (2026-10-10) | No (`SALARY_SELF_PAYOUT`): the manager records it, or it goes as a request for his order (§5.8) | The separation already decided for custody (`CUSTODY_SELF_RECEIPT`): money that leaves before any order must not rest on the payee's word alone |
+| D9 | How does the payment order apply to an inspector's commission? (decided by the owner, 2026-10-10) | Like a salary: the manager's payout is the order; an accountant's is paid at once on the urgent path with the server's reason «عمولة مسح ميداني — تُدفع قبل الحوالة (المادة 35)» (`COMMISSION_URGENT_REASON`), waits for regularisation, and is exempt from the urgent ceiling (D6). Never his own (`COMMISSION_SELF_PAYOUT`, as D8). Before go-live the figure-only payout stays the manager's (§5.6) | Art. 35 names salaries and wages («الرواتب والأجور») among what may be paid before the order, and a field commission is a wage for work done |
 
 The decree's text was read at <https://www.baladiyat.org/?page_id=6636> (the
 consolidated text with its 1985–1996 amendments). It should be confirmed against the
@@ -1515,25 +1545,29 @@ unposted), note-by-note counting, statement matching (§7.5), and a date picker
 on the voucher forms that stops before the closed days (a back-dated voucher into
 one is refused by the server, with the day named).
 
-### Stage 3, finished — inspector payouts and the printed vouchers (built 2026-10-10; branch `feat/treasury-inspector-payouts-and-vouchers`, PR #109; merged into `feat/treasury-day-closing`, not committed)
+### Stage 3, finished — inspector payouts and the printed vouchers (built 2026-10-10; branch `feat/treasury-inspector-payouts-and-vouchers`, PR #109; merged into `feat/treasury-day-closing` as `6b5b038`; the review fixes and D9 not committed)
 
 The §5.6 link and the printing §4.5 and §5.8 left out, from the owner's brief of 2026-10-10:
 
-- Migration `0086_inspector_payout_voucher` (written as `0083_inspector_payout_voucher` and
-  renumbered in the merge, because `develop`'s `0083_treasury_controls` and this branch's `0087`
-  had taken the numbers; `docs/database.md` › Numbering): `inspector_payouts.expenseVoucherId`, nullable,
+- Migration `0086_inspector_payout_voucher`: `inspector_payouts.expenseVoucherId`, nullable,
   unique, a RESTRICT foreign key to `expense_vouchers`. `inspector_payouts` is in production
-  (0025); the column is additive and every existing payout keeps NULL.
-- **«صرف عمولة».** `POST staff/inspectors/:id/payouts`, now `TREASURY_WORK_ROLES`. One
-  transaction under an advisory lock on the inspector: the amount owed is read and checked
-  (`payoutAllowance`), then — once live — `ExpensesService.recordCommission` writes a «PV-»
-  voucher under `FIELD_COMMISSIONS` with the inspector as `payeeStaffId`, the ledger entry
-  leaves the wallet under its lock, the payout row points at the voucher, and two Tier 1 audit
-  rows are written (`EXPENSE_RECORDED`, `INSPECTOR_PAYOUT_RECORDED`). The wallet must hold
-  dollars. Before go-live the old path, unchanged, with no wallet. Three codes:
+  (0025); the column is additive and every existing payout keeps NULL. PR #109 wrote it as
+  `0083_inspector_payout_voucher`; `develop` already held `0083_treasury_controls`, so it became
+  `0086` in the merge. `0084` and `0085` are left to PR #111 and PR #112, and `0087` is the
+  PR #106 review fix (`docs/database.md` › Numbering).
+- **«صرف عمولة».** `POST staff/inspectors/:id/payouts`, `TREASURY_WORK_ROLES` (D9, §5.6). One
+  transaction under an advisory lock on the inspector. Once live,
+  `ExpensesService.recordCommission` writes a «PV-» voucher under `FIELD_COMMISSIONS` with the
+  inspector as `payeeStaffId` (the manager's ordered, an accountant's on the urgent path), the
+  ledger entry leaves the wallet under its lock, the amount owed is checked
+  (`payoutAllowance`), the payout row points at the voucher, and two Tier 1 audit rows are
+  written (`EXPENSE_RECORDED`, `INSPECTOR_PAYOUT_RECORDED`). The wallet must hold dollars.
+  Before go-live the old path, the manager's, with no wallet. Codes:
   `INSPECTOR_PAYOUT_WALLET_REQUIRED`, `INSPECTOR_PAYOUT_WALLET_NOT_USD`,
-  `INSPECTOR_PAYOUT_DATE_NOT_ALLOWED`, and `INSPECTOR_PAYOUT_REQUEST_REUSED` for a retry key
-  that already paid someone else.
+  `INSPECTOR_PAYOUT_DATE_NOT_ALLOWED`, `INSPECTOR_PAYOUT_REQUEST_REUSED` (a retry key that
+  already paid someone else or wrote another voucher), and from the review and D9
+  `EXPENSE_CATEGORY_RESERVED`, `INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY`,
+  `INSPECTOR_PAYOUT_DATE_IN_FUTURE` and `COMMISSION_SELF_PAYOUT`.
 - The dialog (on the staff page's inspector rows, the roster, the profile and the payout
   history): the units credited, what was earned, what is owed, the dollar wallets with the main
   dollar safe first, the balance and what would be left as the amount is typed, the button off
@@ -1553,6 +1587,46 @@ The §5.6 link and the printing §4.5 and §5.8 left out, from the owner's brief
   the retry, two payouts racing for one balance — it fails with the lock removed — the cancelled
   voucher on the profile and the roster, the short wallet). Rendered with a mocked API at 360 and
   1440px, light and dark, Arabic and English, and printed to PDF from a dark theme.
+
+**The PR #109 review (2026-10-10).** Twelve confirmed findings, each fixed with a test that fails
+without the fix (proved by breaking it in place, running the test and restoring it byte for
+byte):
+
+- *P0* — a commission paid through the expense form never counted as paid, so it was paid again:
+  `FIELD_COMMISSIONS` is reserved to «صرف عمولة» (§5.6, `EXPENSE_CATEGORY_RESERVED`), and the
+  form does not offer it (`formCategories`).
+- *P0/P1* — the dialog minted a new retry key after every failure, so a lost answer and a second
+  press paid twice: it holds `commission:<staffId>` outside the component (`lib/request-id.ts`),
+  keeps it through a lost answer (`payoutKeyAfterFailure`), marks it in doubt and re-reads the
+  figures, stops refusing on figures the lost payout may already carry (`payoutFieldErrors`),
+  locks the form after a 2xx, and announces a `replayed` answer as already paid.
+- *P1* — a failed background re-read unmounted the form: `payoutDialogView` gives the dialog to
+  the error only while nothing has loaded, and shows `RefreshFailedAlert` otherwise.
+- *P2* — the replay was not bound to its act and answered a voided voucher: `replayPayout`
+  compares inspector, amount, wallet, recorder and statement (`TREASURY_REQUEST_KEY_REUSED`) and
+  refuses a voided one (`EXPENSE_ALREADY_VOID`).
+- *P2* — the accountant's only reachable path was the uncontrolled pre-go-live payout: it is the
+  manager's (`INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY`), in dollars only, never dated after today
+  (`INSPECTOR_PAYOUT_DATE_IN_FUTURE`), with the amount in a Tier 1 audit row in the transaction.
+- *P2* — the printed «أمر صرف» of an urgent voucher read as ordered: it now prints «بانتظار أمر
+  الصرف» with the urgent reason, or who ordered it and when (`printedOrder`).
+- *P3* — the ceiling exemption hung on `payeeStaffId`: each path says it
+  (`VoucherPath.exemptFromUrgentCeiling`), and the comments that said only a salary sets a staff
+  payee are corrected.
+- *P3* — `StaffController.recordPayout` was pinned by no route-inventory test: it is pinned by name.
+- *P3* — the refusal told the accountant the owed balance: the figure is named only to a caller
+  the profile admits, and the balance is judged last (§5.6).
+- *P3* — the print pages swapped the document for an error on a failed re-read: both use
+  `readView` and `RefreshFailedAlert` (`lib/print-pages.test.ts`).
+- *P3* — `tafqeet`: ليرة takes feminine numerals and «ليرات» after 3–10 («ثلاث عشرة ليرة»,
+  «مائة وثلاث ليرات»); a dual scale word before the noun is in construct («ألفا دولار»,
+  «مليونا دولار»); a ليرة amount with a fraction writes no words rather than dropping it.
+- Then decision D9 (§5.6, §13.1c): the accountant's commission on the urgent path.
+
+Tests now: 20 integration in `inspector-payout.integration.spec.ts`, the ceiling test in
+`treasury-controls.integration.spec.ts`, the unit tests in `payout-policy.spec.ts`, the route pin, and
+the frontend tests in `lib/commission-payout.test.ts`, `lib/expense-form.test.ts`,
+`lib/expense-order.test.ts`, `lib/print-pages.test.ts` and `lib/tafqeet.test.ts` for the fixes.
 
 **Not built:** the «نسخة» stamp on a reprint (§4.5); a warning in the expense register's
 cancel dialog that the voucher paid a commission; the wording and layout of both papers are

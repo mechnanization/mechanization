@@ -1,4 +1,4 @@
-import { payoutAllowance, payoutRefusal } from '@mechanization/shared-schemas';
+import { payoutAllowance, payoutRefusal, recordInspectorPayoutSchema } from '@mechanization/shared-schemas';
 
 /*
   The payout rule, as the server enforces it: never more than is owed.
@@ -49,5 +49,38 @@ describe('payoutAllowance', () => {
     // 0.1 + 0.2 is 0.30000000000000004 in floating point.
     expect(payoutRefusal(payoutAllowance({ pendingBalance: 0.1 + 0.2 }), 0.3)).toBeNull();
     expect(payoutRefusal(payoutAllowance({ pendingBalance: 0.3 }), 0.1 + 0.2)).toBeNull();
+  });
+});
+
+/*
+  An accountant pays commissions (decision D9) but may not read an inspector's
+  figures, so the refusal he is given says that the amount is too much and
+  never by how much — nothing owed included, which is the same refusal of any
+  positive amount.
+*/
+describe('payoutRefusal without the figure', () => {
+  it('says the amount is more than is owed, and names no balance', () => {
+    const allowance = payoutAllowance({ pendingBalance: 123 });
+    const refusal = payoutRefusal(allowance, 200, { showOwed: false });
+    expect(refusal).toBe('المبلغ أكبر من الرصيد المستحق.');
+    expect(refusal).not.toContain('123');
+    expect(payoutRefusal(allowance, 123, { showOwed: false })).toBeNull();
+    // The manager's refusal keeps it.
+    expect(payoutRefusal(allowance, 200)).toContain('123.00');
+  });
+
+  it('gives nothing owed the same words, so it is not told apart from a balance short of the amount', () => {
+    expect(payoutRefusal(payoutAllowance({ pendingBalance: 0 }), 5, { showOwed: false })).toBe(
+      'المبلغ أكبر من الرصيد المستحق.',
+    );
+  });
+});
+
+describe('recordInspectorPayoutSchema', () => {
+  it('takes dollars only: earnings are counted in dollars', () => {
+    expect(recordInspectorPayoutSchema.safeParse({ amount: 5 }).data?.currency).toBe('USD');
+    expect(recordInspectorPayoutSchema.safeParse({ amount: 5, currency: 'USD' }).success).toBe(true);
+    expect(recordInspectorPayoutSchema.safeParse({ amount: 5, currency: 'XYZ' }).success).toBe(false);
+    expect(recordInspectorPayoutSchema.safeParse({ amount: 5, currency: 'LBP' }).success).toBe(false);
   });
 });

@@ -200,8 +200,12 @@ export const ERROR_CODES = [
   'INSPECTOR_PAYOUT_WALLET_NOT_USD',
   'INSPECTOR_PAYOUT_DATE_NOT_ALLOWED',
   'INSPECTOR_PAYOUT_REQUEST_REUSED',
-  // «صرف عمولة» is the manager's until the owner decides the accountant's part (finance.md §5.6).
-  'INSPECTOR_PAYOUT_MANAGER_ONLY',
+  // Before go-live a payout is a figure with no wallet, voucher or order: the manager's alone (finance.md §5.6).
+  'INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY',
+  // A payout recorded before go-live and dated after today.
+  'INSPECTOR_PAYOUT_DATE_IN_FUTURE',
+  // An accountant paying a commission to himself on the urgent path (decision D9, the D8 rule).
+  'COMMISSION_SELF_PAYOUT',
   // A بند only its own path may file under: «تعويضات المسح والجباية» is the payout's (`params.category`).
   'EXPENSE_CATEGORY_RESERVED',
   'INCOME_VOUCHER_NOT_FOUND',

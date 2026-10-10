@@ -11,7 +11,11 @@ import { ExpensesService } from '../treasury/expenses.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { TreasuryService } from '../treasury/treasury.service';
 import { StaffService } from './staff.service';
-import { municipalPeriod, type RecordInspectorPayoutInput } from '@mechanization/shared-schemas';
+import {
+  COMMISSION_URGENT_REASON,
+  municipalPeriod,
+  type RecordInspectorPayoutInput,
+} from '@mechanization/shared-schemas';
 
 /**
  * «صرف عمولة» against a real Postgres (docs/finance.md §5.6, migration 0086).
@@ -212,7 +216,18 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
     });
 
     it("refuses the accountant: the figure-only payout, with no wallet, voucher or order, is the manager's", async () => {
-      await expect(pay({ amount: 1 }, ACCOUNTANT)).rejects.toMatchObject({ code: 'INSPECTOR_PAYOUT_MANAGER_ONLY' });
+      await expect(pay({ amount: 1 }, ACCOUNTANT)).rejects.toMatchObject({
+        code: 'INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY',
+      });
+      expect(await counts()).toEqual({ payouts: 1, vouchers: 0, entries: 0 });
+      expect((await profile()).pendingBalance).toBe(EARNED - 2);
+    });
+
+    it('refuses a payout dated after today: the cash it records has not been handed over', async () => {
+      const tomorrow = new Date(Date.now() + 36 * 60 * 60 * 1000).toISOString();
+      await expect(pay({ amount: 1, paidAt: tomorrow })).rejects.toMatchObject({
+        code: 'INSPECTOR_PAYOUT_DATE_IN_FUTURE',
+      });
       expect(await counts()).toEqual({ payouts: 1, vouchers: 0, entries: 0 });
       expect((await profile()).pendingBalance).toBe(EARNED - 2);
     });
@@ -360,16 +375,106 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       expect((await profile()).pendingBalance).toBe(owed);
     });
 
-    it('refuses the accountant before any figure is read: no owed balance, and no answer on whose account an id is', async () => {
+    // ── decision D9: a commission is paid like a salary (art. 35) ──
+
+    it("pays the accountant's payout at once on the urgent path, with the server's art. 35 reason, waiting for the order", async () => {
+      const owed = (await profile()).pendingBalance;
+      const before = await balance(safeUsdId);
+      const payout = await pay({ amount: 1, accountId: safeUsdId, clientRequestId: randomUUID() }, ACCOUNTANT);
+
+      // Paid: the money left the safe and the inspector is owed that much less, now.
+      expect(await balance(safeUsdId)).toBe(before - 1);
+      expect((await profile()).pendingBalance).toBe(owed - 1);
+
+      const voucher = await scoped(() => expenses.get(payout.voucher!.id));
+      expect(voucher).toMatchObject({
+        orderStatus: 'AWAITING_ORDER',
+        urgentReason: COMMISSION_URGENT_REASON,
+        payeeStaffId: inspectorId,
+      });
+      expect(voucher.urgentReason).toBe('عمولة مسح ميداني — تُدفع قبل الحوالة (المادة 35)');
+      const row = (
+        await db.auditLogEntry.findMany({ where: { action: 'INSPECTOR_PAYOUT_RECORDED', entityId: inspectorId } })
+      ).find((candidate) => (candidate.after as { payoutId?: string }).payoutId === payout.id);
+      expect(row?.after).toMatchObject({ ordered: false });
+
+      // In the manager's queue, and his regularisation is the order.
+      const waiting = await scoped(() => expenses.list({ awaitingOrder: true }));
+      expect(waiting.vouchers.map((candidate) => candidate.id)).toContain(voucher.id);
+      await expect(scoped(() => expenses.regularize(voucher.id, MANAGER))).resolves.toMatchObject({
+        orderStatus: 'ORDERED',
+      });
+
+      // The manager's own payout is the order, and carries no reason.
+      const own = await pay({ amount: 1, accountId: safeUsdId, clientRequestId: randomUUID() });
+      expect(await scoped(() => expenses.get(own.voucher!.id))).toMatchObject({
+        orderStatus: 'ORDERED',
+        urgentReason: null,
+      });
+    });
+
+    it("does not hold the accountant's commission to the urgent ceiling, as art. 35 does not hold a salary (D6, D9)", async () => {
+      await db.systemSettings.updateMany({ data: { urgentExpenseCeilingUsd: 1 } });
+      try {
+        await expect(
+          pay({ amount: 2, accountId: safeUsdId, clientRequestId: randomUUID() }, ACCOUNTANT),
+        ).resolves.toMatchObject({ replayed: false });
+      } finally {
+        await db.systemSettings.updateMany({ data: { urgentExpenseCeilingUsd: null } });
+      }
+    });
+
+    it('refuses an accountant his own commission, before any figure is read (the D8 rule)', async () => {
+      // The accountant filed a card once, so he has earned something a payout could take.
+      const citizenId = randomUUID();
+      await db.user.create({
+        data: { id: citizenId, kind: 'CITIZEN', tenantSlug: 'payouts', firstName: 'ليلى', lastName: 'عون' },
+      });
+      const registration = await db.registration.create({
+        data: { citizenId, referenceNumber: `R-${randomUUID().slice(0, 10)}`, createdById: ACCOUNTANT.id },
+        select: { id: true },
+      });
+      await db.propertyEntry.create({
+        data: {
+          registrationId: registration.id,
+          occupancyType: 'OWNER',
+          propertyType: 'BUILDING',
+          neighborhood: 'الحي',
+          propertyNumber: '202',
+          units: {
+            create: [{ unitType: 'APARTMENT', floor: '1', unitArea: 100, unitStatus: 'OWNER_OCCUPIED' }],
+          },
+        },
+      });
+      const own = await scoped(() => staff.getInspectorProfile('payouts', ACCOUNTANT.id));
+      expect(own.pendingBalance).toBeGreaterThan(0);
+      const before = await counts();
+
+      await expect(
+        pay({ amount: 1, accountId: safeUsdId, clientRequestId: randomUUID() }, ACCOUNTANT, ACCOUNTANT.id),
+      ).rejects.toMatchObject({ code: 'COMMISSION_SELF_PAYOUT' });
+      expect(await counts()).toEqual(before);
+    });
+
+    it('names no owed figure to the accountant, and judges the balance last, so no other refusal tells him it', async () => {
       const owed = (await profile()).pendingBalance;
       const before = await counts();
 
-      for (const to of [inspectorId, randomUUID()]) {
-        const refusal = pay({ amount: 999_999, accountId: safeUsdId, clientRequestId: randomUUID() }, ACCOUNTANT, to);
-        await expect(refusal).rejects.toMatchObject({ code: 'INSPECTOR_PAYOUT_MANAGER_ONLY' });
-        await expect(refusal).rejects.not.toThrow(owed.toFixed(2));
+      // Above what is owed: refused in words that carry no figure, and nothing is written.
+      const over = pay({ amount: owed + 1, accountId: safeUsdId, clientRequestId: randomUUID() }, ACCOUNTANT);
+      await expect(over).rejects.toThrow('المبلغ أكبر من الرصيد المستحق.');
+      await expect(over).rejects.not.toThrow(owed.toFixed(2));
+
+      // A wallet that does not exist answers alike whether the amount is within what is owed or not.
+      for (const amount of [1, owed + 1]) {
+        await expect(
+          pay({ amount, accountId: randomUUID(), clientRequestId: randomUUID() }, ACCOUNTANT),
+        ).rejects.toMatchObject({ code: 'TREASURY_ACCOUNT_NOT_FOUND' });
       }
       expect(await counts()).toEqual(before);
+
+      // The manager, who reads the profile, is told the figure.
+      await expect(pay({ amount: owed + 1, accountId: safeUsdId })).rejects.toThrow(`(${owed.toFixed(2)}$)`);
     });
 
     it('keeps «تعويضات المسح والجباية» to «صرف عمولة»: the form, a request and an order refuse it', async () => {

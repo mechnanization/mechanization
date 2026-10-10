@@ -28,6 +28,7 @@ import {
   COMMISSION_RATE,
   cardsFiledOn,
   creditBillableUnits,
+  municipalToday,
   payoutAllowance,
   payoutRefusal,
   TREASURY_ADMIN_ROLES,
@@ -635,14 +636,31 @@ export class StaffService {
    * ## Two paths, chosen by the treasury, never by the client
    *
    * Before go-live a payout is a figure and nothing else, as it always was —
-   * there is no ledger yet for the money to leave, and `paidAt` may date it.
-   * Once live the money must leave a wallet, or the day's count comes up short
-   * by every commission paid (docs/finance.md §5.6): the payout is paid now,
-   * from a dollar wallet the client names, as a «PV-» voucher in «تعويضات
-   * المسح والجباية» written by `ExpensesService.recordCommission`, and the
-   * payout row points at it. Voucher, ledger entry, payout and both audit rows
-   * commit together or not at all. Each path refuses the other's fields rather
-   * than quietly dropping them.
+   * there is no ledger yet for the money to leave, and `paidAt` may date it,
+   * never after today. Once live the money must leave a wallet, or the day's
+   * count comes up short by every commission paid (docs/finance.md §5.6): the
+   * payout is paid now, from a dollar wallet the client names, as a «PV-»
+   * voucher in «تعويضات المسح والجباية» written by
+   * `ExpensesService.recordCommission`, and the payout row points at it.
+   * Voucher, ledger entry, payout and both audit rows commit together or not
+   * at all. Each path refuses the other's fields rather than quietly dropping
+   * them.
+   *
+   * ## Whose it is (decision D9, the owner, 2026-10-10)
+   *
+   * A commission is paid like a salary (§5.8): decree 5595/1982 art. 35 names
+   * salaries and wages among what may be paid before the order. Once live the
+   * manager's payout is the order, and an accountant's is paid at once on the
+   * urgent path with `COMMISSION_URGENT_REASON`, written by the server, and
+   * waits for the manager's regularisation; the urgent ceiling does not hold
+   * it back (`recordCommission`). Two refusals, both before any figure is read:
+   *
+   * - nobody but the manager pays himself (`COMMISSION_SELF_PAYOUT`): money
+   *   that leaves before any order must not rest on the payee's word alone,
+   *   the rule D8 set for a salary;
+   * - before go-live the figure-only payout — no wallet and no voucher, so no
+   *   order to wait for and nothing to regularise — stays the manager's
+   *   (`INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY`).
    *
    * ## Why the inspector is locked
    *
@@ -657,16 +675,14 @@ export class StaffService {
    * answers with it (`replayPayout`) — rather than reading a balance the first
    * already spent and refusing a payment that in fact went through.
    *
-   * ## Whose it is
+   * ## The balance is judged last
    *
-   * The manager's (`TREASURY_ADMIN_ROLES`), checked first, before any figure
-   * or account is read — the route says the same. Whether, and how, an
-   * accountant pays a commission is **Undecided** (docs/finance.md §5.6,
-   * docs/open-decisions.md §18): art. 35 names salaries, not commissions. Until
-   * the owner decides, he is refused here rather than handed the one path he
-   * could otherwise reach, the figure-only payout before go-live with no wallet,
-   * no voucher and no order; and a refusal that comes before the balance tells
-   * him nothing about what an inspector is owed.
+   * An accountant may not read an inspector's figures (`INSPECTOR_PROFILE_ROLES`).
+   * So once live the allowance is checked after every other refusal, inside the
+   * transaction that rolls the voucher back with it: no other refusal — a
+   * missing, stopped or short wallet — can tell him whether an amount is within
+   * what is owed, and the refusal itself names no figure to him
+   * (`payoutRefusal`'s `showOwed`).
    */
   async recordInspectorPayout(input: {
     tenantSlug: string;
@@ -674,16 +690,38 @@ export class StaffService {
     payload: RecordInspectorPayoutInput;
     actor: { id: string; role: string };
   }): Promise<RecordInspectorPayoutResult> {
-    if (!(TREASURY_ADMIN_ROLES as readonly string[]).includes(input.actor.role)) {
+    const ordersPayments = (TREASURY_ADMIN_ROLES as readonly string[]).includes(input.actor.role);
+    if (!ordersPayments && input.inspectorId === input.actor.id) {
       throw new ForbiddenError({
-        code: 'INSPECTOR_PAYOUT_MANAGER_ONLY',
-        message: "An inspector's commission is paid by the manager.",
+        code: 'COMMISSION_SELF_PAYOUT',
+        message: 'Staff cannot pay their own commission; the manager records it.',
       });
     }
+    // Who may read the figure: `StaffController.getInspectorProfile`'s rule, the manager or the inspector himself.
+    const showOwed = input.actor.role === 'SUPER_ADMIN' || input.actor.id === input.inspectorId;
 
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const { payload } = input;
+
+      /** What the inspector is owed, read under his lock. Refuses an id that is no staff account, or a deleted one. */
+      const payeeProfile = async (): Promise<InspectorProfileResponse> => {
+        // Throws NotFoundError for anything that is not a staff account.
+        const profile = await this.getInspectorProfile(input.tenantSlug, input.inspectorId);
+        // A deleted account was settled before it went (see `remove`); paying it now has no basis.
+        if (await this.users.isStaffHidden(input.inspectorId)) {
+          throw new ConflictError('هذا الحساب محذوف — استعده أولاً إن كان له مستحقات');
+        }
+        return profile;
+      };
+      /** Never more than is owed, with the figure only for a caller who may read it. */
+      const refuseOverOwed = (profile: InspectorProfileResponse): void => {
+        const allowance = payoutAllowance({ pendingBalance: profile.pendingBalance });
+        const refusal = payoutRefusal(allowance, payload.amount, { showOwed });
+        if (refusal) {
+          throw new ValidationError(refusal);
+        }
+      };
 
       const lockKey = `${this.tenantContext.schemaName}:inspector-payout:${input.inspectorId}`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
@@ -696,23 +734,16 @@ export class StaffService {
         if (earlier) return replayPayout(earlier, input);
       }
 
-      // Throws NotFoundError for anything that is not a staff account.
-      const profile = await this.getInspectorProfile(input.tenantSlug, input.inspectorId);
-      // A deleted account was settled before it went (see `remove`); paying it now has no basis.
-      if (await this.users.isStaffHidden(input.inspectorId)) {
-        throw new ConflictError('هذا الحساب محذوف — استعده أولاً إن كان له مستحقات');
-      }
-
-      const refusal = payoutRefusal(
-        payoutAllowance({ pendingBalance: profile.pendingBalance }),
-        payload.amount,
-      );
-      if (refusal) {
-        throw new ValidationError(refusal);
-      }
-
+      // The settings row FOR SHARE before any wallet is named (`TreasuryLedgerService.lockAccounts`).
       const { goLiveAt } = await this.ledger.config(tx);
       if (!goLiveAt) {
+        if (!ordersPayments) {
+          throw new ForbiddenError({
+            code: 'INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY',
+            message: 'Before the treasury is live a commission payout is recorded by the manager.',
+          });
+        }
+        refuseOverOwed(await payeeProfile());
         return this.recordPayoutWithoutTreasury(tx, input);
       }
 
@@ -735,6 +766,9 @@ export class StaffService {
           message: 'With the treasury live a payout is dated today.',
         });
       }
+
+      const profile = await payeeProfile();
+
       /*
         Earnings are counted in dollars, so a payout that left a ليرة wallet
         would be summed as dollars against them. An unknown or stopped wallet
@@ -775,6 +809,14 @@ export class StaffService {
         });
       }
 
+      /*
+        Last, so nothing else refused can say whether the amount is within what
+        is owed (see above); the voucher and its ledger entry roll back with
+        this refusal. `profile` was read under the inspector's lock and before
+        this payout, so it is what was owed when the press arrived.
+      */
+      refuseOverOwed(profile);
+
       const { occurredAt } = await tx.expenseVoucher.findUniqueOrThrow({
         where: { id: voucher.id },
         select: { occurredAt: true },
@@ -813,6 +855,8 @@ export class StaffService {
           voucherId: voucher.id,
           voucherNumber: voucher.voucherNumber,
           accountId: payload.accountId,
+          // Whether the order came with it, or it was paid on the urgent path and waits for one (D9).
+          ordered: voucher.orderStatus === 'ORDERED',
         },
       });
 
@@ -846,6 +890,16 @@ export class StaffService {
     const paidAt = payload.paidAt ? new Date(payload.paidAt) : new Date();
     if (Number.isNaN(paidAt.getTime())) {
       throw new ValidationError('تاريخ الدفع غير صالح.');
+    }
+    /*
+      A payout is dated the day the cash was handed over, which has happened.
+      Compared as the municipality's calendar days, as every treasury date is.
+    */
+    if (municipalToday(paidAt) > municipalToday()) {
+      throw new ValidationError({
+        code: 'INSPECTOR_PAYOUT_DATE_IN_FUTURE',
+        message: 'A payout cannot be dated after today.',
+      });
     }
 
     const payout = await tx.inspectorPayout.create({
@@ -902,15 +956,15 @@ type PayoutRow = Prisma.InspectorPayoutGetPayload<{ include: typeof PAYOUT_INCLU
  * The answer to a press whose `clientRequestId` already paid a commission.
  *
  * A key names one act, as an expense voucher's does (`ExpensesService.replayVoucher`):
- * this manager paying this inspector this amount out of this wallet, for this
+ * this officer paying this inspector this amount out of this wallet, for this
  * statement. Replayed with all of them it answers with the first payout,
  * marked `replayed`. Anything else is a new act under an old key and is
  * refused (`TREASURY_REQUEST_KEY_REUSED`), rather than answered with a payout
- * the manager did not ask for. The paper reference is not compared: a retry is
+ * the officer did not ask for. The paper reference is not compared: a retry is
  * the same payment, and the payout keeps what it was first recorded with.
  *
  * A payout whose voucher was cancelled since is not answered as made
- * (`EXPENSE_ALREADY_VOID`): the manager would read «صُرفت» and hand over cash
+ * (`EXPENSE_ALREADY_VOID`): the officer would read «صُرفت» and hand over cash
  * the register shows as returned, which the inspector is owed again.
  */
 function replayPayout(

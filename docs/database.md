@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; 0083 extended to income vouchers and the urgent-payment ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes and `0087`) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (its migration renumbered `0086_inspector_payout_voucher`; uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; 0083 extended to income vouchers and the urgent-payment ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes and `0087`) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (its migration renumbered `0086_inspector_payout_voucher`), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted), 2026-10-10.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -540,20 +540,27 @@ reads staging's history from `.env.staging` and nothing else, and
     nowhere but throwaway databases. The two touch different tables, so either merge order works:
     a database that already has `0083` takes `0082` out of order, with `deploy.mjs`'s warning.
     That is now the case on `develop`, which has `0083` and no `0082`.
-  - `0087_treasury_day_closure_written_once` was numbered on 2026-10-10 on
-    `feat/treasury-day-closing`, after `git log --all` showed no local or remote-tracking branch
-    holding an `0087` or later (no fresh fetch was made). It needs `0082` (its tables) and never
-    edits it: `0082` may already be on staging.
-  - `0086_inspector_payout_voucher` was first written as `0083_inspector_payout_voucher` on
+  - On 2026-10-10, in the merge of PR #109 into `feat/treasury-day-closing`, every number from
+    `0083` to `0087` was given out so that none is used twice across `develop` and the open PRs:
+    `0083_treasury_controls` is `develop`'s (PR #107); `0084` is PR #111's
+    (`0084_treasury_exchange_and_review`) and `0085` PR #112's (`0085_payment_settlements`), both
+    left free on this branch on purpose; `0086` and `0087` are this branch's, below. `0084`,
+    `0085`, `0086` and `0087` do not depend on one another, so they apply alike in any order.
+    `0086` and `0087` have not been applied to staging or production.
+  - `0087_treasury_day_closure_written_once` was written as `0084` in the review fix for PR #106,
+    and renumbered `0087` in that merge, since `0084` and `0085` belong to PR #111 and PR #112 and
+    `0086` to PR #109. It needs `0082` (its tables) and never edits it: `0082` may already be on
+    staging.
+  - `0086_inspector_payout_voucher` was written as `0083_inspector_payout_voucher` on
     `feat/treasury-inspector-payouts-and-vouchers` (PR #109, cut from
-    `feat/treasury-daily-count-and-closure`), after a fetch showed no branch holding an `0083` or
-    later. It was renumbered on 2026-10-10, in the merge of PR #109 into
-    `feat/treasury-day-closing`: `develop`'s `0083_treasury_controls` (PR #107) had taken `0083`,
-    and `0087` is the day-closure fix. It had been applied nowhere but throwaway databases. PR
-    #109's branch on `origin` still carries the old name until the merge is pushed. It is one
-    nullable column on `inspector_payouts`, which is in production (0025), with a unique index
-    built without CONCURRENTLY on a table of tens of rows. It needs `0074`, and ships in its own
-    migrations-only PR after the finance migrations.
+    `feat/treasury-daily-count-and-closure`), and renumbered `0086` in that merge, because
+    `develop`'s `0083_treasury_controls` already held `0083`. PR #109's branch on `origin` still
+    carries the old name until the merge is pushed, and so does PR #111's, which was cut from it:
+    PR #111 must take `0086` in place of its `0083_inspector_payout_voucher` when it lands, or the
+    column is created twice under two names (harmless, being `IF NOT EXISTS`, but a second
+    history row). It is one nullable column on `inspector_payouts`, which is in production
+    (0025), with a unique index built without CONCURRENTLY on a table of tens of rows. It needs
+    `0074`, and ships in its own migrations-only PR after the finance migrations.
   - The treasury migration was itself first written as `0071` and renumbered when
     `0071_damage_habitable` and `0072_users_no_phone_rules` landed on `develop`.
   - A branch cut before a release is a branch whose numbers can be taken while you work:
@@ -563,11 +570,12 @@ reads staging's history from `.env.staging` and nothing else, and
   `0066`, so it applies out of order: `deploy.mjs` warns and applies it. `0073` and
   `0074` reach a database that already has `0075`–`0077` the same way, with the same
   warning; the two sets touch different tables (checked on a scratch schema on the
-  PR #104 review, 2026-10-09). On 2026-10-10, in the merge of PR #109, every local and
-  remote-tracking branch was listed (refs as fresh as the last fetch): `develop` ends at
-  `0083_treasury_controls`, `feat/treasury-day-closing` holds `0082`, `0087` and `0086`, and PR
-  #109's remote branch still holds the old `0083_inspector_payout_voucher`. No branch holds an
-  `0086` or later, so the next free number is `0086`.
+  PR #104 review, 2026-10-09). On 2026-10-10, after a fetch, the unmerged remote branches
+  were listed: `develop` ends at `0083_treasury_controls`; `feat/treasury-day-closing` holds
+  `0082`, `0086` and `0087`; PR #111 (`feat/treasury-transfers-and-exchange`) holds
+  `0084_treasury_exchange_and_review` and the old `0083_inspector_payout_voucher`; PR #112
+  (`feat/fees-bulk-settlement`) holds `0085_payment_settlements`. The next free number is
+  `0088`.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 

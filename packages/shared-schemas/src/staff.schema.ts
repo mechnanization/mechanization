@@ -104,7 +104,13 @@ export type InspectorProfileResponse = z.infer<typeof inspectorProfileResponseSc
  */
 export const recordInspectorPayoutSchema = z.object({
   amount: z.number().positive('Amount must be greater than 0'),
-  currency: z.string().default('USD'),
+  /**
+   * Dollars only: earnings are counted in dollars, and a payout in anything
+   * else would be summed as dollars against them. Once live the wallet's
+   * currency is what the voucher carries, and the server refuses a ليرة wallet.
+   */
+  currency: z.literal('USD').default('USD'),
+  /** Before go-live only, and never after today (`INSPECTOR_PAYOUT_DATE_IN_FUTURE`). */
   paidAt: z.string().optional(),
   note: z.string().max(500).optional(),
   reference: z.string().max(100).optional(),

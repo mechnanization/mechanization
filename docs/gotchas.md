@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3`, committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted), 2026-10-10.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -853,6 +853,25 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Why:** both use `mechanization.session.<tenant>`.
 - **Do this:** use two browser profiles to test both at once.
 - **Where:** `apps/frontend/lib/session.ts` `key`.
+
+### A refusal can tell a caller the figure his role may not read
+
+- **What happens:** a route open to a role that may not read a balance still
+  answers it. The figure leaks in the refusal's words (the commission payout
+  said «المبلغ أكبر من الرصيد المستحق (123.00$)» to an accountant), or in
+  the order of the refusals: when the balance is judged before a check that
+  does not depend on the amount (the wallet exists, is active, covers it), an
+  amount above the balance and one within it answer differently, and a
+  bisection reads the figure without paying anything.
+- **Why:** the role check is on the route, but the refusals were written for
+  the manager, who sees the figure anyway.
+- **Do this:** word the refusal without the figure for a caller the read route
+  refuses, and judge the hidden balance last, inside the transaction that
+  rolls the write back with it. Test both: the words, and that a bad wallet
+  answers alike either side of the balance.
+- **Where:** `StaffService.recordInspectorPayout`, `payoutRefusal`'s
+  `showOwed` (`packages/shared-schemas/src/payout-policy.ts`); PR #109 review,
+  2026-10-10.
 
 ## Frontend
 

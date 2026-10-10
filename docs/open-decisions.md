@@ -760,7 +760,7 @@ the role is one allow-list in `lib/staff-roles.ts`.
 
 **Status:** decided on the PR #104 review, from the municipal accounting decree
 (Decree 5595/1982, read in its consolidated text) and municipal cash-handling
-practice; D6, D7 and the receipt's paper size by the owner on 2026-10-10. Each one
+practice; D6, D7, D9 and the receipt's paper size by the owner on 2026-10-10. Each one
 is written up, with its grounds, in
 [finance.md §13.1c](finance.md), and pinned by
 `treasury-controls.integration.spec.ts`.
@@ -791,15 +791,36 @@ is written up, with its grounds, in
   so the accountant's «صرف راتب / أجر» is paid at once on the urgent path, with the
   reason «راتب — يُدفع قبل الحوالة (المادة 35)» written by the server, and waits for
   the manager's regularisation. The manager's payout is the order itself.
+- **D8, an accountant's own salary (2026-10-10):** refused (`SALARY_SELF_PAYOUT`); the
+  manager records it, or it goes to him as a request.
+- **D9, an inspector's commission (decided by the owner, 2026-10-10):** paid like a salary.
+  Art. 35 names salaries and wages («الرواتب والأجور»), so the manager's «صرف عمولة» is the
+  order, and the accountant's is paid at once on the urgent path with the reason «عمولة مسح
+  ميداني — تُدفع قبل الحوالة (المادة 35)» written by the server, waits for the manager's
+  regularisation, and is not held to the urgent ceiling. He cannot pay his own commission
+  (`COMMISSION_SELF_PAYOUT`), and before go-live, when a payout is a figure with no voucher to
+  regularise, it stays the manager's. This settles the question PR #109 raised on 2026-10-10
+  ([finance.md §5.6](finance.md)).
 - **The printed receipt (decided 2026-10-10):** A5, scaled in print to fit one sheet,
   rather than running over two or moving to another paper size. The frontend
   implements it ([ui-ux-standards.md](ui-ux-standards.md), the printing entry).
 
 **Still open:**
 
-- **How large a salary may an accountant pay before the order?** Salaries are exempt from
-  the urgent ceiling (D7), so the only bound is the wallet. The manager sees each one in the
-  regularisation queue, after the cash has left. **Undecided:** a salary ceiling, or none.
+- **How large a salary or a commission may an accountant pay before the order?** Both are
+  exempt from the urgent ceiling (D7, D9), so the only bounds are the wallet and, for a
+  commission, what the inspector is owed. The manager sees each one in the regularisation
+  queue, after the cash has left. **Undecided:** a ceiling of their own, or none.
+- **A commission paid on another day, once live.** «صرف عمولة» is dated today, and the expense
+  form may not file under «تعويضات المسح والجباية» (a commission paid there left the inspector
+  owed what he was paid). So a commission handed over yesterday has no road into the system
+  today. **Undecided:** a back-dated payout with a reason, as the expense form has, or none.
+- **Whether the accountant sees what an inspector is owed.** He may pay a commission (D9), but
+  the inspector's profile, which carries the figure, also lists the citizens the inspector
+  registered, and stays the manager's and the inspector's own. So the accountant pays through
+  the API with no screen and no figure, and the refusal names none. **Undecided:** a narrow
+  read of the owed figure for him (and the dialog on a screen he opens), or the manager keeps
+  paying commissions himself.
 - **Which settings the accountant may change.** The settings route admits him for every field
   except the urgent ceilings, including the official exchange rate ([security.md](security.md)
   gaps). **Undecided.**

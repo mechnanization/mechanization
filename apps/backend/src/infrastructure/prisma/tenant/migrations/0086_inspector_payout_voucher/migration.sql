@@ -58,10 +58,19 @@
 -- way for a restore to fail. The snapshot version is unchanged: an older
 -- snapshot simply has no key, which reads as NULL.
 --
--- Needs 0074, which creates `expense_vouchers`. Numbered 0086: it was written
--- as 0083, but develop's 0083 is the treasury controls (`0083_treasury_controls`)
--- and 0087 the day-closure fix (`0087_treasury_day_closure_written_once`),
--- checked 2026-10-10; check again before the PR.
+-- Needs 0074, which creates `expense_vouchers`, and nothing after it.
+--
+-- == Its number ===========================================================
+--
+-- PR #109 wrote this as `0083_inspector_payout_voucher`. `develop` already
+-- holds `0083_treasury_controls`, so it was renumbered on 2026-10-10, in the
+-- merge of PR #109 into `feat/treasury-day-closing`. The numbers between are
+-- spoken for: `0084` is PR #111's (`0084_treasury_exchange_and_review`) and
+-- `0085` PR #112's (`0085_payment_settlements`), left free here on purpose;
+-- `0087` is the review fix for PR #106 (`0087_treasury_day_closure_written_once`).
+-- 0084, 0085, 0086 and 0087 do not depend on one another, so they apply alike
+-- in any order. This file has not been applied to staging or production; until
+-- it is, a fix may still extend it additively, and says so here.
 
 ALTER TABLE "inspector_payouts" ADD COLUMN IF NOT EXISTS "expenseVoucherId" UUID;
 

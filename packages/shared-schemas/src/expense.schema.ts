@@ -213,6 +213,19 @@ export type RecordStaffSalaryInput = z.infer<typeof recordStaffSalarySchema>;
 export const SALARY_URGENT_REASON = 'راتب — يُدفع قبل الحوالة (المادة 35)';
 
 /**
+ * The reason an accountant's commission payout carries, written by the server.
+ *
+ * Decision D9 (the owner, 2026-10-10): an inspector's commission is paid like a
+ * salary. Decree 5595/1982 art. 35 names salaries and wages («الرواتب
+ * والأجور») among what may be paid before the order, so an accountant's
+ * «صرف عمولة» is paid at once on the urgent path with this reason, waits for
+ * the manager's regularisation, and is not held to the urgent ceiling (D6),
+ * exactly as a salary (docs/finance.md §5.6). The manager's own payout is the
+ * order and carries none. Stored exactly as written here.
+ */
+export const COMMISSION_URGENT_REASON = 'عمولة مسح ميداني — تُدفع قبل الحوالة (المادة 35)';
+
+/**
  * A budget code as an edit sends it. Unlike `budgetCodeSchema` (treasury.schema.ts),
  * empty is allowed here and means none: that is how an edit takes the codes off a
  * category (both sent empty). Left out, a code stays as it is.

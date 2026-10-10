@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import {
   INSPECTOR_PROFILE_ROLES,
-  TREASURY_ADMIN_ROLES,
+  TREASURY_WORK_ROLES,
   WORKING_STAFF_ROLES,
   createStaffUserSchema,
   recordInspectorPayoutSchema,
@@ -181,15 +181,16 @@ export class StaffController {
   /**
    * «صرف عمولة» — a commission payout to a field inspector.
    *
-   * The manager's alone, as it always was (docs/finance.md §5.6, §9). Once the
-   * treasury is live this writes a «PV-» voucher and a ledger debit; before, a
-   * figure that lowers what the inspector is owed. Whether an accountant may
-   * pay a commission, and on which footing (art. 35 names salaries, not
-   * commissions), is **Undecided** (docs/open-decisions.md §18), so the route
-   * stays where it was, and `StaffService.recordInspectorPayout` refuses anyone
-   * else again before it reads a figure. Pinned in route-inventory.spec.ts.
+   * The treasury's working roles, as a salary is (docs/finance.md §5.6, §9;
+   * decision D9). Once the treasury is live this writes a «PV-» voucher and a
+   * ledger debit: the manager's payout is the order, and an accountant's is
+   * paid on the art. 35 urgent path and waits for the manager's regularisation.
+   * Before go-live it is a figure that lowers what the inspector is owed, and
+   * stays the manager's. `StaffService.recordInspectorPayout` holds those rules
+   * and refuses an accountant's own commission; it names no owed figure to a
+   * caller who may not read the profile above. Pinned in route-inventory.spec.ts.
    */
-  @Roles(...TREASURY_ADMIN_ROLES)
+  @Roles(...TREASURY_WORK_ROLES)
   @Post('inspectors/:id/payouts')
   async recordPayout(
     @Param('tenantSlug') tenantSlug: string,

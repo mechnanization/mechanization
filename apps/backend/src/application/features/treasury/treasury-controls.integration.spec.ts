@@ -1137,13 +1137,14 @@ describeIfDb('treasury controls', () => {
       ).resolves.toMatchObject({ orderStatus: 'AWAITING_ORDER' });
     });
 
-    it('holds any other voucher naming a staff payee to it: the exemption is the salary path’s, not the payee’s', async () => {
+    it('holds any other voucher naming a staff payee to it: the exemption is said by the path, not read off the payee', async () => {
       /*
-        A commission voucher carries `payeeStaffId` too, and art. 35 names
-        salaries, not commissions. No route sends a commission down the urgent
-        path today (the payout is the manager's), so the one write behind every
+        A salary (D7) and a commission (D9) are exempt because art. 35 names
+        salaries and wages, and each of those paths says so
+        (`exemptFromUrgentCeiling`). Naming a staff payee is not the same
+        thing, and once was the whole test. So the one write behind every
         voucher is driven directly, as a path that names a staff payee without
-        claiming the salary's exemption — what a commission would be.
+        claiming the exemption: it is held to the ceiling.
       */
       await setCeilings(CEILING_LBP, null);
       const person = staff('FIELD_INSPECTOR');

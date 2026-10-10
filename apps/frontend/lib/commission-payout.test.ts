@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { payoutAllowance } from '@mechanization/shared-schemas';
 import { ApiRequestError } from './api-client';
@@ -30,7 +32,7 @@ describe('payoutKeyAfterFailure', () => {
   it('keeps the key on a refusal of this attempt alone', () => {
     expect(payoutKeyAfterFailure(refused(400, 'VALIDATION_FAILED'))).toBe('keep');
     expect(payoutKeyAfterFailure(refused(409, 'TREASURY_INSUFFICIENT_FUNDS'))).toBe('keep');
-    expect(payoutKeyAfterFailure(refused(403, 'INSPECTOR_PAYOUT_MANAGER_ONLY'))).toBe('keep');
+    expect(payoutKeyAfterFailure(refused(403, 'COMMISSION_SELF_PAYOUT'))).toBe('keep');
   });
 
   it('spends it once the server says an act exists under it', () => {
@@ -106,5 +108,40 @@ describe('payoutDialogView', () => {
       overview,
       refreshFailed: false,
     });
+  });
+});
+
+/**
+ * The dialog itself follows the rules above (STA-1, STA-4).
+ *
+ * The component is not rendered here (this suite collects `lib/**` and runs
+ * without a DOM), so, as `print-pages.test.ts` does for the print pages, it is
+ * read. The helpers above decide; this checks the dialog asks them, rather than
+ * the shape it had before: a fresh `crypto.randomUUID()` per failure, a key
+ * held in a `useRef` that died with the form, and the error checked before the
+ * data — the three that paid a commission twice (PR #109 review).
+ */
+describe('the payout dialog', () => {
+  const source = readFileSync(join(__dirname, '..', 'components', 'admin', 'inspector-payout-dialog.tsx'), 'utf8');
+
+  it('sends the key held for this inspector, minted nowhere else', () => {
+    expect(source).toMatch(/clientRequestId:\s*heldKey\(tenant,\s*scope\)/);
+    expect(source).toMatch(/const scope = commissionScope\(staff\.id\)/);
+    expect(source).not.toMatch(/randomUUID|newRequestId/);
+  });
+
+  it('decides what a failure does to the key through payoutKeyAfterFailure, and marks a lost answer in doubt', () => {
+    expect(source).toMatch(/payoutKeyAfterFailure\(caught\)/);
+    expect(source).toMatch(/markInDoubt\(tenant,\s*scope\)/);
+  });
+
+  it('locks the form after a 2xx', () => {
+    expect(source).toMatch(/setDone\(true\)/);
+    expect(source).toMatch(/disabled=\{\s*busy \|\| done/);
+  });
+
+  it('draws through payoutDialogView, so a failed re-read never unmounts the form', () => {
+    expect(source).toMatch(/payoutDialogView\(profile,\s*overview\)/);
+    expect(source).not.toMatch(/profile\.isError\s*\|\|\s*overview\.isError/);
   });
 });
