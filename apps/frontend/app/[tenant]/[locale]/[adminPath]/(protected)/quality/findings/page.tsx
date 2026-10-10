@@ -31,11 +31,6 @@ export default function QualityFindingsPage({
       adminPath={adminPath}
       icon={ShieldQuestion}
       title={en ? 'Quality findings' : 'ملاحظات الجودة'}
-      subtitle={
-        en
-          ? 'Duplicate records, copied numbers and contradictions the register can find on its own.'
-          : 'سجلات مكرَّرة وأرقام منقولة وتناقضات يستطيع السجل أن يجدها بنفسه.'
-      }
     >
       {({ token, base, role }) => (
         <FindingsList tenant={tenant} base={base} locale={locale} token={token} role={role} />

@@ -44,7 +44,7 @@ import { LandlordLinkService } from '../../application/features/citizens/landlor
 import { OwnershipService } from '../../application/features/citizens/ownership.service';
 import { AuditService } from '../../application/features/audit/audit.service';
 import { TenancyService } from '../../application/features/citizens/tenancy.service';
-import { ReportingService } from '../../application/features/reporting/reporting.service';
+import { ReportingService, type CitizenProfileUnit } from '../../application/features/reporting/reporting.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { NotFoundError } from '../../application/common/exceptions';
 import { CurrentUser } from '../decorators/current-user.decorator';
@@ -184,6 +184,15 @@ export class CitizenController {
     const citizen = await this.reporting.getCitizenProfile(user.sub);
     if (!citizen) throw new NotFoundError('Citizen', user.sub);
 
+    /*
+      How a co-owned flat is divided, and this person's part — never another
+      owner's register id. Under «مالك مسؤول» their part says whether they pay
+      for all (1/1) or nothing (0/1), read the same way as the staff file reads
+      it (`lib/owner-billing.ts`).
+    */
+    const portalOwnerBilling = (billing: CitizenProfileUnit['ownerBilling']) =>
+      billing ? { mode: billing.mode, effectiveMode: billing.effectiveMode, share: billing.share } : null;
+
     return {
       fullName: citizen.fullName,
       referenceNumber: citizen.referenceNumber,
@@ -271,15 +280,24 @@ export class CitizenController {
         .flatMap((registration) => registration.properties)
         // What they hold now: a tenancy that ended is not a property they have.
         .filter((property) => !property.endedAt)
-        .map(({ landlordCitizenId: _id, landlordReferenceNumber: _reference, ...property }) => ({
+        .map(({ landlordCitizenId: _id, landlordReferenceNumber: _reference, heldUnits, ...property }) => ({
           ...property,
+          /*
+            A منزل's flat, or the census flats a مبنى card bills through — the
+            same split, the same rule. Absent on a profile cached before it.
+          */
+          heldUnits: (heldUnits ?? []).map(({ ownerBilling, ...unit }) => ({
+            ...unit,
+            ownerBilling: portalOwnerBilling(ownerBilling),
+          })),
           // The owners' names and أسهم are the tenant's to see; their register
           // ids and numbers — their own or a relative's — are not: the
           // landlord's number is on the card. Named, so a field added to the
           // staff view never reaches the portal by default.
-          units: property.units.map((unit) => ({
+          units: property.units.map(({ ownerBilling, ...unit }) => ({
             ...unit,
             owners: unit.owners.map((owner) => ({ name: owner.name, shares: owner.shares })),
+            ownerBilling: portalOwnerBilling(ownerBilling),
           })),
         })),
       payments: citizen.payments,

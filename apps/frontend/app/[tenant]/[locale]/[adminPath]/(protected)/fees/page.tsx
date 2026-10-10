@@ -2,7 +2,6 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useTranslations } from 'next-intl';
 import { REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -29,7 +28,6 @@ import {
   getFeeFilterOptions,
   getMunicipalitySettings,
   getTenantConfig,
-  issueFeeNotice,
   listCitizens,
   logApiError,
   reviewPayment,
@@ -54,7 +52,6 @@ import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { ChargeCitizenDialog, type ChargeValues } from '@/components/admin/charge-citizen-dialog';
-import { IssueFeeDialog, type IssueFeeValues } from '@/components/admin/issue-fee-dialog';
 import { BillTypeFilter } from '@/components/admin/bill-type-select';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { cn } from '@/lib/utils';
@@ -188,8 +185,6 @@ export default function FeesPage({
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
 
   // Dialogs State
-  const [issueOpen, setIssueOpen] = useState(false);
-  const [issuing, setIssuing] = useState(false);
   const [chargeOpen, setChargeOpen] = useState(false);
   const [charging, setCharging] = useState(false);
   const [busyPaymentId, setBusyPaymentId] = useState<string | null>(null);
@@ -202,7 +197,6 @@ export default function FeesPage({
   } | null>(null);
 
   const toast = useToast();
-  const tFees = useTranslations('fees');
   const canManage = role === 'SUPER_ADMIN';
 
   useEffect(() => {
@@ -377,6 +371,8 @@ export default function FeesPage({
       setBusyPaymentId(paymentId);
       try {
         await reviewPayment(tenant, token, paymentId, { confirmed });
+        // Confirming puts the money in a wallet, so the treasury's balances are stale; a refusal moves none.
+        if (confirmed) void queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
         toast.success(confirmed ? 'تم تأكيد الدفعة بنجاح.' : 'تم رفض الدفعة.');
         void load();
       } catch (caught) {
@@ -386,87 +382,9 @@ export default function FeesPage({
         setBusyPaymentId(null);
       }
     },
-    [tenant, token, busyPaymentId, toast, load],
+    [tenant, token, busyPaymentId, toast, load, queryClient],
   );
 
-  const handleIssueNotice = async (values: IssueFeeValues) => {
-    if (!token) return;
-    setIssuing(true);
-    try {
-      const res = await issueFeeNotice(tenant, token, {
-        title: values.title,
-        amount: Number(values.amount.replace(/\D/g, '')),
-        basis: values.basis,
-        bearer: values.bearer,
-        frequency: values.frequency,
-        targetType: values.targetType,
-        targetCategory: values.targetCategory || undefined,
-        targetCitizenId: values.targetCitizenId || undefined,
-        dueDate: values.dueDate,
-        instructions: values.instructions || undefined,
-      });
-      toast.success(`تم إصدار الرسم بنجاح وتكليف ${res.issued} مواطن.`);
-
-      /*
-        The skipped are named, not buried.
-
-        A clerk told only that two hundred invoices were raised has no way to
-        know that eleven buildings went unbilled because nobody has been inside
-        them. This is the shortfall made visible so someone can act on it.
-      */
-      if (res.unassessable && res.unassessable.length > 0) {
-        toast.error(
-          `${res.unassessable.length} سجل لم يُحتسب لعدم اكتمال الجرد: ` +
-            res.unassessable.map((entry) => entry.name).join('، '),
-        );
-      }
-
-      /*
-        And so is what the bearer rule left out, for the same reason.
-
-        A clerk who has just said this fee falls on المالك rather than الشاغل
-        has changed what the town owes, and the size of that change is knowable
-        only right here — afterwards it is spread across a few hundred invoices
-        that each look unremarkable. One number, at the moment it was decided.
-      */
-      if (res.exemptedUnits) {
-        toast.info(`${res.exemptedUnits} وحدة لم تُحتسب حسب صفة المكلَّف بالرسم.`);
-      }
-      /*
-        Held, not exempt — and not charged on this notice's period at all: the
-        period's invoice is written once. Said plainly so a clerk who wants the
-        period recovered knows it is a manual charge, not something that will
-        happen by itself.
-      */
-      if (res.heldUnits) {
-        toast.info(
-          `${res.heldUnits} وحدة موقوفة للمراجعة (تعارض في حالة الوحدة) — لم يُحتسب عليها رسم الإشغال في هذه الفترة. بعد تسويتها تُحتسب ابتداءً من الفترة التالية؛ ولتحصيل هذه الفترة أصدر رسماً فردياً. تجدها في «جودة البيانات».`,
-        );
-      }
-      /*
-        Held too, for a different reason: flats read «غير صالحة للسكن» are not
-        charged an occupant-borne fee until a re-inspection reads them
-        habitable (decision, 2026-10-05). Its own count, never folded into the
-        review hold — the clerk acts on each in a different place. A one-off
-        fee has no next period for the charge to resume in (the recurring run
-        skips `ONCE`), so it says how to collect it instead.
-      */
-      if (res.uninhabitableUnits) {
-        toast.info(
-          tFees(values.frequency === 'ONCE' ? 'issue.uninhabitableOnce' : 'issue.uninhabitable', {
-            count: res.uninhabitableUnits,
-          }),
-        );
-      }
-      setIssueOpen(false);
-      void load();
-    } catch (caught) {
-      logApiError(caught);
-      toast.error(caught instanceof ApiRequestError ? caught.message : 'تعذّر إصدار الرسم.');
-    } finally {
-      setIssuing(false);
-    }
-  };
 
   const handleChargeCitizen = async (values: ChargeValues) => {
     if (!token) return;
@@ -759,9 +677,11 @@ export default function FeesPage({
                   <UserPlus className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
                   {locale === 'en' ? 'Direct Charge' : 'تكليف مباشر'}
                 </Button>
-                <Button size="sm" onClick={() => setIssueOpen(true)}>
-                  <Plus className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
-                  {locale === 'en' ? 'Issue New Fee' : 'إصدار رسم جديد'}
+                <Button asChild size="sm">
+                  <Link href={`${base}/fees/new`}>
+                    <Plus className="me-1.5 size-4" />
+                    {locale === 'en' ? 'Issue New Fee' : 'إصدار رسم جديد'}
+                  </Link>
                 </Button>
               </>
             ) : null}
@@ -897,17 +817,6 @@ export default function FeesPage({
         </CardContent>
       </Card>
 
-      {/* Issue Fee Dialog */}
-      <IssueFeeDialog
-        open={issueOpen}
-        onOpenChange={setIssueOpen}
-        citizens={citizens}
-        submitting={issuing}
-        error={null}
-        onSubmit={handleIssueNotice}
-        locale={locale}
-        existingTitles={feeTitles}
-      />
 
       {/* Charge Citizen Dialog */}
       <ChargeCitizenDialog

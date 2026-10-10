@@ -39,7 +39,7 @@ import {
   logApiError,
   type DashboardAnalytics,
 } from '@/lib/api-client';
-import { ar, type InspectorProfileResponse } from '@mechanization/shared-schemas';
+import type { InspectorProfileResponse } from '@mechanization/shared-schemas';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { formatMonth } from '@/lib/dates';
@@ -386,9 +386,6 @@ export default function StaffDashboard({
       <PageHeader
         icon={LayoutDashboard}
         title={locale === 'en' ? 'Dashboard' : 'لوحة التحكم'}
-        /* The role rode beside the title as a badge; as a subtitle it says the
-           same thing without a second object competing with the heading. */
-        subtitle={role ? (locale === 'en' ? role : (ar.staffRole?.[role as never] ?? role)) : undefined}
         actions={
           <>
             {/* `REGISTER_EXPORT_ROLES`, as the route: not «مشاهد فقط», whose account reads on screen and takes nothing away. */}

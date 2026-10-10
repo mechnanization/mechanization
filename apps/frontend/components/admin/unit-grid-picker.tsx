@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import { AlertTriangle, Minus, Plus, Trash2 } from 'lucide-react';
 import {
   getLabels,
@@ -243,6 +244,7 @@ export function UnitGridPicker({
   const en = locale === 'en';
   const labels = getLabels(locale);
   const toast = useToast();
+  const tFloors = useTranslations('floorCount');
 
   const colsCount = Math.max(MIN_HORIZONTAL_BLOCKS, gridSize || DEFAULT_HORIZONTAL_BLOCKS);
   const safeFloorsCount = Math.max(MIN_VERTICAL_BLOCKS, floorsCount || DEFAULT_VERTICAL_BLOCKS);
@@ -819,9 +821,11 @@ export function UnitGridPicker({
         <div className="grid w-full grid-cols-1 gap-2 lg:w-80 lg:shrink-0">
           {/* Vertical / Floors */}
           <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
-            <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
-              {en ? 'Vertical (Floors)' : 'عمودي (الطوابق)'}
-            </span>
+            {/*
+              «الطوابق المسقوفة» — built levels under a roof, the ground floor
+              and a pilotis among them; never the roof (decision of 2026-10-07).
+            */}
+            <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">{tFloors('label')}</span>
             <div className="flex shrink-0 items-center gap-1.5">
               <Button
                 type="button"
@@ -830,7 +834,7 @@ export function UnitGridPicker({
                 className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestVerticalChange(safeFloorsCount - 1)}
                 disabled={safeFloorsCount <= MIN_VERTICAL_BLOCKS || safeFloorsCount <= minFloorsAllowed}
-                aria-label={en ? 'Fewer floors' : 'إنقاص الطوابق'}
+                aria-label={tFloors('fewer')}
               >
                 <Minus className="size-4" />
               </Button>
@@ -844,7 +848,7 @@ export function UnitGridPicker({
                 value={verticalInput}
                 onChange={(e) => handleVerticalInputChange(e.target.value)}
                 onBlur={handleVerticalInputBlur}
-                aria-label={en ? 'Number of floors' : 'عدد الطوابق'}
+                aria-label={tFloors('aria')}
                 className="h-10 w-12 shrink-0 px-1 py-0 text-center font-mono text-sm font-semibold [appearance:textfield] lg:h-8 lg:text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 dir="ltr"
               />
@@ -855,7 +859,7 @@ export function UnitGridPicker({
                 className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestVerticalChange(safeFloorsCount + 1)}
                 disabled={safeFloorsCount >= MAX_VERTICAL_BLOCKS}
-                aria-label={en ? 'More floors' : 'زيادة الطوابق'}
+                aria-label={tFloors('more')}
               >
                 <Plus className="size-4" />
               </Button>
@@ -963,6 +967,12 @@ export function UnitGridPicker({
           {sizeError}
         </p>
       ) : null}
+
+      {/* What the height counts, and a duplex — the two answers officers asked for in the field. */}
+      <div className="space-y-0.5 text-xs leading-relaxed text-muted-foreground">
+        <p>{tFloors('help')}</p>
+        <p>{tFloors('duplexHelp')}</p>
+      </div>
 
       {/*
         «إضافة كراج / ملحق» — the one-block case, made reachable.

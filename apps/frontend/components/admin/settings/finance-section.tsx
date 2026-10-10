@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeftRight, Coins, Smartphone } from 'lucide-react';
+import { useTranslations } from 'next-intl';
+import { ArrowLeftRight, Coins, Smartphone, Zap } from 'lucide-react';
 import {
   ApiRequestError,
   getMunicipalitySettings,
@@ -9,13 +10,16 @@ import {
   updateMunicipalitySettings,
 } from '@/lib/api-client';
 import type { MunicipalitySettings } from '@/lib/api-client';
+import { currencyUnit, formatTypedAmount } from '@/lib/currency';
 import { CURRENCY_NAMES, type SettingsCopy } from '@/lib/settings-i18n';
+import { ceilingChange, ceilingDraft, ceilingToSend } from '@/lib/urgent-ceiling';
 import {
   CURRENCY_CODES as CURRENCIES,
   type CurrencyCode,
   type FeeFrequency,
 } from '@mechanization/shared-schemas';
 
+import { CurrencyInput } from '@/components/ui/currency-input';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -49,6 +53,9 @@ interface FinanceDraft {
   exchangeRate: string;
   /** Read-only here: the server stamps it, and only when the rate changes. */
   exchangeRateUpdatedAt: string;
+  /** «سقف الدفع العاجل», as typed (grouped); `''` is no ceiling. */
+  urgentCeilingLbp: string;
+  urgentCeilingUsd: string;
 }
 
 const EMPTY: FinanceDraft = {
@@ -61,6 +68,8 @@ const EMPTY: FinanceDraft = {
   secondaryCurrency: '',
   exchangeRate: '',
   exchangeRateUpdatedAt: '',
+  urgentCeilingLbp: '',
+  urgentCeilingUsd: '',
 };
 
 function toDraft(settings: MunicipalitySettings): FinanceDraft {
@@ -74,6 +83,8 @@ function toDraft(settings: MunicipalitySettings): FinanceDraft {
     secondaryCurrency: settings.secondaryCurrency ?? '',
     exchangeRate: settings.exchangeRate === null ? '' : String(settings.exchangeRate),
     exchangeRateUpdatedAt: settings.exchangeRateUpdatedAt ?? '',
+    urgentCeilingLbp: ceilingDraft(settings.urgentExpenseCeilingLbp, 0),
+    urgentCeilingUsd: ceilingDraft(settings.urgentExpenseCeilingUsd, 2),
   };
 }
 
@@ -94,7 +105,12 @@ function formatNumber(amount: number, currency: CurrencyCode): string {
 }
 
 /**
- * المالية — what a new invoice assumes before anyone edits it.
+ * المالية — what a new invoice assumes before anyone edits it, and the one
+ * limit the treasury sets on its own staff: the urgent-payment ceiling.
+ *
+ * The ceiling's copy is in next-intl (`settings.urgentCeiling`); the rest of the
+ * section still reads `settingsCopy`, the legacy TXT-1 names, whose conversion
+ * is left whole for the file rather than started here.
  */
 export function FinanceSection({
   tenant,
@@ -108,6 +124,7 @@ export function FinanceSection({
   copy: SettingsCopy;
 }) {
   const toast = useToast();
+  const tCeiling = useTranslations('settings.urgentCeiling');
 
   const [saved, setSaved] = useState<FinanceDraft | null>(null);
   const [local, setLocal] = useState<FinanceDraft>(EMPTY);
@@ -143,6 +160,14 @@ export function FinanceSection({
   const exchangeValid = !local.secondaryCurrency || (exchange !== null && exchange > 0);
   const dueDays = parseNumber(local.dueDays);
   const dueDaysValid = dueDays !== null && Number.isInteger(dueDays) && dueDays >= 0 && dueDays <= 365;
+  /*
+    Judged against what the field showed when read: an untouched ceiling is not
+    sent, so a save about something else never rewrites it (the field shows a
+    stored LBP ceiling rounded, and sending that back would round the ceiling).
+  */
+  const ceilingLbp = ceilingChange(local.urgentCeilingLbp, saved?.urgentCeilingLbp);
+  const ceilingUsd = ceilingChange(local.urgentCeilingUsd, saved?.urgentCeilingUsd);
+  const ceilingsValid = ceilingLbp.kind !== 'invalid' && ceilingUsd.kind !== 'invalid';
 
   const dirty = useMemo(
     () => saved !== null && JSON.stringify(local) !== JSON.stringify(saved),
@@ -158,6 +183,10 @@ export function FinanceSection({
       toast.error(copy.finance.invalidDueDays);
       return;
     }
+    if (!ceilingsValid) {
+      toast.error(tCeiling('invalid'));
+      return;
+    }
 
     setSaving(true);
     try {
@@ -170,6 +199,9 @@ export function FinanceSection({
         baseCurrency: local.baseCurrency,
         secondaryCurrency: local.secondaryCurrency === '' ? null : local.secondaryCurrency,
         exchangeRate: local.secondaryCurrency === '' ? null : exchange,
+        // Only a changed ceiling is sent; emptied, it is «بلا سقف» (`null`), which clears it.
+        urgentExpenseCeilingLbp: ceilingToSend(ceilingLbp),
+        urgentExpenseCeilingUsd: ceilingToSend(ceilingUsd),
       });
       const next = toDraft(result);
       setSaved(next);
@@ -192,8 +224,12 @@ export function FinanceSection({
     dueDays,
     exchangeValid,
     dueDaysValid,
+    ceilingLbp,
+    ceilingUsd,
+    ceilingsValid,
     toast,
     copy,
+    tCeiling,
   ]);
 
   const discard = useCallback(() => {
@@ -372,6 +408,46 @@ export function FinanceSection({
                 </div>
               </div>
             ) : null}
+          </FieldGroup>
+
+          {/*
+            The manager's limit on the accountant's art. 35 path (D6,
+            docs/finance.md §5.1): per voucher, per currency, empty for none.
+            Above it the accountant's expense goes as a request for the order.
+          */}
+          <FieldGroup icon={Zap} title={tCeiling('heading')}>
+            <p className="text-xs leading-relaxed text-muted-foreground">{tCeiling('hint')}</p>
+            <AlignedFieldGrid>
+              <SettingsField
+                label={tCeiling('lbp')}
+                htmlFor="urgent-ceiling-lbp"
+                error={ceilingLbp.kind === 'invalid' ? tCeiling('invalid') : undefined}
+              >
+                <CurrencyInput
+                  id="urgent-ceiling-lbp"
+                  unit={currencyUnit('LBP', locale)}
+                  value={local.urgentCeilingLbp}
+                  placeholder={tCeiling('none')}
+                  invalid={ceilingLbp.kind === 'invalid'}
+                  onChange={(raw) => setLocal({ ...local, urgentCeilingLbp: formatTypedAmount(raw, 0) })}
+                />
+              </SettingsField>
+              <SettingsField
+                label={tCeiling('usd')}
+                htmlFor="urgent-ceiling-usd"
+                error={ceilingUsd.kind === 'invalid' ? tCeiling('invalid') : undefined}
+              >
+                <CurrencyInput
+                  id="urgent-ceiling-usd"
+                  unit={currencyUnit('USD', locale)}
+                  value={local.urgentCeilingUsd}
+                  placeholder={tCeiling('none')}
+                  invalid={ceilingUsd.kind === 'invalid'}
+                  onChange={(raw) => setLocal({ ...local, urgentCeilingUsd: formatTypedAmount(raw, 2) })}
+                />
+              </SettingsField>
+            </AlignedFieldGrid>
+            <p className="text-xs leading-relaxed text-muted-foreground">{tCeiling('emptyHint')}</p>
           </FieldGroup>
 
           <FieldGroup icon={Smartphone} title={copy.finance.whishHeading}>

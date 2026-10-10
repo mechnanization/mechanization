@@ -22,6 +22,7 @@ import {
   createFeeNoticeSchema,
   declarePaymentSchema,
   noticeActiveSchema,
+  parcelDuesQuerySchema,
   reverseTransactionSchema,
   reviewPaymentSchema,
   settlePaymentSchema,
@@ -30,11 +31,13 @@ import {
   type ChargeCitizen,
   type CreateFeeNotice,
   type DeclarePayment,
+  type ParcelDuesQuery,
   type SettlePayment,
   type SystemSettingsInput,
 } from '@mechanization/shared-schemas';
 import { FeesService } from '../../application/features/fees/fees.service';
 import { CorrectionBillsService } from '../../application/features/fees/correction-bills.service';
+import { ParcelDuesService } from '../../application/features/fees/parcel-dues.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
@@ -61,6 +64,7 @@ export class FeesController {
   constructor(
     private readonly fees: FeesService,
     private readonly correctionBills: CorrectionBillsService,
+    private readonly parcelDues: ParcelDuesService,
   ) {}
 
   // ───────────────────────────  Settings  ───────────────────────────
@@ -86,7 +90,11 @@ export class FeesController {
     @Query('includeLogo') includeLogo?: string,
   ) {
     // Still staff-only when asked for — a citizen cannot opt in.
-    return this.fees.getSettings(includeLogo === 'true' && Boolean(user.role));
+    const settings = await this.fees.getSettings(includeLogo === 'true' && Boolean(user.role));
+    if (user.role) return settings;
+    // A citizen reads how to pay, not the limits the treasury sets on its own staff.
+    const { urgentExpenseCeilingLbp: _lbp, urgentExpenseCeilingUsd: _usd, ...forCitizen } = settings;
+    return forCitizen;
   }
 
   @Roles(...FEE_ADMIN_ROLES)
@@ -368,6 +376,17 @@ export class FeesController {
       limit: Math.min(Math.max(Number(limit) || 20, 1), 100),
       offset: Math.max(Number(offset) || 0, 0),
     });
+  }
+
+  /**
+   * «ما المستحق على العقار» — open bills with a line on one رقم العقار, and
+   * the part of each that is the parcel's; asked before a براءة ذمّة. Read-only:
+   * every role that reads the ledger may ask it.
+   */
+  @Roles(...FEE_READ_ROLES)
+  @Get('parcel-dues')
+  async parcelDuesOf(@Query(new ZodValidationPipe(parcelDuesQuerySchema)) query: ParcelDuesQuery) {
+    return this.parcelDues.dues(query.propertyNumber);
   }
 
   /** Recording what was decided about one of them. The bill itself is never changed. */

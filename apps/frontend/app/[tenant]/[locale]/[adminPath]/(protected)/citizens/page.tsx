@@ -348,7 +348,8 @@ export default function CitizensPage({
         meta: { label: locale === 'en' ? 'Status' : 'الحالة' },
         cell: ({ row }) => {
           const citizen = row.original;
-          const nonResident = citizen.residence === 'NON_RESIDENT_OWNER';
+          // Not a household — «غير مقيم», «تركة» or «جهة أو وقف» (0076): said on the row.
+          const nonResident = Boolean(citizen.residence && citizen.residence !== 'RESIDENT');
           const review = citizen.latestStatus === 'REQUIRES_REVIEW';
           /*
             Nothing to flag is itself the answer: an active file with no review
@@ -390,7 +391,8 @@ export default function CitizensPage({
               ) : null}
               {nonResident ? (
                 <p className="text-info">
-                  {labels.citizenResidence.NON_RESIDENT_OWNER}
+                  {labels.citizenResidence[citizen.residence as keyof typeof labels.citizenResidence] ??
+                    citizen.residence}
                 </p>
               ) : null}
             </div>
@@ -742,7 +744,7 @@ export default function CitizensPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={Users}
-        title={locale === 'en' ? 'Citizens' : 'المواطنون'}
+        title={locale === 'en' ? 'Citizen register' : 'سجل المواطنين'}
 
         actions={
           canWrite ? (
@@ -818,7 +820,7 @@ export default function CitizensPage({
         A permanent link reading «يتطلب مراجعة (٠)» is a standing invitation to
         check something that is never there. It appears when a record needs
         finishing, and leads to the queue's own page (`/citizens/review`, also
-        in «استكمال البيانات»), which lists just those records with a «فحص
+        a row of the «المواطنون» group), which lists just those records with a «فحص
         الملف» for each.
       */}
       {totals.requiringReview > 0 ? (

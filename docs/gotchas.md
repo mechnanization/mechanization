@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/no-phone-follow-ups` (on `develop@4512abf`), 2026-10-06.
+Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`), 2026-10-09.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -68,6 +68,22 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   into its own `NEXT_DIST_DIR`.
 - **Where:** `apps/frontend/next.config.mjs` (`NEXT_DIST_DIR`),
   `apps/frontend/scripts/build-check.mjs`.
+
+### A running API keeps the old Prisma client after `pnpm db:generate`
+
+- **What happens:** after a schema change and `pnpm db:generate`, the API
+  started by `pnpm dev` recompiles the new code and then answers its new
+  queries with a 500 (`INTERNAL_ERROR`), while the integration suites, which
+  load the client from `src/`, pass. Seen 2026-10-09 with `payeeStaffId` (0081).
+- **Why:** `nest start --watch` runs `dist/`, and the Prisma clients reach
+  `dist/generated` only as assets. `nest-cli.json` sets `"watchAssets": false`,
+  so the watcher recompiles TypeScript but never re-copies the regenerated
+  client: the code asks for a column the loaded client does not know.
+- **Do this:** restart `pnpm dev` (the initial build copies the assets) after
+  every `pnpm db:generate`. `diff -rq apps/backend/src/generated apps/backend/dist/generated`
+  shows whether `dist/` is behind.
+- **Where:** `apps/backend/nest-cli.json` `compilerOptions.assets` and
+  `watchAssets`.
 
 ### Three Node versions, and an unknown fourth
 
@@ -171,6 +187,18 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Where:** `0062_status_conflict_case`, `0063_status_conflict_one_open`,
   `tenant-migrator.ts` `migrateTenantSchema`.
 
+### A CHECK passes on NULL, so `=` against a nullable column lets the row in
+
+- **What happens:** `CHECK ("responsibleOwnerId" IS NULL OR "ownerBillingMode" = 'RESPONSIBLE_OWNER')`
+  accepted a responsible owner on a flat with no method chosen. The first draft of
+  `0075` did exactly this, and only exercising the CHECK on a seeded row caught it.
+- **Why:** with `ownerBillingMode` NULL, `NULL = 'RESPONSIBLE_OWNER'` is NULL, `false
+  OR NULL` is NULL, and a CHECK fails only on false.
+- **Do this:** compare a nullable column with `IS NOT DISTINCT FROM` (or test `IS NOT
+  NULL` first), and prove every CHECK refuses the row it exists for before shipping.
+- **Where:** `0075_unit_owner_billing` (`units_responsible_owner_needs_mode`), `0077`'s
+  `units_fee_exemption_other_note` (`IS DISTINCT FROM`).
+
 ### No `CREATE INDEX CONCURRENTLY`
 
 - **What happens:** it errors inside the migrator.
@@ -234,6 +262,37 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** match `error.code` structurally.
 - **Where:** `with-connection-retry.ts` `isTransientConnectionError`.
 
+### A Radix Select drops a value set while its list is closed
+
+- **What happens:** setting a controlled `Select`'s value from code — after
+  creating the option the user should land on, say — appears to work for a
+  render or two and then resets to empty, so the trigger falls back to its
+  placeholder even though the option is in the list. A value present when the
+  Select *mounts* is kept; one assigned later, while the content is closed, is
+  not: the item backing it has never mounted, so nothing is registered for it.
+- **Do this:** remount the Select when the option set gains the new value
+  (`key` on a counter of additions), which hands Radix the value at mount time.
+  Passing `SelectValue` children fixes only the visible label, not the value.
+  Refetching the options while the form is open makes it worse, not better.
+- **Where:** `record-expense-form.tsx`, the «بند الصرف» select.
+
+### Two requests creating the same singleton row
+
+- **What happens:** `upsert` on a row that does not exist yet (`system_settings`, keyed by `singleton`)
+  is a read then an insert. Two requests arriving together both read nothing and both insert; the
+  loser fails with a raw unique violation (`P2002`) instead of the domain answer it should give,
+  and inside a transaction the violation aborts the whole transaction.
+- **Do this:** `INSERT … ON CONFLICT DO NOTHING` (raw, schema-qualified), then read and lock the
+  row. `TreasuryService.activate` does; `treasury.integration.spec.ts` pins it with two
+  simultaneous activations.
+- **And commit it first** when other transactions wait on that row's lock. A row your
+  transaction inserted is invisible to them: a `FOR SHARE` reader finds nothing to wait on,
+  reads nothing, and goes ahead. A payment taken while the first activation of a
+  municipality with no settings row was committing read no go-live stamp and credited no
+  wallet. `activate` inserts the singleton in its own statement before its transaction opens
+  (`treasury-controls.integration.spec.ts` pins it).
+- **Where:** `treasury.service.ts`.
+
 ### Append-only triggers fire through cascades
 
 - **What happens:** deleting a `citizen_payments` row cascades into
@@ -242,9 +301,63 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Why:** `payment_transactions_no_delete` rejects every row delete, including
   cascaded ones.
 - **Do this:** treat the abort as the control working. Never `TRUNCATE` or set
-  `session_replication_role` to get round it.
+  `session_replication_role` to get round it. `treasury_entries` (0073) behaves the same way: its
+  foreign keys are RESTRICT, so deleting a staff member or a wallet that moved money is refused.
 - **Where:** `0017_payment_ledger`, the `BackupService` comment above
   `TABLE_ORDER`.
+
+### A Prisma `DateTime` with no `@db` attribute may be a `TIMESTAMPTZ` column
+
+- **What happens:** raw SQL that buckets by day reads the wrong day. `("occurredAt"
+  AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Beirut')::date` is right for a bare
+  timestamp holding UTC. On a `TIMESTAMPTZ` column it moves every boundary six
+  hours, so a collector's 01:00 receipt counted for the day before.
+- **Why:** a Prisma field with no native-type attribute says nothing about the
+  column. `payment_transactions.occurredAt` is `TIMESTAMPTZ` in 0017, and the model
+  carried a bare `DateTime` until the PR #104 review.
+- **Do this:** read the column's type in its migration before writing time-zone SQL.
+  On `TIMESTAMPTZ` one `AT TIME ZONE 'Asia/Beirut'` gives the wall clock; the two-step
+  form is for a bare `TIMESTAMP`.
+- **Where:** `transfers.service.ts` `collectedToday`, `audit.repository.ts` (a bare
+  timestamp, two steps), `schema.prisma` `PaymentTransaction.occurredAt`.
+
+### A bare `timestamp` compared with a bound `Date` follows the session's zone
+
+- **What happens:** `"createdAt" >= ${since}` in raw SQL matches on a database whose
+  zone is UTC and misses by two or three hours on one set to Asia/Beirut. Invoice
+  numbering matched no bill there, and every issue rolled back.
+- **Why:** Prisma binds a JS `Date` as `timestamptz`. Comparing it with a bare
+  `timestamp` (Prisma's default for `DateTime`: `citizen_payments.createdAt` and the
+  other pre-treasury columns) converts the column through the session's `TimeZone`.
+- **Do this:** bring the value to the column: `"createdAt" >= (${since}::timestamptz AT
+  TIME ZONE 'UTC')`. The treasury tables are `TIMESTAMPTZ` and compare safely. To test,
+  give one client `options=-c TimeZone=Asia/Beirut` in its URL; changing the database's
+  default would move every suite sharing it.
+- **Where:** `fees.service.ts` `numberInvoices`, `invoice-numbering.integration.spec.ts`.
+
+### A foreign-key check locks the row it points at
+
+- **What happens:** two transactions that each insert a row referencing the same
+  wallet, then lock that wallet `FOR UPDATE`, deadlock. An expense and a collector's
+  handover on one safe did, 17 times in 25 rounds.
+- **Why:** the insert's foreign-key check takes `FOR KEY SHARE` on the referenced
+  row. Upgrading it to `FOR UPDATE` waits for every other holder of the weak lock,
+  and each waits for the other.
+- **Do this:** take the strong lock first, in id order, before writing anything that
+  references the row (`TreasuryLedgerService.lockAccounts`).
+- **Where:** `expenses.service.ts`, `transfers.service.ts`,
+  `treasury-ledger.service.ts` (`lockAccounts`, `refundDrafts`).
+
+### A statement takes at most 32,767 bind variables
+
+- **What happens:** a raw query built as a `VALUES` list with a parameter or two per
+  row fails with `too many bind variables` once the list is long enough. Invoice
+  numbering did, from 16,384 bills: a town-wide notice rolled back whole.
+- **Why:** a statement is limited to 32,767 bind variables (the error says so). Prisma's
+  `createMany` splits itself; a raw query does not.
+- **Do this:** pass one array parameter and `unnest(${values}::text[]) WITH
+  ORDINALITY`.
+- **Where:** `fees.service.ts` `numberInvoices`.
 
 ### Integration suites drop schemas wherever `TEST_DATABASE_URL` points
 
@@ -447,6 +560,49 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Where:** `presentation/controllers/citizen.controller.ts` `mySummary`;
   `reporting.service.ts` `CitizenProfile`.
 
+### Re-recording an owner from the drawer used to wipe their أسهم
+
+- **What happens:** «تعديل» on an owner in the unit drawer, with the أسهم box left
+  empty, wrote `shares: null` over the أسهم on file. Harmless while nothing read
+  them; since `0075` a flat billed «حسب الأسهم» then refuses to bill.
+- **Why:** the drawer sends no `shares` for an empty box, and `recordOccupancy`'s
+  update wrote `input.shares ?? null`.
+- **Do this:** an absent value keeps what is on file (`input.shares ?? current.shares`);
+  أسهم are recorded or corrected beside the billing method, in «توزيع الرسم على المالكين».
+- **Where:** `BuildingsService.recordOccupancy`; pinned by
+  `co-owner-billing.integration.spec.ts`.
+
+### Granting an exemption reaches back; lifting one does not
+
+- **What happens:** «معفاة من الرسوم» granted on a unit lists, in «فواتير تأثّرت بتصحيحات»,
+  every open bill on it whose figure now differs — raised last week or last year. Lifting the
+  same exemption lists none of the bills raised before the lift.
+- **Why:** `traceChanges` reads `UNIT_FEE_EXEMPTION_SET` as a CORRECTION (the mosque was a
+  mosque before anyone ticked the box, so a bill raised on it was raised on a wrong register)
+  and `UNIT_FEE_EXEMPTION_LIFTED` as a DATED_CHANGE on its day, like a damage reading or a
+  co-owner billing method (the user's decision, 2026-10-08). A change of reason on a standing
+  exemption is also a SET, but leaves the figure as it was, so it lists nothing.
+- **Do this:** do not "fix" the asymmetry. The listing never changes a bill; the accountant decides.
+- **Where:** `fees/bill-corrections.ts` `traceChanges`; pinned in `bill-corrections.spec.ts`.
+
+### Archiving a co-owner re-divides the flat from then on, and no raised bill is listed for it
+
+- **What happens:** «أرشفة الملف» on one owner of a co-owned flat changes every other owner's part
+  from the next bill: four brothers at 1/4 become three at 1/3, and an archived «مالك مسؤول» falls
+  back to the equal split. Restoring the file divides it by four again. «فواتير تأثّرت بتصحيحات»
+  lists none of the bills already raised at the old part.
+- **Why:** billing divides a flat between open files only (`activeOwnerSpells`), so the archive
+  moves the division; but the archive is one `CITIZEN_DEACTIVATED` / `CITIZEN_REACTIVATED` row on
+  the archived person's own file, which `traceChanges` reads for that person alone and which is not
+  in `FILE_ACTIONS`. Deliberately: an archive runs forward, like a sale or a damage reading, and a
+  bill raised before it was right when it was raised.
+- **Do this:** treat it as a forward change. If a file was archived in error and the other owners
+  were billed more in the meantime, that is a manual correction of those bills, not something the
+  correction screen will find. «ملاحظات الجودة» flags an archived responsible owner
+  (`OWNER_BILLING_BLOCKED`).
+- **Where:** `buildings/owner-billing.ts` `activeOwnerSpells`; `fees/bill-corrections.ts`
+  `FILE_ACTIONS`, `traceChanges`.
+
 ### Events are synchronous strings
 
 - **What happens:** a misspelt event name is dropped silently; a listener on
@@ -539,6 +695,64 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Where:** `src/scripts/import-parcels.ts`, `clearRemoteCredentials` in
   `src/scripts/seed.ts`.
 
+### A name joined by hand drops «ورثة المرحوم»
+
+- **What happens:** an estate's bill, roster row or tenant card reads «حسن
+  واكد سرور», as if the man who died were the one being billed, while every
+  other screen says «ورثة المرحوم حسن واكد سرور».
+- **Why:** an estate (`0076`) keeps the deceased's own name in the row; the
+  prefix is added when it is shown. `[firstName, lastName].join(' ')` shows the
+  row.
+- **Do this:** name a citizen through `citizenDisplayName` (shared-schemas),
+  with `residence` in the select. It also reads an institution's name, which
+  is one line stored across `firstName`/`lastName` (`splitInstitutionName`), so
+  a search or a sort on `lastName` alone does not find «وقف مسجد البلدة».
+  The opposite holds when a name is **written** into another row (a tenancy
+  card's owner name): use `citizenStoredName`, never the display name — the
+  heirs' sale once wrote «ورثة المرحوم …» onto a tenant's card. Text someone
+  typed is matched through `withoutEstatePrefix` (SQL: `ESTATE_PREFIX_PATTERN`).
+  A card's `landlordName` **as submitted** goes through `storedLandlordName`
+  on the server, at every write: the owner lookup and the unit matrix answer
+  with display names, «نعم، هو المالك» and the sole-owner prefill copy them
+  into the card, and a queued offline save carries whatever the form held.
+  The form strips it too (`landlordNameToSend`), and `landlordLink` carries
+  `name` (stored, the one sent) apart from `displayName` (the one shown).
+- **Where:** `fees.service.ts`, `reporting.service.ts`, `citizens.service.ts`,
+  `buildings.service.ts` (`toOccupancyRow`), `parcel-dues.service.ts`.
+
+### «ليس مقيماً» is not one value any more
+
+- **What happens:** an estate or a waqf is asked for a mother's name, offered
+  «مشغولة من المالك», or billed a per-head flat amount.
+- **Why:** «not a household» used to be `residence === 'NON_RESIDENT_OWNER'`,
+  and `0076` added `ESTATE` and `INSTITUTION`, which are not households either.
+- **Do this:** ask `isOwnerRecord` (not a household) or `isNonPersonRecord`
+  (not a living person). A new check against the one value misses two kinds.
+- **Where:** `packages/shared-schemas/src/enums.ts`.
+
+### A plain `$transaction` closes after five seconds
+
+- **What happens:** `Transaction already closed ... The timeout for this transaction
+  was 5000 ms`, under load, on work that is fine on a quiet machine. A town-wide
+  notice's insert and numbering hit it.
+- **Why:** Prisma's interactive transactions default to `timeout: 5000`.
+  `runInTenantTransaction` passes 60 s; a direct `this.db.$transaction(...)` does
+  not.
+- **Do this:** pass `{ maxWait: 15_000, timeout: 60_000 }` to a direct
+  `$transaction` that does bulk work.
+- **Where:** `fees.service.ts` (the two bill-raising transactions).
+
+### `value * 100` is not a two-decimal check
+
+- **What happens:** `Math.abs(v * 100 - Math.round(v * 100)) < 1e-6` refused valid
+  amounts from about 134 million and let `1e-9` through. A DECIMAL(14,2) column then
+  rounded that to 0.00, and its CHECK refused it with a server error.
+- **Why:** float arithmetic. From 2^27 the error in `v * 100` exceeds the tolerance.
+- **Do this:** judge the number's decimal form: `hasAtMostTwoDecimals` in
+  `packages/shared-schemas/src/money-amount.ts`.
+- **Where:** the money fields of `treasury.schema.ts`, `expense.schema.ts` and
+  `transfer.schema.ts`.
+
 ## Auth
 
 ### A route without `@Roles` is open to citizens
@@ -603,6 +817,29 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Where:** `apps/frontend/lib/session.ts` `key`.
 
 ## Frontend
+
+### A form moved from a dialog to a page stays mounted after it succeeds
+
+- **What happens:** the fee wizard, once a dialog that closed itself on success, became the
+  page `fees/new`. After a successful issue, `router.push` started the navigation, `finally`
+  re-enabled the button, and the page stayed on screen until the next route was ready.
+  A second press there issued the notice again and billed every household twice.
+- **Why:** a dialog's `onOpenChange(false)` removes the form at once; a page is replaced
+  only when the next route has loaded, which can take seconds on a village connection.
+- **Do this:** guard with a synchronous `useRef` in-flight flag and release it only on
+  failure. A form that has succeeded stays locked until it leaves.
+- **Where:** `app/[tenant]/[locale]/[adminPath]/(protected)/fees/new/page.tsx` `issue`.
+
+### A retry key thrown away on failure pays twice
+
+- **What happens:** a money form that regenerated its `clientRequestId` in every `catch` sent
+  a new key when the clerk pressed again after a dropped connection. The server had already
+  recorded the first press, and recorded the second as a new voucher.
+- **Why:** a network error, or a 5xx, says nothing about whether the write happened.
+- **Do this:** `newRequestId()` once per act. Renew it only on a refusal (a 4xx, `isRefusal`)
+  or when the figures change (`apps/frontend/lib/request-id.ts`, as the settle page does).
+- **Where:** `record-expense-form.tsx`, `collector-custody-panel.tsx`, and the citizen payment
+  page that first did it right.
 
 ### `cn()` uses tailwind-merge 3 on Tailwind 3.4
 
@@ -754,6 +991,20 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   stored meanwhile.
 - **Where:** `lib/session.ts` `clearSession`, `lib/citizen-draft.ts`,
   `lib/offline-db.ts`.
+
+### A رقم العقار typed in Arabic digits misses its Latin twin
+
+- **What happens:** «ما المستحق على العقار» for 420 answers «لا شيء مستحق»
+  although a card and its bill lines say «٤٢٠».
+- **Why:** `propertyNumber` is stored as typed, and the fee lines copy it.
+  The query is normalised to Latin digits (`parcelDuesQuerySchema`), the rows
+  are not.
+- **Do this:** compare digit-normalised values on both sides — `normalizeDigits`
+  in TypeScript, `translate(btrim(x), '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹',
+  '01234567890123456789')` in SQL. Over a jsonb array, guard with
+  `CASE WHEN jsonb_typeof(…) = 'array' THEN … END`, not `AND`/`OR`: Postgres
+  does not promise the order it evaluates them in.
+- **Where:** `parcel-dues.service.ts`, `parcel-dues.ts` (`parcelShareOf`).
 
 ### `#` in a plural branch can print Arabic-Indic digits
 

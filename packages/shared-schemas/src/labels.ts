@@ -13,6 +13,8 @@ import type {
   OccupancyEndReason,
   OccupancyRole,
   OccupancyType,
+  OwnerBillingMode,
+  FeeExemptionReason,
   PropertyType,
   ResidentStatus,
   StaffRole,
@@ -110,6 +112,25 @@ export const ar = {
     CASH: 'نقداً في البلدية',
     WHISH_MONEY: 'تحويل Whish Money',
     COLLECTOR: 'عبر المحصّل',
+  },
+
+  /** Where the municipality's money is held (الخزينة). */
+  treasuryAccountType: {
+    CASH_SAFE: 'صندوق النقد',
+    WHISH_ACCOUNT: 'حساب Whish',
+    BANK_ACCOUNT: 'حساب مصرفي',
+    COLLECTOR_CUSTODY: 'عهدة جابٍ',
+    PETTY_CASH: 'سلفة مصاريف نثرية',
+  },
+
+  /** Why a wallet's balance moved. */
+  treasuryEntrySource: {
+    OPENING_BALANCE: 'رصيد افتتاحي',
+    CITIZEN_PAYMENT: 'دفعة مواطن',
+    INCOME_VOUCHER: 'سند قبض',
+    EXPENSE_VOUCHER: 'سند صرف',
+    TRANSFER: 'مناقلة',
+    ADJUSTMENT: 'تسوية',
   },
 
   /** Staff roles as the municipality names them, not as the enum spells them. */
@@ -307,6 +328,20 @@ export const ar = {
     RECORDED_IN_ERROR: 'سُجِّل بالخطأ',
   } satisfies Record<OccupancyEndReason, string>,
 
+  /** «معفاة من الرسوم» — why a unit is charged nothing. See `FEE_EXEMPTION_REASON`. */
+  feeExemptionReason: {
+    PLACE_OF_WORSHIP: 'دار عبادة',
+    PUBLIC_FACILITY: 'مرفق عام',
+    OTHER: 'سبب آخر',
+  } satisfies Record<FeeExemptionReason, string>,
+
+  /** «توزيع الرسم على المالكين» on a flat with several owners. See `OWNER_BILLING_MODE`. */
+  ownerBillingMode: {
+    EQUAL: 'بالتساوي بين المالكين',
+    BY_SHARES: 'حسب الأسهم',
+    RESPONSIBLE_OWNER: 'مالك مسؤول يدفع عن الجميع',
+  } satisfies Record<OwnerBillingMode, string>,
+
   /** ما يستند إليه «تأكيد الشغور». See `VACANCY_BASIS`. */
   vacancyBasis: {
     FIELD_INSPECTION: 'معاينة ميدانية — وُجدت خالية',
@@ -330,6 +365,8 @@ export const ar = {
   citizenResidence: {
     RESIDENT: 'أسرة مقيمة في البلدة',
     NON_RESIDENT_OWNER: 'غير مقيم في البلدة',
+    ESTATE: 'تركة (ورثة المرحوم)',
+    INSTITUTION: 'جهة أو وقف',
   } satisfies Record<CitizenResidence, string>,
 
   documentType: {
@@ -482,6 +519,23 @@ export const en = {
     COLLECTOR: 'Via Collector',
   },
 
+  treasuryAccountType: {
+    CASH_SAFE: 'Cash safe',
+    WHISH_ACCOUNT: 'Whish account',
+    BANK_ACCOUNT: 'Bank account',
+    COLLECTOR_CUSTODY: 'Collector custody',
+    PETTY_CASH: 'Petty cash',
+  },
+
+  treasuryEntrySource: {
+    OPENING_BALANCE: 'Opening balance',
+    CITIZEN_PAYMENT: 'Citizen payment',
+    INCOME_VOUCHER: 'Receipt voucher',
+    EXPENSE_VOUCHER: 'Payment voucher',
+    TRANSFER: 'Transfer',
+    ADJUSTMENT: 'Adjustment',
+  },
+
   staffRole: {
     SUPER_ADMIN: 'System Administrator',
     AUDITOR: 'Auditor',
@@ -631,6 +685,18 @@ export const en = {
     RECORDED_IN_ERROR: 'Recorded in error',
   } satisfies Record<OccupancyEndReason, string>,
 
+  feeExemptionReason: {
+    PLACE_OF_WORSHIP: 'Place of worship',
+    PUBLIC_FACILITY: 'Public facility',
+    OTHER: 'Other reason',
+  } satisfies Record<FeeExemptionReason, string>,
+
+  ownerBillingMode: {
+    EQUAL: 'Split equally between the owners',
+    BY_SHARES: 'By shares',
+    RESPONSIBLE_OWNER: 'One responsible owner pays for all',
+  } satisfies Record<OwnerBillingMode, string>,
+
   vacancyBasis: {
     FIELD_INSPECTION: 'Field inspection — found empty',
     OWNER_STATEMENT: 'The owner says so',
@@ -646,6 +712,8 @@ export const en = {
   citizenResidence: {
     RESIDENT: 'Household living in the town',
     NON_RESIDENT_OWNER: 'Lives outside the town',
+    ESTATE: 'Estate (heirs of the late)',
+    INSTITUTION: 'Institution or waqf',
   } satisfies Record<CitizenResidence, string>,
 
   documentType: {

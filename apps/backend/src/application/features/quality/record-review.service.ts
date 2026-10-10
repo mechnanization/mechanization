@@ -12,6 +12,9 @@ import {
   type DrawSampleInput,
   type FieldFlag,
   type ReturnRecordInput,
+  citizenDisplayName,
+  isNonPersonRecord,
+  isOwnerRecord,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -70,8 +73,8 @@ export interface QueuePage {
   counts: Record<ReviewState, number>;
 }
 
-const fullName = (row: { firstName: string; middleName?: string | null; lastName: string }) =>
-  [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' ');
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+const fullName = (row: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }) => citizenDisplayName(row);
 
 type Actor = { id: string; role: string };
 
@@ -480,13 +483,22 @@ export class RecordReviewService {
       */
       const citizen = await this.db.user.findFirst({
         where: { id: payload.citizenId, kind: 'CITIZEN' },
-        select: { motherName: true, phone: true, hasNoPhone: true },
+        select: { motherName: true, phone: true, hasNoPhone: true, residence: true },
       });
 
+      /*
+        Only what this kind of file is asked can still be missing (0076). No
+        owner record — non-resident, estate, institution — is asked a mother's
+        name; an estate or an institution has an optional phone, and its
+        «لا يملك رقم هاتف» is forced off, so a return naming either would
+        otherwise stay open on that file for ever.
+      */
       const stillMissing = new Set<string>();
-      if (!citizen?.motherName?.trim()) stillMissing.add('MOTHER_NAME');
+      if (!isOwnerRecord(citizen?.residence) && !citizen?.motherName?.trim()) stillMissing.add('MOTHER_NAME');
       // «لا يملك رقم هاتف» answers the phone: the return asked for one, and the answer is that there is none.
-      if (!citizen?.hasNoPhone && !citizen?.phone?.trim()) stillMissing.add('PHONE');
+      if (!isNonPersonRecord(citizen?.residence) && !citizen?.hasNoPhone && !citizen?.phone?.trim()) {
+        stillMissing.add('PHONE');
+      }
 
       const resolvable = open.filter((review) => !review.fields.some((f) => stillMissing.has(f)));
       if (resolvable.length === 0) return;
@@ -584,7 +596,7 @@ export class RecordReviewService {
           registration: {
             select: {
               referenceNumber: true,
-              citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } },
+              citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } },
             },
           },
         },
@@ -724,6 +736,7 @@ export class RecordReviewService {
                 firstName: true,
                 middleName: true,
                 lastName: true,
+                residence: true,
                 actualHouseholdMembers: true,
               },
             },

@@ -114,9 +114,25 @@ export const QUALITY_FINDING_KIND = [
    * dismissing it would not change the bill, only hide why.
    */
   'UNIT_UNDER_REVIEW',
+  /**
+   * A co-owned flat whose saved «توزيع الرسم على المالكين» billing cannot
+   * carry out (migration 0075). HIGH: «حسب الأسهم» with an owner's أسهم
+   * missing, so every co-owner's bill is refused. MEDIUM: «مالك مسؤول» naming
+   * someone who no longer owns it with an open file, so the flat is split
+   * equally instead. Not dismissable, for `UNIT_UNDER_REVIEW`'s reason: it
+   * closes when the أسهم are recorded or another method is chosen.
+   */
+  'OWNER_BILLING_BLOCKED',
   'BUILDING_WITHOUT_PIN',
   'UNITS_WITHOUT_AREA',
   'UNLINKED_LANDLORDS',
+  /**
+   * A building labelled «متضررة من الحرب وغير مسكونة» or «مهدوم» whose units
+   * are still billed, because no damage reading says «غير صالحة للسكن». The
+   * label exempts nothing; the reading does (decision of 2026-10-07). HIGH:
+   * someone is billed for a home the register itself calls uninhabitable.
+   */
+  'UNINHABITED_WITHOUT_READING',
 ] as const;
 export type QualityFindingKind = (typeof QUALITY_FINDING_KIND)[number];
 
@@ -164,9 +180,13 @@ export function qualityLabels(locale: string) {
       NEAR_DUPLICATE_BUILDINGS: en ? 'Buildings metres apart on one parcel' : 'مبانٍ متلاصقة على العقار نفسه',
       UNIT_STATUS_CONTRADICTION: en ? 'Unit and owner card disagree' : 'حالة الوحدة تخالف بطاقة المالك',
       UNIT_UNDER_REVIEW: en ? 'Unit status to review' : 'حالة الوحدة للمراجعة',
+      OWNER_BILLING_BLOCKED: en ? 'Co-owner billing not applied' : 'توزيع على المالكين لا يُطبَّق',
       BUILDING_WITHOUT_PIN: en ? 'Building with no entrance pin' : 'مبنى بلا مدخل مُثبت',
       UNITS_WITHOUT_AREA: en ? 'Occupied units with no area' : 'وحدات مشغولة بلا مساحة',
       UNLINKED_LANDLORDS: en ? 'Owners named but not linked' : 'مالكون مذكورون غير مربوطين',
+      UNINHABITED_WITHOUT_READING: en
+        ? 'Labelled uninhabited, still billed'
+        : 'مبنى مصنَّف غير مسكون وما زال يُفوتر',
     } satisfies Record<QualityFindingKind, string>,
     /**
      * What the re-check found, as one word.

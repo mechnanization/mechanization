@@ -755,3 +755,55 @@ The register's own export (citizens, `REGISTER_EXPORT_ROLES`) was taken from the
 head's account in `PR #88`. Whether "does nothing else" also means no building
 export, or only no register export, is the owner's call; hiding the button for
 the role is one allow-list in `lib/staff-roles.ts`.
+
+## 18. The treasury’s controls (decided 2026-10-09)
+
+**Status:** decided on the PR #104 review, from the municipal accounting decree
+(Decree 5595/1982, read in its consolidated text) and municipal cash-handling
+practice; D6, D7 and the receipt's paper size by the owner on 2026-10-10. Each one
+is written up, with its grounds, in
+[finance.md §13.1c](finance.md), and pinned by
+`treasury-controls.integration.spec.ts`.
+
+- **D1, a refund after a handover:** it comes out of the collector’s custody only
+  while that still holds all of it; otherwise it comes out of the safe. A collector
+  pays nothing out (art. 93).
+- **D2, a payment dated before go-live:** only a finance role may record one once the
+  treasury is live, and the audit row says no wallet was credited.
+- **D3, the payment order:** an accountant’s expense waits for the manager’s order
+  (art. 28, 33). Urgent payments are paid first and regularised after (art. 35). The
+  manager records the order the head signs on paper; the head’s own account stays
+  «مشاهد فقط» (decision 16).
+- **D4, stage 5 before activation:** not required with D3 in place. Until it ships, the
+  one-day statement is the daily register (art. 101), printed, counted and signed.
+- **D5, the go-live day:** live, for payments, expenses and income alike. Whatever was
+  taken before the opening count is entered before activation; a document dated that
+  day is never placed before the opening entry.
+- **D6, a ceiling on the urgent path (decided 2026-10-10):** a per-voucher ceiling per
+  currency (LBP, USD), set by the manager in الإعدادات. An accountant's urgent payment
+  above it is refused (`EXPENSE_URGENT_OVER_CEILING`) and goes to the manager as a
+  request. Unset means no ceiling, which is where every municipality starts. Art. 35
+  covers salaries, routine petty spending and genuinely urgent spending; the ceiling
+  keeps a large purchase on the order path. Salaries are not held to it.
+- **D7, a salary paid by the accountant (decided 2026-10-10):** art. 35 names salaries,
+  so the accountant's «صرف راتب / أجر» is paid at once on the urgent path, with the
+  reason «راتب — يُدفع قبل الحوالة (المادة 35)» written by the server, and waits for
+  the manager's regularisation. The manager's payout is the order itself.
+- **The printed receipt (decided 2026-10-10):** A5, scaled in print to fit one sheet,
+  rather than running over two or moving to another paper size. The frontend
+  implements it ([ui-ux-standards.md](ui-ux-standards.md), the printing entry).
+
+**Still open:**
+
+- **How large a salary may an accountant pay before the order?** Salaries are exempt from
+  the urgent ceiling (D7), so the only bound is the wallet. The manager sees each one in the
+  regularisation queue, after the cash has left. **Undecided:** a salary ceiling, or none.
+- **Which settings the accountant may change.** The settings route admits him for every field
+  except the urgent ceilings, including the official exchange rate ([security.md](security.md)
+  gaps). **Undecided.**
+
+- Whether each municipality wants the head’s signature reflected through the
+  manager’s account, or a role of its own.
+- Petty-cash advances (art. 37–42).
+- How a backup should carry an append-only ledger ([database.md](database.md),
+  **Undecided**).
